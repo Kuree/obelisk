@@ -63,23 +63,31 @@ UnitLowering::lowerDumpSystemCall(semantic::SVCallExpressionOp op) {
   };
 
   if (name == "$dumpfile") {
-    if (children.size() != 1) {
-      emitError(location) << "$dumpfile requires one file name";
-      return failure();
-    }
-    auto literal = stringLiteral(children.front());
-    if (!literal) {
-      // The traced set and the file are fixed for the whole run, so a computed
-      // name buys nothing that a literal does not. Reject it plainly rather
-      // than carrying a managed string through every execution tier.
-      emitError(getSemanticLocation(children.front()))
-          << "$dumpfile requires a string literal file name";
+    if (children.size() > 1) {
+      emitError(location) << "$dumpfile accepts at most one file name";
       return failure();
     }
     declareTimescale();
-    sim::SimDumpOpenOp::create(
-        builder, location, context,
-        bytesConstant(getSemanticLocation(literal), literal.getConstantValue()));
+    if (children.empty()) {
+      sim::SimDumpOpenOp::create(builder, location, context,
+                                 bytesConstant(location, "dump.vcd"));
+      return dummyTaskResult();
+    }
+    if (auto literal = stringLiteral(children.front())) {
+      sim::SimDumpOpenOp::create(builder, location, context,
+                                 bytesConstant(getSemanticLocation(literal),
+                                               literal.getConstantValue()));
+      return dummyTaskResult();
+    }
+    FailureOr<Value> pathValue = lowerExpression(children.front());
+    if (failed(pathValue))
+      return failure();
+    Type stringType = sim::StringType::get(function.getContext());
+    FailureOr<Value> path = convert(*pathValue, stringType,
+                                    isSignedNode(children.front()), location);
+    if (failed(path))
+      return failure();
+    sim::SimDumpOpenStringOp::create(builder, location, context, *path);
     return dummyTaskResult();
   }
 
@@ -112,9 +120,9 @@ UnitLowering::lowerDumpSystemCall(semantic::SVCallExpressionOp op) {
             << "$dumpvars requires a hierarchical scope or variable reference";
         return failure();
       }
-      sim::SimDumpVarsOp::create(builder, location, context, *depth,
-                                 bytesConstant(getSemanticLocation(child),
-                                               path.getValue()));
+      sim::SimDumpVarsOp::create(
+          builder, location, context, *depth,
+          bytesConstant(getSemanticLocation(child), path.getValue()));
     }
     return dummyTaskResult();
   }

@@ -285,16 +285,21 @@ typedef struct obelisk_rt_handle_v1 {
   uint64_t id;
 } obelisk_rt_handle_v1;
 
-// Design-wide executable metadata is deliberately split from optional VPI
-// reflection metadata.  Both payloads are immutable, pointer-free byte images;
-// the only native pointers are this linker-resolved pointer/size pair.  A
-// descriptor with a null reflection image is valid and is emitted for vpi=off.
+// Design-wide executable metadata is deliberately split from the optional
+// reflection image used by VPI and waveform dumping. Both payloads are
+// immutable, pointer-free byte images; the only native pointers are this
+// linker-resolved pointer/size pair. A descriptor with no reflection consumers
+// has a null image.
 #define OBELISK_RT_EXECUTION_HAS_BYTECODE (UINT32_C(1) << 0)
 #define OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE (UINT32_C(1) << 1)
 #define OBELISK_RT_EXECUTION_VPI_READ (UINT32_C(1) << 2)
 #define OBELISK_RT_EXECUTION_VPI_WRITE (UINT32_C(1) << 3)
 #define OBELISK_RT_EXECUTION_REQUIRE_BYTECODE (UINT32_C(1) << 4)
 #define OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT (UINT32_C(1) << 5)
+// The design database is also the immutable hierarchy/type image consumed by
+// waveform dumping. This grants no VPI access; the VPI permission bits remain
+// the sole authority for VPI handles and reads.
+#define OBELISK_RT_EXECUTION_WAVEFORM_METADATA (UINT32_C(1) << 6)
 
 // Executable event-region ordinals. The eight PLI callback regions remain
 // compiler-only until the callback ABI can populate them. Preponed is serviced
@@ -749,6 +754,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_CLOCKED_SAMPLE_UPDATE = UINT32_C(0x00010222),
   OBELISK_RT_INTRINSIC_V1_CLOCKED_SAMPLE_READ = UINT32_C(0x00010223),
   OBELISK_RT_INTRINSIC_V1_DUMP_OPEN = UINT32_C(0x00010224),
+  OBELISK_RT_INTRINSIC_V1_DUMP_OPEN_STRING = UINT32_C(0x00010225),
   OBELISK_RT_INTRINSIC_V1_DUMP_TIMESCALE = UINT32_C(0x00010226),
   OBELISK_RT_INTRINSIC_V1_DUMP_VARS = UINT32_C(0x00010227),
   OBELISK_RT_INTRINSIC_V1_DUMP_ALL = UINT32_C(0x00010228),
@@ -2601,13 +2607,17 @@ obelisk_rt_status obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context);
 // invisible to native, bytecode, and generated writers alike. The traced set,
 // its hierarchical names, and its canonical bit ranges all come from the
 // design database, so a design database must be present in the execution
-// descriptor. `--vpi=off` designs without `--trace` report INVALID_DESIGN.
+// descriptor. The compiler embeds waveform metadata automatically when a
+// design contains these system tasks; this does not enable VPI.
 //
 // Selecting a nonexistent path reports INVALID_HANDLE; `$dumpvars` with no
 // prior `$dumpfile` opens the IEEE default `dump.vcd`.
 obelisk_rt_status obelisk_rt_v1_dump_open(obelisk_rt_context *context,
                                           const uint8_t *path,
                                           uint64_t path_size);
+obelisk_rt_status
+obelisk_rt_v1_dump_open_string(obelisk_rt_context *context,
+                               obelisk_rt_string_v1 path);
 // Declare the `$timescale` written into the header, as a decimal exponent in
 // seconds (-15..0). The compiler knows the elaborated design precision and
 // emits this before the first dump call. Without it the dump falls back to the

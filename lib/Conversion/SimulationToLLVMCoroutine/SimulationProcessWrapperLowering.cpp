@@ -271,6 +271,7 @@ LogicalResult makeDirectFragmentWrapper(
               sim::SimFileReadPackedOp, sim::SimFileEofOp,
               sim::SimFileSeekOp, sim::SimFileTellOp,
               sim::SimFileRewindOp, sim::SimDumpOpenOp,
+              sim::SimDumpOpenStringOp,
               sim::SimDumpTimescaleOp, sim::SimDumpVarsOp, sim::SimDumpAllOp,
               sim::SimDumpControlOp, sim::SimDumpLimitOp,
               sim::SimDumpFlushOp>(operation);

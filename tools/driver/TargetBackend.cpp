@@ -199,8 +199,19 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
   module.walk([&](obelisk::sim::SimSampledReadOp) {
     needsSampledStatePlan = true;
   });
+  bool needsWaveformMetadata = false;
+  module.walk([&](mlir::Operation *operation) {
+    needsWaveformMetadata |=
+        mlir::isa<obelisk::sim::SimDumpOpenOp,
+                  obelisk::sim::SimDumpOpenStringOp,
+                  obelisk::sim::SimDumpTimescaleOp, obelisk::sim::SimDumpVarsOp,
+                  obelisk::sim::SimDumpAllOp, obelisk::sim::SimDumpControlOp,
+                  obelisk::sim::SimDumpLimitOp, obelisk::sim::SimDumpFlushOp>(
+            operation);
+  });
   bool needsDesignEncoding =
-      bytecode || needsHybridBytecode || vpi != "off" || hasLanguageOverride;
+      bytecode || needsHybridBytecode || vpi != "off" || hasLanguageOverride ||
+      needsWaveformMetadata;
   requiresStateSync |= needsSampledStatePlan && !needsDesignEncoding;
   if (needsDesignEncoding) {
     EncodeObeliskSimToBytecodePassOptions options;

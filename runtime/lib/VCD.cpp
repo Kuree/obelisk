@@ -13,8 +13,8 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <cstring>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <limits>
 #include <map>
@@ -118,8 +118,7 @@ bool getString(const DesignDatabaseCache &database, uint64_t offset,
 uint64_t firstChildOffset(const uint8_t *record) { return read64(record + 24); }
 
 uint64_t nextSiblingOffset(const uint8_t *record, uint32_t kind) {
-  return read64(record +
-                (kind == OBELISK_RT_DESIGN_RECORD_SCOPE ? 32 : 24));
+  return read64(record + (kind == OBELISK_RT_DESIGN_RECORD_SCOPE ? 32 : 24));
 }
 
 uint64_t parentOffset(const uint8_t *record) { return read64(record + 16); }
@@ -132,8 +131,7 @@ uint64_t nameOffset(const uint8_t *record) { return read64(record + 40); }
 // enclosing scope's own full name.
 std::string_view leafName(std::string_view path, std::string_view parent) {
   if (!parent.empty() && path.size() > parent.size() + 1 &&
-      path.compare(0, parent.size(), parent) == 0 &&
-      path[parent.size()] == '.')
+      path.compare(0, parent.size(), parent) == 0 && path[parent.size()] == '.')
     return path.substr(parent.size() + 1);
   size_t dot = path.rfind('.');
   return dot == std::string_view::npos ? path : path.substr(dot + 1);
@@ -143,8 +141,6 @@ std::string_view leafName(std::string_view path, std::string_view parent) {
 // reads and language writes both address.
 uint64_t objectTypeOffset(const uint8_t *record) { return read64(record + 48); }
 uint64_t objectBitWidth(const uint8_t *record) { return read64(record + 56); }
-int64_t objectRangeLeft(const uint8_t *record) { return readI64(record + 64); }
-int64_t objectRangeRight(const uint8_t *record) { return readI64(record + 72); }
 uint64_t objectStateBit(const uint8_t *record) { return read64(record + 80); }
 
 bool traceableObject(uint32_t kind, const uint8_t *record) {
@@ -184,8 +180,7 @@ bool bitRangeEqual(const uint8_t *left, const uint8_t *right, uint64_t bit,
   if (((left[lastByte] ^ right[lastByte]) & lastMask) != 0)
     return false;
   uint64_t middle = lastByte - firstByte - 1;
-  return middle == 0 || std::memcmp(left + firstByte + 1,
-                                    right + firstByte + 1,
+  return middle == 0 || std::memcmp(left + firstByte + 1, right + firstByte + 1,
                                     static_cast<size_t>(middle)) == 0;
 }
 
@@ -390,31 +385,40 @@ std::string timescaleText(int32_t exponent) {
 // Plan construction
 //===----------------------------------------------------------------------===//
 
-// Resolve a selection to the scope it names. An empty path selects the root.
-// Scope records carry their full hierarchical name, so this is a direct match
-// rather than a segment walk.
-bool resolveSelectionScope(const DesignDatabaseCache &database,
-                           const std::string &path, uint64_t &scopeOffset) {
+// Resolve a selection to the scope or variable it names. An empty path selects
+// the root. Records carry their full hierarchical name, so this is a direct
+// match rather than a segment walk.
+bool resolveSelection(const DesignDatabaseCache &database,
+                      const std::string &path, uint64_t &offset,
+                      uint32_t &kind) {
   if (path.empty()) {
-    scopeOffset = database.root;
+    offset = database.root;
+    kind = OBELISK_RT_DESIGN_RECORD_SCOPE;
     return true;
   }
   std::string_view wanted(path);
   if (wanted.rfind("$root.", 0) == 0)
     wanted.remove_prefix(6);
-  for (uint64_t index = 0; index != database.scopeCount; ++index) {
-    uint64_t offset = database.scopes + index * kScopeRecordSize;
-    const uint8_t *record;
-    uint32_t kind;
-    std::string_view name;
-    if (!getRecord(database, offset, record, kind) ||
-        kind != OBELISK_RT_DESIGN_RECORD_SCOPE ||
-        !getString(database, nameOffset(record), name) || name != wanted)
-      continue;
-    scopeOffset = offset;
-    return true;
-  }
-  return false;
+  auto find = [&](uint64_t begin, uint64_t count, uint64_t size) {
+    for (uint64_t index = 0; index != count; ++index) {
+      uint64_t candidate = begin + index * size;
+      const uint8_t *record;
+      uint32_t candidateKind;
+      std::string_view name;
+      if (!getRecord(database, candidate, record, candidateKind) ||
+          !getString(database, nameOffset(record), name) || name != wanted)
+        continue;
+      if (candidateKind != OBELISK_RT_DESIGN_RECORD_SCOPE &&
+          !traceableObject(candidateKind, record))
+        continue;
+      offset = candidate;
+      kind = candidateKind;
+      return true;
+    }
+    return false;
+  };
+  return find(database.scopes, database.scopeCount, kScopeRecordSize) ||
+         find(database.objects, database.objectCount, kObjectRecordSize);
 }
 
 // Collect every traceable object at or below `scopeOffset`. `levels` follows
@@ -542,14 +546,46 @@ struct PlanBuilder {
     }
   }
 
+  // Determine whether expanding every unpacked dimension stays within one
+  // object's declaration budget. Checking only each dimension admits an
+  // exponential number of leaves for nested arrays.
+  bool expandedLeafCount(uint64_t typeOffset, uint64_t width, unsigned depth,
+                         uint64_t limit, uint64_t &count) const {
+    if (depth == kMaxUnpackedDepth ||
+        !typeIsUnpackedArray(database, typeOffset)) {
+      count = 1;
+      return true;
+    }
+    uint64_t element = typeElement(database, typeOffset);
+    uint64_t elementWidth =
+        isTypeOffset(database, element) ? typeWidth(database, element) : 0;
+    int64_t left = typeLeft(database, typeOffset);
+    int64_t right = typeRight(database, typeOffset);
+    uint64_t extent = left >= right ? static_cast<uint64_t>(left - right) + 1
+                                    : static_cast<uint64_t>(right - left) + 1;
+    if (elementWidth == 0 || extent == 0 || extent > width / elementWidth ||
+        extent * elementWidth != width) {
+      count = 1;
+      return true;
+    }
+    if (extent > limit)
+      return false;
+    uint64_t childCount = 0;
+    if (!expandedLeafCount(element, elementWidth, depth + 1, limit / extent,
+                           childCount))
+      return false;
+    count = extent * childCount;
+    return true;
+  }
+
   // Declare one traced range: a scalar, a vector, or one element of an
   // unpacked array. `name` is already the fully qualified leaf spelling.
   void declareLeaf(uint64_t typeOffset, uint64_t sourceBit, uint64_t width,
                    std::string_view name, bool isNet) {
     bool isReal = typeIsReal(database, typeOffset);
-    auto [entry, inserted] = codeByRange.try_emplace(
-        std::make_pair(sourceBit, width),
-        static_cast<uint32_t>(state.codeText.size()));
+    auto [entry, inserted] =
+        codeByRange.try_emplace(std::make_pair(sourceBit, width),
+                                static_cast<uint32_t>(state.codeText.size()));
     uint32_t code = entry->second;
     bool fourState = !isReal && typeFourState(database, typeOffset);
     if (inserted) {
@@ -568,9 +604,7 @@ struct PlanBuilder {
       // are still in code order here; buildRanges sorts them afterwards.
       state.variables[code].fourState = true;
     }
-    append(state, isReal    ? "$var real "
-                  : isNet   ? "$var wire "
-                            : "$var reg ");
+    append(state, isReal ? "$var real " : isNet ? "$var wire " : "$var reg ");
     appendUnsigned(state, width);
     append(state, " ");
     append(state, state.codeText[code]);
@@ -607,7 +641,8 @@ struct PlanBuilder {
   // lowest canonical bits and carries the leftmost declared index.
   void declareType(uint64_t typeOffset, uint64_t sourceBit, uint64_t width,
                    const std::string &name, bool isNet, unsigned depth) {
-    if (depth == kMaxUnpackedDepth || !typeIsUnpackedArray(database, typeOffset))
+    if (depth == kMaxUnpackedDepth ||
+        !typeIsUnpackedArray(database, typeOffset))
       return declareLeaf(typeOffset, sourceBit, width, name, isNet);
     uint64_t element = typeElement(database, typeOffset);
     uint64_t elementWidth =
@@ -616,20 +651,9 @@ struct PlanBuilder {
     int64_t right = typeRight(database, typeOffset);
     uint64_t extent = left >= right ? static_cast<uint64_t>(left - right) + 1
                                     : static_cast<uint64_t>(right - left) + 1;
-    if (elementWidth == 0 || extent == 0 || extent * elementWidth != width)
+    if (elementWidth == 0 || extent == 0 || extent > width / elementWidth ||
+        extent * elementWidth != width)
       return declareLeaf(typeOffset, sourceBit, width, name, isNet);
-    if (extent > state.maxExpandedElements) {
-      // Omit rather than smash. A single wide vector would be well-formed VCD
-      // that silently presents several independent signals as one value, with
-      // nothing in the file to say so.
-      std::fprintf(stderr,
-                   "obelisk: not dumping %s: %llu elements exceeds the "
-                   "waveform array limit of %llu "
-                   "(raise OBELISK_RT_DUMP_MAX_ARRAY to include it)\n",
-                   name.c_str(), static_cast<unsigned long long>(extent),
-                   static_cast<unsigned long long>(state.maxExpandedElements));
-      return;
-    }
     int64_t step = right >= left ? 1 : -1;
     for (uint64_t ordinal = 0; ordinal != extent; ++ordinal) {
       std::string elementName = name;
@@ -644,8 +668,23 @@ struct PlanBuilder {
 
   void emitVariable(const uint8_t *record, std::string_view name,
                     std::string_view scopeName) {
+    std::string leaf(leafName(name, scopeName));
+    uint64_t leafCount = 0;
+    if (!expandedLeafCount(objectTypeOffset(record), objectBitWidth(record), 0,
+                           state.maxExpandedElements, leafCount)) {
+      // Omit rather than smash. A single wide vector would be well-formed VCD
+      // that silently presents several independent signals as one value, with
+      // nothing in the file to say so.
+      std::fprintf(stderr,
+                   "obelisk: not dumping %s: the unpacked array exceeds the "
+                   "waveform array limit of %llu "
+                   "(raise OBELISK_RT_DUMP_MAX_ARRAY to include it)\n",
+                   leaf.c_str(),
+                   static_cast<unsigned long long>(state.maxExpandedElements));
+      return;
+    }
     declareType(objectTypeOffset(record), objectStateBit(record),
-                objectBitWidth(record), std::string(leafName(name, scopeName)),
+                objectBitWidth(record), leaf,
                 read32(record) == OBELISK_RT_DESIGN_RECORD_NET, 0);
   }
 
@@ -767,8 +806,9 @@ void emitValue(VCDTraceState &state, const TraceVariable &variable,
   bits.reserve(static_cast<size_t>(variable.width));
   for (uint64_t index = variable.width; index-- != 0;) {
     uint64_t bit = variable.sourceBit + index;
-    bits.push_back(fourStateChar(bitAt(valuePlane, bit),
-                                 variable.fourState && bitAt(unknownPlane, bit)));
+    bits.push_back(
+        fourStateChar(bitAt(valuePlane, bit),
+                      variable.fourState && bitAt(unknownPlane, bit)));
   }
   size_t first = 0;
   char lead = bits[0];
@@ -887,15 +927,19 @@ obelisk_rt_status buildPlan(obelisk_rt_context *context, VCDTraceState &state) {
 
   std::unordered_set<uint64_t> selected;
   for (const TraceSelection &selection : state.selections) {
-    uint64_t scopeOffset = 0;
-    if (!resolveSelectionScope(database, selection.scope, scopeOffset)) {
+    uint64_t offset = 0;
+    uint32_t kind = OBELISK_RT_DESIGN_RECORD_INVALID;
+    if (!resolveSelection(database, selection.scope, offset, kind)) {
       std::fprintf(stderr,
-                   "obelisk: $dumpvars scope '%s' does not name a design "
-                   "scope; no waveform will be written\n",
+                   "obelisk: $dumpvars selection '%s' does not name a design "
+                   "scope or variable; no waveform will be written\n",
                    selection.scope.c_str());
       return OBELISK_RT_INVALID_HANDLE;
     }
-    collectScope(database, scopeOffset, selection.levels, selected);
+    if (kind == OBELISK_RT_DESIGN_RECORD_SCOPE)
+      collectScope(database, offset, selection.levels, selected);
+    else
+      selected.insert(offset);
   }
 
   writeHeader(context, state);
@@ -947,12 +991,11 @@ obelisk_rt_status emitSlot(obelisk_rt_context *context, VCDTraceState &state,
     size_t length = static_cast<size_t>(range.byteEnd - range.byteBegin);
     if (length == 0)
       continue;
-    bool moved =
-        forceAll ||
-        std::memcmp(state.shadowValue.data() + range.byteBegin,
-                    valuePlane + range.byteBegin, length) != 0 ||
-        std::memcmp(state.shadowUnknown.data() + range.byteBegin,
-                    unknownPlane + range.byteBegin, length) != 0;
+    bool moved = forceAll ||
+                 std::memcmp(state.shadowValue.data() + range.byteBegin,
+                             valuePlane + range.byteBegin, length) != 0 ||
+                 std::memcmp(state.shadowUnknown.data() + range.byteBegin,
+                             unknownPlane + range.byteBegin, length) != 0;
     if (!moved)
       continue;
     for (uint32_t index = range.firstVariable; index != range.lastVariable;
@@ -1025,8 +1068,9 @@ void obelisk_rt_dump_destroy(obelisk_rt_context *context) noexcept {
   context->vcdState = nullptr;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_dump_open(
-    obelisk_rt_context *context, const uint8_t *path, uint64_t pathSize) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_dump_open(obelisk_rt_context *context, const uint8_t *path,
+                        uint64_t pathSize) {
   if (!context || (!path && pathSize != 0) || pathSize == 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
@@ -1048,6 +1092,20 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dump_open(
   } catch (...) {
     return OBELISK_RT_IO_ERROR;
   }
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_dump_open_string(obelisk_rt_context *context,
+                               obelisk_rt_string_v1 path) {
+  char scratch[8] = {};
+  const char *bytes = nullptr;
+  uint64_t size = 0;
+  obelisk_rt_status status =
+      obelisk_rt_v1_string_view(path, scratch, &bytes, &size);
+  return status == OBELISK_RT_OK
+             ? obelisk_rt_v1_dump_open(
+                   context, reinterpret_cast<const uint8_t *>(bytes), size)
+             : status;
 }
 
 extern "C" obelisk_rt_status
@@ -1116,7 +1174,8 @@ obelisk_rt_v1_dump_all(obelisk_rt_context *context) {
   try {
     ContextMutexLock lock(context);
     VCDTraceState *state = traceState(context);
-    if (!state || !state->file || (!state->planBuilt && state->selections.empty()))
+    if (!state || !state->file ||
+        (!state->planBuilt && state->selections.empty()))
       return OBELISK_RT_OK;
     obelisk_rt_status status = buildPlan(context, *state);
     if (status != OBELISK_RT_OK)
@@ -1137,7 +1196,8 @@ obelisk_rt_v1_dump_control(obelisk_rt_context *context, uint32_t enabled) {
   try {
     ContextMutexLock lock(context);
     VCDTraceState *state = traceState(context);
-    if (!state || !state->file || (!state->planBuilt && state->selections.empty()))
+    if (!state || !state->file ||
+        (!state->planBuilt && state->selections.empty()))
       return OBELISK_RT_OK;
     obelisk_rt_status status = buildPlan(context, *state);
     if (status != OBELISK_RT_OK)

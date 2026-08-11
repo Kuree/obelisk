@@ -584,6 +584,9 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         {reg(plan, op.getState())});
   if (auto op = dyn_cast<sim::SimDumpOpenOp>(operation))
     return emitIntrinsic(plan, kIntrinsicDumpOpen, {op.getPath()}, {});
+  if (auto op = dyn_cast<sim::SimDumpOpenStringOp>(operation))
+    return emitIntrinsicRegisters(plan, kIntrinsicDumpOpenString,
+                                  {reg(plan, op.getPath())}, {});
   if (auto op = dyn_cast<sim::SimDumpTimescaleOp>(operation))
     return emitIntrinsic(plan, kIntrinsicDumpTimescale, {op.getExponent()}, {});
   if (auto op = dyn_cast<sim::SimDumpVarsOp>(operation))

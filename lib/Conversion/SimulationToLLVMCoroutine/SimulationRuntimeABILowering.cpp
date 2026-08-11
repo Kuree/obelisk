@@ -430,6 +430,8 @@ void declareNativeRuntimeABI(ModuleOp module) {
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_file_open_string", managedI32,
       {managedPointer, managedI64, managedI64, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dump_open_string",
+                           managedI32, {managedPointer, managedI64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_file_getline_string",
                            managedI32,
                            {managedPointer, managedPointer, managedI32,

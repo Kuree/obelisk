@@ -284,7 +284,7 @@ struct Fixture {
   Fixture() {
     execution.version = OBELISK_RT_VERSION;
     execution.flags = OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                      OBELISK_RT_EXECUTION_VPI_READ;
+                      OBELISK_RT_EXECUTION_WAVEFORM_METADATA;
     execution.design_database = image.bytes.data();
     execution.design_database_size = image.bytes.size();
     execution.state_bit_count = kStateBits;
@@ -840,6 +840,28 @@ TEST(VCD, ScopeSelectionRestrictsTheTracedSet) {
   EXPECT_TRUE(identifierFor(text, "clk").empty());
   EXPECT_TRUE(identifierFor(text, "data").empty());
   // The enclosing scope is still declared so the path stays well formed.
+  EXPECT_NE(text.find("$scope module top $end"), std::string::npos);
+  EXPECT_NE(text.find("$scope module sub $end"), std::string::npos);
+}
+
+TEST(VCD, VariableSelectionRestrictsTheTracedSetWithoutEnablingVPI) {
+  Fixture fixture;
+  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_vpi_startup(fixture.context, nullptr, 0),
+            OBELISK_RT_PERMISSION_DENIED);
+  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
+  const std::string variable = "top.sub.count";
+  ASSERT_EQ(obelisk_rt_v1_dump_vars(
+                fixture.context, 0,
+                reinterpret_cast<const uint8_t *>(variable.data()),
+                variable.size()),
+            OBELISK_RT_OK);
+  fixture.advanceTo(10);
+  std::string text = fixture.read();
+
+  EXPECT_FALSE(identifierFor(text, "count").empty());
+  EXPECT_TRUE(identifierFor(text, "clk").empty());
+  EXPECT_TRUE(identifierFor(text, "data").empty());
   EXPECT_NE(text.find("$scope module top $end"), std::string::npos);
   EXPECT_NE(text.find("$scope module sub $end"), std::string::npos);
 }

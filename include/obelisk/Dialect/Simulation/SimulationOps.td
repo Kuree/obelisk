@@ -1402,6 +1402,14 @@ def SimDumpOpenOp : SimDumpOp<"dump.open",
   let summary = "select the waveform file named by $dumpfile";
 }
 
+def SimDumpOpenStringOp : SimOp<"dump.open_string", [
+    MemoryEffects<[MemRead<SimIOResource>, MemWrite<SimIOResource>,
+                   MemRead<SimHeapResource>]>
+]> {
+  let summary = "select the waveform file named by a dynamic string";
+  let arguments = (ins SimContextType:$context, SimStringType:$path);
+}
+
 def SimDumpTimescaleOp : SimDumpOp<"dump.timescale",
     (ins SimContextType:$context, I32:$exponent)> {
   let summary = "declare the $timescale written into the waveform header";

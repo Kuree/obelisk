@@ -30,7 +30,8 @@ FailureOr<SmallVector<NativePeriodicClock>> buildNativePeriodicClockPlan(
   // time, so decline the tier here rather than deoptimizing mid-run.
   bool dumping = false;
   module.walk([&](Operation *operation) {
-    if (isa<sim::SimDumpOpenOp, sim::SimDumpVarsOp, sim::SimDumpAllOp,
+    if (isa<sim::SimDumpOpenOp, sim::SimDumpOpenStringOp, sim::SimDumpVarsOp,
+            sim::SimDumpAllOp,
             sim::SimDumpControlOp, sim::SimDumpFlushOp>(operation))
       dumping = true;
   });

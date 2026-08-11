@@ -299,7 +299,8 @@ LogicalResult materializeEvalTwoStateVariants(
                 sim::SimFileGetlineOp, sim::SimFileReadPackedOp,
                 sim::SimFileEofOp, sim::SimFileSeekOp, sim::SimFileTellOp,
                 sim::SimFileRewindOp, sim::SimDumpOpenOp,
-                sim::SimDumpTimescaleOp, sim::SimDumpVarsOp,
+                sim::SimDumpOpenStringOp, sim::SimDumpTimescaleOp,
+                sim::SimDumpVarsOp,
                 sim::SimDumpAllOp, sim::SimDumpControlOp,
                 sim::SimDumpLimitOp, sim::SimDumpFlushOp>(operation)) {
           preserving = false;

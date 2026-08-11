@@ -858,7 +858,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
                                       OBELISK_RT_EXECUTION_VPI_READ |
                                       OBELISK_RT_EXECUTION_VPI_WRITE |
                                       OBELISK_RT_EXECUTION_REQUIRE_BYTECODE |
-                                      OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
+                                      OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT |
+                                      OBELISK_RT_EXECUTION_WAVEFORM_METADATA;
       if (execution->version != OBELISK_RT_VERSION ||
           execution->dpi_reserved != 0 ||
           (execution->flags & ~validFlags) != 0 ||
@@ -866,6 +867,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
            (execution->flags & OBELISK_RT_EXECUTION_VPI_READ) == 0) ||
           ((execution->flags & OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0 &&
            (execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0) ||
+          ((execution->flags & OBELISK_RT_EXECUTION_WAVEFORM_METADATA) != 0 &&
+           (execution->flags & OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE) ==
+               0) ||
           ((execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) != 0
                ? (!execution->bytecode || execution->bytecode_size == 0 ||
                   execution->checksum == 0)

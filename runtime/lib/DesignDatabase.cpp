@@ -119,7 +119,9 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       ((database.profile & OBELISK_RT_DESIGN_PROFILE_WRITE) != 0 &&
        (database.profile & OBELISK_RT_DESIGN_PROFILE_READ) == 0) ||
       ((database.profile & OBELISK_RT_DESIGN_PROFILE_READ) != 0) !=
-          ((execution->flags & OBELISK_RT_EXECUTION_VPI_READ) != 0) ||
+          ((execution->flags & (OBELISK_RT_EXECUTION_VPI_READ |
+                                OBELISK_RT_EXECUTION_WAVEFORM_METADATA)) !=
+           0) ||
       ((database.profile & OBELISK_RT_DESIGN_PROFILE_WRITE) != 0) !=
           ((execution->flags & OBELISK_RT_EXECUTION_VPI_WRITE) != 0) ||
       !validRange(database.scopes, database.scopeCount, kScopeSize,

@@ -537,6 +537,9 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_DUMP_OPEN:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && bytes(input(0));
+  case OBELISK_RT_INTRINSIC_V1_DUMP_OPEN_STRING:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 0 && string(input(0));
   case OBELISK_RT_INTRINSIC_V1_DUMP_TIMESCALE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && numeric(input(0));

@@ -348,6 +348,28 @@ public:
   }
 };
 
+class StringDumpOpenConversion final
+    : public OpConversionPattern<sim::SimDumpOpenStringOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimDumpOpenStringOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_dump_open_string"),
+            ValueRange{context, adaptor.getPath().front()})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 class StringScanFieldConversion final
     : public OpConversionPattern<sim::SimStringScanFieldOp> {
 public:
@@ -649,7 +671,8 @@ void populateManagedStringToLLVMConversionPatterns(
                StringCompareConversion, StringScanFieldConversion,
                FileScanFieldConversion,
                PlusargTestConversion,
-               PlusargValueConversion>(converter, context);
+               PlusargValueConversion,
+               StringDumpOpenConversion>(converter, context);
   patterns.add<StringFileOpenConversion<sim::SimFileOpenStringMCDOp>,
                StringFileOpenConversion<sim::SimFileOpenStringOp>>(
       converter, context);

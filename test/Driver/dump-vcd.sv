@@ -2,18 +2,33 @@
 // state planes, so every execution tier must produce the same file.
 //
 // RUN: %split-file %s %t
-// RUN: cd %t && obelisk --vpi=read design.sv -o %t/native.sim
+// RUN: cd %t && obelisk design.sv -o %t/native.sim
 // RUN: cd %t && %t/native.sim
 // RUN: FileCheck %s --check-prefix=VCD < %t/waves.vcd
 //
-// RUN: cd %t && obelisk --vpi=read --execution-tier=bytecode design.sv \
+// RUN: cd %t && obelisk --execution-tier=bytecode design.sv \
 // RUN:   -o %t/bytecode.sim
 // RUN: cd %t && %t/bytecode.sim
 // RUN: FileCheck %s --check-prefix=VCD < %t/waves.vcd
 //
-// A computed file name is refused rather than silently ignored.
-// RUN: not obelisk --vpi=read %t/computed.sv -o %t/computed.sim 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=COMPUTED
+// Explicit generic scheduling still needs the waveform database even with VPI
+// disabled, and an individual variable is a valid $dumpvars selection.
+// RUN: cd %t && obelisk --native-scheduler=generic selected.sv \
+// RUN:   -o %t/selected.sim
+// RUN: cd %t && %t/selected.sim
+// RUN: FileCheck %s --check-prefix=SELECTED < %t/selected.vcd
+//
+// The LRM permits a string expression and an omitted argument as file names.
+// RUN: cd %t && obelisk computed.sv -o %t/computed.sim
+// RUN: cd %t && %t/computed.sim
+// RUN: FileCheck %s --check-prefix=COMPUTED < %t/computed.vcd
+// RUN: cd %t && obelisk --execution-tier=bytecode computed.sv \
+// RUN:   -o %t/computed-bytecode.sim
+// RUN: cd %t && %t/computed-bytecode.sim
+// RUN: FileCheck %s --check-prefix=COMPUTED < %t/computed.vcd
+// RUN: cd %t && obelisk default-name.sv -o %t/default-name.sim
+// RUN: cd %t && %t/default-name.sim
+// RUN: FileCheck %s --check-prefix=DEFAULT-NAME < %t/dump.vcd
 
 //--- design.sv
 module sub(input logic clk, output logic [3:0] tick);
@@ -69,11 +84,47 @@ endmodule
 
 //--- computed.sv
 module top;
-  string name = "w.vcd";
+  string name = "computed.vcd";
+  logic traced = 0;
   initial begin
     $dumpfile(name);
     $dumpvars(0, top);
+    #1 traced = 1;
+    #1 $finish;
   end
 endmodule
 
-// COMPUTED: $dumpfile requires a string literal file name
+// COMPUTED: $scope module top $end
+// COMPUTED: $var reg 1 {{.*}} traced $end
+// COMPUTED-NOT: name
+// COMPUTED: $enddefinitions $end
+
+//--- default-name.sv
+module default_name;
+  logic value = 0;
+  initial begin
+    $dumpfile();
+    $dumpvars(0, default_name);
+    #1 $finish;
+  end
+endmodule
+
+// DEFAULT-NAME: $var reg 1 {{.*}} value $end
+// DEFAULT-NAME: $enddefinitions $end
+
+//--- selected.sv
+module selected;
+  logic traced = 0;
+  logic omitted = 0;
+  initial begin
+    $dumpfile("selected.vcd");
+    $dumpvars(0, selected.traced);
+    #1 traced = 1;
+    #1 $finish;
+  end
+endmodule
+
+// SELECTED: $scope module selected $end
+// SELECTED: $var reg 1 {{.*}} traced $end
+// SELECTED-NOT: omitted
+// SELECTED: $enddefinitions $end

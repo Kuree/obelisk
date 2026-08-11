@@ -2073,6 +2073,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_BYTECODE;
     return obelisk_rt_v1_dump_open(context, path->data, path->size);
   }
+  case OBELISK_RT_INTRINSIC_V1_DUMP_OPEN_STRING: {
+    obelisk_rt_string_v1 path = 0;
+    if (!readString(inputRegister(0), path))
+      return OBELISK_RT_INVALID_BYTECODE;
+    return obelisk_rt_v1_dump_open_string(context, path);
+  }
   case OBELISK_RT_INTRINSIC_V1_DUMP_TIMESCALE: {
     auto exponent = scalar(0);
     if (!exponent)

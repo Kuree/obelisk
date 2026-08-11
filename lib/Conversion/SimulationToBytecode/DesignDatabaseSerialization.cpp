@@ -63,10 +63,37 @@ SmallVector<uint8_t> serializeDesignDatabase(
   auto fallbackName = [](StringRef kind, uint64_t id) {
     return (kind + "." + Twine(id)).str();
   };
+  std::function<bool(Type)> isReflectableType = [&](Type type) {
+    if (!simulationWidth(type))
+      return false;
+    if (isa<IntegerType, sim::LogicType>(type) || type.isF64())
+      return true;
+    if (auto array = dyn_cast<sim::PackedArrayType>(type))
+      return isReflectableType(array.getElementType());
+    if (auto array = dyn_cast<sim::UnpackedArrayType>(type))
+      return isReflectableType(array.getElementType());
+    ArrayAttr fields;
+    if (auto aggregate = dyn_cast<sim::PackedStructType>(type))
+      fields = aggregate.getFields();
+    else if (auto aggregate = dyn_cast<sim::UnpackedStructType>(type))
+      fields = aggregate.getFields();
+    else if (auto aggregate = dyn_cast<sim::PackedUnionType>(type))
+      fields = aggregate.getFields();
+    else if (auto aggregate = dyn_cast<sim::UnpackedUnionType>(type))
+      fields = aggregate.getFields();
+    else
+      return false;
+    return llvm::all_of(fields, [&](Attribute attribute) {
+      auto field = dyn_cast<sim::FieldAttr>(attribute);
+      return field && isReflectableType(field.getType());
+    });
+  };
   for (Operation &operation : design.getBody().front()) {
     if (auto scope = dyn_cast<sim::SimScopeDeclOp>(operation))
       scopes.push_back(scope);
-    else if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation))
+    else if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
+      if (!isReflectableType(storage.getType()))
+        continue;
       objects.push_back({2, profile & kDatabaseProfileWrite ? 3u : 1u,
                          storage.getId(), storage.getScopeId(),
                          storage.getHierarchicalName()
@@ -76,7 +103,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
                          storage.getType(),
                          storageOffsets.lookup(storage.getId()),
                          sourceFor(storage)});
-    else if (auto net = dyn_cast<sim::SimNetDeclOp>(operation))
+    } else if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
+      if (!isReflectableType(net.getType()))
+        continue;
       objects.push_back({3, profile & kDatabaseProfileWrite ? 3u : 1u,
                          net.getId(), net.getScopeId(),
                          net.getHierarchicalName()
@@ -85,7 +114,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
                              .str(),
                          net.getType(), netOffsets.lookup(net.getId()),
                          sourceFor(net)});
-    else if (auto driver = dyn_cast<sim::SimDriverDeclOp>(operation))
+    } else if (auto driver = dyn_cast<sim::SimDriverDeclOp>(operation)) {
+      if (!isReflectableType(driver.getType()))
+        continue;
       objects.push_back({4, profile & kDatabaseProfileWrite ? 3u : 1u,
                          driver.getId(), driver.getScopeId(),
                          (driver.getHierarchicalName().value_or(
@@ -95,7 +126,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
                              .str(),
                          driver.getType(), driverOffsets.lookup(driver.getId()),
                          sourceFor(driver)});
-    else if (auto codeUnit = dyn_cast<sim::SimCodeUnitDeclOp>(operation))
+    } else if (auto codeUnit = dyn_cast<sim::SimCodeUnitDeclOp>(operation))
       objects.push_back(
           {(codeUnit.getCodeUnitKind() == sim::EntryKind::Function ||
             codeUnit.getCodeUnitKind() == sim::EntryKind::Observer)

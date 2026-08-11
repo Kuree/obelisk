@@ -103,6 +103,8 @@ constexpr uint32_t kIntrinsicMonitorControl =
 constexpr uint32_t kIntrinsicMonitorCurrent =
     OBELISK_RT_INTRINSIC_V1_MONITOR_CURRENT;
 constexpr uint32_t kIntrinsicDumpOpen = OBELISK_RT_INTRINSIC_V1_DUMP_OPEN;
+constexpr uint32_t kIntrinsicDumpOpenString =
+    OBELISK_RT_INTRINSIC_V1_DUMP_OPEN_STRING;
 constexpr uint32_t kIntrinsicDumpTimescale =
     OBELISK_RT_INTRINSIC_V1_DUMP_TIMESCALE;
 constexpr uint32_t kIntrinsicDumpVars = OBELISK_RT_INTRINSIC_V1_DUMP_VARS;

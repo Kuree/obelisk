@@ -1,13 +1,12 @@
 # Waveform dumping
 
 `$dumpfile`, `$dumpvars`, `$dumpoff`, `$dumpon`, `$dumpall`, `$dumplimit`, and
-`$dumpflush` write a VCD file. Tracing needs the design database, so a design
-must be built with `--vpi=read` or higher; the names, scopes, widths, and
-canonical bit offsets in the dump all come from that image rather than from a
-second hierarchy built at run time.
+`$dumpflush` write a VCD file. A design containing these tasks automatically
+embeds the waveform metadata needed for names, scopes, widths, and canonical
+bit offsets. This does not enable VPI or require a `--vpi` option.
 
 ```sh
-obelisk --vpi=read design.sv -o simulator
+obelisk design.sv -o simulator
 ```
 
 ## Collection is a per-slot difference, not a callback
@@ -75,10 +74,10 @@ from the design image, not from how the design executes.
 
 ## Limits
 
-`$dumpfile` requires a string literal. The traced set and the file are fixed
-for the whole run, so a computed name buys nothing that a literal does not, and
-a literal keeps managed strings out of every execution tier.
+`$dumpfile` accepts no argument or one string expression. With no argument it
+uses the standard `dump.vcd` default.
 
-A `$dumpvars` scope that does not name a design scope is reported once on
-stderr and no waveform is written. `$dumplimit` stops writing once the file
-reaches the given size; the file remains valid VCD up to that point.
+A `$dumpvars` selection that does not name a design scope or variable is
+reported once on stderr and no waveform is written. `$dumplimit` stops writing
+once the file reaches the given size; the file remains valid VCD up to that
+point.

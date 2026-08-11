@@ -46,10 +46,24 @@ constexpr uint32_t kExecutionRequireBytecode =
     OBELISK_RT_EXECUTION_REQUIRE_BYTECODE;
 constexpr uint32_t kExecutionPreponedSnapshot =
     OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
+constexpr uint32_t kExecutionWaveformMetadata =
+    OBELISK_RT_EXECUTION_WAVEFORM_METADATA;
 constexpr uint32_t kDatabaseProfileRead = OBELISK_RT_DESIGN_PROFILE_READ;
 constexpr uint32_t kDatabaseProfileWrite = OBELISK_RT_DESIGN_PROFILE_WRITE;
 
 } // namespace
+
+static bool needsWaveformMetadata(sim::SimDesignOp design) {
+  bool needed = false;
+  design.walk([&](Operation *operation) {
+    if (isa<sim::SimDumpOpenOp, sim::SimDumpOpenStringOp,
+            sim::SimDumpTimescaleOp, sim::SimDumpVarsOp,
+            sim::SimDumpAllOp, sim::SimDumpControlOp,
+            sim::SimDumpLimitOp, sim::SimDumpFlushOp>(operation))
+      needed = true;
+  });
+  return needed;
+}
 
 static FailureOr<SmallVector<SimulationSampledRange>>
 planSampledRanges(sim::SimDesignOp design, const StateLayout &state) {
@@ -142,8 +156,12 @@ FailureOr<EncodedSimulationDesign> Encoder::encode() {
   uint32_t profile = getVPIProfile();
   if (profile == UINT32_MAX)
     return failure();
-  if (profile != 0) {
-    result.designDatabase = serializeDatabase(profile);
+  bool waveformMetadata = needsWaveformMetadata(design);
+  uint32_t databaseProfile = profile;
+  if (waveformMetadata)
+    databaseProfile |= kDatabaseProfileRead;
+  if (databaseProfile != 0) {
+    result.designDatabase = serializeDatabase(databaseProfile);
     if (result.designDatabase.empty())
       return failure();
   }
@@ -159,6 +177,8 @@ FailureOr<EncodedSimulationDesign> Encoder::encode() {
     if (profile & kDatabaseProfileWrite)
       result.executionFlags |= kExecutionVPIWrite;
   }
+  if (waveformMetadata)
+    result.executionFlags |= kExecutionHasDatabase | kExecutionWaveformMetadata;
   for (FunctionPlan &plan : plans)
     result.functions.push_back({plan.function.getSymName().str(), plan.index,
                                 plan.scratchSize, plan.scratchAlignment,
