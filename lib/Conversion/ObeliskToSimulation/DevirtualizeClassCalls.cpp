@@ -3,6 +3,7 @@
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/SymbolTable.h"
 
@@ -104,6 +105,35 @@ public:
     return selected;
   }
 
+  sim::SimClassMethodDeclOp
+  resolveMonomorphic(sim::SimClassDeclOp staticClass,
+                     sim::SimClassVirtualCallOp call) const {
+    sim::SimClassMethodDeclOp selected;
+    for (const auto &entry : classes) {
+      sim::SimClassDeclOp candidate = entry.second;
+      if (candidate.getIsAbstract() || candidate.getIsInterface() ||
+          !isInstanceOf(candidate, staticClass))
+        continue;
+      sim::SimClassMethodDeclOp method = resolve(candidate, call);
+      if (!isDirectTarget(method, call))
+        return {};
+      if (!selected)
+        selected = method;
+      else if (selected.getImplementationAttr() !=
+               method.getImplementationAttr())
+        return {};
+    }
+    return selected;
+  }
+
+  static bool isDirectTarget(sim::SimClassMethodDeclOp method,
+                             sim::SimClassVirtualCallOp call) {
+    return method && method.getSignatureIdAttr() &&
+           method.getSignatureId() == call.getSignatureId() &&
+           !method.getIsPure() && !method.getIsTask() &&
+           method.getImplementationAttr();
+  }
+
 private:
   llvm::StringMap<sim::SimClassDeclOp> classes;
   llvm::StringMap<SmallVector<sim::SimClassMethodDeclOp>> methods;
@@ -175,6 +205,57 @@ createDirectCall(IRRewriter &rewriter, Operation *operation,
                                 callee, operands, ArrayAttr{}, ArrayAttr{});
 }
 
+LogicalResult createGuardedDirectCall(IRRewriter &rewriter,
+                                      sim::SimClassVirtualCallOp call,
+                                      sim::SimClassMethodDeclOp method) {
+  Location location = call.getLoc();
+  Value receiver = call.getReceiver();
+  SmallVector<Value> arguments(call.getArguments());
+  SmallVector<Type> resultTypes(call.getResultTypes());
+  Block *head = call->getBlock();
+
+  rewriter.setInsertionPoint(call);
+  Value isNull = sim::SimManagedIsNullOp::create(
+      rewriter, location, rewriter.getI1Type(), receiver);
+  Block *continuation = rewriter.splitBlock(head, call->getIterator());
+  SmallVector<BlockArgument> mergedResults;
+  for (Type type : resultTypes)
+    mergedResults.push_back(continuation->addArgument(type, location));
+
+  Region *region = head->getParent();
+  Block *nullBlock =
+      rewriter.createBlock(region, continuation->getIterator());
+  Block *directBlock =
+      rewriter.createBlock(region, continuation->getIterator());
+
+  rewriter.setInsertionPointToEnd(head);
+  cf::CondBranchOp::create(rewriter, location, isNull, nullBlock, ValueRange{},
+                           directBlock, ValueRange{});
+
+  rewriter.setInsertionPointToEnd(nullBlock);
+  Value nullReceiver = sim::SimClassNullOp::create(
+      rewriter, location, receiver.getType());
+  auto fallback = sim::SimClassVirtualCallOp::create(
+      rewriter, location, resultTypes, nullReceiver, call.getMethodAttr(),
+      call.getSlotAttr(), call.getSignatureIdAttr(), arguments);
+  cf::BranchOp::create(rewriter, location, continuation,
+                       fallback.getResults());
+
+  rewriter.setInsertionPointToEnd(directBlock);
+  FailureOr<sim::SimCallOp> direct = createDirectCall(
+      rewriter, call, method.getImplementationAttr(), receiver, arguments,
+      resultTypes);
+  if (failed(direct))
+    return failure();
+  cf::BranchOp::create(rewriter, location, continuation, direct->getResults());
+
+  for (auto [result, merged] :
+       llvm::zip_equal(call.getResults(), mergedResults))
+    result.replaceAllUsesWith(merged);
+  rewriter.eraseOp(call);
+  return success();
+}
+
 class ObeliskSimDevirtualizeClassCallsPass final
     : public impl::ObeliskSimDevirtualizeClassCallsPassBase<
           ObeliskSimDevirtualizeClassCallsPass> {
@@ -191,6 +272,12 @@ public:
 private:
   Statistic exactCalls{this, "exact-calls",
                        "virtual calls resolved from exact non-null classes"};
+  Statistic monomorphicCalls{
+      this, "monomorphic-calls",
+      "virtual calls resolved from closed-world monomorphic hierarchies"};
+  Statistic guardedCalls{
+      this, "guarded-calls",
+      "monomorphic calls guarded to preserve null-dispatch failure"};
   Statistic directCalls{this, "direct-calls",
                         "managed direct calls normalized to ordinary calls"};
   Statistic unresolvedCalls{this, "unresolved-calls",
@@ -209,26 +296,45 @@ void ObeliskSimDevirtualizeClassCallsPass::runOnOperation() {
   });
   for (sim::SimClassVirtualCallOp call : virtualCalls) {
     sim::SimClassDeclOp dynamicClass = resolver.resolve(call.getReceiver());
-    sim::SimClassMethodDeclOp method =
-        dynamicClass ? inventory.resolve(dynamicClass, call)
-                     : sim::SimClassMethodDeclOp{};
-    if (!method || !method.getSignatureIdAttr() ||
-        method.getSignatureId() != call.getSignatureId() ||
-        method.getIsPure() || method.getIsTask() ||
-        !method.getImplementationAttr()) {
+    if (dynamicClass) {
+      sim::SimClassMethodDeclOp method = inventory.resolve(dynamicClass, call);
+      if (!ClassDispatchInventory::isDirectTarget(method, call)) {
+        ++unresolvedCalls;
+        continue;
+      }
+      rewriter.setInsertionPoint(call);
+      FailureOr<sim::SimCallOp> replacement = createDirectCall(
+          rewriter, call, method.getImplementationAttr(), call.getReceiver(),
+          call.getArguments(), call.getResultTypes());
+      if (failed(replacement)) {
+        call.emitError(
+            "resolved virtual method has no valid function implementation");
+        return signalPassFailure();
+      }
+      rewriter.replaceOp(call, replacement->getResults());
+      ++exactCalls;
+      continue;
+    }
+
+    if (call.getReceiver().getDefiningOp<sim::SimClassNullOp>()) {
       ++unresolvedCalls;
       continue;
     }
-    rewriter.setInsertionPoint(call);
-    FailureOr<sim::SimCallOp> replacement = createDirectCall(
-        rewriter, call, method.getImplementationAttr(), call.getReceiver(),
-        call.getArguments(), call.getResultTypes());
-    if (failed(replacement)) {
-      call.emitError("resolved virtual method has no valid function implementation");
+
+    auto staticType = cast<sim::ClassHandleType>(call.getReceiver().getType());
+    sim::SimClassMethodDeclOp method = inventory.resolveMonomorphic(
+        inventory.lookup(staticType), call);
+    if (!method) {
+      ++unresolvedCalls;
+      continue;
+    }
+    if (failed(createGuardedDirectCall(rewriter, call, method))) {
+      call.emitError(
+          "monomorphic virtual method has no valid function implementation");
       return signalPassFailure();
     }
-    rewriter.replaceOp(call, replacement->getResults());
-    ++exactCalls;
+    ++monomorphicCalls;
+    ++guardedCalls;
   }
 
   SmallVector<sim::SimClassDirectCallOp> directCallsToNormalize;
