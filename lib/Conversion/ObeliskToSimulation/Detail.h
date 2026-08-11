@@ -146,6 +146,8 @@ inline constexpr ::mlir::StringLiteral randomizeDispatchAttrName =
     "obelisk_sim.randomize_dispatch";
 inline constexpr ::mlir::StringLiteral randomizePlanClassAttrName =
     "obelisk_sim.randomize_plan_class";
+inline constexpr ::mlir::StringLiteral objectRandomDispatchClassesAttrName =
+    "obelisk_sim.object_random_dispatch_classes";
 inline constexpr ::mlir::StringLiteral randomizeCheckerOnlyAttrName =
     "obelisk_sim.randomize_checker_only";
 inline constexpr ::mlir::StringLiteral randomReceiverIndexAttrName =

@@ -2729,9 +2729,82 @@ void ObeliskSimPreparePass::runOnOperation() {
       return true;
     }
     if ((*staticStorages)[*constraintIndex] >= 0)
-      call->setAttr(constraintModeStaticStorageAttrName,
-                    builder.getI64IntegerAttr(
-                        (*staticStorages)[*constraintIndex]));
+      call->setAttr(
+          constraintModeStaticStorageAttrName,
+          builder.getI64IntegerAttr((*staticStorages)[*constraintIndex]));
+    return true;
+  };
+
+  auto freezeObjectRandomDispatch =
+      [&](semantic::SVCallExpressionOp call) -> bool {
+    StringRef name = call.getCalleeName();
+    if (name != "get_randstate" && name != "set_randstate" && name != "srandom")
+      return false;
+    if (call->hasAttr(objectRandomDispatchClassesAttrName))
+      return true;
+    SmallVector<Operation *> children = getChildren(call);
+    if (children.empty())
+      return false;
+    auto typeAttr = children.front()->getAttrOfType<TypeAttr>("semantic_type");
+    auto receiverType =
+        typeAttr ? dyn_cast<semantic::ClassHandleType>(typeAttr.getValue())
+                 : semantic::ClassHandleType{};
+    if (!receiverType)
+      return false;
+    auto foundClass =
+        semanticClasses.find(receiverType.getClassName().getLeafReference());
+    if (foundClass == semanticClasses.end() ||
+        !foundClass->second.getIsInterface())
+      return false;
+
+    struct DynamicClass {
+      semantic::SVClassTypeOp type;
+      unsigned depth;
+    };
+    SmallVector<DynamicClass> compatible;
+    StringRef target = receiverType.getClassName().getLeafReference();
+    for (semantic::SVClassTypeOp candidate : classSources) {
+      if (candidate.getIsAbstract() || candidate.getIsInterface())
+        continue;
+      SmallVector<semantic::SVClassTypeOp> hierarchy;
+      if (failed(collectClassHierarchy(candidate, hierarchy,
+                                       "object random-stream dispatch"))) {
+        invalid = true;
+        return true;
+      }
+      bool matches = false;
+      for (semantic::SVClassTypeOp current : hierarchy) {
+        for (Attribute attribute : current.getImplementedInterfaces()) {
+          auto interfaceType = dyn_cast<TypeAttr>(attribute);
+          auto interface = interfaceType ? dyn_cast<semantic::ClassHandleType>(
+                                               interfaceType.getValue())
+                                         : semantic::ClassHandleType{};
+          if (interface &&
+              interface.getClassName().getLeafReference() == target) {
+            matches = true;
+            break;
+          }
+        }
+        if (matches)
+          break;
+      }
+      if (matches)
+        compatible.push_back(
+            {candidate, static_cast<unsigned>(hierarchy.size())});
+    }
+    llvm::sort(compatible,
+               [&](const DynamicClass &lhs, const DynamicClass &rhs) {
+                 if (lhs.depth != rhs.depth)
+                   return lhs.depth > rhs.depth;
+                 return classSymbols.lookup(lhs.type).getValue() <
+                        classSymbols.lookup(rhs.type).getValue();
+               });
+    SmallVector<Attribute> classes;
+    for (const DynamicClass &entry : compatible)
+      classes.push_back(FlatSymbolRefAttr::get(
+          context, classSymbols.lookup(entry.type).getValue()));
+    call->setAttr(objectRandomDispatchClassesAttrName,
+                  builder.getArrayAttr(classes));
     return true;
   };
 
@@ -2743,8 +2816,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     semanticCalls.push_back(call);
   });
   for (semantic::SVCallExpressionOp call : semanticCalls)
-    if (!freezeRandModeContract(call) &&
-        !freezeConstraintModeContract(call))
+    if (!freezeRandModeContract(call) && !freezeConstraintModeContract(call) &&
+        !freezeObjectRandomDispatch(call))
       freezeRandomizeContract(call);
   if (invalid)
     return abort();
@@ -2753,14 +2826,14 @@ void ObeliskSimPreparePass::runOnOperation() {
   // is an addressable class-wide storage root, while its object prefix is only
   // an evaluated qualifier and must not be classified as the assigned base.
   semanticRoot->walk([&](semantic::SVMemberAccessExpressionOp member) {
-    auto symbol = semanticSymbols.find(
-        member.getReferencedSymbol().getLeafReference());
+    auto symbol =
+        semanticSymbols.find(member.getReferencedSymbol().getLeafReference());
     auto property =
         symbol != semanticSymbols.end()
             ? dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second)
             : semantic::SVClassPropertySymbolOp{};
-    if (property && property.getLifetime() ==
-                        semantic::SVVariableLifetime::Static)
+    if (property &&
+        property.getLifetime() == semantic::SVVariableLifetime::Static)
       member->setAttr(staticClassPropertyAttrName, builder.getUnitAttr());
   });
 
@@ -2833,6 +2906,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (freezeRandModeContract(call))
       return;
     if (freezeConstraintModeContract(call))
+      return;
+    if (freezeObjectRandomDispatch(call))
       return;
     if (freezeRandomizeContract(call)) {
       if (failed(freezeRandomizeHookCaptures(call)))

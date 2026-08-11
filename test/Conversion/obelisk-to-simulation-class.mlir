@@ -12,7 +12,15 @@ module attributes {
   }
   obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
     obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
-      obelisk.sv.type.class_type attributes {bitstream_width = 32 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "supported_object", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "supported_object", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.supported_object>, sym_name = "s3.supported_object", this_variable_path = "supported_object::this", this_variable_symbol = @s1.$root::@s2::@s3.supported_object::@s22.this} {
+      obelisk.sv.type.class_type attributes {bitstream_width = 0 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "stream_interface", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = true, is_uninstantiated = false, name = "stream_interface", node_id = 1000 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s30.stream_interface>, sym_name = "s30.stream_interface", this_variable_path = "stream_interface::this", this_variable_symbol = @s1.$root::@s2::@s30.stream_interface::@s31.this} {
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "stream_interface::this", is_compiler_generated, is_const, name = "this", node_id = 1001 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s30.stream_interface>, sym_name = "s31.this"} {
+        }
+      }
+      obelisk.sv.type.class_type attributes {bitstream_width = 0 : i64, declared_interfaces = [!obelisk.class_handle<@s1.$root::@s2::@s30.stream_interface>], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "stream_child", implemented_interfaces = [!obelisk.class_handle<@s1.$root::@s2::@s30.stream_interface>], is_abstract = false, is_final = false, is_interface = true, is_uninstantiated = false, name = "stream_child", node_id = 1004 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s33.stream_child>, sym_name = "s33.stream_child", this_variable_path = "stream_child::this", this_variable_symbol = @s1.$root::@s2::@s33.stream_child::@s34.this} {
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "stream_child::this", is_compiler_generated, is_const, name = "this", node_id = 1005 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s33.stream_child>, sym_name = "s34.this"} {
+        }
+      }
+      obelisk.sv.type.class_type attributes {bitstream_width = 32 : i64, declared_interfaces = [!obelisk.class_handle<@s1.$root::@s2::@s33.stream_child>], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "supported_object", implemented_interfaces = [!obelisk.class_handle<@s1.$root::@s2::@s33.stream_child>, !obelisk.class_handle<@s1.$root::@s2::@s30.stream_interface>], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "supported_object", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.supported_object>, sym_name = "s3.supported_object", this_variable_path = "supported_object::this", this_variable_symbol = @s1.$root::@s2::@s3.supported_object::@s22.this} {
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "supported_object::field", name = "field", node_id = 4 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s4.field"} {
         }
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "supported_object::static_field", lifetime = 1 : i32, name = "static_field", node_id = 40 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s23.static_field"} {
@@ -76,11 +84,15 @@ module attributes {
             obelisk.sv.expression.new_class attributes {is_super_class = false, node_id = 29 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.supported_object>} {
             }
           }
+          obelisk.sv.symbol.variable attributes {hierarchical_name = "supported_class_use.stream", name = "stream", node_id = 1002 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s30.stream_interface>, sym_name = "s32.stream"} {
+          }
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "supported_class_use", node_id = 30 : i64, procedure_kind = 0 : i32, sym_name = "s21", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 31 : i64} {
             obelisk.sv.statement.list attributes {node_id = 32 : i64} {
               obelisk.sv.statement.variable_declaration attributes {node_id = 33 : i64, referenced_path = "supported_class_use.object", referenced_symbol = @s1.$root::@s17.supported_class_use::@s18.supported_class_use::@s19::@s20.object} {
+              }
+              obelisk.sv.statement.variable_declaration attributes {node_id = 1003 : i64, referenced_path = "supported_class_use.stream", referenced_symbol = @s1.$root::@s17.supported_class_use::@s18.supported_class_use::@s19::@s32.stream} {
               }
               obelisk.sv.statement.expression_statement attributes {node_id = 34 : i64} {
                 obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 35 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
@@ -112,7 +124,7 @@ module attributes {
               }
               obelisk.sv.statement.expression_statement attributes {node_id = 54 : i64} {
                 obelisk.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "srandom", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_signed = false, is_super_class = false, is_system_call = false, node_id = 55 : i64, referenced_path = "supported_object::srandom", referenced_symbol = @s1.$root::@s2::@s3.supported_object::@s11.srandom, semantic_type = !obelisk.void, subroutine_kind = 0 : i32} {
-                  obelisk.sv.expression.named_value attributes {node_id = 56 : i64, referenced_path = "supported_class_use.object", referenced_symbol = @s1.$root::@s17.supported_class_use::@s18.supported_class_use::@s19::@s20.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.supported_object>} {
+                  obelisk.sv.expression.named_value attributes {node_id = 56 : i64, referenced_path = "supported_class_use.stream", referenced_symbol = @s1.$root::@s17.supported_class_use::@s18.supported_class_use::@s19::@s32.stream, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s30.stream_interface>} {
                   }
                   obelisk.sv.expression.integer_literal attributes {constant_value = "123", is_declared_unsized = true, is_signed = true, node_id = 57 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                   }
@@ -120,10 +132,10 @@ module attributes {
               }
               obelisk.sv.statement.expression_statement attributes {node_id = 58 : i64} {
                 obelisk.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "set_randstate", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_signed = false, is_super_class = false, is_system_call = false, node_id = 59 : i64, referenced_path = "supported_object::set_randstate", referenced_symbol = @s1.$root::@s2::@s3.supported_object::@s9.set_randstate, semantic_type = !obelisk.void, subroutine_kind = 0 : i32} {
-                  obelisk.sv.expression.named_value attributes {node_id = 60 : i64, referenced_path = "supported_class_use.object", referenced_symbol = @s1.$root::@s17.supported_class_use::@s18.supported_class_use::@s19::@s20.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.supported_object>} {
+                  obelisk.sv.expression.named_value attributes {node_id = 60 : i64, referenced_path = "supported_class_use.stream", referenced_symbol = @s1.$root::@s17.supported_class_use::@s18.supported_class_use::@s19::@s32.stream, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s30.stream_interface>} {
                   }
                   obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "get_randstate", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_signed = false, is_super_class = false, is_system_call = false, node_id = 61 : i64, referenced_path = "supported_object::get_randstate", referenced_symbol = @s1.$root::@s2::@s3.supported_object::@s8.get_randstate, semantic_type = !obelisk.string, subroutine_kind = 0 : i32} {
-                    obelisk.sv.expression.named_value attributes {node_id = 62 : i64, referenced_path = "supported_class_use.object", referenced_symbol = @s1.$root::@s17.supported_class_use::@s18.supported_class_use::@s19::@s20.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.supported_object>} {
+                    obelisk.sv.expression.named_value attributes {node_id = 62 : i64, referenced_path = "supported_class_use.stream", referenced_symbol = @s1.$root::@s17.supported_class_use::@s18.supported_class_use::@s19::@s32.stream, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s30.stream_interface>} {
                     }
                   }
                 }
@@ -136,8 +148,8 @@ module attributes {
   }
 }
 
-// CHECK: obelisk_sim.class.decl
-// CHECK-SAME: debug_name = "supported_object"
+// CHECK: obelisk_sim.class.decl {{.*}}debug_name = "stream_interface"
+// CHECK: obelisk_sim.class.decl @{{[^ ]*supported_object}} {{.*}}debug_name = "supported_object"
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rng_state"
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rng_increment"
 // CHECK: obelisk_sim.storage.decl {{.*}}hierarchy "supported_object::static_field"
@@ -147,6 +159,10 @@ module attributes {
 // CHECK: obelisk_sim.class.field_ref
 // CHECK: obelisk_sim.ref.store
 // CHECK: obelisk_sim.call @{{unit_[0-9]+}}({{.*}}) : (!obelisk_sim.context, i32) -> ()
+// The common interface receiver lets canonicalization share one dominating
+// dynamic-class guard across all three stream operations.
+// CHECK: obelisk_sim.class.is_instance {{.*}} is @{{.*}}supported_object
+// CHECK: obelisk_sim.class.cast {{.*}} to !obelisk_sim.class_handle<@{{.*}}supported_object>
 // CHECK: arith.constant {{.*}} -8545228632546703407 : i64
 // CHECK: obelisk_sim.managed.store
 // CHECK: arith.constant {{.*}} 1442695040888963407 : i64
