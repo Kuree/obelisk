@@ -360,6 +360,104 @@ struct StepBudget {
   bool consume() { return limit == 0 || ++used <= limit; }
 };
 
+obelisk_rt_status prepareTaskActivation(
+    const Image &image, Frame &caller, obelisk_rt_context *context,
+    uint32_t calleeIndex, uint32_t firstOperand, uint32_t operandCount,
+    std::unique_ptr<PendingDesignActivation> *pendingActivation) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (!pendingActivation || *pendingActivation)
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  if (calleeIndex >= image.functionCount)
+    return OBELISK_RT_INVALID_BYTECODE;
+  Function callee = functionAt(image, calleeIndex);
+  if ((callee.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
+      callee.resultCount != 0 || callee.argumentCount != operandCount ||
+      !validMap(image, caller.function, callee, firstOperand, operandCount))
+    return OBELISK_RT_INVALID_BYTECODE;
+  for (uint32_t index = 0; index != operandCount; ++index)
+    if (operandAt(image, firstOperand + index).first != index)
+      return OBELISK_RT_INVALID_BYTECODE;
+
+  uint64_t canonicalSize =
+      (callee.flags & OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK) >> 1;
+  if (callee.scratchAlignment == 0 ||
+      canonicalSize > UINT64_MAX - (callee.scratchAlignment - 1))
+    return OBELISK_RT_INVALID_BYTECODE;
+  uint64_t scratchOffset = (canonicalSize + callee.scratchAlignment - 1) &
+                           ~(callee.scratchAlignment - 1);
+  if (scratchOffset > UINT64_MAX - callee.scratchSize ||
+      scratchOffset + callee.scratchSize > std::numeric_limits<size_t>::max())
+    return OBELISK_RT_OUT_OF_MEMORY;
+  auto pending = std::make_unique<PendingDesignActivation>();
+  pending->context = context;
+  DesignActivation &activation = pending->activation;
+  activation.function = calleeIndex;
+  activation.scheduleRank = static_cast<uint32_t>(callee.initialScheduleRank);
+  activation.scratchOffset = scratchOffset;
+  activation.scratchSize = callee.scratchSize;
+  activation.frame = context->designTaskFrames.acquire(
+      static_cast<size_t>(scratchOffset + callee.scratchSize));
+  uint32_t copied = 0;
+  std::unordered_map<uint32_t, uint64_t> retainedAutomaticStates;
+  for (uint64_t index = 0; index != image.stateDescriptorCount; ++index) {
+    CaptureRecord capture = captureAt(image, index);
+    if (capture.function != calleeIndex)
+      continue;
+    ++copied;
+    if (capture.argument >= operandCount)
+      return OBELISK_RT_INVALID_BYTECODE;
+    if (capture.valueOffset == UINT64_MAX)
+      continue;
+    uint32_t sourceRegister =
+        operandAt(image, firstOperand + capture.argument).second;
+    Layout source = layoutAt(image, caller.function, sourceRegister);
+    if (source.kind == OBELISK_RT_DBREG_HANDLE) {
+      uint64_t stable = UINT64_MAX;
+      if (!encodeCanonicalHandle(caller.data + source.offset, stable))
+        return OBELISK_RT_INVALID_HANDLE;
+      std::memcpy(activation.frame.data() + capture.valueOffset, &stable,
+                  sizeof(stable));
+      uint32_t automaticID = 0;
+      int64_t automaticOffset = 0;
+      if (decodeAutomaticHandle(stable, automaticID, automaticOffset) &&
+          ++retainedAutomaticStates[automaticID] == 0)
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      continue;
+    }
+    std::memcpy(activation.frame.data() + capture.valueOffset,
+                caller.data + source.offset, capture.planeSize);
+    if (capture.unknownOffset != UINT64_MAX) {
+      uint64_t sourcePlane = source.kind == OBELISK_RT_DBREG_LOGIC
+                                 ? limbCount(source.width) * sizeof(uint64_t)
+                                 : capture.planeSize;
+      std::memcpy(activation.frame.data() + capture.unknownOffset,
+                  caller.data + source.offset + sourcePlane, capture.planeSize);
+    }
+  }
+  if (copied != callee.argumentCount)
+    return OBELISK_RT_INVALID_BYTECODE;
+  pending->retainedAutomaticStates.reserve(retainedAutomaticStates.size());
+  for (const auto &[automaticID, count] : retainedAutomaticStates)
+    pending->retainedAutomaticStates.emplace_back(automaticID, count);
+  {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    for (const auto &[automaticID, count] : pending->retainedAutomaticStates) {
+      auto found = context->nativeAutomaticStates.find(automaticID);
+      if (found == context->nativeAutomaticStates.end())
+        return OBELISK_RT_INVALID_HANDLE;
+      if (count > UINT64_MAX - found->second.referenceCount)
+        return OBELISK_RT_OUT_OF_RESOURCES;
+    }
+    for (const auto &[automaticID, count] : pending->retainedAutomaticStates)
+      context->nativeAutomaticStates.find(automaticID)->second.referenceCount +=
+          count;
+  }
+  pending->ownsRetainedAutomaticStates = true;
+  *pendingActivation = std::move(pending);
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status
 executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                 uint8_t *canonicalFrame, uint64_t canonicalFrameSize,
@@ -1330,6 +1428,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         return OBELISK_RT_INVALID_FRAME;
       std::memset(canonicalFrame + instruction.immediate, 0, sizeof(void *));
       break;
+    case OBELISK_RT_DB_FRAME_ROOT:
+      break;
     case OBELISK_RT_DB_LOAD_STATE:
     case OBELISK_RT_DB_STORE_STATE:
     case OBELISK_RT_DB_OVERRIDE_STATE: {
@@ -2167,98 +2267,42 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       return OBELISK_RT_OK;
     }
     case OBELISK_RT_DB_TASK_CALL: {
-      if (!context)
-        return OBELISK_RT_INVALID_ARGUMENT;
-      if (!pendingActivation || *pendingActivation)
-        return OBELISK_RT_INVALID_LIFECYCLE;
-      Function callee = functionAt(image, instruction.source0);
-      uint64_t canonicalSize =
-          (callee.flags & OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK) >> 1;
-      if (callee.scratchAlignment == 0 ||
-          canonicalSize > UINT64_MAX - (callee.scratchAlignment - 1))
-        return OBELISK_RT_INVALID_BYTECODE;
-      uint64_t scratchOffset = (canonicalSize + callee.scratchAlignment - 1) &
-                               ~(callee.scratchAlignment - 1);
-      if (scratchOffset > UINT64_MAX - callee.scratchSize ||
-          scratchOffset + callee.scratchSize >
-              std::numeric_limits<size_t>::max())
-        return OBELISK_RT_OUT_OF_MEMORY;
-      auto pending = std::make_unique<PendingDesignActivation>();
-      pending->context = context;
-      DesignActivation &activation = pending->activation;
-      activation.function = instruction.source0;
-      activation.scheduleRank =
-          static_cast<uint32_t>(callee.initialScheduleRank);
-      activation.scratchOffset = scratchOffset;
-      activation.scratchSize = callee.scratchSize;
-      activation.frame = context->designTaskFrames.acquire(
-          static_cast<size_t>(scratchOffset + callee.scratchSize));
-      uint32_t copied = 0;
-      std::unordered_map<uint32_t, uint64_t> retainedAutomaticStates;
-      for (uint64_t index = 0; index != image.stateDescriptorCount; ++index) {
-        CaptureRecord capture = captureAt(image, index);
-        if (capture.function != instruction.source0)
-          continue;
-        ++copied;
-        if (capture.valueOffset == UINT64_MAX)
-          continue;
-        uint32_t sourceRegister =
-            operandAt(image, instruction.source1 + capture.argument).second;
-        Layout source = layoutAt(image, frame.function, sourceRegister);
-        if (source.kind == OBELISK_RT_DBREG_HANDLE) {
-          uint64_t stable = UINT64_MAX;
-          if (!encodeCanonicalHandle(frame.data + source.offset, stable))
-            return OBELISK_RT_INVALID_HANDLE;
-          std::memcpy(activation.frame.data() + capture.valueOffset, &stable,
-                      sizeof(stable));
-          uint32_t automaticID = 0;
-          int64_t automaticOffset = 0;
-          if (decodeAutomaticHandle(stable, automaticID, automaticOffset) &&
-              ++retainedAutomaticStates[automaticID] == 0)
-            return OBELISK_RT_OUT_OF_RESOURCES;
-          continue;
-        }
-        std::memcpy(activation.frame.data() + capture.valueOffset,
-                    frame.data + source.offset, capture.planeSize);
-        if (capture.unknownOffset != UINT64_MAX) {
-          // Four-state bytecode registers place their unknown plane after a
-          // whole-limb value plane. The canonical activation frame may use a
-          // smaller target-ABI plane, so do not derive the source stride from
-          // the capture size.
-          uint64_t sourcePlane =
-              source.kind == OBELISK_RT_DBREG_LOGIC
-                  ? limbCount(source.width) * sizeof(uint64_t)
-                  : capture.planeSize;
-          std::memcpy(activation.frame.data() + capture.unknownOffset,
-                      frame.data + source.offset + sourcePlane,
-                      capture.planeSize);
-        }
-      }
-      if (copied != callee.argumentCount)
-        return OBELISK_RT_INVALID_BYTECODE;
-      pending->retainedAutomaticStates.reserve(retainedAutomaticStates.size());
-      for (const auto &[automaticID, count] : retainedAutomaticStates)
-        pending->retainedAutomaticStates.emplace_back(automaticID, count);
-      {
-        std::lock_guard<std::recursive_mutex> lock(context->mutex);
-        for (const auto &[automaticID, count] :
-             pending->retainedAutomaticStates) {
-          auto found = context->nativeAutomaticStates.find(automaticID);
-          if (found == context->nativeAutomaticStates.end())
-            return OBELISK_RT_INVALID_HANDLE;
-          if (count > UINT64_MAX - found->second.referenceCount)
-            return OBELISK_RT_OUT_OF_RESOURCES;
-        }
-        for (const auto &[automaticID, count] :
-             pending->retainedAutomaticStates)
-          context->nativeAutomaticStates.find(automaticID)
-              ->second.referenceCount += count;
-      }
-      pending->ownsRetainedAutomaticStates = true;
-      *pendingActivation = std::move(pending);
+      obelisk_rt_status status = prepareTaskActivation(
+          image, frame, context, instruction.source0, instruction.source1,
+          instruction.source2, pendingActivation);
+      if (status != OBELISK_RT_OK)
+        return status;
       *action = {OBELISK_RT_FRAGMENT_TASK_CALL,
                  OBELISK_RT_SUSPEND_NONE,
                  static_cast<uint32_t>(instruction.immediate),
+                 0,
+                 0,
+                 0};
+      return OBELISK_RT_OK;
+    }
+    case OBELISK_RT_DB_VIRTUAL_TASK_CALL: {
+      Layout receiverLayout = layout(instruction.source0);
+      obelisk_rt_object_v1 *receiver = nullptr;
+      std::memcpy(&receiver, frame.data + receiverLayout.offset,
+                  sizeof(receiver));
+      const obelisk_rt_method_descriptor_v1 *method = nullptr;
+      obelisk_rt_status status = obelisk_rt_v1_method_resolve(
+          receiver, instruction.destination, instruction.immediate, &method);
+      if (status != OBELISK_RT_OK)
+        return status;
+      if (!method || (method->flags & OBELISK_RT_METHOD_TASK) == 0)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      if ((method->flags & OBELISK_RT_METHOD_PURE) != 0 ||
+          method->bytecode_function == OBELISK_RT_METHOD_NO_BYTECODE)
+        return OBELISK_RT_TIER_UNAVAILABLE;
+      status = prepareTaskActivation(
+          image, frame, context, method->bytecode_function, instruction.source1,
+          instruction.source2, pendingActivation);
+      if (status != OBELISK_RT_OK)
+        return status;
+      *action = {OBELISK_RT_FRAGMENT_TASK_CALL,
+                 OBELISK_RT_SUSPEND_NONE,
+                 instruction.auxiliary,
                  0,
                  0,
                  0};

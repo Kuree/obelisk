@@ -76,6 +76,9 @@ private:
                                             sim::SimClassDirectCallOp call);
   mlir::LogicalResult encodeClassVirtualCall(FunctionPlan &plan,
                                              sim::SimClassVirtualCallOp call);
+  mlir::LogicalResult
+  encodeClassVirtualTaskCall(FunctionPlan &plan,
+                             sim::SimClassVirtualTaskCallOp call);
   std::optional<mlir::LogicalResult>
   encodeClassOperation(FunctionPlan &plan, mlir::Operation *operation);
   mlir::LogicalResult encodeDisplay(FunctionPlan &plan, sim::SimDisplayOp op);

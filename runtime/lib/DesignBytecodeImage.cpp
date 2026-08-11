@@ -1202,6 +1202,7 @@ bool validateInitialization(const Image &image, const Function &function,
         return false;
       break;
     case OBELISK_RT_DB_CLEAR_FRAME_ROOT:
+    case OBELISK_RT_DB_FRAME_ROOT:
       break;
     case OBELISK_RT_DB_INTRINSIC: {
       IntrinsicSite site =
@@ -1219,6 +1220,7 @@ bool validateInitialization(const Image &image, const Function &function,
     case OBELISK_RT_DB_SUSPEND:
     case OBELISK_RT_DB_TERMINATE:
     case OBELISK_RT_DB_TASK_CALL:
+    case OBELISK_RT_DB_VIRTUAL_TASK_CALL:
       fallthrough = false;
       break;
     default:
@@ -1326,6 +1328,7 @@ bool validateInitialization(const Image &image, const Function &function,
                                     instruction.source2);
       break;
     case OBELISK_RT_DB_VIRTUAL_CALL:
+    case OBELISK_RT_DB_VIRTUAL_TASK_CALL:
       valid = requireInitialized(state, instruction.source0) &&
               mapSourcesInitialized(state, instruction.source1,
                                     instruction.source2);
@@ -2051,12 +2054,20 @@ bool validateImage(const Image &image) {
         break;
       }
       case OBELISK_RT_DB_CLEAR_FRAME_ROOT:
+      case OBELISK_RT_DB_FRAME_ROOT: {
+        uint64_t canonicalSize =
+            (function.flags & OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK) >> 1;
         if (instruction.flags || instruction.destination ||
             instruction.source0 || instruction.source1 || instruction.source2 ||
-            instruction.auxiliary)
+            instruction.auxiliary ||
+            (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
+            instruction.immediate > canonicalSize ||
+            sizeof(obelisk_rt_managed_word_v1) >
+                canonicalSize - instruction.immediate)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
+      }
       case OBELISK_RT_DB_MAKE_HANDLE:
         if (instruction.flags || !reg(instruction.destination) ||
             layoutAt(image, function, instruction.destination).kind !=
@@ -2249,6 +2260,28 @@ bool validateImage(const Image &image) {
           auto [destination, source] =
               operandAt(image, instruction.auxiliary + index);
           if (!reg(destination) || source != instruction.source2 + index)
+            return reject(__LINE__, "invalid instruction encoding or operands",
+                          functionIndex, pc, instruction.opcode);
+        }
+        break;
+      }
+      case OBELISK_RT_DB_VIRTUAL_TASK_CALL: {
+        if (instruction.flags || instruction.immediate == 0 ||
+            instruction.source2 < 2 ||
+            (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
+            !hasContinuation(instruction.auxiliary) ||
+            !reg(instruction.source0) ||
+            layoutAt(image, function, instruction.source0).kind !=
+                OBELISK_RT_DBREG_MANAGED ||
+            instruction.source1 > image.operandCount ||
+            instruction.source2 > image.operandCount - instruction.source1)
+          return reject(__LINE__, "invalid instruction encoding or operands",
+                        functionIndex, pc, instruction.opcode);
+        for (uint32_t index = 0; index != instruction.source2; ++index) {
+          auto [destination, source] =
+              operandAt(image, instruction.source1 + index);
+          if (destination != index || !reg(source) ||
+              (index == 1 && source != instruction.source0))
             return reject(__LINE__, "invalid instruction encoding or operands",
                           functionIndex, pc, instruction.opcode);
         }

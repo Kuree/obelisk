@@ -2,6 +2,7 @@
 
 #include "DesignBytecodeRoots.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace {
@@ -143,51 +144,71 @@ void obelisk_rt_enumerate_design_managed_roots(
     if (!hasBytecode)
       return;
     for (ScheduledDesignTask &task : context->scheduledDesignTasks) {
-      if (task.terminated || task.function >= image.functionCount)
+      if (task.terminated)
         continue;
-      Function function = functionAt(image, task.function);
-      auto visitOffset = [&](uint64_t offset) {
-        if (offset > task.scratchOffset ||
-            sizeof(obelisk_rt_object_v1 *) > task.scratchOffset - offset)
+      auto visitActivation = [&](uint32_t functionIndex,
+                                 const std::vector<uint8_t> &frame,
+                                 uint64_t scratchOffset) {
+        if (functionIndex >= image.functionCount)
           return;
-        visitObjectWord(task.frame.data() + offset, visit, visitorEnvironment);
+        Function function = functionAt(image, functionIndex);
+        uint64_t canonicalSize =
+            std::min<uint64_t>(scratchOffset, frame.size());
+        auto visitOffset = [&](uint64_t offset) {
+          if (offset > canonicalSize ||
+              sizeof(obelisk_rt_object_v1 *) > canonicalSize - offset)
+            return;
+          visitObjectWord(frame.data() + offset, visit, visitorEnvironment);
+        };
+        for (uint64_t index = 0; index != image.stateDescriptorCount; ++index) {
+          CaptureRecord capture = captureAt(image, index);
+          if (capture.function != functionIndex ||
+              capture.argument >= function.layoutCount ||
+              capture.valueOffset == UINT64_MAX)
+            continue;
+          uint8_t kind = layoutAt(image, function, capture.argument).kind;
+          if (kind == OBELISK_RT_DBREG_STRING) {
+            if (capture.valueOffset <= canonicalSize &&
+                sizeof(obelisk_rt_managed_word_v1) <=
+                    canonicalSize - capture.valueOffset)
+              visitManagedWord(frame.data() + capture.valueOffset, visit,
+                               visitorEnvironment);
+          } else if (kind == OBELISK_RT_DBREG_MANAGED ||
+                     kind == OBELISK_RT_DBREG_MANAGED_REF ||
+                     kind == OBELISK_RT_DBREG_ARGUMENT_REF)
+            visitOffset(capture.valueOffset);
+        }
+        uint64_t end = function.firstInstruction + function.instructionCount;
+        for (uint64_t pc = function.firstInstruction; pc != end; ++pc) {
+          Instruction instruction = instructionAt(image, pc);
+          if (instruction.opcode == OBELISK_RT_DB_FRAME_ROOT ||
+              instruction.opcode == OBELISK_RT_DB_CLEAR_FRAME_ROOT) {
+            if (instruction.immediate <= canonicalSize &&
+                sizeof(obelisk_rt_managed_word_v1) <=
+                    canonicalSize - instruction.immediate)
+              visitManagedWord(frame.data() + instruction.immediate, visit,
+                               visitorEnvironment);
+            continue;
+          }
+          if (instruction.opcode != OBELISK_RT_DB_STORE_FRAME ||
+              instruction.source0 >= function.layoutCount)
+            continue;
+          uint8_t kind = layoutAt(image, function, instruction.source0).kind;
+          if (kind == OBELISK_RT_DBREG_STRING) {
+            if (instruction.immediate <= canonicalSize &&
+                sizeof(obelisk_rt_managed_word_v1) <=
+                    canonicalSize - instruction.immediate)
+              visitManagedWord(frame.data() + instruction.immediate, visit,
+                               visitorEnvironment);
+          } else if (kind == OBELISK_RT_DBREG_MANAGED ||
+                     kind == OBELISK_RT_DBREG_MANAGED_REF ||
+                     kind == OBELISK_RT_DBREG_ARGUMENT_REF)
+            visitOffset(instruction.immediate);
+        }
       };
-      for (uint64_t index = 0; index != image.stateDescriptorCount; ++index) {
-        CaptureRecord capture = captureAt(image, index);
-        if (capture.function != task.function ||
-            capture.argument >= function.layoutCount ||
-            capture.valueOffset == UINT64_MAX)
-          continue;
-        uint8_t kind = layoutAt(image, function, capture.argument).kind;
-        if (kind == OBELISK_RT_DBREG_STRING) {
-          if (capture.valueOffset <= task.scratchOffset &&
-              sizeof(obelisk_rt_managed_word_v1) <=
-                  task.scratchOffset - capture.valueOffset)
-            visitManagedWord(task.frame.data() + capture.valueOffset, visit,
-                             visitorEnvironment);
-        } else if (kind == OBELISK_RT_DBREG_MANAGED ||
-                   kind == OBELISK_RT_DBREG_MANAGED_REF ||
-                   kind == OBELISK_RT_DBREG_ARGUMENT_REF)
-          visitOffset(capture.valueOffset);
-      }
-      uint64_t end = function.firstInstruction + function.instructionCount;
-      for (uint64_t pc = function.firstInstruction; pc != end; ++pc) {
-        Instruction instruction = instructionAt(image, pc);
-        if (instruction.opcode != OBELISK_RT_DB_STORE_FRAME ||
-            instruction.source0 >= function.layoutCount)
-          continue;
-        uint8_t kind = layoutAt(image, function, instruction.source0).kind;
-        if (kind == OBELISK_RT_DBREG_STRING) {
-          if (instruction.immediate <= task.scratchOffset &&
-              sizeof(obelisk_rt_managed_word_v1) <=
-                  task.scratchOffset - instruction.immediate)
-            visitManagedWord(task.frame.data() + instruction.immediate, visit,
-                             visitorEnvironment);
-        } else if (kind == OBELISK_RT_DBREG_MANAGED ||
-                   kind == OBELISK_RT_DBREG_MANAGED_REF ||
-                   kind == OBELISK_RT_DBREG_ARGUMENT_REF)
-          visitOffset(instruction.immediate);
-      }
+      visitActivation(task.function, task.frame, task.scratchOffset);
+      for (const DesignActivation &caller : task.callers)
+        visitActivation(caller.function, caller.frame, caller.scratchOffset);
     }
   } catch (...) {
     // The image was validated when the context was created. A collector cannot

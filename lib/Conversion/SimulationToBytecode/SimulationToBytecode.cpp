@@ -433,7 +433,8 @@ bool Encoder::mayCollect(Operation *operation) {
       sim::SimFileErrorStringOp,
       sim::SimPlusargValueOp, sim::SimCallOp,
       sim::SimClassDirectCallOp,
-      sim::SimClassVirtualCallOp, sim::SimDPICallOp>(operation);
+      sim::SimClassVirtualCallOp, sim::SimClassVirtualTaskCallOp,
+      sim::SimDPICallOp>(operation);
 }
 
 LogicalResult Encoder::emitAggregateManagedRoots(FunctionPlan &plan,
@@ -551,6 +552,14 @@ LogicalResult Encoder::emitContinuationEntries(FunctionPlan &plan) {
                        /*consumeRoots=*/id != 0)))
       return plan.function.emitOpError(
           "canonical frame transfer exceeds the bytecode ABI limit");
+    if (id == 0)
+      // Entry captures remain resident in the canonical frame across every
+      // suspension. Record their precise managed leaves explicitly because an
+      // aggregate register's top-level bytecode kind does not reveal them.
+      for (const ProcessFrameValue &slot : plan.frame->getEntryCaptureLayout())
+        if (slot.valueOffset != UINT64_MAX)
+          for (uint64_t rootOffset : slot.managedRootOffsets)
+            emit({FrameRoot, 0, 0, 0, 0, 0, 0, slot.valueOffset + rootOffset});
     uint64_t jump = emit({Jump});
     instructions[jump].immediate = plan.blockPCs.lookup(block);
     auto rank = plan.blockScheduleRanks.find(block);

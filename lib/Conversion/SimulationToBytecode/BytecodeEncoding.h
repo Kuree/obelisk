@@ -284,6 +284,8 @@ enum Opcode : uint16_t {
   FExt = OBELISK_RT_DB_FEXT,
   FTrunc = OBELISK_RT_DB_FTRUNC,
   FPow = OBELISK_RT_DB_FPOW,
+  VirtualTaskCall = OBELISK_RT_DB_VIRTUAL_TASK_CALL,
+  FrameRoot = OBELISK_RT_DB_FRAME_ROOT,
 };
 
 } // namespace obelisk::bytecode

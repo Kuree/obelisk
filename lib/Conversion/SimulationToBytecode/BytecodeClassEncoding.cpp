@@ -99,6 +99,8 @@ Encoder::encodeClassOperation(FunctionPlan &plan, Operation *operation) {
     return encodeClassDirectCall(plan, op);
   if (auto op = dyn_cast<sim::SimClassVirtualCallOp>(operation))
     return encodeClassVirtualCall(plan, op);
+  if (auto op = dyn_cast<sim::SimClassVirtualTaskCallOp>(operation))
+    return encodeClassVirtualTaskCall(plan, op);
   if (auto op = dyn_cast<sim::SimWeakCreateOp>(operation)) {
     auto wrapperType = cast<sim::ClassHandleType>(op.getResult().getType());
     FailureOr<uint64_t> id = classID(wrapperType.getClassName(), operation);
@@ -152,6 +154,50 @@ LogicalResult Encoder::encodeClassVirtualCall(FunctionPlan &plan,
   emit({VirtualCall, static_cast<uint16_t>(call.getNumResults()),
         static_cast<uint32_t>(call.getSlot()), reg(plan, call.getReceiver()),
         firstInputs, static_cast<uint32_t>(arguments.size()), firstOutputs,
+        call.getSignatureId()});
+  return success();
+}
+
+LogicalResult
+Encoder::encodeClassVirtualTaskCall(FunctionPlan &plan,
+                                    sim::SimClassVirtualTaskCallOp call) {
+  if (!plan.frame)
+    return call.emitOpError("virtual task call has no canonical caller frame");
+  const ProcessSuspension *suspension =
+      plan.frame->getSuspension(call.getOperation());
+  if (!suspension)
+    return call.emitOpError("virtual task call is missing frame analysis");
+  ArrayRef<ProcessFrameValue> slots =
+      plan.frame->getContinuationLayout(suspension->continuationID);
+  if (slots.size() != call.getContinuationOperands().size())
+    return call.emitOpError("virtual task continuation frame arity mismatch");
+  for (auto [value, slot] :
+       llvm::zip_equal(call.getContinuationOperands(), slots)) {
+    if (slot.storageSize > UINT32_MAX ||
+        (slot.hasSecondaryStorage() && slot.storageSize > UINT32_MAX / 2))
+      return call.emitOpError(
+          "canonical frame transfer exceeds the bytecode ABI limit");
+    uint64_t transferSize =
+        slot.storageSize * (slot.hasSecondaryStorage() ? 2 : 1);
+    emitFrameTransfer(plan, StoreFrame, value, slot.valueOffset,
+                      static_cast<uint32_t>(transferSize));
+  }
+
+  if (call.getSlot() > UINT32_MAX || call.getArguments().size() > UINT32_MAX ||
+      operandMaps.size() > UINT32_MAX)
+    return call.emitOpError("virtual task call exceeds the bytecode ABI");
+  SmallVector<Value> arguments{plan.function.getBody().front().getArgument(0),
+                               call.getReceiver()};
+  llvm::append_range(arguments, call.getArguments());
+  if (arguments.size() > UINT32_MAX)
+    return call.emitOpError(
+        "virtual task argument map exceeds the bytecode ABI");
+  uint32_t firstInputs = operandMaps.size();
+  for (auto [index, argument] : llvm::enumerate(arguments))
+    operandMaps.push_back({static_cast<uint32_t>(index), reg(plan, argument)});
+  emit({VirtualTaskCall, 0, static_cast<uint32_t>(call.getSlot()),
+        reg(plan, call.getReceiver()), firstInputs,
+        static_cast<uint32_t>(arguments.size()), suspension->continuationID,
         call.getSignatureId()});
   return success();
 }

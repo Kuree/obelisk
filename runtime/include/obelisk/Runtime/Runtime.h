@@ -609,7 +609,11 @@ enum {
   OBELISK_RT_DB_FCOMPARE = 50,
   OBELISK_RT_DB_FEXT = 51,
   OBELISK_RT_DB_FTRUNC = 52,
-  OBELISK_RT_DB_FPOW = 53
+  OBELISK_RT_DB_FPOW = 53,
+  OBELISK_RT_DB_VIRTUAL_TASK_CALL = 54,
+  // Declarative precise-root record for a canonical process frame. Execution
+  // is a no-op; the collector scans these records while activations suspend.
+  OBELISK_RT_DB_FRAME_ROOT = 55
 };
 
 // StoreState writes its exact post-resolution transition predicate to the
