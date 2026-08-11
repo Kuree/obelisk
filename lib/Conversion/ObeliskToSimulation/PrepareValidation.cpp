@@ -181,14 +181,9 @@ FailureOr<ValidatedSemanticDesign> validateSemanticDesign(ModuleOp module) {
       invalid = true;
     }
     if (auto covergroup = dyn_cast<semantic::SVCovergroupTypeOp>(op)) {
-      if (covergroup->getParentOfType<semantic::SVClassTypeOp>()) {
-        emitError(getSemanticLocation(op))
-            << "class-member and inherited covergroups are not executable";
-        invalid = true;
-      }
       if (covergroup.getBaseGroupAttr()) {
         emitError(getSemanticLocation(op))
-            << "inherited covergroups are not executable";
+            << "covergroup type inheritance is not executable";
         invalid = true;
       }
       if (covergroup.getConstructorArgumentCount() != 0) {

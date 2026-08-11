@@ -797,6 +797,33 @@ void ObeliskSimPreparePass::runOnOperation() {
   auto &virtualMethodSignatures = classes->virtualMethodSignatures;
   auto &semanticClasses = classes->semanticClasses;
 
+  // Coverpoint expressions are evaluated from their semantic declarations at
+  // each manual sample site rather than cloned into a prepared code unit.
+  // Freeze instance-property descriptors on those declarations now, while
+  // the semantic symbol table and flattened class layout are both available.
+  semanticRoot->walk([&](semantic::SVCovergroupTypeOp covergroup) {
+    covergroup->walk([&](Operation *nested) {
+      SymbolRefAttr reference;
+      if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(nested))
+        reference = named.getReferencedSymbol();
+      else if (auto member =
+                   dyn_cast<semantic::SVMemberAccessExpressionOp>(nested))
+        reference = member.getReferencedSymbol();
+      if (!reference)
+        return;
+      auto symbol = semanticSymbols.find(reference.getLeafReference());
+      if (symbol == semanticSymbols.end())
+        return;
+      auto property =
+          dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second);
+      if (!property ||
+          property.getLifetime() == semantic::SVVariableLifetime::Static)
+        return;
+      if (FlatSymbolRefAttr field = classFieldSymbols.lookup(property))
+        nested->setAttr("obelisk_sim.class_field", field);
+    });
+  });
+
   FailureOr<PreparedScopeDeclarations> scopes = materializeScopeDeclarations(
       semanticRoot, sourceUnits, designPrecisionFs, builder);
   if (failed(scopes)) {

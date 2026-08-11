@@ -145,7 +145,7 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   lowerCovergroupSample(semantic::SVCallExpressionOp op,
                         semantic::SVCovergroupTypeOp covergroup,
-                        ::mlir::Value handle);
+                        ::mlir::Value handle, ::mlir::Value classOwner = {});
   semantic::SVCovergroupTypeOp
   findSemanticCovergroup(::mlir::Operation *operation) const;
   ::mlir::FailureOr<::mlir::Value>

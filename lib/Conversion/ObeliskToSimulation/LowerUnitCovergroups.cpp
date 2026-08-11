@@ -66,7 +66,7 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op) {
 FailureOr<Value>
 UnitLowering::lowerCovergroupSample(semantic::SVCallExpressionOp op,
                                     semantic::SVCovergroupTypeOp covergroup,
-                                    Value handle) {
+                                    Value handle, Value classOwner) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
   SmallVector<semantic::SVFormalArgumentSymbolOp> formals;
@@ -108,6 +108,14 @@ UnitLowering::lowerCovergroupSample(semantic::SVCallExpressionOp op,
         values.erase(saved.path);
     }
   });
+
+  // Sample actuals are evaluated in the caller's context. Only declaration
+  // expressions in the embedded covergroup use the object that owns the
+  // covergroup property as their implicit `this`.
+  Value savedThisObject = thisObject;
+  if (classOwner)
+    thisObject = classOwner;
+  llvm::scope_exit restoreThisObject([&] { thisObject = savedThisObject; });
 
   Value context = function.getBody().front().getArgument(0);
   Value enabled = sim::SimCovergroupSampleEnabledOp::create(
@@ -337,28 +345,76 @@ UnitLowering::lowerCovergroupCall(semantic::SVCallExpressionOp op,
 
   bool instanceMethod = name == "sample" || name == "start" || name == "stop" ||
                         name == "get_inst_coverage";
-  FailureOr<Value> handle;
+  Value handle;
+  Value classOwner;
   if (instanceMethod) {
     if (children.empty()) {
       emitError(location) << "covergroup instance method has no receiver";
       return failure();
     }
-    handle = lowerExpression(children.front());
-    if (failed(handle) || !isa<sim::CovergroupHandleType>((*handle).getType()))
+    Operation *receiver = children.front();
+    bool classMember = static_cast<bool>(
+        covergroup->getParentOfType<semantic::SVClassTypeOp>());
+    if (classMember && name == "sample") {
+      if (auto member =
+              dyn_cast<semantic::SVMemberAccessExpressionOp>(receiver)) {
+        SmallVector<Operation *> memberChildren = getChildren(member);
+        auto field =
+            member->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.class_field");
+        FailureOr<Type> handleType = getNormalizedSemanticType(member);
+        FailureOr<Value> owner = memberChildren.size() == 1
+                                     ? lowerExpression(memberChildren.front())
+                                     : FailureOr<Value>(failure());
+        auto ownerType =
+            succeeded(owner)
+                ? dyn_cast<sim::ClassHandleType>((*owner).getType())
+                : sim::ClassHandleType{};
+        if (!field || failed(handleType) || failed(owner) || !ownerType ||
+            !isa<sim::CovergroupHandleType>(*handleType)) {
+          emitError(location)
+              << "class covergroup receiver has no owning object field";
+          return failure();
+        }
+        Type referenceType = sim::ManagedRefType::get(
+            function.getContext(), *handleType, ownerType.getClassName());
+        Value reference = sim::SimClassFieldRefOp::create(
+            builder, getSemanticLocation(member), referenceType, *owner, field);
+        handle = sim::SimManagedLoadOp::create(
+            builder, getSemanticLocation(member), *handleType, reference);
+        classOwner = *owner;
+      } else if (isa<semantic::SVNamedValueExpressionOp>(receiver) &&
+                 receiver->hasAttr("obelisk_sim.class_field") && thisObject) {
+        FailureOr<Value> lowered = lowerExpression(receiver);
+        if (failed(lowered))
+          return failure();
+        handle = *lowered;
+        classOwner = thisObject;
+      } else {
+        emitError(location)
+            << "class covergroup sample has no owning object expression";
+        return failure();
+      }
+    } else {
+      FailureOr<Value> lowered = lowerExpression(receiver);
+      if (failed(lowered))
+        return failure();
+      handle = *lowered;
+    }
+    if (!handle || !isa<sim::CovergroupHandleType>(handle.getType()))
       return failure();
   }
 
   if (name == "sample")
-    return lowerCovergroupSample(op, covergroup, *handle);
+    return lowerCovergroupSample(op, covergroup, handle, classOwner);
   if (name == "start" || name == "stop") {
     if (children.size() != 1 || op.getArgumentCount() != 0) {
       emitError(location) << "covergroup " << name << "() takes no arguments";
       return failure();
     }
     if (name == "start")
-      sim::SimCovergroupStartOp::create(builder, location, context, *handle);
+      sim::SimCovergroupStartOp::create(builder, location, context, handle);
     else
-      sim::SimCovergroupStopOp::create(builder, location, context, *handle);
+      sim::SimCovergroupStopOp::create(builder, location, context, handle);
     return voidResult();
   }
   if (name != "get_inst_coverage" && name != "get_coverage") {
@@ -396,7 +452,7 @@ UnitLowering::lowerCovergroupCall(semantic::SVCallExpressionOp op,
         builder, location,
         TypeRange{builder.getF64Type(), builder.getI32Type(),
                   builder.getI32Type()},
-        context, *handle);
+        context, handle);
     percentage = query.getPercentage();
     covered = query.getCovered();
     total = query.getTotal();
