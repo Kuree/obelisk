@@ -140,12 +140,13 @@ bool nativeWaitReady(obelisk_rt_context &context,
     return false;
   case OBELISK_RT_SUSPEND_AWAIT:
     return wait->count == 1 &&
-           context.terminatedNativeProcesses.count(entries[0].stable_id) != 0;
+           obelisk_rt_logical_process_terminated(
+               &context, entries[0].stable_id);
   case OBELISK_RT_SUSPEND_JOIN: {
     bool ready = wait->flags == 0;
     for (uint32_t index = 0; index != wait->count; ++index) {
-      bool terminated = context.terminatedNativeProcesses.count(
-                            entries[index].stable_id) != 0;
+      bool terminated = obelisk_rt_logical_process_terminated(
+          &context, entries[index].stable_id);
       if (wait->flags == 0)
         ready &= terminated;
       else
@@ -1432,10 +1433,82 @@ extern "C" uint64_t obelisk_rt_v1_scheduler_process_token(
     ContextMutexLock lock(context);
     for (const ScheduledProcess &process : context->scheduledProcesses)
       if (process.instance == instance)
-        return process.token;
+        return OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | process.token;
   } catch (...) {
   }
   return 0;
+}
+
+extern "C" uint64_t
+obelisk_rt_v1_process_current(obelisk_rt_context *context) {
+  if (!context)
+    return 0;
+  try {
+    ContextMutexLock lock(context);
+    return context->activeLogicalProcessToken;
+  } catch (...) {
+    return 0;
+  }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_process_status(
+    obelisk_rt_context *context, uint64_t logicalProcess,
+    obelisk_rt_process_state *outState) {
+  if (!context || logicalProcess == 0 || !outState)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outState = OBELISK_RT_PROCESS_FINISHED;
+  try {
+    ContextMutexLock lock(context);
+    if ((logicalProcess & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0) {
+      uint64_t token =
+          logicalProcess & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+      if (context->killedNativeProcesses.count(token) != 0) {
+        *outState = OBELISK_RT_PROCESS_KILLED;
+        return OBELISK_RT_OK;
+      }
+      if (context->terminatedNativeProcesses.count(token) != 0)
+        return OBELISK_RT_OK;
+      if (context->activeLogicalProcessToken == logicalProcess) {
+        *outState = OBELISK_RT_PROCESS_RUNNING;
+        return OBELISK_RT_OK;
+      }
+      ScheduledProcess *process = findScheduledProcess(context, token);
+      if (!process || !process->instance)
+        return OBELISK_RT_INVALID_HANDLE;
+      *outState = process->suspendKind != OBELISK_RT_SUSPEND_NONE
+                      ? OBELISK_RT_PROCESS_WAITING
+                      : OBELISK_RT_PROCESS_RUNNING;
+      return OBELISK_RT_OK;
+    }
+    if (context->killedDesignTasks.count(logicalProcess) != 0) {
+      *outState = OBELISK_RT_PROCESS_KILLED;
+      return OBELISK_RT_OK;
+    }
+    if (context->terminatedDesignTasks.count(logicalProcess) != 0)
+      return OBELISK_RT_OK;
+    if (context->activeLogicalProcessToken == logicalProcess) {
+      *outState = OBELISK_RT_PROCESS_RUNNING;
+      return OBELISK_RT_OK;
+    }
+    auto indexed = context->scheduledDesignTaskIndices.find(logicalProcess);
+    if (indexed == context->scheduledDesignTaskIndices.end() ||
+        indexed->second >= context->scheduledDesignTasks.size())
+      return OBELISK_RT_INVALID_HANDLE;
+    const ScheduledDesignTask &task =
+        context->scheduledDesignTasks[indexed->second];
+    if (task.id != logicalProcess)
+      return OBELISK_RT_INVALID_HANDLE;
+    if (task.terminated)
+      return OBELISK_RT_OK;
+    *outState = task.suspendKind != OBELISK_RT_SUSPEND_NONE
+                    ? OBELISK_RT_PROCESS_WAITING
+                    : OBELISK_RT_PROCESS_RUNNING;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
 }
 
 extern "C" obelisk_rt_status
@@ -1457,6 +1530,19 @@ obelisk_rt_v1_monitor_register(obelisk_rt_context *context,
   } catch (...) {
     return OBELISK_RT_INVALID_ARGUMENT;
   }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_monitor_register_logical(
+    obelisk_rt_context *context, uint64_t logicalProcess) {
+  if (logicalProcess == 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  bool native =
+      (logicalProcess & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0;
+  uint64_t token = native
+                       ? logicalProcess &
+                             ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG
+                       : logicalProcess;
+  return obelisk_rt_v1_monitor_register(context, token, native ? 0 : 1);
 }
 
 extern "C" obelisk_rt_status

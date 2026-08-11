@@ -2654,6 +2654,8 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
     std::vector<CancelledDesignTask> designTasks;
     std::vector<uint64_t> insertedNativeTerminations;
     std::vector<uint64_t> insertedDesignTerminations;
+    std::vector<uint64_t> insertedNativeKills;
+    std::vector<uint64_t> insertedDesignKills;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       uint64_t root = context->activeLogicalProcessToken;
@@ -2717,10 +2719,16 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
       designTasks.reserve(designActivationCount);
       insertedNativeTerminations.reserve(nativeTaskCount);
       insertedDesignTerminations.reserve(designTaskCount);
+      insertedNativeKills.reserve(nativeTaskCount);
+      insertedDesignKills.reserve(designTaskCount);
       context->terminatedNativeProcesses.reserveRanges(checkedSizeSum(
           context->terminatedNativeProcesses.rangeCount(), nativeTaskCount));
       context->terminatedDesignTasks.reserveRanges(checkedSizeSum(
           context->terminatedDesignTasks.rangeCount(), designTaskCount));
+      context->killedNativeProcesses.reserveRanges(checkedSizeSum(
+          context->killedNativeProcesses.rangeCount(), nativeTaskCount));
+      context->killedDesignTasks.reserveRanges(checkedSizeSum(
+          context->killedDesignTasks.rangeCount(), designTaskCount));
       try {
         for (const ScheduledProcess &process : context->scheduledProcesses) {
           uint64_t token = (UINT64_C(1) << 63) | process.token;
@@ -2728,18 +2736,26 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
             continue;
           if (context->terminatedNativeProcesses.insert(process.token).second)
             insertedNativeTerminations.push_back(process.token);
+          if (context->killedNativeProcesses.insert(process.token).second)
+            insertedNativeKills.push_back(process.token);
         }
         for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
           if (task.terminated || !contains(task.id) || task.id == root)
             continue;
           if (context->terminatedDesignTasks.insert(task.id).second)
             insertedDesignTerminations.push_back(task.id);
+          if (context->killedDesignTasks.insert(task.id).second)
+            insertedDesignKills.push_back(task.id);
         }
       } catch (...) {
         for (uint64_t token : insertedNativeTerminations)
           context->terminatedNativeProcesses.erase(token);
         for (uint64_t token : insertedDesignTerminations)
           context->terminatedDesignTasks.erase(token);
+        for (uint64_t token : insertedNativeKills)
+          context->killedNativeProcesses.erase(token);
+        for (uint64_t token : insertedDesignKills)
+          context->killedDesignTasks.erase(token);
         throw;
       }
       for (ScheduledProcess &process : context->scheduledProcesses) {
@@ -2846,6 +2862,8 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
     std::vector<CancelledDesignTask> designTasks;
     std::vector<uint64_t> insertedNativeTerminations;
     std::vector<uint64_t> insertedDesignTerminations;
+    std::vector<uint64_t> insertedNativeKills;
+    std::vector<uint64_t> insertedDesignKills;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       uint64_t current = context->activeLogicalProcessToken;
@@ -2945,10 +2963,16 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
       designTasks.reserve(designActivationCount);
       insertedNativeTerminations.reserve(nativeTaskCount);
       insertedDesignTerminations.reserve(designTaskCount);
+      insertedNativeKills.reserve(nativeTaskCount);
+      insertedDesignKills.reserve(designTaskCount);
       context->terminatedNativeProcesses.reserveRanges(checkedSizeSum(
           context->terminatedNativeProcesses.rangeCount(), nativeTaskCount));
       context->terminatedDesignTasks.reserveRanges(checkedSizeSum(
           context->terminatedDesignTasks.rangeCount(), designTaskCount));
+      context->killedNativeProcesses.reserveRanges(checkedSizeSum(
+          context->killedNativeProcesses.rangeCount(), nativeTaskCount));
+      context->killedDesignTasks.reserveRanges(checkedSizeSum(
+          context->killedDesignTasks.rangeCount(), designTaskCount));
       try {
         for (const ScheduledProcess &process : context->scheduledProcesses) {
           uint64_t token = (UINT64_C(1) << 63) | process.token;
@@ -2957,6 +2981,8 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
             continue;
           if (context->terminatedNativeProcesses.insert(process.token).second)
             insertedNativeTerminations.push_back(process.token);
+          if (context->killedNativeProcesses.insert(process.token).second)
+            insertedNativeKills.push_back(process.token);
         }
         for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
           if (task.terminated || (task.id == current && !cancelCurrent) ||
@@ -2964,12 +2990,18 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
             continue;
           if (context->terminatedDesignTasks.insert(task.id).second)
             insertedDesignTerminations.push_back(task.id);
+          if (context->killedDesignTasks.insert(task.id).second)
+            insertedDesignKills.push_back(task.id);
         }
       } catch (...) {
         for (uint64_t token : insertedNativeTerminations)
           context->terminatedNativeProcesses.erase(token);
         for (uint64_t token : insertedDesignTerminations)
           context->terminatedDesignTasks.erase(token);
+        for (uint64_t token : insertedNativeKills)
+          context->killedNativeProcesses.erase(token);
+        for (uint64_t token : insertedDesignKills)
+          context->killedDesignTasks.erase(token);
         throw;
       }
 
@@ -3216,18 +3248,19 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
                     generation != iterator->waitGenerations[index];
               }
           } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_AWAIT)
-            awaited = wait->count == 1 && context->terminatedDesignTasks.count(
-                                              entries[0].stable_id) != 0;
+            awaited = wait->count == 1 &&
+                      obelisk_rt_logical_process_terminated(
+                          context, entries[0].stable_id);
           else if (wait->count != 0) {
             awaited = wait->flags == 0;
             if (wait->flags == 0)
               for (uint32_t index = 0; index != wait->count; ++index)
-                awaited &= context->terminatedDesignTasks.count(
-                               entries[index].stable_id) != 0;
+                awaited &= obelisk_rt_logical_process_terminated(
+                    context, entries[index].stable_id);
             else
               for (uint32_t index = 0; index != wait->count; ++index)
-                awaited |= context->terminatedDesignTasks.count(
-                               entries[index].stable_id) != 0;
+                awaited |= obelisk_rt_logical_process_terminated(
+                    context, entries[index].stable_id);
           }
         }
         if (iterator->started &&

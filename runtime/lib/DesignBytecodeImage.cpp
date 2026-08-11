@@ -435,7 +435,7 @@ bool validIntrinsic(const Image &image, const Function &function,
     uint32_t calleeIndex =
         signature.flags & OBELISK_RT_INTRINSIC_SPAWN_FUNCTION_MASK;
     if (calleeIndex >= image.functionCount || site.outputCount != 1 ||
-        !handle(output(0)))
+        (!twoStateBits(output(0), 64) && !handle(output(0))))
       return false;
     Function callee = functionAt(image, calleeIndex);
     if ((callee.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
@@ -558,7 +558,15 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 0;
   case OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER:
     return signature.flags == 0 && site.inputCount == 1 &&
-           site.outputCount == 0 && handle(input(0));
+           site.outputCount == 0 &&
+           (twoStateBits(input(0), 64) || handle(input(0)));
+  case OBELISK_RT_INTRINSIC_V1_PROCESS_CURRENT:
+    return signature.flags == 0 && site.inputCount == 0 &&
+           site.outputCount == 1 && twoStateBits(output(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_PROCESS_STATUS:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 1 && twoStateBits(input(0), 64) &&
+           twoStateBits(output(0), 32);
   case OBELISK_RT_INTRINSIC_V1_MONITOR_CONTROL:
     return signature.flags <= 1 && site.inputCount == 0 &&
            site.outputCount == 0;

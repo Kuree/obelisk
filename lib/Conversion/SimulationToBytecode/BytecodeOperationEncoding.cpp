@@ -240,6 +240,22 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
           reg(plan, op.getLhs()), reg(plan, op.getRhs())});
     return success();
   }
+  if (auto op = dyn_cast<sim::SimProcessNullOp>(operation)) {
+    Layout layout = plan.layouts[reg(plan, op.getResult())];
+    emit({Constant, 0, reg(plan, op.getResult()), 0, 0, 0, 0,
+          addConstant(layout, APInt(64, 0))});
+    return success();
+  }
+  if (auto op = dyn_cast<sim::SimProcessCurrentOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicProcessCurrent, {}, {op.getResult()});
+  if (auto op = dyn_cast<sim::SimProcessEqualOp>(operation)) {
+    emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getEqual()),
+          reg(plan, op.getLhs()), reg(plan, op.getRhs())});
+    return success();
+  }
+  if (auto op = dyn_cast<sim::SimProcessStatusOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicProcessStatus, {op.getProcess()},
+                         {op.getStatus()});
   if (std::optional<LogicalResult> encoded =
           encodeContainerOperation(plan, operation))
     return *encoded;

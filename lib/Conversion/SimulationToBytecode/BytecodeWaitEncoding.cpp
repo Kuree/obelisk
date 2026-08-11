@@ -307,6 +307,12 @@ LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
   emit({Constant, 0, recordRegister, 0, 0, 0, 0, constantOffset});
   emit({StoreFrame, 0, 0, recordRegister, 0, 0, 0, suspension->waitOffset});
   for (auto [index, handle] : llvm::enumerate(watched)) {
+    if (isa<sim::ProcessType>(handle.getType())) {
+      emit({StoreFrame, 0, 0, reg(plan, handle), 0, 0, 0,
+            suspension->waitOffset + sizeof(obelisk_rt_wait_record_v1) +
+                index * sizeof(obelisk_rt_wait_entry_v1)});
+      continue;
+    }
     uint32_t stableID =
         temporary(plan, IntegerType::get(operation->getContext(), 64));
     if (stableID == kInvalidRegister)

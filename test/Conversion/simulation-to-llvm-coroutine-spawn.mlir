@@ -32,6 +32,10 @@ module attributes {
 
 // CHECK-DAG: llvm.mlir.global internal thread_local @__obelisk_current_context
 // CHECK-DAG: llvm.mlir.global internal @__obelisk_static_specialization_fast_v1
+// CHECK-LABEL: llvm.func @child.__obelisk_spawn
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_process_token
+// CHECK: llvm.mlir.constant(-9223372036854775808 : i64)
+// CHECK: llvm.or
 // CHECK-LABEL: llvm.func @parent
 // CHECK: llvm.call @obelisk_rt_v1_native_state_alloc
 // CHECK: llvm.call @obelisk_rt_v1_native_state_retain

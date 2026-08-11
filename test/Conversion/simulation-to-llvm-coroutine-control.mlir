@@ -41,7 +41,7 @@ module attributes {
 // CHECK-DAG: llvm.func @obelisk_rt_v1_control_disable
 // CHECK-DAG: llvm.func @obelisk_rt_v1_static_once
 // CHECK-DAG: llvm.func @obelisk_rt_v1_deferred_once
-// CHECK-DAG: llvm.func @obelisk_rt_v1_monitor_register
+// CHECK-DAG: llvm.func @obelisk_rt_v1_monitor_register_logical
 // CHECK-DAG: llvm.func @obelisk_rt_v1_monitor_control
 // CHECK-DAG: llvm.func @obelisk_rt_v1_monitor_current
 // CHECK-DAG: llvm.func @obelisk_rt_v1_scheduler_disable_children
@@ -51,7 +51,7 @@ module attributes {
 // CHECK: llvm.call @obelisk_rt_v1_control_disable
 // CHECK: llvm.call @obelisk_rt_v1_static_once
 // CHECK: llvm.call @obelisk_rt_v1_deferred_once
-// CHECK: llvm.call @obelisk_rt_v1_monitor_register
+// CHECK: llvm.call @obelisk_rt_v1_monitor_register_logical
 // CHECK: llvm.call @obelisk_rt_v1_monitor_control
 // CHECK: llvm.call @obelisk_rt_v1_monitor_current
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_disable_children

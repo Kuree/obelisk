@@ -30,6 +30,86 @@ void reportRuntimeControlStatus(ConversionPatternRewriter &rewriter,
       ValueRange{context, status});
 }
 
+class ProcessNullConversion final
+    : public OpConversionPattern<sim::SimProcessNullOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimProcessNullOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    rewriter.replaceOpWithNewOp<arith::ConstantOp>(
+        operation, rewriter.getI64Type(), rewriter.getI64IntegerAttr(0));
+    return success();
+  }
+};
+
+class ProcessCurrentConversion final
+    : public OpConversionPattern<sim::SimProcessCurrentOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimProcessCurrentOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Value context = loadCurrentRuntimeContext(rewriter, operation.getLoc());
+    auto call = LLVM::CallOp::create(
+        rewriter, operation.getLoc(), TypeRange{rewriter.getI64Type()},
+        SymbolRefAttr::get(rewriter.getContext(),
+                           "obelisk_rt_v1_process_current"),
+        ValueRange{context});
+    rewriter.replaceOp(operation, call.getResults());
+    return success();
+  }
+};
+
+class ProcessEqualConversion final
+    : public OpConversionPattern<sim::SimProcessEqualOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimProcessEqualOp operation, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getLhs().size() != 1 || adaptor.getRhs().size() != 1)
+      return failure();
+    rewriter.replaceOpWithNewOp<arith::CmpIOp>(
+        operation, arith::CmpIPredicate::eq, adaptor.getLhs().front(),
+        adaptor.getRhs().front());
+    return success();
+  }
+};
+
+class ProcessStatusConversion final
+    : public OpConversionPattern<sim::SimProcessStatusOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimProcessStatusOp operation, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getProcess().size() != 1)
+      return failure();
+    Location location = operation.getLoc();
+    Value context = loadCurrentRuntimeContext(rewriter, location);
+    Type i32 = rewriter.getI32Type();
+    Value outState = entryAlloca(rewriter, location, i32, 1, 4);
+    LLVM::StoreOp::create(rewriter, location,
+                          llvmConstant(rewriter, location, i32, 0), outState,
+                          4);
+    Value status = LLVM::CallOp::create(
+                       rewriter, location, TypeRange{i32},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_process_status"),
+                       ValueRange{context, adaptor.getProcess().front(),
+                                  outState})
+                       .getResult();
+    reportRuntimeControlStatus(rewriter, location, context, status);
+    rewriter.replaceOpWithNewOp<LLVM::LoadOp>(operation, i32, outState, 4);
+    return success();
+  }
+};
+
 class DisableChildrenConversion final
     : public OpConversionPattern<sim::SimDisableChildrenOp> {
 public:
@@ -312,10 +392,8 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, location, TypeRange{rewriter.getI32Type()},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_monitor_register"),
-                       ValueRange{context, adaptor.getProcess().front(),
-                                  llvmConstant(rewriter, location,
-                                               rewriter.getI32Type(), 0)})
+                                          "obelisk_rt_v1_monitor_register_logical"),
+                       ValueRange{context, adaptor.getProcess().front()})
                        .getResult();
     reportRuntimeControlStatus(rewriter, location, context, status);
     rewriter.eraseOp(operation);
@@ -377,6 +455,8 @@ void populateControlToLLVMConversionPatterns(RewritePatternSet &patterns,
   MLIRContext *context = patterns.getContext();
   patterns.add<DisableChildrenConversion, ControlEnterConversion,
                ControlLeaveConversion, ControlDisableConversion,
+               ProcessNullConversion, ProcessCurrentConversion,
+               ProcessEqualConversion, ProcessStatusConversion,
                MonitorRegisterConversion, MonitorControlConversion,
                MonitorCurrentConversion>(converter, context);
   patterns.add<OnceConversion<sim::SimStaticOnceOp>>(

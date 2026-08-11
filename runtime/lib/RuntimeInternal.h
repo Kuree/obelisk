@@ -24,7 +24,8 @@
 #include <utility>
 #include <vector>
 
-constexpr uint64_t OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG = UINT64_C(1) << 63;
+constexpr uint64_t OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG =
+    OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG;
 
 struct SignalWaitLatch {
   bool triggered = false;
@@ -839,6 +840,11 @@ struct obelisk_rt_context {
   size_t schedulerDeadDesignTaskCount = 0;
   TerminatedTokenSet terminatedDesignTasks;
   TerminatedTokenSet terminatedNativeProcesses;
+  // Forced cancellation is a terminal process::KILLED state, while ordinary
+  // completion remains process::FINISHED. These sets are subsets of the two
+  // terminated sets above so await/join readiness stays reason-independent.
+  TerminatedTokenSet killedDesignTasks;
+  TerminatedTokenSet killedNativeProcesses;
   uint64_t nextControlActivation = 1;
   std::unordered_map<uint64_t, ControlActivation> controlActivations;
   std::unordered_set<uint64_t> initializedStaticSites;
@@ -1002,6 +1008,16 @@ inline void obelisk_rt_unregister_unstarted_actor(obelisk_rt_context *context,
                                                   uint32_t phase,
                                                   uint64_t logicalToken) {
   obelisk_rt_unstarted_actors(context, phase).erase(logicalToken);
+}
+
+inline bool obelisk_rt_logical_process_terminated(
+    const obelisk_rt_context *context, uint64_t logicalToken) {
+  if (!context || logicalToken == 0)
+    return false;
+  if ((logicalToken & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0)
+    return context->terminatedNativeProcesses.count(
+               logicalToken & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0;
+  return context->terminatedDesignTasks.count(logicalToken) != 0;
 }
 
 // The earliest home region holding an actor that has never run, or UINT32_MAX

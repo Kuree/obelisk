@@ -458,8 +458,6 @@ void Encoder::emitFrameTransfer(FunctionPlan &plan, uint16_t opcode,
     width = *simulationWidth(driver.getElementType());
   } else if (isa<sim::EventType>(type)) {
     kind = 5;
-  } else if (isa<sim::ProcessType>(type)) {
-    kind = 6;
   }
   if (opcode == LoadFrame)
     emit({LoadFrame, kind, reg(plan, value), 0, 0, 0,

@@ -589,6 +589,12 @@ static_assert(OBELISK_RT_PROCESS_READY == 0);
 static_assert(OBELISK_RT_PROCESS_EXECUTING == 1);
 static_assert(OBELISK_RT_PROCESS_SUSPENDED == 2);
 static_assert(OBELISK_RT_PROCESS_TERMINATED == 3);
+static_assert(OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG == UINT64_C(1) << 63);
+static_assert(OBELISK_RT_PROCESS_FINISHED == 0);
+static_assert(OBELISK_RT_PROCESS_RUNNING == 1);
+static_assert(OBELISK_RT_PROCESS_WAITING == 2);
+static_assert(OBELISK_RT_PROCESS_EXPLICITLY_SUSPENDED == 3);
+static_assert(OBELISK_RT_PROCESS_KILLED == 4);
 static_assert(OBELISK_RT_FRAGMENT_NATIVE == 0);
 static_assert(OBELISK_RT_FRAGMENT_BYTECODE == 1);
 static_assert(OBELISK_RT_BC_TYPE_NONE == 0);
@@ -802,6 +808,8 @@ ABI_FUNCTION(obelisk_rt_v1_display,
                                    uint64_t, const obelisk_rt_format_env_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_monitor_register,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint32_t));
+ABI_FUNCTION(obelisk_rt_v1_monitor_register_logical,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_monitor_control,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_monitor_current, uint32_t (*)(obelisk_rt_context *));
@@ -984,6 +992,11 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_snapshot_aot,
 ABI_FUNCTION(obelisk_rt_v1_scheduler_process_token,
              uint64_t (*)(obelisk_rt_context *,
                           obelisk_rt_process_instance_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_process_current,
+             uint64_t (*)(obelisk_rt_context *));
+ABI_FUNCTION(obelisk_rt_v1_process_status,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t,
+                                   obelisk_rt_process_state *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_nba,
              obelisk_rt_status (*)(obelisk_rt_context *, uint8_t *, uint8_t *,
                                    uint64_t, uint64_t, uint64_t, uint64_t,

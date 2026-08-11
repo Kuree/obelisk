@@ -68,6 +68,10 @@ constexpr uint32_t kIntrinsicFileSeek = OBELISK_RT_INTRINSIC_V1_FILE_SEEK;
 constexpr uint32_t kIntrinsicFileTell = OBELISK_RT_INTRINSIC_V1_FILE_TELL;
 constexpr uint32_t kIntrinsicFileRewind = OBELISK_RT_INTRINSIC_V1_FILE_REWIND;
 constexpr uint32_t kIntrinsicSpawn = OBELISK_RT_INTRINSIC_V1_SPAWN;
+constexpr uint32_t kIntrinsicProcessCurrent =
+    OBELISK_RT_INTRINSIC_V1_PROCESS_CURRENT;
+constexpr uint32_t kIntrinsicProcessStatus =
+    OBELISK_RT_INTRINSIC_V1_PROCESS_STATUS;
 constexpr uint32_t kIntrinsicNBA = OBELISK_RT_INTRINSIC_V1_NBA;
 constexpr uint32_t kIntrinsicStaticNBA = OBELISK_RT_INTRINSIC_V1_STATIC_NBA;
 constexpr uint32_t kIntrinsicEventTrigger =

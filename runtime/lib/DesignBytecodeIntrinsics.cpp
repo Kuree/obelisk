@@ -1621,6 +1621,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     Layout destination = layoutAt(image, frame.function, destinationRegister);
     uint8_t *address = frame.data + destination.offset;
     std::memset(address, 0, destination.size);
+    if (destination.kind == OBELISK_RT_DBREG_BITS && destination.width == 64 &&
+        destination.size == sizeof(id)) {
+      std::memcpy(address, &id, sizeof(id));
+      return OBELISK_RT_OK;
+    }
+    if (destination.kind != OBELISK_RT_DBREG_HANDLE || destination.size < 32)
+      return OBELISK_RT_INVALID_BYTECODE;
     uint32_t kind = OBELISK_RT_DESCRIPTOR_PROCESS;
     int64_t begin = static_cast<int64_t>(id);
     int64_t end = id == uint64_t{INT64_MAX} ? begin : begin + 1;
@@ -2052,6 +2059,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!context)
       return OBELISK_RT_INVALID_ARGUMENT;
     Layout process = layoutAt(image, frame.function, inputRegister(0));
+    if (process.kind == OBELISK_RT_DBREG_BITS && process.width == 64 &&
+        process.size == sizeof(uint64_t)) {
+      uint64_t logicalProcess = 0;
+      std::memcpy(&logicalProcess, frame.data + process.offset,
+                  sizeof(logicalProcess));
+      return obelisk_rt_v1_monitor_register_logical(context, logicalProcess);
+    }
     if (process.kind != OBELISK_RT_DBREG_HANDLE || process.size < 32)
       return OBELISK_RT_INVALID_BYTECODE;
     const uint8_t *address = frame.data + process.offset;
@@ -2066,6 +2080,17 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_HANDLE;
     return obelisk_rt_v1_monitor_register(context, static_cast<uint64_t>(begin),
                                           1);
+  }
+  case OBELISK_RT_INTRINSIC_V1_PROCESS_CURRENT:
+    return sentinel(0, obelisk_rt_v1_process_current(context));
+  case OBELISK_RT_INTRINSIC_V1_PROCESS_STATUS: {
+    auto logicalProcess = scalar(0);
+    obelisk_rt_process_state state = OBELISK_RT_PROCESS_FINISHED;
+    if (!logicalProcess)
+      return OBELISK_RT_INVALID_BYTECODE;
+    obelisk_rt_status status =
+        obelisk_rt_v1_process_status(context, *logicalProcess, &state);
+    return status == OBELISK_RT_OK ? sentinel(0, state) : status;
   }
   case OBELISK_RT_INTRINSIC_V1_DUMP_OPEN: {
     auto path = bytes(0);

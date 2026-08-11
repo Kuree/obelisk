@@ -778,6 +778,8 @@ enum {
   OBELISK_RT_INTRINSIC_V1_DUMP_CONTROL = UINT32_C(0x00010229),
   OBELISK_RT_INTRINSIC_V1_DUMP_LIMIT = UINT32_C(0x0001022a),
   OBELISK_RT_INTRINSIC_V1_DUMP_FLUSH = UINT32_C(0x0001022b),
+  OBELISK_RT_INTRINSIC_V1_PROCESS_CURRENT = UINT32_C(0x0001022c),
+  OBELISK_RT_INTRINSIC_V1_PROCESS_STATUS = UINT32_C(0x0001022d),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -1393,6 +1395,23 @@ enum {
   OBELISK_RT_PROCESS_EXECUTING = 1,
   OBELISK_RT_PROCESS_SUSPENDED = 2,
   OBELISK_RT_PROCESS_TERMINATED = 3
+};
+
+// Opaque SystemVerilog process identities use one shared 64-bit namespace.
+// Native scheduler tokens carry the high-bit tag; design-bytecode tokens keep
+// it clear. Zero is the null process handle. Tokens are never reused within a
+// context and remain valid as tombstones after termination.
+#define OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG (UINT64_C(1) << 63)
+
+// IEEE 1800 process::state ordinals. Keep these values aligned with Slang's
+// built-in std::process declaration and the Simulation IR contract.
+typedef uint32_t obelisk_rt_process_state;
+enum {
+  OBELISK_RT_PROCESS_FINISHED = 0,
+  OBELISK_RT_PROCESS_RUNNING = 1,
+  OBELISK_RT_PROCESS_WAITING = 2,
+  OBELISK_RT_PROCESS_EXPLICITLY_SUSPENDED = 3,
+  OBELISK_RT_PROCESS_KILLED = 4
 };
 
 typedef struct obelisk_rt_process_descriptor_v1 {
@@ -2344,11 +2363,20 @@ uint32_t obelisk_rt_v1_static_specialization_guard(obelisk_rt_context *context,
 uint32_t
 obelisk_rt_v1_static_nba_specialization_guard(obelisk_rt_context *context,
                                               uint32_t root_index);
-// Return the scheduler-owned stable identity used by await/join records. The
-// token is never a host address and is not reused within a context.
+// Return the scheduler-owned tagged logical identity used by await/join
+// records. The token is never a host address and is not reused within a
+// context. Native identities carry OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG.
 uint64_t
 obelisk_rt_v1_scheduler_process_token(obelisk_rt_context *context,
                                       obelisk_rt_process_instance_v1 *instance);
+// Return the shared tagged identity of the executing logical process, or zero
+// when called outside a scheduled logical-process activation.
+uint64_t obelisk_rt_v1_process_current(obelisk_rt_context *context);
+// Query one nonnull logical-process identity. Completed identities remain
+// valid through the context-owned tombstone sets.
+obelisk_rt_status obelisk_rt_v1_process_status(
+    obelisk_rt_context *context, uint64_t logical_process,
+    obelisk_rt_process_state *out_state);
 // Recursively terminate every live descendant of the currently executing
 // logical process. Task activations retain their caller's logical identity.
 obelisk_rt_status
@@ -2358,6 +2386,10 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context);
 obelisk_rt_status obelisk_rt_v1_monitor_register(obelisk_rt_context *context,
                                                  uint64_t process_token,
                                                  uint32_t design_process);
+// Register a monitor using the shared tagged logical-process identity.
+obelisk_rt_status
+obelisk_rt_v1_monitor_register_logical(obelisk_rt_context *context,
+                                       uint64_t logical_process);
 obelisk_rt_status obelisk_rt_v1_monitor_control(obelisk_rt_context *context,
                                                 uint32_t enabled);
 uint32_t obelisk_rt_v1_monitor_current(obelisk_rt_context *context);

@@ -397,7 +397,11 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
           SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_process_token"),
           ValueRange{entry->getArgument(0), instance})
           .getResult();
-  LLVM::ReturnOp::create(builder, location, token);
+  Value logicalToken = arith::OrIOp::create(
+      builder, location, token,
+      llvmConstant(builder, location, i64,
+                   OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG));
+  LLVM::ReturnOp::create(builder, location, logicalToken);
 
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_process_instance_create_for_context", i32,
@@ -409,6 +413,10 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
       {pointer, pointer, i32, i32, i32, pointer, pointer, i32, pointer, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_process_token", i64,
                            {pointer, pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_current", i64,
+                           {pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_status", i32,
+                           {pointer, i64, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_fail",
                            LLVM::LLVMVoidType::get(context), {pointer, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_disable_children",
@@ -436,8 +444,8 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
                            {pointer, i64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_assertion_action_state", i32,
                            {pointer, i64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_monitor_register", i32,
-                           {pointer, i64, i32});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_monitor_register_logical",
+                           i32, {pointer, i64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_monitor_control", i32,
                            {pointer, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_monitor_current", i32,
