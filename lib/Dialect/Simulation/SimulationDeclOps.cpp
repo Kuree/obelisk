@@ -734,6 +734,28 @@ LogicalResult SimDesignOp::verifyRegions() {
                 "implements list references a non-interface class");
         }
       }
+      if (classDecl.getIsInterface()) {
+        llvm::SmallPtrSet<Operation *, 8> reached;
+        SmallVector<SimClassDeclOp> pending;
+        auto appendInterfaces = [&](SimClassDeclOp declaration) {
+          if (ArrayAttr interfaces = declaration.getInterfacesAttr())
+            for (Attribute attribute : interfaces) {
+              auto reference = cast<FlatSymbolRefAttr>(attribute);
+              auto found = classes.find(reference.getValue());
+              if (found != classes.end() && found->second.getIsInterface())
+                pending.push_back(found->second);
+            }
+        };
+        appendInterfaces(classDecl);
+        while (!pending.empty()) {
+          SimClassDeclOp current = pending.pop_back_val();
+          if (current == classDecl)
+            return classDecl.emitOpError(
+                "interface inheritance contains a cycle");
+          if (reached.insert(current).second)
+            appendInterfaces(current);
+        }
+      }
       llvm::SmallPtrSet<Operation *, 8> path;
       for (SimClassDeclOp current = classDecl; current;
            current = current.getBaseAttr()

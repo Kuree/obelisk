@@ -16,6 +16,54 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @self_interface_cycle {
+    obelisk_sim.scope.decl 0
+    // expected-error @below {{interface inheritance contains a cycle}}
+    obelisk_sim.class.decl @I id 1 implements [@I] {
+      is_abstract = true, is_final = false, is_interface = true
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @transitive_interface_cycle {
+    obelisk_sim.scope.decl 0
+    // expected-error @below {{interface inheritance contains a cycle}}
+    obelisk_sim.class.decl @I id 1 implements [@J] {
+      is_abstract = true, is_final = false, is_interface = true
+    }
+    obelisk_sim.class.decl @J id 2 implements [@K] {
+      is_abstract = true, is_final = false, is_interface = true
+    }
+    obelisk_sim.class.decl @K id 3 implements [@I] {
+      is_abstract = true, is_final = false, is_interface = true
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @invalid_edge_before_cycle {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.class.decl @I id 1 implements [@J] {
+      is_abstract = true, is_final = false, is_interface = true
+    }
+    // expected-error @below {{implements list references a non-interface class}}
+    obelisk_sim.class.decl @J id 2 implements [@C] {
+      is_abstract = true, is_final = false, is_interface = true
+    }
+    obelisk_sim.class.decl @C id 3 implements [@I] {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @bad_weak_specialization {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
