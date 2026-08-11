@@ -736,6 +736,20 @@ LogicalResult SimSpawnOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
+static LogicalResult verifyProcessContext(Operation *operation) {
+  if (!operation->getParentOfType<SimFuncOp>())
+    return operation->emitOpError("must be nested in obelisk_sim.func");
+  return success();
+}
+
+LogicalResult SimProcessCurrentOp::verify() {
+  return verifyProcessContext(getOperation());
+}
+
+LogicalResult SimProcessStatusOp::verify() {
+  return verifyProcessContext(getOperation());
+}
+
 LogicalResult SimControlEnterOp::verify() {
   return verifyPositive(*this, getTargetIdAttr(), "control target ID");
 }

@@ -1155,6 +1155,8 @@ sim::ComputeActionKind getFragmentActionKind(Operation *terminator) {
           [](auto) { return sim::ComputeActionKind::SuspendObserve; })
       .Case<sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp>(
           [](auto) { return sim::ComputeActionKind::TaskCall; })
+      .Case<sim::SimProcessControlOp>(
+          [](auto) { return sim::ComputeActionKind::ProcessControl; })
       .Case<sim::SimReturnOp>(
           [](auto) { return sim::ComputeActionKind::Terminate; })
       .Default([](Operation *) { return sim::ComputeActionKind::Continue; });
@@ -1169,7 +1171,8 @@ sim::ContinuationSiteAttr getContinuationSite(Operation *operation) {
             sim::SimSuspendEventOp, sim::SimSuspendObserveOp,
             sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp,
             sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp,
-            sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp>(
+            sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp,
+            sim::SimProcessControlOp>(
           [&](auto op) { site = op.getSiteAttr(); });
   return site;
 }
@@ -1182,7 +1185,8 @@ void setContinuationSite(Operation *operation, sim::ContinuationSiteAttr site) {
             sim::SimSuspendEventOp, sim::SimSuspendObserveOp,
             sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp,
             sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp,
-            sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp>(
+            sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp,
+            sim::SimProcessControlOp>(
           [&](auto op) { op.setSiteAttr(site); });
 }
 

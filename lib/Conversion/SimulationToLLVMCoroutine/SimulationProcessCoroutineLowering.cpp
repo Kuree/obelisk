@@ -116,6 +116,10 @@ LogicalResult
 lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
                        const SimulationProcessFrameAnalysis &analysis,
                        const RampBlocks &blocks) {
+  if (isa<sim::SimProcessControlOp>(operation))
+    return operation->emitError(
+        "must be propagated through zero-time callers before native "
+        "coroutine lowering");
   IRRewriter builder(operation->getContext());
   builder.setInsertionPoint(operation);
   Location location = operation->getLoc();

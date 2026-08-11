@@ -170,6 +170,19 @@ SuccessorOperands
 SimClassVirtualTaskCallOp::getSuccessorOperands(unsigned index) {
   return makeContinuationSuccessorOperands(*this, index);
 }
+SuccessorOperands SimProcessControlOp::getSuccessorOperands(unsigned index) {
+  return makeContinuationSuccessorOperands(*this, index);
+}
+
+LogicalResult SimProcessControlOp::verify() {
+  auto function = getOperation()->getParentOfType<SimFuncOp>();
+  if (!function)
+    return emitOpError("must be nested in obelisk_sim.func");
+  if (function.getEntryKind() == EntryKind::Observer)
+    return emitOpError("is not permitted in an observer entry");
+  return verifyContinuation(*this, getContinuationOperands(),
+                            getContinuation());
+}
 
 LogicalResult SimSuspendDelayOp::verify() {
   return verifyContinuation(*this, getContinuationOperands(),

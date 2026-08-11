@@ -1636,6 +1636,79 @@ def SimSpawnOp : SimOp<"spawn", [
   let hasVerifier = 1;
 }
 
+def SimProcessNullOp : SimOp<"process.null", [Pure, ConstantLike]> {
+  let summary = "create the null IEEE process object handle";
+  let results = (outs SimProcessType:$result);
+  let assemblyFormat = "attr-dict";
+}
+
+def SimProcessCurrentOp : SimOp<"process.current", [
+    MemoryEffects<[MemRead<SimSchedulerResource>, MemRead<SimProcessResource>]>
+  ]> {
+  let summary = "return the currently executing IEEE process object";
+  let description = [{
+    The logical process identity is stable across task activation boundaries.
+    Native and bytecode implementations may encode the handle differently,
+    but the value remains an opaque `!obelisk_sim.process` in Simulation IR.
+  }];
+  let results = (outs SimProcessType:$result);
+  let assemblyFormat = "attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimProcessEqualOp : SimOp<"process.equal", [Pure, Commutative]> {
+  let summary = "compare two process object identities, including null";
+  let arguments = (ins SimProcessType:$lhs, SimProcessType:$rhs);
+  let results = (outs I1:$equal);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict";
+}
+
+def SimProcessStatusOp : SimOp<"process.status", [
+    MemoryEffects<[MemRead<SimSchedulerResource>, MemRead<SimProcessResource>]>
+  ]> {
+  let summary = "query the IEEE state of one process object";
+  let description = [{
+    The i32 result uses the IEEE `process::state` ordinals: FINISHED=0,
+    RUNNING=1, WAITING=2, SUSPENDED=3, and KILLED=4. Process identities are
+    tombstones: equality and status remain valid after FINISHED or KILLED.
+    Querying a null handle reports a runtime invalid-handle failure.
+  }];
+  let arguments = (ins SimProcessType:$process);
+  let results = (outs I32:$status);
+  let assemblyFormat = "$process attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimProcessControlOp : SimOp<"process.control", [
+    Terminator, DeclareOpInterfaceMethods<BranchOpInterface>,
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemWrite<SimSchedulerResource>,
+                   MemRead<SimProcessResource>, MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "apply an IEEE control operation to one process object";
+  let description = [{
+    This is a control-flow terminator because the target can dynamically name
+    the executing logical process or one of its ancestors. Resuming a process,
+    or controlling another process while the caller survives, transfers
+    immediately to the continuation. Suspending the caller yields and later
+    resumes at that continuation. Killing the caller never reaches it.
+
+    A null handle reports a runtime invalid-handle failure. Zero-time function
+    entries may contain this operation; lowering must propagate its control
+    action through the function call chain before coroutine or bytecode
+    materialization.
+  }];
+  let arguments = (ins SimProcessControlKind:$kind,
+                       SimProcessType:$process,
+                       Variadic<AnyType>:$continuation_operands,
+                       OptionalAttr<SimContinuationSiteAttr>:$site);
+  let successors = (successor AnySuccessor:$continuation);
+  let assemblyFormat = [{$kind $process `to` $continuation
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`) ?
+    attr-dict}];
+  let hasVerifier = 1;
+}
+
 def SimControlEnterOp : SimOp<"control.enter", [
     MemoryEffects<[MemWrite<SimProcessResource>]>
   ]> {

@@ -423,6 +423,8 @@ def SimComputeActionSuspendChildren
     : I32EnumAttrCase<"SuspendChildren", 10, "suspend_children">;
 def SimComputeActionSuspendObserve
     : I32EnumAttrCase<"SuspendObserve", 11, "suspend_observe">;
+def SimComputeActionProcessControl
+    : I32EnumAttrCase<"ProcessControl", 12, "process_control">;
 def SimComputeActionKind
     : I32EnumAttr<"ComputeActionKind", "fragment terminal action", [
         SimComputeActionContinue, SimComputeActionSuspendDelay,
@@ -430,7 +432,24 @@ def SimComputeActionKind
         SimComputeActionSuspendAny, SimComputeActionSuspendEvent,
         SimComputeActionSuspendAwait, SimComputeActionSuspendJoin,
         SimComputeActionTerminate, SimComputeActionTaskCall,
-        SimComputeActionSuspendChildren, SimComputeActionSuspendObserve
+        SimComputeActionSuspendChildren, SimComputeActionSuspendObserve,
+        SimComputeActionProcessControl
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
+// IEEE 1800 process object control methods. Keep these as a typed enum so
+// Simulation IR never relies on stringly-typed built-in method names.
+def SimProcessControlKill
+    : I32EnumAttrCase<"Kill", 0, "kill">;
+def SimProcessControlSuspend
+    : I32EnumAttrCase<"Suspend", 1, "suspend">;
+def SimProcessControlResume
+    : I32EnumAttrCase<"Resume", 2, "resume">;
+def SimProcessControlKind
+    : I32EnumAttr<"ProcessControlKind", "process object control kind", [
+        SimProcessControlKill, SimProcessControlSuspend,
+        SimProcessControlResume
       ]> {
   let cppNamespace = "::obelisk::sim";
 }

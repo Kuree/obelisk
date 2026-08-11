@@ -129,13 +129,7 @@ bool updateBoundary(StateDomainFact &current, StateDomainFact contribution,
 }
 
 bool isSuspensionTerminator(Operation *op) {
-  return isa<sim::SimSuspendDelayOp, sim::SimSuspendChangeOp,
-             sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
-             sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
-             sim::SimSuspendEventOp, sim::SimSuspendForeverOp,
-             sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
-             sim::SimSuspendChildrenOp, sim::SimSuspendObserveOp,
-             sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp>(op);
+  return sim::isSuspensionOp(op);
 }
 
 std::optional<APInt> getConstantInteger(Value value) {
