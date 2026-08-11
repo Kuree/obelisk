@@ -1,5 +1,6 @@
 //===- DevirtualizeClassCalls.cpp - Resolve exact class dispatches -------===//
 
+#include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -10,10 +11,6 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringMap.h"
-
-#include <cstdint>
-#include <limits>
 
 using namespace mlir;
 
@@ -26,123 +23,37 @@ namespace {
 
 namespace sim = ::obelisk::sim;
 
-constexpr uint64_t interfaceDispatchSlot =
-    std::numeric_limits<uint32_t>::max();
+bool isDirectTarget(sim::SimClassMethodDeclOp method,
+                    sim::SimClassVirtualCallOp call) {
+  return method && method.getSignatureIdAttr() &&
+         method.getSignatureId() == call.getSignatureId() &&
+         !method.getIsPure() && !method.getIsTask() &&
+         method.getImplementationAttr();
+}
 
-class ClassDispatchInventory {
-public:
-  explicit ClassDispatchInventory(sim::SimDesignOp design) {
-    design.walk([&](sim::SimClassDeclOp declaration) {
-      classes.try_emplace(declaration.getSymName(), declaration);
-    });
-    design.walk([&](sim::SimClassMethodDeclOp method) {
-      methods[method.getOwner()].push_back(method);
-    });
+sim::SimClassMethodDeclOp resolveMonomorphic(
+    const analysis::ClassDispatchAnalysis &dispatch,
+    sim::SimClassDeclOp staticClass, sim::SimClassVirtualCallOp call) {
+  sim::SimClassMethodDeclOp selected;
+  for (sim::SimClassDeclOp candidate :
+       dispatch.compatibleConcreteClasses(staticClass)) {
+    sim::SimClassMethodDeclOp method = dispatch.resolve(
+        candidate, call.getSlot(), call.getSignatureId());
+    if (!isDirectTarget(method, call))
+      return {};
+    if (!selected)
+      selected = method;
+    else if (selected.getImplementationAttr() !=
+             method.getImplementationAttr())
+      return {};
   }
-
-  sim::SimClassDeclOp lookup(StringRef name) const {
-    auto found = classes.find(name);
-    return found == classes.end() ? sim::SimClassDeclOp{} : found->second;
-  }
-
-  sim::SimClassDeclOp lookup(sim::ClassHandleType type) const {
-    return lookup(type.getClassName().getRootReference());
-  }
-
-  bool isInstanceOf(sim::SimClassDeclOp dynamicClass,
-                    sim::SimClassDeclOp target) const {
-    if (!dynamicClass || !target)
-      return false;
-    DenseSet<Operation *> visited;
-    for (sim::SimClassDeclOp current = dynamicClass;
-         current && visited.insert(current).second;
-         current = current.getBase() ? lookup(*current.getBase())
-                                         : sim::SimClassDeclOp{}) {
-      if (current == target)
-        return true;
-      if (!target.getIsInterface())
-        continue;
-      if (ArrayAttr interfaces = current.getInterfacesAttr())
-        for (Attribute attribute : interfaces)
-          if (auto reference = dyn_cast<FlatSymbolRefAttr>(attribute);
-              reference && reference.getValue() == target.getSymName())
-            return true;
-    }
-    return false;
-  }
-
-  sim::SimClassMethodDeclOp
-  resolve(sim::SimClassDeclOp dynamicClass,
-          sim::SimClassVirtualCallOp call) const {
-    DenseSet<Operation *> visited;
-    DenseMap<uint64_t, sim::SimClassMethodDeclOp> effectiveMethods;
-    for (sim::SimClassDeclOp current = dynamicClass;
-         current && visited.insert(current).second;
-         current = current.getBase() ? lookup(*current.getBase())
-                                         : sim::SimClassDeclOp{}) {
-      auto found = methods.find(current.getSymName());
-      if (found == methods.end())
-        continue;
-      for (sim::SimClassMethodDeclOp method : found->second)
-        if (method.getSlotAttr())
-          effectiveMethods.try_emplace(*method.getSlot(), method);
-    }
-
-    if (call.getSlot() != interfaceDispatchSlot) {
-      auto found = effectiveMethods.find(call.getSlot());
-      return found == effectiveMethods.end() ? sim::SimClassMethodDeclOp{}
-                                             : found->second;
-    }
-
-    uint64_t selectedSlot = std::numeric_limits<uint64_t>::max();
-    sim::SimClassMethodDeclOp selected;
-    for (auto [slot, method] : effectiveMethods)
-      if (slot < selectedSlot && method.getSignatureIdAttr() &&
-          method.getSignatureId() == call.getSignatureId()) {
-        selectedSlot = slot;
-        selected = method;
-      }
-    return selected;
-  }
-
-  sim::SimClassMethodDeclOp
-  resolveMonomorphic(sim::SimClassDeclOp staticClass,
-                     sim::SimClassVirtualCallOp call) const {
-    sim::SimClassMethodDeclOp selected;
-    for (const auto &entry : classes) {
-      sim::SimClassDeclOp candidate = entry.second;
-      if (candidate.getIsAbstract() || candidate.getIsInterface() ||
-          !isInstanceOf(candidate, staticClass))
-        continue;
-      sim::SimClassMethodDeclOp method = resolve(candidate, call);
-      if (!isDirectTarget(method, call))
-        return {};
-      if (!selected)
-        selected = method;
-      else if (selected.getImplementationAttr() !=
-               method.getImplementationAttr())
-        return {};
-    }
-    return selected;
-  }
-
-  static bool isDirectTarget(sim::SimClassMethodDeclOp method,
-                             sim::SimClassVirtualCallOp call) {
-    return method && method.getSignatureIdAttr() &&
-           method.getSignatureId() == call.getSignatureId() &&
-           !method.getIsPure() && !method.getIsTask() &&
-           method.getImplementationAttr();
-  }
-
-private:
-  llvm::StringMap<sim::SimClassDeclOp> classes;
-  llvm::StringMap<SmallVector<sim::SimClassMethodDeclOp>> methods;
-};
+  return selected;
+}
 
 class ExactClassResolver {
 public:
-  explicit ExactClassResolver(const ClassDispatchInventory &inventory)
-      : inventory(inventory) {}
+  explicit ExactClassResolver(const analysis::ClassDispatchAnalysis &dispatch)
+      : dispatch(dispatch) {}
 
   sim::SimClassDeclOp resolve(Value value) {
     if (auto found = exact.find(value); found != exact.end())
@@ -152,15 +63,15 @@ public:
 
     sim::SimClassDeclOp result;
     if (auto allocation = value.getDefiningOp<sim::SimClassAllocOp>()) {
-      result = inventory.lookup(
+      result = dispatch.lookup(
           cast<sim::ClassHandleType>(allocation.getResult().getType()));
     } else if (auto copy = value.getDefiningOp<sim::SimClassCopyOp>()) {
       result = resolve(copy.getSource());
     } else if (auto castOp = value.getDefiningOp<sim::SimClassCastOp>()) {
       sim::SimClassDeclOp dynamicClass = resolve(castOp.getObject());
-      sim::SimClassDeclOp target = inventory.lookup(
+      sim::SimClassDeclOp target = dispatch.lookup(
           cast<sim::ClassHandleType>(castOp.getResult().getType()));
-      if (inventory.isInstanceOf(dynamicClass, target))
+      if (dispatch.isInstanceOf(dynamicClass, target))
         result = dynamicClass;
     }
 
@@ -173,7 +84,7 @@ public:
   }
 
 private:
-  const ClassDispatchInventory &inventory;
+  const analysis::ClassDispatchAnalysis &dispatch;
   DenseMap<Value, sim::SimClassDeclOp> exact;
   DenseSet<Value> unknown;
   DenseSet<Value> visiting;
@@ -286,8 +197,8 @@ private:
 
 void ObeliskSimDevirtualizeClassCallsPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
-  ClassDispatchInventory inventory(design);
-  ExactClassResolver resolver(inventory);
+  analysis::ClassDispatchAnalysis dispatch(design);
+  ExactClassResolver resolver(dispatch);
   IRRewriter rewriter(design.getContext());
 
   SmallVector<sim::SimClassVirtualCallOp> virtualCalls;
@@ -297,8 +208,9 @@ void ObeliskSimDevirtualizeClassCallsPass::runOnOperation() {
   for (sim::SimClassVirtualCallOp call : virtualCalls) {
     sim::SimClassDeclOp dynamicClass = resolver.resolve(call.getReceiver());
     if (dynamicClass) {
-      sim::SimClassMethodDeclOp method = inventory.resolve(dynamicClass, call);
-      if (!ClassDispatchInventory::isDirectTarget(method, call)) {
+      sim::SimClassMethodDeclOp method = dispatch.resolve(
+          dynamicClass, call.getSlot(), call.getSignatureId());
+      if (!isDirectTarget(method, call)) {
         ++unresolvedCalls;
         continue;
       }
@@ -322,8 +234,8 @@ void ObeliskSimDevirtualizeClassCallsPass::runOnOperation() {
     }
 
     auto staticType = cast<sim::ClassHandleType>(call.getReceiver().getType());
-    sim::SimClassMethodDeclOp method = inventory.resolveMonomorphic(
-        inventory.lookup(staticType), call);
+    sim::SimClassMethodDeclOp method =
+        resolveMonomorphic(dispatch, dispatch.lookup(staticType), call);
     if (!method) {
       ++unresolvedCalls;
       continue;
