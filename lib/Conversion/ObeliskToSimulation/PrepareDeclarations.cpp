@@ -293,6 +293,7 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
       nextSlot = classVirtualCounts.lookup(base->second);
     }
     uint64_t methodOrdinal = 0;
+    uint64_t interfaceMethodOrdinal = 0;
     for (Operation *child : getChildren(classType)) {
       auto method = getClassMethod(child);
       if (!method || method.getIsBuiltin().value_or(false))
@@ -308,6 +309,7 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
         result.virtualMethodSlots[method] = UINT32_MAX;
         result.virtualMethodSignatures[method] =
             getVirtualMethodSignatureID(method);
+        result.interfaceMethodOrdinals[method] = interfaceMethodOrdinal++;
         continue;
       }
       if (std::optional<SymbolRefAttr> overridden =

@@ -33,6 +33,7 @@ struct PreparedClassDeclarations {
       implicitConstructorSymbols;
   llvm::DenseMap<mlir::Operation *, uint64_t> virtualMethodSlots;
   llvm::DenseMap<mlir::Operation *, uint64_t> virtualMethodSignatures;
+  llvm::DenseMap<mlir::Operation *, uint64_t> interfaceMethodOrdinals;
   llvm::StringMap<ir::SVClassTypeOp> semanticClasses;
 };
 

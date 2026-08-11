@@ -4064,6 +4064,11 @@ void ObeliskSimPreparePass::runOnOperation() {
           isVirtual ? builder.getI64IntegerAttr(
                           virtualMethodSignatures.lookup(method))
                     : IntegerAttr{};
+      IntegerAttr interfaceOrdinal =
+          classType.getIsInterface() && isVirtual
+              ? builder.getI64IntegerAttr(
+                    classes->interfaceMethodOrdinals.lookup(method))
+              : IntegerAttr{};
       sim::SimFuncOp implementation =
           isPure ? sim::SimFuncOp{} : typedImplementation;
       FlatSymbolRefAttr implementationRef =
@@ -4078,7 +4083,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder.getStringAttr(methodSymbol.getValue()),
           FlatSymbolRefAttr::get(context,
                                  classSymbols.lookup(classType).getValue()),
-          TypeAttr::get(functionType), slot, signatureID, implementationRef,
+          TypeAttr::get(functionType), slot, signatureID, interfaceOrdinal,
+          implementationRef,
           builder.getBoolAttr(isVirtual), builder.getBoolAttr(isPure),
           builder.getBoolAttr(method.getIsStatic().value_or(false)),
           builder.getBoolAttr(method.getSubroutineKind() ==

@@ -234,8 +234,86 @@ module {
       is_abstract = true, is_final = false, is_interface = true
     }
     // expected-error @below {{interface virtual methods require the interface dispatch slot}}
-    obelisk_sim.class.method @I_f of @I slot 0 signature_id 17 :
+    obelisk_sim.class.method @I_f of @I slot 0 signature_id 17
+        interface_ordinal 0 :
       (!obelisk_sim.context, !obelisk_sim.class_handle<@I>) -> i64 {
+        is_final = false, is_pure = true, is_static = false,
+        is_task = false, is_virtual = true
+      }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @missing_interface_method_ordinal {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.class.decl @I id 1 {
+      is_abstract = true, is_final = false, is_interface = true
+    }
+    // expected-error @below {{interface virtual methods require a 32-bit interface ordinal}}
+    obelisk_sim.class.method @I_f of @I slot 4294967295 signature_id 17 :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@I>) -> i64 {
+        is_final = false, is_pure = true, is_static = false,
+        is_task = false, is_virtual = true
+      }
+  }
+}
+
+// -----
+
+module {
+  // expected-error @below {{interface I contains a non-dense method ordinal set}}
+  obelisk_sim.design @sparse_interface_method_ordinals {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.class.decl @I id 1 {
+      is_abstract = true, is_final = false, is_interface = true
+    }
+    obelisk_sim.class.method @I_f of @I slot 4294967295 signature_id 17
+        interface_ordinal 1 :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@I>) -> i64 {
+        is_final = false, is_pure = true, is_static = false,
+        is_task = false, is_virtual = true
+      }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @duplicate_interface_method_ordinals {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.class.decl @I id 1 {
+      is_abstract = true, is_final = false, is_interface = true
+    }
+    obelisk_sim.class.method @I_f of @I slot 4294967295 signature_id 17
+        interface_ordinal 0 :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@I>) -> i64 {
+        is_final = false, is_pure = true, is_static = false,
+        is_task = false, is_virtual = true
+      }
+    // expected-error @below {{owner interface contains a duplicate method ordinal}}
+    obelisk_sim.class.method @I_g of @I slot 4294967295 signature_id 18
+        interface_ordinal 0 :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@I>) -> i64 {
+        is_final = false, is_pure = true, is_static = false,
+        is_task = false, is_virtual = true
+      }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @class_method_with_interface_ordinal {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = true, is_final = false, is_interface = false
+    }
+    // expected-error @below {{only interface virtual methods may have an interface ordinal}}
+    obelisk_sim.class.method @C_f of @C slot 0 signature_id 17
+        interface_ordinal 0 :
+      (!obelisk_sim.context, !obelisk_sim.class_handle<@C>) -> i64 {
         is_final = false, is_pure = true, is_static = false,
         is_task = false, is_virtual = true
       }

@@ -84,7 +84,7 @@ module {
         is_task = false, is_virtual = true
       }
     obelisk_sim.class.method @Worker_run of @Worker slot 4294967295
-        signature_id 71 :
+        signature_id 71 interface_ordinal 0 :
       (!obelisk_sim.context, !obelisk_sim.class_handle<@Worker>) -> i64 {
         is_final = false, is_pure = true, is_static = false,
         is_task = false, is_virtual = true

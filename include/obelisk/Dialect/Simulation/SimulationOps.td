@@ -344,6 +344,7 @@ def SimClassMethodDeclOp : SimOp<"class.method", [
     TypeAttr:$function_type,
     OptionalAttr<I64Attr>:$slot,
     OptionalAttr<I64Attr>:$signature_id,
+    OptionalAttr<I64Attr>:$interface_ordinal,
     OptionalAttr<FlatSymbolRefAttr>:$implementation,
     BoolAttr:$is_virtual,
     BoolAttr:$is_pure,
@@ -355,6 +356,7 @@ def SimClassMethodDeclOp : SimOp<"class.method", [
   let assemblyFormat = [{
     $sym_name `of` $owner (`slot` $slot^)?
     (`signature_id` $signature_id^)?
+    (`interface_ordinal` $interface_ordinal^)?
     (`implemented_by` $implementation^)? `:` $function_type attr-dict
   }];
   let hasVerifier = 1;

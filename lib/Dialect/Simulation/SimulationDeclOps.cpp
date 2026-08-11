@@ -316,6 +316,16 @@ LogicalResult SimClassMethodDeclOp::verify() {
           "non-interface virtual methods cannot use the interface dispatch "
           "slot");
   }
+  if (owner.getIsInterface() && getIsVirtual()) {
+    if (!getInterfaceOrdinalAttr() ||
+        getInterfaceOrdinalAttr().getValue().isNegative() ||
+        getInterfaceOrdinal() > UINT32_MAX)
+      return emitOpError(
+          "interface virtual methods require a 32-bit interface ordinal");
+  } else if (getInterfaceOrdinalAttr()) {
+    return emitOpError(
+        "only interface virtual methods may have an interface ordinal");
+  }
   if (getIsVirtual() != static_cast<bool>(getSignatureIdAttr()) ||
       (getSignatureIdAttr() && getSignatureId() == 0))
     return emitOpError(
@@ -702,7 +712,8 @@ LogicalResult SimDesignOp::verifyRegions() {
   llvm::StringMap<SimFuncOp> functionsByName;
   for (SimFuncOp function : functions)
     functionsByName[function.getSymName()] = function;
-  llvm::StringMap<llvm::DenseSet<uint64_t>> fieldOrdinals, methodSlots;
+  llvm::StringMap<llvm::DenseSet<uint64_t>> fieldOrdinals, methodSlots,
+      interfaceMethodOrdinals;
   for (Operation &op : getBody().front()) {
     if (auto classDecl = dyn_cast<SimClassDeclOp>(op)) {
       if (auto base = classDecl.getBase()) {
@@ -740,6 +751,12 @@ LogicalResult SimDesignOp::verifyRegions() {
           !methodSlots[method.getOwner()].insert(*method.getSlot()).second)
         return method.emitOpError(
             "owner class contains a duplicate virtual-method slot");
+      if (method.getInterfaceOrdinalAttr() &&
+          !interfaceMethodOrdinals[method.getOwner()]
+               .insert(*method.getInterfaceOrdinal())
+               .second)
+        return method.emitOpError(
+            "owner interface contains a duplicate method ordinal");
       if (auto implementation = method.getImplementation()) {
         auto found = functionsByName.find(*implementation);
         if (found == functionsByName.end() ||
@@ -754,6 +771,11 @@ LogicalResult SimDesignOp::verifyRegions() {
       }
     }
   }
+  for (auto &entry : interfaceMethodOrdinals)
+    for (uint64_t ordinal = 0; ordinal != entry.second.size(); ++ordinal)
+      if (!entry.second.count(ordinal))
+        return emitOpError() << "interface " << entry.first()
+                             << " contains a non-dense method ordinal set";
   for (Operation &op : getBody().front()) {
     if (auto scope = dyn_cast<SimScopeDeclOp>(op)) {
       if (scope.getParentAttr() && !scopeIds.count(*scope.getParent()))

@@ -16,7 +16,7 @@ module attributes {
       is_abstract = false, is_final = false, is_interface = false
     }
     obelisk_sim.class.method @Runner_run of @Runner slot 4294967295
-      signature_id 17 :
+      signature_id 17 interface_ordinal 0 :
       (!obelisk_sim.context, !obelisk_sim.class_handle<@Runner>, f32,
        !obelisk_sim.logic<8>, !obelisk_sim.class_handle<@Base>,
        !obelisk_sim.ref<i32>) -> () {
