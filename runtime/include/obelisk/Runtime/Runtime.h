@@ -622,7 +622,11 @@ enum {
   OBELISK_RT_DB_VIRTUAL_TASK_CALL = 54,
   // Declarative precise-root record for a canonical process frame. Execution
   // is a no-op; the collector scans these records while activations suspend.
-  OBELISK_RT_DB_FRAME_ROOT = 55
+  OBELISK_RT_DB_FRAME_ROOT = 55,
+  // Interface dispatch uses destination as an operand-table index whose pair
+  // stores the interface ID and stable method ordinal.
+  OBELISK_RT_DB_INTERFACE_CALL = 56,
+  OBELISK_RT_DB_INTERFACE_TASK_CALL = 57
 };
 
 // StoreState writes its exact post-resolution transition predicate to the

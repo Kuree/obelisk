@@ -139,6 +139,30 @@ LogicalResult Encoder::encodeClassVirtualCall(FunctionPlan &plan,
                                               sim::SimClassVirtualCallOp call) {
   if (call.getSlot() > UINT32_MAX || call.getNumResults() > UINT16_MAX)
     return call.emitOpError("virtual call exceeds the bytecode ABI");
+  Opcode opcode = VirtualCall;
+  uint32_t dispatch = static_cast<uint32_t>(call.getSlot());
+  auto method =
+      SymbolTable::lookupNearestSymbolFrom<sim::SimClassMethodDeclOp>(
+          call, call.getMethodAttr());
+  auto owner =
+      method ? SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+                   method, method.getOwnerAttr())
+             : sim::SimClassDeclOp{};
+  if (!method || !owner)
+    return call.emitOpError("virtual method descriptor is missing");
+  if (owner.getIsInterface()) {
+    if (!method.getInterfaceOrdinalAttr())
+      return call.emitOpError("interface method has no dispatch ordinal");
+    if (owner.getId() > UINT32_MAX ||
+        *method.getInterfaceOrdinal() > UINT32_MAX ||
+        operandMaps.size() >= UINT32_MAX)
+      return call.emitOpError("interface dispatch exceeds the bytecode ABI");
+    opcode = InterfaceCall;
+    dispatch = static_cast<uint32_t>(operandMaps.size());
+    operandMaps.push_back(
+        {static_cast<uint32_t>(owner.getId()),
+         static_cast<uint32_t>(*method.getInterfaceOrdinal())});
+  }
   SmallVector<Value> arguments{plan.function.getBody().front().getArgument(0),
                                call.getReceiver()};
   llvm::append_range(arguments, call.getArguments());
@@ -151,9 +175,9 @@ LogicalResult Encoder::encodeClassVirtualCall(FunctionPlan &plan,
   for (auto [index, result] : llvm::enumerate(call.getResults()))
     operandMaps.push_back(
         {reg(plan, result), static_cast<uint32_t>(arguments.size() + index)});
-  emit({VirtualCall, static_cast<uint16_t>(call.getNumResults()),
-        static_cast<uint32_t>(call.getSlot()), reg(plan, call.getReceiver()),
-        firstInputs, static_cast<uint32_t>(arguments.size()), firstOutputs,
+  emit({opcode, static_cast<uint16_t>(call.getNumResults()), dispatch,
+        reg(plan, call.getReceiver()), firstInputs,
+        static_cast<uint32_t>(arguments.size()), firstOutputs,
         call.getSignatureId()});
   return success();
 }
@@ -186,6 +210,30 @@ Encoder::encodeClassVirtualTaskCall(FunctionPlan &plan,
   if (call.getSlot() > UINT32_MAX || call.getArguments().size() > UINT32_MAX ||
       operandMaps.size() > UINT32_MAX)
     return call.emitOpError("virtual task call exceeds the bytecode ABI");
+  Opcode opcode = VirtualTaskCall;
+  uint32_t dispatch = static_cast<uint32_t>(call.getSlot());
+  auto method =
+      SymbolTable::lookupNearestSymbolFrom<sim::SimClassMethodDeclOp>(
+          call, call.getMethodAttr());
+  auto owner =
+      method ? SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+                   method, method.getOwnerAttr())
+             : sim::SimClassDeclOp{};
+  if (!method || !owner)
+    return call.emitOpError("virtual task descriptor is missing");
+  if (owner.getIsInterface()) {
+    if (!method.getInterfaceOrdinalAttr())
+      return call.emitOpError("interface task has no dispatch ordinal");
+    if (owner.getId() > UINT32_MAX ||
+        *method.getInterfaceOrdinal() > UINT32_MAX ||
+        operandMaps.size() >= UINT32_MAX)
+      return call.emitOpError("interface dispatch exceeds the bytecode ABI");
+    opcode = InterfaceTaskCall;
+    dispatch = static_cast<uint32_t>(operandMaps.size());
+    operandMaps.push_back(
+        {static_cast<uint32_t>(owner.getId()),
+         static_cast<uint32_t>(*method.getInterfaceOrdinal())});
+  }
   SmallVector<Value> arguments{plan.function.getBody().front().getArgument(0),
                                call.getReceiver()};
   llvm::append_range(arguments, call.getArguments());
@@ -195,8 +243,7 @@ Encoder::encodeClassVirtualTaskCall(FunctionPlan &plan,
   uint32_t firstInputs = operandMaps.size();
   for (auto [index, argument] : llvm::enumerate(arguments))
     operandMaps.push_back({static_cast<uint32_t>(index), reg(plan, argument)});
-  emit({VirtualTaskCall, 0, static_cast<uint32_t>(call.getSlot()),
-        reg(plan, call.getReceiver()), firstInputs,
+  emit({opcode, 0, dispatch, reg(plan, call.getReceiver()), firstInputs,
         static_cast<uint32_t>(arguments.size()), suspension->continuationID,
         call.getSignatureId()});
   return success();

@@ -15,6 +15,7 @@ module attributes {
     obelisk_sim.scope.decl 0 hierarchy "top"
     obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.caller"
     obelisk_sim.code_unit.decl 2 in 0 task hierarchy "Base.run"
+    obelisk_sim.code_unit.decl 3 in 0 initial hierarchy "top.class_caller"
 
     obelisk_sim.class.decl @Runner id 1 {
       is_abstract = true, is_final = false, is_interface = true
@@ -66,18 +67,37 @@ module attributes {
     ^done(%continued: !bundle):
       obelisk_sim.return
     }
+
+    obelisk_sim.func @class_caller(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {code_unit_id = 3 : i64, entry_kind = 1 : i32} {
+      %receiver = obelisk_sim.class.alloc %ctx :
+        !obelisk_sim.context -> !obelisk_sim.class_handle<@Base>
+      %value = arith.constant 9 : i32
+      %empty = obelisk_sim.aggregate.default : !bundle
+      %bundle = obelisk_sim.aggregate.insert %receiver into %empty[0] :
+        (!bundle, !obelisk_sim.class_handle<@Base>) -> !bundle
+      obelisk_sim.class.virtual_task_call
+        %receiver[@Base_run] slot 0 signature_id 17
+        (%value, %bundle) arguments 2 to ^done :
+        (!obelisk_sim.class_handle<@Base>, i32, !bundle) -> ()
+    ^done:
+      obelisk_sim.return
+    }
   }
 }
 
-// Opcode 54 carries the interface sentinel slot, receiver register 2,
-// argument-map offset 8/count 4, continuation 1, and signature ID 17.
+// Opcode 57 carries interface-dispatch record 8, receiver register 2,
+// argument-map offset 9/count 4, continuation 1, and signature ID 17. The
+// dispatch record stores interface ID 1 and ordinal 0.
 // The managed continuation is stored before dispatch, restored on resume, and
 // then removed from the canonical frame's precise root inventory.
 // CHECK: obelisk.bytecode.image = array<i8:
 // CHECK-SAME: 24, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-// CHECK-SAME: 54, 0, 0, 0, -1, -1, -1, -1, 2, 0, 0, 0, 8, 0, 0, 0, 4, 0, 0, 0, 1, 0, 0, 0, 17, 0, 0, 0, 0, 0, 0, 0
+// CHECK-SAME: 57, 0, 0, 0, 8, 0, 0, 0, 2, 0, 0, 0, 9, 0, 0, 0, 4, 0, 0, 0, 1, 0, 0, 0, 17, 0, 0, 0, 0, 0, 0, 0
 // CHECK-SAME: 23, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 // CHECK-SAME: 42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 // CHECK-SAME: 55, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0
+// CHECK-SAME: 54, 0, 0, 0, 0, 0, 0, 0
 // CHECK: obelisk.bytecode.function = 1 : i32
 // CHECK: obelisk.bytecode.function = 0 : i32

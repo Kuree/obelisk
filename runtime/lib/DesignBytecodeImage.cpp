@@ -1198,6 +1198,7 @@ bool validateInitialization(const Image &image, const Function &function,
         return false;
       break;
     case OBELISK_RT_DB_VIRTUAL_CALL:
+    case OBELISK_RT_DB_INTERFACE_CALL:
       if (!defineMap(state, instruction.auxiliary, instruction.flags))
         return false;
       break;
@@ -1221,6 +1222,7 @@ bool validateInitialization(const Image &image, const Function &function,
     case OBELISK_RT_DB_TERMINATE:
     case OBELISK_RT_DB_TASK_CALL:
     case OBELISK_RT_DB_VIRTUAL_TASK_CALL:
+    case OBELISK_RT_DB_INTERFACE_TASK_CALL:
       fallthrough = false;
       break;
     default:
@@ -1329,6 +1331,8 @@ bool validateInitialization(const Image &image, const Function &function,
       break;
     case OBELISK_RT_DB_VIRTUAL_CALL:
     case OBELISK_RT_DB_VIRTUAL_TASK_CALL:
+    case OBELISK_RT_DB_INTERFACE_CALL:
+    case OBELISK_RT_DB_INTERFACE_TASK_CALL:
       valid = requireInitialized(state, instruction.source0) &&
               mapSourcesInitialized(state, instruction.source1,
                                     instruction.source2);
@@ -2238,21 +2242,29 @@ bool validateImage(const Image &image) {
                           functionIndex, pc, instruction.opcode);
         break;
       }
-      case OBELISK_RT_DB_VIRTUAL_CALL: {
+      case OBELISK_RT_DB_VIRTUAL_CALL:
+      case OBELISK_RT_DB_INTERFACE_CALL: {
+        bool interfaceDispatch =
+            instruction.opcode == OBELISK_RT_DB_INTERFACE_CALL;
         if (instruction.flags > function.layoutCount ||
-            instruction.immediate == 0 || !reg(instruction.source0) ||
+            instruction.immediate == 0 || instruction.source2 < 2 ||
+            !reg(instruction.source0) ||
             layoutAt(image, function, instruction.source0).kind !=
                 OBELISK_RT_DBREG_MANAGED ||
             instruction.source1 > image.operandCount ||
             instruction.source2 > image.operandCount - instruction.source1 ||
             instruction.auxiliary > image.operandCount ||
-            instruction.flags > image.operandCount - instruction.auxiliary)
+            instruction.flags > image.operandCount - instruction.auxiliary ||
+            (interfaceDispatch &&
+             (instruction.destination >= image.operandCount ||
+              operandAt(image, instruction.destination).first == 0)))
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         for (uint32_t index = 0; index != instruction.source2; ++index) {
           auto [destination, source] =
               operandAt(image, instruction.source1 + index);
-          if (destination != index || !reg(source))
+          if (destination != index || !reg(source) ||
+              (index == 1 && source != instruction.source0))
             return reject(__LINE__, "invalid instruction encoding or operands",
                           functionIndex, pc, instruction.opcode);
         }
@@ -2265,7 +2277,10 @@ bool validateImage(const Image &image) {
         }
         break;
       }
-      case OBELISK_RT_DB_VIRTUAL_TASK_CALL: {
+      case OBELISK_RT_DB_VIRTUAL_TASK_CALL:
+      case OBELISK_RT_DB_INTERFACE_TASK_CALL: {
+        bool interfaceDispatch =
+            instruction.opcode == OBELISK_RT_DB_INTERFACE_TASK_CALL;
         if (instruction.flags || instruction.immediate == 0 ||
             instruction.source2 < 2 ||
             (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
@@ -2274,7 +2289,10 @@ bool validateImage(const Image &image) {
             layoutAt(image, function, instruction.source0).kind !=
                 OBELISK_RT_DBREG_MANAGED ||
             instruction.source1 > image.operandCount ||
-            instruction.source2 > image.operandCount - instruction.source1)
+            instruction.source2 > image.operandCount - instruction.source1 ||
+            (interfaceDispatch &&
+             (instruction.destination >= image.operandCount ||
+              operandAt(image, instruction.destination).first == 0)))
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         for (uint32_t index = 0; index != instruction.source2; ++index) {

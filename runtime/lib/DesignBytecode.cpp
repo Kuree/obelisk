@@ -2181,14 +2181,23 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         return status;
       break;
     }
-    case OBELISK_RT_DB_VIRTUAL_CALL: {
+    case OBELISK_RT_DB_VIRTUAL_CALL:
+    case OBELISK_RT_DB_INTERFACE_CALL: {
       Layout receiverLayout = layout(instruction.source0);
       obelisk_rt_object_v1 *receiver = nullptr;
       std::memcpy(&receiver, frame.data + receiverLayout.offset,
                   sizeof(receiver));
       const obelisk_rt_method_descriptor_v1 *method = nullptr;
-      obelisk_rt_status status = obelisk_rt_v1_method_resolve(
-          receiver, instruction.destination, instruction.immediate, &method);
+      obelisk_rt_status status;
+      if (instruction.opcode == OBELISK_RT_DB_INTERFACE_CALL) {
+        auto [interfaceID, ordinal] =
+            operandAt(image, instruction.destination);
+        status = obelisk_rt_v1_interface_method_resolve(
+            receiver, interfaceID, ordinal, instruction.immediate, &method);
+      } else {
+        status = obelisk_rt_v1_method_resolve(
+            receiver, instruction.destination, instruction.immediate, &method);
+      }
       if (status != OBELISK_RT_OK)
         return status;
       if (!method ||
@@ -2280,14 +2289,23 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                  0};
       return OBELISK_RT_OK;
     }
-    case OBELISK_RT_DB_VIRTUAL_TASK_CALL: {
+    case OBELISK_RT_DB_VIRTUAL_TASK_CALL:
+    case OBELISK_RT_DB_INTERFACE_TASK_CALL: {
       Layout receiverLayout = layout(instruction.source0);
       obelisk_rt_object_v1 *receiver = nullptr;
       std::memcpy(&receiver, frame.data + receiverLayout.offset,
                   sizeof(receiver));
       const obelisk_rt_method_descriptor_v1 *method = nullptr;
-      obelisk_rt_status status = obelisk_rt_v1_method_resolve(
-          receiver, instruction.destination, instruction.immediate, &method);
+      obelisk_rt_status status;
+      if (instruction.opcode == OBELISK_RT_DB_INTERFACE_TASK_CALL) {
+        auto [interfaceID, ordinal] =
+            operandAt(image, instruction.destination);
+        status = obelisk_rt_v1_interface_method_resolve(
+            receiver, interfaceID, ordinal, instruction.immediate, &method);
+      } else {
+        status = obelisk_rt_v1_method_resolve(
+            receiver, instruction.destination, instruction.immediate, &method);
+      }
       if (status != OBELISK_RT_OK)
         return status;
       if (!method || (method->flags & OBELISK_RT_METHOD_TASK) == 0)
