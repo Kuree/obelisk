@@ -865,15 +865,60 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
     value = arith::MulIOp::create(builder, location, *lhs, *rhs);
     break;
   case Binary::Divide:
-    value = signedOp
-                ? Value(arith::DivSIOp::create(builder, location, *lhs, *rhs))
-                : Value(arith::DivUIOp::create(builder, location, *lhs, *rhs));
+  case Binary::Mod: {
+    // Two-state operands have no unknown result to fall back on, so the host
+    // instruction must never be handed a case that traps on it: a zero divisor
+    // divides to zero, and the signed most-negative dividend over -1 wraps to
+    // itself instead of overflowing (IEEE 1800-2017 11.4.4).
+    auto type = cast<IntegerType>((*lhs).getType());
+    auto constant = [&](const APInt &bits) {
+      return arith::ConstantOp::create(builder, location, type,
+                                       builder.getIntegerAttr(type, bits));
+    };
+    Value zero = constant(APInt::getZero(type.getWidth()));
+    Value undefined = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, *rhs, zero);
+    Value overflow;
+    if (signedOp) {
+      overflow = arith::AndIOp::create(
+          builder, location,
+          arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::eq, *lhs,
+              constant(APInt::getSignedMinValue(type.getWidth()))),
+          arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::eq, *rhs,
+              constant(APInt::getAllOnes(type.getWidth()))));
+      undefined = arith::OrIOp::create(builder, location, undefined, overflow);
+    }
+    Value divisor = arith::SelectOp::create(
+        builder, location, undefined, constant(APInt(type.getWidth(), 1)),
+        *rhs);
+    if (kind == Binary::Divide) {
+      value = signedOp
+                  ? Value(arith::DivSIOp::create(builder, location, *lhs,
+                                                 divisor))
+                  : Value(arith::DivUIOp::create(builder, location, *lhs,
+                                                 divisor));
+      // The wrapped quotient of the signed overflow is the dividend itself.
+      if (overflow)
+        value = arith::SelectOp::create(builder, location, overflow, *lhs,
+                                        value);
+      value = arith::SelectOp::create(
+          builder, location,
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                *rhs, zero),
+          zero, value);
+    } else {
+      value = signedOp
+                  ? Value(arith::RemSIOp::create(builder, location, *lhs,
+                                                 divisor))
+                  : Value(arith::RemUIOp::create(builder, location, *lhs,
+                                                 divisor));
+      value =
+          arith::SelectOp::create(builder, location, undefined, zero, value);
+    }
     break;
-  case Binary::Mod:
-    value = signedOp
-                ? Value(arith::RemSIOp::create(builder, location, *lhs, *rhs))
-                : Value(arith::RemUIOp::create(builder, location, *lhs, *rhs));
-    break;
+  }
   case Binary::BinaryAnd:
     value = arith::AndIOp::create(builder, location, *lhs, *rhs);
     break;
