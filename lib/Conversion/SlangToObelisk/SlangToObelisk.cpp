@@ -80,6 +80,14 @@ static_assert(haveSameEncoding(slangir::SubroutineKind::Function,
                                ir::SVSubroutineKind::Function) &&
               haveSameEncoding(slangir::SubroutineKind::Task,
                                ir::SVSubroutineKind::Task));
+static_assert(haveSameEncoding(slangir::DynamicCastKind::AlwaysSuccess,
+                               ir::SVDynamicCastKind::AlwaysSuccess) &&
+              haveSameEncoding(slangir::DynamicCastKind::AlwaysFail,
+                               ir::SVDynamicCastKind::AlwaysFail) &&
+              haveSameEncoding(slangir::DynamicCastKind::EnumMembership,
+                               ir::SVDynamicCastKind::EnumMembership) &&
+              haveSameEncoding(slangir::DynamicCastKind::ClassRuntime,
+                               ir::SVDynamicCastKind::ClassRuntime));
 static_assert(haveSameEncoding(slangir::UnaryOperator::Plus,
                                ir::SVUnaryOperator::Plus) &&
               haveSameEncoding(slangir::UnaryOperator::Postdecrement,

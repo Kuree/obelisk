@@ -476,6 +476,22 @@ def ObeliskSVAssignmentKind : I32EnumAttr<"SVAssignmentKind",
   let cppNamespace = "::obelisk::ir";
 }
 
+def ObeliskSVDynamicCast_AlwaysSuccess
+    : I32EnumAttrCase<"AlwaysSuccess", 0, "always_success">;
+def ObeliskSVDynamicCast_AlwaysFail
+    : I32EnumAttrCase<"AlwaysFail", 1, "always_fail">;
+def ObeliskSVDynamicCast_EnumMembership
+    : I32EnumAttrCase<"EnumMembership", 2, "enum_membership">;
+def ObeliskSVDynamicCast_ClassRuntime
+    : I32EnumAttrCase<"ClassRuntime", 3, "class_runtime">;
+def ObeliskSVDynamicCastKind : I32EnumAttr<"SVDynamicCastKind",
+    "Elaborated SystemVerilog dynamic-cast behavior", [
+  ObeliskSVDynamicCast_AlwaysSuccess, ObeliskSVDynamicCast_AlwaysFail,
+  ObeliskSVDynamicCast_EnumMembership, ObeliskSVDynamicCast_ClassRuntime
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
 def ObeliskSVRange_Simple
     : I32EnumAttrCase<"Simple", 0, "simple">;
 def ObeliskSVRange_IndexedUp

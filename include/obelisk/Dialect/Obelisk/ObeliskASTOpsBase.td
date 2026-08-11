@@ -502,7 +502,9 @@ class ObeliskCallExpressionASTNodeOp<string mnemonic>
         BoolAttr:$has_iterator_expression,
         BoolAttr:$has_inline_constraints,
         ArrayAttr:$constraint_restrictions,
-        OptionalAttr<DenseI64ArrayAttr>:$defaulted_arguments
+        OptionalAttr<DenseI64ArrayAttr>:$defaulted_arguments,
+        OptionalAttr<ObeliskSVDynamicCastKind>:$dynamic_cast_kind,
+        OptionalAttr<StrArrayAttr>:$dynamic_cast_enum_values
       )>;
 
 class ObeliskNewClassExpressionASTNodeOp<string mnemonic>

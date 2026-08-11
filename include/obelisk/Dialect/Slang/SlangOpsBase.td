@@ -510,7 +510,9 @@ class SlangCallExpressionASTNodeOp<string mnemonic>
         BoolAttr:$has_iterator_expression,
         BoolAttr:$has_inline_constraints,
         ArrayAttr:$constraint_restrictions,
-        OptionalAttr<DenseI64ArrayAttr>:$defaulted_arguments
+        OptionalAttr<DenseI64ArrayAttr>:$defaulted_arguments,
+        OptionalAttr<SlangDynamicCastKind>:$dynamic_cast_kind,
+        OptionalAttr<StrArrayAttr>:$dynamic_cast_enum_values
       )>;
 
 class SlangNewClassExpressionASTNodeOp<string mnemonic>

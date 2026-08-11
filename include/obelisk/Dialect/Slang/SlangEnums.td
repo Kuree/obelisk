@@ -99,6 +99,22 @@ def SlangSubroutineKind : I32EnumAttr<"SubroutineKind",
   let cppNamespace = "::obelisk::slangir";
 }
 
+def SlangDynamicCast_AlwaysSuccess
+    : I32EnumAttrCase<"AlwaysSuccess", 0, "always_success">;
+def SlangDynamicCast_AlwaysFail
+    : I32EnumAttrCase<"AlwaysFail", 1, "always_fail">;
+def SlangDynamicCast_EnumMembership
+    : I32EnumAttrCase<"EnumMembership", 2, "enum_membership">;
+def SlangDynamicCast_ClassRuntime
+    : I32EnumAttrCase<"ClassRuntime", 3, "class_runtime">;
+def SlangDynamicCastKind : I32EnumAttr<"DynamicCastKind",
+    "Elaborated SystemVerilog dynamic-cast behavior", [
+  SlangDynamicCast_AlwaysSuccess, SlangDynamicCast_AlwaysFail,
+  SlangDynamicCast_EnumMembership, SlangDynamicCast_ClassRuntime
+]> {
+  let cppNamespace = "::obelisk::slangir";
+}
+
 def SlangUnary_Plus          : I32EnumAttrCase<"Plus",          0, "plus">;
 def SlangUnary_Minus         : I32EnumAttrCase<"Minus",         1, "minus">;
 def SlangUnary_BitwiseNot    : I32EnumAttrCase<"BitwiseNot",    2, "bitwise_not">;

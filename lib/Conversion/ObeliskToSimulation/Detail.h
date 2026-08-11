@@ -124,6 +124,10 @@ inline constexpr ::mlir::StringLiteral staticClassPropertyAttrName =
     "obelisk_sim.static_class_property";
 inline constexpr ::mlir::StringLiteral staticClassReceiverAttrName =
     "obelisk_sim.static_class_receiver";
+inline constexpr ::mlir::StringLiteral dynamicCastEnumValuesAttrName =
+    "obelisk_sim.dynamic_cast_enum_values";
+inline constexpr ::mlir::StringLiteral dynamicCastTaskAttrName =
+    "obelisk_sim.dynamic_cast_task";
 inline constexpr ::mlir::StringLiteral placeholderAttrName =
     "obelisk_sim.placeholder";
 inline constexpr ::mlir::StringLiteral staticNetConstantAttrName =

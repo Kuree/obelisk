@@ -1348,6 +1348,42 @@ private:
       }
       SET_OP_ATTR(DefaultedArguments,
                   builder.getDenseI64ArrayAttr(defaultedArguments));
+      if (node.isSystemCall() && node.getSubroutineName() == "$cast" &&
+          node.arguments().size() == 2) {
+        const slang::ast::Type &destinationType =
+            node.arguments().front()->type->getCanonicalType();
+        const slang::ast::Type &sourceType =
+            node.arguments()[1]->type->getCanonicalType();
+        slangir::DynamicCastKind kind;
+        if (!destinationType.isClass()) {
+          if (destinationType.isEnum() && sourceType.isIntegral())
+            kind = slangir::DynamicCastKind::EnumMembership;
+          else if ((destinationType.isSingular() && sourceType.isSingular()
+                        ? destinationType.isCastCompatible(sourceType)
+                        : destinationType.isAssignmentCompatible(sourceType)))
+            kind = slangir::DynamicCastKind::AlwaysSuccess;
+          else
+            kind = slangir::DynamicCastKind::AlwaysFail;
+        } else if (destinationType.isAssignmentCompatible(sourceType)) {
+          kind = slangir::DynamicCastKind::AlwaysSuccess;
+        } else if (!sourceType.isClass() ||
+                   !sourceType.isAssignmentCompatible(destinationType)) {
+          kind = slangir::DynamicCastKind::AlwaysFail;
+        } else {
+          kind = slangir::DynamicCastKind::ClassRuntime;
+        }
+        SET_OP_ATTR(DynamicCastKind, slangir::DynamicCastKindAttr::get(
+                                         builder.getContext(), kind));
+        if (kind == slangir::DynamicCastKind::EnumMembership) {
+          SmallVector<Attribute> values;
+          for (const slang::ast::EnumValueSymbol &value :
+               destinationType.as<slang::ast::EnumType>()
+                   .membersOfType<slang::ast::EnumValueSymbol>())
+            values.push_back(
+                builder.getStringAttr(formatConstant(value.getValue())));
+          SET_OP_ATTR(DynamicCastEnumValues, builder.getArrayAttr(values));
+        }
+      }
       if (const auto *subroutine =
               std::get_if<const slang::ast::SubroutineSymbol *>(
                   &node.subroutine);

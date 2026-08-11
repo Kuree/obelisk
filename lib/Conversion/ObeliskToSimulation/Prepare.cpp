@@ -224,6 +224,85 @@ void ObeliskSimPreparePass::runOnOperation() {
       sourceUnits.push_back(op);
   });
 
+  // Enum identity is intentionally erased when semantic values are normalized
+  // to executable packed types. Freeze the frontend's exact enumerator
+  // inventory on each dynamic cast before code units are cloned so lowering
+  // can preserve the LRM membership check without consulting semantic symbols.
+  semanticRoot->walk([&](semantic::SVCallExpressionOp call) {
+    if (call.getCalleeName() != "$cast")
+      return;
+    SmallVector<Operation *> arguments = getChildren(call);
+    if (arguments.size() != 2)
+      return;
+    std::optional<semantic::SVDynamicCastKind> kind =
+        call.getDynamicCastKind();
+    if (!kind) {
+      emitError(getSemanticLocation(call))
+          << "$cast has no valid elaborated cast classification";
+      invalid = true;
+      return;
+    }
+    if (isa<semantic::SVExpressionStatementOp>(call->getParentOp()))
+      call->setAttr(dynamicCastTaskAttrName, UnitAttr::get(context));
+    if (*kind != semantic::SVDynamicCastKind::EnumMembership)
+      return;
+    Operation *destination = arguments.front();
+    if (auto assignment =
+            dyn_cast<semantic::SVAssignmentExpressionOp>(destination)) {
+      SmallVector<Operation *> children = getChildren(assignment);
+      if (children.size() == 2 &&
+          isa<semantic::SVEmptyArgumentExpressionOp>(children[1]))
+        destination = children.front();
+    }
+    auto semanticType = destination->getAttrOfType<TypeAttr>("semantic_type");
+    if (!semanticType || !isa<semantic::EnumType>(semanticType.getValue())) {
+      emitError(getSemanticLocation(call))
+          << "enum $cast destination has no elaborated enum type";
+      invalid = true;
+      return;
+    }
+    ArrayAttr spellings = call.getDynamicCastEnumValuesAttr();
+    FailureOr<Type> normalized = getNormalizedSemanticType(destination);
+    if (failed(normalized)) {
+      invalid = true;
+      return;
+    }
+    Type scalar = sim::getPackedScalarType(*normalized);
+    std::optional<unsigned> width =
+        scalar ? sim::getPackedWidth(scalar) : std::nullopt;
+    if (!spellings || spellings.empty() || !width) {
+      emitError(getSemanticLocation(call))
+          << "enum $cast has no frozen enumerator inventory";
+      invalid = true;
+      return;
+    }
+    SmallVector<Attribute> values;
+    values.reserve(spellings.size());
+    unsigned enumWidth = width.value();
+    Type planeType = IntegerType::get(context, enumWidth);
+    for (Attribute attribute : spellings) {
+      auto spelling = dyn_cast<StringAttr>(attribute);
+      FailureOr<ParsedConstant> parsed =
+          spelling ? parseSVInteger(spelling.getValue(), enumWidth,
+                                    getSemanticLocation(call))
+                   : FailureOr<ParsedConstant>(failure());
+      if (failed(parsed)) {
+        emitError(getSemanticLocation(call))
+            << "enum $cast has a malformed enumerator value";
+        invalid = true;
+        return;
+      }
+      ArrayAttr planes = ArrayAttr::get(
+          context, {IntegerAttr::get(planeType, parsed->value),
+                    IntegerAttr::get(planeType, parsed->unknown)});
+      values.push_back(sim::FrozenConstantAttr::get(
+          context, *normalized, planes,
+          isSignedSemanticType(semanticType.getValue())));
+    }
+    call->setAttr(dynamicCastEnumValuesAttrName,
+                  ArrayAttr::get(context, values));
+  });
+
   // Assign compact, collision-free IDs from sorted elaborated paths. These
   // IDs cross both native and bytecode ABIs, so unchecked truncated hashes
   // are not acceptable.

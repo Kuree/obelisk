@@ -752,57 +752,177 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     FailureOr<Value> destinationRef = lowerExpression(destination, true);
     if (failed(destinationRef))
       return failure();
-    Type destinationType;
-    if (auto ref = dyn_cast<sim::RefType>((*destinationRef).getType())) {
-      destinationType = ref.getElementType();
-    } else if (auto ref =
-                   dyn_cast<sim::ManagedRefType>((*destinationRef).getType())) {
-      destinationType = ref.getElementType();
-    } else {
-      emitError(location)
-          << "$cast destination must be a variable or class property";
+    Type destinationType = getReferenceElementType(*destinationRef);
+    if (!destinationType) {
+      emitError(location) << "$cast destination must be a writable reference";
       return failure();
     }
+    std::optional<semantic::SVDynamicCastKind> kindAttr =
+        op.getDynamicCastKind();
+    if (!kindAttr) {
+      emitError(location) << "$cast has no valid elaborated classification";
+      return failure();
+    }
+    semantic::SVDynamicCastKind kind = *kindAttr;
     auto targetClass = dyn_cast<sim::ClassHandleType>(destinationType);
-    if (!targetClass) {
-      emitError(location) << "$cast currently requires class-handle operands";
-      return failure();
-    }
-    FailureOr<Value> source =
-        isa<semantic::SVNullLiteralOp>(children[1])
-            ? FailureOr<Value>(sim::SimClassNullOp::create(
-                                   builder, getSemanticLocation(children[1]),
-                                   destinationType)
-                                   .getResult())
-            : lowerExpression(children[1]);
-    if (failed(source) || !isa<sim::ClassHandleType>((*source).getType())) {
-      emitError(location) << "$cast currently requires class-handle operands";
-      return failure();
+    Value source;
+    if (isa<semantic::SVNullLiteralOp>(children[1])) {
+      if (targetClass)
+        source = sim::SimClassNullOp::create(
+            builder, getSemanticLocation(children[1]), destinationType);
+      else if (kind != semantic::SVDynamicCastKind::AlwaysFail) {
+        emitError(location) << "$cast null source requires a class target";
+        return failure();
+      }
+    } else {
+      FailureOr<Value> lowered = lowerExpression(children[1]);
+      if (failed(lowered))
+        return failure();
+      source = *lowered;
     }
 
-    Value casted = sim::SimClassCastOp::create(builder, location,
-                                               destinationType, *source);
-    Value instance = sim::SimClassIsInstanceOp::create(
-        builder, location, builder.getI1Type(), *source,
-        FlatSymbolRefAttr::get(function.getContext(),
-                               targetClass.getClassName().getRootReference()));
-    Value sourceID = sim::SimClassIdOp::create(builder, location,
-                                               builder.getI64Type(), *source);
-    Value nullID = constant(builder.getI64Type(), 0);
-    Value isNull = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, sourceID, nullID);
-    Value succeeded = arith::OrIOp::create(builder, location, instance, isNull);
-    Block *store = addBlock();
-    Block *resume = addBlock();
-    cf::CondBranchOp::create(builder, location, succeeded, store, resume);
-    setCurrent(store);
-    if (isa<sim::RefType>((*destinationRef).getType()))
-      sim::SimRefStoreOp::create(builder, location, casted, *destinationRef);
-    else
-      sim::SimManagedStoreOp::create(builder, location, casted,
-                                     *destinationRef);
-    emitBranch(resume);
-    setCurrent(resume);
+    Value casted;
+    Value succeeded;
+    bool conditionalStore = false;
+    switch (kind) {
+    case semantic::SVDynamicCastKind::AlwaysSuccess: {
+      FailureOr<Value> converted =
+          source ? convert(source, destinationType, isSignedNode(children[1]),
+                           location, isSignedNode(destination))
+                 : FailureOr<Value>(failure());
+      if (failed(converted))
+        return failure();
+      casted = *converted;
+      succeeded = constant(builder.getI1Type(), 1);
+      break;
+    }
+    case semantic::SVDynamicCastKind::AlwaysFail:
+      succeeded = constant(builder.getI1Type(), 0);
+      break;
+    case semantic::SVDynamicCastKind::ClassRuntime: {
+      if (!targetClass || !source ||
+          !isa<sim::ClassHandleType>(source.getType())) {
+        emitError(location) << "runtime class $cast has incompatible operands";
+        return failure();
+      }
+      casted = sim::SimClassCastOp::create(builder, location, destinationType,
+                                           source);
+      Value instance = sim::SimClassIsInstanceOp::create(
+          builder, location, builder.getI1Type(), source,
+          FlatSymbolRefAttr::get(
+              function.getContext(),
+              targetClass.getClassName().getRootReference()));
+      Value sourceID = sim::SimClassIdOp::create(
+          builder, location, builder.getI64Type(), source);
+      Value isNull = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, sourceID,
+          constant(builder.getI64Type(), 0));
+      succeeded = arith::OrIOp::create(builder, location, instance, isNull);
+      conditionalStore = true;
+      break;
+    }
+    case semantic::SVDynamicCastKind::EnumMembership: {
+      if (targetClass || !source ||
+          isa<sim::ClassHandleType>(source.getType())) {
+        emitError(location) << "enum $cast has incompatible operands";
+        return failure();
+      }
+      FailureOr<Value> converted =
+          convert(source, destinationType, isSignedNode(children[1]), location,
+                  isSignedNode(destination));
+      if (failed(converted))
+        return failure();
+      casted = *converted;
+      Type sourceScalar = sim::getPackedScalarType(source.getType());
+      Type destinationScalar = sim::getPackedScalarType(destinationType);
+      std::optional<unsigned> sourceWidth =
+          sourceScalar ? sim::getPackedWidth(sourceScalar) : std::nullopt;
+      std::optional<unsigned> destinationWidth =
+          destinationScalar ? sim::getPackedWidth(destinationScalar)
+                            : std::nullopt;
+      if (!sourceWidth || !destinationWidth) {
+        emitError(location)
+            << "enum $cast requires packed integral operands";
+        return failure();
+      }
+      unsigned comparisonWidth = std::max(*sourceWidth, *destinationWidth);
+      Type comparisonType =
+          isa<sim::LogicType>(sourceScalar) ||
+                  isa<sim::LogicType>(destinationScalar)
+              ? Type(sim::LogicType::get(function.getContext(),
+                                         comparisonWidth))
+              : Type(IntegerType::get(function.getContext(),
+                                      comparisonWidth));
+      bool comparisonSigned = isSignedNode(children[1]) &&
+                              isSignedNode(destination);
+      FailureOr<Value> comparisonSource =
+          convert(source, comparisonType, comparisonSigned, location,
+                  comparisonSigned);
+      if (failed(comparisonSource))
+        return failure();
+      ArrayAttr enumValues =
+          op->getAttrOfType<ArrayAttr>(dynamicCastEnumValuesAttrName);
+      if (!enumValues || enumValues.empty()) {
+        emitError(location) << "enum $cast has no valid frozen membership";
+        return failure();
+      }
+      succeeded = constant(builder.getI1Type(), 0);
+      for (Attribute attribute : enumValues) {
+        auto frozen = dyn_cast<sim::FrozenConstantAttr>(attribute);
+        FailureOr<Value> member = frozen && frozen.getType() == destinationType
+                                      ? sim::materializeFrozenConstant(
+                                            builder, location, frozen)
+                                      : FailureOr<Value>(failure());
+        if (failed(member)) {
+          emitError(location)
+              << "enum $cast has malformed frozen membership";
+          return failure();
+        }
+        FailureOr<Value> comparisonMember =
+            convert(*member, comparisonType, comparisonSigned, location,
+                    comparisonSigned);
+        if (failed(comparisonMember))
+          return failure();
+        FailureOr<Value> equal = conditionalEqual(
+            *comparisonSource, *comparisonMember, comparisonType, location,
+            /*caseEquality=*/true);
+        if (failed(equal))
+          return failure();
+        succeeded =
+            arith::OrIOp::create(builder, location, succeeded, *equal);
+      }
+      conditionalStore = true;
+      break;
+    }
+    }
+
+    bool taskForm = op->hasAttr(dynamicCastTaskAttrName);
+    if (conditionalStore) {
+      Block *store = addBlock();
+      Block *resume = addBlock();
+      Block *failedCast = taskForm ? addBlock() : resume;
+      cf::CondBranchOp::create(builder, location, succeeded, store, failedCast);
+      setCurrent(store);
+      if (failed(storeReference(*destinationRef, casted, location)))
+        return failure();
+      emitBranch(resume);
+      if (taskForm) {
+        setCurrent(failedCast);
+        if (failed(emitRuntimeFatal(location,
+                                    "$cast failed when used as a task")))
+          return failure();
+      }
+      setCurrent(resume);
+    } else if (kind == semantic::SVDynamicCastKind::AlwaysSuccess) {
+      if (failed(storeReference(*destinationRef, casted, location)))
+        return failure();
+    } else if (taskForm) {
+      if (failed(
+              emitRuntimeFatal(location, "$cast failed when used as a task")))
+        return failure();
+      setCurrent(addBlock());
+      succeeded = constant(builder.getI1Type(), 0);
+    }
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
     if (failed(resultType))
       return failure();
