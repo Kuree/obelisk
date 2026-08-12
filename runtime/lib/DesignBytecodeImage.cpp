@@ -709,6 +709,27 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 0 && managed(input(0)) &&
            twoStateBits(input(1), 64) && managedValue(input(2));
+  case OBELISK_RT_INTRINSIC_V1_MAILBOX_CREATE:
+    if (signature.flags != 0 || site.inputCount != 8 ||
+        site.outputCount != 1 || !managed(output(0)))
+      return false;
+    for (uint32_t index = 0; index != 6; ++index)
+      if (!twoStateBits(input(index), 64))
+        return false;
+    return bytes(input(6)) && twoStateBits(input(7), 64);
+  case OBELISK_RT_INTRINSIC_V1_MAILBOX_NUM:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 1 && managed(input(0)) &&
+           twoStateBits(output(0), 32);
+  case OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_PUT:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 1 && managed(input(0)) &&
+           managedValue(input(1)) && twoStateBits(output(0), 1);
+  case OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_PEEK:
+  case OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_GET:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 2 && managed(input(0)) &&
+           twoStateBits(output(0), 1) && managedValue(output(1));
   case OBELISK_RT_INTRINSIC_V1_RANDOM_BOUNDED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&

@@ -430,6 +430,110 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                       static_cast<int64_t>(*index),
                                       frame.data + input.offset, unknown);
   }
+  case OBELISK_RT_INTRINSIC_V1_MAILBOX_CREATE: {
+    std::array<std::optional<uint64_t>, 7> inputs;
+    for (uint32_t index = 0; index != 6; ++index)
+      inputs[index] = scalar(index);
+    inputs[6] = scalar(7);
+    if (std::any_of(inputs.begin(), inputs.end(),
+                    [](const auto &value) { return !value; }))
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::optional<ByteSpan> trace =
+        readByteSpan(image, frame, inputRegister(6));
+    if (!trace || trace->size % sizeof(obelisk_rt_element_trace_slot_v1) != 0)
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::vector<obelisk_rt_element_trace_slot_v1> traceSlots(
+        trace->size / sizeof(obelisk_rt_element_trace_slot_v1));
+    if (!traceSlots.empty())
+      std::memcpy(traceSlots.data(), trace->data, trace->size);
+    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    if (!lane)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    obelisk_rt_object_v1 *result = nullptr;
+    obelisk_rt_status status = obelisk_rt_v1_mailbox_create_typed(
+        lane, *inputs[0], static_cast<uint32_t>(*inputs[1]),
+        static_cast<uint32_t>(*inputs[2]), *inputs[3], *inputs[4], *inputs[5],
+        traceSlots.data(), traceSlots.size(),
+        static_cast<int64_t>(*inputs[6]), &result);
+    return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), result)
+               ? OBELISK_RT_INVALID_BYTECODE
+               : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_MAILBOX_NUM: {
+    uint32_t count = 0;
+    obelisk_rt_status status = obelisk_rt_v1_mailbox_num(
+        readManaged(inputRegister(0)), &count);
+    return status == OBELISK_RT_OK ? sentinel(0, count) : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_PUT: {
+    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    if (!lane)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    Layout input = layoutAt(image, frame.function, inputRegister(1));
+    uint32_t success = 0;
+    obelisk_rt_status status;
+    if (input.kind == OBELISK_RT_DBREG_HANDLE) {
+      int64_t event = kInvalidHandleStart;
+      std::memcpy(&event, frame.data + input.offset + 16, sizeof(event));
+      status = obelisk_rt_v1_mailbox_try_put_checked(
+          lane, readManaged(inputRegister(0)), &event, sizeof(event), nullptr,
+          0, &success);
+    } else {
+      uint64_t planeSize =
+          input.kind == OBELISK_RT_DBREG_LOGIC ? input.size / 2 : input.size;
+      const void *unknown = input.kind == OBELISK_RT_DBREG_LOGIC
+                                ? frame.data + input.offset + planeSize
+                                : nullptr;
+      status = obelisk_rt_v1_mailbox_try_put_checked(
+          lane, readManaged(inputRegister(0)), frame.data + input.offset,
+          planeSize, unknown, unknown ? planeSize : 0, &success);
+    }
+    return status == OBELISK_RT_OK ? sentinel(0, success) : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_PEEK:
+  case OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_GET: {
+    Layout output = layoutAt(image, frame.function, outputRegister(1));
+    std::memset(frame.data + output.offset, 0, output.size);
+    uint32_t present = 0;
+    bool remove = signature.id == OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_GET;
+    obelisk_rt_status status;
+    if (output.kind == OBELISK_RT_DBREG_HANDLE) {
+      uint64_t event = UINT64_MAX;
+      status = remove ? obelisk_rt_v1_mailbox_try_get_checked(
+                            readManaged(inputRegister(0)), &event,
+                            sizeof(event), nullptr, 0, &present)
+                      : obelisk_rt_v1_mailbox_try_peek_checked(
+                            readManaged(inputRegister(0)), &event,
+                            sizeof(event), nullptr, 0, &present);
+      if (status == OBELISK_RT_OK) {
+        uint32_t kind = OBELISK_RT_DESCRIPTOR_EVENT;
+        int64_t start = static_cast<int64_t>(event);
+        int64_t begin = start == kInvalidHandleStart ? 0 : start;
+        int64_t end = start == kInvalidHandleStart
+                          ? 0
+                          : (start == INT64_MAX ? start : start + 1);
+        std::memcpy(frame.data + output.offset, &kind, sizeof(kind));
+        std::memcpy(frame.data + output.offset + 8, &begin, sizeof(begin));
+        std::memcpy(frame.data + output.offset + 16, &start, sizeof(start));
+        std::memcpy(frame.data + output.offset + 24, &end, sizeof(end));
+      }
+    } else {
+      uint64_t planeSize =
+          output.kind == OBELISK_RT_DBREG_LOGIC ? output.size / 2 : output.size;
+      void *unknown = output.kind == OBELISK_RT_DBREG_LOGIC
+                          ? frame.data + output.offset + planeSize
+                          : nullptr;
+      status = remove ? obelisk_rt_v1_mailbox_try_get_checked(
+                            readManaged(inputRegister(0)),
+                            frame.data + output.offset, planeSize, unknown,
+                            unknown ? planeSize : 0, &present)
+                      : obelisk_rt_v1_mailbox_try_peek_checked(
+                            readManaged(inputRegister(0)),
+                            frame.data + output.offset, planeSize, unknown,
+                            unknown ? planeSize : 0, &present);
+    }
+    return status == OBELISK_RT_OK ? sentinel(0, present) : status;
+  }
   case OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE: {
     std::array<std::optional<uint64_t>, 8> inputs;
     for (uint32_t index = 0; index != 6; ++index)

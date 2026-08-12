@@ -421,6 +421,7 @@ bool Encoder::mayCollect(Operation *operation) {
       sim::SimReferencePathIndexOp, sim::SimReferencePathAssocOp,
       sim::SimContainerCreateLikeOp, sim::SimContainerCreateOp,
       sim::SimContainerCloneOp, sim::SimContainerWriteOp, sim::SimQueueInsertOp,
+      sim::SimMailboxCreateOp, sim::SimMailboxTryPutOp,
       sim::SimAssocCreateOp, sim::SimAssocWriteOp, sim::SimAssocSetDefaultOp,
       sim::SimAssocTraverseOp, sim::SimArgumentRefStoreOp,
       sim::SimReferencePathNBAEnqueueOp, sim::SimGCSafepointOp,

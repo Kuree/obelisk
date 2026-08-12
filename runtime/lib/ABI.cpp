@@ -1360,14 +1360,25 @@ ABI_FUNCTION(obelisk_rt_v1_mailbox_try_put,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
                                    obelisk_rt_object_v1 *, const void *,
                                    const void *, uint32_t *));
+ABI_FUNCTION(obelisk_rt_v1_mailbox_try_put_checked,
+             obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
+                                   obelisk_rt_object_v1 *, const void *,
+                                   uint64_t, const void *, uint64_t,
+                                   uint32_t *));
 ABI_FUNCTION(obelisk_rt_v1_mailbox_num,
              obelisk_rt_status (*)(obelisk_rt_object_v1 *, uint32_t *));
 ABI_FUNCTION(obelisk_rt_v1_mailbox_try_peek,
              obelisk_rt_status (*)(obelisk_rt_object_v1 *, void *, void *,
                                    uint32_t *));
+ABI_FUNCTION(obelisk_rt_v1_mailbox_try_peek_checked,
+             obelisk_rt_status (*)(obelisk_rt_object_v1 *, void *, uint64_t,
+                                   void *, uint64_t, uint32_t *));
 ABI_FUNCTION(obelisk_rt_v1_mailbox_try_get,
              obelisk_rt_status (*)(obelisk_rt_object_v1 *, void *, void *,
                                    uint32_t *));
+ABI_FUNCTION(obelisk_rt_v1_mailbox_try_get_checked,
+             obelisk_rt_status (*)(obelisk_rt_object_v1 *, void *, uint64_t,
+                                   void *, uint64_t, uint32_t *));
 ABI_FUNCTION(obelisk_rt_v1_queue_insert,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
                                    obelisk_rt_object_v1 *, int64_t,

@@ -2967,6 +2967,24 @@ extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_try_put(
   return queuePushImpl(lane, mailbox, 0, value, unknown, outSuccess);
 }
 
+extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_try_put_checked(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *mailbox,
+    const void *value, uint64_t valueSize, const void *unknown,
+    uint64_t unknownSize, uint32_t *outSuccess) {
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(mailbox, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  bool fourState =
+      (snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0;
+  if (!value || valueSize < snapshot.element->value_size ||
+      (fourState && (!unknown || unknownSize < snapshot.element->value_size)) ||
+      (!fourState && (unknown || unknownSize != 0)))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return obelisk_rt_v1_mailbox_try_put(lane, mailbox, value, unknown,
+                                       outSuccess);
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_mailbox_num(obelisk_rt_object_v1 *mailbox, uint32_t *outCount) {
   if (!outCount)
@@ -3095,10 +3113,49 @@ extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_try_peek(
       &peek);
 }
 
+static obelisk_rt_status verifyMailboxOutputBuffers(
+    obelisk_rt_object_v1 *mailbox, void *outValue, uint64_t valueSize,
+    void *outUnknown, uint64_t unknownSize) {
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(mailbox, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  bool fourState =
+      (snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0;
+  if (!outValue || valueSize < snapshot.element->value_size ||
+      (fourState &&
+       (!outUnknown || unknownSize < snapshot.element->value_size)) ||
+      (!fourState && (outUnknown || unknownSize != 0)))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return OBELISK_RT_OK;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_try_peek_checked(
+    obelisk_rt_object_v1 *mailbox, void *outValue, uint64_t valueSize,
+    void *outUnknown, uint64_t unknownSize, uint32_t *outPresent) {
+  obelisk_rt_status status = verifyMailboxOutputBuffers(
+      mailbox, outValue, valueSize, outUnknown, unknownSize);
+  return status == OBELISK_RT_OK
+             ? obelisk_rt_v1_mailbox_try_peek(mailbox, outValue, outUnknown,
+                                              outPresent)
+             : status;
+}
+
 extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_try_get(
     obelisk_rt_object_v1 *mailbox, void *outValue, void *outUnknown,
     uint32_t *outPresent) {
   return obelisk_rt_v1_queue_pop(mailbox, 1, outValue, outUnknown, outPresent);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_try_get_checked(
+    obelisk_rt_object_v1 *mailbox, void *outValue, uint64_t valueSize,
+    void *outUnknown, uint64_t unknownSize, uint32_t *outPresent) {
+  obelisk_rt_status status = verifyMailboxOutputBuffers(
+      mailbox, outValue, valueSize, outUnknown, unknownSize);
+  return status == OBELISK_RT_OK
+             ? obelisk_rt_v1_mailbox_try_get(mailbox, outValue, outUnknown,
+                                             outPresent)
+             : status;
 }
 
 extern "C" obelisk_rt_status

@@ -880,6 +880,11 @@ enum {
   OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE = UINT32_C(0x00010447),
   OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE_STATE = UINT32_C(0x00010448),
   OBELISK_RT_INTRINSIC_V1_RANDOM_CYCLE_NEXT = UINT32_C(0x00010449),
+  OBELISK_RT_INTRINSIC_V1_MAILBOX_CREATE = UINT32_C(0x0001044a),
+  OBELISK_RT_INTRINSIC_V1_MAILBOX_NUM = UINT32_C(0x0001044b),
+  OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_PUT = UINT32_C(0x0001044c),
+  OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_PEEK = UINT32_C(0x0001044d),
+  OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_GET = UINT32_C(0x0001044e),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE = UINT32_C(0x00010450),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_ENABLED = UINT32_C(0x00010451),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE_ENABLED = UINT32_C(0x00010452),
@@ -1887,14 +1892,24 @@ obelisk_rt_status obelisk_rt_v1_queue_pop(obelisk_rt_object_v1 *queue,
 obelisk_rt_status obelisk_rt_v1_mailbox_try_put(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *mailbox,
     const void *value, const void *unknown, uint32_t *out_success);
+obelisk_rt_status obelisk_rt_v1_mailbox_try_put_checked(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *mailbox,
+    const void *value, uint64_t value_size, const void *unknown,
+    uint64_t unknown_size, uint32_t *out_success);
 obelisk_rt_status obelisk_rt_v1_mailbox_num(obelisk_rt_object_v1 *mailbox,
                                             uint32_t *out_count);
 obelisk_rt_status obelisk_rt_v1_mailbox_try_peek(
     obelisk_rt_object_v1 *mailbox, void *out_value, void *out_unknown,
     uint32_t *out_present);
+obelisk_rt_status obelisk_rt_v1_mailbox_try_peek_checked(
+    obelisk_rt_object_v1 *mailbox, void *out_value, uint64_t value_size,
+    void *out_unknown, uint64_t unknown_size, uint32_t *out_present);
 obelisk_rt_status obelisk_rt_v1_mailbox_try_get(
     obelisk_rt_object_v1 *mailbox, void *out_value, void *out_unknown,
     uint32_t *out_present);
+obelisk_rt_status obelisk_rt_v1_mailbox_try_get_checked(
+    obelisk_rt_object_v1 *mailbox, void *out_value, uint64_t value_size,
+    void *out_unknown, uint64_t unknown_size, uint32_t *out_present);
 obelisk_rt_status obelisk_rt_v1_queue_insert(obelisk_rt_gc_lane_v1 *lane,
                                              obelisk_rt_object_v1 *queue,
                                              int64_t index, const void *value,

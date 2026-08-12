@@ -49,6 +49,37 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
   if (auto op = dyn_cast<sim::SimQueueInsertOp>(operation))
     return emitIntrinsic(plan, kIntrinsicQueueInsert,
                          {op.getQueue(), op.getIndex(), op.getValue()}, {});
+  if (auto op = dyn_cast<sim::SimMailboxCreateOp>(operation)) {
+    SmallVector<uint8_t> traceSlots;
+    for (auto [offset, kind] :
+         llvm::zip_equal(op.getTraceOffsets(), op.getTraceKinds())) {
+      append64(traceSlots, static_cast<uint64_t>(offset));
+      append32(traceSlots, static_cast<uint32_t>(kind));
+      append32(traceSlots, 0);
+    }
+    return emitIntrinsicRegisters(plan, kIntrinsicMailboxCreate,
+                                  {emitU64Constant(plan, op.getTypeId()),
+                                   emitU64Constant(plan, op.getElementKind()),
+                                   emitU64Constant(plan, op.getElementFlags()),
+                                   emitU64Constant(plan, op.getValueSize()),
+                                   emitU64Constant(plan, op.getAlignment()),
+                                   emitU64Constant(plan, op.getBitWidth()),
+                                   emitBytesConstant(plan, traceSlots),
+                                   reg(plan, op.getBound())},
+                                  {reg(plan, op.getResult())});
+  }
+  if (auto op = dyn_cast<sim::SimMailboxNumOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicMailboxNum, {op.getMailbox()},
+                         {op.getResult()});
+  if (auto op = dyn_cast<sim::SimMailboxTryPutOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicMailboxTryPut,
+                         {op.getMailbox(), op.getValue()}, {op.getSuccess()});
+  if (auto op = dyn_cast<sim::SimMailboxTryPeekOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicMailboxTryPeek, {op.getMailbox()},
+                         {op.getSuccess(), op.getValue()});
+  if (auto op = dyn_cast<sim::SimMailboxTryGetOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicMailboxTryGet, {op.getMailbox()},
+                         {op.getSuccess(), op.getValue()});
   if (auto op = dyn_cast<sim::SimRandomNextOp>(operation))
     return emitIntrinsic(plan, kIntrinsicRandomNext, {}, {op.getResult()});
   if (auto op = dyn_cast<sim::SimSampledReadOp>(operation))

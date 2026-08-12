@@ -229,6 +229,15 @@ constexpr uint32_t kIntrinsicRandomNext = OBELISK_RT_INTRINSIC_V1_RANDOM_NEXT;
 constexpr uint32_t kIntrinsicRandomSeed = OBELISK_RT_INTRINSIC_V1_RANDOM_SEED;
 constexpr uint32_t kIntrinsicQueueDelete = OBELISK_RT_INTRINSIC_V1_QUEUE_DELETE;
 constexpr uint32_t kIntrinsicQueueInsert = OBELISK_RT_INTRINSIC_V1_QUEUE_INSERT;
+constexpr uint32_t kIntrinsicMailboxCreate =
+    OBELISK_RT_INTRINSIC_V1_MAILBOX_CREATE;
+constexpr uint32_t kIntrinsicMailboxNum = OBELISK_RT_INTRINSIC_V1_MAILBOX_NUM;
+constexpr uint32_t kIntrinsicMailboxTryPut =
+    OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_PUT;
+constexpr uint32_t kIntrinsicMailboxTryPeek =
+    OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_PEEK;
+constexpr uint32_t kIntrinsicMailboxTryGet =
+    OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_GET;
 constexpr uint32_t kIntrinsicAssocCreate = OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE;
 constexpr uint32_t kIntrinsicAssocRead = OBELISK_RT_INTRINSIC_V1_ASSOC_READ;
 constexpr uint32_t kIntrinsicAssocWrite = OBELISK_RT_INTRINSIC_V1_ASSOC_WRITE;
