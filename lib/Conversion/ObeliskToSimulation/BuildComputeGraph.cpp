@@ -43,11 +43,45 @@ static bool isProceduralProcess(sim::EntryKind kind) {
          kind == sim::EntryKind::Fork;
 }
 
+/// Whether two writes to one descriptor can reach the same bits. Distinct
+/// elements of an unpacked array and disjoint parts of a packed one are
+/// separate drivers of the same variable, which IEEE 1800-2017 10.3.2 allows.
+/// A dynamic range is unresolved, so it has to be assumed to cover everything.
+static bool writesOverlap(sim::ComputeEffectAttr lhs,
+                          sim::ComputeEffectAttr rhs) {
+  if (lhs.getDynamic() || rhs.getDynamic())
+    return true;
+  constexpr uint64_t maximum = std::numeric_limits<uint64_t>::max();
+  if (lhs.getLow() > maximum - lhs.getWidth() ||
+      rhs.getLow() > maximum - rhs.getWidth())
+    return true;
+  return lhs.getLow() < rhs.getLow() + rhs.getWidth() &&
+         rhs.getLow() < lhs.getLow() + lhs.getWidth();
+}
+
+struct DescriptorWrite {
+  sim::SimFuncOp function;
+  sim::ComputeEffectAttr effect;
+};
+
+/// The first write in `candidates` from another process that reaches bits in
+/// common with `write`. Callers pass the writes that precede `write`, so the
+/// conflict is always reported on the later of the two.
+static std::optional<DescriptorWrite>
+findOverlap(ArrayRef<DescriptorWrite> candidates,
+            const DescriptorWrite &write) {
+  for (const DescriptorWrite &candidate : candidates)
+    if (candidate.function != write.function &&
+        writesOverlap(candidate.effect, write.effect))
+      return candidate;
+  return std::nullopt;
+}
+
 static LogicalResult verifyVariableWriters(
     sim::SimDesignOp design,
     const simlowering::ComputeGraphResult &derived) {
-  llvm::MapVector<uint64_t, SmallVector<sim::SimFuncOp>> continuousWriters;
-  llvm::MapVector<uint64_t, SmallVector<sim::SimFuncOp>> proceduralWriters;
+  llvm::MapVector<uint64_t, SmallVector<DescriptorWrite>> continuousWrites;
+  llvm::MapVector<uint64_t, SmallVector<DescriptorWrite>> proceduralWrites;
 
   for (auto [operation, summary] : derived.effectSummaries) {
     auto function = cast<sim::SimFuncOp>(operation);
@@ -63,10 +97,9 @@ static LogicalResult verifyVariableWriters(
           (effect.getEffect() != sim::ComputeEffectKind::Write &&
            effect.getEffect() != sim::ComputeEffectKind::NBA))
         continue;
-      auto &writers = continuous ? continuousWriters[effect.getDescriptor()]
-                                 : proceduralWriters[effect.getDescriptor()];
-      if (!llvm::is_contained(writers, function))
-        writers.push_back(function);
+      auto &writes = continuous ? continuousWrites[effect.getDescriptor()]
+                                : proceduralWrites[effect.getDescriptor()];
+      writes.push_back({function, effect});
     }
   }
 
@@ -82,21 +115,32 @@ static LogicalResult verifyVariableWriters(
   };
 
   bool invalid = false;
-  for (auto &[descriptor, continuous] : continuousWriters) {
-    if (continuous.size() > 1) {
-      continuous[1].emitOpError()
+  for (auto &[descriptor, continuous] : continuousWrites) {
+    for (auto [index, write] : llvm::enumerate(continuous)) {
+      std::optional<DescriptorWrite> earlier =
+          findOverlap(ArrayRef(continuous).take_front(index), write);
+      if (!earlier)
+        continue;
+      write.function.emitOpError()
           << "variable '" << storageName(descriptor)
           << "' is driven by multiple continuous assignments";
-      continuous.front().emitRemark("first continuous assignment is here");
+      earlier->function.emitRemark("first continuous assignment is here");
       invalid = true;
+      break;
     }
-    auto procedural = proceduralWriters.find(descriptor);
-    if (procedural != proceduralWriters.end() && !procedural->second.empty()) {
-      procedural->second.front().emitOpError()
+    auto procedural = proceduralWrites.find(descriptor);
+    if (procedural == proceduralWrites.end())
+      continue;
+    for (DescriptorWrite &write : procedural->second) {
+      std::optional<DescriptorWrite> conflict = findOverlap(continuous, write);
+      if (!conflict)
+        continue;
+      write.function.emitOpError()
           << "variable '" << storageName(descriptor)
           << "' is written by both continuous and procedural assignments";
-      continuous.front().emitRemark("continuous assignment is here");
+      conflict->function.emitRemark("continuous assignment is here");
       invalid = true;
+      break;
     }
   }
   return failure(invalid);
