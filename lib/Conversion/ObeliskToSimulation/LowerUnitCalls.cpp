@@ -81,10 +81,46 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                  ? FailureOr<Value>(failure())
                  : convert(success, *resultType, false, location, true);
     }
+    if (method == "put") {
+      if (children.size() != 2) {
+        emitError(location) << "mailbox::put requires one message";
+        return failure();
+      }
+      FailureOr<Value> value = lowerExpression(children[1]);
+      value = succeeded(value) ? convert(*value, mailbox.getElementType(),
+                                         isSignedNode(children[1]), location)
+                               : FailureOr<Value>(failure());
+      if (failed(value))
+        return failure();
+      Value held = cloneSequentialValue(*value, location);
+      Block *retry = addBlock();
+      retry->addArgument(mailbox, location);
+      retry->addArgument(held.getType(), location);
+      Block *wait = addBlock();
+      wait->addArgument(mailbox, location);
+      wait->addArgument(held.getType(), location);
+      Block *done = addBlock();
+      cf::BranchOp::create(builder, location, retry,
+                           ValueRange{*receiver, held});
+      setCurrent(retry);
+      Value success = sim::SimMailboxTryPutOp::create(
+          builder, location, retry->getArgument(0), retry->getArgument(1));
+      cf::CondBranchOp::create(builder, location, success, done, ValueRange{},
+                               wait, retry->getArguments());
+      setCurrent(wait);
+      sim::SimSuspendMailboxOp::create(
+          builder, location, wait->getArgument(0),
+          sim::MailboxWaitKind::NotFull, wait->getArguments(),
+          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, retry);
+      setCurrent(done);
+      return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                       builder.getBoolAttr(false))
+          .getResult();
+    }
     if (method == "try_peek" || method == "try_get") {
       if (children.size() != 2) {
-        emitError(location) << "mailbox::" << method
-                            << " requires one output argument";
+        emitError(location)
+            << "mailbox::" << method << " requires one output argument";
         return failure();
       }
       FailureOr<Value> destination = lowerExpression(children[1], true);
@@ -92,8 +128,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return failure();
       Type destinationType = getReferenceElementType(*destination);
       if (!destinationType) {
-        emitError(location) << "mailbox::" << method
-                            << " output is not assignable";
+        emitError(location)
+            << "mailbox::" << method << " output is not assignable";
         return failure();
       }
       Value success;
@@ -119,8 +155,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                                resume, ValueRange{});
       setCurrent(store);
       FailureOr<Value> converted =
-          convert(cloneSequentialValue(value, location), destinationType,
-                  false, location, isSignedNode(children[1]));
+          convert(cloneSequentialValue(value, location), destinationType, false,
+                  location, isSignedNode(children[1]));
       if (failed(converted) ||
           failed(storeReference(*destination, *converted, location)))
         return failure();
@@ -131,8 +167,73 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                  ? FailureOr<Value>(failure())
                  : convert(success, *resultType, false, location, true);
     }
-    unsupported(op) << " (mailbox blocking method requires scheduler wait "
-                       "lowering)";
+    if (method == "peek" || method == "get") {
+      if (children.size() != 2) {
+        emitError(location)
+            << "mailbox::" << method << " requires one output argument";
+        return failure();
+      }
+      FailureOr<Value> destination = lowerExpression(children[1], true);
+      if (failed(destination))
+        return failure();
+      Type destinationType = getReferenceElementType(*destination);
+      if (!destinationType) {
+        emitError(location)
+            << "mailbox::" << method << " output is not assignable";
+        return failure();
+      }
+      Block *retry = addBlock();
+      retry->addArgument(mailbox, location);
+      retry->addArgument((*destination).getType(), location);
+      Block *wait = addBlock();
+      wait->addArgument(mailbox, location);
+      wait->addArgument((*destination).getType(), location);
+      Block *store = addBlock();
+      store->addArgument(mailbox.getElementType(), location);
+      store->addArgument((*destination).getType(), location);
+      Block *done = addBlock();
+      cf::BranchOp::create(builder, location, retry,
+                           ValueRange{*receiver, *destination});
+      setCurrent(retry);
+      Value success;
+      Value value;
+      if (method == "peek") {
+        auto read = sim::SimMailboxTryPeekOp::create(
+            builder, location,
+            TypeRange{builder.getI1Type(), mailbox.getElementType()},
+            retry->getArgument(0));
+        success = read.getSuccess();
+        value = read.getValue();
+      } else {
+        auto read = sim::SimMailboxTryGetOp::create(
+            builder, location,
+            TypeRange{builder.getI1Type(), mailbox.getElementType()},
+            retry->getArgument(0));
+        success = read.getSuccess();
+        value = read.getValue();
+      }
+      cf::CondBranchOp::create(builder, location, success, store,
+                               ValueRange{value, retry->getArgument(1)}, wait,
+                               retry->getArguments());
+      setCurrent(wait);
+      sim::SimSuspendMailboxOp::create(
+          builder, location, wait->getArgument(0),
+          sim::MailboxWaitKind::NotEmpty, wait->getArguments(),
+          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, retry);
+      setCurrent(store);
+      FailureOr<Value> converted =
+          convert(cloneSequentialValue(store->getArgument(0), location),
+                  destinationType, false, location, isSignedNode(children[1]));
+      if (failed(converted) ||
+          failed(storeReference(store->getArgument(1), *converted, location)))
+        return failure();
+      cf::BranchOp::create(builder, location, done);
+      setCurrent(done);
+      return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                       builder.getBoolAttr(false))
+          .getResult();
+    }
+    unsupported(op);
     return failure();
   }
   if (referencedPath && referencedPath->starts_with("std::process::")) {

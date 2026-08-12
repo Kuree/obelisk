@@ -113,7 +113,8 @@ bool isTypedSuspend(Operation *operation) {
   return isa<sim::SimSuspendDelayOp, sim::SimSuspendChangeOp,
              sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
              sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
-             sim::SimSuspendEventOp, sim::SimSuspendObserveOp,
+             sim::SimSuspendEventOp, sim::SimSuspendMailboxOp,
+             sim::SimSuspendObserveOp,
              sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp,
              sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp>(operation);
 }

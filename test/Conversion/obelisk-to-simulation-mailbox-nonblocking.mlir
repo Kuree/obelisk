@@ -3,6 +3,12 @@
 // CHECK: !obelisk_sim.mailbox<!obelisk_sim.string>
 // CHECK: obelisk_sim.mailbox.create
 // CHECK: obelisk_sim.mailbox.try_put
+// CHECK: obelisk_sim.suspend.mailbox {{.*}} not_full
+// CHECK: obelisk_sim.mailbox.try_peek
+// CHECK: obelisk_sim.suspend.mailbox {{.*}} not_empty
+// CHECK: obelisk_sim.mailbox.try_get
+// CHECK: obelisk_sim.suspend.mailbox {{.*}} not_empty
+// CHECK: obelisk_sim.mailbox.try_put
 // CHECK: obelisk_sim.mailbox.try_peek
 // CHECK: obelisk_sim.mailbox.try_get
 // CHECK: obelisk_sim.mailbox.num
@@ -51,6 +57,30 @@ module {
                       obelisk.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 25 : i64, original_source_range = !obelisk.source_range<"../../../../tmp/mailbox-nonblocking-probe.sv", 8, 13, "../../../../tmp/mailbox-nonblocking-probe.sv", 8, 14, "">, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_end_column = 14 : i64, source_end_line = 8 : i64, source_file = "../../../../tmp/mailbox-nonblocking-probe.sv", source_range = !obelisk.source_range<"../../../../tmp/mailbox-nonblocking-probe.sv", 8, 13, "../../../../tmp/mailbox-nonblocking-probe.sv", 8, 14, "">} {
                       }
                     }
+                  }
+                }
+              }
+              obelisk.sv.statement.expression_statement attributes {node_id = 200 : i64} {
+                obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "put", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_signed = false, is_super_class = false, is_system_call = false, node_id = 201 : i64, referenced_path = "std::mailbox#(string)::put", semantic_type = !obelisk.void, subroutine_kind = 1 : i32} {
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 202 : i64, referenced_path = "top.m", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.m, semantic_type = !obelisk.class_handle<@s7.std::@s6.mailbox>} {
+                  }
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 203 : i64, referenced_path = "top.input_value", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8::@s9.input_value, semantic_type = !obelisk.string} {
+                  }
+                }
+              }
+              obelisk.sv.statement.expression_statement attributes {node_id = 204 : i64} {
+                obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "peek", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = true, has_this_class = true, is_signed = false, is_super_class = false, is_system_call = false, node_id = 205 : i64, referenced_path = "std::mailbox#(string)::peek", semantic_type = !obelisk.void, subroutine_kind = 1 : i32} {
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 206 : i64, referenced_path = "top.m", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.m, semantic_type = !obelisk.class_handle<@s7.std::@s6.mailbox>} {
+                  }
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 207 : i64, referenced_path = "top.peeked", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8::@s10.peeked, semantic_type = !obelisk.string} {
+                  }
+                }
+              }
+              obelisk.sv.statement.expression_statement attributes {node_id = 208 : i64} {
+                obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "get", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = true, has_this_class = true, is_signed = false, is_super_class = false, is_system_call = false, node_id = 209 : i64, referenced_path = "std::mailbox#(string)::get", semantic_type = !obelisk.void, subroutine_kind = 1 : i32} {
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 210 : i64, referenced_path = "top.m", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.m, semantic_type = !obelisk.class_handle<@s7.std::@s6.mailbox>} {
+                  }
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 211 : i64, referenced_path = "top.received", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8::@s11.received, semantic_type = !obelisk.string} {
                   }
                 }
               }
@@ -257,4 +287,3 @@ module {
     }
   }
 }
-

@@ -1238,6 +1238,8 @@ sim::ComputeActionKind getFragmentActionKind(Operation *terminator) {
           [](auto) { return sim::ComputeActionKind::SuspendAny; })
       .Case<sim::SimSuspendEventOp>(
           [](auto) { return sim::ComputeActionKind::SuspendEvent; })
+      .Case<sim::SimSuspendMailboxOp>(
+          [](auto) { return sim::ComputeActionKind::SuspendMailbox; })
       .Case<sim::SimSuspendForeverOp>(
           [](auto) { return sim::ComputeActionKind::SuspendAny; })
       .Case<sim::SimSuspendAwaitOp>(
@@ -1263,7 +1265,8 @@ sim::ContinuationSiteAttr getContinuationSite(Operation *operation) {
       .Case<sim::SimSuspendDelayOp, sim::SimSuspendChangeOp,
             sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
             sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
-            sim::SimSuspendEventOp, sim::SimSuspendObserveOp,
+            sim::SimSuspendEventOp, sim::SimSuspendMailboxOp,
+            sim::SimSuspendObserveOp,
             sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp,
             sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp,
             sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp,
@@ -1277,7 +1280,8 @@ void setContinuationSite(Operation *operation, sim::ContinuationSiteAttr site) {
       .Case<sim::SimSuspendDelayOp, sim::SimSuspendChangeOp,
             sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
             sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
-            sim::SimSuspendEventOp, sim::SimSuspendObserveOp,
+            sim::SimSuspendEventOp, sim::SimSuspendMailboxOp,
+            sim::SimSuspendObserveOp,
             sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp,
             sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp,
             sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp,

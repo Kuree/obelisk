@@ -425,6 +425,8 @@ def SimComputeActionSuspendObserve
     : I32EnumAttrCase<"SuspendObserve", 11, "suspend_observe">;
 def SimComputeActionProcessControl
     : I32EnumAttrCase<"ProcessControl", 12, "process_control">;
+def SimComputeActionSuspendMailbox
+    : I32EnumAttrCase<"SuspendMailbox", 13, "suspend_mailbox">;
 def SimComputeActionKind
     : I32EnumAttr<"ComputeActionKind", "fragment terminal action", [
         SimComputeActionContinue, SimComputeActionSuspendDelay,
@@ -433,7 +435,7 @@ def SimComputeActionKind
         SimComputeActionSuspendAwait, SimComputeActionSuspendJoin,
         SimComputeActionTerminate, SimComputeActionTaskCall,
         SimComputeActionSuspendChildren, SimComputeActionSuspendObserve,
-        SimComputeActionProcessControl
+        SimComputeActionProcessControl, SimComputeActionSuspendMailbox
       ]> {
   let cppNamespace = "::obelisk::sim";
 }
