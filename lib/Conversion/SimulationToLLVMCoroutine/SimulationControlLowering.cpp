@@ -57,6 +57,35 @@ public:
   }
 };
 
+class ChandleNullConversion final
+    : public OpConversionPattern<sim::SimChandleNullOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimChandleNullOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    rewriter.replaceOpWithNewOp<arith::ConstantOp>(
+        operation, rewriter.getI64Type(), rewriter.getI64IntegerAttr(0));
+    return success();
+  }
+};
+
+class ChandleEqualConversion final
+    : public OpConversionPattern<sim::SimChandleEqualOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimChandleEqualOp operation, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getLhs().size() != 1 || adaptor.getRhs().size() != 1)
+      return failure();
+    rewriter.replaceOpWithNewOp<arith::CmpIOp>(
+        operation, arith::CmpIPredicate::eq, adaptor.getLhs().front(),
+        adaptor.getRhs().front());
+    return success();
+  }
+};
+
 class VirtualInterfaceBindConversion final
     : public OpConversionPattern<sim::SimVirtualInterfaceBindOp> {
 public:
@@ -596,7 +625,8 @@ void populateControlToLLVMConversionPatterns(RewritePatternSet &patterns,
   MLIRContext *context = patterns.getContext();
   patterns.add<DisableChildrenConversion, ControlEnterConversion,
                ControlLeaveConversion, ControlDisableConversion,
-               VirtualInterfaceNullConversion,
+               VirtualInterfaceNullConversion, ChandleNullConversion,
+               ChandleEqualConversion,
                VirtualInterfaceBindConversion, VirtualInterfaceCastConversion,
                VirtualInterfaceScopeConversion,
                VirtualInterfaceEqualConversion, ProcessNullConversion,

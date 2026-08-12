@@ -765,6 +765,8 @@ static FailureOr<Type> normalizeType(Type type, Location location,
     return sim::EventType::get(context);
   if (isa<semantic::ProcessType>(type))
     return sim::ProcessType::get(context);
+  if (isa<semantic::ChandleType>(type))
+    return sim::ChandleType::get(context);
   if (auto covergroup = dyn_cast<semantic::CovergroupHandleType>(type))
     return sim::CovergroupHandleType::get(
         context, SymbolRefAttr::get(context, getSimulationCovergroupSymbol(
@@ -784,7 +786,8 @@ static FailureOr<Type> normalizeType(Type type, Location location,
     return type;
   if (isa<sim::LogicType, sim::TimeType, sim::ContextType, sim::RefType,
           sim::NetType, sim::DriverType, sim::EventType, sim::ProcessType,
-          sim::ClassHandleType, sim::VirtualInterfaceType, sim::StringType,
+          sim::ClassHandleType, sim::VirtualInterfaceType, sim::ChandleType,
+          sim::StringType,
           sim::DynamicArrayType,
           sim::QueueType, sim::AssocArrayType, sim::ManagedRefType>(type) ||
       sim::isAggregateType(type))
@@ -1124,6 +1127,8 @@ Value createDefaultValue(OpBuilder &builder, Location location, Type type) {
     return sim::SimCovergroupNullOp::create(builder, location, type);
   if (isa<sim::VirtualInterfaceType>(type))
     return sim::SimVirtualInterfaceNullOp::create(builder, location, type);
+  if (isa<sim::ChandleType>(type))
+    return sim::SimChandleNullOp::create(builder, location);
   if (isa<sim::EventType>(type))
     return sim::SimEventNullOp::create(builder, location, type);
   if (sim::isManagedHandleType(type))

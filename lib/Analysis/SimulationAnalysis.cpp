@@ -115,6 +115,7 @@ void forEachIncoming(Block &block, Callback &&callback) {
 
 std::optional<unsigned> getSimulationStorageBitWidth(Type type) {
   if (isa<sim::CovergroupHandleType, sim::VirtualInterfaceType,
+          sim::ChandleType,
           sim::ProcessType>(type) ||
       sim::isManagedHandleType(type))
     return 64;

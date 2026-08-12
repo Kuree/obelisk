@@ -42,7 +42,8 @@ bool isNormalizedValueType(Type type) {
   if (auto integer = dyn_cast<IntegerType>(type))
     return integer.isSignless();
   return isa<FloatType>(type) || isa<LogicType>(type) ||
-         isa<CovergroupHandleType, VirtualInterfaceType, ProcessType>(type) ||
+         isa<CovergroupHandleType, VirtualInterfaceType, ChandleType,
+             ProcessType>(type) ||
          isManagedHandleType(type) || isAggregateType(type);
 }
 

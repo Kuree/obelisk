@@ -149,6 +149,12 @@ describeContainerElementImpl(Type type, Location location) {
     result.bitWidth = 64;
     return result;
   }
+  if (isa<sim::ChandleType>(type)) {
+    result.kind = OBELISK_RT_ELEMENT_BITS;
+    result.valueSize = sizeof(void *);
+    result.bitWidth = sizeof(void *) * 8;
+    return result;
+  }
   if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(type)) {
     result.kind = OBELISK_RT_ELEMENT_CONTAINER_HANDLE;
     result.valueSize = sizeof(void *);
@@ -1176,6 +1182,17 @@ FailureOr<Value> UnitLowering::formatTaggedUnionPattern(Value value,
 }
 
 FailureOr<Value> UnitLowering::truthValue(Value value, Location location) {
+  if (isa<sim::ChandleType>(value.getType())) {
+    Value null = sim::SimChandleNullOp::create(builder, location);
+    Value isNull =
+        sim::SimChandleEqualOp::create(builder, location, value, null);
+    return arith::XOrIOp::create(
+               builder, location, isNull,
+               arith::ConstantOp::create(builder, location,
+                                         builder.getI1Type(),
+                                         builder.getBoolAttr(true)))
+        .getResult();
+  }
   if (isa<sim::StringType>(value.getType())) {
     Value length = sim::SimStringLengthOp::create(builder, location,
                                                   builder.getI64Type(), value);
@@ -1552,6 +1569,9 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
       if (isa<sim::VirtualInterfaceType>(*target))
         return sim::SimVirtualInterfaceNullOp::create(
                    builder, getSemanticLocation(op), *target)
+            .getResult();
+      if (isa<sim::ChandleType>(*target))
+        return sim::SimChandleNullOp::create(builder, getSemanticLocation(op))
             .getResult();
     }
     FailureOr<Value> input = lowerExpression(children.front());

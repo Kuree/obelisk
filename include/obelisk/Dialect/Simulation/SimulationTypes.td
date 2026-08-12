@@ -172,6 +172,15 @@ def SimVirtualInterfaceType : SimType<"VirtualInterface"> {
   let genVerifyDecl = 1;
 }
 
+// A chandle is an opaque C pointer transported through DPI. Keep it distinct
+// from integers and managed SystemVerilog handles until physical lowering so
+// that the LRM's deliberately narrow operator and conversion rules remain
+// enforceable.
+def SimChandleType : SimType<"Chandle"> {
+  let mnemonic = "chandle";
+  let summary = "nullable opaque DPI C pointer";
+}
+
 // Class identity deliberately remains in the executable type. Lowering this
 // to a physical pointer before hierarchy analysis would lose the distinction
 // between inherited fields, interface views, and checked casts.

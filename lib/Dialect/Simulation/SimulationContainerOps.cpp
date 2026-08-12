@@ -145,6 +145,8 @@ std::optional<uint64_t> getProvenanceSpan(Type type) {
     return uint64_t{64};
   if (isa<VirtualInterfaceType>(type))
     return uint64_t{64};
+  if (isa<ChandleType>(type))
+    return uint64_t{64};
   if (std::optional<unsigned> packed = getPackedWidth(type))
     return *packed;
   if (isa<TimeType>(type) || type.isF64())

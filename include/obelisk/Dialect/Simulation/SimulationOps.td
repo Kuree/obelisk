@@ -192,6 +192,19 @@ def SimVirtualInterfaceNullOp
   let assemblyFormat = "attr-dict `:` qualified(type($result))";
 }
 
+def SimChandleNullOp : SimOp<"chandle.null", [Pure, ConstantLike]> {
+  let summary = "typed null DPI C pointer";
+  let results = (outs SimChandleType:$result);
+  let assemblyFormat = "attr-dict `:` qualified(type($result))";
+}
+
+def SimChandleEqualOp : SimOp<"chandle.equal", [Pure, Commutative]> {
+  let summary = "compare opaque DPI C pointers, including null";
+  let arguments = (ins SimChandleType:$lhs, SimChandleType:$rhs);
+  let results = (outs I1:$equal);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs)";
+}
+
 def SimVirtualInterfaceBindOp
     : SimOp<"virtual_interface.bind", [Pure]> {
   let summary = "bind an elaborated interface instance as a virtual handle";

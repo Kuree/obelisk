@@ -363,6 +363,8 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
         lhs = sim::SimVirtualInterfaceNullOp::create(
                   builder, location, (*rhs).getType())
                   .getResult();
+      else if (isa<sim::ChandleType>((*rhs).getType()))
+        lhs = sim::SimChandleNullOp::create(builder, location).getResult();
     }
   } else if (isa<semantic::SVNullLiteralOp>(children[1])) {
     lhs = lowerExpression(children[0]);
@@ -379,6 +381,8 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
         rhs = sim::SimVirtualInterfaceNullOp::create(
                   builder, location, (*lhs).getType())
                   .getResult();
+      else if (isa<sim::ChandleType>((*lhs).getType()))
+        rhs = sim::SimChandleNullOp::create(builder, location).getResult();
     }
   } else {
     lhs = lowerContextDeterminedExpression(children[0]);
@@ -535,6 +539,23 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
     Value compared =
         arith::CmpIOp::create(builder, location, predicate, lhsID, rhsID);
     return convert(compared, *resultType, false, location);
+  }
+  if (isa<sim::ChandleType>((*lhs).getType()) ||
+      isa<sim::ChandleType>((*rhs).getType())) {
+    if (!isa<sim::ChandleType>((*lhs).getType()) ||
+        !isa<sim::ChandleType>((*rhs).getType()) ||
+        (kind != Binary::Equality && kind != Binary::Inequality &&
+         kind != Binary::CaseEquality && kind != Binary::CaseInequality)) {
+      unsupported(op) << " (chandle operator)";
+      return failure();
+    }
+    Value equal = sim::SimChandleEqualOp::create(builder, location, *lhs, *rhs);
+    if (kind == Binary::Inequality || kind == Binary::CaseInequality)
+      equal = arith::XOrIOp::create(
+          builder, location, equal,
+          arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                    builder.getBoolAttr(true)));
+    return convert(equal, *resultType, false, location);
   }
   if (isa<sim::VirtualInterfaceType>((*lhs).getType()) ||
       isa<sim::VirtualInterfaceType>((*rhs).getType())) {
@@ -1048,6 +1069,19 @@ FailureOr<Value> UnitLowering::conditionalPredicate(Value value,
                *truth)
         .getResult();
   }
+  if (isa<sim::ChandleType>(value.getType())) {
+    Value null = sim::SimChandleNullOp::create(builder, location);
+    Value isNull =
+        sim::SimChandleEqualOp::create(builder, location, value, null);
+    Value nonnull = arith::XOrIOp::create(
+        builder, location, isNull,
+        arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                  builder.getBoolAttr(true)));
+    return sim::SimLogicFromBitsOp::create(
+               builder, location, sim::LogicType::get(function.getContext(), 1),
+               nonnull)
+        .getResult();
+  }
   FailureOr<Value> scalar = toPackedScalar(value, location);
   if (failed(scalar))
     return failure();
@@ -1120,6 +1154,9 @@ FailureOr<Value> UnitLowering::conditionalEqual(Value lhs, Value rhs, Type type,
         .getResult();
   if (isa<sim::VirtualInterfaceType>(type))
     return sim::SimVirtualInterfaceEqualOp::create(builder, location, lhs, rhs)
+        .getResult();
+  if (isa<sim::ChandleType>(type))
+    return sim::SimChandleEqualOp::create(builder, location, lhs, rhs)
         .getResult();
   if (isa<sim::EventType>(type))
     return sim::SimEventEqualOp::create(builder, location, builder.getI1Type(),

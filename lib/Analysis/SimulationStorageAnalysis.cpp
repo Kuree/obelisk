@@ -40,7 +40,7 @@ getSimulationStorageProperties(Type type, const llvm::DataLayout &dataLayout,
     llvmType = llvm::IntegerType::get(llvmContext, 192);
   } else if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
                  sim::ProcessType, sim::ControlType, sim::CovergroupHandleType,
-                 sim::VirtualInterfaceType>(type)) {
+                 sim::VirtualInterfaceType, sim::ChandleType>(type)) {
     // Simulation handles remain frame-relative stable IDs. They must never
     // become host pointers in the canonical frame shared with bytecode.
     llvmType = llvm::Type::getInt64Ty(llvmContext);

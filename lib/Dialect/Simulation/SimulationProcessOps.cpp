@@ -288,7 +288,8 @@ LogicalResult SimFuncOp::verify() {
   for (Type input : type.getInputs()) {
     if (!isa<ContextType, RefType, ArgumentRefType, NetType, DriverType,
              EventType, ProcessType, ManagedRefType, IntegerType, LogicType,
-             TimeType, CovergroupHandleType, VirtualInterfaceType>(input) &&
+             TimeType, CovergroupHandleType, VirtualInterfaceType,
+             ChandleType>(input) &&
         !isManagedHandleType(input) && !isa<FloatType>(input) &&
         !isAggregateType(input))
       return emitOpError() << "contains non-normalized argument type " << input;
@@ -299,7 +300,7 @@ LogicalResult SimFuncOp::verify() {
   for (Type result : type.getResults()) {
     if (!isa<IntegerType, LogicType, TimeType, EventType, ProcessType,
              ManagedRefType, ArgumentRefType, CovergroupHandleType,
-             VirtualInterfaceType>(result) &&
+             VirtualInterfaceType, ChandleType>(result) &&
         !isManagedHandleType(result) && !isa<FloatType>(result) &&
         !isAggregateType(result))
       return emitOpError() << "contains non-normalized result type " << result;

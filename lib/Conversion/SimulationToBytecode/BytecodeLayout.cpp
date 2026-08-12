@@ -43,7 +43,8 @@ FailureOr<Layout> getLayout(Type type) {
     layout.kind = Logic;
     layout.width = logic.getWidth();
   } else if (isa<sim::TimeType, sim::ProcessType,
-                 sim::CovergroupHandleType, sim::VirtualInterfaceType>(type)) {
+                 sim::CovergroupHandleType, sim::VirtualInterfaceType,
+                 sim::ChandleType>(type)) {
     layout.kind = Bits;
     layout.width = 64;
   } else if (isa<sim::ControlType>(type)) {

@@ -252,6 +252,12 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
           addConstant(layout, APInt(64, 0))});
     return success();
   }
+  if (auto op = dyn_cast<sim::SimChandleNullOp>(operation)) {
+    Layout layout = plan.layouts[reg(plan, op.getResult())];
+    emit({Constant, 0, reg(plan, op.getResult()), 0, 0, 0, 0,
+          addConstant(layout, APInt(64, 0))});
+    return success();
+  }
   if (auto op = dyn_cast<sim::SimVirtualInterfaceBindOp>(operation)) {
     Layout layout = plan.layouts[reg(plan, op.getResult())];
     emit({Constant, 0, reg(plan, op.getResult()), 0, 0, 0, 0,
@@ -267,6 +273,11 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return success();
   }
   if (auto op = dyn_cast<sim::SimVirtualInterfaceEqualOp>(operation)) {
+    emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getEqual()),
+          reg(plan, op.getLhs()), reg(plan, op.getRhs())});
+    return success();
+  }
+  if (auto op = dyn_cast<sim::SimChandleEqualOp>(operation)) {
     emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getEqual()),
           reg(plan, op.getLhs()), reg(plan, op.getRhs())});
     return success();
