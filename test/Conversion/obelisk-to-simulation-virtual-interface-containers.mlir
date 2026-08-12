@@ -1,6 +1,8 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
 
-module {
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
   obelisk.sv.symbol.definition attributes {definition_kind = 1 : i32, hierarchical_name = "bus_if", name = "bus_if", node_id = 0 : i64, original_source_range = !obelisk.source_range<"../../../../tmp/vif_containers.sv", 1, 1, "../../../../tmp/vif_containers.sv", 3, 13, "">, source_end_column = 13 : i64, source_end_line = 3 : i64, source_file = "../../../../tmp/vif_containers.sv", source_range = !obelisk.source_range<"../../../../tmp/vif_containers.sv", 1, 1, "../../../../tmp/vif_containers.sv", 3, 13, "">, sym_name = "s0.bus_if"} {
   }
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 1 : i64, original_source_range = !obelisk.source_range<"../../../../tmp/vif_containers.sv", 4, 1, "../../../../tmp/vif_containers.sv", 27, 10, "">, source_end_column = 10 : i64, source_end_line = 27 : i64, source_file = "../../../../tmp/vif_containers.sv", source_range = !obelisk.source_range<"../../../../tmp/vif_containers.sv", 4, 1, "../../../../tmp/vif_containers.sv", 27, 10, "">, sym_name = "s1.top"} {
@@ -215,3 +217,7 @@ module {
 // CHECK: obelisk_sim.task.call @unit_0({{.*}}, [[OUTNULL]], {{.*}})
 // CHECK: obelisk_sim.argument_ref.store
 // CHECK-NOT: obelisk.sv.
+// BYTECODE: obelisk.bytecode.image = array<i8:
+// BYTECODE: obelisk.execution.state_bits = 384 : i64
+// NATIVE: llvm.func
+// NATIVE-NOT: obelisk_sim.virtual_interface
