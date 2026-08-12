@@ -206,10 +206,28 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
         continue;
       }
       bool hasTiming = false;
-      source->walk([&](Operation *nested) {
-        hasTiming |=
-            isa<semantic::SVDelayControlOp, semantic::SVSignalEventControlOp,
-                semantic::SVEventListControlOp>(nested);
+      source->walk<WalkOrder::PreOrder>([&](Operation *nested) {
+        if (auto block = dyn_cast<semantic::SVBlockStatementOp>(nested);
+            block && block.getBlockKind() !=
+                         semantic::SVStatementBlockKind::Sequential) {
+          // IEEE 1800 permits fork...join_none in a function because the
+          // function itself returns without blocking. Its branches become
+          // independent fork code units below, so their timing controls do
+          // not make the enclosing function a suspending code unit.
+          if (block.getBlockKind() ==
+              semantic::SVStatementBlockKind::JoinNone)
+            return WalkResult::skip();
+
+          // fork...join and fork...join_any block the caller and therefore
+          // remain illegal in a zero-time function even if a particular set
+          // of branches happens to complete in the current time slot.
+          hasTiming = true;
+          return WalkResult::skip();
+        }
+        if (isa<semantic::SVDelayControlOp, semantic::SVSignalEventControlOp,
+                semantic::SVEventListControlOp>(nested))
+          hasTiming = true;
+        return hasTiming ? WalkResult::interrupt() : WalkResult::advance();
       });
       if (*entryKind == sim::EntryKind::Function && !dpiImport && hasTiming) {
         emitError(getSemanticLocation(source))
