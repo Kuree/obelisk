@@ -1607,8 +1607,18 @@ void ObeliskSimPreparePass::runOnOperation() {
       unsigned elementWidth;
       unsigned modeIndex;
     };
+    struct NestedObjectPlan {
+      Operation *source;
+      FlatSymbolRefAttr field;
+      Type concreteType;
+      Type storageType;
+      SmallVector<semantic::SVClassTypeOp> hierarchy;
+      SmallVector<EffectiveConstraintGroup> constraintGroups;
+      SmallVector<unsigned> globalConstraintIndices;
+    };
     SmallVector<RandomProperty> properties;
     SmallVector<RandomContainerProperty> containerProperties;
+    SmallVector<NestedObjectPlan> nestedObjectPlans;
     SmallVector<Operation *> constraintRoots;
     SmallVector<EffectiveConstraintGroup> constraintGroups;
     semantic::SVSubroutineSymbolOp preRandomizeHook;
@@ -1775,10 +1785,6 @@ void ObeliskSimPreparePass::runOnOperation() {
             for (semantic::SVClassTypeOp nestedClass : nestedHierarchy) {
               for (Operation *nestedMember : getChildren(nestedClass)) {
                 if (isa<semantic::SVConstraintBlockSymbolOp>(nestedMember)) {
-                  emitError(getSemanticLocation(property))
-                      << "rand object handles with child constraints require "
-                         "recursive constraint-plan composition";
-                  unsupportedNestedSemantics = true;
                   continue;
                 }
                 if (auto method = getClassMethod(nestedMember);
@@ -1864,6 +1870,45 @@ void ObeliskSimPreparePass::runOnOperation() {
                      std::move(nestedDomains)});
               }
             }
+            NestedObjectPlan nestedPlan{
+                property,
+                field,
+                sim::ClassHandleType::get(
+                    context,
+                    FlatSymbolRefAttr::get(
+                        context, classSymbols.lookup(concreteClasses.front())
+                                     .getValue())),
+                objectType,
+                nestedHierarchy,
+                {},
+                {}};
+            if (llvm::any_of(nestedObjectPlans,
+                             [&](const NestedObjectPlan &existing) {
+                               return existing.concreteType ==
+                                      nestedPlan.concreteType;
+                             })) {
+              emitError(getSemanticLocation(property))
+                  << "multiple rand handles of the same concrete child class "
+                     "require per-instance constraint identities";
+              invalid = true;
+              continue;
+            }
+            collectEffectiveConstraints(nestedHierarchy,
+                                        nestedPlan.constraintGroups);
+            for (const EffectiveConstraintGroup &group :
+                 nestedPlan.constraintGroups) {
+              semantic::SVConstraintBlockSymbolOp activeConstraint =
+                  group.empty() ? semantic::SVConstraintBlockSymbolOp{}
+                                : group.back();
+              if (activeConstraint &&
+                  activeConstraint.getIsStatic().value_or(false)) {
+                emitError(getSemanticLocation(property))
+                    << "static nested constraint blocks require null-aware "
+                       "shared constraint_mode composition";
+                invalid = true;
+              }
+            }
+            nestedObjectPlans.push_back(std::move(nestedPlan));
             if (unsupportedNestedSemantics)
               invalid = true;
             continue;
@@ -1971,6 +2016,15 @@ void ObeliskSimPreparePass::runOnOperation() {
                           randomPostHookSourceAttrName)))
       invalid = true;
     collectEffectiveConstraints(hierarchy, constraintGroups);
+    llvm::DenseMap<Operation *, NestedObjectPlan *> nestedConstraintOwners;
+    for (NestedObjectPlan &plan : nestedObjectPlans) {
+      for (const EffectiveConstraintGroup &group : plan.constraintGroups) {
+        plan.globalConstraintIndices.push_back(constraintGroups.size());
+        constraintGroups.push_back(group);
+        for (semantic::SVConstraintBlockSymbolOp constraint : group)
+          nestedConstraintOwners[constraint] = &plan;
+      }
+    }
     if (constraintGroups.size() > 64) {
       emitError(getSemanticLocation(call))
           << "the executable constraint_mode boundary is 64 effective "
@@ -1994,11 +2048,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     // block. Executable body and soft-priority order instead follow active
     // source declaration order, with every derived declaration after all base
     // declarations. Keep those two orderings deliberately separate.
-    for (semantic::SVClassTypeOp classType : hierarchy) {
-      for (Operation *member : getChildren(classType)) {
-        auto constraint = dyn_cast<semantic::SVConstraintBlockSymbolOp>(member);
-        if (!constraint || !constraintIndices.contains(constraint))
-          continue;
+    for (const EffectiveConstraintGroup &group : constraintGroups) {
+      for (semantic::SVConstraintBlockSymbolOp constraint : group) {
         if (constraint.getIsExtern().value_or(false) ||
             constraint.getIsPure().value_or(false)) {
           emitError(getSemanticLocation(constraint))
@@ -2104,6 +2155,13 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (!property.nestedObjectField)
         continue;
       bool referenced = llvm::any_of(constraintRoots, [&](Operation *root) {
+        auto block =
+            root->getParentOfType<semantic::SVConstraintBlockSymbolOp>();
+        auto owner = block ? nestedConstraintOwners.find(block)
+                           : nestedConstraintOwners.end();
+        if (owner != nestedConstraintOwners.end() &&
+            owner->second->field == property.nestedObjectField)
+          return false;
         bool found = false;
         root->walk([&](Operation *nested) {
           auto reference =
@@ -2121,6 +2179,33 @@ void ObeliskSimPreparePass::runOnOperation() {
                "error-aware recursive constraint composition";
         invalid = true;
       }
+    }
+    llvm::SmallPtrSet<Operation *, 16> randomPropertySources;
+    for (const RandomProperty &property : properties)
+      randomPropertySources.insert(property.source);
+    for (Operation *root : constraintRoots) {
+      auto block = root->getParentOfType<semantic::SVConstraintBlockSymbolOp>();
+      auto owner = block ? nestedConstraintOwners.find(block)
+                         : nestedConstraintOwners.end();
+      if (owner == nestedConstraintOwners.end())
+        continue;
+      root->walk([&](Operation *nested) {
+        auto reference =
+            nested->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+        auto symbol = reference
+                          ? semanticSymbols.find(reference.getLeafReference())
+                          : semanticSymbols.end();
+        auto childProperty =
+            symbol != semanticSymbols.end()
+                ? dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second)
+                : semantic::SVClassPropertySymbolOp{};
+        if (childProperty && !randomPropertySources.contains(childProperty)) {
+          emitError(getSemanticLocation(childProperty))
+              << "nested object constraints that read non-random child state "
+                 "require guarded child-state captures";
+          invalid = true;
+        }
+      });
     }
     llvm::DenseMap<Operation *, unsigned> randomIndices;
     for (auto [index, property] : llvm::enumerate(properties))
@@ -3010,6 +3095,25 @@ void ObeliskSimPreparePass::runOnOperation() {
       }));
     call->setAttr(randomContainerPropertiesAttrName,
                   builder.getArrayAttr(containerPropertyAttrs));
+    SmallVector<Attribute> nestedConstraintModeAttrs;
+    for (const NestedObjectPlan &plan : nestedObjectPlans) {
+      if (plan.globalConstraintIndices.empty())
+        continue;
+      SmallVector<int64_t> indices;
+      indices.reserve(plan.globalConstraintIndices.size());
+      for (unsigned index : plan.globalConstraintIndices)
+        indices.push_back(index);
+      nestedConstraintModeAttrs.push_back(builder.getDictionaryAttr({
+          builder.getNamedAttr("field", plan.field),
+          builder.getNamedAttr("concrete_type",
+                               TypeAttr::get(plan.concreteType)),
+          builder.getNamedAttr("storage_type", TypeAttr::get(plan.storageType)),
+          builder.getNamedAttr("global_indices",
+                               builder.getDenseI64ArrayAttr(indices)),
+      }));
+    }
+    call->setAttr(randomNestedConstraintModesAttrName,
+                  builder.getArrayAttr(nestedConstraintModeAttrs));
     call->setAttr(randomTotalWidthAttrName,
                   builder.getI64IntegerAttr(totalWidth));
     call->setAttr(randomConstraintCountAttrName,

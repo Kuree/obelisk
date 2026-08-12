@@ -99,6 +99,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   auto properties = op->getAttrOfType<ArrayAttr>(randomPropertiesAttrName);
   auto containerProperties =
       op->getAttrOfType<ArrayAttr>(randomContainerPropertiesAttrName);
+  auto nestedConstraintModes =
+      op->getAttrOfType<ArrayAttr>(randomNestedConstraintModesAttrName);
   auto totalWidthAttr =
       op->getAttrOfType<IntegerAttr>(randomTotalWidthAttrName);
   auto receiverIndexAttr =
@@ -108,6 +110,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   auto staticConstraintStorages = op->getAttrOfType<DenseI64ArrayAttr>(
       constraintModeStaticStoragesAttrName);
   if (children.empty() || !properties || !containerProperties ||
+      !nestedConstraintModes ||
       !totalWidthAttr ||
       !receiverIndexAttr || !constraintCountAttr) {
     emitError(location) << "randomize call has no frozen constraint plan";
@@ -688,6 +691,108 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         builder, location, type,
         builder.getIntegerAttr(type, APInt(type.getWidth(), value)));
   };
+  for (Attribute nestedAttr : nestedConstraintModes) {
+    auto nested = dyn_cast<DictionaryAttr>(nestedAttr);
+    auto field = nested ? nested.getAs<FlatSymbolRefAttr>("field")
+                        : FlatSymbolRefAttr{};
+    auto concreteTypeAttr =
+        nested ? nested.getAs<TypeAttr>("concrete_type") : TypeAttr{};
+    auto storageTypeAttr =
+        nested ? nested.getAs<TypeAttr>("storage_type") : TypeAttr{};
+    auto globalIndices =
+        nested ? nested.getAs<DenseI64ArrayAttr>("global_indices")
+               : DenseI64ArrayAttr{};
+    if (!field || !concreteTypeAttr || !storageTypeAttr || !globalIndices ||
+        globalIndices.empty() || globalIndices.size() > 64 ||
+        !isa<sim::ClassHandleType>(concreteTypeAttr.getValue()) ||
+        !isa<sim::ClassHandleType>(storageTypeAttr.getValue())) {
+      emitError(location) << "nested constraint-mode plan is malformed";
+      return failure();
+    }
+    uint64_t globalMask = 0;
+    for (int64_t index : globalIndices.asArrayRef()) {
+      if (index < 0 || static_cast<uint64_t>(index) >= constraintCount ||
+          (globalMask & (uint64_t{1} << index)) != 0) {
+        emitError(location)
+            << "nested constraint-mode index is malformed";
+        return failure();
+      }
+      globalMask |= uint64_t{1} << index;
+    }
+    Type objectReferenceType = sim::ManagedRefType::get(
+        function.getContext(), storageTypeAttr.getValue(),
+        objectType.getClassName());
+    Value objectReference = sim::SimClassFieldRefOp::create(
+        builder, location, objectReferenceType, receiver, field);
+    FailureOr<Value> loadedObject = loadReference(objectReference, location);
+    if (failed(loadedObject))
+      return failure();
+    Value isNull = sim::SimManagedIsNullOp::create(
+        builder, location, builder.getI1Type(), *loadedObject);
+    Block *nullBlock = addBlock();
+    Block *objectBlock = addBlock();
+    Block *mergeBlock = addBlock();
+    mergeBlock->addArgument(i64, location);
+    cf::CondBranchOp::create(builder, location, isNull, nullBlock,
+                             ValueRange{}, objectBlock, ValueRange{});
+
+    setCurrent(nullBlock);
+    Value nullMode = arith::OrIOp::create(builder, location, constraintMode,
+                                          constant64(globalMask));
+    cf::BranchOp::create(builder, location, mergeBlock, ValueRange{nullMode});
+
+    setCurrent(objectBlock);
+    Value object = *loadedObject;
+    if (object.getType() != concreteTypeAttr.getValue())
+      object = sim::SimClassCastOp::create(
+          builder, location, concreteTypeAttr.getValue(), object);
+    auto concreteType =
+        cast<sim::ClassHandleType>(concreteTypeAttr.getValue());
+    sim::SimClassDeclOp nestedDeclaration =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+            function, concreteType.getClassName());
+    while (nestedDeclaration &&
+           !nestedDeclaration->hasAttr("obelisk_sim.constraint_mode_field")) {
+      if (!nestedDeclaration.getBaseAttr())
+        break;
+      nestedDeclaration =
+          SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+              function, nestedDeclaration.getBaseAttr());
+    }
+    auto nestedModeField =
+        nestedDeclaration
+            ? nestedDeclaration->getAttrOfType<FlatSymbolRefAttr>(
+                  "obelisk_sim.constraint_mode_field")
+            : FlatSymbolRefAttr{};
+    if (!nestedModeField) {
+      emitError(location)
+          << "nested rand object has no constraint_mode field";
+      return failure();
+    }
+    Type nestedModeReferenceType = sim::ManagedRefType::get(
+        function.getContext(), i64, concreteType.getClassName());
+    Value nestedModeReference = sim::SimClassFieldRefOp::create(
+        builder, location, nestedModeReferenceType, object, nestedModeField);
+    Value nestedMode = sim::SimManagedLoadOp::create(
+        builder, location, i64, nestedModeReference);
+    Value mappedMode = arith::AndIOp::create(
+        builder, location, constraintMode, constant64(~globalMask));
+    for (auto [localIndex, globalIndex] :
+         llvm::enumerate(globalIndices.asArrayRef())) {
+      Value localBit = arith::AndIOp::create(
+          builder, location, nestedMode, constant64(uint64_t{1} << localIndex));
+      if (static_cast<uint64_t>(globalIndex) != localIndex)
+        localBit = arith::ShLIOp::create(
+            builder, location, localBit,
+            constant64(static_cast<uint64_t>(globalIndex) - localIndex));
+      mappedMode =
+          arith::OrIOp::create(builder, location, mappedMode, localBit);
+    }
+    cf::BranchOp::create(builder, location, mergeBlock,
+                         ValueRange{mappedMode});
+    setCurrent(mergeBlock);
+    constraintMode = mergeBlock->getArgument(0);
+  }
   if (staticConstraintStorages) {
     Value context = function.getBody().front().getArgument(0);
     Type referenceType = sim::RefType::get(function.getContext(), i64);
