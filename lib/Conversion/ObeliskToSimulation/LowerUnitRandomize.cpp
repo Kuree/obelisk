@@ -510,12 +510,14 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       builder.getIntegerAttr(assignmentType, domainMask));
   uint64_t propertyModeMask =
       planned.size() == 64 ? UINT64_MAX : (uint64_t{1} << planned.size()) - 1;
-  Value relevantMode =
-      checkerOnly
-          ? constant64(propertyModeMask)
-          : arith::AndIOp::create(builder, location, mode,
-                                  constant64(propertyModeMask))
-                .getResult();
+  Value relevantMode;
+  if (checkerOnly)
+    relevantMode = constant64(propertyModeMask);
+  else if (op->hasAttr(randomizeExplicitPropertiesAttrName))
+    relevantMode = constant64(0);
+  else
+    relevantMode = arith::AndIOp::create(builder, location, mode,
+                                         constant64(propertyModeMask));
   Value randomizationEnabled = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::eq, relevantMode, constant64(0));
   Value allPropertiesDisabled =

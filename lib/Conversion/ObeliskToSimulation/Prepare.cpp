@@ -1301,6 +1301,10 @@ void ObeliskSimPreparePass::runOnOperation() {
         frozenChecker ||
         (argumentCount == 2 &&
          isa<semantic::SVNullLiteralOp>(callChildren.back()));
+    bool explicitPropertyList = argumentCount > 1 && !checkerOnly;
+    llvm::SmallPtrSet<Operation *, 8> explicitProperties;
+    SmallVector<Operation *> explicitPropertyArguments;
+    SmallVector<semantic::SVClassPropertySymbolOp> explicitPropertySymbols;
     auto receiverTypeAttr =
         callChildren[receiverIndex]->getAttrOfType<TypeAttr>("semantic_type");
     auto receiverType =
@@ -1316,12 +1320,44 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     if (checkerOnly)
       call->setAttr(randomizeCheckerOnlyAttrName, builder.getUnitAttr());
-    if (argumentCount != 1 && !checkerOnly) {
-      emitError(getSemanticLocation(call))
-          << "randomize property argument lists are outside the executable "
-             "object-randomization boundary";
-      invalid = true;
-      return true;
+    if (explicitPropertyList) {
+      for (uint64_t index = 1; index != argumentCount; ++index) {
+        Operation *argument = callChildren[receiverIndex + index];
+        if (!isa<semantic::SVNamedValueExpressionOp>(argument)) {
+          emitError(getSemanticLocation(argument))
+              << "randomize property argument must be a class property name";
+          invalid = true;
+          return true;
+        }
+        auto reference =
+            argument->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+        auto symbol = reference
+                          ? semanticSymbols.find(reference.getLeafReference())
+                          : semanticSymbols.end();
+        auto property =
+            symbol != semanticSymbols.end()
+                ? dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second)
+                : semantic::SVClassPropertySymbolOp{};
+        if (!property) {
+          emitError(getSemanticLocation(argument))
+              << "randomize property argument does not resolve to a class "
+                 "property";
+          invalid = true;
+          return true;
+        }
+        if (property.getLifetime() == semantic::SVVariableLifetime::Static) {
+          emitError(getSemanticLocation(argument))
+              << "static randomize property arguments are outside the "
+                 "executable object-randomization boundary";
+          invalid = true;
+          return true;
+        }
+        explicitProperties.insert(property);
+        explicitPropertyArguments.push_back(argument);
+        explicitPropertySymbols.push_back(property);
+      }
+      call->setAttr(randomizeExplicitPropertiesAttrName,
+                    builder.getUnitAttr());
     }
 
     auto foundClass =
@@ -1344,6 +1380,29 @@ void ObeliskSimPreparePass::runOnOperation() {
           << "randomize receiver class does not resolve";
       invalid = true;
       return true;
+    }
+    if (explicitPropertyList) {
+      SmallVector<semantic::SVClassTypeOp> receiverHierarchy;
+      if (failed(collectClassHierarchy(foundClass->second, receiverHierarchy,
+                                       "randomize property selection"))) {
+        invalid = true;
+        return true;
+      }
+      llvm::SmallPtrSet<Operation *, 8> receiverClasses;
+      for (semantic::SVClassTypeOp classType : receiverHierarchy)
+        receiverClasses.insert(classType);
+      for (auto [argument, property] :
+           llvm::zip_equal(explicitPropertyArguments,
+                           explicitPropertySymbols)) {
+        auto owner = property->getParentOfType<semantic::SVClassTypeOp>();
+        if (!owner || !receiverClasses.contains(owner)) {
+          emitError(getSemanticLocation(argument))
+              << "randomize property argument does not belong to the "
+                 "receiver class hierarchy";
+          invalid = true;
+          return true;
+        }
+      }
     }
 
     // A randomize call uses the dynamic object's complete property and
@@ -1453,6 +1512,13 @@ void ObeliskSimPreparePass::runOnOperation() {
         call->setAttr(randomizeDispatchAttrName, builder.getUnitAttr());
         call->setAttr(randomReceiverIndexAttrName,
                       builder.getI32IntegerAttr(receiverIndex));
+        if (explicitPropertyList) {
+          for (Operation *argument : explicitPropertyArguments)
+            argument->erase();
+          call->setAttr("argument_count", builder.getI64IntegerAttr(1));
+          call->setAttr("defaulted_arguments",
+                        builder.getDenseI64ArrayAttr({0}));
+        }
         return true;
       }
     }
@@ -1522,7 +1588,9 @@ void ObeliskSimPreparePass::runOnOperation() {
         if (auto property =
                 dyn_cast<semantic::SVClassPropertySymbolOp>(member)) {
           if (property.getLifetime() == semantic::SVVariableLifetime::Static ||
-              property.getRandMode() == semantic::SVRandMode::None)
+              (explicitPropertyList
+                   ? !explicitProperties.contains(property)
+                   : property.getRandMode() == semantic::SVRandMode::None))
             continue;
           FailureOr<Type> type = getNormalizedSemanticType(property);
           FlatSymbolRefAttr field = classFieldSymbols.lookup(property);
@@ -2477,6 +2545,18 @@ void ObeliskSimPreparePass::runOnOperation() {
                   builder.getI32IntegerAttr(constraintGroups.size()));
     call->setAttr(constraintModeStaticStoragesAttrName,
                   builder.getDenseI64ArrayAttr(*staticConstraintStorages));
+
+    // Property arguments name object fields; they are compile-time controls,
+    // not expressions evaluated by the randomize call. Once their exact set
+    // has been frozen, remove them so capture analysis does not mistake the
+    // names for ordinary unit-local reads.
+    if (explicitPropertyList) {
+      for (Operation *argument : explicitPropertyArguments)
+        argument->erase();
+      call->setAttr("argument_count", builder.getI64IntegerAttr(1));
+      call->setAttr("defaulted_arguments",
+                    builder.getDenseI64ArrayAttr({0}));
+    }
 
     auto annotateConstraint = [&](Operation *constraint) {
       constraint->walk([&](Operation *nested) {
