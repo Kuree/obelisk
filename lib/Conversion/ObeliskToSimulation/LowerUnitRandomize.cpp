@@ -793,6 +793,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     setCurrent(mergeBlock);
     nestedHookRuntimes.push_back({hook, object, enabled});
   }
+  Value nullNestedConstraintMask = constant64(0);
   for (Attribute nestedAttr : nestedConstraintModes) {
     auto nested = dyn_cast<DictionaryAttr>(nestedAttr);
     auto field = nested ? nested.getAs<FlatSymbolRefAttr>("field")
@@ -831,6 +832,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return failure();
     Value isNull = sim::SimManagedIsNullOp::create(
         builder, location, builder.getI1Type(), *loadedObject);
+    Value nullMask = arith::SelectOp::create(
+        builder, location, isNull, constant64(globalMask), constant64(0));
+    nullNestedConstraintMask = arith::OrIOp::create(
+        builder, location, nullNestedConstraintMask, nullMask);
     Block *nullBlock = addBlock();
     Block *objectBlock = addBlock();
     Block *mergeBlock = addBlock();
@@ -919,6 +924,12 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           arith::OrIOp::create(builder, location, constraintMode, selected);
     }
   }
+  // Static constraint_mode is class-wide, but a null random object member has
+  // no variables or constraints in this randomize call. Apply null gating
+  // after shared static modes so a globally enabled block cannot resurrect a
+  // constraint belonging to an absent child.
+  constraintMode = arith::OrIOp::create(
+      builder, location, constraintMode, nullNestedConstraintMask);
   unsigned assignmentWidth = std::max<uint64_t>(64, totalWidth);
   auto assignmentType = IntegerType::get(function.getContext(), assignmentWidth);
   auto constantAssignment = [&](const APInt &value) -> Value {

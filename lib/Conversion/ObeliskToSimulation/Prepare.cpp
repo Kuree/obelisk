@@ -1918,19 +1918,6 @@ void ObeliskSimPreparePass::runOnOperation() {
                 nestedPostHook};
             collectEffectiveConstraints(nestedHierarchy,
                                         nestedPlan.constraintGroups);
-            for (const EffectiveConstraintGroup &group :
-                 nestedPlan.constraintGroups) {
-              semantic::SVConstraintBlockSymbolOp activeConstraint =
-                  group.empty() ? semantic::SVConstraintBlockSymbolOp{}
-                                : group.back();
-              if (activeConstraint &&
-                  activeConstraint.getIsStatic().value_or(false)) {
-                emitError(getSemanticLocation(property))
-                    << "static nested constraint blocks require null-aware "
-                       "shared constraint_mode composition";
-                invalid = true;
-              }
-            }
             nestedObjectPlans.push_back(std::move(nestedPlan));
             if (unsupportedNestedSemantics)
               invalid = true;

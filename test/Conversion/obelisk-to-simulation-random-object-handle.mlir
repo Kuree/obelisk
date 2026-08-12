@@ -10,7 +10,7 @@ module {
         }
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "Leaf::limit", name = "limit", node_id = 33 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s29.limit"} {
         }
-        obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "Leaf::positive", name = "positive", node_id = 17 : i64, sym_name = "s17.positive", this_variable_path = "Leaf::positive.this", this_variable_symbol = @s1.$root::@s2::@s3.Leaf::@s17.positive::@s18.constraint_this} {
+        obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "Leaf::positive", is_static, name = "positive", node_id = 17 : i64, sym_name = "s17.positive", this_variable_path = "Leaf::positive.this", this_variable_symbol = @s1.$root::@s2::@s3.Leaf::@s17.positive::@s18.constraint_this} {
           obelisk.sv.constraint.list attributes {item_count = 1 : i64, node_id = 18 : i64} {
             obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 19 : i64} {
               obelisk.sv.expression.binary_op attributes {is_signed = false, node_id = 20 : i64, operator_kind = 14 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
@@ -95,8 +95,19 @@ module {
 // CHECK: ^[[AFTER_PRE]]:
 // CHECK: %[[MODE_LEAF:.*]] = obelisk_sim.managed.load %[[LEAF_REF]] : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Leaf>
 // CHECK: %[[MODE_NULL:.*]] = obelisk_sim.managed.is_null %[[MODE_LEAF]]
+// CHECK: %[[NULL_BIT0:.*]] = arith.extui %[[MODE_NULL]] : i1 to i64
 // CHECK: cf.cond_br %[[MODE_NULL]]
 // CHECK: obelisk_sim.class.field_ref %[[MODE_LEAF]][@__obelisk_class_s3_Leaf_field___obelisk_constraint_mode]
+// CHECK: %[[MODE_LEAF2:.*]] = obelisk_sim.managed.load %[[LEAF2_REF]] : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Leaf>
+// CHECK: %[[MODE_NULL2:.*]] = obelisk_sim.managed.is_null %[[MODE_LEAF2]]
+// CHECK: %[[NULL_BIT1:.*]] = arith.select %[[MODE_NULL2]], {{.*}}, {{.*}} : i64
+// CHECK: %[[NULL_MASK:.*]] = arith.ori %[[NULL_BIT0]], %[[NULL_BIT1]] : i64
+// CHECK: %[[STATIC_MODE_REF:.*]] = obelisk_sim.context.storage {{.*}} : !obelisk_sim.ref<i64>
+// CHECK: %[[STATIC_MODE:.*]] = obelisk_sim.ref.load %[[STATIC_MODE_REF]]
+// CHECK: %[[STATIC_DISABLED:.*]] = arith.cmpi ne, %[[STATIC_MODE]], {{.*}} : i64
+// CHECK: %[[STATIC_BIT:.*]] = arith.select %[[STATIC_DISABLED]], {{.*}}, {{.*}} : i64
+// CHECK: %[[STATIC_COMPOSED:.*]] = arith.ori {{.*}}, %[[STATIC_BIT]] : i64
+// CHECK-NEXT: %[[NULL_GATED_MODE:.*]] = arith.ori %[[STATIC_COMPOSED]], %[[NULL_MASK]] : i64
 // CHECK: %[[LEAF:.*]] = obelisk_sim.managed.load %[[LEAF_REF]] : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Leaf>
 // CHECK: %[[NULL:.*]] = obelisk_sim.managed.is_null %[[LEAF]]
 // CHECK: cf.cond_br %[[NULL]], ^[[MERGE:bb[0-9]+]]({{.*}}%false{{.*}}), ^[[OBJECT_BLOCK:bb[0-9]+]]
