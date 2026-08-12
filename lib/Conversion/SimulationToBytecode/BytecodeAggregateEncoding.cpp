@@ -275,14 +275,21 @@ LogicalResult Encoder::encodeUnionConstruct(FunctionPlan &plan,
   Type unionType = op.getResult().getType();
   std::optional<uint64_t> payloadSpan = unionPayloadSpan(unionType);
   std::optional<uint32_t> width = simulationWidth(unionType);
-  if (!payloadSpan || !width || *payloadSpan > *width)
+  auto selected = sim::getAggregateProvenanceSubelement(
+      unionType, static_cast<unsigned>(op.getIndex()));
+  if (!payloadSpan || !width || !selected || *payloadSpan > *width ||
+      selected->first > *payloadSpan ||
+      selected->second > *payloadSpan - selected->first)
     return op.emitOpError("union has no fixed packed representation");
   uint32_t destination = reg(plan, op.getResult());
   uint32_t value = reg(plan, op.getValue());
   uint16_t flags = isManagedAggregateWord(plan.layouts[value].kind)
                        ? OBELISK_RT_DB_AGGREGATE_MANAGED
                        : 0;
-  emit({Extract, flags, destination, value, kInvalidRegister});
+  emit({Constant, 0, destination, 0, 0, 0, 0,
+        addConstant(plan.layouts[destination], APInt(*width, 0))});
+  emit({Insert, flags, destination, destination, value, 0, 0,
+        selected->first});
   uint64_t tag = 0;
   unsigned tagBits = 0;
   if (auto packed = dyn_cast<sim::PackedUnionType>(unionType);

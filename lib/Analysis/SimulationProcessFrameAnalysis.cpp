@@ -139,18 +139,22 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
                                   storage->managedRootAlignment});
     }
     if (storage->managedReference) {
-      auxiliaryOffset = end;
-      if (end > std::numeric_limits<uint64_t>::max() - storage->size)
+      if (!alignUp(end, storage->alignment, auxiliaryOffset) ||
+          auxiliaryOffset >
+              std::numeric_limits<uint64_t>::max() - storage->size)
         return function.emitError("canonical process frame offset overflow");
-      end += storage->size;
+      end = auxiliaryOffset + storage->size;
       result->fields.push_back({kind, ProcessFrameFieldFlags::None,
                                 auxiliaryOffset, storage->size,
                                 storage->alignment});
     } else if (storage->fourState) {
-      unknownOffset = end;
-      if (end > std::numeric_limits<uint64_t>::max() - storage->size)
+      // The transferred plane contains only the value's store bytes, but a
+      // following typed LLVM load/store still requires its ABI alignment.
+      if (!alignUp(end, storage->alignment, unknownOffset) ||
+          unknownOffset >
+              std::numeric_limits<uint64_t>::max() - storage->size)
         return function.emitError("canonical process frame size overflow");
-      end += storage->size;
+      end = unknownOffset + storage->size;
       result->fields.push_back({kind, ProcessFrameFieldFlags::FourStateUnknown,
                                 unknownOffset, storage->size,
                                 storage->alignment});

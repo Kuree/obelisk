@@ -73,7 +73,9 @@ public:
                      << " alignment=" << field.storage.alignment << " planes="
                      << obelisk::analysis::getSimulationPhysicalStorageCount(
                             field.storage)
-                     << "\n";
+                     << " roots=[";
+        llvm::interleaveComma(field.storage.managedRootOffsets, llvm::errs());
+        llvm::errs() << "]\n";
       }
     }
     markAllAnalysesPreserved();

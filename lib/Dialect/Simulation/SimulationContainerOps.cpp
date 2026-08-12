@@ -175,7 +175,14 @@ std::optional<uint64_t> getProvenanceSpan(Type type) {
       return std::nullopt;
     return count * *stride;
   }
-  if (isa<UnpackedStructType>(type)) {
+  // Unpacked tagged unions use a disjoint internal payload. Unlike an
+  // ordinary union, inactive members have no observable representation and
+  // can therefore occupy separate aligned slots selected by the tag. This
+  // keeps embedded managed handles permanently well-typed for precise GC.
+  bool disjointTaggedUnion = false;
+  if (auto unionType = dyn_cast<UnpackedUnionType>(type))
+    disjointTaggedUnion = unionType.getIsTagged();
+  if (isa<UnpackedStructType>(type) || disjointTaggedUnion) {
     uint64_t total = 0;
     uint64_t alignment = 1;
     for (unsigned index = 0; index < getAggregateNumElements(type); ++index) {
@@ -264,7 +271,9 @@ getAggregateProvenanceSubelement(Type type, unsigned index) {
     if (stride && index > std::numeric_limits<uint64_t>::max() / stride)
       return std::nullopt;
     offset = index * stride;
-  } else if (isa<UnpackedStructType>(type)) {
+  } else if (isa<UnpackedStructType>(type) ||
+             (isa<UnpackedUnionType>(type) &&
+              cast<UnpackedUnionType>(type).getIsTagged())) {
     for (unsigned previous = 0; previous < index; ++previous) {
       Type previousType = getAggregateElementType(type, previous);
       std::optional<uint64_t> previousSpan = getProvenanceSpan(previousType);
@@ -298,12 +307,35 @@ bool getManagedHandleOffsets(Type type,
   }
   if (!isAggregateType(type))
     return true;
-  // Union members overlap. A flat list of root offsets cannot distinguish an
-  // active class member from ordinary bits in another member, and treating
-  // those bits as a pointer would make the collector conservative (and could
-  // admit an invalid host address). Keep the failure explicit until the trace
-  // ABI carries active-member guards.
+  // Ordinary union members overlap. A flat list of root offsets cannot
+  // distinguish a class member from ordinary bits in another member, and
+  // treating those bits as a pointer would make the collector conservative.
+  // Unpacked tagged unions instead use the disjoint payload layout above, so
+  // their inactive managed slots remain canonical null words and are safe to
+  // trace precisely.
   if (isa<PackedUnionType, UnpackedUnionType>(type)) {
+    if (auto unionType = dyn_cast<UnpackedUnionType>(type);
+        unionType && unionType.getIsTagged()) {
+      for (unsigned index = 0; index < getAggregateNumElements(type); ++index) {
+        std::optional<std::pair<uint64_t, uint64_t>> child =
+            getAggregateProvenanceSubelement(type, index);
+        if (!child)
+          return false;
+        SmallVector<uint64_t, 2> nested;
+        if (!getManagedHandleOffsets(getAggregateElementType(type, index),
+                                     nested))
+          return false;
+        for (uint64_t nestedOffset : nested) {
+          if (nestedOffset >
+              std::numeric_limits<uint64_t>::max() - child->first)
+            return false;
+          offsets.push_back(child->first + nestedOffset);
+        }
+      }
+      llvm::sort(offsets);
+      offsets.erase(std::unique(offsets.begin(), offsets.end()), offsets.end());
+      return true;
+    }
     for (unsigned index = 0; index < getAggregateNumElements(type); ++index) {
       SmallVector<uint64_t, 2> nested;
       if (!getManagedHandleOffsets(getAggregateElementType(type, index),

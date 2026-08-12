@@ -522,12 +522,16 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   if (auto op = dyn_cast<sim::SimUnionConstructOp>(operation))
     return encodeUnionConstruct(plan, op);
   if (auto op = dyn_cast<sim::SimUnionExtractOp>(operation)) {
+    auto subelement = sim::getAggregateProvenanceSubelement(
+        op.getInput().getType(), static_cast<unsigned>(op.getIndex()));
+    if (!subelement)
+      return op.emitOpError("union member has no packed provenance");
     uint32_t destination = reg(plan, op.getResult());
     uint16_t flags = isManagedAggregateWord(plan.layouts[destination].kind)
                          ? OBELISK_RT_DB_AGGREGATE_MANAGED
                          : 0;
     emit({Extract, flags, destination, reg(plan, op.getInput()),
-          kInvalidRegister});
+          kInvalidRegister, 0, 0, subelement->first});
     return success();
   }
   if (auto op = dyn_cast<sim::SimUnionIsActiveOp>(operation))

@@ -358,7 +358,11 @@ public:
     Type unionType = op.getResult().getType();
     std::optional<unsigned> width = nativeStateWidth(unionType);
     std::optional<uint64_t> payloadSpan = unionPayloadSpan(unionType);
-    if (!width || !payloadSpan || *payloadSpan > *width)
+    auto selected = sim::getAggregateProvenanceSubelement(
+        unionType, static_cast<unsigned>(op.getIndex()));
+    if (!width || !payloadSpan || !selected || *payloadSpan > *width ||
+        selected->first > *payloadSpan ||
+        selected->second > *payloadSpan - selected->first)
       return failure();
     IntegerType plane = rewriter.getIntegerType(*width);
     auto extend = [&](Value value) -> FailureOr<Value> {
@@ -381,6 +385,15 @@ public:
       if (failed(convertedUnknown))
         return failure();
       unknown = *convertedUnknown;
+    }
+    if (selected->first != 0) {
+      Value amount = arith::ConstantOp::create(
+          rewriter, op.getLoc(), plane,
+          rewriter.getIntegerAttr(
+              plane, APInt(plane.getWidth(), selected->first)));
+      *value = arith::ShLIOp::create(rewriter, op.getLoc(), *value, amount);
+      unknown =
+          arith::ShLIOp::create(rewriter, op.getLoc(), unknown, amount);
     }
 
     uint64_t tag = 0;
@@ -421,7 +434,9 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     std::optional<unsigned> resultWidth =
         nativeStateWidth(op.getResult().getType());
-    if (!resultWidth || adaptor.getInput().empty())
+    auto selected = sim::getAggregateProvenanceSubelement(
+        op.getInput().getType(), static_cast<unsigned>(op.getIndex()));
+    if (!resultWidth || !selected || adaptor.getInput().empty())
       return failure();
     IntegerType resultType = rewriter.getIntegerType(*resultWidth);
     SmallVector<Value> results;
@@ -429,10 +444,20 @@ public:
       auto inputType = dyn_cast<IntegerType>(plane.getType());
       if (!inputType || inputType.getWidth() < *resultWidth)
         return failure();
+      Value selectedPlane = plane;
+      if (selected->first != 0) {
+        Value amount = arith::ConstantOp::create(
+            rewriter, op.getLoc(), inputType,
+            rewriter.getIntegerAttr(
+                inputType, APInt(inputType.getWidth(), selected->first)));
+        selectedPlane =
+            arith::ShRUIOp::create(rewriter, op.getLoc(), plane, amount);
+      }
       results.push_back(inputType == resultType
-                            ? plane
+                            ? selectedPlane
                             : arith::TruncIOp::create(rewriter, op.getLoc(),
-                                                      resultType, plane)
+                                                      resultType,
+                                                      selectedPlane)
                                   .getResult());
     }
     if (containsLogic(op.getResult().getType())) {

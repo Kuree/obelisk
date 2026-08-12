@@ -61,6 +61,17 @@ Layout and state encoding treat managed types before recursively inspecting
 their element types, so (for example) a dynamic array of `logic` remains one
 managed root rather than acquiring value and unknown planes.
 
+Fixed structs and arrays recursively carry precise managed-root offsets.
+Unpacked tagged unions do as well: their internal payload gives each arm a
+separate aligned slot, keeps inactive managed slots at the canonical null
+value, and stores the tag after that disjoint payload. This representation is
+shared by native and bytecode execution and is intentionally independent of
+the source union's overlapping syntax. An untagged union containing a managed
+handle remains unsupported because it has no discriminator with which precise
+tracing can distinguish pointer bits from an inactive ordinary member; that
+case is diagnosed during class and process-storage layout instead of being
+traced conservatively.
+
 Source `string` values use this representation throughout semantic constants,
 design and procedural storage, fixed aggregates, ports, parameters, captures,
 and subroutine arguments and results. The native and bytecode tiers share the

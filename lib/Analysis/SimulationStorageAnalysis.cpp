@@ -54,14 +54,12 @@ getSimulationStorageProperties(Type type, const llvm::DataLayout &dataLayout,
     return failure();
   }
 
-  // Argument references are a packed three-word runtime record represented as
-  // i192 in LLVM. Some targets give i192 a 32-byte allocation stride even
-  // though loads and stores transfer 24 bytes. Canonical process frames are
-  // explicitly laid out records rather than LLVM arrays, so reserve the
-  // transferred payload and align its start according to the target ABI.
-  llvm::TypeSize typeSize = isa<sim::ArgumentRefType>(type)
-                                ? dataLayout.getTypeStoreSize(llvmType)
-                                : dataLayout.getTypeAllocSize(llvmType);
+  // Canonical class and process storage consists of explicitly aligned fields,
+  // not LLVM arrays. Reserve the bytes transferred by a load or store and use
+  // the target ABI alignment when placing the next field. This matters for
+  // non-power-of-two integers such as flattened aggregate payloads: their LLVM
+  // allocation stride may include tail padding that is not part of the value.
+  llvm::TypeSize typeSize = dataLayout.getTypeStoreSize(llvmType);
   if (typeSize.isScalable() || typeSize.getFixedValue() == 0)
     return failure();
 
