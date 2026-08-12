@@ -848,6 +848,72 @@ void ObeliskSimPreparePass::runOnOperation() {
     return abort();
   llvm::StringMap<DescriptorInfo> &descriptors = *preparedDescriptors;
 
+  // A static randc property shares one cycle across every object. Its source
+  // value already has class-wide storage; materialize the two compiler-owned
+  // cycle words beside that storage instead of adding per-instance fields.
+  // These descriptors participate in the ordinary capture ABI, so native and
+  // bytecode execution retain exactly the same persistent cycle state.
+  llvm::DenseMap<Operation *, std::pair<std::string, std::string>>
+      staticRandCStatePaths;
+  uint64_t nextStorageId = 0;
+  for (const auto &entry : descriptors)
+    if (entry.second.kind == DescriptorInfo::Kind::Storage) {
+      if (entry.second.id == UINT64_MAX) {
+        emitError(module.getLoc())
+            << "static randc state exceeds the storage descriptor space";
+        return abort();
+      }
+      nextStorageId = std::max(nextStorageId, entry.second.id + 1);
+    }
+  Type i64 = builder.getI64Type();
+  for (semantic::SVClassTypeOp classType : classSources)
+    for (Operation *member : getChildren(classType)) {
+      auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(member);
+      if (!property ||
+          property.getLifetime() != semantic::SVVariableLifetime::Static ||
+          property.getRandMode() != semantic::SVRandMode::RandC)
+        continue;
+      StringRef propertyPath = getHierarchyName(property);
+      auto source = descriptors.find(propertyPath);
+      if (source == descriptors.end() ||
+          source->second.kind != DescriptorInfo::Kind::Storage) {
+        emitError(getSemanticLocation(property))
+            << "static randc property has no class-wide storage descriptor";
+        return abort();
+      }
+      if (nextStorageId > UINT64_MAX - 2) {
+        emitError(getSemanticLocation(property))
+            << "static randc state exceeds the storage descriptor space";
+        return abort();
+      }
+      std::string keyPath = (propertyPath + ".$randc_key").str();
+      std::string positionPath = (propertyPath + ".$randc_position").str();
+      if (descriptors.count(keyPath) || descriptors.count(positionPath)) {
+        emitError(getSemanticLocation(property))
+            << "static randc state conflicts with an existing design object";
+        return abort();
+      }
+      auto addState = [&](StringRef path, StringRef debugName) {
+        uint64_t id = nextStorageId++;
+        DescriptorInfo descriptor{DescriptorInfo::Kind::Storage,
+                                  id,
+                                  source->second.scopeId,
+                                  i64,
+                                  sim::NetResolutionKind::Wire};
+        descriptor.rootType = i64;
+        descriptors[path] = descriptor;
+        sim::SimStorageDeclOp::create(
+            builder, getSemanticLocation(property), id,
+            source->second.scopeId, i64, sim::Lifetime::Design,
+            builder.getStringAttr(path), builder.getStringAttr(debugName),
+            sim::ComputeObservabilityKindAttr{});
+      };
+      addState(keyPath, "__obelisk_static_randc_key");
+      addState(positionPath, "__obelisk_static_randc_position");
+      staticRandCStatePaths[property] =
+          {std::move(keyPath), std::move(positionPath)};
+    }
+
   FailureOr<ContinuousDriverMap> preparedNetTopology =
       materializeNetTopology(sourceUnits, portConnections, semanticSymbols,
                              descriptors, *scopes, builder);
@@ -1345,13 +1411,6 @@ void ObeliskSimPreparePass::runOnOperation() {
           invalid = true;
           return true;
         }
-        if (property.getLifetime() == semantic::SVVariableLifetime::Static) {
-          emitError(getSemanticLocation(argument))
-              << "static randomize property arguments are outside the "
-                 "executable object-randomization boundary";
-          invalid = true;
-          return true;
-        }
         explicitProperties.insert(property);
         explicitPropertyArguments.push_back(argument);
         explicitPropertySymbols.push_back(property);
@@ -1533,12 +1592,15 @@ void ObeliskSimPreparePass::runOnOperation() {
     struct RandomProperty {
       Operation *source;
       FlatSymbolRefAttr field;
+      StringAttr referencePath;
       Type type;
       uint64_t width;
       bool isSigned;
       bool isRandC;
       FlatSymbolRefAttr randcKeyField;
       FlatSymbolRefAttr randcPositionField;
+      StringAttr randcKeyPath;
+      StringAttr randcPositionPath;
       SmallVector<RandomSubdomain> domains;
     };
     SmallVector<RandomProperty> properties;
@@ -1587,19 +1649,37 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
         if (auto property =
                 dyn_cast<semantic::SVClassPropertySymbolOp>(member)) {
-          if (property.getLifetime() == semantic::SVVariableLifetime::Static ||
+          bool isStatic =
+              property.getLifetime() == semantic::SVVariableLifetime::Static;
+          if ((isStatic && !explicitPropertyList) ||
               (explicitPropertyList
                    ? !explicitProperties.contains(property)
                    : property.getRandMode() == semantic::SVRandMode::None))
             continue;
           FailureOr<Type> type = getNormalizedSemanticType(property);
-          FlatSymbolRefAttr field = classFieldSymbols.lookup(property);
           if (failed(type)) {
             invalid = true;
             continue;
           }
+          FlatSymbolRefAttr field;
+          StringAttr referencePath;
+          if (isStatic) {
+            StringRef path = getHierarchyName(property);
+            auto descriptor = descriptors.find(path);
+            if (path.empty() || descriptor == descriptors.end() ||
+                descriptor->second.kind != DescriptorInfo::Kind::Storage) {
+              emitError(getSemanticLocation(property))
+                  << "static random property has no class-wide storage "
+                     "descriptor";
+              invalid = true;
+              continue;
+            }
+            referencePath = builder.getStringAttr(path);
+          } else {
+            field = classFieldSymbols.lookup(property);
+          }
           std::optional<unsigned> width = sim::getPackedWidth(*type);
-          if (!width || *width == 0 || !field) {
+          if (!width || *width == 0 || (!field && !referencePath)) {
             emitError(getSemanticLocation(property))
                 << "random properties must be packed integral values";
             invalid = true;
@@ -1611,8 +1691,19 @@ void ObeliskSimPreparePass::runOnOperation() {
               randcKeyFieldSymbols.lookup(property);
           FlatSymbolRefAttr randcPositionField =
               randcPositionFieldSymbols.lookup(property);
+          StringAttr randcKeyPath;
+          StringAttr randcPositionPath;
+          if (isRandC && isStatic) {
+            auto state = staticRandCStatePaths.find(property);
+            if (state != staticRandCStatePaths.end()) {
+              randcKeyPath = builder.getStringAttr(state->second.first);
+              randcPositionPath = builder.getStringAttr(state->second.second);
+            }
+          }
           if (isRandC &&
-              (*width > 32 || !randcKeyField || !randcPositionField)) {
+              (*width > 32 ||
+               ((!randcKeyField || !randcPositionField) &&
+                (!randcKeyPath || !randcPositionPath)))) {
             emitError(getSemanticLocation(property))
                 << "randc properties must be packed integral values no wider "
                    "than 32 bits";
@@ -1630,9 +1721,10 @@ void ObeliskSimPreparePass::runOnOperation() {
             invalid = true;
             continue;
           }
-          properties.push_back({property, field, *type, *width,
+          properties.push_back({property, field, referencePath, *type, *width,
                                 isSignedSemanticType(*semanticPropertyType),
                                 isRandC, randcKeyField, randcPositionField,
+                                randcKeyPath, randcPositionPath,
                                 std::move(domains)});
           continue;
         }
@@ -2492,7 +2584,6 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVector<Attribute> propertyAttrs;
     for (const RandomProperty &property : properties) {
       SmallVector<NamedAttribute> attributes{
-          builder.getNamedAttr("field", property.field),
           builder.getNamedAttr("type", TypeAttr::get(property.type)),
           builder.getNamedAttr("width",
                                builder.getI64IntegerAttr(property.width)),
@@ -2501,11 +2592,23 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder.getNamedAttr("is_randc",
                                builder.getBoolAttr(property.isRandC)),
       };
+      if (property.field)
+        attributes.push_back(builder.getNamedAttr("field", property.field));
+      else
+        attributes.push_back(builder.getNamedAttr(
+            randomPropertyPathAttrName, property.referencePath));
       if (property.isRandC) {
-        attributes.push_back(
-            builder.getNamedAttr("randc_key_field", property.randcKeyField));
-        attributes.push_back(builder.getNamedAttr("randc_position_field",
-                                                  property.randcPositionField));
+        if (property.randcKeyField) {
+          attributes.push_back(builder.getNamedAttr("randc_key_field",
+                                                    property.randcKeyField));
+          attributes.push_back(builder.getNamedAttr(
+              "randc_position_field", property.randcPositionField));
+        } else {
+          attributes.push_back(builder.getNamedAttr(
+              randomRandCKeyPathAttrName, property.randcKeyPath));
+          attributes.push_back(builder.getNamedAttr(
+              randomRandCPositionPathAttrName, property.randcPositionPath));
+        }
       }
       if (!property.domains.empty()) {
         SmallVector<Attribute> domains;
@@ -2567,9 +2670,13 @@ void ObeliskSimPreparePass::runOnOperation() {
         auto symbol = semanticSymbols.find(reference.getLeafReference());
         if (symbol == semanticSymbols.end())
           return;
-        if (auto field = classFieldSymbols.find(symbol->second);
-            field != classFieldSymbols.end())
-          nested->setAttr("obelisk_sim.class_field", field->second);
+        auto property =
+            dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second);
+        if ((!property || property.getLifetime() !=
+                              semantic::SVVariableLifetime::Static))
+          if (auto field = classFieldSymbols.find(symbol->second);
+              field != classFieldSymbols.end())
+            nested->setAttr("obelisk_sim.class_field", field->second);
         if (auto index = randomIndices.find(symbol->second);
             index != randomIndices.end() &&
             !nested->hasAttr(randomFunctionStateAttrName))

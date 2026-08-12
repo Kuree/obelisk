@@ -238,6 +238,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     auto property = dyn_cast<DictionaryAttr>(propertyAttr);
     auto field = property ? property.getAs<FlatSymbolRefAttr>("field")
                           : FlatSymbolRefAttr{};
+    auto referencePath =
+        property ? property.getAs<StringAttr>(randomPropertyPathAttrName)
+                 : StringAttr{};
     auto typeAttr = property ? property.getAs<TypeAttr>("type") : TypeAttr{};
     auto widthAttr =
         property ? property.getAs<IntegerAttr>("width") : IntegerAttr{};
@@ -245,7 +248,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         property ? property.getAs<BoolAttr>("is_signed") : BoolAttr{};
     auto randcAttr =
         property ? property.getAs<BoolAttr>("is_randc") : BoolAttr{};
-    if (!field || !typeAttr || !widthAttr || !signedAttr || !randcAttr ||
+    if (static_cast<bool>(field) == static_cast<bool>(referencePath) ||
+        !typeAttr || !widthAttr || !signedAttr || !randcAttr ||
         widthAttr.getValue().isZero() || widthAttr.getValue().isNegative() ||
         widthAttr.getValue().getActiveBits() > 64) {
       emitError(location) << "randomize property plan is malformed";
@@ -263,26 +267,58 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       emitError(location) << "randomize property type width is inconsistent";
       return failure();
     }
-    Type referenceType = sim::ManagedRefType::get(function.getContext(), type,
-                                                  objectType.getClassName());
-    Value reference = sim::SimClassFieldRefOp::create(
-        builder, location, referenceType, receiver, field);
+    Value reference;
+    if (field) {
+      Type referenceType = sim::ManagedRefType::get(
+          function.getContext(), type, objectType.getClassName());
+      reference = sim::SimClassFieldRefOp::create(
+          builder, location, referenceType, receiver, field);
+    } else {
+      reference = lvalues.lookup(referencePath.getValue());
+      if (!reference || getReferenceElementType(reference) != type) {
+        emitError(location)
+            << "static random property has no typed unit-local reference: "
+            << referencePath.getValue();
+        return failure();
+      }
+    }
     Value randcKeyReference;
     Value randcPositionReference;
     if (randcAttr.getValue()) {
       auto keyField = property.getAs<FlatSymbolRefAttr>("randc_key_field");
       auto positionField =
           property.getAs<FlatSymbolRefAttr>("randc_position_field");
-      if (width > 32 || !keyField || !positionField) {
+      auto keyPath = property.getAs<StringAttr>(randomRandCKeyPathAttrName);
+      auto positionPath =
+          property.getAs<StringAttr>(randomRandCPositionPathAttrName);
+      bool hasKeyField = static_cast<bool>(keyField);
+      bool hasPositionField = static_cast<bool>(positionField);
+      bool hasKeyPath = static_cast<bool>(keyPath);
+      bool hasPositionPath = static_cast<bool>(positionPath);
+      if (width > 32 || hasKeyField != hasPositionField ||
+          hasKeyPath != hasPositionPath || hasKeyField == hasKeyPath ||
+          hasKeyField != static_cast<bool>(field)) {
         emitError(location) << "randc property plan is malformed";
         return failure();
       }
-      Type stateReferenceType = sim::ManagedRefType::get(
-          function.getContext(), i64, objectType.getClassName());
-      randcKeyReference = sim::SimClassFieldRefOp::create(
-          builder, location, stateReferenceType, receiver, keyField);
-      randcPositionReference = sim::SimClassFieldRefOp::create(
-          builder, location, stateReferenceType, receiver, positionField);
+      if (hasKeyField) {
+        Type stateReferenceType = sim::ManagedRefType::get(
+            function.getContext(), i64, objectType.getClassName());
+        randcKeyReference = sim::SimClassFieldRefOp::create(
+            builder, location, stateReferenceType, receiver, keyField);
+        randcPositionReference = sim::SimClassFieldRefOp::create(
+            builder, location, stateReferenceType, receiver, positionField);
+      } else {
+        randcKeyReference = lvalues.lookup(keyPath.getValue());
+        randcPositionReference = lvalues.lookup(positionPath.getValue());
+        if (!randcKeyReference || !randcPositionReference ||
+            getReferenceElementType(randcKeyReference) != i64 ||
+            getReferenceElementType(randcPositionReference) != i64) {
+          emitError(location)
+              << "static randc state has no typed unit-local references";
+          return failure();
+        }
+      }
     }
     SmallVector<PropertyDomain> propertyDomains;
     if (auto domains = property.getAs<ArrayAttr>("domains")) {
@@ -734,9 +770,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   SmallVector<Value> propertyEnabled;
   uint64_t currentOffset = 0;
   for (auto [index, property] : llvm::enumerate(planned)) {
-    Value current = sim::SimManagedLoadOp::create(
-        builder, location, property.type, property.reference);
-    FailureOr<Value> scalar = toPackedScalar(current, location);
+    FailureOr<Value> current = loadReference(property.reference, location);
+    if (failed(current))
+      return failure();
+    FailureOr<Value> scalar = toPackedScalar(*current, location);
     FailureOr<Value> extended =
         succeeded(scalar)
             ? convert(*scalar, assignmentType, property.isSigned, location,
@@ -778,10 +815,12 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           ValueRange{state, bits, constant64(0), constant64(0)});
 
       setCurrent(enabledBlock);
-      Value key = sim::SimManagedLoadOp::create(builder, location, i64,
-                                                property.randcKeyReference);
-      Value position = sim::SimManagedLoadOp::create(
-          builder, location, i64, property.randcPositionReference);
+      FailureOr<Value> key =
+          loadReference(property.randcKeyReference, location);
+      FailureOr<Value> position =
+          loadReference(property.randcPositionReference, location);
+      if (failed(key) || failed(position))
+        return failure();
       uint64_t semanticCardinality = propertyDomainCardinality(property);
       if (semanticCardinality == 0 ||
           semanticCardinality > (uint64_t{1} << 32)) {
@@ -798,7 +837,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           value = arith::ExtUIOp::create(builder, location, assignmentType,
                                          value);
         cf::BranchOp::create(builder, location, mergeBlock,
-                             ValueRange{state, value, key, position});
+                             ValueRange{state, value, *key, *position});
       } else {
         unsigned cycleWidth = llvm::Log2_64_Ceil(semanticCardinality);
         Block *cycleEntry = addBlock();
@@ -811,7 +850,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         Value activeKey = cycleBlock->addArgument(i64, location);
         Value activePosition = cycleBlock->addArgument(i64, location);
         cf::BranchOp::create(builder, location, cycleEntry,
-                             ValueRange{state, key, position});
+                             ValueRange{state, *key, *position});
 
         setCurrent(cycleEntry);
         Value needsRekey =
@@ -4680,12 +4719,13 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         materializeCandidates(commitCandidate);
     if (failed(candidates))
       return failure();
-    sim::SimManagedStoreOp::create(builder, location, candidates->front(),
-                                   property.reference);
-    sim::SimManagedStoreOp::create(builder, location, commitKey,
-                                   property.randcKeyReference);
-    sim::SimManagedStoreOp::create(builder, location, commitPosition,
-                                   property.randcPositionReference);
+    if (failed(storeReference(property.reference, candidates->front(),
+                              location)) ||
+        failed(storeReference(property.randcKeyReference, commitKey,
+                              location)) ||
+        failed(storeReference(property.randcPositionReference, commitPosition,
+                              location)))
+      return failure();
     cf::BranchOp::create(builder, location, postBlock);
   }
 
@@ -4905,14 +4945,14 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     cf::CondBranchOp::create(builder, location, enabled, store, ValueRange{},
                              nextProperty, ValueRange{});
     setCurrent(store);
-    sim::SimManagedStoreOp::create(builder, location, candidate,
-                                   property.reference);
+    if (failed(storeReference(property.reference, candidate, location)))
+      return failure();
     if (property.isRandC) {
-      sim::SimManagedStoreOp::create(builder, location, property.nextRandcKey,
-                                     property.randcKeyReference);
-      sim::SimManagedStoreOp::create(builder, location,
-                                     property.nextRandcPosition,
-                                     property.randcPositionReference);
+      if (failed(storeReference(property.randcKeyReference,
+                                property.nextRandcKey, location)) ||
+          failed(storeReference(property.randcPositionReference,
+                                property.nextRandcPosition, location)))
+        return failure();
     }
     cf::BranchOp::create(builder, location, nextProperty);
     setCurrent(nextProperty);

@@ -321,6 +321,44 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
     unit.source->walk<WalkOrder::PreOrder>(
         [&](Operation *nested) { collectBinding(nested); });
 
+    // Explicit randomize property names are compile-time selectors and are
+    // erased before this analysis. Static selections still need their
+    // class-wide value and compiler-owned randc state references in the unit
+    // ABI. Freeze those descriptor captures from the prepared property plan;
+    // they are writes, while any genuine constraint read is discovered from
+    // the cloned constraint expressions above.
+    unit.source->walk([&](semantic::SVCallExpressionOp call) {
+      auto properties =
+          call->getAttrOfType<ArrayAttr>(randomPropertiesAttrName);
+      if (!properties)
+        return;
+      for (Attribute attribute : properties) {
+        auto property = dyn_cast<DictionaryAttr>(attribute);
+        if (!property)
+          continue;
+        for (StringRef name : {randomPropertyPathAttrName,
+                               randomRandCKeyPathAttrName,
+                               randomRandCPositionPathAttrName}) {
+          auto path = property.getAs<StringAttr>(name);
+          if (!path)
+            continue;
+          auto descriptor = descriptors.find(path.getValue());
+          if (descriptor == descriptors.end() ||
+              descriptor->second.kind != DescriptorInfo::Kind::Storage) {
+            emitError(getSemanticLocation(call))
+                << "static randomization state has no storage descriptor: "
+                << path.getValue();
+            invalid = true;
+            continue;
+          }
+          if (seenPaths.insert(path.getValue()).second)
+            result.descriptors[unit.source].push_back(
+                {path.getValue().str(), descriptor->second});
+          writtenDescriptors[unit.source].insert(path.getValue());
+        }
+      }
+    });
+
     // Manual covergroup sampling evaluates declaration expressions in the
     // caller, so their enclosing design storage is part of the sampling ABI.
     unit.source->walk([&](semantic::SVCallExpressionOp call) {
