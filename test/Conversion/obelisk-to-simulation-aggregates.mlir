@@ -510,6 +510,11 @@ module {
 // Ascending range [-1:1] maps source indices -1 and 1 to ordinals 0 and 2.
 // CHECK: obelisk_sim.ref.subelement {{.*}}{{\[\[0\]\]}} : !obelisk_sim.ref<!obelisk_sim.unpacked_array<-1 : 1
 // CHECK: obelisk_sim.ref.subelement {{.*}}{{\[\[2\]\]}} : !obelisk_sim.ref<!obelisk_sim.unpacked_array<-1 : 1
+// An unpacked union member write preserves every overlapping byte through a
+// whole-value read/modify/write instead of manufacturing a subreference.
+// CHECK: %[[UNTAGGED_OLD:.*]] = obelisk_sim.ref.load {{.*}} : {{.*}} -> !obelisk_sim.unpacked_union<{{.*}}isTagged = false>
+// CHECK: %[[UNTAGGED_UPDATED:.*]] = obelisk_sim.aggregate.insert {{.*}} into %[[UNTAGGED_OLD]][1] :
+// CHECK: obelisk_sim.ref.store %[[UNTAGGED_UPDATED]] to {{.*}} : !obelisk_sim.unpacked_union<{{.*}}isTagged = false>
 // CHECK: obelisk_sim.union.construct {{.*}} as 1 : {{.*}}isTagged = true, tagBits = 2>
 // CHECK: obelisk_sim.union.construct {{.*}} as 1 : {{.*}}isTagged = true>
 // Ambiguous fixed-array merging compares tagged-union activity before values.

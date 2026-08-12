@@ -252,27 +252,36 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
   }
 
   if (isa<semantic::SVMemberAccessExpressionOp>(destination) &&
-      !destination->hasAttr("obelisk_sim.class_field") &&
-      (isSequentialContainerSubvalue(destination) ||
-       sim::isManagedHandleType(*destinationType))) {
+      !destination->hasAttr("obelisk_sim.class_field")) {
     SmallVector<Operation *> members = getChildren(destination);
     auto ordinalAttr = destination->getAttrOfType<IntegerAttr>("field_ordinal");
     if (members.size() != 1 || !ordinalAttr ||
         ordinalAttr.getValue().isNegative() ||
         ordinalAttr.getValue().getActiveBits() > 32)
       return failure();
-    FailureOr<CapturedLValue> base = captureLValue(members.front(), location);
-    if (failed(base))
+    FailureOr<Type> memberBaseType =
+        getNormalizedSemanticType(members.front());
+    if (failed(memberBaseType))
       return failure();
-    Type baseType = base->type;
-    unsigned ordinal = ordinalAttr.getValue().getZExtValue();
-    if (isa<sim::PackedUnionType, sim::UnpackedUnionType>(baseType) ||
-        sim::getAggregateElementType(baseType, ordinal) != *destinationType)
-      return failure();
-    captured.kind = CapturedLValue::Kind::AggregateElement;
-    captured.ordinal = ordinal;
-    captured.children.push_back(std::move(*base));
-    return captured;
+    auto unpackedUnion = dyn_cast<sim::UnpackedUnionType>(*memberBaseType);
+    if (isSequentialContainerSubvalue(destination) ||
+        sim::isManagedHandleType(*destinationType) ||
+        (unpackedUnion && !unpackedUnion.getIsTagged())) {
+      FailureOr<CapturedLValue> base =
+          captureLValue(members.front(), location);
+      if (failed(base))
+        return failure();
+      Type baseType = base->type;
+      unsigned ordinal = ordinalAttr.getValue().getZExtValue();
+      if (isa<sim::PackedUnionType>(baseType) ||
+          (unpackedUnion && unpackedUnion.getIsTagged()) ||
+          sim::getAggregateElementType(baseType, ordinal) != *destinationType)
+        return failure();
+      captured.kind = CapturedLValue::Kind::AggregateElement;
+      captured.ordinal = ordinal;
+      captured.children.push_back(std::move(*base));
+      return captured;
+    }
   }
 
   FailureOr<Value> reference = lowerExpression(destination, true);
@@ -347,9 +356,18 @@ UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
         sim::getAggregateElementType((*aggregate).getType(),
                                      destination.ordinal) != destination.type)
       return failure();
-    return sim::SimAggregateExtractOp::create(builder, location,
-                                              destination.type, *aggregate,
-                                              destination.ordinal)
+    if (isa<sim::UnpackedUnionType>((*aggregate).getType())) {
+      Value extracted = sim::SimUnionExtractOp::create(
+          builder, location, destination.type, *aggregate,
+          destination.ordinal);
+      if (isa<sim::ClassHandleType>(destination.type))
+        extracted = sim::SimClassCastOp::create(
+            builder, location, destination.type, extracted);
+      return extracted;
+    }
+    return sim::SimAggregateExtractOp::create(
+               builder, location, destination.type, *aggregate,
+               destination.ordinal)
         .getResult();
   }
   case CapturedLValue::Kind::AggregateSlice: {

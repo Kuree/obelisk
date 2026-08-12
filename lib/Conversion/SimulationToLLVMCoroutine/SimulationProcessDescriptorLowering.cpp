@@ -73,6 +73,9 @@ makeProcessDescriptor(ModuleOp module, Location location, StringRef baseName,
           value = insertValue(
               builder, location, value,
               llvmConstant(builder, location, i32, field.alignment), 4);
+          value = insertValue(
+              builder, location, value,
+              llvmConstant(builder, location, i32, field.reserved), 5);
           array = LLVM::InsertValueOp::create(
               builder, location, array, value,
               ArrayRef<int64_t>{static_cast<int64_t>(index)});

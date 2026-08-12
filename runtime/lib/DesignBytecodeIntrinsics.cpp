@@ -1348,6 +1348,29 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                ? OBELISK_RT_OK
                : OBELISK_RT_INVALID_BYTECODE;
   }
+  case OBELISK_RT_INTRINSIC_V1_MANAGED_CANDIDATE_ROOT: {
+    Layout input = layoutAt(image, frame.function, inputRegister(0));
+    std::optional<uint64_t> bitOffset = scalar(1);
+    std::optional<uint64_t> kindMask = scalar(2);
+    if (!bitOffset || !kindMask || (*bitOffset & 63) != 0 ||
+        *bitOffset > input.width || 64 > input.width - *bitOffset ||
+        *kindMask == 0 ||
+        (*kindMask & ~uint64_t{OBELISK_RT_MANAGED_ROOT_KIND_ALL}) != 0)
+      return OBELISK_RT_INVALID_BYTECODE;
+    obelisk_rt_managed_word_v1 word = 0;
+    std::memcpy(&word, frame.data + input.offset + *bitOffset / 8,
+                sizeof(word));
+    word = obelisk_rt_v1_gc_candidate_root(
+        context, word, static_cast<uint32_t>(*kindMask));
+    obelisk_rt_object_v1 *object =
+        word != 0 && (word & UINT64_C(3)) == 0
+            ? reinterpret_cast<obelisk_rt_object_v1 *>(
+                  static_cast<uintptr_t>(word))
+            : nullptr;
+    return writeManaged(outputRegister(0), object)
+               ? OBELISK_RT_OK
+               : OBELISK_RT_INVALID_BYTECODE;
+  }
   case OBELISK_RT_INTRINSIC_V1_MANAGED_LOAD: {
     obelisk_rt_object_v1 *object = nullptr;
     uint64_t offset = 0;
@@ -1904,7 +1927,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         context, static_cast<uint64_t>(start));
     return sentinel(0, triggered);
   }
-  case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC: {
+  case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC:
+  case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC_TYPED: {
     if (!context)
       return OBELISK_RT_INVALID_ARGUMENT;
     Layout initialLayout = layoutAt(image, frame.function, inputRegister(0));
@@ -1923,7 +1947,25 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           initial.fourState
               ? reinterpret_cast<const uint8_t *>(initial.unknown.data())
               : nullptr;
-      if (site.inputCount > 1) {
+      if (signature.id == OBELISK_RT_INTRINSIC_V1_STATE_ALLOC_TYPED) {
+        if (site.inputCount < 4 || ((site.inputCount - 1) % 3) != 0)
+          return OBELISK_RT_INVALID_BYTECODE;
+        std::vector<obelisk_rt_managed_root_slot_v1> slots;
+        slots.reserve((site.inputCount - 1) / 3);
+        for (uint32_t index = 1; index != site.inputCount; index += 3) {
+          std::optional<uint64_t> bitOffset = scalar(index);
+          std::optional<uint64_t> kindMask = scalar(index + 1);
+          std::optional<uint64_t> flags = scalar(index + 2);
+          if (!bitOffset || !kindMask || !flags || *kindMask > UINT32_MAX ||
+              *flags > UINT32_MAX)
+            return OBELISK_RT_INVALID_BYTECODE;
+          slots.push_back({*bitOffset, static_cast<uint32_t>(*kindMask),
+                           static_cast<uint32_t>(*flags)});
+        }
+        status = obelisk_rt_v1_native_state_alloc_with_typed_roots(
+            context, initial.width, value, unknown, slots.data(), slots.size(),
+            &stable);
+      } else if (site.inputCount > 1) {
         std::vector<uint64_t> rootOffsets;
         rootOffsets.reserve(site.inputCount - 1);
         for (uint32_t index = 1; index != site.inputCount; ++index) {

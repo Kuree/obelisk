@@ -161,7 +161,7 @@ void walkTraceSlots(uint8_t *base, const obelisk_rt_trace_layout_v1 *layout,
   }
 }
 
-void enumerateTraceSlots(uint8_t *base,
+void enumerateTraceSlots(obelisk_rt_context *context, uint8_t *base,
                          const obelisk_rt_trace_layout_v1 *layout,
                          ManagedRootVisit visit, void *environment) noexcept {
   if (!layout)
@@ -171,8 +171,20 @@ void enumerateTraceSlots(uint8_t *base,
     for (uint64_t item = 0; item != entry.count; ++item) {
       uint8_t *address = base + entry.offset + item * entry.stride;
       if (entry.kind == OBELISK_RT_TRACE_EMBEDDED)
-        enumerateTraceSlots(address, entry.child_layout, visit, environment);
-      else if (entry.slot_kind == OBELISK_RT_MANAGED_SLOT_STRING) {
+        enumerateTraceSlots(context, address, entry.child_layout, visit,
+                            environment);
+      else if ((entry.slot_kind & OBELISK_RT_MANAGED_SLOT_CANDIDATE) != 0) {
+        obelisk_rt_managed_word_v1 word = 0;
+        std::memcpy(&word, address, sizeof(word));
+        word = obelisk_rt_v1_gc_candidate_root(
+            context, word,
+            entry.slot_kind & ~OBELISK_RT_MANAGED_SLOT_CANDIDATE);
+        if (word == 0 || (word & stringTagMask) != 0)
+          continue;
+        auto *object = reinterpret_cast<obelisk_rt_object_v1 *>(
+            static_cast<uintptr_t>(word));
+        visit(environment, &object);
+      } else if (entry.slot_kind == OBELISK_RT_MANAGED_SLOT_STRING) {
         obelisk_rt_managed_word_v1 word = 0;
         std::memcpy(&word, address, sizeof(word));
         if (word == 0 || (word & stringTagMask) == stringInlineTag)
@@ -189,6 +201,7 @@ void enumerateTraceSlots(uint8_t *base,
 }
 
 struct ValueRootEnvironment {
+  obelisk_rt_context *context;
   uint8_t *data;
   uint64_t count;
   uint64_t stride;
@@ -237,7 +250,8 @@ void enumerateValueRoots(void *opaque, ManagedRootVisit visit,
                          void *environment) {
   auto *values = static_cast<ValueRootEnvironment *>(opaque);
   for (uint64_t index = 0; index != values->count; ++index)
-    enumerateTraceSlots(values->data + index * values->stride,
+    enumerateTraceSlots(values->context,
+                        values->data + index * values->stride,
                         values->element->trace, visit, environment);
 }
 
@@ -271,6 +285,8 @@ validateManagedSlots(obelisk_rt_context *context,
                  [&](obelisk_rt_managed_word_v1 *slot,
                      obelisk_rt_managed_slot_kind_v1 kind) {
                    if (status != OBELISK_RT_OK || !slot || *slot == 0)
+                     return;
+                   if ((kind & OBELISK_RT_MANAGED_SLOT_CANDIDATE) != 0)
                      return;
                    if (kind == OBELISK_RT_MANAGED_SLOT_STRING) {
                      if (!stringBelongsTo(context, *slot))
@@ -839,6 +855,8 @@ void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
     if (extent != sizeof(ContainerHeader))
       return;
     auto *header = reinterpret_cast<ContainerHeader *>(object);
+    obelisk_rt_context *context = obelisk_rt_managed_object_context(
+        reinterpret_cast<obelisk_rt_object_v1 *>(object));
     if (header->descriptor != &containerDescriptorToken || !header->element ||
         header->size > header->capacity)
       return;
@@ -857,7 +875,8 @@ void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
           reinterpret_cast<BufferHeader *>(defaultBuffer)->descriptor ==
               &bufferDescriptorToken)
         enumerateTraceSlots(
-            defaultBuffer + sizeof(BufferHeader), header->element->trace,
+            context, defaultBuffer + sizeof(BufferHeader),
+            header->element->trace,
             [](void *opaque, obelisk_rt_object_v1 **root) {
               auto *pair =
                   static_cast<std::pair<ManagedTraceVisit, void *> *>(opaque);
@@ -894,7 +913,7 @@ void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
             (slot->string & stringTagMask) == 0)
           visit(environment, heapStringObject(slot->string));
         enumerateTraceSlots(
-            reinterpret_cast<uint8_t *>(slot) + valueOffset,
+            context, reinterpret_cast<uint8_t *>(slot) + valueOffset,
             header->element->trace,
             [](void *opaque, obelisk_rt_object_v1 **root) {
               auto *pair =
@@ -906,7 +925,7 @@ void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
     } else {
       for (uint64_t index = 0; index != header->size; ++index)
         enumerateTraceSlots(
-            data + physicalIndex(*header, index) * stride,
+            context, data + physicalIndex(*header, index) * stride,
             header->element->trace,
             [](void *opaque, obelisk_rt_object_v1 **slot) {
               auto *pair =
@@ -1556,7 +1575,7 @@ obelisk_rt_status prepareElementValue(obelisk_rt_gc_lane_v1 *lane,
   if (status != OBELISK_RT_OK || !element->trace)
     return status;
 
-  ValueRootEnvironment roots{storage.data(), 1, stride, element};
+  ValueRootEnvironment roots{context, storage.data(), 1, stride, element};
   ManagedRootProvider provider{};
   status = obelisk_rt_managed_roots_push(lane, &provider, enumerateValueRoots,
                                          &roots);
@@ -1565,9 +1584,22 @@ obelisk_rt_status prepareElementValue(obelisk_rt_gc_lane_v1 *lane,
   walkTraceSlots(storage.data(), element->trace,
                  [&](obelisk_rt_managed_word_v1 *word,
                      obelisk_rt_managed_slot_kind_v1 kind) {
+                   bool exactContainer =
+                       kind == OBELISK_RT_MANAGED_SLOT_CONTAINER;
+                   bool candidateContainer =
+                       (kind & OBELISK_RT_MANAGED_SLOT_CANDIDATE) != 0 &&
+                       (kind & OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER) != 0;
                    if (status != OBELISK_RT_OK || !word || *word == 0 ||
-                       kind != OBELISK_RT_MANAGED_SLOT_CONTAINER)
+                       (!exactContainer && !candidateContainer))
                      return;
+                   if (candidateContainer) {
+                     obelisk_rt_managed_word_v1 candidate =
+                         obelisk_rt_v1_gc_candidate_root(
+                         context, *word,
+                         OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER);
+                     if (candidate == 0)
+                       return;
+                   }
                    auto *slot =
                        reinterpret_cast<obelisk_rt_object_v1 **>(word);
                    if (obelisk_rt_managed_object_kind(*slot) !=
@@ -1847,6 +1879,7 @@ obelisk_rt_status snapshotValues(obelisk_rt_object_v1 *container,
 }
 
 struct AssocCloneRoots {
+  obelisk_rt_context *context;
   uint8_t *entries;
   uint64_t count;
   uint64_t stride;
@@ -1864,7 +1897,8 @@ void enumerateAssocCloneRoots(void *opaque, ManagedRootVisit visit,
     if (roots->keyKind == OBELISK_RT_ASSOC_KEY_STRING)
       visit(environment,
             reinterpret_cast<obelisk_rt_object_v1 **>(&slot->string));
-    enumerateTraceSlots(reinterpret_cast<uint8_t *>(slot) + roots->valueOffset,
+    enumerateTraceSlots(roots->context,
+                        reinterpret_cast<uint8_t *>(slot) + roots->valueOffset,
                         roots->element->trace, visit, environment);
   }
 }
@@ -1937,8 +1971,9 @@ obelisk_rt_status cloneAssocContainer(obelisk_rt_gc_lane_v1 *lane,
       break;
   }
 
-  AssocCloneRoots roots{entries.data(), snapshot.size,    stride,
-                        valueOffset,    snapshot.keyKind, snapshot.element};
+  AssocCloneRoots roots{obelisk_rt_managed_lane_context(lane), entries.data(),
+                        snapshot.size, stride, valueOffset, snapshot.keyKind,
+                        snapshot.element};
   ManagedRootProvider provider{};
   obelisk_rt_status status = obelisk_rt_managed_roots_push(
       lane, &provider, enumerateAssocCloneRoots, &roots);
@@ -2026,7 +2061,8 @@ obelisk_rt_status cloneContainerImpl(obelisk_rt_gc_lane_v1 *lane,
     status = snapshotValues(container, snapshot, values);
   uint64_t stride =
       status == OBELISK_RT_OK ? elementStride(snapshot.element) : 0;
-  ValueRootEnvironment roots{values.data(), snapshot.size, stride,
+  ValueRootEnvironment roots{obelisk_rt_managed_lane_context(lane),
+                             values.data(), snapshot.size, stride,
                              snapshot.element};
   ManagedRootProvider provider{};
   bool providerPushed = false;
@@ -2041,9 +2077,22 @@ obelisk_rt_status cloneContainerImpl(obelisk_rt_gc_lane_v1 *lane,
       walkTraceSlots(values.data() + index * stride, snapshot.element->trace,
                      [&](obelisk_rt_managed_word_v1 *word,
                          obelisk_rt_managed_slot_kind_v1 kind) {
+                       bool exactContainer =
+                           kind == OBELISK_RT_MANAGED_SLOT_CONTAINER;
+                       bool candidateContainer =
+                           (kind & OBELISK_RT_MANAGED_SLOT_CANDIDATE) != 0 &&
+                           (kind & OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER) != 0;
                        if (status != OBELISK_RT_OK || !word || *word == 0 ||
-                           kind != OBELISK_RT_MANAGED_SLOT_CONTAINER)
+                           (!exactContainer && !candidateContainer))
                          return;
+                       if (candidateContainer) {
+                         obelisk_rt_managed_word_v1 candidate =
+                             obelisk_rt_v1_gc_candidate_root(
+                             obelisk_rt_managed_lane_context(lane), *word,
+                             OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER);
+                         if (candidate == 0)
+                           return;
+                       }
                        auto *slot =
                            reinterpret_cast<obelisk_rt_object_v1 **>(word);
                        if (obelisk_rt_managed_object_kind(*slot) !=
@@ -3357,7 +3406,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_assoc_set_default(
   if (status != OBELISK_RT_OK)
     return status;
   ValueRootEnvironment preparedRoots{
-      prepared.data(), 1, elementStride(snapshot.element), snapshot.element};
+      obelisk_rt_managed_lane_context(lane), prepared.data(), 1,
+      elementStride(snapshot.element), snapshot.element};
   ScopedValueRoots preparedRoot(lane, &preparedRoots);
   if (preparedRoot.getStatus() != OBELISK_RT_OK)
     return preparedRoot.getStatus();

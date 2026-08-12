@@ -391,6 +391,10 @@ struct SignalValueSnapshot {
 };
 
 struct NativeAutomaticState {
+  struct CandidateRoot {
+    uint64_t byteOffset;
+    uint32_t allowedKinds;
+  };
   uint64_t bitWidth = 0;
   obelisk_rt_process_instance_v1 *owner = nullptr;
   uint64_t designOwner = 0;
@@ -400,6 +404,7 @@ struct NativeAutomaticState {
   obelisk_rt_object_v1 *managedValue = nullptr;
   bool managedRootRegistered = false;
   std::vector<uint64_t> managedRootByteOffsets;
+  std::vector<CandidateRoot> candidateRootByteOffsets;
 };
 
 struct EventState {

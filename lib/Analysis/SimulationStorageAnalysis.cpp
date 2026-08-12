@@ -70,29 +70,41 @@ getSimulationStorageProperties(Type type, const llvm::DataLayout &dataLayout,
   uint64_t managedRootSize = pointerSize.getFixedValue();
   uint32_t managedRootAlignment =
       dataLayout.getABITypeAlign(pointerType).value();
+  SmallVector<sim::ManagedHandleSlot, 2> managedRootSlots;
   SmallVector<uint64_t, 2> managedRootOffsets;
-  if (isa<sim::ManagedRefType, sim::ArgumentRefType>(type)) {
-    managedRootOffsets.push_back(0);
+  if (isa<sim::ManagedRefType>(type)) {
+    managedRootSlots.push_back(
+        {0, static_cast<uint32_t>(sim::ManagedHandleKind::Class), false});
+  } else if (isa<sim::ArgumentRefType>(type)) {
+    managedRootSlots.push_back(
+        {0,
+         static_cast<uint32_t>(sim::ManagedHandleKind::Class) |
+             static_cast<uint32_t>(sim::ManagedHandleKind::ReferencePath),
+         false});
   } else {
-    SmallVector<uint64_t, 2> bitOffsets;
-    if (!sim::getManagedHandleOffsets(type, bitOffsets))
+    SmallVector<sim::ManagedHandleSlot, 2> bitSlots;
+    if (!sim::getManagedHandleSlots(type, bitSlots))
       return failure();
-    for (uint64_t bitOffset : bitOffsets) {
-      if ((bitOffset & 7) != 0)
+    for (sim::ManagedHandleSlot slot : bitSlots) {
+      if ((slot.bitOffset & 7) != 0)
         return failure();
-      uint64_t byteOffset = bitOffset / 8;
+      uint64_t byteOffset = slot.bitOffset / 8;
       if (byteOffset > typeSize.getFixedValue() ||
           managedRootSize > typeSize.getFixedValue() - byteOffset)
         return failure();
-      managedRootOffsets.push_back(byteOffset);
+      slot.bitOffset = byteOffset;
+      managedRootSlots.push_back(slot);
     }
   }
+  for (const sim::ManagedHandleSlot &slot : managedRootSlots)
+    managedRootOffsets.push_back(slot.bitOffset);
 
   return SimulationStorageProperties{
       typeSize.getFixedValue(),
       static_cast<uint32_t>(dataLayout.getABITypeAlign(llvmType).value()),
       fourState,
       isa<sim::ManagedRefType>(type),
+      std::move(managedRootSlots),
       std::move(managedRootOffsets),
       managedRootSize,
       managedRootAlignment};

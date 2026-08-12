@@ -75,7 +75,8 @@ registerManagedFrameRoots(obelisk_rt_process_instance_v1 *instance,
   bool hasManagedRoots = false;
   for (uint32_t index = 0; index != layout.field_count; ++index)
     hasManagedRoots |=
-        layout.fields[index].flags == OBELISK_RT_FRAME_MANAGED_ROOT;
+        layout.fields[index].flags == OBELISK_RT_FRAME_MANAGED_ROOT ||
+        layout.fields[index].flags == OBELISK_RT_FRAME_CANDIDATE_ROOT;
   if (!hasManagedRoots) {
     metadata->managedRootContext = context;
     return OBELISK_RT_OK;

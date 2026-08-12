@@ -2,6 +2,7 @@
 // RUN:   --pass-pipeline='builtin.module(test-obelisk-simulation-process-frame-analysis)' \
 // RUN:   2>&1 | FileCheck %s
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | %python %S/../Conversion/Inputs/dump-bytecode-instructions.py | FileCheck %s --check-prefix=BYTECODE
 
 // This test owns the process-frame contract directly; the native RUN also
 // checks that lowering preserves the analysis's alignment guarantees.
@@ -11,6 +12,12 @@
   #obelisk_sim.field<name = "bits", type = i32, ordinal = 1, packedOffset = 0>
 ], isTagged = true>
 
+!untagged = !obelisk_sim.unpacked_union<fields = [
+  #obelisk_sim.field<name = "object", type = !obelisk_sim.class_handle<@Node>, ordinal = 0, packedOffset = 0>,
+  #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 1, packedOffset = 0>,
+  #obelisk_sim.field<name = "bits", type = i64, ordinal = 2, packedOffset = 0>
+], isTagged = false>
+
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
@@ -19,6 +26,7 @@ module attributes {
     obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "frame"
     obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "tagged_frame"
     obelisk_sim.code_unit.decl 3 in 0 initial hierarchy "wide_logic_frame"
+    obelisk_sim.code_unit.decl 4 in 0 initial hierarchy "untagged_frame"
     obelisk_sim.scope.decl 0
     obelisk_sim.class.decl @Node id 1 {
       is_abstract = false, is_final = false, is_interface = false
@@ -72,6 +80,18 @@ module attributes {
         attributes {entry_kind = 1 : i32, code_unit_id = 3 : i64} {
       obelisk_sim.return
     }
+
+    obelisk_sim.func @untagged_frame(
+        %ctx: !obelisk_sim.context
+            {obelisk_sim.capture_kind = 0 : i32},
+        %value: !untagged
+            {obelisk_sim.capture_kind = 2 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 4 : i64} {
+      %delay = obelisk_sim.time.constant 1
+      obelisk_sim.suspend.delay %delay to ^resume(%value : !untagged)
+    ^resume(%continued: !untagged):
+      obelisk_sim.return
+    }
   }
 }
 
@@ -105,6 +125,15 @@ module attributes {
 // CHECK-NEXT: continuations=0, 1
 // CHECK-NEXT: suspend obelisk_sim.suspend.delay id=1 bb=1 wait={{[0-9]+}}+
 // CHECK-NEXT: arg0 value={{[0-9]+}} size=17 align=8 roots=0
+// CHECK-NEXT: frame @untagged_frame size=
+// CHECK-NEXT: capture0 context
+// CHECK-NEXT: capture1 value=0 size=8 align=8 roots=0 candidate-roots=0:3
+// CHECK-NEXT: field capture candidate-root offset=0 size=8 align=8 kinds=3
+// CHECK-NEXT: field continuation candidate-root offset={{[0-9]+}} size=8 align=8 kinds=3
+// CHECK-NEXT: field wait none offset={{[0-9]+}} size=
+// CHECK-NEXT: continuations=0, 1
+// CHECK-NEXT: suspend obelisk_sim.suspend.delay id=1 bb=1 wait={{[0-9]+}}+
+// CHECK-NEXT: arg0 value={{[0-9]+}} size=8 align=8 roots=0 candidate-roots=0:3
 // CHECK-NEXT: frame @wide_logic_frame size=48 align=8 checksum=
 // CHECK-NEXT: capture0 context
 // CHECK-NEXT: capture1 value=0 unknown=24 size=17 align=8
@@ -114,5 +143,11 @@ module attributes {
 
 // NATIVE-LABEL: llvm.func @wide_logic_frame(
 // NATIVE: llvm.load %{{.*}} {alignment = 8 : i64} : !llvm.ptr -> i130
+
+// Candidate roots remain visible while the untagged union is captured and
+// while its continuation value resides in a suspended caller frame. The
+// destination field carries the allowed class|string kind mask.
+// BYTECODE: opcode=55 flags=1 dst=3 {{.*}} imm=0
+// BYTECODE: opcode=42 flags=1 dst=3 {{.*}} imm=8
 // NATIVE: llvm.getelementptr %{{.*}}[24] : (!llvm.ptr) -> !llvm.ptr, i8
 // NATIVE: llvm.load %{{.*}} {alignment = 8 : i64} : !llvm.ptr -> i130

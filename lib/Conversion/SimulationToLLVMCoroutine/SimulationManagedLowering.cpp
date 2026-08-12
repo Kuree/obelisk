@@ -331,6 +331,23 @@ public:
         owner = arith::TruncIOp::create(rewriter, op.getLoc(),
                                         rewriter.getI64Type(), owner);
     }
+    if (op.getMode() == sim::ManagedRootMode::Candidate) {
+      Value contextAddress = LLVM::AddressOfOp::create(
+          rewriter, op.getLoc(), LLVM::LLVMPointerType::get(rewriter.getContext()),
+          "__obelisk_current_context");
+      Value context = LLVM::LoadOp::create(
+          rewriter, op.getLoc(), LLVM::LLVMPointerType::get(rewriter.getContext()),
+          contextAddress, 8);
+      owner = LLVM::CallOp::create(
+                  rewriter, op.getLoc(), TypeRange{rewriter.getI64Type()},
+                  SymbolRefAttr::get(rewriter.getContext(),
+                                     "obelisk_rt_v1_gc_candidate_root"),
+                  ValueRange{context, owner,
+                             llvmConstant(rewriter, op.getLoc(),
+                                          rewriter.getI32Type(),
+                                          op.getKindMask())})
+                  .getResult();
+    }
     LLVM::StoreOp::create(rewriter, op.getLoc(), owner,
                           adaptor.getSlot().front(), 8);
     rewriter.eraseOp(op);

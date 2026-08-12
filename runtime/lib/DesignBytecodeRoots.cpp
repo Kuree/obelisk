@@ -112,6 +112,23 @@ void obelisk_rt_enumerate_design_managed_roots(
           continue;
         visitObjectWord(state.value.data() + offset, visit, visitorEnvironment);
       }
+      for (const NativeAutomaticState::CandidateRoot &root :
+           state.candidateRootByteOffsets) {
+        if (root.byteOffset > state.value.size() ||
+            sizeof(obelisk_rt_managed_word_v1) >
+                state.value.size() - root.byteOffset)
+          continue;
+        obelisk_rt_managed_word_v1 word = 0;
+        std::memcpy(&word, state.value.data() + root.byteOffset, sizeof(word));
+        word = obelisk_rt_v1_gc_candidate_root(context, word,
+                                               root.allowedKinds);
+        if (word != 0 && (word & UINT64_C(3)) == 0) {
+          obelisk_rt_object_v1 *object =
+              reinterpret_cast<obelisk_rt_object_v1 *>(
+                  static_cast<uintptr_t>(word));
+          visit(visitorEnvironment, &object);
+        }
+      }
     }
     for (obelisk_rt_process_instance_v1 *instance :
          context->managedRootProcesses) {
@@ -122,11 +139,25 @@ void obelisk_rt_enumerate_design_managed_roots(
           *instance->descriptor->frame_layout;
       for (uint32_t index = 0; index != layout.field_count; ++index) {
         const obelisk_rt_frame_field_v1 &field = layout.fields[index];
-        if (field.flags != OBELISK_RT_FRAME_MANAGED_ROOT)
+        if (field.flags != OBELISK_RT_FRAME_MANAGED_ROOT &&
+            field.flags != OBELISK_RT_FRAME_CANDIDATE_ROOT)
           continue;
-        auto **slot = reinterpret_cast<obelisk_rt_object_v1 **>(
-            static_cast<uint8_t *>(instance->frame) + field.offset);
-        visit(visitorEnvironment, slot);
+        uint8_t *address =
+            static_cast<uint8_t *>(instance->frame) + field.offset;
+        if (field.flags == OBELISK_RT_FRAME_MANAGED_ROOT) {
+          auto **slot = reinterpret_cast<obelisk_rt_object_v1 **>(address);
+          visit(visitorEnvironment, slot);
+        } else {
+          obelisk_rt_managed_word_v1 word = 0;
+          std::memcpy(&word, address, sizeof(word));
+          word = obelisk_rt_v1_gc_candidate_root(context, word,
+                                                 field.reserved);
+          if (word != 0 && (word & UINT64_C(3)) == 0) {
+            obelisk_rt_object_v1 *object = reinterpret_cast<obelisk_rt_object_v1 *>(
+                static_cast<uintptr_t>(word));
+            visit(visitorEnvironment, &object);
+          }
+        }
       }
     }
     for (ScheduledNBA &update : context->scheduledNBAs)
@@ -185,9 +216,23 @@ void obelisk_rt_enumerate_design_managed_roots(
               instruction.opcode == OBELISK_RT_DB_CLEAR_FRAME_ROOT) {
             if (instruction.immediate <= canonicalSize &&
                 sizeof(obelisk_rt_managed_word_v1) <=
-                    canonicalSize - instruction.immediate)
-              visitManagedWord(frame.data() + instruction.immediate, visit,
-                               visitorEnvironment);
+                    canonicalSize - instruction.immediate) {
+              const uint8_t *address = frame.data() + instruction.immediate;
+              if (instruction.flags == 0) {
+                visitManagedWord(address, visit, visitorEnvironment);
+              } else {
+                obelisk_rt_managed_word_v1 word = 0;
+                std::memcpy(&word, address, sizeof(word));
+                word = obelisk_rt_v1_gc_candidate_root(
+                    context, word, instruction.destination);
+                if (word != 0 && (word & UINT64_C(3)) == 0) {
+                  obelisk_rt_object_v1 *object =
+                      reinterpret_cast<obelisk_rt_object_v1 *>(
+                          static_cast<uintptr_t>(word));
+                  visit(visitorEnvironment, &object);
+                }
+              }
+            }
             continue;
           }
           if (instruction.opcode != OBELISK_RT_DB_STORE_FRAME ||

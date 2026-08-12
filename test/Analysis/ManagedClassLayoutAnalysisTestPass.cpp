@@ -75,7 +75,19 @@ public:
                             field.storage)
                      << " roots=[";
         llvm::interleaveComma(field.storage.managedRootOffsets, llvm::errs());
-        llvm::errs() << "]\n";
+        llvm::errs() << "]";
+        bool firstCandidate = true;
+        for (const obelisk::sim::ManagedHandleSlot &slot :
+             field.storage.managedRootSlots) {
+          if (!slot.conditional)
+            continue;
+          llvm::errs() << (firstCandidate ? " candidate-roots=[" : ",")
+                       << slot.bitOffset << ":" << slot.kindMask;
+          firstCandidate = false;
+        }
+        if (!firstCandidate)
+          llvm::errs() << "]";
+        llvm::errs() << "\n";
       }
     }
     markAllAnalysesPreserved();

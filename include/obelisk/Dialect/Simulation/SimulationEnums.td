@@ -534,4 +534,13 @@ def SimComputeNBAStorageKind
   let cppNamespace = "::obelisk::sim";
 }
 
+def SimManagedRootExact : I32EnumAttrCase<"Exact", 0, "exact">;
+def SimManagedRootCandidate : I32EnumAttrCase<"Candidate", 1, "candidate">;
+def SimManagedRootMode
+    : I32EnumAttr<"ManagedRootMode", "managed root classification", [
+        SimManagedRootExact, SimManagedRootCandidate
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 #endif // OBELISK_DIALECT_SIMULATION_SIMULATIONENUMS_TD

@@ -53,29 +53,35 @@ struct ManagedClassLayout {
 LogicalResult collectManagedTraceSlots(
     Type type, uint64_t baseBitOffset,
     SmallVectorImpl<std::pair<uint64_t, uint32_t>> &slots) {
-  if (sim::isManagedHandleType(type)) {
-    if ((baseBitOffset & 7) != 0)
+  SmallVector<sim::ManagedHandleSlot, 2> managed;
+  if (!sim::getManagedHandleSlots(type, managed))
+    return failure();
+  auto exactKind = [](uint32_t mask) -> std::optional<uint32_t> {
+    if (mask == static_cast<uint32_t>(sim::ManagedHandleKind::Class))
+      return OBELISK_RT_MANAGED_SLOT_CLASS;
+    if (mask == static_cast<uint32_t>(sim::ManagedHandleKind::String))
+      return OBELISK_RT_MANAGED_SLOT_STRING;
+    if (mask == static_cast<uint32_t>(sim::ManagedHandleKind::Container))
+      return OBELISK_RT_MANAGED_SLOT_CONTAINER;
+    if (mask == static_cast<uint32_t>(sim::ManagedHandleKind::ReferencePath))
+      return OBELISK_RT_MANAGED_SLOT_REFERENCE_PATH;
+    return std::nullopt;
+  };
+  for (const sim::ManagedHandleSlot &slot : managed) {
+    if ((slot.bitOffset & 7) != 0 ||
+        slot.bitOffset > UINT64_MAX - baseBitOffset)
       return failure();
-    uint32_t kind = OBELISK_RT_MANAGED_SLOT_CLASS;
-    if (isa<sim::StringType>(type))
-      kind = OBELISK_RT_MANAGED_SLOT_STRING;
-    else if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
-                 type))
-      kind = OBELISK_RT_MANAGED_SLOT_CONTAINER;
-    slots.push_back({baseBitOffset / 8, kind});
-    return success();
-  }
-  if (!sim::isAggregateType(type))
-    return success();
-  for (unsigned index = 0; index < sim::getAggregateNumElements(type);
-       ++index) {
-    auto child = sim::getAggregateProvenanceSubelement(type, index);
-    if (!child || child->first > UINT64_MAX - baseBitOffset)
+    uint64_t absolute = baseBitOffset + slot.bitOffset;
+    if ((absolute & 7) != 0)
       return failure();
-    if (failed(
-            collectManagedTraceSlots(sim::getAggregateElementType(type, index),
-                                     baseBitOffset + child->first, slots)))
+    std::optional<uint32_t> kind = exactKind(slot.kindMask);
+    if (!slot.conditional && !kind)
       return failure();
+    slots.push_back(
+        {absolute / 8,
+         slot.conditional
+             ? OBELISK_RT_MANAGED_SLOT_CANDIDATE | slot.kindMask
+             : *kind});
   }
   return success();
 }

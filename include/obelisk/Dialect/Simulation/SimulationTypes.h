@@ -53,8 +53,47 @@ std::optional<uint64_t> getProvenanceAlignment(::mlir::Type type);
 std::optional<std::pair<uint64_t, uint64_t>>
 getAggregateProvenanceSubelement(::mlir::Type type, unsigned index);
 
-/// Append every strong managed-handle word in `type`, as a bit offset from the
-/// start of its structural provenance representation.
+/// Runtime-managed categories that can occupy a source value word. These are
+/// bit flags because an overlapping union slot may legally represent more
+/// than one category.
+enum class ManagedHandleKind : uint32_t {
+  Class = 1u << 0,
+  String = 1u << 1,
+  Container = 1u << 2,
+  ReferencePath = 1u << 3,
+};
+
+/// Runtime trace-layout encoding shared by native class and container
+/// descriptors. Exact slots use the one-based managed kind enumerators;
+/// candidate slots carry this flag plus a ManagedHandleKind mask.
+constexpr uint32_t managedHandleCandidateFlag = uint32_t{1} << 31;
+
+struct ManagedHandleSlot {
+  uint64_t bitOffset;
+  uint32_t kindMask;
+  /// An overlapping source union can also contain ordinary bits. Such a slot
+  /// is a root only when its current word names a live object of an allowed
+  /// kind; exact slots must always contain a well-typed managed word.
+  bool conditional;
+
+  bool operator==(const ManagedHandleSlot &other) const {
+    return bitOffset == other.bitOffset && kindMask == other.kindMask &&
+           conditional == other.conditional;
+  }
+};
+
+/// Encode a structured managed slot for the public runtime trace ABI.
+std::optional<uint32_t>
+getManagedHandleTraceKind(const ManagedHandleSlot &slot);
+
+/// Append every managed-handle word in `type`, including its allowed runtime
+/// categories and whether tracing is conditional on the current word.
+bool getManagedHandleSlots(::mlir::Type type,
+                           ::llvm::SmallVectorImpl<ManagedHandleSlot> &slots);
+
+/// Compatibility projection used by analyses that only need root positions.
+/// Append every managed-handle word in `type`, as a bit offset from the start
+/// of its structural provenance representation.
 bool getManagedHandleOffsets(::mlir::Type type,
                              ::llvm::SmallVectorImpl<uint64_t> &offsets);
 

@@ -170,33 +170,47 @@ LogicalResult makeSchedulerMain(ModuleOp module,
         builder, location, TypeRange{},
         SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
         ValueRange{runtimeContext, status.getResult()});
-    for (uint64_t rootOffset : bound.managedRootOffsets) {
+    for (const sim::ManagedHandleSlot &root : bound.managedRootSlots) {
+      uint64_t rootOffset = root.bitOffset;
       if ((bound.offset + rootOffset) & 7)
         return module.emitError("managed static root is not byte aligned");
       Value state = LLVM::AddressOfOp::create(builder, location, pointer,
                                               "__obelisk_state_value");
       Value slot =
           byteGEP(builder, location, state, (bound.offset + rootOffset) / 8);
+      SmallVector<Value> rootArguments{runtimeContext, slot};
+      StringRef rootFunction = "obelisk_rt_v1_gc_static_root_register";
+      if (root.conditional) {
+        rootFunction = "obelisk_rt_v1_gc_candidate_static_root_register";
+        rootArguments.push_back(
+            llvmConstant(builder, location, i32, root.kindMask));
+      }
       Value rootStatus =
-          LLVM::CallOp::create(
-              builder, location, TypeRange{i32},
-              SymbolRefAttr::get(context,
-                                 "obelisk_rt_v1_gc_static_root_register"),
-              ValueRange{runtimeContext, slot})
+          LLVM::CallOp::create(builder, location, TypeRange{i32},
+                               SymbolRefAttr::get(context, rootFunction),
+                               rootArguments)
               .getResult();
       LLVM::CallOp::create(
           builder, location, TypeRange{},
           SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
           ValueRange{runtimeContext, rootStatus});
       if (hasDesignBytecode) {
+        SmallVector<Value> designRootArguments{
+            runtimeContext, llvmConstant(builder, location, i64,
+                                         bound.offset + rootOffset)};
+        StringRef designRootFunction =
+            "obelisk_rt_v1_gc_design_root_register";
+        if (root.conditional) {
+          designRootFunction =
+              "obelisk_rt_v1_gc_design_candidate_root_register";
+          designRootArguments.push_back(
+              llvmConstant(builder, location, i32, root.kindMask));
+        }
         Value designRootStatus =
             LLVM::CallOp::create(
                 builder, location, TypeRange{i32},
-                SymbolRefAttr::get(context,
-                                   "obelisk_rt_v1_gc_design_root_register"),
-                ValueRange{runtimeContext,
-                           llvmConstant(builder, location, i64,
-                                        bound.offset + rootOffset)})
+                SymbolRefAttr::get(context, designRootFunction),
+                designRootArguments)
                 .getResult();
         LLVM::CallOp::create(
             builder, location, TypeRange{},
@@ -248,8 +262,14 @@ LogicalResult makeSchedulerMain(ModuleOp module,
                            i32, {pointer, i32, i64, i64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_static_root_register", i32,
                            {pointer, pointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_gc_candidate_static_root_register", i32,
+      {pointer, pointer, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_design_root_register", i32,
                            {pointer, i64});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_gc_design_candidate_root_register", i32,
+      {pointer, i64, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_class_register", i32,
                            {pointer, pointer});
   getOrDeclareLLVMFunction(module,

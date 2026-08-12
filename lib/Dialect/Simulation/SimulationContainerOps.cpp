@@ -31,8 +31,10 @@
 #include "llvm/ADT/bit.h"
 
 #include <algorithm>
+#include <functional>
 #include <limits>
 #include <optional>
+#include <tuple>
 
 using namespace mlir;
 
@@ -299,69 +301,143 @@ getAggregateProvenanceSubelement(Type type, unsigned index) {
   return std::pair<uint64_t, uint64_t>{offset, *span};
 }
 
+bool getManagedHandleSlots(Type type,
+                           llvm::SmallVectorImpl<ManagedHandleSlot> &slots) {
+  auto leafKind = [](Type leaf) -> std::optional<uint32_t> {
+    if (isa<ClassHandleType>(leaf))
+      return static_cast<uint32_t>(ManagedHandleKind::Class);
+    if (isa<StringType>(leaf))
+      return static_cast<uint32_t>(ManagedHandleKind::String);
+    if (isa<DynamicArrayType, QueueType, AssocArrayType>(leaf))
+      return static_cast<uint32_t>(ManagedHandleKind::Container);
+    if (isa<ReferencePathType>(leaf))
+      return static_cast<uint32_t>(ManagedHandleKind::ReferencePath);
+    return std::nullopt;
+  };
+
+  std::function<bool(Type, uint64_t, bool)> collect =
+      [&](Type nestedType, uint64_t baseOffset, bool conditional) {
+        if (std::optional<uint32_t> kind = leafKind(nestedType)) {
+          slots.push_back({baseOffset, *kind, conditional});
+          return true;
+        }
+        if (!isAggregateType(nestedType))
+          return true;
+        bool overlapping = isa<PackedUnionType>(nestedType);
+        if (auto unpacked = dyn_cast<UnpackedUnionType>(nestedType))
+          overlapping = !unpacked.getIsTagged();
+        for (unsigned index = 0; index < getAggregateNumElements(nestedType);
+             ++index) {
+          std::optional<std::pair<uint64_t, uint64_t>> child =
+              getAggregateProvenanceSubelement(nestedType, index);
+          if (!child || child->first >
+                            std::numeric_limits<uint64_t>::max() - baseOffset)
+            return false;
+          if (!collect(getAggregateElementType(nestedType, index),
+                       baseOffset + child->first,
+                       conditional || overlapping))
+            return false;
+        }
+        return true;
+      };
+  size_t originalSize = slots.size();
+  if (!collect(type, 0, false)) {
+    slots.resize(originalSize);
+    return false;
+  }
+  // Four-state overlapping unions need value/unknown-plane pairing before a
+  // managed arm can be classified precisely. Keep this first chunk strictly
+  // two-state instead of silently treating X/Z bits as an object word.
+  if (containsFourStateLeaf(type) &&
+      llvm::any_of(llvm::ArrayRef(slots).drop_front(originalSize),
+                   [](const ManagedHandleSlot &slot) {
+                     return slot.conditional;
+                   })) {
+    slots.resize(originalSize);
+    return false;
+  }
+  llvm::sort(slots.begin() + originalSize, slots.end(),
+             [](const ManagedHandleSlot &lhs, const ManagedHandleSlot &rhs) {
+               return std::tie(lhs.bitOffset, lhs.kindMask, lhs.conditional) <
+                      std::tie(rhs.bitOffset, rhs.kindMask, rhs.conditional);
+             });
+  size_t output = originalSize;
+  for (size_t index = originalSize; index != slots.size(); ++index) {
+    ManagedHandleSlot slot = slots[index];
+    if (output != originalSize &&
+        slots[output - 1].bitOffset == slot.bitOffset) {
+      slots[output - 1].kindMask |= slot.kindMask;
+      slots[output - 1].conditional |= slot.conditional;
+      continue;
+    }
+    slots[output++] = slot;
+  }
+  slots.resize(output);
+  return true;
+}
+
+std::optional<uint32_t>
+getManagedHandleTraceKind(const ManagedHandleSlot &slot) {
+  constexpr uint32_t allKinds =
+      static_cast<uint32_t>(ManagedHandleKind::Class) |
+      static_cast<uint32_t>(ManagedHandleKind::String) |
+      static_cast<uint32_t>(ManagedHandleKind::Container) |
+      static_cast<uint32_t>(ManagedHandleKind::ReferencePath);
+  if (slot.kindMask == 0 || (slot.kindMask & ~allKinds) != 0)
+    return std::nullopt;
+  if (slot.conditional)
+    return managedHandleCandidateFlag | slot.kindMask;
+  switch (static_cast<ManagedHandleKind>(slot.kindMask)) {
+  case ManagedHandleKind::Class:
+    return 1;
+  case ManagedHandleKind::String:
+    return 2;
+  case ManagedHandleKind::Container:
+    return 3;
+  case ManagedHandleKind::ReferencePath:
+    return 4;
+  }
+  return std::nullopt;
+}
+
+static bool isValidManagedTraceKind(int32_t signedKind) {
+  uint32_t kind = static_cast<uint32_t>(signedKind);
+  if ((kind & managedHandleCandidateFlag) == 0)
+    return kind >= 1 && kind <= 4;
+  uint32_t mask = kind & ~managedHandleCandidateFlag;
+  constexpr uint32_t allKinds =
+      static_cast<uint32_t>(ManagedHandleKind::Class) |
+      static_cast<uint32_t>(ManagedHandleKind::String) |
+      static_cast<uint32_t>(ManagedHandleKind::Container) |
+      static_cast<uint32_t>(ManagedHandleKind::ReferencePath);
+  return mask != 0 && (mask & ~allKinds) == 0;
+}
+
+static LogicalResult
+collectExpectedManagedTrace(Type type,
+                            SmallVectorImpl<int64_t> &traceOffsets,
+                            SmallVectorImpl<int32_t> &traceKinds) {
+  SmallVector<ManagedHandleSlot, 2> slots;
+  if (!getManagedHandleSlots(type, slots))
+    return failure();
+  for (const ManagedHandleSlot &slot : slots) {
+    std::optional<uint32_t> kind = getManagedHandleTraceKind(slot);
+    if (!kind || (slot.bitOffset & 7) != 0 ||
+        slot.bitOffset / 8 > uint64_t{INT64_MAX})
+      return failure();
+    traceOffsets.push_back(static_cast<int64_t>(slot.bitOffset / 8));
+    traceKinds.push_back(static_cast<int32_t>(*kind));
+  }
+  return success();
+}
+
 bool getManagedHandleOffsets(Type type,
                              llvm::SmallVectorImpl<uint64_t> &offsets) {
-  if (isManagedHandleType(type)) {
-    offsets.push_back(0);
-    return true;
-  }
-  if (!isAggregateType(type))
-    return true;
-  // Ordinary union members overlap. A flat list of root offsets cannot
-  // distinguish a class member from ordinary bits in another member, and
-  // treating those bits as a pointer would make the collector conservative.
-  // Unpacked tagged unions instead use the disjoint payload layout above, so
-  // their inactive managed slots remain canonical null words and are safe to
-  // trace precisely.
-  if (isa<PackedUnionType, UnpackedUnionType>(type)) {
-    if (auto unionType = dyn_cast<UnpackedUnionType>(type);
-        unionType && unionType.getIsTagged()) {
-      for (unsigned index = 0; index < getAggregateNumElements(type); ++index) {
-        std::optional<std::pair<uint64_t, uint64_t>> child =
-            getAggregateProvenanceSubelement(type, index);
-        if (!child)
-          return false;
-        SmallVector<uint64_t, 2> nested;
-        if (!getManagedHandleOffsets(getAggregateElementType(type, index),
-                                     nested))
-          return false;
-        for (uint64_t nestedOffset : nested) {
-          if (nestedOffset >
-              std::numeric_limits<uint64_t>::max() - child->first)
-            return false;
-          offsets.push_back(child->first + nestedOffset);
-        }
-      }
-      llvm::sort(offsets);
-      offsets.erase(std::unique(offsets.begin(), offsets.end()), offsets.end());
-      return true;
-    }
-    for (unsigned index = 0; index < getAggregateNumElements(type); ++index) {
-      SmallVector<uint64_t, 2> nested;
-      if (!getManagedHandleOffsets(getAggregateElementType(type, index),
-                                   nested))
-        return false;
-      if (!nested.empty())
-        return false;
-    }
-    return true;
-  }
-  for (unsigned index = 0; index < getAggregateNumElements(type); ++index) {
-    std::optional<std::pair<uint64_t, uint64_t>> child =
-        getAggregateProvenanceSubelement(type, index);
-    if (!child)
-      return false;
-    SmallVector<uint64_t, 2> nested;
-    if (!getManagedHandleOffsets(getAggregateElementType(type, index), nested))
-      return false;
-    for (uint64_t nestedOffset : nested) {
-      if (nestedOffset > std::numeric_limits<uint64_t>::max() - child->first)
-        return false;
-      offsets.push_back(child->first + nestedOffset);
-    }
-  }
-  llvm::sort(offsets);
-  offsets.erase(std::unique(offsets.begin(), offsets.end()), offsets.end());
+  SmallVector<ManagedHandleSlot, 2> slots;
+  if (!getManagedHandleSlots(type, slots))
+    return false;
+  for (const ManagedHandleSlot &slot : slots)
+    offsets.push_back(slot.bitOffset);
   return true;
 }
 
@@ -464,7 +540,7 @@ LogicalResult SimContainerCreateOp::verify() {
       return emitOpError("trace slot is outside the element value plane");
     if (static_cast<uint64_t>(offset) % alignof(void *) != 0)
       return emitOpError("trace slot is not pointer aligned");
-    if (kind < 1 || kind > 3)
+    if (!isValidManagedTraceKind(kind))
       return emitOpError("trace slot kind is outside the runtime ABI");
     if (offset <= previousOffset)
       return emitOpError("trace slot offsets must be strictly increasing");
@@ -525,38 +601,8 @@ LogicalResult SimContainerCreateOp::verify() {
     expectedKind = 7;
     expectedSize = (*width + 7) / 8;
     expectedWidth = expectedSize * 8;
-    std::function<LogicalResult(Type, uint64_t)> collectTrace =
-        [&](Type nested, uint64_t baseBitOffset) -> LogicalResult {
-      if (isManagedHandleType(nested)) {
-        if ((baseBitOffset & 7) != 0 || baseBitOffset / 8 > uint64_t{INT64_MAX})
-          return failure();
-        int32_t kind = 1;
-        if (isa<StringType>(nested))
-          kind = 2;
-        else if (isa<DynamicArrayType, QueueType, AssocArrayType,
-                     ReferencePathType>(nested))
-          kind = 3;
-        expectedTraceOffsets.push_back(static_cast<int64_t>(baseBitOffset / 8));
-        expectedTraceKinds.push_back(kind);
-        return success();
-      }
-      if (!isAggregateType(nested))
-        return success();
-      if (isa<PackedUnionType, UnpackedUnionType>(nested)) {
-        SmallVector<uint64_t, 2> offsets;
-        return getManagedHandleOffsets(nested, offsets) ? success() : failure();
-      }
-      for (unsigned index = 0; index < getAggregateNumElements(nested);
-           ++index) {
-        auto child = getAggregateProvenanceSubelement(nested, index);
-        if (!child || child->first > UINT64_MAX - baseBitOffset ||
-            failed(collectTrace(getAggregateElementType(nested, index),
-                                baseBitOffset + child->first)))
-          return failure();
-      }
-      return success();
-    };
-    if (failed(collectTrace(element, 0)))
+    if (failed(collectExpectedManagedTrace(
+            element, expectedTraceOffsets, expectedTraceKinds)))
       return emitOpError("aggregate element has no canonical trace layout");
   }
   if (expectedKind != 0 &&
@@ -648,7 +694,7 @@ LogicalResult SimAssocCreateOp::verify() {
       return emitOpError("trace slot is outside the element value plane");
     if (static_cast<uint64_t>(offset) % alignof(void *) != 0)
       return emitOpError("trace slot is not pointer aligned");
-    if (kind < 1 || kind > 3)
+    if (!isValidManagedTraceKind(kind))
       return emitOpError("trace slot kind is outside the runtime ABI");
     if (offset <= previousOffset)
       return emitOpError("trace slot offsets must be strictly increasing");
@@ -702,38 +748,8 @@ LogicalResult SimAssocCreateOp::verify() {
     expectedKind = 7;
     expectedSize = (*width + 7) / 8;
     expectedWidth = expectedSize * 8;
-    std::function<LogicalResult(Type, uint64_t)> collectTrace =
-        [&](Type nested, uint64_t baseBitOffset) -> LogicalResult {
-      if (isManagedHandleType(nested)) {
-        if ((baseBitOffset & 7) != 0 || baseBitOffset / 8 > uint64_t{INT64_MAX})
-          return failure();
-        int32_t kind = 1;
-        if (isa<StringType>(nested))
-          kind = 2;
-        else if (isa<DynamicArrayType, QueueType, AssocArrayType,
-                     ReferencePathType>(nested))
-          kind = 3;
-        expectedTraceOffsets.push_back(static_cast<int64_t>(baseBitOffset / 8));
-        expectedTraceKinds.push_back(kind);
-        return success();
-      }
-      if (!isAggregateType(nested))
-        return success();
-      if (isa<PackedUnionType, UnpackedUnionType>(nested)) {
-        SmallVector<uint64_t, 2> offsets;
-        return getManagedHandleOffsets(nested, offsets) ? success() : failure();
-      }
-      for (unsigned index = 0; index < getAggregateNumElements(nested);
-           ++index) {
-        auto child = getAggregateProvenanceSubelement(nested, index);
-        if (!child || child->first > UINT64_MAX - baseBitOffset ||
-            failed(collectTrace(getAggregateElementType(nested, index),
-                                baseBitOffset + child->first)))
-          return failure();
-      }
-      return success();
-    };
-    if (failed(collectTrace(element, 0)))
+    if (failed(collectExpectedManagedTrace(
+            element, expectedTraceOffsets, expectedTraceKinds)))
       return emitOpError("aggregate element has no canonical trace layout");
   }
   if (expectedKind != 0 &&

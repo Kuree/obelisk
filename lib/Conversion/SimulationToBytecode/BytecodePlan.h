@@ -89,6 +89,8 @@ struct FunctionPlan {
   struct ManagedRootShadow {
     mlir::Value value;
     uint64_t bitOffset;
+    uint32_t kindMask;
+    bool conditional;
     uint32_t reg;
   };
   llvm::SmallVector<ManagedRootShadow> managedRootShadows;

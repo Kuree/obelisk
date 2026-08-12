@@ -185,6 +185,57 @@ bool validImmediateManagedWord(obelisk_rt_managed_word_v1 word) noexcept {
   return usedBits == 64 || (word >> usedBits) == 0;
 }
 
+bool isCandidateSlotKind(obelisk_rt_managed_slot_kind_v1 kind) noexcept {
+  return (kind & OBELISK_RT_MANAGED_SLOT_CANDIDATE) != 0;
+}
+
+uint32_t candidateSlotMask(obelisk_rt_managed_slot_kind_v1 kind) noexcept {
+  return kind & ~OBELISK_RT_MANAGED_SLOT_CANDIDATE;
+}
+
+uint32_t managedKindMask(obelisk_rt_managed_kind_v1 kind) noexcept {
+  switch (kind) {
+  case OBELISK_RT_MANAGED_CLASS:
+    return OBELISK_RT_MANAGED_ROOT_KIND_CLASS;
+  case OBELISK_RT_MANAGED_STRING:
+    return OBELISK_RT_MANAGED_ROOT_KIND_STRING;
+  case OBELISK_RT_MANAGED_CONTAINER:
+    return OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER;
+  case OBELISK_RT_MANAGED_REFERENCE_PATH:
+    return OBELISK_RT_MANAGED_ROOT_KIND_REFERENCE_PATH;
+  default:
+    return 0;
+  }
+}
+
+ObjectMetadata *candidateRootMetadata(ManagedHeap *heap,
+                                      obelisk_rt_managed_word_v1 word,
+                                      uint32_t allowedKinds) noexcept {
+  if (allowedKinds == 0 ||
+      (allowedKinds & ~OBELISK_RT_MANAGED_ROOT_KIND_ALL) != 0)
+    return nullptr;
+  if (validImmediateManagedWord(word))
+    return nullptr;
+  obelisk_rt_object_v1 *object = managedWordObject(word);
+  if (!object)
+    return nullptr;
+  // Candidate words are arbitrary source bits. Keep the global registry read
+  // lock through every metadata inspection so a foreign heap cannot remove
+  // and destroy a coincidentally addressed allocation between lookup and
+  // classification. Same-heap objects remain stable after return because the
+  // caller is either the owning stop-the-world collector or an active lane.
+  std::shared_lock<std::shared_mutex> lock(metadataRegistryMutex);
+  auto found = metadataRegistry.find(object);
+  if (found == metadataRegistry.end())
+    return nullptr;
+  ObjectMetadata *metadata = found->second;
+  return metadata && metadata->object == object && metadata->heap == heap &&
+                 metadata->allocated.load(std::memory_order_acquire) &&
+                 (managedKindMask(metadata->kind) & allowedKinds) != 0
+             ? metadata
+             : nullptr;
+}
+
 class ObjectLock {
 public:
   explicit ObjectLock(ObjectMetadata *metadata) : metadata(metadata) {
@@ -234,14 +285,23 @@ bool validateTraceLayout(const obelisk_rt_trace_layout_v1 *layout,
           entry.slot_kind != OBELISK_RT_MANAGED_SLOT_INVALID)
         return false;
       elementSize = entry.child_layout->size;
-    } else if ((entry.kind != OBELISK_RT_TRACE_STRONG &&
-                entry.kind != OBELISK_RT_TRACE_WEAK) ||
-               entry.child_layout ||
-               entry.slot_kind < OBELISK_RT_MANAGED_SLOT_CLASS ||
-               entry.slot_kind > OBELISK_RT_MANAGED_SLOT_CONTAINER ||
-               (entry.kind == OBELISK_RT_TRACE_WEAK &&
-                entry.slot_kind != OBELISK_RT_MANAGED_SLOT_CLASS))
-      return false;
+    } else {
+      bool candidate = isCandidateSlotKind(entry.slot_kind);
+      uint32_t candidateMask = candidateSlotMask(entry.slot_kind);
+      if ((entry.kind != OBELISK_RT_TRACE_STRONG &&
+           entry.kind != OBELISK_RT_TRACE_WEAK) ||
+          entry.child_layout ||
+          (candidate
+               ? entry.kind != OBELISK_RT_TRACE_STRONG ||
+                     candidateMask == 0 ||
+                     (candidateMask & ~OBELISK_RT_MANAGED_ROOT_KIND_ALL) != 0
+               : entry.slot_kind < OBELISK_RT_MANAGED_SLOT_CLASS ||
+                     entry.slot_kind >
+                         OBELISK_RT_MANAGED_SLOT_REFERENCE_PATH ||
+                     (entry.kind == OBELISK_RT_TRACE_WEAK &&
+                      entry.slot_kind != OBELISK_RT_MANAGED_SLOT_CLASS)))
+        return false;
+    }
     uint64_t requiredAlignment = entry.kind == OBELISK_RT_TRACE_EMBEDDED
                                      ? entry.child_layout->alignment
                                      : alignof(obelisk_rt_object_v1 *);
@@ -285,7 +345,8 @@ bool layoutHasHandleAt(const obelisk_rt_trace_layout_v1 *layout,
       if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
         if (layoutHasHandleAt(entry.child_layout, offset, wantedOffset))
           return true;
-      } else if (offset == wantedOffset) {
+      } else if (!isCandidateSlotKind(entry.slot_kind) &&
+                 offset == wantedOffset) {
         return true;
       }
     }
@@ -314,7 +375,9 @@ bool layoutHasWeakHandleAt(const obelisk_rt_trace_layout_v1 *layout,
 }
 
 bool layoutHasStrongHandleAt(const obelisk_rt_trace_layout_v1 *layout,
-                             uint64_t baseOffset, uint64_t wantedOffset) {
+                             uint64_t baseOffset, uint64_t wantedOffset,
+                             obelisk_rt_managed_slot_kind_v1 wantedKind =
+                                 OBELISK_RT_MANAGED_SLOT_INVALID) {
   if (!layout)
     return false;
   for (uint64_t index = 0; index != layout->entry_count; ++index) {
@@ -322,10 +385,13 @@ bool layoutHasStrongHandleAt(const obelisk_rt_trace_layout_v1 *layout,
     for (uint64_t item = 0; item != entry.count; ++item) {
       uint64_t offset = baseOffset + entry.offset + item * entry.stride;
       if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
-        if (layoutHasStrongHandleAt(entry.child_layout, offset, wantedOffset))
+        if (layoutHasStrongHandleAt(entry.child_layout, offset, wantedOffset,
+                                    wantedKind))
           return true;
       } else if (entry.kind == OBELISK_RT_TRACE_STRONG &&
-                 offset == wantedOffset) {
+                 offset == wantedOffset &&
+                 (wantedKind == OBELISK_RT_MANAGED_SLOT_INVALID ||
+                  entry.slot_kind == wantedKind)) {
         return true;
       }
     }
@@ -388,7 +454,7 @@ bool layoutContainsHandles(const obelisk_rt_trace_layout_v1 *candidate,
         if (!layoutContainsHandles(candidate, entry.child_layout, offset))
           return false;
       } else if (entry.kind == OBELISK_RT_TRACE_STRONG) {
-        if (!layoutHasStrongHandleAt(candidate, 0, offset))
+        if (!layoutHasStrongHandleAt(candidate, 0, offset, entry.slot_kind))
           return false;
       } else if (!layoutHasWeakHandleAt(candidate, 0, offset)) {
         return false;
@@ -448,6 +514,14 @@ bool validateLayoutHandleWrite(
       std::memcpy(&word, data + fieldOffset - offset, sizeof(word));
       if (word == 0)
         continue;
+      if (isCandidateSlotKind(entry.slot_kind)) {
+        if (ObjectMetadata *candidate = candidateRootMetadata(
+                heap, word, candidateSlotMask(entry.slot_kind));
+            candidate && referents)
+          referents->push_back(
+              static_cast<obelisk_rt_object_v1 *>(candidate->object));
+        continue;
+      }
       if (entry.slot_kind == OBELISK_RT_MANAGED_SLOT_STRING &&
           validImmediateManagedWord(word))
         continue;
@@ -458,7 +532,9 @@ bool validateLayoutHandleWrite(
               ? OBELISK_RT_MANAGED_CLASS
               : (entry.slot_kind == OBELISK_RT_MANAGED_SLOT_STRING
                      ? OBELISK_RT_MANAGED_STRING
-                     : OBELISK_RT_MANAGED_CONTAINER);
+                     : (entry.slot_kind == OBELISK_RT_MANAGED_SLOT_CONTAINER
+                            ? OBELISK_RT_MANAGED_CONTAINER
+                            : OBELISK_RT_MANAGED_REFERENCE_PATH));
       if (!referentMetadata || referentMetadata->heap != heap ||
           referentMetadata->kind != expectedKind)
         return false;
@@ -821,6 +897,25 @@ public:
         staticRoots.end())
       return OBELISK_RT_INVALID_LIFECYCLE;
     staticRoots.push_back(slot);
+    return OBELISK_RT_OK;
+  }
+
+  obelisk_rt_status registerCandidateStatic(obelisk_rt_managed_word_v1 *slot,
+                                            uint32_t allowedKinds,
+                                            bool activeCaller) {
+    if (!slot || allowedKinds == 0 ||
+        (allowedKinds & ~OBELISK_RT_MANAGED_ROOT_KIND_ALL) != 0)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    std::unique_lock<std::mutex> worldLock(worldMutex, std::defer_lock);
+    if (!activeCaller)
+      worldLock.lock();
+    std::lock_guard<std::mutex> rootLock(rootMutex);
+    if (std::any_of(candidateStaticRoots.begin(), candidateStaticRoots.end(),
+                    [&](const CandidateStaticRoot &root) {
+          return root.slot == slot;
+        }))
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    candidateStaticRoots.push_back({slot, allowedKinds});
     return OBELISK_RT_OK;
   }
 
@@ -1264,7 +1359,12 @@ private:
         else {
           obelisk_rt_managed_word_v1 word = 0;
           std::memcpy(&word, address, sizeof(word));
-          markObject(managedWordObject(word), pending);
+          if (isCandidateSlotKind(entry.slot_kind))
+            mark(candidateRootMetadata(this, word,
+                                       candidateSlotMask(entry.slot_kind)),
+                 pending);
+          else
+            markObject(managedWordObject(word), pending);
         }
       }
     }
@@ -1342,6 +1442,10 @@ private:
       std::lock_guard<std::mutex> rootLock(rootMutex);
       for (obelisk_rt_object_v1 **slot : staticRoots)
         markObject(slot ? *slot : nullptr, pending);
+      for (const CandidateStaticRoot &root : candidateStaticRoots) {
+        obelisk_rt_managed_word_v1 word = root.slot ? *root.slot : 0;
+        mark(candidateRootMetadata(this, word, root.allowedKinds), pending);
+      }
     }
     obelisk_rt_enumerate_design_managed_roots(context, visitProviderRoot,
                                               &providerVisitor);
@@ -1494,6 +1598,11 @@ private:
   std::atomic<bool> collectionRequested{false};
   std::vector<obelisk_rt_gc_lane_v1 *> lanes;
   std::vector<obelisk_rt_object_v1 **> staticRoots;
+  struct CandidateStaticRoot {
+    obelisk_rt_managed_word_v1 *slot;
+    uint32_t allowedKinds;
+  };
+  std::vector<CandidateStaticRoot> candidateStaticRoots;
   std::vector<std::unique_ptr<Chunk>> chunks;
   std::vector<std::unique_ptr<LargeAllocation>> largeAllocations;
   std::array<std::vector<Span *>, kSizeClassCount> availableSpans;
@@ -1921,6 +2030,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_gc_managed_root_range_pop(
              : OBELISK_RT_INVALID_ARGUMENT;
 }
 
+extern "C" obelisk_rt_managed_word_v1 obelisk_rt_v1_gc_candidate_root(
+    obelisk_rt_context *context, obelisk_rt_managed_word_v1 word,
+    obelisk_rt_managed_root_kind_mask_v1 allowedKinds) {
+  if ((allowedKinds & OBELISK_RT_MANAGED_ROOT_KIND_STRING) != 0 &&
+      validImmediateManagedWord(word))
+    return word;
+  ManagedHeap *heap = heapFor(context);
+  return heap && candidateRootMetadata(heap, word, allowedKinds) ? word : 0;
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_gc_static_root_register(obelisk_rt_context *context,
                                       obelisk_rt_object_v1 **slot) {
@@ -1930,6 +2049,19 @@ obelisk_rt_v1_gc_static_root_register(obelisk_rt_context *context,
              ? guarded(context,
                        [&] { return heap->registerStatic(slot, activeCaller); })
              : OBELISK_RT_INVALID_ARGUMENT;
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_gc_candidate_static_root_register(
+    obelisk_rt_context *context, obelisk_rt_managed_word_v1 *slot,
+    obelisk_rt_managed_root_kind_mask_v1 allowedKinds) {
+  ManagedHeap *heap = heapFor(context);
+  bool activeCaller = heap && heap->hasActiveCaller();
+  return heap ? guarded(context, [&] {
+           return heap->registerCandidateStatic(slot, allowedKinds,
+                                                activeCaller);
+         })
+              : OBELISK_RT_INVALID_ARGUMENT;
 }
 
 extern "C" obelisk_rt_status
@@ -2101,6 +2233,24 @@ obelisk_rt_v1_gc_design_root_register(obelisk_rt_context *context,
         context->stateValue.data() + word);
     bool activeCaller = heap->hasActiveCaller();
     return heap->registerStatic(slot, activeCaller);
+  });
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_gc_design_candidate_root_register(
+    obelisk_rt_context *context, uint64_t bitOffset,
+    obelisk_rt_managed_root_kind_mask_v1 allowedKinds) {
+  ManagedHeap *heap = heapFor(context);
+  if (!heap || bitOffset % 64 != 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  uint64_t word = bitOffset / 64;
+  if (word >= context->stateValue.size())
+    return OBELISK_RT_INVALID_DESIGN;
+  return guarded(context, [&] {
+    auto *slot = reinterpret_cast<obelisk_rt_managed_word_v1 *>(
+        context->stateValue.data() + word);
+    return heap->registerCandidateStatic(slot, allowedKinds,
+                                         heap->hasActiveCaller());
   });
 }
 

@@ -34,8 +34,11 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
         nextHandleID > OBELISK_RT_STABLE_HANDLE_MAX_STATIC_ID)
       return failure();
     SmallVector<uint64_t, 2> managedRootOffsets;
-    if (!sim::getManagedHandleOffsets(type, managedRootOffsets))
+    SmallVector<sim::ManagedHandleSlot, 2> managedRootSlots;
+    if (!sim::getManagedHandleSlots(type, managedRootSlots))
       return failure();
+    for (const sim::ManagedHandleSlot &slot : managedRootSlots)
+      managedRootOffsets.push_back(slot.bitOffset);
     // Keep byte-sized roots byte-aligned. Besides avoiding cross-byte packed
     // loads and masks for ordinary scalar state, this lets read-only VPI retain
     // a canonical value with one plain store. Sub-byte roots remain densely
@@ -57,7 +60,8 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
     layout.bitCount += *width;
     handle = encodeStaticHandle(nextHandleID);
     layout.bounds.push_back({nextHandleID++, offset, *width, fourState,
-                             std::move(managedRootOffsets)});
+                             std::move(managedRootOffsets),
+                             std::move(managedRootSlots)});
     return success();
   };
   WalkResult walked = module.walk([&](Operation *operation) {

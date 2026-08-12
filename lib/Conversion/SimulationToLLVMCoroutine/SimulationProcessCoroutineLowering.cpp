@@ -75,6 +75,7 @@ void addFrameAttributes(LLVM::LLVMFuncOp ramp,
     attributes.set("offset", builder.getI64IntegerAttr(field.offset));
     attributes.set("size", builder.getI64IntegerAttr(field.size));
     attributes.set("alignment", builder.getI32IntegerAttr(field.alignment));
+    attributes.set("reserved", builder.getI32IntegerAttr(field.reserved));
     fields.push_back(attributes.getDictionary(builder.getContext()));
   }
   ramp->setAttr("obelisk.frame.fields", builder.getArrayAttr(fields));
@@ -265,7 +266,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
         task->getAttrOfType<DenseI64ArrayAttr>(nativeTransferredReferencesAttr);
     if (!sizesAttr ||
         static_cast<uint64_t>(sizesAttr.size()) != task.getArguments().size() ||
-        !rootsAttr || (rootsAttr.size() & 1) != 0 || !referencesAttr)
+        !rootsAttr || (rootsAttr.size() % 4) != 0 || !referencesAttr)
       return task.emitOpError("has malformed native argument metadata");
     Type argumentType =
         LLVM::LLVMStructType::getLiteral(builder.getContext(), {pointer, i64});
@@ -309,7 +310,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
     if (!rootsAttr.empty()) {
       Type rootType = LLVM::LLVMStructType::getLiteral(
           builder.getContext(), {pointer, i64, pointer, i64});
-      uint64_t rootCount = rootsAttr.size() / 2;
+      uint64_t rootCount = rootsAttr.size() / 4;
       Value count = llvmConstant(builder, location, i64, rootCount);
       Value rootSlots = entryAlloca(builder, location, i64, rootCount, 8);
       rootRecord = entryAlloca(builder, location, rootType, 1, 8);
@@ -317,11 +318,17 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
                             LLVM::ZeroOp::create(builder, location, rootType),
                             rootRecord, 8);
       for (uint64_t index = 0; index != rootCount; ++index) {
-        int64_t argumentIndex = rootsAttr[index * 2];
-        int64_t byteOffset = rootsAttr[index * 2 + 1];
+        int64_t argumentIndex = rootsAttr[index * 4];
+        int64_t byteOffset = rootsAttr[index * 4 + 1];
+        int64_t kindMask = rootsAttr[index * 4 + 2];
+        int64_t conditional = rootsAttr[index * 4 + 3];
         if (argumentIndex < 0 ||
             static_cast<uint64_t>(argumentIndex) >= argumentStorage.size() ||
             byteOffset < 0 || sizesAttr[argumentIndex] < 0 ||
+            kindMask <= 0 ||
+            static_cast<uint64_t>(kindMask) >
+                OBELISK_RT_MANAGED_ROOT_KIND_ALL ||
+            (conditional != 0 && conditional != 1) ||
             static_cast<uint64_t>(byteOffset) >
                 static_cast<uint64_t>(sizesAttr[argumentIndex]) ||
             sizeof(void *) > static_cast<uint64_t>(sizesAttr[argumentIndex]) -
@@ -332,6 +339,15 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
             byteGEP(builder, location, argumentStorage[argumentIndex],
                     byteOffset),
             1);
+        if (conditional)
+          root = LLVM::CallOp::create(
+                     builder, location, TypeRange{i64},
+                     SymbolRefAttr::get(builder.getContext(),
+                                        "obelisk_rt_v1_gc_candidate_root"),
+                     ValueRange{context, root,
+                                llvmConstant(builder, location, i32,
+                                             kindMask)})
+                     .getResult();
         LLVM::StoreOp::create(
             builder, location, root,
             byteGEP(builder, location, rootSlots, index * sizeof(void *)), 8);

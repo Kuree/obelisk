@@ -542,14 +542,21 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     if (!width)
       return op.emitOpError("automatic storage has no fixed width");
     SmallVector<uint32_t> inputs{reg(plan, op.getInitialValue())};
-    SmallVector<uint64_t, 2> rootOffsets;
-    if (!sim::getManagedHandleOffsets(op.getInitialValue().getType(),
-                                      rootOffsets))
+    SmallVector<sim::ManagedHandleSlot, 2> rootSlots;
+    if (!sim::getManagedHandleSlots(op.getInitialValue().getType(), rootSlots))
       return op.emitOpError("automatic storage has no managed root layout");
-    if (plan.layouts[inputs.front()].kind != Managed)
-      for (uint64_t offset : rootOffsets)
-        inputs.push_back(emitU64Constant(plan, offset));
-    return emitIntrinsicRegisters(plan, kIntrinsicStateAlloc, inputs,
+    uint32_t intrinsic = kIntrinsicStateAlloc;
+    if (plan.layouts[inputs.front()].kind != Managed && !rootSlots.empty()) {
+      intrinsic = kIntrinsicStateAllocTyped;
+      for (const sim::ManagedHandleSlot &slot : rootSlots) {
+        inputs.push_back(emitU64Constant(plan, slot.bitOffset));
+        inputs.push_back(emitU64Constant(plan, slot.kindMask));
+        inputs.push_back(emitU64Constant(
+            plan, slot.conditional ? OBELISK_RT_MANAGED_ROOT_SLOT_CANDIDATE
+                                   : 0));
+      }
+    }
+    return emitIntrinsicRegisters(plan, intrinsic, inputs,
                                   {reg(plan, op.getResult())});
   }
   if (isa<sim::SimDisableChildrenOp>(operation))

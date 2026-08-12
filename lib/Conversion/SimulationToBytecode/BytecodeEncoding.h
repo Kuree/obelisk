@@ -83,6 +83,8 @@ constexpr uint32_t kIntrinsicEventTrigger =
 constexpr uint32_t kIntrinsicEventTriggered =
     OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGERED;
 constexpr uint32_t kIntrinsicStateAlloc = OBELISK_RT_INTRINSIC_V1_STATE_ALLOC;
+constexpr uint32_t kIntrinsicStateAllocTyped =
+    OBELISK_RT_INTRINSIC_V1_STATE_ALLOC_TYPED;
 constexpr uint32_t kIntrinsicDisableChildren =
     OBELISK_RT_INTRINSIC_V1_DISABLE_CHILDREN;
 constexpr uint32_t kIntrinsicControlEnter =
@@ -162,6 +164,8 @@ constexpr uint32_t kIntrinsicArgumentRefStore =
     OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_STORE;
 constexpr uint32_t kIntrinsicManagedRootExtract =
     OBELISK_RT_INTRINSIC_V1_MANAGED_ROOT_EXTRACT;
+constexpr uint32_t kIntrinsicManagedCandidateRoot =
+    OBELISK_RT_INTRINSIC_V1_MANAGED_CANDIDATE_ROOT;
 constexpr uint32_t kIntrinsicReferencePathIndex =
     OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_INDEX;
 constexpr uint32_t kIntrinsicArgumentRefFromPath =

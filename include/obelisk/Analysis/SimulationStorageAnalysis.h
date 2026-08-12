@@ -6,6 +6,8 @@
 #include "mlir/IR/Types.h"
 #include "mlir/Support/LLVM.h"
 
+#include "obelisk/Dialect/Simulation/SimulationTypes.h"
+
 #include <cstddef>
 #include <cstdint>
 
@@ -24,6 +26,7 @@ struct SimulationStorageProperties {
   uint32_t alignment;
   bool fourState;
   bool managedReference;
+  llvm::SmallVector<sim::ManagedHandleSlot, 2> managedRootSlots;
   llvm::SmallVector<uint64_t, 2> managedRootOffsets;
   uint64_t managedRootSize;
   uint32_t managedRootAlignment;

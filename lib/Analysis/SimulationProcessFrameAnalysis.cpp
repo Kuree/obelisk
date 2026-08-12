@@ -132,11 +132,14 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
                               : ProcessFrameFieldFlags::None,
            valueOffset, storage->size, storage->alignment});
     } else {
-      for (uint64_t rootOffset : storage->managedRootOffsets)
-        result->fields.push_back({kind, ProcessFrameFieldFlags::ManagedRoot,
-                                  valueOffset + rootOffset,
-                                  storage->managedRootSize,
-                                  storage->managedRootAlignment});
+      for (const sim::ManagedHandleSlot &root : storage->managedRootSlots)
+        result->fields.push_back(
+            {kind,
+             root.conditional ? ProcessFrameFieldFlags::CandidateRoot
+                              : ProcessFrameFieldFlags::ManagedRoot,
+             valueOffset + root.bitOffset, storage->managedRootSize,
+             storage->managedRootAlignment,
+             root.conditional ? root.kindMask : 0});
     }
     if (storage->managedReference) {
       if (!alignUp(end, storage->alignment, auxiliaryOffset) ||
@@ -164,7 +167,7 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
         std::max<uint64_t>(result->frameAlignment, storage->alignment);
     values.push_back({valueOffset, unknownOffset, storage->size,
                       storage->alignment, auxiliaryOffset,
-                      storage->managedRootOffsets});
+                      storage->managedRootOffsets, storage->managedRootSlots});
     return success();
   };
 
@@ -199,6 +202,7 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
     bool initialized = false;
     bool managedReference = false;
     SmallVector<uint64_t, 2> managedRootOffsets;
+    SmallVector<sim::ManagedHandleSlot, 2> managedRootSlots;
     uint64_t managedRootSize = 0;
     uint32_t managedRootAlignment = 1;
     uint64_t valueOffset = 0;
@@ -225,7 +229,7 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
         if (!used[index] &&
             (!lane.initialized ||
              (lane.managedReference == storage->managedReference &&
-              lane.managedRootOffsets == storage->managedRootOffsets))) {
+              lane.managedRootSlots == storage->managedRootSlots))) {
           selected = index;
           break;
         }
@@ -239,6 +243,7 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
       lane.initialized = true;
       lane.managedReference = storage->managedReference;
       lane.managedRootOffsets = storage->managedRootOffsets;
+      lane.managedRootSlots = storage->managedRootSlots;
       lane.managedRootSize = storage->managedRootSize;
       lane.managedRootAlignment = storage->managedRootAlignment;
       lane.planeSize = std::max(lane.planeSize, storage->size);
@@ -260,11 +265,14 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
                           : ProcessFrameFieldFlags::None,
            lane.valueOffset, lane.planeSize, lane.alignment});
     } else {
-      for (uint64_t rootOffset : lane.managedRootOffsets)
+      for (const sim::ManagedHandleSlot &root : lane.managedRootSlots)
         result->fields.push_back(
             {ProcessFrameFieldKind::Continuation,
-             ProcessFrameFieldFlags::ManagedRoot, lane.valueOffset + rootOffset,
-             lane.managedRootSize, lane.managedRootAlignment});
+             root.conditional ? ProcessFrameFieldFlags::CandidateRoot
+                              : ProcessFrameFieldFlags::ManagedRoot,
+             lane.valueOffset + root.bitOffset, lane.managedRootSize,
+             lane.managedRootAlignment,
+             root.conditional ? root.kindMask : 0});
     }
     if (lane.managedReference) {
       lane.auxiliaryOffset = end;
@@ -308,7 +316,7 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
            storage->fourState ? lane.unknownOffset : kNoOffset, storage->size,
            storage->alignment,
            storage->managedReference ? lane.auxiliaryOffset : kNoOffset,
-           storage->managedRootOffsets});
+           storage->managedRootOffsets, storage->managedRootSlots});
     }
   }
 
@@ -405,7 +413,7 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
     hash = appendHash(hash, field.offset, 8);
     hash = appendHash(hash, field.size, 8);
     hash = appendHash(hash, field.alignment, 4);
-    hash = appendHash(hash, kFrameChecksumReserved, 4);
+    hash = appendHash(hash, field.reserved, 4);
   }
   for (uint32_t continuation : result->continuations)
     hash = appendHash(hash, continuation, 4);

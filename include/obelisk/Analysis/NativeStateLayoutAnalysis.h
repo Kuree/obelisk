@@ -24,6 +24,7 @@ struct NativeStateLayoutAnalysis {
     unsigned width;
     bool fourState;
     mlir::SmallVector<uint64_t, 2> managedRootOffsets;
+    mlir::SmallVector<sim::ManagedHandleSlot, 2> managedRootSlots;
   };
   struct Net {
     uint64_t id;

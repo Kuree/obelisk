@@ -101,7 +101,26 @@ enum {
   OBELISK_RT_MANAGED_SLOT_INVALID = 0,
   OBELISK_RT_MANAGED_SLOT_CLASS = 1,
   OBELISK_RT_MANAGED_SLOT_STRING = 2,
-  OBELISK_RT_MANAGED_SLOT_CONTAINER = 3
+  OBELISK_RT_MANAGED_SLOT_CONTAINER = 3,
+  OBELISK_RT_MANAGED_SLOT_REFERENCE_PATH = 4,
+  // The low bits of a candidate slot kind are an
+  // OBELISK_RT_MANAGED_ROOT_KIND_* mask. Candidate slots belong to an
+  // overlapping source union and may contain ordinary bits; they are traced
+  // only when the current word names a live object of an allowed kind.
+  OBELISK_RT_MANAGED_SLOT_CANDIDATE = UINT32_C(0x80000000)
+};
+
+typedef uint32_t obelisk_rt_managed_root_kind_mask_v1;
+enum {
+  OBELISK_RT_MANAGED_ROOT_KIND_CLASS = 1u << 0,
+  OBELISK_RT_MANAGED_ROOT_KIND_STRING = 1u << 1,
+  OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER = 1u << 2,
+  OBELISK_RT_MANAGED_ROOT_KIND_REFERENCE_PATH = 1u << 3,
+  OBELISK_RT_MANAGED_ROOT_KIND_ALL =
+      OBELISK_RT_MANAGED_ROOT_KIND_CLASS |
+      OBELISK_RT_MANAGED_ROOT_KIND_STRING |
+      OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER |
+      OBELISK_RT_MANAGED_ROOT_KIND_REFERENCE_PATH
 };
 
 struct obelisk_rt_trace_layout_v1;
@@ -204,6 +223,13 @@ typedef struct obelisk_rt_element_trace_slot_v1 {
   obelisk_rt_managed_slot_kind_v1 kind;
   uint32_t reserved;
 } obelisk_rt_element_trace_slot_v1;
+
+#define OBELISK_RT_MANAGED_ROOT_SLOT_CANDIDATE UINT32_C(1)
+typedef struct obelisk_rt_managed_root_slot_v1 {
+  uint64_t bit_offset;
+  obelisk_rt_managed_root_kind_mask_v1 kind_mask;
+  uint32_t flags;
+} obelisk_rt_managed_root_slot_v1;
 
 typedef struct obelisk_rt_element_type_v1 {
   uint32_t version;
@@ -786,6 +812,9 @@ enum {
   OBELISK_RT_INTRINSIC_V1_PROCESS_STATUS = UINT32_C(0x0001022d),
   OBELISK_RT_INTRINSIC_V1_PROCESS_RANDOM_GET = UINT32_C(0x0001022e),
   OBELISK_RT_INTRINSIC_V1_PROCESS_RANDOM_SET = UINT32_C(0x0001022f),
+  // Automatic-state allocation with typed root triples following the initial
+  // value: bit offset, allowed managed-kind mask, and root-slot flags.
+  OBELISK_RT_INTRINSIC_V1_STATE_ALLOC_TYPED = UINT32_C(0x00010230),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -808,6 +837,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_MANAGED_ROOT_EXTRACT = UINT32_C(0x00010411),
   OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_INDEX = UINT32_C(0x00010412),
   OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_PATH = UINT32_C(0x00010413),
+  OBELISK_RT_INTRINSIC_V1_MANAGED_CANDIDATE_ROOT = UINT32_C(0x00010414),
   OBELISK_RT_INTRINSIC_V1_STRING_LITERAL = UINT32_C(0x00010420),
   OBELISK_RT_INTRINSIC_V1_STRING_FROM_PACKED = UINT32_C(0x00010421),
   OBELISK_RT_INTRINSIC_V1_STRING_TO_PACKED = UINT32_C(0x00010422),
@@ -1257,7 +1287,11 @@ enum {
   OBELISK_RT_FRAME_FOUR_STATE_UNKNOWN = 1u << 1,
   // The field is an aligned object-pointer slot traced for the lifetime of
   // its process activation, including while that activation is suspended.
-  OBELISK_RT_FRAME_MANAGED_ROOT = 1u << 2
+  OBELISK_RT_FRAME_MANAGED_ROOT = 1u << 2,
+  // The field overlaps ordinary union bits. `reserved` carries an
+  // OBELISK_RT_MANAGED_ROOT_KIND_* mask and the word is traced only when it
+  // currently names an allowed live managed object.
+  OBELISK_RT_FRAME_CANDIDATE_ROOT = 1u << 3
 };
 
 typedef struct obelisk_rt_frame_field_v1 {
@@ -1547,9 +1581,19 @@ obelisk_rt_status obelisk_rt_v1_gc_managed_root_range_push(
     obelisk_rt_managed_word_v1 *slots, uint64_t count);
 obelisk_rt_status obelisk_rt_v1_gc_managed_root_range_pop(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_gc_managed_root_range_v1 *range);
+// Convert an overlapping union word into a valid temporary root. The result
+// is the original word only when it is an immediate string or a live object
+// in `context` whose kind is present in `allowed_kinds`; ordinary or stale
+// bits produce zero. This function never allocates or collects.
+obelisk_rt_managed_word_v1 obelisk_rt_v1_gc_candidate_root(
+    obelisk_rt_context *context, obelisk_rt_managed_word_v1 word,
+    obelisk_rt_managed_root_kind_mask_v1 allowed_kinds);
 obelisk_rt_status
 obelisk_rt_v1_gc_static_root_register(obelisk_rt_context *context,
                                       obelisk_rt_object_v1 **slot);
+obelisk_rt_status obelisk_rt_v1_gc_candidate_static_root_register(
+    obelisk_rt_context *context, obelisk_rt_managed_word_v1 *slot,
+    obelisk_rt_managed_root_kind_mask_v1 allowed_kinds);
 obelisk_rt_status
 obelisk_rt_v1_gc_static_root_unregister(obelisk_rt_context *context,
                                         obelisk_rt_object_v1 **slot);
@@ -1593,6 +1637,9 @@ obelisk_rt_status obelisk_rt_v1_element_type_register(
 obelisk_rt_status
 obelisk_rt_v1_gc_design_root_register(obelisk_rt_context *context,
                                       uint64_t bit_offset);
+obelisk_rt_status obelisk_rt_v1_gc_design_candidate_root_register(
+    obelisk_rt_context *context, uint64_t bit_offset,
+    obelisk_rt_managed_root_kind_mask_v1 allowed_kinds);
 
 // Allocate zero-initialized class storage. Abstract and interface descriptors
 // cannot be allocated. The descriptor word is installed before the object is
@@ -2636,6 +2683,10 @@ obelisk_rt_status obelisk_rt_v1_native_state_alloc_with_roots(
     obelisk_rt_context *context, uint64_t bit_width, const uint8_t *value,
     const uint8_t *unknown, const uint64_t *bit_offsets, uint64_t count,
     uint64_t *out_handle);
+obelisk_rt_status obelisk_rt_v1_native_state_alloc_with_typed_roots(
+    obelisk_rt_context *context, uint64_t bit_width, const uint8_t *value,
+    const uint8_t *unknown, const obelisk_rt_managed_root_slot_v1 *slots,
+    uint64_t count, uint64_t *out_handle);
 obelisk_rt_status obelisk_rt_v1_native_state_retain(obelisk_rt_context *context,
                                                     uint64_t handle);
 // Attach precise managed-word offsets to one automatic state allocation.

@@ -1101,9 +1101,11 @@ def SimClassRootBindOp : SimOp<"class.root_bind", [
     MemoryEffects<[MemWrite<SimHeapResource>]>
   ]> {
   let summary = "bind a managed SSA handle to a pre-registered root slot";
-  let arguments = (ins AnyType:$object, AnyType:$slot, I64Attr:$bit_offset);
+  let arguments = (ins AnyType:$object, AnyType:$slot, I64Attr:$bit_offset,
+                       SimManagedRootMode:$mode, I32Attr:$kind_mask);
   let assemblyFormat =
-      "$object `to` $slot `at` $bit_offset attr-dict `:` "
+      "$object `to` $slot `at` $bit_offset $mode `kinds` $kind_mask "
+      "attr-dict `:` "
       "qualified(type($object)) `,` type($slot)";
   let hasVerifier = 1;
 }
@@ -2337,6 +2339,7 @@ def SimNBAEnqueueOp : SimOp<"nba.enqueue", [
                        OptionalAttr<SimNBASiteAttr>:$site);
   let assemblyFormat = [{$value `to` $destination (`after` $delay^)? attr-dict
     `:` functional-type(operands, results)}];
+  let hasVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//

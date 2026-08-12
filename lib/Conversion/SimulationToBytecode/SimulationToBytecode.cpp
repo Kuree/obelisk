@@ -447,21 +447,22 @@ LogicalResult Encoder::emitAggregateManagedRoots(FunctionPlan &plan,
   for (const auto &registerEntry : plan.registers) {
     Value value = registerEntry.first;
     uint32_t source = registerEntry.second;
-    SmallVector<uint64_t, 2> offsets;
-    if (!sim::getManagedHandleOffsets(value.getType(), offsets))
+    SmallVector<sim::ManagedHandleSlot, 2> slots;
+    if (!sim::getManagedHandleSlots(value.getType(), slots))
       return operation->emitError(
           "value has no fixed bytecode managed root layout");
     // Scalar managed registers and tagged string words are enumerated
     // directly from the live bytecode frame. Only aggregate payloads need
     // object-pointer shadows for their embedded managed slots.
-    if (offsets.empty() || plan.layouts[source].kind == Managed ||
+    if (slots.empty() || plan.layouts[source].kind == Managed ||
         plan.layouts[source].kind == String)
       continue;
-    for (uint64_t bitOffset : offsets) {
+    for (const sim::ManagedHandleSlot &slot : slots) {
       auto found = llvm::find_if(
           plan.managedRootShadows,
           [&](const FunctionPlan::ManagedRootShadow &shadow) {
-            return shadow.value == value && shadow.bitOffset == bitOffset;
+            return shadow.value == value &&
+                   shadow.bitOffset == slot.bitOffset;
           });
       uint32_t shadow;
       if (found == plan.managedRootShadows.end()) {
@@ -473,7 +474,8 @@ LogicalResult Encoder::emitAggregateManagedRoots(FunctionPlan &plan,
         plan.scratchSize = layout.offset + layout.size;
         plan.layouts.push_back(layout);
         shadow = plan.layouts.size() - 1;
-        plan.managedRootShadows.push_back({value, bitOffset, shadow});
+        plan.managedRootShadows.push_back(
+            {value, slot.bitOffset, slot.kindMask, slot.conditional, shadow});
       } else {
         shadow = found->reg;
       }
@@ -482,9 +484,14 @@ LogicalResult Encoder::emitAggregateManagedRoots(FunctionPlan &plan,
               addZeroConstant(plan.layouts[shadow])});
         continue;
       }
-      if (failed(emitIntrinsicRegisters(
-              plan, kIntrinsicManagedRootExtract,
-              {source, emitU64Constant(plan, bitOffset)}, {shadow})))
+      SmallVector<uint32_t> inputs{source,
+                                   emitU64Constant(plan, slot.bitOffset)};
+      uint32_t intrinsic = kIntrinsicManagedRootExtract;
+      if (slot.conditional) {
+        intrinsic = kIntrinsicManagedCandidateRoot;
+        inputs.push_back(emitU64Constant(plan, slot.kindMask));
+      }
+      if (failed(emitIntrinsicRegisters(plan, intrinsic, inputs, {shadow})))
         return failure();
     }
   }
@@ -532,9 +539,11 @@ LogicalResult Encoder::emitContinuationEntries(FunctionPlan &plan) {
         emitFrameTransfer(plan, LoadFrame, argument, slot.valueOffset,
                           static_cast<uint32_t>(transferSize));
         if (consumeRoots)
-          for (uint64_t rootOffset : slot.managedRootOffsets)
-            emit({ClearFrameRoot, 0, 0, 0, 0, 0, 0,
-                  slot.valueOffset + rootOffset});
+          for (const sim::ManagedHandleSlot &root : slot.managedRootSlots)
+            emit({ClearFrameRoot,
+                  static_cast<uint16_t>(root.conditional ? 1 : 0),
+                  root.conditional ? root.kindMask : 0, 0, 0, 0, 0,
+                  slot.valueOffset + root.bitOffset});
       }
       return success();
     };
@@ -558,8 +567,11 @@ LogicalResult Encoder::emitContinuationEntries(FunctionPlan &plan) {
       // aggregate register's top-level bytecode kind does not reveal them.
       for (const ProcessFrameValue &slot : plan.frame->getEntryCaptureLayout())
         if (slot.valueOffset != UINT64_MAX)
-          for (uint64_t rootOffset : slot.managedRootOffsets)
-            emit({FrameRoot, 0, 0, 0, 0, 0, 0, slot.valueOffset + rootOffset});
+          for (const sim::ManagedHandleSlot &root : slot.managedRootSlots)
+            emit({FrameRoot,
+                  static_cast<uint16_t>(root.conditional ? 1 : 0),
+                  root.conditional ? root.kindMask : 0, 0, 0, 0, 0,
+                  slot.valueOffset + root.bitOffset});
     uint64_t jump = emit({Jump});
     instructions[jump].immediate = plan.blockPCs.lookup(block);
     auto rank = plan.blockScheduleRanks.find(block);

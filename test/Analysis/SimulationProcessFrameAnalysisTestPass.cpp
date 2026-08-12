@@ -40,6 +40,8 @@ StringRef getFieldFlagsName(obelisk::ProcessFrameFieldFlags flags) {
     return "four-state-unknown";
   case obelisk::ProcessFrameFieldFlags::ManagedRoot:
     return "managed-root";
+  case obelisk::ProcessFrameFieldFlags::CandidateRoot:
+    return "candidate-root";
   }
   llvm_unreachable("unknown process frame field flags");
 }
@@ -67,6 +69,15 @@ void printValueLayout(StringRef prefix, unsigned index,
   if (value.hasManagedRoots()) {
     llvm::errs() << " roots=";
     llvm::interleaveComma(value.managedRootOffsets, llvm::errs());
+    bool first = true;
+    for (const obelisk::sim::ManagedHandleSlot &slot :
+         value.managedRootSlots) {
+      if (!slot.conditional)
+        continue;
+      llvm::errs() << (first ? " candidate-roots=" : ",") << slot.bitOffset
+                   << ":" << slot.kindMask;
+      first = false;
+    }
   }
   llvm::errs() << "\n";
 }
@@ -129,11 +140,15 @@ private:
                  << " checksum=" << frame.getChecksum() << "\n";
     for (auto [index, value] : llvm::enumerate(frame.getEntryCaptureLayout()))
       printValueLayout("capture", index, value);
-    for (const obelisk::ProcessFrameField &field : frame.getFields())
+    for (const obelisk::ProcessFrameField &field : frame.getFields()) {
       llvm::errs() << "    field " << getFieldKindName(field.kind) << " "
                    << getFieldFlagsName(field.flags)
                    << " offset=" << field.offset << " size=" << field.size
-                   << " align=" << field.alignment << "\n";
+                   << " align=" << field.alignment;
+      if (field.flags == obelisk::ProcessFrameFieldFlags::CandidateRoot)
+        llvm::errs() << " kinds=" << field.reserved;
+      llvm::errs() << "\n";
+    }
     llvm::errs() << "    continuations=";
     llvm::interleaveComma(frame.getContinuations(), llvm::errs());
     llvm::errs() << "\n";

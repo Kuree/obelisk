@@ -227,9 +227,12 @@ LogicalResult lowerPackedSimulationOperations(
           }
           unsigned planes =
               analysis::getSimulationPhysicalStorageCount(*storage);
-          for (uint64_t offset : storage->managedRootOffsets) {
+          for (const sim::ManagedHandleSlot &root :
+               storage->managedRootSlots) {
             roots.push_back(physicalIndex);
-            roots.push_back(offset);
+            roots.push_back(root.bitOffset);
+            roots.push_back(root.kindMask);
+            roots.push_back(root.conditional ? 1 : 0);
           }
           for (unsigned plane = 0; plane != planes; ++plane)
             sizes.push_back(storage->size);

@@ -95,7 +95,7 @@ validateLayout(const obelisk_rt_process_descriptor_v1 &descriptor) {
     const obelisk_rt_frame_field_v1 &field = layout.fields[index];
     uint64_t end;
     if (field.kind < OBELISK_RT_FRAME_CAPTURE ||
-        field.kind > OBELISK_RT_FRAME_WAIT || field.reserved != 0 ||
+        field.kind > OBELISK_RT_FRAME_WAIT ||
         field.size == 0 || !isPowerOfTwo(field.alignment) ||
         field.alignment > layout.frame_alignment ||
         field.offset % field.alignment != 0 ||
@@ -123,11 +123,20 @@ validateLayout(const obelisk_rt_process_descriptor_v1 &descriptor) {
         return OBELISK_RT_LAYOUT_MISMATCH;
       previousEnd = unknownEnd;
     } else if (field.flags == OBELISK_RT_FRAME_MANAGED_ROOT) {
-      if (field.size != sizeof(obelisk_rt_object_v1 *) ||
+      if (field.reserved != 0 ||
+          field.size != sizeof(obelisk_rt_object_v1 *) ||
           field.alignment < alignof(obelisk_rt_object_v1 *))
         return OBELISK_RT_LAYOUT_MISMATCH;
       previousEnd = end;
-    } else if (field.flags != OBELISK_RT_FRAME_FIELD_FLAGS_NONE) {
+    } else if (field.flags == OBELISK_RT_FRAME_CANDIDATE_ROOT) {
+      if (field.reserved == 0 ||
+          (field.reserved & ~OBELISK_RT_MANAGED_ROOT_KIND_ALL) != 0 ||
+          field.size != sizeof(obelisk_rt_managed_word_v1) ||
+          field.alignment < alignof(obelisk_rt_managed_word_v1))
+        return OBELISK_RT_LAYOUT_MISMATCH;
+      previousEnd = end;
+    } else if (field.flags != OBELISK_RT_FRAME_FIELD_FLAGS_NONE ||
+               field.reserved != 0) {
       return OBELISK_RT_LAYOUT_MISMATCH;
     } else {
       previousEnd = end;

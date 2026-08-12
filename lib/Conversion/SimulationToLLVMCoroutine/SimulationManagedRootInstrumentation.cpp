@@ -59,18 +59,25 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
     Liveness liveness(function);
     struct ManagedSSAValue {
       Value value;
-      uint64_t bitOffset;
+      sim::ManagedHandleSlot slot;
     };
     SmallVector<ManagedSSAValue> handles;
     SmallVector<Operation *> collectionPoints;
     auto collectHandles = [&](Value value) -> LogicalResult {
-      SmallVector<uint64_t, 2> offsets;
-      if (isa<sim::ManagedRefType, sim::ArgumentRefType>(value.getType()))
-        offsets.push_back(0);
-      else if (!sim::getManagedHandleOffsets(value.getType(), offsets))
+      SmallVector<sim::ManagedHandleSlot, 2> slots;
+      if (isa<sim::ManagedRefType>(value.getType()))
+        slots.push_back(
+            {0, static_cast<uint32_t>(sim::ManagedHandleKind::Class), false});
+      else if (isa<sim::ArgumentRefType>(value.getType()))
+        slots.push_back(
+            {0,
+             static_cast<uint32_t>(sim::ManagedHandleKind::Class) |
+                 static_cast<uint32_t>(sim::ManagedHandleKind::ReferencePath),
+             false});
+      else if (!sim::getManagedHandleSlots(value.getType(), slots))
         return failure();
-      for (uint64_t offset : offsets)
-        handles.push_back({value, offset});
+      for (sim::ManagedHandleSlot slot : slots)
+        handles.push_back({value, slot});
       return success();
     };
     for (Block &block : function.getBody()) {
@@ -170,6 +177,13 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
     }
 
     for (auto [handle, slot] : llvm::zip_equal(handles, slots)) {
+      // Exact managed words remain valid for the lifetime of their SSA value,
+      // so binding once at the definition is sufficient. A candidate word is
+      // arbitrary union storage: allocator reuse can change whether it names
+      // a live object without changing the SSA bits. Refresh that shadow at
+      // every collection point below instead of caching classification here.
+      if (handle.slot.conditional)
+        continue;
       if (auto argument = dyn_cast<BlockArgument>(handle.value)) {
         Block *owner = argument.getOwner();
         if (Operation *activationEnd = activationEnds.lookup(owner))
@@ -181,7 +195,10 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
       }
       sim::SimClassRootBindOp::create(
           builder, handle.value.getLoc(), handle.value, slot,
-          builder.getI64IntegerAttr(handle.bitOffset));
+          handle.slot.bitOffset,
+          handle.slot.conditional ? sim::ManagedRootMode::Candidate
+                                  : sim::ManagedRootMode::Exact,
+          handle.slot.kindMask);
     }
 
     // A root slot outlives its SSA value and is reused on loop backedges.
@@ -197,8 +214,16 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
           blockInfo->currentlyLiveValues(collectionPoint);
       builder.setInsertionPoint(collectionPoint);
       for (auto [handle, slot] : llvm::zip_equal(handles, slots)) {
-        if (live.contains(handle.value) &&
-            handle.value.getDefiningOp() != collectionPoint)
+        bool isLive = live.contains(handle.value) &&
+                      handle.value.getDefiningOp() != collectionPoint;
+        if (isLive && handle.slot.conditional) {
+          sim::SimClassRootBindOp::create(
+              builder, collectionPoint->getLoc(), handle.value, slot,
+              handle.slot.bitOffset, sim::ManagedRootMode::Candidate,
+              handle.slot.kindMask);
+          continue;
+        }
+        if (isLive)
           continue;
         LLVM::StoreOp::create(
             builder, collectionPoint->getLoc(),

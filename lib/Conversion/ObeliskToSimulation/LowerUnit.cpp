@@ -165,50 +165,25 @@ describeContainerElementImpl(Type type, Location location) {
           << type;
       return failure();
     }
-    std::function<LogicalResult(Type, uint64_t)> collectTrace =
-        [&](Type nested, uint64_t baseBitOffset) -> LogicalResult {
-      if (sim::isManagedHandleType(nested)) {
-        if ((baseBitOffset & 7) != 0 || baseBitOffset / 8 > uint64_t{INT64_MAX})
-          return failure();
-        int32_t kind = OBELISK_RT_MANAGED_SLOT_CLASS;
-        if (isa<sim::StringType>(nested))
-          kind = OBELISK_RT_MANAGED_SLOT_STRING;
-        else if (isa<sim::DynamicArrayType, sim::QueueType,
-                     sim::AssocArrayType>(nested))
-          kind = OBELISK_RT_MANAGED_SLOT_CONTAINER;
-        result.traceOffsets.push_back(static_cast<int64_t>(baseBitOffset / 8));
-        result.traceKinds.push_back(kind);
-        return success();
-      }
-      if (!sim::isAggregateType(nested))
-        return success();
-      if (isa<sim::PackedUnionType, sim::UnpackedUnionType>(nested)) {
-        for (unsigned index = 0; index < sim::getAggregateNumElements(nested);
-             ++index) {
-          SmallVector<uint64_t, 2> offsets;
-          if (!sim::getManagedHandleOffsets(
-                  sim::getAggregateElementType(nested, index), offsets))
-            return failure();
-          if (!offsets.empty())
-            return failure();
-        }
-        return success();
-      }
-      for (unsigned index = 0; index < sim::getAggregateNumElements(nested);
-           ++index) {
-        auto child = sim::getAggregateProvenanceSubelement(nested, index);
-        if (!child || child->first > UINT64_MAX - baseBitOffset ||
-            failed(collectTrace(sim::getAggregateElementType(nested, index),
-                                baseBitOffset + child->first)))
-          return failure();
-      }
-      return success();
-    };
-    if (failed(collectTrace(type, 0))) {
+    SmallVector<sim::ManagedHandleSlot, 2> traceSlots;
+    if (!sim::getManagedHandleSlots(type, traceSlots)) {
       emitError(location)
           << "dynamic-array aggregate element has no canonical trace layout: "
           << type;
       return failure();
+    }
+    for (const sim::ManagedHandleSlot &slot : traceSlots) {
+      std::optional<uint32_t> kind = sim::getManagedHandleTraceKind(slot);
+      if (!kind || (slot.bitOffset & 7) != 0 ||
+          slot.bitOffset / 8 > uint64_t{INT64_MAX}) {
+        emitError(location)
+            << "dynamic-array aggregate element has no canonical trace layout: "
+            << type;
+        return failure();
+      }
+      result.traceOffsets.push_back(
+          static_cast<int64_t>(slot.bitOffset / 8));
+      result.traceKinds.push_back(static_cast<int32_t>(*kind));
     }
     bool fourState = false;
     type.walk([&](sim::LogicType) { fourState = true; });

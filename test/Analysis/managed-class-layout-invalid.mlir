@@ -2,7 +2,7 @@
 
 !untagged = !obelisk_sim.unpacked_union<fields = [
   #obelisk_sim.field<name = "object", type = !obelisk_sim.class_handle<@Node>, ordinal = 0, packedOffset = 0>,
-  #obelisk_sim.field<name = "bits", type = i64, ordinal = 1, packedOffset = 0>
+  #obelisk_sim.field<name = "bits", type = !obelisk_sim.logic<64>, ordinal = 1, packedOffset = 0>
 ], isTagged = false>
 
 module attributes {

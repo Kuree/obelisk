@@ -6,6 +6,12 @@
   #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 2, packedOffset = 0>
 ], isTagged = true>
 
+!untagged = !obelisk_sim.unpacked_union<fields = [
+  #obelisk_sim.field<name = "object", type = !obelisk_sim.class_handle<@Referent>, ordinal = 0, packedOffset = 0>,
+  #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 1, packedOffset = 0>,
+  #obelisk_sim.field<name = "bits", type = i64, ordinal = 2, packedOffset = 0>
+], isTagged = false>
+
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8"
 } {
@@ -28,6 +34,9 @@ module attributes {
     obelisk_sim.class.decl @TaggedHolder id 5 {
       is_abstract = false, is_final = false, is_interface = false
     }
+    obelisk_sim.class.decl @UntaggedHolder id 6 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
 
     obelisk_sim.class.field @Base_value of @Base at 0 :
         !obelisk_sim.logic<8> {
@@ -47,6 +56,10 @@ module attributes {
         !tagged {
       is_static = false, is_weak = false
     }
+    obelisk_sim.class.field @UntaggedHolder_value of @UntaggedHolder at 0 :
+        !untagged {
+      is_static = false, is_weak = false
+    }
   }
 }
 
@@ -59,3 +72,5 @@ module attributes {
 // CHECK-NEXT:   field Derived_owner offset=32 size=8 alignment=8 planes=1 roots=[0]
 // CHECK-NEXT: managed-class TaggedHolder id=5 size=40 alignment=8
 // CHECK-NEXT:   field TaggedHolder_value offset=8 size=25 alignment=8 planes=1 roots=[0, 16]
+// CHECK-NEXT: managed-class UntaggedHolder id=6 size=16 alignment=8
+// CHECK-NEXT:   field UntaggedHolder_value offset=8 size=8 alignment=8 planes=1 roots=[0] candidate-roots=[0:3]

@@ -30,6 +30,7 @@ enum class ProcessFrameFieldFlags : uint32_t {
   FourStateValue = 1,
   FourStateUnknown = 2,
   ManagedRoot = 4,
+  CandidateRoot = 8,
 };
 
 struct ProcessFrameField {
@@ -38,6 +39,7 @@ struct ProcessFrameField {
   uint64_t offset;
   uint64_t size;
   uint32_t alignment;
+  uint32_t reserved = 0;
 };
 
 struct ProcessFrameValue {
@@ -47,6 +49,7 @@ struct ProcessFrameValue {
   uint32_t alignment;
   uint64_t auxiliaryOffset = UINT64_MAX;
   llvm::SmallVector<uint64_t, 2> managedRootOffsets;
+  llvm::SmallVector<sim::ManagedHandleSlot, 2> managedRootSlots;
 
   bool hasValueStorage() const { return valueOffset != UINT64_MAX; }
   bool isFourState() const { return unknownOffset != UINT64_MAX; }

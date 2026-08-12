@@ -513,14 +513,28 @@ LogicalResult SimArgumentRefStoreOp::verify() {
 
 LogicalResult SimClassRootBindOp::verify() {
   Type type = getObject().getType();
-  SmallVector<uint64_t, 2> offsets;
-  if (isa<ManagedRefType, ArgumentRefType>(type))
-    offsets.push_back(0);
-  else if (!getManagedHandleOffsets(type, offsets))
+  SmallVector<ManagedHandleSlot, 2> slots;
+  if (isa<ManagedRefType>(type))
+    slots.push_back(
+        {0, static_cast<uint32_t>(ManagedHandleKind::Class), false});
+  else if (isa<ArgumentRefType>(type))
+    slots.push_back(
+        {0,
+         static_cast<uint32_t>(ManagedHandleKind::Class) |
+             static_cast<uint32_t>(ManagedHandleKind::ReferencePath),
+         false});
+  else if (!getManagedHandleSlots(type, slots))
     return emitOpError("rooted value has no fixed managed layout");
-  uint64_t selected = getBitOffset();
-  if (!llvm::is_contained(offsets, selected))
+  auto selected = llvm::find_if(slots, [&](const ManagedHandleSlot &slot) {
+    return slot.bitOffset == getBitOffset();
+  });
+  if (selected == slots.end())
     return emitOpError("bit offset does not select a managed handle");
+  ManagedRootMode expectedMode = selected->conditional
+                                     ? ManagedRootMode::Candidate
+                                     : ManagedRootMode::Exact;
+  if (getMode() != expectedMode || getKindMask() != selected->kindMask)
+    return emitOpError("root mode or managed-kind mask disagrees with type");
   return success();
 }
 

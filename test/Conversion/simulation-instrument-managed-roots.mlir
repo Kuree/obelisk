@@ -1,6 +1,15 @@
 // RUN: obelisk-opt %s --obelisk-sim-instrument-managed-roots | FileCheck %s
 
-module {
+!candidate = !obelisk_sim.unpacked_union<fields = [
+  #obelisk_sim.field<name = "object", type = !obelisk_sim.class_handle<@Object>, ordinal = 0, packedOffset = 0>,
+  #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 1, packedOffset = 0>,
+  #obelisk_sim.field<name = "bits", type = i64, ordinal = 2, packedOffset = 0>
+], isTagged = false>
+
+module attributes {
+  llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
+  llvm.target_triple = "x86_64-unknown-linux-gnu"
+} {
   obelisk_sim.design @managed_roots {
     llvm.mlir.global internal @__obelisk_current_context() : !llvm.ptr {
       %null = llvm.mlir.zero : !llvm.ptr
@@ -25,8 +34,13 @@ module {
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       %object = obelisk_sim.class.alloc %ctx :
           !obelisk_sim.context -> !obelisk_sim.class_handle<@Object>
+      %candidate = obelisk_sim.union.construct %object as 0 :
+          (!obelisk_sim.class_handle<@Object>) -> !candidate
       obelisk_sim.gc.safepoint %ctx : !obelisk_sim.context
-      %is_object = obelisk_sim.class.is_instance %object is @Object :
+      obelisk_sim.gc.safepoint %ctx : !obelisk_sim.context
+      %reloaded = obelisk_sim.union.extract %candidate[0] :
+          (!candidate) -> !obelisk_sim.class_handle<@Object>
+      %is_object = obelisk_sim.class.is_instance %reloaded is @Object :
           !obelisk_sim.class_handle<@Object>
       obelisk_sim.return
     }
@@ -38,6 +52,11 @@ module {
 // CHECK: llvm.alloca
 // CHECK-SAME: obelisk.managed_root_range_record
 // CHECK: llvm.call @obelisk_rt_v1_gc_managed_root_range_push
-// CHECK: obelisk_sim.class.root_bind
-// CHECK: obelisk_sim.gc.safepoint
+// Candidate classification is refreshed immediately before every collection;
+// it is not cached once at the SSA definition.
+// CHECK-NOT: obelisk_sim.class.root_bind
+// CHECK: obelisk_sim.class.root_bind %[[CANDIDATE:.*]] to %[[SLOT:.*]] at 0 candidate kinds 3
+// CHECK-NEXT: obelisk_sim.gc.safepoint
+// CHECK: obelisk_sim.class.root_bind %[[CANDIDATE]] to %[[SLOT]] at 0 candidate kinds 3
+// CHECK-NEXT: obelisk_sim.gc.safepoint
 // CHECK: llvm.call @obelisk_rt_v1_gc_managed_root_range_pop

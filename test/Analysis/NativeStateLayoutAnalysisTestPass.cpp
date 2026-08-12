@@ -45,6 +45,15 @@ public:
       if (!bound.managedRootOffsets.empty()) {
         llvm::errs() << " roots=";
         llvm::interleaveComma(bound.managedRootOffsets, llvm::errs());
+        bool firstCandidate = true;
+        for (const obelisk::sim::ManagedHandleSlot &slot :
+             bound.managedRootSlots) {
+          if (!slot.conditional)
+            continue;
+          llvm::errs() << (firstCandidate ? " candidate-roots=" : ",")
+                       << slot.bitOffset << ":" << slot.kindMask;
+          firstCandidate = false;
+        }
       }
       llvm::errs() << "\n";
     }

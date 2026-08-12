@@ -129,6 +129,13 @@ void declareNativeRuntimeABI(ModuleOp module) {
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_native_state_alloc_with_typed_roots",
+      IntegerType::get(context, 32),
+      {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
+       LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
+       LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
+       LLVM::LLVMPointerType::get(context)});
+  getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_native_state_retain",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64)});
@@ -213,6 +220,9 @@ void declareNativeRuntimeABI(ModuleOp module) {
       {managedPointer, managedPointer, managedPointer, managedI64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_managed_root_range_pop",
                            managedI32, {managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_candidate_root",
+                           managedI64,
+                           {managedPointer, managedI64, managedI32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_safepoint", managedI32,
                            {managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_allocate", managedI32,

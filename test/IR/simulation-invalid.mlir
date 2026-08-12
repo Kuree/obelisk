@@ -24,6 +24,24 @@ module {
 // -----
 
 module {
+  func.func @aggregate_managed_nba(
+      %value: !obelisk_sim.unpacked_struct<[
+        #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 0, packedOffset = 0>]>,
+      %destination: !obelisk_sim.ref<!obelisk_sim.unpacked_struct<[
+        #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 0, packedOffset = 0>]>>) {
+    // expected-error @+1 {{aggregate values containing managed handles are not yet supported}}
+    obelisk_sim.nba.enqueue %value to %destination :
+      (!obelisk_sim.unpacked_struct<[
+        #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 0, packedOffset = 0>]>,
+       !obelisk_sim.ref<!obelisk_sim.unpacked_struct<[
+        #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 0, packedOffset = 0>]>>) -> ()
+    return
+  }
+}
+
+// -----
+
+module {
   func.func @bad_random_cycle(%key: i64, %position: i64) {
     // expected-error @+1 {{width must be between 1 and 32 bits}}
     %next, %value = obelisk_sim.random.cycle_next %key, %position

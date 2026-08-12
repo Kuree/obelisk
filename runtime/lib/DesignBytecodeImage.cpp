@@ -480,6 +480,15 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!twoStateBits(input(index), 64))
         return false;
     return true;
+  case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC_TYPED:
+    if (signature.flags != 0 || site.inputCount < 4 ||
+        ((site.inputCount - 1) % 3) != 0 || site.outputCount != 1 ||
+        (!numeric(input(0)) && !floating(input(0))) || !handle(output(0)))
+      return false;
+    for (uint32_t index = 1; index != site.inputCount; ++index)
+      if (!twoStateBits(input(index), 64))
+        return false;
+    return true;
   case OBELISK_RT_INTRINSIC_V1_DISABLE_CHILDREN:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 0;
@@ -849,6 +858,11 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && numeric(input(0)) &&
            twoStateBits(input(1), 64) && managed(output(0));
+  case OBELISK_RT_INTRINSIC_V1_MANAGED_CANDIDATE_ROOT:
+    return signature.flags == 0 && site.inputCount == 3 &&
+           site.outputCount == 1 && numeric(input(0)) &&
+           twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
+           managed(output(0));
   case OBELISK_RT_INTRINSIC_V1_WEAK_CREATE:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && managed(input(0)) &&
@@ -2081,9 +2095,15 @@ bool validateImage(const Image &image) {
       case OBELISK_RT_DB_FRAME_ROOT: {
         uint64_t canonicalSize =
             (function.flags & OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK) >> 1;
-        if (instruction.flags || instruction.destination ||
-            instruction.source0 || instruction.source1 || instruction.source2 ||
-            instruction.auxiliary ||
+        bool candidate = instruction.flags == 1;
+        if (instruction.flags > 1 ||
+            (candidate
+                 ? instruction.destination == 0 ||
+                       (instruction.destination &
+                        ~OBELISK_RT_MANAGED_ROOT_KIND_ALL) != 0
+                 : instruction.destination != 0) ||
+            instruction.source0 || instruction.source1 ||
+            instruction.source2 || instruction.auxiliary ||
             (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
             instruction.immediate > canonicalSize ||
             sizeof(obelisk_rt_managed_word_v1) >

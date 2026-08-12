@@ -329,6 +329,66 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_alloc_with_roots(
 }
 
 extern "C" obelisk_rt_status
+obelisk_rt_v1_native_state_alloc_with_typed_roots(
+    obelisk_rt_context *context, uint64_t bitWidth, const uint8_t *value,
+    const uint8_t *unknown, const obelisk_rt_managed_root_slot_v1 *slots,
+    uint64_t count, uint64_t *outHandle) {
+  if (!outHandle)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outHandle = UINT64_MAX;
+  if (!context || !value || !slots || count == 0 || bitWidth == 0 ||
+      bitWidth > INT32_MAX || count > std::numeric_limits<size_t>::max())
+    return OBELISK_RT_INVALID_ARGUMENT;
+  uint64_t byteCount = (bitWidth + 7) / 8;
+  try {
+    NativeAutomaticState state;
+    state.bitWidth = bitWidth;
+    state.value.assign(value, value + static_cast<size_t>(byteCount));
+    if (unknown)
+      state.unknown.assign(unknown, unknown + static_cast<size_t>(byteCount));
+    uint64_t previousBitOffset = 0;
+    bool havePrevious = false;
+    for (uint64_t index = 0; index != count; ++index) {
+      const obelisk_rt_managed_root_slot_v1 &slot = slots[index];
+      if ((slot.bit_offset & 63) != 0 || slot.bit_offset > bitWidth ||
+          64 > bitWidth - slot.bit_offset || slot.kind_mask == 0 ||
+          (slot.kind_mask & ~OBELISK_RT_MANAGED_ROOT_KIND_ALL) != 0 ||
+          (slot.flags & ~OBELISK_RT_MANAGED_ROOT_SLOT_CANDIDATE) != 0 ||
+          (havePrevious && slot.bit_offset <= previousBitOffset))
+        return OBELISK_RT_INVALID_ARGUMENT;
+      previousBitOffset = slot.bit_offset;
+      havePrevious = true;
+      uint64_t byteOffset = slot.bit_offset / 8;
+      if ((slot.flags & OBELISK_RT_MANAGED_ROOT_SLOT_CANDIDATE) != 0) {
+        state.candidateRootByteOffsets.push_back(
+            {byteOffset, slot.kind_mask});
+      } else {
+        obelisk_rt_managed_word_v1 word = 0;
+        std::memcpy(&word, value + byteOffset, sizeof(word));
+        if (obelisk_rt_v1_gc_candidate_root(context, word, slot.kind_mask) !=
+            word)
+          return OBELISK_RT_INVALID_HANDLE;
+        state.managedRootByteOffsets.push_back(byteOffset);
+      }
+    }
+    std::sort(state.managedRootByteOffsets.begin(),
+              state.managedRootByteOffsets.end());
+    std::sort(state.candidateRootByteOffsets.begin(),
+              state.candidateRootByteOffsets.end(),
+              [](const auto &lhs, const auto &rhs) {
+                return lhs.byteOffset < rhs.byteOffset;
+              });
+    return publishNativeAutomaticState(context, std::move(state), outHandle);
+  } catch (const std::bad_alloc &) {
+    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
+
+extern "C" obelisk_rt_status
 obelisk_rt_v1_native_state_release(obelisk_rt_context *context, uint64_t handle,
                                    uint32_t ownerReference) {
   if (!context || ownerReference > 1)

@@ -33,3 +33,19 @@ for index in range(instruction_count):
         f"src0={source0} src1={source1} src2={source2} "
         f"aux={auxiliary} imm={immediate}"
     )
+
+intrinsic_offset = struct.unpack_from("<Q", image, 136)[0]
+intrinsic_count = struct.unpack_from("<Q", image, 144)[0]
+intrinsic_size = 16
+if intrinsic_offset > len(image) or intrinsic_count > (
+    len(image) - intrinsic_offset
+) // intrinsic_size:
+    raise SystemExit("invalid Obelisk design-bytecode intrinsic range")
+
+for index in range(intrinsic_count):
+    offset = intrinsic_offset + index * intrinsic_size
+    intrinsic, inputs, outputs, flags = struct.unpack_from("<IIII", image, offset)
+    print(
+        f"intrinsic {index}: id=0x{intrinsic:08x} "
+        f"inputs={inputs} outputs={outputs} flags={flags}"
+    )

@@ -594,9 +594,17 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
     if (isTaggedUnionType(inputValueType) &&
         failed(guardTaggedUnionMember(*input, ordinal, location)))
       return failure();
-    return sim::SimUnionExtractOp::create(builder, location, *resultType,
-                                          *input, ordinal)
-        .getResult();
+    Value extracted = sim::SimUnionExtractOp::create(
+        builder, location, *resultType, *input, ordinal);
+    // An untagged union carries raw overlapping source bits. Validate a class
+    // view before any field or direct-call operation can rely on its static
+    // class type; unrelated live objects and arbitrary numeric words fail via
+    // the ordinary checked-cast status path.
+    if (!isTaggedUnionType(inputValueType) &&
+        isa<sim::ClassHandleType>(*resultType))
+      extracted = sim::SimClassCastOp::create(builder, location, *resultType,
+                                               extracted);
+    return extracted;
   }
   return sim::SimAggregateExtractOp::create(builder, location, *resultType,
                                             *input, ordinal)

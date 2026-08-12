@@ -3,6 +3,7 @@
 #include "SimulationToLLVMCoroutinePrivate.h"
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/Analysis/Liveness.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -136,23 +137,43 @@ public:
         rewriter, location, pointer, "__obelisk_current_context");
     Value context =
         LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
-    SmallVector<uint64_t, 2> rootOffsets;
-    if (!sim::getManagedHandleOffsets(op.getInitialValue().getType(),
-                                      rootOffsets))
+    SmallVector<sim::ManagedHandleSlot, 2> rootSlots;
+    if (!sim::getManagedHandleSlots(op.getInitialValue().getType(), rootSlots))
       return failure();
     SmallVector<Value> arguments{
         context, llvmConstant(rewriter, location, i64, *width), value, unknown};
     StringRef allocation = "obelisk_rt_v1_native_state_alloc";
-    if (!rootOffsets.empty()) {
-      Value count = llvmConstant(rewriter, location, i64, rootOffsets.size());
-      Value offsets =
-          entryAlloca(rewriter, location, i64, rootOffsets.size(), 8);
-      for (auto [index, offset] : llvm::enumerate(rootOffsets))
+    if (!rootSlots.empty()) {
+      Value count = llvmConstant(rewriter, location, i64, rootSlots.size());
+      Type slotType = LLVM::LLVMStructType::getLiteral(
+          rewriter.getContext(), {i64, i32, i32});
+      Value slots = entryAlloca(rewriter, location, slotType, rootSlots.size(),
+                                8);
+      for (auto [index, root] : llvm::enumerate(rootSlots)) {
+        Value encoded = LLVM::ZeroOp::create(rewriter, location, slotType);
+        encoded = insertValue(rewriter, location, encoded,
+                              llvmConstant(rewriter, location, i64,
+                                           root.bitOffset),
+                              0);
+        encoded = insertValue(rewriter, location, encoded,
+                              llvmConstant(rewriter, location, i32,
+                                           root.kindMask),
+                              1);
+        encoded = insertValue(
+            rewriter, location, encoded,
+            llvmConstant(rewriter, location, i32,
+                         root.conditional
+                             ? OBELISK_RT_MANAGED_ROOT_SLOT_CANDIDATE
+                             : 0),
+            2);
         LLVM::StoreOp::create(
-            rewriter, location, llvmConstant(rewriter, location, i64, offset),
-            byteGEP(rewriter, location, offsets, index * sizeof(uint64_t)), 8);
-      allocation = "obelisk_rt_v1_native_state_alloc_with_roots";
-      arguments.push_back(offsets);
+            rewriter, location, encoded,
+            byteGEP(rewriter, location, slots,
+                    index * sizeof(obelisk_rt_managed_root_slot_v1)),
+            8);
+      }
+      allocation = "obelisk_rt_v1_native_state_alloc_with_typed_roots";
+      arguments.push_back(slots);
       arguments.push_back(count);
     }
     arguments.push_back(outHandle);

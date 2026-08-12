@@ -950,6 +950,12 @@ LogicalResult SimAggregateExtractOp::verify() {
 LogicalResult SimAggregateInsertOp::verify() {
   if (getInput().getType() != getResult().getType())
     return emitOpError("input and result aggregate types must match");
+  if (auto unionType = dyn_cast<UnpackedUnionType>(getInput().getType())) {
+    if (unionType.getIsTagged())
+      return emitOpError("tagged unions require an active-member update");
+    return verifyAggregateIndex(*this, getInput().getType(), getIndexAttr(),
+                                getReplacement().getType(), true);
+  }
   return verifyAggregateIndex(*this, getInput().getType(), getIndexAttr(),
                               getReplacement().getType(), false);
 }
@@ -1471,6 +1477,16 @@ LogicalResult SimOverrideOp::verify() {
     return emitOpError("target element type must match the override value");
   if (!getPackedWidth(elementType))
     return emitOpError("requires a fixed-width packed value");
+  return success();
+}
+
+LogicalResult SimNBAEnqueueOp::verify() {
+  SmallVector<ManagedHandleSlot> slots;
+  if (!getManagedHandleSlots(getValue().getType(), slots))
+    return emitOpError("value has no supported canonical managed-root layout");
+  if (!slots.empty() && !isManagedHandleType(getValue().getType()))
+    return emitOpError(
+        "aggregate values containing managed handles are not yet supported");
   return success();
 }
 

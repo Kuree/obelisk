@@ -2,6 +2,11 @@
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
 
+!candidate = !obelisk_sim.unpacked_union<fields = [
+  #obelisk_sim.field<name = "object", type = !obelisk_sim.class_handle<@Node>, ordinal = 0, packedOffset = 0>,
+  #obelisk_sim.field<name = "bits", type = i64, ordinal = 1, packedOffset = 0>
+], isTagged = false>
+
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
@@ -17,6 +22,11 @@ module attributes {
         hierarchy "top.names"
     obelisk_sim.storage.decl 3 in 0 : !obelisk_sim.assoc_array<!obelisk_sim.string, i64, false, false> design
         hierarchy "top.lookup"
+    obelisk_sim.storage.decl 4 in 0 : !obelisk_sim.dynamic_array<!candidate> design
+        hierarchy "top.candidates"
+    obelisk_sim.class.decl @Node id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
     obelisk_sim.func @process(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {
@@ -46,6 +56,21 @@ module attributes {
       "obelisk_sim.container.write"(%merged, %index, %element) :
         (!obelisk_sim.dynamic_array<!obelisk_sim.logic<4>>, i64,
          !obelisk_sim.logic<4>) -> ()
+      %node = obelisk_sim.class.alloc %ctx :
+          !obelisk_sim.context -> !obelisk_sim.class_handle<@Node>
+      %candidate = obelisk_sim.union.construct %node as 0 :
+          (!obelisk_sim.class_handle<@Node>) -> !candidate
+      %one = arith.constant 1 : i64
+      %candidates = obelisk_sim.container.create %one {
+        type_id = 99 : i64, element_kind = 7 : i32,
+        element_flags = 0 : i32, value_size = 8 : i64,
+        alignment = 8 : i64, bit_width = 64 : i64,
+        trace_offsets = array<i64: 0>,
+        trace_kinds = array<i32: -2147483647>,
+        container_kind = 1 : i32, bound = 0 : i64
+      } : (i64) -> !obelisk_sim.dynamic_array<!candidate>
+      "obelisk_sim.container.write"(%candidates, %index, %candidate) :
+        (!obelisk_sim.dynamic_array<!candidate>, i64, !candidate) -> ()
       obelisk_sim.return
     }
   }
@@ -62,18 +87,22 @@ module attributes {
 // CHECK: obelisk_sim.aggregate.extract
 // CHECK: obelisk_sim.container.read
 // CHECK: obelisk_sim.container.write
+// CHECK: trace_kinds = array<i32: -2147483647>
 
 // A container whose element is logic remains one managed register. It must
 // not acquire a second unknown plane from recursive containsLogic analysis.
-// BYTECODE: obelisk.execution.state_bits = 256 : i64
+// BYTECODE: obelisk.execution.state_bits = 320 : i64
 // BYTECODE: obelisk_sim.storage.decl 0
 // BYTECODE: obelisk_sim.storage.decl 1
 // BYTECODE: obelisk_sim.storage.decl 2
 // BYTECODE: obelisk_sim.storage.decl 3
+// BYTECODE: obelisk_sim.storage.decl 4
 // The live aggregate string across create_like needs one shadow-root slot.
-// BYTECODE: obelisk.bytecode.scratch_size = 152 : i64
+// BYTECODE: obelisk.bytecode.scratch_size = 312 : i64
 
 // NATIVE: llvm.call @obelisk_rt_v1_container_size
 // NATIVE: llvm.call @obelisk_rt_v1_container_create_like
 // NATIVE: llvm.call @obelisk_rt_v1_container_read
+// NATIVE: llvm.call @obelisk_rt_v1_container_write
+// NATIVE: llvm.call @obelisk_rt_v1_container_create
 // NATIVE: llvm.call @obelisk_rt_v1_container_write
