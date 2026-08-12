@@ -23,6 +23,13 @@ instruction_size = 32
 if code_offset > len(image) or instruction_count > (len(image) - code_offset) // instruction_size:
     raise SystemExit("invalid Obelisk design-bytecode instruction range")
 
+constant_offset = struct.unpack_from("<Q", image, 104)[0]
+constant_size = struct.unpack_from("<Q", image, 112)[0]
+if constant_offset > len(image) or constant_size > len(image) - constant_offset:
+    raise SystemExit("invalid Obelisk design-bytecode constant range")
+constant_data = image[constant_offset : constant_offset + constant_size]
+print(f"constants: {constant_data.hex()}")
+
 for index in range(instruction_count):
     offset = code_offset + index * instruction_size
     opcode, flags, destination, source0, source1, source2, auxiliary, immediate = (

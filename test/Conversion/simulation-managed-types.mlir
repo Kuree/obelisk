@@ -1,11 +1,15 @@
 // RUN: obelisk-opt %s | FileCheck %s
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | %python %S/Inputs/dump-bytecode-instructions.py | FileCheck %s --check-prefix=INSTRUCTIONS
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
 
 !candidate = !obelisk_sim.unpacked_union<fields = [
   #obelisk_sim.field<name = "object", type = !obelisk_sim.class_handle<@Node>, ordinal = 0, packedOffset = 0>,
   #obelisk_sim.field<name = "bits", type = i64, ordinal = 1, packedOffset = 0>
 ], isTagged = false>
+!path_holder = !obelisk_sim.unpacked_struct<[
+  #obelisk_sim.field<name = "path", type = !obelisk_sim.reference_path<i64>, ordinal = 0, packedOffset = 0>
+]>
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -71,6 +75,13 @@ module attributes {
       } : (i64) -> !obelisk_sim.dynamic_array<!candidate>
       "obelisk_sim.container.write"(%candidates, %index, %candidate) :
         (!obelisk_sim.dynamic_array<!candidate>, i64, !candidate) -> ()
+      %paths = obelisk_sim.container.create %one {
+        type_id = 100 : i64, element_kind = 7 : i32,
+        element_flags = 0 : i32, value_size = 8 : i64,
+        alignment = 8 : i64, bit_width = 64 : i64,
+        trace_offsets = array<i64: 0>, trace_kinds = array<i32: 4>,
+        container_kind = 1 : i32, bound = 0 : i64
+      } : (i64) -> !obelisk_sim.dynamic_array<!path_holder>
       obelisk_sim.return
     }
   }
@@ -88,6 +99,7 @@ module attributes {
 // CHECK: obelisk_sim.container.read
 // CHECK: obelisk_sim.container.write
 // CHECK: trace_kinds = array<i32: -2147483647>
+// CHECK: trace_kinds = array<i32: 4>
 
 // A container whose element is logic remains one managed register. It must
 // not acquire a second unknown plane from recursive containsLogic analysis.
@@ -98,11 +110,24 @@ module attributes {
 // BYTECODE: obelisk_sim.storage.decl 3
 // BYTECODE: obelisk_sim.storage.decl 4
 // The live aggregate string across create_like needs one shadow-root slot.
-// BYTECODE: obelisk.bytecode.scratch_size = 312 : i64
+// BYTECODE: obelisk.bytecode.scratch_size = 400 : i64
 
+// The bytecode constants retain complete flattened trace-slot records:
+// little-endian {offset = 0, candidate class kind = 0x80000001, reserved = 0}
+// and {offset = 0, exact reference-path kind = 4, reserved = 0}.
+// INSTRUCTIONS: constants: {{.*}}00000000000000000100008000000000{{.*}}00000000000000000400000000000000
+
+// Candidate class roots retain the high candidate bit in the public trace
+// record, and reference paths retain their distinct exact slot kind.
+// NATIVE: llvm.mlir.global internal constant @__obelisk_element_trace_100
+// NATIVE: llvm.mlir.constant(4 : i8)
+// NATIVE: llvm.mlir.global internal constant @__obelisk_element_trace_99
+// NATIVE: llvm.mlir.constant(1 : i8)
+// NATIVE: llvm.mlir.constant(-128 : i8)
 // NATIVE: llvm.call @obelisk_rt_v1_container_size
 // NATIVE: llvm.call @obelisk_rt_v1_container_create_like
 // NATIVE: llvm.call @obelisk_rt_v1_container_read
 // NATIVE: llvm.call @obelisk_rt_v1_container_write
-// NATIVE: llvm.call @obelisk_rt_v1_container_create
+// NATIVE: llvm.call @obelisk_rt_v1_container_create_typed
 // NATIVE: llvm.call @obelisk_rt_v1_container_write
+// NATIVE: llvm.call @obelisk_rt_v1_container_create_typed

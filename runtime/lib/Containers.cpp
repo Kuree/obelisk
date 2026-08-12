@@ -298,10 +298,21 @@ validateManagedSlots(obelisk_rt_context *context,
                      return;
                    }
                    auto *object = heapStringObject(*slot);
-                   obelisk_rt_managed_kind_v1 expected =
-                       kind == OBELISK_RT_MANAGED_SLOT_CLASS
-                           ? OBELISK_RT_MANAGED_CLASS
-                           : OBELISK_RT_MANAGED_CONTAINER;
+                   obelisk_rt_managed_kind_v1 expected;
+                   switch (kind) {
+                   case OBELISK_RT_MANAGED_SLOT_CLASS:
+                     expected = OBELISK_RT_MANAGED_CLASS;
+                     break;
+                   case OBELISK_RT_MANAGED_SLOT_CONTAINER:
+                     expected = OBELISK_RT_MANAGED_CONTAINER;
+                     break;
+                   case OBELISK_RT_MANAGED_SLOT_REFERENCE_PATH:
+                     expected = OBELISK_RT_MANAGED_REFERENCE_PATH;
+                     break;
+                   default:
+                     status = OBELISK_RT_INVALID_HANDLE;
+                     return;
+                   }
                    if (!obelisk_rt_managed_object_belongs_to(context, object) ||
                        obelisk_rt_managed_object_kind(object) != expected)
                      status = OBELISK_RT_INVALID_HANDLE;
@@ -2503,9 +2514,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_container_create_typed(
     for (uint64_t index = 0; index != traceSlotCount; ++index) {
       obelisk_rt_element_trace_slot_v1 slot{};
       std::memcpy(&slot, traceSlots + index, sizeof(slot));
-      if (slot.reserved != 0 || slot.kind < OBELISK_RT_MANAGED_SLOT_CLASS ||
-          slot.kind > OBELISK_RT_MANAGED_SLOT_CONTAINER ||
-          slot.offset > valueSize ||
+      // The descriptor validator below is the authority for exact and
+      // candidate slot kinds. Keep this local check limited to the flattened
+      // trace representation and ordering so the two validators cannot drift.
+      if (slot.reserved != 0 || slot.offset > valueSize ||
           sizeof(obelisk_rt_managed_word_v1) > valueSize - slot.offset ||
           slot.offset % alignof(obelisk_rt_managed_word_v1) != 0 ||
           (!owned->entries.empty() &&
