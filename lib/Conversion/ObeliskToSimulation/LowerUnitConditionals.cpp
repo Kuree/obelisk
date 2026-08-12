@@ -1289,6 +1289,90 @@ LogicalResult UnitLowering::lowerCase(semantic::SVCaseStatementOp op) {
   return success();
 }
 
+LogicalResult UnitLowering::lowerRandCase(semantic::SVRandCaseStatementOp op) {
+  Location location = getSemanticLocation(op);
+  SmallVector<Operation *> children = getChildren(op);
+  size_t itemCount = op.getItemCount();
+  // The importer emits every item's weight expression in item order, then
+  // every item body. The verifier already pairs the two halves.
+  if (itemCount == 0 || children.size() != 2 * itemCount) {
+    emitError(location) << "malformed randcase item inventory";
+    return failure();
+  }
+  ArrayRef<Operation *> weights =
+      ArrayRef<Operation *>(children).take_front(itemCount);
+  ArrayRef<Operation *> statements =
+      ArrayRef<Operation *>(children).take_back(itemCount);
+
+  auto i64 = builder.getI64Type();
+  Value zero = arith::ConstantOp::create(builder, location, i64,
+                                         builder.getI64IntegerAttr(0));
+
+  // IEEE 1800-2017 18.16 evaluates every weight exactly once, in source order.
+  // Accumulate the running total alongside so each item keeps the upper bound
+  // of its own share of the distribution.
+  SmallVector<Value> bounds;
+  bounds.reserve(itemCount);
+  Value total = zero;
+  for (Operation *node : weights) {
+    Location weightLocation = getSemanticLocation(node);
+    FailureOr<Value> value = lowerExpression(node);
+    if (failed(value))
+      return failure();
+    bool isSigned = isSignedNode(node);
+    FailureOr<Value> weight = convert(*value, i64, isSigned, weightLocation);
+    if (failed(weight))
+      return failure();
+    // A weight is a count, so a negative one contributes nothing. Clamping
+    // keeps it from reappearing as a dominant unsigned magnitude.
+    if (isSigned) {
+      Value negative =
+          arith::CmpIOp::create(builder, weightLocation,
+                                arith::CmpIPredicate::slt, *weight, zero);
+      weight = arith::SelectOp::create(builder, weightLocation, negative, zero,
+                                       *weight)
+                   .getResult();
+    }
+    total = arith::AddIOp::create(builder, weightLocation, total, *weight);
+    bounds.push_back(total);
+  }
+
+  Block *mergeBlock = addBlock();
+  Block *selectBlock = addBlock();
+  // An all-zero weight list selects no branch at all.
+  Value anyWeight = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::ne, total, zero);
+  cf::CondBranchOp::create(builder, location, anyWeight, selectBlock,
+                           ValueRange{}, mergeBlock, ValueRange{});
+  setCurrent(selectBlock);
+
+  // The draw shares the process random number generator with $urandom and
+  // lands in [0, total), so it always falls inside the final item's bound and
+  // that item needs no test of its own.
+  Value context = function.getBody().front().getArgument(0);
+  Value draw = sim::SimRandomBoundedOp::create(builder, location, i64, context,
+                                               total);
+  for (size_t item = 0; item + 1 < itemCount; ++item) {
+    Block *itemBlock = addBlock();
+    Block *nextItemBlock = addBlock();
+    Value selected =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ult,
+                              draw, bounds[item]);
+    cf::CondBranchOp::create(builder, location, selected, itemBlock,
+                             ValueRange{}, nextItemBlock, ValueRange{});
+    setCurrent(itemBlock);
+    if (failed(lowerStatement(statements[item])))
+      return failure();
+    emitBranch(mergeBlock);
+    setCurrent(nextItemBlock);
+  }
+  if (failed(lowerStatement(statements.back())))
+    return failure();
+  emitBranch(mergeBlock);
+  setCurrent(mergeBlock);
+  return success();
+}
+
 LogicalResult
 UnitLowering::lowerPatternCase(semantic::SVPatternCaseStatementOp op) {
   Location location = getSemanticLocation(op);

@@ -634,6 +634,11 @@ class SlangPatternCaseStatementASTNodeOp<string mnemonic>
   let hasVerifier = 1;
 }
 
+class SlangRandCaseStatementASTNodeOp<string mnemonic>
+    : SlangASTNodeOp<mnemonic, [], (ins I64Attr:$item_count)> {
+  let hasVerifier = 1;
+}
+
 class SlangInsideExpressionASTNodeOp<string mnemonic>
     : SlangExpressionASTNodeOp<mnemonic, (ins I64Attr:$item_count)> {
   let hasVerifier = 1;

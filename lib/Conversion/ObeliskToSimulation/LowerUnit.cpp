@@ -1929,6 +1929,8 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     return lowerCase(caseStatement);
   if (auto patternCase = dyn_cast<semantic::SVPatternCaseStatementOp>(op))
     return lowerPatternCase(patternCase);
+  if (auto randCase = dyn_cast<semantic::SVRandCaseStatementOp>(op))
+    return lowerRandCase(randCase);
   if (isa<semantic::SVWhileLoopStatementOp>(op))
     return lowerWhile(op);
   if (isa<semantic::SVDoWhileLoopStatementOp>(op))

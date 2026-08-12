@@ -205,6 +205,7 @@ private:
   lowerQualifiedConditional(semantic::SVConditionalStatementOp op);
   ::mlir::LogicalResult lowerCase(semantic::SVCaseStatementOp op);
   ::mlir::LogicalResult lowerPatternCase(semantic::SVPatternCaseStatementOp op);
+  ::mlir::LogicalResult lowerRandCase(semantic::SVRandCaseStatementOp op);
   ::mlir::FailureOr<::mlir::Value>
   lowerPattern(::mlir::Value input, ::mlir::Operation *pattern,
                semantic::SVCaseCondition condition,

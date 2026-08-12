@@ -534,6 +534,20 @@ LogicalResult SVPatternCaseStatementOp::verify() {
   return success();
 }
 
+LogicalResult SVRandCaseStatementOp::verify() {
+  if (getItemCount() == 0)
+    return emitOpError("randcase must contain at least one item");
+  // Every item contributes one weight expression and one statement, and the
+  // importer emits all weights before all statements.
+  uint64_t expected = 0;
+  if (failed(addInventory(*this, getItemCount(), expected, "randcase weight")) ||
+      failed(addInventory(*this, getItemCount(), expected, "randcase item")))
+    return failure();
+  if (astBodySize(*this) != expected)
+    return emitOpError("malformed randcase item inventory");
+  return success();
+}
+
 LogicalResult SVInsideExpressionOp::verify() {
   if (getItemCount() == 0)
     return emitOpError("inside set must contain at least one item");

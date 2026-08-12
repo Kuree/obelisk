@@ -570,3 +570,25 @@ module {
   } {
   }
 }
+
+// -----
+
+module {
+  // expected-error @+1 {{randcase must contain at least one item}}
+  obelisk.sv.statement.rand_case attributes {item_count = 0 : i64, node_id = 0 : i64} {
+  }
+}
+
+// -----
+
+module {
+  // Each item owns one weight expression and one statement.
+  // expected-error @+1 {{malformed randcase item inventory}}
+  obelisk.sv.statement.rand_case attributes {item_count = 1 : i64, node_id = 0 : i64} {
+    obelisk.sv.expression.integer_literal attributes {
+      constant_value = "1", node_id = 1 : i64,
+      semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
+    } {
+    }
+  }
+}

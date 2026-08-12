@@ -626,6 +626,11 @@ class ObeliskPatternCaseStatementASTNodeOp<string mnemonic>
   let hasVerifier = 1;
 }
 
+class ObeliskRandCaseStatementASTNodeOp<string mnemonic>
+    : ObeliskASTNodeOp<mnemonic, [], (ins I64Attr:$item_count)> {
+  let hasVerifier = 1;
+}
+
 class ObeliskInsideExpressionASTNodeOp<string mnemonic>
     : ObeliskExpressionASTNodeOp<mnemonic, (ins I64Attr:$item_count)> {
   let hasVerifier = 1;

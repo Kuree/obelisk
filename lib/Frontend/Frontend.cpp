@@ -2061,6 +2061,8 @@ private:
         filterFlags.push_back(item.filter != nullptr);
       SET_OP_ATTR(ItemFilterFlags, builder.getDenseI64ArrayAttr(filterFlags));
       SET_OP_ATTR(HasDefault, builder.getBoolAttr(node.defaultCase != nullptr));
+    } else if constexpr (std::same_as<T, slang::ast::RandCaseStatement>) {
+      SET_OP_ATTR(ItemCount, builder.getI64IntegerAttr(node.items.size()));
     } else if constexpr (std::same_as<T, slang::ast::InsideExpression>) {
       SET_OP_ATTR(ItemCount,
                   builder.getI64IntegerAttr(node.rangeList().size()));
