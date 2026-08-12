@@ -27,12 +27,114 @@ bool isWeakReferenceCall(semantic::SVCallExpressionOp op) {
   return path && path.getValue().starts_with("std::weak_reference#(");
 }
 
+bool isMailboxCall(semantic::SVCallExpressionOp op) {
+  auto path = op->getAttrOfType<StringAttr>("referenced_path");
+  return path && path.getValue().starts_with("std::mailbox#(");
+}
+
 } // namespace
 
 FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
   std::optional<StringRef> referencedPath = op.getReferencedPath();
+  if (referencedPath && referencedPath->starts_with("std::mailbox#(")) {
+    StringRef method = op.getCalleeName();
+    if (children.empty()) {
+      emitError(location) << "mailbox method has no receiver";
+      return failure();
+    }
+    FailureOr<Value> receiver = lowerExpression(children.front());
+    auto mailbox = succeeded(receiver)
+                       ? dyn_cast<sim::MailboxType>((*receiver).getType())
+                       : sim::MailboxType{};
+    if (failed(receiver) || !mailbox)
+      return failure();
+    if (method == "num") {
+      if (children.size() != 1) {
+        emitError(location) << "mailbox::num accepts no arguments";
+        return failure();
+      }
+      Value count = sim::SimMailboxNumOp::create(builder, location, *receiver);
+      FailureOr<Type> resultType = getNormalizedSemanticType(op);
+      return failed(resultType)
+                 ? FailureOr<Value>(failure())
+                 : convert(count, *resultType, true, location, true);
+    }
+    if (method == "try_put") {
+      if (children.size() != 2) {
+        emitError(location) << "mailbox::try_put requires one message";
+        return failure();
+      }
+      FailureOr<Value> value = lowerExpression(children[1]);
+      value = succeeded(value)
+                  ? convert(*value, mailbox.getElementType(),
+                            isSignedNode(children[1]), location)
+                  : FailureOr<Value>(failure());
+      if (failed(value))
+        return failure();
+      Value success = sim::SimMailboxTryPutOp::create(
+          builder, location, *receiver,
+          cloneSequentialValue(*value, location));
+      FailureOr<Type> resultType = getNormalizedSemanticType(op);
+      return failed(resultType)
+                 ? FailureOr<Value>(failure())
+                 : convert(success, *resultType, false, location, true);
+    }
+    if (method == "try_peek" || method == "try_get") {
+      if (children.size() != 2) {
+        emitError(location) << "mailbox::" << method
+                            << " requires one output argument";
+        return failure();
+      }
+      FailureOr<Value> destination = lowerExpression(children[1], true);
+      if (failed(destination))
+        return failure();
+      Type destinationType = getReferenceElementType(*destination);
+      if (!destinationType) {
+        emitError(location) << "mailbox::" << method
+                            << " output is not assignable";
+        return failure();
+      }
+      Value success;
+      Value value;
+      if (method == "try_peek") {
+        auto read = sim::SimMailboxTryPeekOp::create(
+            builder, location,
+            TypeRange{builder.getI1Type(), mailbox.getElementType()},
+            *receiver);
+        success = read.getSuccess();
+        value = read.getValue();
+      } else {
+        auto read = sim::SimMailboxTryGetOp::create(
+            builder, location,
+            TypeRange{builder.getI1Type(), mailbox.getElementType()},
+            *receiver);
+        success = read.getSuccess();
+        value = read.getValue();
+      }
+      Block *store = addBlock();
+      Block *resume = addBlock();
+      cf::CondBranchOp::create(builder, location, success, store, ValueRange{},
+                               resume, ValueRange{});
+      setCurrent(store);
+      FailureOr<Value> converted =
+          convert(cloneSequentialValue(value, location), destinationType,
+                  false, location, isSignedNode(children[1]));
+      if (failed(converted) ||
+          failed(storeReference(*destination, *converted, location)))
+        return failure();
+      cf::BranchOp::create(builder, location, resume);
+      setCurrent(resume);
+      FailureOr<Type> resultType = getNormalizedSemanticType(op);
+      return failed(resultType)
+                 ? FailureOr<Value>(failure())
+                 : convert(success, *resultType, false, location, true);
+    }
+    unsupported(op) << " (mailbox blocking method requires scheduler wait "
+                       "lowering)";
+    return failure();
+  }
   if (referencedPath && referencedPath->starts_with("std::process::")) {
     StringRef method =
         referencedPath->drop_front(StringRef("std::process::").size());
@@ -1836,6 +1938,33 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
     return failure();
   }
   auto call = dyn_cast<semantic::SVCallExpressionOp>(children.front());
+  if (call && isMailboxCall(call) && call.getCalleeName() == "new") {
+    SmallVector<Operation *> actuals = getChildren(call);
+    FailureOr<Type> resultType = getNormalizedSemanticType(op);
+    auto mailbox = succeeded(resultType)
+                       ? dyn_cast<sim::MailboxType>(*resultType)
+                       : sim::MailboxType{};
+    if (actuals.size() != 1 || failed(resultType) || !mailbox)
+      return emitError(location)
+                 << "mailbox constructor requires one resolved bound",
+             failure();
+    FailureOr<Value> bound = lowerExpression(actuals.front());
+    bound = succeeded(bound)
+                ? convert(*bound, builder.getI64Type(),
+                          isSignedNode(actuals.front()), location, true)
+                : FailureOr<Value>(failure());
+    FailureOr<ContainerElementDescriptor> descriptor =
+        describeContainerElement(mailbox.getElementType(), location);
+    if (failed(bound) || failed(descriptor))
+      return failure();
+    return sim::SimMailboxCreateOp::create(
+               builder, location, mailbox, *bound, descriptor->typeID,
+               descriptor->kind, descriptor->flags, descriptor->valueSize,
+               descriptor->alignment, descriptor->bitWidth,
+               builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
+               builder.getDenseI32ArrayAttr(descriptor->traceKinds))
+        .getResult();
+  }
   if (call && isWeakReferenceCall(call) && call.getCalleeName() == "new") {
     SmallVector<Operation *> actuals = getChildren(call);
     FailureOr<Type> resultType = getNormalizedSemanticType(op);

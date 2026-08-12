@@ -789,7 +789,8 @@ static FailureOr<Type> normalizeType(Type type, Location location,
           sim::ClassHandleType, sim::VirtualInterfaceType, sim::ChandleType,
           sim::StringType,
           sim::DynamicArrayType,
-          sim::QueueType, sim::AssocArrayType, sim::ManagedRefType>(type) ||
+          sim::QueueType, sim::MailboxType, sim::AssocArrayType,
+          sim::ManagedRefType>(type) ||
       sim::isAggregateType(type))
     return type;
 
@@ -806,7 +807,60 @@ FailureOr<Type> getNormalizedSemanticType(Operation *op) {
         "semantic node requires semantic_type for simulation lowering");
     return failure();
   }
-  return normalizeType(typeAttr.getValue(), getSemanticLocation(op));
+  Type semanticType = typeAttr.getValue();
+  if (auto handle = dyn_cast<semantic::ClassHandleType>(semanticType)) {
+    SymbolRefAttr name = handle.getClassName();
+    auto sourceName = [](StringRef symbol) {
+      size_t separator = symbol.find('.');
+      return separator == StringRef::npos ? symbol
+                                         : symbol.drop_front(separator + 1);
+    };
+    bool mailbox = name.getNestedReferences().size() == 1 &&
+                   sourceName(name.getRootReference().getValue()) == "std" &&
+                   sourceName(name.getLeafReference().getValue()) == "mailbox";
+    if (mailbox) {
+      semantic::SVClassTypeOp specialization;
+      Operation *root = op;
+      while (root->getParentOp())
+        root = root->getParentOp();
+      root->walk([&](semantic::SVClassTypeOp candidate) {
+        if (candidate.getSemanticType() == semanticType) {
+          specialization = candidate;
+          return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+      });
+      if (!specialization) {
+        emitError(getSemanticLocation(op))
+            << "mailbox specialization has no semantic class definition";
+        return failure();
+      }
+      Type elementType;
+      for (Operation *child : getChildren(specialization)) {
+        auto parameter = dyn_cast<semantic::SVTypeParameterSymbolOp>(child);
+        if (!parameter)
+          continue;
+        if (elementType) {
+          emitError(getSemanticLocation(op))
+              << "mailbox specialization has multiple type parameters";
+          return failure();
+        }
+        elementType = parameter.getSemanticType().value_or(Type{});
+      }
+      if (!elementType) {
+        emitError(getSemanticLocation(op))
+            << "mailbox specialization has no resolved element type";
+        return failure();
+      }
+      FailureOr<Type> normalized =
+          normalizeType(elementType, getSemanticLocation(op));
+      return failed(normalized)
+                 ? FailureOr<Type>(failure())
+                 : FailureOr<Type>(sim::MailboxType::get(
+                       semanticType.getContext(), *normalized));
+    }
+  }
+  return normalizeType(semanticType, getSemanticLocation(op));
 }
 
 FailureOr<Type> normalizeSemanticType(Type type, Location location) {

@@ -155,7 +155,8 @@ describeContainerElementImpl(Type type, Location location) {
     result.bitWidth = sizeof(void *) * 8;
     return result;
   }
-  if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(type)) {
+  if (isa<sim::DynamicArrayType, sim::QueueType, sim::MailboxType,
+          sim::AssocArrayType>(type)) {
     result.kind = OBELISK_RT_ELEMENT_CONTAINER_HANDLE;
     result.valueSize = sizeof(void *);
     return result;
