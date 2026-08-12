@@ -1085,6 +1085,20 @@ private:
     });
   }
 
+  /// A constraint prototype declares no body of its own: a `pure` constraint
+  /// never has one (IEEE 1800-2017 18.5.2) and an extern prototype's body is
+  /// defined out of block. slang represents that absence with the
+  /// InvalidConstraint placeholder and separately diagnoses the prototypes
+  /// whose required body is genuinely missing, so the placeholder alone does
+  /// not mean the design is ill-formed.
+  static bool
+  isBodylessConstraintPrototype(const slang::ast::ConstraintBlockSymbol &node) {
+    const slang::syntax::SyntaxNode *syntax = node.getSyntax();
+    return syntax &&
+           syntax->kind == slang::syntax::SyntaxKind::ConstraintPrototype &&
+           node.getConstraints().kind == slang::ast::ConstraintKind::Invalid;
+  }
+
   void setSymbolReference(NamedAttrList &attrs,
                           const slang::ast::Symbol &symbol,
                           StringAttr referenceName, StringAttr pathName) {
@@ -2455,6 +2469,18 @@ private:
           clocking->as<slang::ast::ClockingBlockSymbol>().getEvent().visit(
               *this);
       this->visitDefault(node);
+    } else if constexpr (std::same_as<T, slang::ast::ConstraintBlockSymbol>) {
+      // Importing the body placeholder of a prototype would reject the whole
+      // compilation as invalid. Leave the body region empty instead and keep
+      // the members (the implicit `this` variable); the declaration flags
+      // already record that the block is pure or extern, and Prepare rejects
+      // such a block only once it reaches an executable randomize().
+      if (isBodylessConstraintPrototype(node)) {
+        for (const slang::ast::Symbol &member : node.members())
+          member.visit(*this);
+      } else {
+        this->visitDefault(node);
+      }
     } else if constexpr (std::same_as<T, slang::ast::BlockEventListControl>) {
       for (const auto &event : node.events)
         if (event.target)
