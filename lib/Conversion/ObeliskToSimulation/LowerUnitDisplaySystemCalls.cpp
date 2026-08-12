@@ -6,6 +6,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
+#include <cctype>
 #include <optional>
 #include <string>
 #include <utility>
@@ -13,6 +14,168 @@
 using namespace mlir;
 
 namespace obelisk::simlowering {
+
+FailureOr<Value>
+UnitLowering::lowerStringFormatSystemCall(semantic::SVCallExpressionOp op) {
+  Location location = getSemanticLocation(op);
+  SmallVector<Operation *> children = getChildren(op);
+  StringRef name = op.getCalleeName();
+  bool task = name == "$sformat";
+  size_t formatIndex = task ? 1 : 0;
+  if (children.size() <= formatIndex) {
+    emitError(location) << name << " requires "
+                        << (task ? "a destination and a format string"
+                                 : "a format string");
+    return failure();
+  }
+
+  Operation *literalNode = children[formatIndex];
+  while (isa<semantic::SVConversionExpressionOp>(literalNode)) {
+    SmallVector<Operation *> converted = getChildren(literalNode);
+    if (converted.size() != 1)
+      break;
+    literalNode = converted.front();
+  }
+  auto literal = dyn_cast<semantic::SVStringLiteralOp>(literalNode);
+  if (!literal) {
+    emitError(getSemanticLocation(children[formatIndex]))
+        << name << " currently requires a literal format string";
+    return failure();
+  }
+
+  Type stringType = sim::StringType::get(function.getContext());
+  auto stringLiteral = [&](StringRef text) -> Value {
+    return sim::SimStringLiteralOp::create(builder, location, stringType, text);
+  };
+  SmallVector<Value> parts;
+  StringRef format = literal.getConstantValue();
+  size_t argumentIndex = formatIndex + 1;
+  size_t textStart = 0;
+  for (size_t cursor = 0; cursor < format.size();) {
+    if (format[cursor] != '%') {
+      ++cursor;
+      continue;
+    }
+    if (cursor > textStart)
+      parts.push_back(stringLiteral(format.slice(textStart, cursor)));
+    if (cursor + 1 < format.size() && format[cursor + 1] == '%') {
+      parts.push_back(stringLiteral("%"));
+      cursor += 2;
+      textStart = cursor;
+      continue;
+    }
+
+    size_t specifier = cursor + 1;
+    while (specifier < format.size() &&
+           !std::isalpha(static_cast<unsigned char>(format[specifier])))
+      ++specifier;
+    if (specifier == format.size()) {
+      emitError(location) << name << " has an unterminated format specifier";
+      return failure();
+    }
+    StringRef modifiers = format.slice(cursor + 1, specifier);
+    if (!modifiers.empty() && modifiers != "0") {
+      emitError(location) << name << " does not yet support format modifier '"
+                          << modifiers << "'";
+      return failure();
+    }
+    if (std::isupper(static_cast<unsigned char>(format[specifier]))) {
+      emitError(location)
+          << name << " does not yet support uppercase format conversion %"
+          << format[specifier];
+      return failure();
+    }
+    if (argumentIndex >= children.size()) {
+      emitError(location) << name << " has too few formatting arguments";
+      return failure();
+    }
+    Operation *argument = children[argumentIndex++];
+    FailureOr<Value> lowered = lowerExpression(argument);
+    if (failed(lowered))
+      return failure();
+    char conversion =
+        static_cast<char>(std::tolower(static_cast<unsigned char>(format[specifier])));
+    if (conversion == 's') {
+      if (isa<sim::StringType>((*lowered).getType()))
+        parts.push_back(*lowered);
+      else {
+        FailureOr<Value> scalar =
+            toPackedScalar(*lowered, getSemanticLocation(argument));
+        if (failed(scalar))
+          return failure();
+        parts.push_back(sim::SimStringFromPackedOp::create(
+            builder, getSemanticLocation(argument), stringType, *scalar));
+      }
+    } else {
+      int32_t radix = conversion == 'b'   ? 2
+                      : conversion == 'o' ? 8
+                      : conversion == 'h' || conversion == 'x' ? 16
+                                                               : 10;
+      if (conversion != 'd' && conversion != 'i' && conversion != 'u' &&
+          conversion != 'b' && conversion != 'o' && conversion != 'h' &&
+          conversion != 'x') {
+        emitError(location) << name << " does not support format conversion %"
+                            << format[specifier];
+        return failure();
+      }
+      FailureOr<Value> scalar =
+          toPackedScalar(*lowered, getSemanticLocation(argument));
+      std::optional<unsigned> width =
+          succeeded(scalar) ? sim::getPackedWidth((*scalar).getType())
+                            : std::nullopt;
+      if (failed(scalar) || !width || *width > 64) {
+        emitError(getSemanticLocation(argument))
+            << name << " currently requires integer arguments of at most 64 bits";
+        return failure();
+      }
+      bool isSigned = (conversion == 'd' || conversion == 'i') &&
+                      isSignedNode(argument);
+      FailureOr<Value> integer =
+          convert(*scalar, builder.getI64Type(), isSigned,
+                  getSemanticLocation(argument));
+      if (failed(integer))
+        return failure();
+      parts.push_back(sim::SimStringFormatIntegerOp::create(
+          builder, getSemanticLocation(argument), stringType, *integer,
+          builder.getI32IntegerAttr(radix), builder.getBoolAttr(isSigned)));
+    }
+    cursor = specifier + 1;
+    textStart = cursor;
+  }
+  if (textStart < format.size())
+    parts.push_back(stringLiteral(format.drop_front(textStart)));
+  if (argumentIndex != children.size()) {
+    emitError(location) << name << " has too many formatting arguments";
+    return failure();
+  }
+  Value result = parts.empty()
+                     ? stringLiteral("")
+                     : Value(sim::SimStringConcatOp::create(
+                           builder, location, stringType, parts));
+  if (!task)
+    return result;
+
+  Operation *destinationNode = children.front();
+  if (auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(
+          destinationNode)) {
+    SmallVector<Operation *> assignmentChildren = getChildren(assignment);
+    if (assignmentChildren.empty())
+      return failure();
+    destinationNode = assignmentChildren.front();
+  }
+  FailureOr<Value> destination = lowerExpression(destinationNode, true);
+  if (failed(destination) ||
+      getReferenceElementType(*destination) != stringType) {
+    emitError(getSemanticLocation(destinationNode))
+        << "$sformat destination must be a string variable";
+    return failure();
+  }
+  if (failed(storeReference(*destination, result, location)))
+    return failure();
+  return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                   builder.getBoolAttr(false))
+      .getResult();
+}
 
 FailureOr<Value>
 UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {

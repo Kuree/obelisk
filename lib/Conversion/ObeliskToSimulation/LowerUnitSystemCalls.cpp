@@ -1239,6 +1239,9 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
   if (displayCall)
     return lowerDisplaySystemCall(op);
 
+  if (name == "$sformat" || name == "$sformatf" || name == "$psprintf")
+    return lowerStringFormatSystemCall(op);
+
   bool fileCall =
       llvm::StringSwitch<bool>(name)
           .Cases({"$fopen", "$fclose", "$fflush", "$fgetc", "$ungetc", "$fgets",
