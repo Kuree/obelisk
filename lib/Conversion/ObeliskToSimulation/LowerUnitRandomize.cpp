@@ -226,6 +226,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Type type;
     unsigned width;
     unsigned modeIndex;
+    bool isContainerSize;
+    Type containerType;
+    uint64_t sizeConstraintMask;
+    bool hasUnconditionalSizeConstraint;
     bool isSigned;
     Value reference;
     bool isRandC;
@@ -261,13 +265,29 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         property
             ? property.getAs<IntegerAttr>(randomPropertyModeStorageAttrName)
             : IntegerAttr{};
+    bool isContainerSize = property &&
+                           property.contains(randomContainerSizeAttrName);
+    auto containerTypeAttr =
+        property ? property.getAs<TypeAttr>(randomContainerTypeAttrName)
+                 : TypeAttr{};
+    auto sizeConstraintMaskAttr =
+        property ? property.getAs<IntegerAttr>("size_constraint_mask")
+                 : IntegerAttr{};
+    auto unconditionalSizeConstraintAttr =
+        property ? property.getAs<BoolAttr>("unconditional_size_constraint")
+                 : BoolAttr{};
     if (static_cast<bool>(field) == static_cast<bool>(referencePath) ||
         !typeAttr || !widthAttr || !modeIndexAttr || !signedAttr ||
         !randcAttr || modeIndexAttr.getValue().isNegative() ||
         modeIndexAttr.getValue().getActiveBits() > 32 ||
         modeIndexAttr.getValue().getZExtValue() >= 64 ||
         widthAttr.getValue().isZero() || widthAttr.getValue().isNegative() ||
-        widthAttr.getValue().getActiveBits() > 64) {
+        widthAttr.getValue().getActiveBits() > 64 ||
+        (isContainerSize != static_cast<bool>(containerTypeAttr)) ||
+        (isContainerSize &&
+         (!field || referencePath || !sizeConstraintMaskAttr ||
+          !unconditionalSizeConstraintAttr ||
+          sizeConstraintMaskAttr.getValue().getBitWidth() > 64))) {
       emitError(location) << "randomize property plan is malformed";
       return failure();
     }
@@ -285,8 +305,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     Value reference;
     if (field) {
+      Type referencedType = isContainerSize ? containerTypeAttr.getValue()
+                                            : type;
       Type referenceType = sim::ManagedRefType::get(
-          function.getContext(), type, objectType.getClassName());
+          function.getContext(), referencedType, objectType.getClassName());
       reference = sim::SimClassFieldRefOp::create(
           builder, location, referenceType, receiver, field);
     } else {
@@ -462,6 +484,13 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                        static_cast<unsigned>(width),
                        static_cast<unsigned>(
                            modeIndexAttr.getValue().getZExtValue()),
+                       isContainerSize,
+                       containerTypeAttr ? containerTypeAttr.getValue() : Type{},
+                       sizeConstraintMaskAttr
+                           ? sizeConstraintMaskAttr.getValue().getZExtValue()
+                           : 0,
+                       unconditionalSizeConstraintAttr &&
+                           unconditionalSizeConstraintAttr.getValue(),
                        signedAttr.getValue(),
                        reference,
                        randcAttr.getValue(),
@@ -531,10 +560,6 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
          static_cast<unsigned>(elementWidth),
          static_cast<unsigned>(modeIndexAttr.getValue().getZExtValue()),
          reference});
-  }
-  if (planned.size() + plannedContainers.size() > 64) {
-    emitError(location) << "randomize plan exceeds its 64-property boundary";
-    return failure();
   }
   bool hasRandC = llvm::any_of(
       planned, [](const Property &property) { return property.isRandC; });
@@ -889,7 +914,17 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   SmallVector<Value> propertyEnabled;
   uint64_t currentOffset = 0;
   for (Property &property : planned) {
-    FailureOr<Value> current = loadReference(property.reference, location);
+    FailureOr<Value> current = [&]() -> FailureOr<Value> {
+      if (!property.isContainerSize)
+        return loadReference(property.reference, location);
+      FailureOr<Value> container = loadReference(property.reference, location);
+      if (failed(container))
+        return failure();
+      Value size = sim::SimContainerSizeOp::create(builder, location, i64,
+                                                   *container);
+      return arith::TruncIOp::create(builder, location, property.type, size)
+          .getResult();
+    }();
     if (failed(current))
       return failure();
     FailureOr<Value> scalar = toPackedScalar(*current, location);
@@ -917,6 +952,22 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                     arith::CmpIPredicate::eq, propertyMode,
                                     constant64(0))
                   .getResult();
+    if (property.isContainerSize &&
+        !property.hasUnconditionalSizeConstraint) {
+      Value disabledSizeConstraints = arith::AndIOp::create(
+          builder, location, relevantConstraintMode,
+          constant64(property.sizeConstraintMask));
+      Value allSizeConstraintsDisabled = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq,
+          disabledSizeConstraints, constant64(property.sizeConstraintMask));
+      enabled = arith::AndIOp::create(
+          builder, location, enabled,
+          arith::XOrIOp::create(
+              builder, location, allSizeConstraintsDisabled,
+              arith::ConstantOp::create(builder, location,
+                                        builder.getI1Type(),
+                                        builder.getBoolAttr(true))));
+    }
     propertyEnabled.push_back(enabled);
     if (property.isRandC) {
       Block *enabledBlock = addBlock();
@@ -5065,7 +5116,22 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     cf::CondBranchOp::create(builder, location, enabled, store, ValueRange{},
                              nextProperty, ValueRange{});
     setCurrent(store);
-    if (failed(storeReference(property.reference, candidate, location)))
+    if (property.isContainerSize) {
+      FailureOr<Value> oldContainer =
+          loadReference(property.reference, location);
+      FailureOr<Value> scalarSize = toPackedScalar(candidate, location);
+      FailureOr<Value> size =
+          succeeded(scalarSize)
+              ? convert(*scalarSize, i64, false, location, false)
+              : FailureOr<Value>(failure());
+      if (failed(oldContainer) || failed(size))
+        return failure();
+      Value resized = sim::SimContainerCreateLikeOp::create(
+          builder, location, property.containerType, *oldContainer,
+          *oldContainer, *size);
+      sim::SimManagedStoreOp::create(builder, location, resized,
+                                     property.reference);
+    } else if (failed(storeReference(property.reference, candidate, location)))
       return failure();
     if (property.isRandC) {
       if (failed(storeReference(property.randcKeyReference,

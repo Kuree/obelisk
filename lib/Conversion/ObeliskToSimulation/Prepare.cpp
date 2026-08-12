@@ -1582,6 +1582,10 @@ void ObeliskSimPreparePass::runOnOperation() {
       Type type;
       uint64_t width;
       unsigned modeIndex;
+      bool isContainerSize;
+      Type containerType;
+      uint64_t sizeConstraintMask;
+      bool hasUnconditionalSizeConstraint;
       bool isSigned;
       bool isRandC;
       FlatSymbolRefAttr randcKeyField;
@@ -1769,7 +1773,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             continue;
           }
           properties.push_back({property, field, referencePath, *type, *width,
-                                modeIndex,
+                                modeIndex, false, {}, 0, false,
                                 isSignedSemanticType(*semanticPropertyType),
                                 isRandC, randcKeyField, randcPositionField,
                                 randcKeyPath, randcPositionPath,
@@ -1785,9 +1789,6 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       return true;
     }
-    llvm::DenseMap<Operation *, unsigned> randomIndices;
-    for (auto [index, property] : llvm::enumerate(properties))
-      randomIndices[property.source] = index;
     auto freezeHook = [&](semantic::SVSubroutineSymbolOp hook,
                           StringRef calleeAttr, StringRef ownerAttr,
                           StringRef sourceAttr) -> LogicalResult {
@@ -1858,7 +1859,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             constraintRoots.push_back(child);
       }
     }
-    for (const RandomContainerProperty &property : containerProperties) {
+    for (RandomContainerProperty &property : containerProperties) {
       bool referenced = llvm::any_of(constraintRoots, [&](Operation *root) {
         bool found = false;
         root->walk([&](Operation *nested) {
@@ -1872,12 +1873,80 @@ void ObeliskSimPreparePass::runOnOperation() {
         return found;
       });
       if (referenced) {
-        emitError(getSemanticLocation(property.source))
-            << "constraints on random dynamic containers require runtime "
-               "size-aware solving";
-        invalid = true;
+        uint64_t constraintMask = 0;
+        bool unconditionalConstraint = false;
+        for (Operation *root : constraintRoots) {
+          bool rootReferences = false;
+          root->walk([&](Operation *nested) {
+            auto reference =
+                nested->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+            if (reference && reference.getLeafReference() ==
+                                 property.source->getAttrOfType<StringAttr>(
+                                     SymbolTable::getSymbolAttrName()))
+              rootReferences = true;
+          });
+          if (!rootReferences)
+            continue;
+          auto block = root->getParentOfType<
+              semantic::SVConstraintBlockSymbolOp>();
+          auto index = block ? constraintIndices.find(block)
+                             : constraintIndices.end();
+          if (index == constraintIndices.end())
+            unconditionalConstraint = true;
+          else
+            constraintMask |= uint64_t{1} << index->second;
+        }
+        bool softReference = llvm::any_of(constraintRoots, [&](Operation *root) {
+          bool found = false;
+          root->walk([&](semantic::SVExpressionConstraintOp expression) {
+            if (!expression.getIsSoft())
+              return;
+            expression->walk([&](Operation *nested) {
+              auto reference =
+                  nested->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+              if (reference && reference.getLeafReference() ==
+                                   property.source->getAttrOfType<StringAttr>(
+                                       SymbolTable::getSymbolAttrName()))
+                found = true;
+            });
+          });
+          return found;
+        });
+        if (softReference) {
+          emitError(getSemanticLocation(property.source))
+              << "soft constraints on dynamic container size require "
+                 "discard-aware resize planning";
+          invalid = true;
+          continue;
+        }
+        RandomSubdomain nonnegative;
+        nonnegative.offset = 31;
+        nonnegative.width = 1;
+        nonnegative.patterns.push_back({1, 0});
+        properties.push_back(
+            {property.source,
+             property.field,
+             {},
+             builder.getI32Type(),
+             32,
+             property.modeIndex,
+             true,
+             property.type,
+             constraintMask,
+             unconditionalConstraint,
+             true,
+             false,
+             {},
+             {},
+             {},
+             {},
+             {},
+             {std::move(nonnegative)}});
       }
     }
+    llvm::DenseMap<Operation *, unsigned> randomIndices;
+    for (auto [index, property] : llvm::enumerate(properties))
+      randomIndices[property.source] = index;
     // Clone declaration-owned constraints into the call before expanding
     // function calls. A dynamic randomize dispatch has one frozen call per
     // concrete class, so mutating the shared class declaration would leak one
@@ -2434,6 +2503,23 @@ void ObeliskSimPreparePass::runOnOperation() {
         Operation *, const llvm::DenseMap<Operation *, Operation *> &, bool,
         SmallVectorImpl<Operation *> &)>
         cloneConstraintExpression;
+    auto isRandomContainerSizeCall = [&](semantic::SVCallExpressionOp call) {
+      if (!call.getIsSystemCall() || call.getCalleeName() != "size")
+        return false;
+      SmallVector<Operation *> operands = getChildren(call);
+      if (operands.size() != 1)
+        return false;
+      auto reference =
+          operands.front()->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+      auto symbol = reference
+                        ? semanticSymbols.find(reference.getLeafReference())
+                        : semanticSymbols.end();
+      auto index = symbol == semanticSymbols.end()
+                       ? randomIndices.end()
+                       : randomIndices.find(symbol->second);
+      return index != randomIndices.end() &&
+             properties[index->second].isContainerSize;
+    };
     cloneConstraintExpression =
         [&](Operation *source,
             const llvm::DenseMap<Operation *, Operation *> &substitutions,
@@ -2448,8 +2534,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             return substitution->second->clone();
       }
 
-      if (auto callExpression =
-              dyn_cast<semantic::SVCallExpressionOp>(source)) {
+      if (auto callExpression = dyn_cast<semantic::SVCallExpressionOp>(source);
+          callExpression && !isRandomContainerSizeCall(callExpression)) {
         FailureOr<semantic::SVSubroutineSymbolOp> function =
             resolveConstraintFunction(callExpression);
         if (failed(function))
@@ -2622,8 +2708,10 @@ void ObeliskSimPreparePass::runOnOperation() {
           invalid = true;
           return;
         }
+        auto call = dyn_cast<semantic::SVCallExpressionOp>(nested);
         if (nested->hasTrait<OpTrait::SemanticASTNode>() &&
-            !isSupportedRandomConstraintExpression(nested)) {
+            !isSupportedRandomConstraintExpression(nested) &&
+            !(call && isRandomContainerSizeCall(call))) {
           emitError(getSemanticLocation(nested))
               << "constraint expression is outside the total side-effect-free "
                  "executable boundary: "
@@ -2651,6 +2739,19 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder.getNamedAttr("is_randc",
                                builder.getBoolAttr(property.isRandC)),
       };
+      if (property.isContainerSize) {
+        attributes.push_back(builder.getNamedAttr(randomContainerSizeAttrName,
+                                                  builder.getUnitAttr()));
+        attributes.push_back(builder.getNamedAttr(
+            randomContainerTypeAttrName, TypeAttr::get(property.containerType)));
+        attributes.push_back(builder.getNamedAttr(
+            "size_constraint_mask",
+            builder.getIntegerAttr(builder.getI64Type(),
+                                   APInt(64, property.sizeConstraintMask))));
+        attributes.push_back(builder.getNamedAttr(
+            "unconditional_size_constraint",
+            builder.getBoolAttr(property.hasUnconditionalSizeConstraint)));
+      }
       if (property.field)
         attributes.push_back(builder.getNamedAttr("field", property.field));
       else
@@ -2754,9 +2855,24 @@ void ObeliskSimPreparePass::runOnOperation() {
             nested->setAttr("obelisk_sim.class_field", field->second);
         if (auto index = randomIndices.find(symbol->second);
             index != randomIndices.end() &&
-            !nested->hasAttr(randomFunctionStateAttrName))
-          nested->setAttr(randomVariableAttrName,
-                          builder.getI32IntegerAttr(index->second));
+            !nested->hasAttr(randomFunctionStateAttrName)) {
+          if (properties[index->second].isContainerSize) {
+            auto sizeCall = dyn_cast_or_null<semantic::SVCallExpressionOp>(
+                nested->getParentOp());
+            if (!sizeCall || sizeCall.getCalleeName() != "size") {
+              emitError(getSemanticLocation(nested))
+                  << "a constrained dynamic container may only participate "
+                     "through its size() value";
+              invalid = true;
+            } else {
+              sizeCall->setAttr(randomVariableAttrName,
+                                builder.getI32IntegerAttr(index->second));
+            }
+          } else {
+            nested->setAttr(randomVariableAttrName,
+                            builder.getI32IntegerAttr(index->second));
+          }
+        }
         if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
                 semantic::SVSpecparamSymbolOp>(symbol->second))
           if (auto constant =

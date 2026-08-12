@@ -208,6 +208,10 @@ inline constexpr ::mlir::StringLiteral randomContainerPropertiesAttrName =
     "obelisk_sim.random_container_properties";
 inline constexpr ::mlir::StringLiteral randomPropertyModeIndexAttrName =
     "rand_mode_index";
+inline constexpr ::mlir::StringLiteral randomContainerSizeAttrName =
+    "container_size";
+inline constexpr ::mlir::StringLiteral randomContainerTypeAttrName =
+    "container_type";
 inline constexpr ::mlir::StringLiteral randomPropertyPathAttrName =
     "reference_path";
 inline constexpr ::mlir::StringLiteral randomPropertyModeStorageAttrName =
