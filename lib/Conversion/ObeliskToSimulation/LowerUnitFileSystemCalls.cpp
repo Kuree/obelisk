@@ -80,28 +80,58 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     auto array = succeeded(memoryType)
                      ? dyn_cast<sim::UnpackedArrayType>(*memoryType)
                      : sim::UnpackedArrayType{};
-    if (!array || isa<sim::UnpackedArrayType>(array.getElementType())) {
+    auto dynamicArray = succeeded(memoryType)
+                            ? dyn_cast<sim::DynamicArrayType>(*memoryType)
+                            : sim::DynamicArrayType{};
+    auto queue = succeeded(memoryType) ? dyn_cast<sim::QueueType>(*memoryType)
+                                       : sim::QueueType{};
+    if ((!array && !dynamicArray && !queue) ||
+        (array && isa<sim::UnpackedArrayType>(array.getElementType()))) {
       emitError(getSemanticLocation(actual))
           << name
-          << " currently requires a one-dimensional fixed unpacked "
-             "array";
+          << " currently requires a one-dimensional unpacked array, dynamic "
+             "array, or queue";
       return failure();
     }
-    Type elementType = array.getElementType();
+    Type elementType = array          ? array.getElementType()
+                       : dynamicArray ? dynamicArray.getElementType()
+                                      : queue.getElementType();
     std::optional<unsigned> elementWidth = sim::getPackedWidth(elementType);
     if (!elementWidth || *elementWidth == 0) {
       emitError(getSemanticLocation(actual))
           << name << " memory elements must be packed values";
       return failure();
     }
-    FailureOr<Value> memory = lowerExpression(actual, true);
-    auto memoryReference = succeeded(memory)
-                               ? dyn_cast<sim::RefType>((*memory).getType())
-                               : sim::RefType{};
-    if (!memoryReference || memoryReference.getElementType() != *memoryType) {
+    FailureOr<Value> memoryReference = lowerExpression(actual, true);
+    if (failed(memoryReference) ||
+        !isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType>(
+            (*memoryReference).getType())) {
       emitError(getSemanticLocation(actual))
-          << name << " memory must be a writable unpacked array";
+          << name << " memory must be writable";
       return failure();
+    }
+    Value memory;
+    if (array) {
+      auto reference = dyn_cast<sim::RefType>((*memoryReference).getType());
+      if (!reference || reference.getElementType() != *memoryType) {
+        emitError(getSemanticLocation(actual))
+            << name << " fixed memory must be a writable unpacked array";
+        return failure();
+      }
+      memory = *memoryReference;
+    } else {
+      FailureOr<Value> loaded = loadReference(*memoryReference, location);
+      if (failed(loaded))
+        return failure();
+      memory = cloneSequentialValue(*loaded, location);
+      if (isa<sim::RefType>((*memoryReference).getType()))
+        sim::SimRefStoreOp::create(builder, location, memory, *memoryReference);
+      else if (isa<sim::ManagedRefType>((*memoryReference).getType()))
+        sim::SimManagedStoreOp::create(builder, location, memory,
+                                       *memoryReference);
+      else
+        sim::SimArgumentRefStoreOp::create(builder, location, memory,
+                                           *memoryReference);
     }
 
     Value descriptor;
@@ -132,17 +162,25 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
                        .getDescriptor();
     }
 
-    int64_t low = std::min(array.getLeft(), array.getRight());
-    int64_t high = std::max(array.getLeft(), array.getRight());
     auto indexConstant = [&](int64_t value) -> Value {
       return arith::ConstantOp::create(builder, location, i64,
                                        builder.getI64IntegerAttr(value));
     };
+    Value low = indexConstant(array ? std::min(array.getLeft(), array.getRight())
+                                    : 0);
+    Value high;
+    if (array)
+      high = indexConstant(std::max(array.getLeft(), array.getRight()));
+    else {
+      Value size = sim::SimContainerSizeOp::create(builder, location, i64,
+                                                   memory);
+      high = arith::SubIOp::create(builder, location, size, indexConstant(1));
+    }
     auto addressArgument = [&](size_t index,
-                               int64_t fallback) -> FailureOr<Value> {
+                               Value fallback) -> FailureOr<Value> {
       if (index >= children.size() ||
           isa<semantic::SVEmptyArgumentExpressionOp>(children[index]))
-        return indexConstant(fallback);
+        return fallback;
       return lowerInteger(children[index], i64);
     };
     FailureOr<Value> start = addressArgument(2, low);
@@ -199,10 +237,10 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     auto withinMemory = [&](Value value) -> Value {
       Value withinLow =
           arith::CmpIOp::create(builder, location, arith::CmpIPredicate::sge,
-                                value, indexConstant(low));
+                                value, low);
       Value withinHigh =
           arith::CmpIOp::create(builder, location, arith::CmpIPredicate::sle,
-                                value, indexConstant(high));
+                                value, high);
       return arith::AndIOp::create(builder, location, withinLow, withinHigh);
     };
     Value validBounds = arith::AndIOp::create(
@@ -265,12 +303,17 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     if (scalarType != elementType)
       element = sim::SimPackedUnflattenOp::create(builder, location,
                                                   elementType, element);
-    Value elementReference = sim::SimRefArrayElementOp::create(
-        builder, location,
-        sim::RefType::get(function.getContext(), elementType), *memory,
-        address);
-    if (failed(storeReference(elementReference, element, location)))
-      return failure();
+    if (array) {
+      Value elementReference = sim::SimRefArrayElementOp::create(
+          builder, location,
+          sim::RefType::get(function.getContext(), elementType), memory,
+          address);
+      if (failed(storeReference(elementReference, element, location)))
+        return failure();
+    } else {
+      sim::SimContainerWriteOp::create(builder, location, memory, address,
+                                       element);
+    }
     Value step = arith::SelectOp::create(builder, location, descending,
                                          indexConstant(-1), indexConstant(1));
     Value nextAddress = arith::AddIOp::create(builder, location, address, step);
