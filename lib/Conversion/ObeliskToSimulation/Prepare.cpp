@@ -1615,6 +1615,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       SmallVector<semantic::SVClassTypeOp> hierarchy;
       SmallVector<EffectiveConstraintGroup> constraintGroups;
       SmallVector<unsigned> globalConstraintIndices;
+      unsigned outerModeIndex;
+      semantic::SVSubroutineSymbolOp preHook;
+      semantic::SVSubroutineSymbolOp postHook;
     };
     SmallVector<RandomProperty> properties;
     SmallVector<RandomContainerProperty> containerProperties;
@@ -1782,6 +1785,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             }
             bool unsupportedNestedSemantics = false;
             unsigned nestedModeIndex = 0;
+            semantic::SVSubroutineSymbolOp nestedPreHook;
+            semantic::SVSubroutineSymbolOp nestedPostHook;
             for (semantic::SVClassTypeOp nestedClass : nestedHierarchy) {
               for (Operation *nestedMember : getChildren(nestedClass)) {
                 if (isa<semantic::SVConstraintBlockSymbolOp>(nestedMember)) {
@@ -1791,10 +1796,36 @@ void ObeliskSimPreparePass::runOnOperation() {
                     method &&
                     method.getIsPrePostRandomize().value_or(false) &&
                     !method.getIsBuiltin().value_or(false)) {
-                  emitError(getSemanticLocation(property))
-                      << "rand object handles with child lifecycle hooks "
-                         "require recursive lifecycle composition";
-                  unsupportedNestedSemantics = true;
+                  StringRef name = method.getName().value_or("");
+                  std::optional<Type> methodType = method.getSemanticType();
+                  auto subroutineType =
+                      methodType
+                          ? dyn_cast<semantic::SubroutineType>(*methodType)
+                          : semantic::SubroutineType{};
+                  auto signature =
+                      subroutineType
+                          ? dyn_cast<FunctionType>(subroutineType.getSignature())
+                          : FunctionType{};
+                  if (method.getIsStatic().value_or(false) ||
+                      method.getSubroutineKind() !=
+                          semantic::SVSubroutineKind::Function ||
+                      !signature || signature.getNumInputs() != 0 ||
+                      signature.getNumResults() != 1 ||
+                      !isa<semantic::VoidType>(signature.getResult(0))) {
+                    emitError(getSemanticLocation(method))
+                        << "nested randomization hooks must be void instance "
+                           "functions without arguments";
+                    unsupportedNestedSemantics = true;
+                  } else if (name == "pre_randomize") {
+                    nestedPreHook = method;
+                  } else if (name == "post_randomize") {
+                    nestedPostHook = method;
+                  } else {
+                    emitError(getSemanticLocation(method))
+                        << "unknown nested randomization lifecycle hook "
+                        << name;
+                    unsupportedNestedSemantics = true;
+                  }
                   continue;
                 }
                 auto nestedProperty =
@@ -1881,7 +1912,10 @@ void ObeliskSimPreparePass::runOnOperation() {
                 objectType,
                 nestedHierarchy,
                 {},
-                {}};
+                {},
+                modeIndex,
+                nestedPreHook,
+                nestedPostHook};
             if (llvm::any_of(nestedObjectPlans,
                              [&](const NestedObjectPlan &existing) {
                                return existing.concreteType ==
@@ -3114,6 +3148,48 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     call->setAttr(randomNestedConstraintModesAttrName,
                   builder.getArrayAttr(nestedConstraintModeAttrs));
+    SmallVector<Attribute> nestedHookAttrs;
+    for (const NestedObjectPlan &plan : nestedObjectPlans) {
+      if (!plan.preHook && !plan.postHook)
+        continue;
+      SmallVector<NamedAttribute> attributes{
+          builder.getNamedAttr("field", plan.field),
+          builder.getNamedAttr("concrete_type",
+                               TypeAttr::get(plan.concreteType)),
+          builder.getNamedAttr("storage_type", TypeAttr::get(plan.storageType)),
+          builder.getNamedAttr("outer_mode_index",
+                               builder.getI32IntegerAttr(plan.outerModeIndex)),
+      };
+      auto addHook = [&](semantic::SVSubroutineSymbolOp hook,
+                         StringRef prefix) {
+        if (!hook)
+          return;
+        auto callee = directCalleeNames.find(hook);
+        semantic::SVClassTypeOp owner = getOwningClass(hook);
+        StringAttr ownerSymbol =
+            owner ? classSymbols.lookup(owner) : StringAttr{};
+        if (callee == directCalleeNames.end() || !ownerSymbol) {
+          emitError(getSemanticLocation(hook))
+              << "nested randomization hook has no executable class method";
+          invalid = true;
+          return;
+        }
+        attributes.push_back(builder.getNamedAttr(
+            (prefix + "_source").str(),
+            FlatSymbolRefAttr::get(context, hook.getSymName())));
+        attributes.push_back(builder.getNamedAttr(
+            (prefix + "_callee").str(),
+            FlatSymbolRefAttr::get(context, callee->second)));
+        attributes.push_back(builder.getNamedAttr(
+            (prefix + "_owner").str(),
+            FlatSymbolRefAttr::get(context, ownerSymbol.getValue())));
+      };
+      addHook(plan.preHook, "pre");
+      addHook(plan.postHook, "post");
+      nestedHookAttrs.push_back(builder.getDictionaryAttr(attributes));
+    }
+    call->setAttr(randomNestedHooksAttrName,
+                  builder.getArrayAttr(nestedHookAttrs));
     call->setAttr(randomTotalWidthAttrName,
                   builder.getI64IntegerAttr(totalWidth));
     call->setAttr(randomConstraintCountAttrName,
@@ -3654,12 +3730,49 @@ void ObeliskSimPreparePass::runOnOperation() {
       call->setAttr(readsAttr, builder.getArrayAttr(reads));
       return success();
     };
-    return failure(failed(freeze(randomPreHookSourceAttrName,
-                                 randomPreHookCapturesAttrName,
-                                 randomPreHookReadCapturesAttrName)) ||
-                   failed(freeze(randomPostHookSourceAttrName,
-                                 randomPostHookCapturesAttrName,
-                                 randomPostHookReadCapturesAttrName)));
+    if (failed(freeze(randomPreHookSourceAttrName,
+                      randomPreHookCapturesAttrName,
+                      randomPreHookReadCapturesAttrName)) ||
+        failed(freeze(randomPostHookSourceAttrName,
+                      randomPostHookCapturesAttrName,
+                      randomPostHookReadCapturesAttrName)))
+      return failure();
+    auto nestedHooks = call->getAttrOfType<ArrayAttr>(randomNestedHooksAttrName);
+    if (!nestedHooks)
+      return success();
+    SmallVector<Attribute> frozenHooks;
+    for (Attribute hookAttr : nestedHooks) {
+      auto hook = dyn_cast<DictionaryAttr>(hookAttr);
+      if (!hook)
+        return failure();
+      SmallVector<NamedAttribute> attributes(hook.begin(), hook.end());
+      for (StringRef prefix : {StringRef("pre"), StringRef("post")}) {
+        auto source = hook.getAs<FlatSymbolRefAttr>((prefix + "_source").str());
+        if (!source)
+          continue;
+        auto found = semanticSymbols.find(source.getLeafReference());
+        if (found == semanticSymbols.end()) {
+          emitError(getSemanticLocation(call))
+              << "nested randomization hook source no longer resolves";
+          return failure();
+        }
+        SmallVector<Attribute> captures;
+        SmallVector<Attribute> reads;
+        for (const auto &capture : unitCaptures[found->second]) {
+          captures.push_back(builder.getStringAttr(capture.first));
+          if (unitReadCaptures[found->second].contains(capture.first))
+            reads.push_back(builder.getStringAttr(capture.first));
+        }
+        attributes.push_back(builder.getNamedAttr(
+            (prefix + "_captures").str(), builder.getArrayAttr(captures)));
+        attributes.push_back(builder.getNamedAttr(
+            (prefix + "_reads").str(), builder.getArrayAttr(reads)));
+      }
+      frozenHooks.push_back(builder.getDictionaryAttr(attributes));
+    }
+    call->setAttr(randomNestedHooksAttrName,
+                  builder.getArrayAttr(frozenHooks));
+    return success();
   };
 
   auto freezeCallContract = [&](semantic::SVCallExpressionOp call) {

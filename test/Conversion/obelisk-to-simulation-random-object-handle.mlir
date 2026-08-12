@@ -22,6 +22,22 @@ module {
           obelisk.sv.symbol.variable attributes {hierarchical_name = "Leaf::positive.this", is_compiler_generated, is_const, name = "this", node_id = 23 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.Leaf>, sym_name = "s18.constraint_this"} {
           }
         }
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "Leaf::pre_randomize", is_pre_post_randomize, name = "pre_randomize", node_id = 24 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s24.pre_randomize", this_variable_path = "Leaf::pre_randomize.this", this_variable_symbol = @s1.$root::@s2::@s3.Leaf::@s24.pre_randomize::@s25.pre_this, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.list attributes {node_id = 25 : i64} {
+            obelisk.sv.statement.expression_statement attributes {node_id = 30 : i64} {
+              obelisk.sv.expression.named_value attributes {node_id = 31 : i64, referenced_path = "top.limit", referenced_symbol = @s1.$root::@s10.top::@s11.top::@s28.limit, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+              }
+            }
+          }
+          obelisk.sv.symbol.variable attributes {hierarchical_name = "Leaf::pre_randomize.this", is_compiler_generated, is_const, name = "this", node_id = 26 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.Leaf>, sym_name = "s25.pre_this"} {
+          }
+        }
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "Leaf::post_randomize", is_pre_post_randomize, name = "post_randomize", node_id = 27 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s26.post_randomize", this_variable_path = "Leaf::post_randomize.this", this_variable_symbol = @s1.$root::@s2::@s3.Leaf::@s26.post_randomize::@s27.post_this, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.list attributes {node_id = 28 : i64} {
+          }
+          obelisk.sv.symbol.variable attributes {hierarchical_name = "Leaf::post_randomize.this", is_compiler_generated, is_const, name = "this", node_id = 29 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.Leaf>, sym_name = "s27.post_this"} {
+          }
+        }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "Leaf::this", is_compiler_generated, is_const, name = "this", node_id = 5 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.Leaf>, sym_name = "s5.leaf_this"} {
         }
       }
@@ -36,6 +52,8 @@ module {
     }
     obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 10 : i64, referenced_path = "top", referenced_symbol = @s0.top, sym_name = "s10.top"} {
       obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 11 : i64, sym_name = "s11.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.limit", lifetime = 1 : i32, name = "limit", node_id = 32 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s28.limit"} {
+        }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.p", lifetime = 1 : i32, name = "p", node_id = 12 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s6.Parent>, sym_name = "s12.p"} {
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 13 : i64, procedure_kind = 0 : i32, sym_name = "s13", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
@@ -54,8 +72,22 @@ module {
 // A rand handle is never replaced. A null child contributes no mutable random
 // fields; a non-null child contributes x to the same aggregate assignment as
 // parent.y and is gated by both objects' rand_mode state.
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// IEEE 1800-2023 18.6.2 additionally invokes the enabled, non-null child's
+// lifecycle hooks. The child pre hook precedes sampling its modes and values;
+// the child post hook follows a successful commit and is absent on failure.
+// CHECK-DAG: obelisk_sim.func private @[[LEAF_PRE:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "Leaf::pre_randomize"
+// CHECK-DAG: obelisk_sim.func private @[[LEAF_POST:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "Leaf::post_randomize"
+// CHECK-LABEL: obelisk_sim.func private @{{unit_[0-9]+}}{{.*}}obelisk_sim.hierarchical_name = "top"
 // CHECK: %[[LEAF_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s6_Parent_field_1]
+// CHECK: %[[HOOK_LEAF:.*]] = obelisk_sim.managed.load %[[LEAF_REF]]
+// CHECK: %[[HOOK_NULL:.*]] = obelisk_sim.managed.is_null %[[HOOK_LEAF]]
+// CHECK: %[[HOOK_NONNULL:.*]] = arith.xori %[[HOOK_NULL]], {{%true[^ ]*}}
+// CHECK: %[[HOOK_ENABLED:.*]] = arith.andi {{.*}}, %[[HOOK_NONNULL]]
+// CHECK: cf.cond_br %[[HOOK_ENABLED]], ^[[PRE:bb[0-9]+]], ^[[AFTER_PRE:bb[0-9]+]]
+// CHECK: ^[[PRE]]:
+// CHECK-NEXT: obelisk_sim.class.direct_call @[[LEAF_PRE]] %[[HOOK_LEAF]]({{.*}})
+// CHECK-NEXT: cf.br ^[[AFTER_PRE]]
+// CHECK: ^[[AFTER_PRE]]:
 // CHECK: %[[MODE_LEAF:.*]] = obelisk_sim.managed.load %[[LEAF_REF]]
 // CHECK: %[[MODE_NULL:.*]] = obelisk_sim.managed.is_null %[[MODE_LEAF]]
 // CHECK: cf.cond_br %[[MODE_NULL]]
@@ -71,7 +103,13 @@ module {
 // CHECK: ^[[MERGE]]({{.*}}, %[[CHILD_ENABLED:.*]]: i1):
 // CHECK: arith.andi {{.*}}, %[[CHILD_ENABLED]] : i1
 // CHECK: arith.cmpi sgt, {{.*}}, {{.*}} : i32
+// CHECK: ^[[POST_DISPATCH:bb[0-9]+]]:  // 3 preds:
+// CHECK-NEXT: cf.cond_br %[[HOOK_ENABLED]], ^[[POST:bb[0-9]+]], ^[[AFTER_POST:bb[0-9]+]]
 // CHECK: %[[COMMIT_LEAF:.*]] = obelisk_sim.managed.load %[[LEAF_REF]]
 // CHECK: %[[COMMIT_X_REF:.*]] = obelisk_sim.class.field_ref %[[COMMIT_LEAF]][@__obelisk_class_s3_Leaf_field_0]
 // CHECK: obelisk_sim.managed.store {{.*}} to %[[COMMIT_X_REF]]
+// CHECK-NEXT: cf.br ^[[POST_DISPATCH]]
+// CHECK: ^[[POST]]:
+// CHECK-NEXT: obelisk_sim.class.direct_call @[[LEAF_POST]] %[[HOOK_LEAF]]()
+// CHECK-NEXT: cf.br ^[[AFTER_POST]]
 // CHECK-NOT: obelisk_sim.managed.store {{.*}} to %[[LEAF_REF]]

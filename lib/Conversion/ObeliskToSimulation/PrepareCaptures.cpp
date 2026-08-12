@@ -420,6 +420,21 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       };
       addRandomizeHook(randomPreHookSourceAttrName);
       addRandomizeHook(randomPostHookSourceAttrName);
+      if (auto nestedHooks =
+              call->getAttrOfType<ArrayAttr>(randomNestedHooksAttrName))
+        for (Attribute nestedAttr : nestedHooks)
+          if (auto nested = dyn_cast<DictionaryAttr>(nestedAttr))
+            for (StringRef name : {StringRef("pre_source"),
+                                   StringRef("post_source")}) {
+              auto reference = nested.getAs<FlatSymbolRefAttr>(name);
+              auto hook = reference
+                              ? semanticSymbols.find(
+                                    reference.getLeafReference())
+                              : semanticSymbols.end();
+              if (hook != semanticSymbols.end() &&
+                  targets.insert(hook->second).second)
+                callEdges[unit.source].push_back(hook->second);
+            }
     });
   }
 

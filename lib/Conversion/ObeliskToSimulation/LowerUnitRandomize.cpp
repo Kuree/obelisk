@@ -101,6 +101,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       op->getAttrOfType<ArrayAttr>(randomContainerPropertiesAttrName);
   auto nestedConstraintModes =
       op->getAttrOfType<ArrayAttr>(randomNestedConstraintModesAttrName);
+  auto nestedHooks = op->getAttrOfType<ArrayAttr>(randomNestedHooksAttrName);
   auto totalWidthAttr =
       op->getAttrOfType<IntegerAttr>(randomTotalWidthAttrName);
   auto receiverIndexAttr =
@@ -111,6 +112,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       constraintModeStaticStoragesAttrName);
   if (children.empty() || !properties || !containerProperties ||
       !nestedConstraintModes ||
+      !nestedHooks ||
       !totalWidthAttr ||
       !receiverIndexAttr || !constraintCountAttr) {
     emitError(location) << "randomize call has no frozen constraint plan";
@@ -691,6 +693,106 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         builder, location, type,
         builder.getIntegerAttr(type, APInt(type.getWidth(), value)));
   };
+  struct NestedHookRuntime {
+    DictionaryAttr plan;
+    Value object;
+    Value enabled;
+  };
+  SmallVector<NestedHookRuntime> nestedHookRuntimes;
+  auto callNestedHook = [&](DictionaryAttr plan, StringRef prefix,
+                            Value object) -> LogicalResult {
+    auto callee = plan.getAs<FlatSymbolRefAttr>((prefix + "_callee").str());
+    if (!callee)
+      return success();
+    auto owner = plan.getAs<FlatSymbolRefAttr>((prefix + "_owner").str());
+    auto captures = plan.getAs<ArrayAttr>((prefix + "_captures").str());
+    auto reads = plan.getAs<ArrayAttr>((prefix + "_reads").str());
+    if (!owner || !captures || !reads) {
+      emitError(location) << "nested randomization hook plan is malformed";
+      return failure();
+    }
+    Type ownerType = sim::ClassHandleType::get(function.getContext(), owner);
+    Value hookReceiver = object;
+    if (hookReceiver.getType() != ownerType)
+      hookReceiver = sim::SimClassCastOp::create(builder, location, ownerType,
+                                                 hookReceiver);
+    llvm::StringSet<> readCaptures;
+    for (Attribute read : reads)
+      readCaptures.insert(cast<StringAttr>(read).getValue());
+    SmallVector<Value> arguments;
+    for (Attribute captureAttr : captures) {
+      StringRef path = cast<StringAttr>(captureAttr).getValue();
+      Value capture = values.lookup(path);
+      if (!capture) {
+        emitError(location)
+            << "nested randomization hook capture has no local binding: "
+            << path;
+        return failure();
+      }
+      if (readCaptures.contains(path))
+        recordSensitivity(capture);
+      arguments.push_back(capture);
+    }
+    sim::SimClassDirectCallOp::create(builder, location, TypeRange{}, callee,
+                                      hookReceiver, arguments);
+    return success();
+  };
+  for (Attribute hookAttr : nestedHooks) {
+    auto hook = dyn_cast<DictionaryAttr>(hookAttr);
+    auto field = hook ? hook.getAs<FlatSymbolRefAttr>("field")
+                      : FlatSymbolRefAttr{};
+    auto concreteTypeAttr =
+        hook ? hook.getAs<TypeAttr>("concrete_type") : TypeAttr{};
+    auto storageTypeAttr =
+        hook ? hook.getAs<TypeAttr>("storage_type") : TypeAttr{};
+    auto outerModeIndexAttr =
+        hook ? hook.getAs<IntegerAttr>("outer_mode_index") : IntegerAttr{};
+    if (!hook || !field || !concreteTypeAttr || !storageTypeAttr ||
+        !outerModeIndexAttr || outerModeIndexAttr.getValue().isNegative() ||
+        outerModeIndexAttr.getValue().getActiveBits() > 32 ||
+        outerModeIndexAttr.getValue().getZExtValue() >= 64 ||
+        !isa<sim::ClassHandleType>(concreteTypeAttr.getValue()) ||
+        !isa<sim::ClassHandleType>(storageTypeAttr.getValue())) {
+      emitError(location) << "nested randomization hook plan is malformed";
+      return failure();
+    }
+    Type objectReferenceType = sim::ManagedRefType::get(
+        function.getContext(), storageTypeAttr.getValue(),
+        objectType.getClassName());
+    Value objectReference = sim::SimClassFieldRefOp::create(
+        builder, location, objectReferenceType, receiver, field);
+    FailureOr<Value> loadedObject = loadReference(objectReference, location);
+    if (failed(loadedObject))
+      return failure();
+    Value object = *loadedObject;
+    Value isNull = sim::SimManagedIsNullOp::create(
+        builder, location, builder.getI1Type(), object);
+    uint64_t outerModeIndex = outerModeIndexAttr.getValue().getZExtValue();
+    Value outerModeBit = arith::AndIOp::create(
+        builder, location, mode, constant64(uint64_t{1} << outerModeIndex));
+    Value outerEnabled = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, outerModeBit,
+        constant64(0));
+    Value nonNull = arith::XOrIOp::create(
+        builder, location, isNull,
+        arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                  builder.getBoolAttr(true)));
+    Value enabled = arith::AndIOp::create(builder, location, outerEnabled,
+                                          nonNull);
+    if (object.getType() != concreteTypeAttr.getValue())
+      object = sim::SimClassCastOp::create(
+          builder, location, concreteTypeAttr.getValue(), object);
+    Block *callBlock = addBlock();
+    Block *mergeBlock = addBlock();
+    cf::CondBranchOp::create(builder, location, enabled, callBlock,
+                             ValueRange{}, mergeBlock, ValueRange{});
+    setCurrent(callBlock);
+    if (failed(callNestedHook(hook, "pre", object)))
+      return failure();
+    cf::BranchOp::create(builder, location, mergeBlock);
+    setCurrent(mergeBlock);
+    nestedHookRuntimes.push_back({hook, object, enabled});
+  }
   for (Attribute nestedAttr : nestedConstraintModes) {
     auto nested = dyn_cast<DictionaryAttr>(nestedAttr);
     auto field = nested ? nested.getAs<FlatSymbolRefAttr>("field")
@@ -5462,6 +5564,19 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                randomPostHookCapturesAttrName,
                                randomPostHookReadCapturesAttrName)))
     return failure();
+  for (const NestedHookRuntime &runtime : nestedHookRuntimes) {
+    if (!runtime.plan.getAs<FlatSymbolRefAttr>("post_callee"))
+      continue;
+    Block *callBlock = addBlock();
+    Block *mergeBlock = addBlock();
+    cf::CondBranchOp::create(builder, location, runtime.enabled, callBlock,
+                             ValueRange{}, mergeBlock, ValueRange{});
+    setCurrent(callBlock);
+    if (failed(callNestedHook(runtime.plan, "post", runtime.object)))
+      return failure();
+    cf::BranchOp::create(builder, location, mergeBlock);
+    setCurrent(mergeBlock);
+  }
   Value success = arith::ConstantOp::create(
       builder, location, builder.getI1Type(), builder.getBoolAttr(true));
   cf::BranchOp::create(builder, location, done, ValueRange{success});
