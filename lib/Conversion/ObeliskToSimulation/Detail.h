@@ -212,6 +212,14 @@ inline constexpr ::mlir::StringLiteral randomContainerSizeAttrName =
     "container_size";
 inline constexpr ::mlir::StringLiteral randomContainerTypeAttrName =
     "container_type";
+inline constexpr ::mlir::StringLiteral randomNestedObjectFieldAttrName =
+    "nested_object_field";
+inline constexpr ::mlir::StringLiteral randomNestedObjectTypeAttrName =
+    "nested_object_type";
+inline constexpr ::mlir::StringLiteral randomNestedObjectStorageTypeAttrName =
+    "nested_object_storage_type";
+inline constexpr ::mlir::StringLiteral randomNestedModeIndexAttrName =
+    "nested_rand_mode_index";
 inline constexpr ::mlir::StringLiteral randomPropertyPathAttrName =
     "reference_path";
 inline constexpr ::mlir::StringLiteral randomPropertyModeStorageAttrName =

@@ -230,6 +230,11 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Type containerType;
     uint64_t sizeConstraintMask;
     bool hasUnconditionalSizeConstraint;
+    Value nestedObjectReference;
+    Type nestedObjectType;
+    FlatSymbolRefAttr nestedField;
+    unsigned nestedModeIndex;
+    FlatSymbolRefAttr nestedModeField;
     bool isSigned;
     Value reference;
     bool isRandC;
@@ -276,6 +281,21 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     auto unconditionalSizeConstraintAttr =
         property ? property.getAs<BoolAttr>("unconditional_size_constraint")
                  : BoolAttr{};
+    auto nestedObjectField =
+        property ? property.getAs<FlatSymbolRefAttr>(
+                       randomNestedObjectFieldAttrName)
+                 : FlatSymbolRefAttr{};
+    auto nestedObjectTypeAttr =
+        property ? property.getAs<TypeAttr>(randomNestedObjectTypeAttrName)
+                 : TypeAttr{};
+    auto nestedObjectStorageTypeAttr =
+        property
+            ? property.getAs<TypeAttr>(randomNestedObjectStorageTypeAttrName)
+            : TypeAttr{};
+    auto nestedModeIndexAttr =
+        property ? property.getAs<IntegerAttr>(randomNestedModeIndexAttrName)
+                 : IntegerAttr{};
+    bool isNestedObject = static_cast<bool>(nestedObjectField);
     if (static_cast<bool>(field) == static_cast<bool>(referencePath) ||
         !typeAttr || !widthAttr || !modeIndexAttr || !signedAttr ||
         !randcAttr || modeIndexAttr.getValue().isNegative() ||
@@ -287,7 +307,13 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         (isContainerSize &&
          (!field || referencePath || !sizeConstraintMaskAttr ||
           !unconditionalSizeConstraintAttr ||
-          sizeConstraintMaskAttr.getValue().getBitWidth() > 64))) {
+          sizeConstraintMaskAttr.getValue().getBitWidth() > 64)) ||
+        (isNestedObject &&
+         (!field || referencePath || !nestedObjectTypeAttr ||
+          !nestedObjectStorageTypeAttr || !nestedModeIndexAttr ||
+          nestedModeIndexAttr.getValue().isNegative() ||
+          nestedModeIndexAttr.getValue().getActiveBits() > 32 ||
+          nestedModeIndexAttr.getValue().getZExtValue() >= 64))) {
       emitError(location) << "randomize property plan is malformed";
       return failure();
     }
@@ -304,7 +330,37 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return failure();
     }
     Value reference;
-    if (field) {
+    Value nestedObjectReference;
+    FlatSymbolRefAttr nestedModeField;
+    if (isNestedObject) {
+      Type objectReferenceType = sim::ManagedRefType::get(
+          function.getContext(), nestedObjectStorageTypeAttr.getValue(),
+          objectType.getClassName());
+      nestedObjectReference = sim::SimClassFieldRefOp::create(
+          builder, location, objectReferenceType, receiver, nestedObjectField);
+      auto nestedDeclaration =
+          SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+              function,
+              cast<sim::ClassHandleType>(nestedObjectTypeAttr.getValue())
+                  .getClassName());
+      while (nestedDeclaration &&
+             !nestedDeclaration->hasAttr("obelisk_sim.random_mode_field")) {
+        if (!nestedDeclaration.getBaseAttr())
+          break;
+        nestedDeclaration =
+            SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+                function, nestedDeclaration.getBaseAttr());
+      }
+      nestedModeField =
+          nestedDeclaration
+              ? nestedDeclaration->getAttrOfType<FlatSymbolRefAttr>(
+                    "obelisk_sim.random_mode_field")
+              : FlatSymbolRefAttr{};
+      if (!nestedModeField) {
+        emitError(location) << "nested rand object has no rand_mode field";
+        return failure();
+      }
+    } else if (field) {
       Type referencedType = isContainerSize ? containerTypeAttr.getValue()
                                             : type;
       Type referenceType = sim::ManagedRefType::get(
@@ -491,6 +547,15 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                            : 0,
                        unconditionalSizeConstraintAttr &&
                            unconditionalSizeConstraintAttr.getValue(),
+                       nestedObjectReference,
+                       nestedObjectTypeAttr ? nestedObjectTypeAttr.getValue()
+                                            : Type{},
+                       field,
+                       nestedModeIndexAttr
+                           ? static_cast<unsigned>(
+                                 nestedModeIndexAttr.getValue().getZExtValue())
+                           : 0,
+                       nestedModeField,
                        signedAttr.getValue(),
                        reference,
                        randcAttr.getValue(),
@@ -914,7 +979,64 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   SmallVector<Value> propertyEnabled;
   uint64_t currentOffset = 0;
   for (Property &property : planned) {
+    Value nestedEnabled;
     FailureOr<Value> current = [&]() -> FailureOr<Value> {
+      if (property.nestedObjectReference) {
+        FailureOr<Value> loadedObject =
+            loadReference(property.nestedObjectReference, location);
+        if (failed(loadedObject))
+          return failure();
+        Value isNull = sim::SimManagedIsNullOp::create(
+            builder, location, builder.getI1Type(), *loadedObject);
+        Block *nullBlock = addBlock();
+        Block *objectBlock = addBlock();
+        Block *mergeBlock = addBlock();
+        mergeBlock->addArgument(property.type, location);
+        mergeBlock->addArgument(builder.getI1Type(), location);
+        cf::CondBranchOp::create(builder, location, isNull, nullBlock,
+                                 ValueRange{}, objectBlock, ValueRange{});
+
+        setCurrent(nullBlock);
+        cf::BranchOp::create(
+            builder, location, mergeBlock,
+            ValueRange{createDefaultValue(builder, location, property.type),
+                       arith::ConstantOp::create(
+                           builder, location, builder.getI1Type(),
+                           builder.getBoolAttr(false))});
+
+        setCurrent(objectBlock);
+        Value object = *loadedObject;
+        if (object.getType() != property.nestedObjectType)
+          object = sim::SimClassCastOp::create(
+              builder, location, property.nestedObjectType, object);
+        auto concreteType = cast<sim::ClassHandleType>(property.nestedObjectType);
+        Type fieldReferenceType = sim::ManagedRefType::get(
+            function.getContext(), property.type, concreteType.getClassName());
+        Value fieldReference = sim::SimClassFieldRefOp::create(
+            builder, location, fieldReferenceType, object,
+            property.nestedField);
+        FailureOr<Value> value = loadReference(fieldReference, location);
+        Type modeReferenceType = sim::ManagedRefType::get(
+            function.getContext(), i64, concreteType.getClassName());
+        Value childModeReference = sim::SimClassFieldRefOp::create(
+            builder, location, modeReferenceType, object,
+            property.nestedModeField);
+        Value childMode = sim::SimManagedLoadOp::create(
+            builder, location, i64, childModeReference);
+        Value childModeBit = arith::AndIOp::create(
+            builder, location, childMode,
+            constant64(uint64_t{1} << property.nestedModeIndex));
+        Value childEnabled = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq, childModeBit,
+            constant64(0));
+        if (failed(value))
+          return failure();
+        cf::BranchOp::create(builder, location, mergeBlock,
+                             ValueRange{*value, childEnabled});
+        setCurrent(mergeBlock);
+        nestedEnabled = mergeBlock->getArgument(1);
+        return mergeBlock->getArgument(0);
+      }
       if (!property.isContainerSize)
         return loadReference(property.reference, location);
       FailureOr<Value> container = loadReference(property.reference, location);
@@ -952,6 +1074,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                     arith::CmpIPredicate::eq, propertyMode,
                                     constant64(0))
                   .getResult();
+    if (nestedEnabled)
+      enabled = arith::AndIOp::create(builder, location, enabled,
+                                      nestedEnabled);
     if (property.isContainerSize &&
         !property.hasUnconditionalSizeConstraint) {
       Value disabledSizeConstraints = arith::AndIOp::create(
@@ -5116,7 +5241,24 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     cf::CondBranchOp::create(builder, location, enabled, store, ValueRange{},
                              nextProperty, ValueRange{});
     setCurrent(store);
-    if (property.isContainerSize) {
+    if (property.nestedObjectReference) {
+      FailureOr<Value> loadedObject =
+          loadReference(property.nestedObjectReference, location);
+      if (failed(loadedObject))
+        return failure();
+      Value object = *loadedObject;
+      if (object.getType() != property.nestedObjectType)
+        object = sim::SimClassCastOp::create(
+            builder, location, property.nestedObjectType, object);
+      auto concreteType = cast<sim::ClassHandleType>(property.nestedObjectType);
+      Type fieldReferenceType = sim::ManagedRefType::get(
+          function.getContext(), property.type, concreteType.getClassName());
+      Value fieldReference = sim::SimClassFieldRefOp::create(
+          builder, location, fieldReferenceType, object,
+          property.nestedField);
+      if (failed(storeReference(fieldReference, candidate, location)))
+        return failure();
+    } else if (property.isContainerSize) {
       FailureOr<Value> oldContainer =
           loadReference(property.reference, location);
       FailureOr<Value> scalarSize = toPackedScalar(candidate, location);

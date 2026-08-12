@@ -1586,6 +1586,10 @@ void ObeliskSimPreparePass::runOnOperation() {
       Type containerType;
       uint64_t sizeConstraintMask;
       bool hasUnconditionalSizeConstraint;
+      FlatSymbolRefAttr nestedObjectField;
+      Type nestedObjectType;
+      Type nestedObjectStorageType;
+      unsigned nestedModeIndex;
       bool isSigned;
       bool isRandC;
       FlatSymbolRefAttr randcKeyField;
@@ -1716,6 +1720,154 @@ void ObeliskSimPreparePass::runOnOperation() {
                                            *elementWidth, modeIndex});
             continue;
           }
+          if (auto objectType = dyn_cast<sim::ClassHandleType>(*type)) {
+            if (isStatic) {
+              emitError(getSemanticLocation(property))
+                  << "static rand object handles are not executable yet";
+              invalid = true;
+              continue;
+            }
+            if (property.getRandMode() == semantic::SVRandMode::RandC) {
+              emitError(getSemanticLocation(property))
+                  << "object handles cannot be declared randc";
+              invalid = true;
+              continue;
+            }
+            auto semanticObjectType = dyn_cast<semantic::ClassHandleType>(
+                property.getSemanticType().value_or(Type{}));
+            auto declaredClass =
+                semanticObjectType
+                    ? semanticClasses.find(semanticObjectType.getClassName()
+                                               .getLeafReference())
+                    : semanticClasses.end();
+            SmallVector<semantic::SVClassTypeOp> concreteClasses;
+            if (declaredClass != semanticClasses.end())
+              for (semantic::SVClassTypeOp candidate : classSources) {
+                if (candidate.getIsAbstract() || candidate.getIsInterface())
+                  continue;
+                SmallVector<semantic::SVClassTypeOp> candidateHierarchy;
+                if (failed(collectClassHierarchy(
+                        candidate, candidateHierarchy,
+                        "nested object randomization"))) {
+                  invalid = true;
+                  continue;
+                }
+                if (llvm::is_contained(candidateHierarchy,
+                                       declaredClass->second))
+                  concreteClasses.push_back(candidate);
+              }
+            if (concreteClasses.size() != 1) {
+              emitError(getSemanticLocation(property))
+                  << "rand object handle requires a unique concrete dynamic "
+                     "class in the closed-world hierarchy";
+              invalid = true;
+              continue;
+            }
+            SmallVector<semantic::SVClassTypeOp> nestedHierarchy;
+            if (failed(collectClassHierarchy(concreteClasses.front(),
+                                             nestedHierarchy,
+                                             "nested object randomization"))) {
+              invalid = true;
+              continue;
+            }
+            bool unsupportedNestedSemantics = false;
+            unsigned nestedModeIndex = 0;
+            for (semantic::SVClassTypeOp nestedClass : nestedHierarchy) {
+              for (Operation *nestedMember : getChildren(nestedClass)) {
+                if (isa<semantic::SVConstraintBlockSymbolOp>(nestedMember)) {
+                  emitError(getSemanticLocation(property))
+                      << "rand object handles with child constraints require "
+                         "recursive constraint-plan composition";
+                  unsupportedNestedSemantics = true;
+                  continue;
+                }
+                if (auto method = getClassMethod(nestedMember);
+                    method &&
+                    method.getIsPrePostRandomize().value_or(false) &&
+                    !method.getIsBuiltin().value_or(false)) {
+                  emitError(getSemanticLocation(property))
+                      << "rand object handles with child lifecycle hooks "
+                         "require recursive lifecycle composition";
+                  unsupportedNestedSemantics = true;
+                  continue;
+                }
+                auto nestedProperty =
+                    dyn_cast<semantic::SVClassPropertySymbolOp>(nestedMember);
+                if (!nestedProperty ||
+                    nestedProperty.getRandMode() ==
+                        semantic::SVRandMode::None)
+                  continue;
+                unsigned childModeIndex = nestedModeIndex++;
+                if (childModeIndex >= 64) {
+                  emitError(getSemanticLocation(nestedProperty))
+                      << "nested rand object exceeds the 64-property "
+                         "rand_mode boundary";
+                  unsupportedNestedSemantics = true;
+                  continue;
+                }
+                FailureOr<Type> nestedType =
+                    getNormalizedSemanticType(nestedProperty);
+                std::optional<Type> semanticNestedType =
+                    nestedProperty.getSemanticType();
+                std::optional<unsigned> nestedWidth =
+                    succeeded(nestedType) ? sim::getPackedWidth(*nestedType)
+                                          : std::nullopt;
+                if (failed(nestedType) || !semanticNestedType || !nestedWidth ||
+                    *nestedWidth == 0 ||
+                    nestedProperty.getRandMode() ==
+                        semantic::SVRandMode::RandC ||
+                    nestedProperty.getLifetime() ==
+                        semantic::SVVariableLifetime::Static) {
+                  emitError(getSemanticLocation(nestedProperty))
+                      << "nested rand object properties must be non-static "
+                         "packed rand values";
+                  unsupportedNestedSemantics = true;
+                  continue;
+                }
+                SmallVector<RandomSubdomain> nestedDomains;
+                if (failed(collectRandomSubdomains(
+                        *semanticNestedType, 0, nestedDomains,
+                        getSemanticLocation(nestedProperty)))) {
+                  emitError(getSemanticLocation(nestedProperty))
+                      << "nested rand object property has an unsupported "
+                         "finite domain";
+                  unsupportedNestedSemantics = true;
+                  continue;
+                }
+                properties.push_back(
+                    {nestedProperty,
+                     classFieldSymbols.lookup(nestedProperty),
+                     {},
+                     *nestedType,
+                     *nestedWidth,
+                     modeIndex,
+                     false,
+                     {},
+                     0,
+                     false,
+                     field,
+                     sim::ClassHandleType::get(
+                         context,
+                         FlatSymbolRefAttr::get(
+                             context,
+                             classSymbols.lookup(concreteClasses.front())
+                                 .getValue())),
+                     objectType,
+                     childModeIndex,
+                     isSignedSemanticType(*semanticNestedType),
+                     false,
+                     {},
+                     {},
+                     {},
+                     {},
+                     {},
+                     std::move(nestedDomains)});
+              }
+            }
+            if (unsupportedNestedSemantics)
+              invalid = true;
+            continue;
+          }
           std::optional<unsigned> width = sim::getPackedWidth(*type);
           if (!width || *width == 0 || (!field && !referencePath)) {
             emitError(getSemanticLocation(property))
@@ -1773,7 +1925,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             continue;
           }
           properties.push_back({property, field, referencePath, *type, *width,
-                                modeIndex, false, {}, 0, false,
+                                modeIndex, false, {}, 0, false, {}, {}, {}, 0,
                                 isSignedSemanticType(*semanticPropertyType),
                                 isRandC, randcKeyField, randcPositionField,
                                 randcKeyPath, randcPositionPath,
@@ -1782,7 +1934,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
       }
     }
-    if (properties.size() + containerProperties.size() > 64) {
+    if (randomPropertyIndex > 64) {
       emitError(getSemanticLocation(call))
           << "the executable rand_mode boundary is 64 effective random "
              "properties";
@@ -1934,6 +2086,10 @@ void ObeliskSimPreparePass::runOnOperation() {
              property.type,
              constraintMask,
              unconditionalConstraint,
+             {},
+             {},
+             {},
+             0,
              true,
              false,
              {},
@@ -1942,6 +2098,28 @@ void ObeliskSimPreparePass::runOnOperation() {
              {},
              {},
              {std::move(nonnegative)}});
+      }
+    }
+    for (const RandomProperty &property : properties) {
+      if (!property.nestedObjectField)
+        continue;
+      bool referenced = llvm::any_of(constraintRoots, [&](Operation *root) {
+        bool found = false;
+        root->walk([&](Operation *nested) {
+          auto reference =
+              nested->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+          if (reference && reference.getLeafReference() ==
+                               property.source->getAttrOfType<StringAttr>(
+                                   SymbolTable::getSymbolAttrName()))
+            found = true;
+        });
+        return found;
+      });
+      if (referenced) {
+        emitError(getSemanticLocation(property.source))
+            << "constraints that dereference rand object handles require "
+               "error-aware recursive constraint composition";
+        invalid = true;
       }
     }
     llvm::DenseMap<Operation *, unsigned> randomIndices;
@@ -2751,6 +2929,19 @@ void ObeliskSimPreparePass::runOnOperation() {
         attributes.push_back(builder.getNamedAttr(
             "unconditional_size_constraint",
             builder.getBoolAttr(property.hasUnconditionalSizeConstraint)));
+      }
+      if (property.nestedObjectField) {
+        attributes.push_back(builder.getNamedAttr(
+            randomNestedObjectFieldAttrName, property.nestedObjectField));
+        attributes.push_back(builder.getNamedAttr(
+            randomNestedObjectTypeAttrName,
+            TypeAttr::get(property.nestedObjectType)));
+        attributes.push_back(builder.getNamedAttr(
+            randomNestedObjectStorageTypeAttrName,
+            TypeAttr::get(property.nestedObjectStorageType)));
+        attributes.push_back(builder.getNamedAttr(
+            randomNestedModeIndexAttrName,
+            builder.getI32IntegerAttr(property.nestedModeIndex)));
       }
       if (property.field)
         attributes.push_back(builder.getNamedAttr("field", property.field));
