@@ -212,9 +212,34 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
       current(&function.getBody().front()) {
   builder.setInsertionPointToStart(current);
   ModuleOp module = function->getParentOfType<ModuleOp>();
-  module.walk([&](sim::SimScopeDeclOp scope) {
+  sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
+  DenseMap<uint64_t, StringAttr> interfaceScopes;
+  design.walk([&](sim::SimScopeDeclOp scope) {
     if (std::optional<StringRef> hierarchy = scope.getHierarchicalName())
       scopeIDs[*hierarchy] = scope.getId();
+    if (StringAttr identity = scope.getInterfaceTypeAttr())
+      interfaceScopes[scope.getId()] = identity;
+  });
+  auto memberKey = [](StringRef identity, StringRef member) {
+    return (Twine(identity) + "\n" + member).str();
+  };
+  design.walk([&](sim::SimStorageDeclOp storage) {
+    auto scope = interfaceScopes.find(storage.getScopeId());
+    StringAttr member = storage->getAttrOfType<StringAttr>(
+        "obelisk_sim.virtual_interface_member");
+    if (scope != interfaceScopes.end() && member)
+      virtualInterfaceStorageMembers[memberKey(scope->second.getValue(),
+                                               member.getValue())]
+          .push_back({storage.getScopeId(), storage.getId()});
+  });
+  design.walk([&](sim::SimNetDeclOp net) {
+    auto scope = interfaceScopes.find(net.getScopeId());
+    StringAttr member = net->getAttrOfType<StringAttr>(
+        "obelisk_sim.virtual_interface_member");
+    if (scope != interfaceScopes.end() && member)
+      virtualInterfaceNetMembers[memberKey(scope->second.getValue(),
+                                           member.getValue())]
+          .push_back({net.getScopeId(), net.getId()});
   });
   for (Operation &topLevel : module.getBody()->getOperations())
     if (auto root = dyn_cast<semantic::SVRootSymbolOp>(topLevel))
@@ -2192,6 +2217,10 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   }
   // IEEE 1800-2017 9.2.2.2.1 excludes any expression also written by an
   // always_comb (and, by 9.2.2.3, always_latch) from implicit sensitivity.
+  for (Value read : virtualInterfaceReadSensitivity)
+    sensitivity.insert(read);
+  for (Value written : virtualInterfaceWrittenSensitivity)
+    implicitProcessWrites.insert(written);
   for (Value written : implicitProcessWrites)
     sensitivity.remove(written);
   if (sensitivity.empty()) {

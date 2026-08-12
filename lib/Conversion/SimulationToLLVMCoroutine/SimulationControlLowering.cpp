@@ -85,6 +85,21 @@ public:
   }
 };
 
+class VirtualInterfaceScopeConversion final
+    : public OpConversionPattern<sim::SimVirtualInterfaceScopeOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimVirtualInterfaceScopeOp operation,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getInput().size() != 1)
+      return failure();
+    rewriter.replaceOp(operation, adaptor.getInput().front());
+    return success();
+  }
+};
+
 class VirtualInterfaceEqualConversion final
     : public OpConversionPattern<sim::SimVirtualInterfaceEqualOp> {
 public:
@@ -583,6 +598,7 @@ void populateControlToLLVMConversionPatterns(RewritePatternSet &patterns,
                ControlLeaveConversion, ControlDisableConversion,
                VirtualInterfaceNullConversion,
                VirtualInterfaceBindConversion, VirtualInterfaceCastConversion,
+               VirtualInterfaceScopeConversion,
                VirtualInterfaceEqualConversion, ProcessNullConversion,
                ProcessCurrentConversion,
                ProcessEqualConversion, ProcessStatusConversion,

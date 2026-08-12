@@ -60,6 +60,11 @@ bool isCompileTimeOnlyInstanceMember(Operation *op) {
     if (instance &&
         instance.getIsVirtualInterfaceTypeInstance().value_or(false))
       return true;
+    if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(cursor))
+      if (auto marker = body->getAttrOfType<BoolAttr>(
+              "is_virtual_interface_type_instance");
+          marker && marker.getValue())
+        return true;
   }
   return false;
 }

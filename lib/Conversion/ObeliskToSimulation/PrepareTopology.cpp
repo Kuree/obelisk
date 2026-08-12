@@ -330,9 +330,13 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
            isStaticFormal(op))
               ? sim::Lifetime::Static
               : sim::Lifetime::Design;
-      sim::SimStorageDeclOp::create(builder, getSemanticLocation(op), id,
-                                    scopeId, *type, lifetime, hierarchy, debug,
-                                    sim::ComputeObservabilityKindAttr{});
+      auto declaration = sim::SimStorageDeclOp::create(
+          builder, getSemanticLocation(op), id, scopeId, *type, lifetime,
+          hierarchy, debug, sim::ComputeObservabilityKindAttr{});
+      if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(op->getParentOp());
+          body && body->hasAttr("virtual_interface_identity") &&
+          !isCompileTimeOnlyInstanceMember(body))
+        declaration->setAttr("obelisk_sim.virtual_interface_member", debug);
       return;
     }
 
@@ -377,10 +381,14 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     descriptors[path] = {DescriptorInfo::Kind::Net, id, scopeId, *type,
                          resolution};
     descriptors[path].rootType = *type;
-    sim::SimNetDeclOp::create(builder, getSemanticLocation(op), id, scopeId,
-                              *type, sim::Lifetime::Design, hierarchy, debug,
-                              sim::ComputeObservabilityKindAttr{}, resolution,
-                              UnitAttr{});
+    auto declaration = sim::SimNetDeclOp::create(
+        builder, getSemanticLocation(op), id, scopeId, *type,
+        sim::Lifetime::Design, hierarchy, debug,
+        sim::ComputeObservabilityKindAttr{}, resolution, UnitAttr{});
+    if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(op->getParentOp());
+        body && body->hasAttr("virtual_interface_identity") &&
+        !isCompileTimeOnlyInstanceMember(body))
+      declaration->setAttr("obelisk_sim.virtual_interface_member", debug);
   };
 
   // Materialize canonical objects first so alias resolution is independent of

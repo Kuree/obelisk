@@ -377,7 +377,7 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
   result.declarations.push_back(sim::SimScopeDeclOp::create(
       builder, getSemanticLocation(semanticRoot), nextScopeId++, IntegerAttr{},
       builder.getStringAttr(getHierarchyName(semanticRoot)),
-      builder.getStringAttr(getDebugName(semanticRoot))));
+      builder.getStringAttr(getDebugName(semanticRoot)), StringAttr{}));
   semanticRoot->walk<WalkOrder::PreOrder>(
       [&](semantic::SVInstanceBodySymbolOp body) {
         Operation *parent = body->getParentOp();
@@ -390,11 +390,19 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
         }
         uint64_t id = nextScopeId++;
         result.ids[body] = id;
+        StringAttr interfaceType;
+        if (auto identity =
+                body->getAttrOfType<SymbolRefAttr>("virtual_interface_identity")) {
+          std::string key;
+          llvm::raw_string_ostream stream(key);
+          stream << identity;
+          interfaceType = builder.getStringAttr(key);
+        }
         sim::SimScopeDeclOp declaration = sim::SimScopeDeclOp::create(
             builder, getSemanticLocation(body), id,
             builder.getI64IntegerAttr(parentId),
             builder.getStringAttr(getHierarchyName(body)),
-            builder.getStringAttr(getDebugName(body)));
+            builder.getStringAttr(getDebugName(body)), interfaceType);
         result.declarations.push_back(declaration);
         auto unitAttr = body->getAttrOfType<IntegerAttr>("time_unit_fs");
         auto precisionAttr =

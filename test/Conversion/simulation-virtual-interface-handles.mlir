@@ -14,8 +14,8 @@ module attributes {
 } {
   obelisk_sim.design @virtual_interface_handles {
     obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.scope.decl 1 parent 0 hierarchy "top.first"
-    obelisk_sim.scope.decl 2 parent 0 hierarchy "top.second"
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top.first" interface "@bus"
+    obelisk_sim.scope.decl 2 parent 0 hierarchy "top.second" interface "@bus"
     obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.exercise"
     obelisk_sim.storage.decl 0 in 0
       : !obelisk_sim.virtual_interface<"@bus", ""> design

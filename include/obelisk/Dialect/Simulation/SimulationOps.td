@@ -80,9 +80,11 @@ def SimScopeDeclOp : SimOp<"scope.decl", [MemoryEffects<[MemWrite<SimInventoryRe
   let summary = "immutable numeric hierarchy descriptor";
   let arguments = (ins I64Attr:$id, OptionalAttr<I64Attr>:$parent,
                        OptionalAttr<StrAttr>:$hierarchical_name,
-                       OptionalAttr<StrAttr>:$debug_name);
+                       OptionalAttr<StrAttr>:$debug_name,
+                       OptionalAttr<StrAttr>:$interface_type);
   let assemblyFormat = [{$id (`parent` $parent^)?
-    (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)? attr-dict}];
+    (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)?
+    (`interface` $interface_type^)? attr-dict}];
   let hasVerifier = 1;
 }
 
@@ -225,6 +227,14 @@ def SimVirtualInterfaceEqualOp
     qualified(type($rhs))
   }];
   let hasVerifier = 1;
+}
+
+def SimVirtualInterfaceScopeOp
+    : SimOp<"virtual_interface.scope", [Pure]> {
+  let summary = "project a virtual interface handle to its elaborated scope ID";
+  let arguments = (ins SimVirtualInterfaceType:$input);
+  let results = (outs I64:$result);
+  let assemblyFormat = "$input attr-dict `:` qualified(type($input))";
 }
 
 def SimCovergroupCreateOp : SimOp<"covergroup.create", [

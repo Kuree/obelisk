@@ -49,6 +49,12 @@ LogicalResult SimScopeDeclOp::verify() {
     return failure();
   if (getParentAttr() && getParentAttr() == getIdAttr())
     return emitOpError("scope cannot be its own parent");
+  if (StringAttr interfaceType = getInterfaceTypeAttr()) {
+    if (interfaceType.getValue().empty())
+      return emitOpError("interface specialization key cannot be empty");
+    if (getId() == 0)
+      return emitOpError("root scope cannot be an interface instance");
+  }
   return success();
 }
 
@@ -156,12 +162,19 @@ LogicalResult SimVirtualInterfaceBindOp::verify() {
   SimDesignOp design = (*this)->getParentOfType<SimDesignOp>();
   if (!design)
     return emitOpError("requires an enclosing simulation design");
-  bool found = false;
+  SimScopeDeclOp found;
   for (SimScopeDeclOp scope : design.getBody().front().getOps<SimScopeDeclOp>())
-    found |= scope.getId() == getScopeId();
+    if (scope.getId() == getScopeId()) {
+      found = scope;
+      break;
+    }
   if (!found)
     return emitOpError("references an unknown interface scope ID ")
            << getScopeId();
+  if (!found.getInterfaceTypeAttr())
+    return emitOpError("scope ID does not identify an interface instance");
+  if (found.getInterfaceTypeAttr() != getResult().getType().getInterfaceName())
+    return emitOpError("scope interface specialization does not match result type");
   return success();
 }
 

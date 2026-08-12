@@ -502,6 +502,103 @@ FailureOr<Value> UnitLowering::lowerReplication(Operation *op) {
 }
 
 FailureOr<Value>
+UnitLowering::lowerVirtualInterfaceMember(
+    semantic::SVMemberAccessExpressionOp op, Value interface, Type elementType,
+    bool lvalue) {
+  Location location = getSemanticLocation(op);
+  auto interfaceType = dyn_cast<sim::VirtualInterfaceType>(interface.getType());
+  StringAttr member = op->getAttrOfType<StringAttr>("member_name");
+  if (!interfaceType || !member) {
+    emitError(location) << "virtual interface member has no static identity";
+    return failure();
+  }
+  std::string key =
+      (Twine(interfaceType.getInterfaceName().getValue()) + "\n" +
+       member.getValue())
+          .str();
+  VirtualMemberTargets *targets = nullptr;
+  Type selectedType;
+  bool isNet = false;
+  if (auto found = virtualInterfaceStorageMembers.find(key);
+      found != virtualInterfaceStorageMembers.end()) {
+    targets = &found->second;
+    selectedType = sim::RefType::get(function.getContext(), elementType);
+  } else if (auto found = virtualInterfaceNetMembers.find(key);
+             found != virtualInterfaceNetMembers.end()) {
+    targets = &found->second;
+    selectedType = sim::NetType::get(function.getContext(), elementType);
+    isNet = true;
+  }
+  if (!targets || targets->empty()) {
+    emitError(location) << "virtual interface member '" << member.getValue()
+                        << "' has no elaborated descriptor";
+    return failure();
+  }
+  llvm::sort(*targets);
+
+  SmallVector<Value> staticTargets;
+  staticTargets.reserve(targets->size());
+  DenseMap<uint64_t, Value> &handleCache =
+      isNet ? virtualInterfaceNetHandles : virtualInterfaceStorageHandles;
+  for (auto [scopeID, descriptorID] : *targets) {
+    (void)scopeID;
+    Value selected = handleCache.lookup(descriptorID);
+    if (!selected) {
+      OpBuilder entryBuilder(function.getContext());
+      entryBuilder.setInsertionPointToStart(&function.getBody().front());
+      Value context = function.getBody().front().getArgument(0);
+      selected = isNet
+                     ? Value(sim::SimContextNetOp::create(
+                           entryBuilder, location, selectedType, context,
+                           entryBuilder.getI64IntegerAttr(descriptorID)))
+                     : Value(sim::SimContextStorageOp::create(
+                           entryBuilder, location, selectedType, context,
+                           entryBuilder.getI64IntegerAttr(descriptorID)));
+      handleCache[descriptorID] = selected;
+    }
+    staticTargets.push_back(selected);
+    if (!lvalue)
+      virtualInterfaceReadSensitivity.insert(selected);
+    else if (!isNet)
+      virtualInterfaceWrittenSensitivity.insert(selected);
+  }
+
+  Value scope = sim::SimVirtualInterfaceScopeOp::create(
+      builder, location, builder.getI64Type(), interface);
+  Block *merge = addBlock();
+  merge->addArgument(selectedType, location);
+  for (auto [index, target] : llvm::enumerate(*targets)) {
+    auto [scopeID, descriptorID] = target;
+    (void)descriptorID;
+    Block *matched = addBlock();
+    Block *next = addBlock();
+    Value expected = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(),
+        builder.getI64IntegerAttr(scopeID));
+    Value equal = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, scope, expected);
+    cf::CondBranchOp::create(builder, location, equal, matched, ValueRange{},
+                             next, ValueRange{});
+    setCurrent(matched);
+    Value selected = staticTargets[index];
+    cf::BranchOp::create(builder, location, merge, ValueRange{selected});
+    setCurrent(next);
+  }
+  if (failed(emitRuntimeFatal(
+          location, "virtual interface member access used a null or invalid handle.")))
+    return failure();
+  setCurrent(merge);
+  Value selected = merge->getArgument(0);
+  if (lvalue)
+    return selected;
+  if (isNet)
+    return sim::SimNetReadOp::create(builder, location, elementType, selected)
+        .getResult();
+  return sim::SimRefLoadOp::create(builder, location, elementType, selected)
+      .getResult();
+}
+
+FailureOr<Value>
 UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
                           bool lvalue) {
   Location location = getSemanticLocation(op);
@@ -544,6 +641,17 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
                                          reference)
         .getResult();
   }
+  FailureOr<Type> virtualResultType = getNormalizedSemanticType(op);
+  FailureOr<Type> receiverType = getNormalizedSemanticType(children.front());
+  if (succeeded(receiverType) && isa<sim::VirtualInterfaceType>(*receiverType)) {
+    FailureOr<Value> virtualInput = lowerExpression(children.front());
+    if (failed(virtualResultType))
+      return failure();
+    if (failed(virtualInput))
+      return failure();
+    return lowerVirtualInterfaceMember(op, *virtualInput, *virtualResultType,
+                                       lvalue);
+  }
   auto ordinalAttr = op->getAttrOfType<IntegerAttr>("field_ordinal");
   if (!ordinalAttr || ordinalAttr.getValue().isNegative() ||
       ordinalAttr.getValue().getActiveBits() > 32) {
@@ -551,7 +659,7 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
     return failure();
   }
   unsigned ordinal = ordinalAttr.getValue().getZExtValue();
-  FailureOr<Type> resultType = getNormalizedSemanticType(op);
+  FailureOr<Type> resultType = std::move(virtualResultType);
   FailureOr<Value> input = lowerExpression(children.front(), lvalue);
   if (failed(resultType) || failed(input))
     return failure();

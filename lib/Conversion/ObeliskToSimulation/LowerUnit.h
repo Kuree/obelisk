@@ -81,6 +81,10 @@ private:
   ::mlir::FailureOr<::mlir::Value> lowerReplication(::mlir::Operation *op);
   ::mlir::FailureOr<::mlir::Value>
   lowerMember(semantic::SVMemberAccessExpressionOp op, bool lvalue);
+  ::mlir::FailureOr<::mlir::Value>
+  lowerVirtualInterfaceMember(semantic::SVMemberAccessExpressionOp op,
+                              ::mlir::Value interface,
+                              ::mlir::Type elementType, bool lvalue);
   ::mlir::LogicalResult guardTaggedUnionMember(::mlir::Value input,
                                                unsigned ordinal,
                                                ::mlir::Location location);
@@ -314,6 +318,14 @@ private:
   ::llvm::StringMap<::mlir::Value> copyOutDestinations;
   ::llvm::StringMap<::mlir::Value> iteratorIndices;
   ::llvm::StringMap<uint64_t> scopeIDs;
+  using VirtualMemberTargets =
+      ::mlir::SmallVector<std::pair<uint64_t, uint64_t>>;
+  ::llvm::StringMap<VirtualMemberTargets> virtualInterfaceStorageMembers;
+  ::llvm::StringMap<VirtualMemberTargets> virtualInterfaceNetMembers;
+  ::llvm::DenseMap<uint64_t, ::mlir::Value> virtualInterfaceStorageHandles;
+  ::llvm::DenseMap<uint64_t, ::mlir::Value> virtualInterfaceNetHandles;
+  ::llvm::SetVector<::mlir::Value> virtualInterfaceReadSensitivity;
+  ::llvm::SetVector<::mlir::Value> virtualInterfaceWrittenSensitivity;
   ::llvm::StringMap<semantic::SVCovergroupTypeOp> semanticCovergroups;
   ::mlir::Value thisObject;
   ::mlir::Value taskControlActivation;

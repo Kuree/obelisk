@@ -683,17 +683,8 @@ public:
       const auto &interface = type.as<slang::ast::VirtualInterfaceType>();
       std::string_view modport =
           interface.modport ? interface.modport->name : std::string_view();
-      SymbolRefAttr interfaceIdentity;
-      for (const auto &[body, identity] : virtualInterfaceIdentities)
-        if (body->hasSameType(interface.iface.body)) {
-          interfaceIdentity = identity;
-          break;
-        }
-      if (!interfaceIdentity) {
-        interfaceIdentity = buildSymbolReference(interface.iface);
-        virtualInterfaceIdentities.emplace_back(&interface.iface.body,
-                                                interfaceIdentity);
-      }
+      SymbolRefAttr interfaceIdentity =
+          getVirtualInterfaceIdentity(interface.iface.body, interface.iface);
       result = slangir::VirtualInterfaceType::get(
           context, interfaceIdentity, StringAttr::get(context, modport));
       break;
@@ -706,6 +697,17 @@ public:
 
     cache.try_emplace(&type, result);
     return result;
+  }
+
+  SymbolRefAttr
+  getVirtualInterfaceIdentity(const slang::ast::InstanceBodySymbol &body,
+                              const slang::ast::InstanceSymbol &instance) {
+    for (const auto &[candidate, identity] : virtualInterfaceIdentities)
+      if (candidate->hasSameType(body))
+        return identity;
+    SymbolRefAttr identity = buildSymbolReference(instance);
+    virtualInterfaceIdentities.emplace_back(&body, identity);
+    return identity;
   }
 
 private:
@@ -1214,6 +1216,20 @@ private:
                 builder.getI64IntegerAttr(getFemtoseconds(scale.base)));
       attrs.set("time_precision_fs",
                 builder.getI64IntegerAttr(getFemtoseconds(scale.precision)));
+      if (node.parentInstance && node.parentInstance->isInterface())
+        attrs.set("virtual_interface_identity",
+                  typeConverter.getVirtualInterfaceIdentity(
+                      node, *node.parentInstance));
+      if (node.parentInstance) {
+        bool isScopeMember = false;
+        if (const slang::ast::Scope *parent =
+                node.parentInstance->getParentScope())
+          for (const slang::ast::Symbol &member : parent->members())
+            isScopeMember |= &member == node.parentInstance;
+        if (!isScopeMember)
+          attrs.set("is_virtual_interface_type_instance",
+                    builder.getBoolAttr(true));
+      }
     }
 
     if constexpr (std::same_as<T, slang::ast::PrimitiveInstanceSymbol>) {
@@ -1344,8 +1360,16 @@ private:
     } else if constexpr (std::same_as<T,
                                       slang::ast::ArbitrarySymbolExpression>) {
       setReferencedSymbol<Op>(attrs, *node.symbol);
-    } else if constexpr (std::same_as<T, slang::ast::MemberAccessExpression> ||
-                         std::same_as<T, slang::ast::TaggedPattern>) {
+    } else if constexpr (std::same_as<T, slang::ast::MemberAccessExpression>) {
+      setReferencedSymbol<Op>(attrs, node.member);
+      attrs.set("member_name", builder.getStringAttr(node.member.name));
+      if (node.member.kind == slang::ast::SymbolKind::Field) {
+        const auto &field = node.member.template as<slang::ast::FieldSymbol>();
+        attrs.set("field_ordinal",
+                  builder.getI64IntegerAttr(field.fieldIndex));
+        attrs.set("packed_offset", builder.getI64IntegerAttr(field.bitOffset));
+      }
+    } else if constexpr (std::same_as<T, slang::ast::TaggedPattern>) {
       setReferencedSymbol<Op>(attrs, node.member);
       const auto &field = node.member.template as<slang::ast::FieldSymbol>();
       attrs.set("field_ordinal", builder.getI64IntegerAttr(field.fieldIndex));

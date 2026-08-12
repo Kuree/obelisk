@@ -251,9 +251,21 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
     }
   }
 
+  SmallVector<Operation *> memberChildren;
+  bool virtualInterfaceMember = false;
+  if (isa<semantic::SVMemberAccessExpressionOp>(destination)) {
+    memberChildren = getChildren(destination);
+    if (memberChildren.size() == 1) {
+      FailureOr<Type> receiverType =
+          getNormalizedSemanticType(memberChildren.front());
+      virtualInterfaceMember = succeeded(receiverType) &&
+                               isa<sim::VirtualInterfaceType>(*receiverType);
+    }
+  }
   if (isa<semantic::SVMemberAccessExpressionOp>(destination) &&
-      !destination->hasAttr("obelisk_sim.class_field")) {
-    SmallVector<Operation *> members = getChildren(destination);
+      !destination->hasAttr("obelisk_sim.class_field") &&
+      !virtualInterfaceMember) {
+    ArrayRef<Operation *> members = memberChildren;
     auto ordinalAttr = destination->getAttrOfType<IntegerAttr>("field_ordinal");
     if (members.size() != 1 || !ordinalAttr ||
         ordinalAttr.getValue().isNegative() ||
