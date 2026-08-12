@@ -1601,6 +1601,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       FlatSymbolRefAttr randcPositionField;
       StringAttr randcKeyPath;
       StringAttr randcPositionPath;
+      IntegerAttr randomModeStorage;
       SmallVector<RandomSubdomain> domains;
     };
     SmallVector<RandomProperty> properties;
@@ -1651,10 +1652,9 @@ void ObeliskSimPreparePass::runOnOperation() {
                 dyn_cast<semantic::SVClassPropertySymbolOp>(member)) {
           bool isStatic =
               property.getLifetime() == semantic::SVVariableLifetime::Static;
-          if ((isStatic && !explicitPropertyList) ||
-              (explicitPropertyList
+          if (explicitPropertyList
                    ? !explicitProperties.contains(property)
-                   : property.getRandMode() == semantic::SVRandMode::None))
+                   : property.getRandMode() == semantic::SVRandMode::None)
             continue;
           FailureOr<Type> type = getNormalizedSemanticType(property);
           if (failed(type)) {
@@ -1693,6 +1693,21 @@ void ObeliskSimPreparePass::runOnOperation() {
               randcPositionFieldSymbols.lookup(property);
           StringAttr randcKeyPath;
           StringAttr randcPositionPath;
+          IntegerAttr randomModeStorage;
+          if (isStatic &&
+              property.getRandMode() != semantic::SVRandMode::None) {
+            randomModeStorage = property->getAttrOfType<IntegerAttr>(
+                staticRandomModeStorageAttrName);
+            if (!randomModeStorage ||
+                randomModeStorage.getValue().isNegative() ||
+                randomModeStorage.getValue().getActiveBits() > 63) {
+              emitError(getSemanticLocation(property))
+                  << "static random property has no valid shared rand_mode "
+                     "storage";
+              invalid = true;
+              continue;
+            }
+          }
           if (isRandC && isStatic) {
             auto state = staticRandCStatePaths.find(property);
             if (state != staticRandCStatePaths.end()) {
@@ -1725,6 +1740,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                                 isSignedSemanticType(*semanticPropertyType),
                                 isRandC, randcKeyField, randcPositionField,
                                 randcKeyPath, randcPositionPath,
+                                randomModeStorage,
                                 std::move(domains)});
           continue;
         }
@@ -2597,6 +2613,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       else
         attributes.push_back(builder.getNamedAttr(
             randomPropertyPathAttrName, property.referencePath));
+      if (property.randomModeStorage)
+        attributes.push_back(builder.getNamedAttr(
+            randomPropertyModeStorageAttrName, property.randomModeStorage));
       if (property.isRandC) {
         if (property.randcKeyField) {
           attributes.push_back(builder.getNamedAttr("randc_key_field",
@@ -2744,23 +2763,102 @@ void ObeliskSimPreparePass::runOnOperation() {
           !getOwningClass(target))
         return false;
       call->setAttr(randomModeAttrName, builder.getUnitAttr());
+
+      semantic::SVClassTypeOp owner = getOwningClass(target);
+      struct DynamicClass {
+        semantic::SVClassTypeOp type;
+        unsigned depth;
+        SmallVector<int64_t> staticModeStorages;
+      };
+      SmallVector<DynamicClass> compatible;
+      bool hasStaticRandomProperty = false;
+      for (semantic::SVClassTypeOp candidate : classSources) {
+        if (candidate.getIsAbstract() || candidate.getIsInterface())
+          continue;
+        SmallVector<semantic::SVClassTypeOp> hierarchy;
+        if (failed(collectClassHierarchy(candidate, hierarchy, "rand_mode"))) {
+          invalid = true;
+          return true;
+        }
+        if (!llvm::is_contained(hierarchy, owner))
+          continue;
+        SmallVector<int64_t> storages;
+        for (semantic::SVClassTypeOp current : hierarchy) {
+          for (Operation *member : getChildren(current)) {
+            auto property =
+                dyn_cast<semantic::SVClassPropertySymbolOp>(member);
+            if (!property ||
+                property.getLifetime() !=
+                    semantic::SVVariableLifetime::Static ||
+                property.getRandMode() == semantic::SVRandMode::None)
+              continue;
+            auto storage = property->getAttrOfType<IntegerAttr>(
+                staticRandomModeStorageAttrName);
+            if (!storage || storage.getValue().isNegative() ||
+                storage.getValue().getActiveBits() > 63) {
+              emitError(getSemanticLocation(property))
+                  << "static random property has no valid shared rand_mode "
+                     "storage";
+              invalid = true;
+              return true;
+            }
+            storages.push_back(static_cast<int64_t>(
+                storage.getValue().getZExtValue()));
+          }
+        }
+        hasStaticRandomProperty |= !storages.empty();
+        compatible.push_back(
+            {candidate, static_cast<unsigned>(hierarchy.size()),
+             std::move(storages)});
+      }
+      if (hasStaticRandomProperty) {
+        llvm::sort(compatible,
+                   [&](const DynamicClass &lhs, const DynamicClass &rhs) {
+                     if (lhs.depth != rhs.depth)
+                       return lhs.depth > rhs.depth;
+                     return classSymbols.lookup(lhs.type).getValue() <
+                            classSymbols.lookup(rhs.type).getValue();
+                   });
+        SmallVector<Attribute> dispatch;
+        for (const DynamicClass &entry : compatible) {
+          StringAttr className = classSymbols.lookup(entry.type);
+          if (!className) {
+            emitError(getSemanticLocation(entry.type))
+                << "rand_mode dispatch class has no prepared symbol";
+            invalid = true;
+            return true;
+          }
+          FlatSymbolRefAttr classSymbol =
+              FlatSymbolRefAttr::get(context, className.getValue());
+          dispatch.push_back(builder.getDictionaryAttr({
+              builder.getNamedAttr("class", classSymbol),
+              builder.getNamedAttr(
+                  "storages",
+                  builder.getDenseI64ArrayAttr(entry.staticModeStorages)),
+          }));
+        }
+        call->setAttr(randomModeStaticDispatchAttrName,
+                      builder.getArrayAttr(dispatch));
+      }
       return true;
     }
 
+    Operation *propertyExpression = callChildren.front();
     auto member =
-        dyn_cast<semantic::SVMemberAccessExpressionOp>(callChildren.front());
-    auto reference =
-        member ? member->getAttrOfType<SymbolRefAttr>("referenced_symbol")
-               : SymbolRefAttr{};
+        dyn_cast<semantic::SVMemberAccessExpressionOp>(propertyExpression);
+    auto named =
+        dyn_cast<semantic::SVNamedValueExpressionOp>(propertyExpression);
+    auto reference = member || named
+                         ? propertyExpression->getAttrOfType<SymbolRefAttr>(
+                               "referenced_symbol")
+                         : SymbolRefAttr{};
     auto symbol = reference ? semanticSymbols.find(reference.getLeafReference())
                             : semanticSymbols.end();
     auto property =
         symbol != semanticSymbols.end()
             ? dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second)
             : semantic::SVClassPropertySymbolOp{};
-    if (!property ||
-        property.getLifetime() == semantic::SVVariableLifetime::Static ||
-        property.getRandMode() == semantic::SVRandMode::None)
+    if (!property || property.getRandMode() == semantic::SVRandMode::None)
       return false;
 
     auto owner =
@@ -2780,7 +2878,6 @@ void ObeliskSimPreparePass::runOnOperation() {
         auto candidate =
             dyn_cast<semantic::SVClassPropertySymbolOp>(classMember);
         if (!candidate ||
-            candidate.getLifetime() == semantic::SVVariableLifetime::Static ||
             candidate.getRandMode() == semantic::SVRandMode::None)
           continue;
         if (candidate == property) {
@@ -2799,8 +2896,21 @@ void ObeliskSimPreparePass::runOnOperation() {
       return true;
     }
     call->setAttr(randomModeAttrName, builder.getUnitAttr());
-    call->setAttr(randomModePropertyAttrName,
-                  builder.getI32IntegerAttr(propertyIndex));
+    if (property.getLifetime() == semantic::SVVariableLifetime::Static) {
+      auto storage = property->getAttrOfType<IntegerAttr>(
+          staticRandomModeStorageAttrName);
+      if (!storage || storage.getValue().isNegative() ||
+          storage.getValue().getActiveBits() > 63) {
+        emitError(getSemanticLocation(call))
+            << "static property rand_mode has no valid shared storage";
+        invalid = true;
+        return true;
+      }
+      call->setAttr(randomModeStaticStorageAttrName, storage);
+    } else {
+      call->setAttr(randomModePropertyAttrName,
+                    builder.getI32IntegerAttr(propertyIndex));
+    }
     return true;
   };
 

@@ -68,8 +68,10 @@ module attributes {
 
 // CHECK: obelisk_sim.storage.decl 0 in 0 : i32 design hierarchy "C::s" debug "s"
 // CHECK: obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.packed_array<1 : 0 x i1> design hierarchy "C::cycle" debug "cycle"
-// CHECK: obelisk_sim.storage.decl 3 in 0 : i64 design hierarchy "C::cycle.$randc_key" debug "__obelisk_static_randc_key"
-// CHECK: obelisk_sim.storage.decl 4 in 0 : i64 design hierarchy "C::cycle.$randc_position" debug "__obelisk_static_randc_position"
+// CHECK: obelisk_sim.storage.decl 3 in 0 : i64 design hierarchy "C::s.$rand_mode" debug "__obelisk_rand_mode"
+// CHECK: obelisk_sim.storage.decl 4 in 0 : i64 design hierarchy "C::cycle.$rand_mode" debug "__obelisk_rand_mode"
+// CHECK: obelisk_sim.storage.decl 5 in 0 : i64 design hierarchy "C::cycle.$randc_key" debug "__obelisk_static_randc_key"
+// CHECK: obelisk_sim.storage.decl 6 in 0 : i64 design hierarchy "C::cycle.$randc_position" debug "__obelisk_static_randc_position"
 // CHECK-LABEL: obelisk_sim.func private @unit_1
 // CHECK-SAME: %[[S_REF:arg[0-9]+]]: !obelisk_sim.ref<i32>
 // CHECK-SAME: %[[CYCLE_REF:arg[0-9]+]]: !obelisk_sim.ref<!obelisk_sim.packed_array<1 : 0 x i1>>

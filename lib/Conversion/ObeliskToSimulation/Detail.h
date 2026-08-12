@@ -178,6 +178,12 @@ inline constexpr ::mlir::StringLiteral randomModeAttrName =
     "obelisk_sim.rand_mode";
 inline constexpr ::mlir::StringLiteral randomModePropertyAttrName =
     "obelisk_sim.rand_mode_property";
+inline constexpr ::mlir::StringLiteral randomModeStaticStorageAttrName =
+    "obelisk_sim.rand_mode_static_storage";
+inline constexpr ::mlir::StringLiteral randomModeStaticDispatchAttrName =
+    "obelisk_sim.rand_mode_static_dispatch";
+inline constexpr ::mlir::StringLiteral staticRandomModeStorageAttrName =
+    "obelisk_sim.static_random_mode_storage";
 inline constexpr ::mlir::StringLiteral constraintModeAttrName =
     "obelisk_sim.constraint_mode";
 inline constexpr ::mlir::StringLiteral constraintModeBlockAttrName =
@@ -196,6 +202,8 @@ inline constexpr ::mlir::StringLiteral randomPropertiesAttrName =
     "obelisk_sim.random_properties";
 inline constexpr ::mlir::StringLiteral randomPropertyPathAttrName =
     "reference_path";
+inline constexpr ::mlir::StringLiteral randomPropertyModeStorageAttrName =
+    "rand_mode_storage";
 inline constexpr ::mlir::StringLiteral randomRandCKeyPathAttrName =
     "randc_key_path";
 inline constexpr ::mlir::StringLiteral randomRandCPositionPathAttrName =

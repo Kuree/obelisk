@@ -243,24 +243,97 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     }
     auto propertyIndexAttr =
         op->getAttrOfType<IntegerAttr>(randomModePropertyAttrName);
+    auto staticStorageAttr =
+        op->getAttrOfType<IntegerAttr>(randomModeStaticStorageAttrName);
+    auto staticDispatchAttr =
+        op->getAttrOfType<ArrayAttr>(randomModeStaticDispatchAttrName);
+    if ((propertyIndexAttr && staticStorageAttr) ||
+        ((propertyIndexAttr || staticStorageAttr) && staticDispatchAttr)) {
+      emitError(location) << "rand_mode metadata is malformed";
+      return failure();
+    }
+    if (!propertyIndexAttr && !staticStorageAttr && children.size() != 2) {
+      emitError(location) << "class-wide rand_mode requires an on/off argument";
+      return failure();
+    }
     Operation *receiverNode = children.front();
-    if (propertyIndexAttr) {
+    if (propertyIndexAttr || staticStorageAttr) {
       auto member =
           dyn_cast<semantic::SVMemberAccessExpressionOp>(children.front());
+      auto named =
+          dyn_cast<semantic::SVNamedValueExpressionOp>(children.front());
       SmallVector<Operation *> memberChildren =
           member ? getChildren(member) : SmallVector<Operation *>{};
-      if (!member || memberChildren.size() != 1) {
+      bool classQualifiedStatic = staticStorageAttr && named;
+      if ((!member && !classQualifiedStatic) || memberChildren.size() > 1 ||
+          (propertyIndexAttr && memberChildren.empty())) {
         emitError(location) << "property rand_mode has no object receiver";
         return failure();
       }
-      receiverNode = memberChildren.front();
+      receiverNode = classQualifiedStatic || memberChildren.empty()
+                         ? nullptr
+                         : memberChildren.front();
     }
-    FailureOr<Value> loweredReceiver = lowerExpression(receiverNode);
+    FailureOr<Value> loweredReceiver = failure();
+    if (receiverNode)
+      loweredReceiver = lowerExpression(receiverNode);
     auto objectType =
         succeeded(loweredReceiver)
             ? dyn_cast<sim::ClassHandleType>((*loweredReceiver).getType())
             : sim::ClassHandleType{};
-    if (failed(loweredReceiver) || !objectType) {
+    if (receiverNode && (failed(loweredReceiver) || !objectType)) {
+      emitError(location) << "rand_mode receiver is not a class object";
+      return failure();
+    }
+    Type i64 = builder.getI64Type();
+    auto staticModeReference = [&](uint64_t storage) -> Value {
+      Type referenceType = sim::RefType::get(function.getContext(), i64);
+      Value context = function.getBody().front().getArgument(0);
+      return sim::SimContextStorageOp::create(
+          builder, location, referenceType, context,
+          builder.getI64IntegerAttr(storage));
+    };
+
+    FailureOr<Value> setterEnabled;
+    if (children.size() == 2) {
+      FailureOr<Value> argument = lowerExpression(children.back());
+      setterEnabled = succeeded(argument)
+                          ? truthValue(*argument, location)
+                          : FailureOr<Value>(failure());
+      if (failed(setterEnabled))
+        return failure();
+    }
+
+    if (staticStorageAttr) {
+      APInt storage = staticStorageAttr.getValue();
+      if (storage.isNegative() || storage.getActiveBits() > 63) {
+        emitError(location) << "static property rand_mode storage is malformed";
+        return failure();
+      }
+      Value reference = staticModeReference(storage.getZExtValue());
+      Value zero = arith::ConstantOp::create(builder, location, i64,
+                                             builder.getI64IntegerAttr(0));
+      if (children.size() == 2) {
+        Value mode = arith::SelectOp::create(
+            builder, location, *setterEnabled, zero,
+            arith::ConstantOp::create(builder, location, i64,
+                                      builder.getI64IntegerAttr(1)));
+        sim::SimRefStoreOp::create(builder, location, mode, reference);
+        return arith::ConstantOp::create(builder, location,
+                                         builder.getI1Type(),
+                                         builder.getBoolAttr(false))
+            .getResult();
+      }
+      Value mode = sim::SimRefLoadOp::create(builder, location, i64, reference);
+      Value enabled = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, mode, zero);
+      FailureOr<Type> resultType = getNormalizedSemanticType(op);
+      if (failed(resultType))
+        return failure();
+      return convert(enabled, *resultType, false, location);
+    }
+
+    if (!receiverNode) {
       emitError(location) << "rand_mode receiver is not a class object";
       return failure();
     }
@@ -282,7 +355,6 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       emitError(location) << "rand_mode receiver has no mode state";
       return failure();
     }
-    Type i64 = builder.getI64Type();
     Type referenceType = sim::ManagedRefType::get(function.getContext(), i64,
                                                   objectType.getClassName());
     Value reference = sim::SimClassFieldRefOp::create(
@@ -298,12 +370,6 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       propertyBit = uint64_t{1} << propertyIndex.getZExtValue();
     }
     if (children.size() == 2) {
-      FailureOr<Value> argument = lowerExpression(children.back());
-      FailureOr<Value> enabled = succeeded(argument)
-                                     ? truthValue(*argument, location)
-                                     : FailureOr<Value>(failure());
-      if (failed(enabled))
-        return failure();
       Value zero = arith::ConstantOp::create(builder, location, i64,
                                              builder.getI64IntegerAttr(0));
       Value disabled = arith::ConstantOp::create(
@@ -324,13 +390,57 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                 builder.getIntegerAttr(i64, APInt(64, ~propertyBit))));
         Value disabledMode =
             arith::OrIOp::create(builder, location, oldMode, bit);
-        mode = arith::SelectOp::create(builder, location, *enabled, enabledMode,
-                                       disabledMode);
+        mode = arith::SelectOp::create(builder, location, *setterEnabled,
+                                       enabledMode, disabledMode);
       } else {
-        mode = arith::SelectOp::create(builder, location, *enabled, zero,
+        mode = arith::SelectOp::create(builder, location, *setterEnabled, zero,
                                        disabled);
       }
-      sim::SimManagedStoreOp::create(builder, location, mode, reference);
+      auto storeMode = [&](ArrayRef<int64_t> staticStorages) {
+        sim::SimManagedStoreOp::create(builder, location, mode, reference);
+        Value staticMode = arith::SelectOp::create(
+            builder, location, *setterEnabled, zero,
+            arith::ConstantOp::create(builder, location, i64,
+                                      builder.getI64IntegerAttr(1)));
+        for (int64_t storage : staticStorages)
+          sim::SimRefStoreOp::create(
+              builder, location, staticMode,
+              staticModeReference(static_cast<uint64_t>(storage)));
+      };
+      if (staticDispatchAttr) {
+        Block *done = addBlock();
+        for (Attribute attribute : staticDispatchAttr) {
+          auto entry = dyn_cast<DictionaryAttr>(attribute);
+          auto target = entry ? entry.getAs<FlatSymbolRefAttr>("class")
+                              : FlatSymbolRefAttr{};
+          auto storages = entry ? entry.getAs<DenseI64ArrayAttr>("storages")
+                                : DenseI64ArrayAttr{};
+          if (!target || !storages ||
+              llvm::any_of(storages.asArrayRef(),
+                           [](int64_t storage) { return storage < 0; })) {
+            emitError(location) << "rand_mode static dispatch is malformed";
+            return failure();
+          }
+          Value matches = sim::SimClassIsInstanceOp::create(
+              builder, location, *loweredReceiver, target);
+          Block *selected = addBlock();
+          Block *next = addBlock();
+          cf::CondBranchOp::create(builder, location, matches, selected,
+                                   ValueRange{}, next, ValueRange{});
+          setCurrent(selected);
+          storeMode(storages.asArrayRef());
+          cf::BranchOp::create(builder, location, done);
+          setCurrent(next);
+        }
+        if (failed(emitRuntimeFatal(location,
+                                    "rand_mode called on null class object")))
+          return failure();
+        setCurrent(addBlock());
+        cf::BranchOp::create(builder, location, done);
+        setCurrent(done);
+      } else {
+        storeMode({});
+      }
       return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                        builder.getBoolAttr(false))
           .getResult();

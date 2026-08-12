@@ -229,6 +229,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value randcPositionReference;
     Value nextRandcKey;
     Value nextRandcPosition;
+    std::optional<uint64_t> randomModeStorage;
     SmallVector<PropertyDomain> domains;
   };
   SmallVector<Property> planned;
@@ -248,6 +249,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         property ? property.getAs<BoolAttr>("is_signed") : BoolAttr{};
     auto randcAttr =
         property ? property.getAs<BoolAttr>("is_randc") : BoolAttr{};
+    auto modeStorageAttr =
+        property
+            ? property.getAs<IntegerAttr>(randomPropertyModeStorageAttrName)
+            : IntegerAttr{};
     if (static_cast<bool>(field) == static_cast<bool>(referencePath) ||
         !typeAttr || !widthAttr || !signedAttr || !randcAttr ||
         widthAttr.getValue().isZero() || widthAttr.getValue().isNegative() ||
@@ -281,6 +286,21 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             << referencePath.getValue();
         return failure();
       }
+    }
+    std::optional<uint64_t> randomModeStorage;
+    if (modeStorageAttr) {
+      APInt storage = modeStorageAttr.getValue();
+      if (field || storage.isNegative() || storage.getActiveBits() > 63) {
+        emitError(location) << "static random property mode is malformed";
+        return failure();
+      }
+      randomModeStorage = storage.getZExtValue();
+    }
+    if (referencePath && !op->hasAttr(randomizeExplicitPropertiesAttrName) &&
+        !randomModeStorage) {
+      emitError(location)
+          << "ordinary static random property has no shared rand_mode state";
+      return failure();
     }
     Value randcKeyReference;
     Value randcPositionReference;
@@ -436,6 +456,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                        randcPositionReference,
                        {},
                        {},
+                       randomModeStorage,
                        std::move(propertyDomains)});
     plannedWidth += width;
   }
@@ -554,6 +575,29 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   else
     relevantMode = arith::AndIOp::create(builder, location, mode,
                                          constant64(propertyModeMask));
+  if (!checkerOnly && !op->hasAttr(randomizeExplicitPropertiesAttrName)) {
+    Value context = function.getBody().front().getArgument(0);
+    Type referenceType = sim::RefType::get(function.getContext(), i64);
+    for (auto [index, property] : llvm::enumerate(planned)) {
+      if (!property.randomModeStorage)
+        continue;
+      uint64_t bit = uint64_t{1} << index;
+      relevantMode = arith::AndIOp::create(builder, location, relevantMode,
+                                           constant64(~bit));
+      Value reference = sim::SimContextStorageOp::create(
+          builder, location, referenceType, context,
+          builder.getI64IntegerAttr(*property.randomModeStorage));
+      Value staticMode =
+          sim::SimRefLoadOp::create(builder, location, i64, reference);
+      Value disabled = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, staticMode,
+          constant64(0));
+      Value selected = arith::SelectOp::create(builder, location, disabled,
+                                                constant64(bit), constant64(0));
+      relevantMode =
+          arith::OrIOp::create(builder, location, relevantMode, selected);
+    }
+  }
   Value randomizationEnabled = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::eq, relevantMode, constant64(0));
   Value allPropertiesDisabled =

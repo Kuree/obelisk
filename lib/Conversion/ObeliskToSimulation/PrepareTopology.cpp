@@ -421,6 +421,43 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
         sim::ComputeObservabilityKindAttr{});
   });
 
+  // A static random property has one rand_mode bit shared by all instances of
+  // its declaring class (IEEE 1800-2017 18.8). Keep the disabled bit beside
+  // the class-wide value rather than in any object's ordinary mode mask.
+  semanticRoot.walk([&](semantic::SVClassPropertySymbolOp property) {
+    if (property.getLifetime() != semantic::SVVariableLifetime::Static ||
+        property.getRandMode() == semantic::SVRandMode::None)
+      return;
+    StringRef path = getHierarchyName(property);
+    if (path.empty()) {
+      emitError(getSemanticLocation(property))
+          << "static random property is missing a hierarchy name";
+      invalid = true;
+      return;
+    }
+    std::string hierarchy = (llvm::Twine(path) + ".$rand_mode").str();
+    if (descriptors.count(hierarchy)) {
+      emitError(getSemanticLocation(property))
+          << "static rand_mode state conflicts with an existing design "
+             "object";
+      invalid = true;
+      return;
+    }
+    uint64_t id = nextStorageId++;
+    property->setAttr(staticRandomModeStorageAttrName,
+                      builder.getI64IntegerAttr(id));
+    Type type = builder.getI64Type();
+    uint64_t scopeId = scopes.lookup(property);
+    descriptors[hierarchy] = {DescriptorInfo::Kind::Storage, id, scopeId, type,
+                              sim::NetResolutionKind::Wire};
+    descriptors[hierarchy].rootType = type;
+    sim::SimStorageDeclOp::create(builder, getSemanticLocation(property), id,
+                                  scopeId, type, sim::Lifetime::Design,
+                                  builder.getStringAttr(hierarchy),
+                                  builder.getStringAttr("__obelisk_rand_mode"),
+                                  sim::ComputeObservabilityKindAttr{});
+  });
+
   for (Operation *op : designObjects) {
     StringRef path = getHierarchyName(op);
     auto alias = portAliases.aliases.find(path);
