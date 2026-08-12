@@ -72,6 +72,15 @@ typedef int32_t obelisk_rt_status;
 // 20 to the runtime scheduler.
 #define OBELISK_RT_AOT_GENERATED_CHECKPOINT INT32_C(22)
 
+// Tokens in an IEEE 1800 $readmemb/$readmemh input stream. Address tokens are
+// always hexadecimal; data tokens use the radix selected by the system task.
+typedef uint32_t obelisk_rt_readmem_token_kind_v1;
+enum {
+  OBELISK_RT_READMEM_EOF = 0,
+  OBELISK_RT_READMEM_DATA = 1,
+  OBELISK_RT_READMEM_ADDRESS = 2
+};
+
 // Managed SystemVerilog value ABI. Object handles are nullable pointers into
 // the context-owned, non-moving heap. Collector and synchronization metadata
 // live outside the language-visible object. Class objects retain an immutable
@@ -760,6 +769,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_PLUSARG_TEST = UINT32_C(0x00010110),
   OBELISK_RT_INTRINSIC_V1_PLUSARG_VALUE = UINT32_C(0x00010111),
   OBELISK_RT_INTRINSIC_V1_FILE_SCAN_FIELD = UINT32_C(0x00010112),
+  OBELISK_RT_INTRINSIC_V1_FILE_READMEM_TOKEN = UINT32_C(0x00010113),
   OBELISK_RT_INTRINSIC_V1_SPAWN = UINT32_C(0x00010200),
   OBELISK_RT_INTRINSIC_V1_NBA = UINT32_C(0x00010201),
   // Statically planned NBA. The final i64 input is the NBASiteAttr identity;
@@ -3257,6 +3267,10 @@ obelisk_rt_status obelisk_rt_v1_file_write(obelisk_rt_context *context,
 obelisk_rt_status obelisk_rt_v1_file_read(obelisk_rt_context *context,
                                           uint32_t descriptor, void *data,
                                           uint64_t size, uint64_t *out_read);
+obelisk_rt_status obelisk_rt_v1_file_readmem_token(
+    obelisk_rt_context *context, uint32_t descriptor, uint32_t radix,
+    uint64_t bit_width, void *value, uint64_t value_size, void *unknown,
+    uint64_t unknown_size, uint32_t *out_kind, uint64_t *out_address);
 obelisk_rt_status obelisk_rt_v1_file_getc(obelisk_rt_context *context,
                                           uint32_t descriptor,
                                           uint8_t *out_byte);

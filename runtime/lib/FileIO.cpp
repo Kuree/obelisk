@@ -509,6 +509,165 @@ obelisk_rt_v1_file_read(obelisk_rt_context *context, uint32_t descriptor,
   });
 }
 
+extern "C" obelisk_rt_status obelisk_rt_v1_file_readmem_token(
+    obelisk_rt_context *context, uint32_t descriptor, uint32_t radix,
+    uint64_t bitWidth, void *value, uint64_t valueSize, void *unknown,
+    uint64_t unknownSize, uint32_t *outKind, uint64_t *outAddress) {
+  uint64_t requiredBytes = bitWidth / 8 + (bitWidth % 8 != 0);
+  if (!context || (radix != 2 && radix != 16) || bitWidth == 0 ||
+      valueSize != requiredBytes || unknownSize != requiredBytes ||
+      !validBytes(value, valueSize) || !validBytes(unknown, unknownSize) ||
+      !outKind || !outAddress)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  std::memset(value, 0, static_cast<size_t>(valueSize));
+  std::memset(unknown, 0, static_cast<size_t>(unknownSize));
+  *outKind = OBELISK_RT_READMEM_EOF;
+  *outAddress = 0;
+  return guarded(context, [&] {
+    FileEntry *entry;
+    std::unique_lock<std::recursive_mutex> lock;
+    obelisk_rt_status status =
+        checkFileArguments(context, descriptor, entry, lock);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (!entry->readable) {
+      setLastErrorUnlocked(context, "$readmem input is not readable");
+      return OBELISK_RT_IO_ERROR;
+    }
+    auto next = [&]() { return std::fgetc(entry->stream); };
+    auto malformed = [&](std::string message) {
+      setLastErrorUnlocked(context, std::move(message));
+      return OBELISK_RT_FORMAT_ERROR;
+    };
+    auto finishIO = [&]() {
+      if (!std::ferror(entry->stream))
+        return OBELISK_RT_OK;
+      recordIOError(context, *entry, "$readmem read failed");
+      return OBELISK_RT_IO_ERROR;
+    };
+    int character;
+    for (;;) {
+      character = next();
+      while (character != EOF && scanSpace(character))
+        character = next();
+      if (character == EOF)
+        return finishIO();
+      if (character != '/')
+        break;
+      int second = next();
+      if (second == '/') {
+        do {
+          character = next();
+        } while (character != EOF && character != '\n' && character != '\r');
+        if (character == EOF && std::ferror(entry->stream))
+          return finishIO();
+        continue;
+      }
+      if (second == '*') {
+        int previous = 0;
+        for (;;) {
+          character = next();
+          if (character == EOF)
+            return std::ferror(entry->stream)
+                       ? finishIO()
+                       : malformed("unterminated $readmem block comment");
+          if (previous == '*' && character == '/')
+            break;
+          previous = character;
+        }
+        continue;
+      }
+      if (second != EOF && std::ungetc(second, entry->stream) == EOF) {
+        recordIOError(context, *entry, "$readmem pushback failed");
+        return OBELISK_RT_IO_ERROR;
+      }
+      return malformed("invalid '/' in $readmem input");
+    }
+    if (character == '@') {
+      uint64_t address = 0;
+      bool haveDigit = false;
+      for (;;) {
+        character = next();
+        unsigned digit =
+            character >= '0' && character <= '9'   ? character - '0'
+            : character >= 'a' && character <= 'f' ? character - 'a' + 10
+            : character >= 'A' && character <= 'F' ? character - 'A' + 10
+                                                    : 16;
+        if (digit >= 16)
+          break;
+        haveDigit = true;
+        if (address > (UINT64_MAX - digit) / 16)
+          return malformed("$readmem address exceeds 64 bits");
+        address = address * 16 + digit;
+      }
+      if (!haveDigit)
+        return malformed("$readmem address marker has no hexadecimal digits");
+      if (character != EOF && std::ungetc(character, entry->stream) == EOF) {
+        recordIOError(context, *entry, "$readmem pushback failed");
+        return OBELISK_RT_IO_ERROR;
+      }
+      if (character == EOF && std::ferror(entry->stream))
+        return finishIO();
+      *outKind = OBELISK_RT_READMEM_ADDRESS;
+      *outAddress = address;
+      return OBELISK_RT_OK;
+    }
+    std::string digits;
+    for (;;) {
+      bool valid = character == '_' || character == 'x' || character == 'X' ||
+                   character == 'z' || character == 'Z' ||
+                   (character >= '0' && character <= '1') ||
+                   (radix == 16 && ((character >= '2' && character <= '9') ||
+                                    (character >= 'a' && character <= 'f') ||
+                                    (character >= 'A' && character <= 'F')));
+      if (!valid)
+        break;
+      digits.push_back(static_cast<char>(character));
+      character = next();
+    }
+    if (digits.empty())
+      return malformed("invalid character in $readmem input");
+    if (character != EOF && std::ungetc(character, entry->stream) == EOF) {
+      recordIOError(context, *entry, "$readmem pushback failed");
+      return OBELISK_RT_IO_ERROR;
+    }
+    if (character == EOF && std::ferror(entry->stream))
+      return finishIO();
+    auto *valueBytes = static_cast<uint8_t *>(value);
+    auto *unknownBytes = static_cast<uint8_t *>(unknown);
+    uint64_t outputBit = 0;
+    unsigned bitsPerDigit = radix == 2 ? 1 : 4;
+    for (auto position = digits.rbegin(); position != digits.rend();
+         ++position) {
+      char digitCharacter = *position;
+      if (digitCharacter == '_')
+        continue;
+      unsigned digit =
+          digitCharacter >= '0' && digitCharacter <= '9'
+              ? digitCharacter - '0'
+          : digitCharacter >= 'a' && digitCharacter <= 'f'
+              ? digitCharacter - 'a' + 10
+          : digitCharacter >= 'A' && digitCharacter <= 'F'
+              ? digitCharacter - 'A' + 10
+              : 0;
+      bool isX = digitCharacter == 'x' || digitCharacter == 'X';
+      bool isZ = digitCharacter == 'z' || digitCharacter == 'Z';
+      for (unsigned bit = 0; bit != bitsPerDigit && outputBit < bitWidth;
+           ++bit, ++outputBit) {
+        uint8_t mask = uint8_t{1} << (outputBit % 8);
+        if ((!isX && !isZ && ((digit >> bit) & 1)) || isZ)
+          valueBytes[outputBit / 8] |= mask;
+        if (isX || isZ)
+          unknownBytes[outputBit / 8] |= mask;
+      }
+      if (outputBit == bitWidth)
+        break;
+    }
+    *outKind = OBELISK_RT_READMEM_DATA;
+    return OBELISK_RT_OK;
+  });
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_file_getc(obelisk_rt_context *context, uint32_t descriptor,
                         uint8_t *outByte) {

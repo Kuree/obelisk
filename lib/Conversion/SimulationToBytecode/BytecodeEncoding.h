@@ -50,6 +50,8 @@ constexpr uint32_t kIntrinsicFileGetlineString =
     OBELISK_RT_INTRINSIC_V1_FILE_GETLINE_STRING;
 constexpr uint32_t kIntrinsicFileScanField =
     OBELISK_RT_INTRINSIC_V1_FILE_SCAN_FIELD;
+constexpr uint32_t kIntrinsicFileReadMemToken =
+    OBELISK_RT_INTRINSIC_V1_FILE_READMEM_TOKEN;
 constexpr uint32_t kIntrinsicFileErrorString =
     OBELISK_RT_INTRINSIC_V1_FILE_ERROR_STRING;
 constexpr uint32_t kIntrinsicTimeFormat = OBELISK_RT_INTRINSIC_V1_TIME_FORMAT;

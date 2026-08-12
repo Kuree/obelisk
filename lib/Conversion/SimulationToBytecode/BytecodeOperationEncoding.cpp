@@ -148,6 +148,14 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   if (auto op = dyn_cast<sim::SimFileReadPackedOp>(operation))
     return emitIntrinsic(plan, kIntrinsicFileReadPacked, {op.getDescriptor()},
                          {op.getData(), op.getCount()});
+  if (auto op = dyn_cast<sim::SimFileReadMemTokenOp>(operation)) {
+    uint32_t radix = emitU64Constant(plan, op.getRadix());
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicFileReadMemToken,
+        {reg(plan, op.getDescriptor()), radix},
+        {reg(plan, op.getData()), reg(plan, op.getKind()),
+         reg(plan, op.getAddress())});
+  }
   if (auto op = dyn_cast<sim::SimFileEofOp>(operation))
     return emitIntrinsic(plan, kIntrinsicFileEof, {op.getDescriptor()},
                          {op.getResult()});

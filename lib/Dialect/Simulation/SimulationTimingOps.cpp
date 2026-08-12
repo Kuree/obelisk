@@ -515,5 +515,13 @@ LogicalResult SimFileReadPackedOp::verify() {
   return verifyPackedFileResult(*this, getData().getType());
 }
 
+LogicalResult SimFileReadMemTokenOp::verify() {
+  if (getData().getType().getWidth() == 0)
+    return emitOpError("data must have nonzero width");
+  if (getRadix() != 2 && getRadix() != 16)
+    return emitOpError("radix must be 2 or 16");
+  return success();
+}
+
 
 } // namespace obelisk::sim

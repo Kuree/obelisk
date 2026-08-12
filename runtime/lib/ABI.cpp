@@ -855,6 +855,10 @@ ABI_FUNCTION(obelisk_rt_v1_file_write,
 ABI_FUNCTION(obelisk_rt_v1_file_read,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, void *,
                                    uint64_t, uint64_t *));
+ABI_FUNCTION(obelisk_rt_v1_file_readmem_token,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint32_t,
+                                   uint64_t, void *, uint64_t, void *, uint64_t,
+                                   uint32_t *, uint64_t *));
 ABI_FUNCTION(obelisk_rt_v1_file_getc,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint8_t *));
 ABI_FUNCTION(obelisk_rt_v1_file_ungetc,

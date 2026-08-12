@@ -331,6 +331,18 @@ def RTFileReadOp : RTOp<"file.read", [
   let results = (outs RTStatusType:$status, I64:$read);
 }
 
+def RTFileReadMemTokenOp : RTOp<"file.readmem_token", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemRead<RTIOResource>, MemWrite<RTIOResource>, MemWrite]>
+]> {
+  let summary = "read one IEEE $readmem token from a file";
+  let arguments = (ins RTContextType:$context, RTFileDescriptorType:$descriptor,
+                       I32:$radix, I64:$bitWidth,
+                       RTMutableByteSpanType:$value,
+                       RTMutableByteSpanType:$unknown);
+  let results = (outs RTStatusType:$status, I32:$kind, I64:$address);
+}
+
 def RTFileGetcOp : RTOp<"file.getc", [
   MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
                  MemRead<RTIOResource>, MemWrite<RTIOResource>]>

@@ -47,6 +47,8 @@ OBELISK_RUNTIME_CALL(FileWrite, RTFileWriteOp, obelisk_rt_v1_file_write,
                      FileBytesCount)
 OBELISK_RUNTIME_CALL(FileRead, RTFileReadOp, obelisk_rt_v1_file_read,
                      FileBytesCount)
+OBELISK_RUNTIME_CALL(FileReadMemToken, RTFileReadMemTokenOp,
+                     obelisk_rt_v1_file_readmem_token, FileReadMemToken)
 OBELISK_RUNTIME_CALL(FileGetc, RTFileGetcOp, obelisk_rt_v1_file_getc,
                      FileByteOut)
 OBELISK_RUNTIME_CALL(FileUngetc, RTFileUngetcOp, obelisk_rt_v1_file_ungetc,

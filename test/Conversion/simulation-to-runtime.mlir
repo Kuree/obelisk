@@ -30,6 +30,9 @@ module {
         (!obelisk_sim.context, i32) -> (i13, i32)
     %data, %read_count = obelisk_sim.file.read_packed %ctx, %fd_bits :
         (!obelisk_sim.context, i32) -> (i13, i32)
+    %token_data, %token_kind, %token_address =
+        obelisk_sim.file.readmem_token %ctx, %fd_bits {radix = 16 : i32} :
+        (!obelisk_sim.context, i32) -> (!obelisk_sim.logic<13>, i32, i64)
     %eof = obelisk_sim.file.eof %ctx, %fd_bits :
         (!obelisk_sim.context, i32) -> i32
     %seek = obelisk_sim.file.seek %ctx, %fd_bits, %offset, %origin :
@@ -122,6 +125,12 @@ module {
 // CHECK: %[[READ_FAILURE:.*]] = arith.constant 0 : i32
 // CHECK: %[[READ_OK:.*]] = obelisk_rt.status.is %[[READ_STATUS]], 0
 // CHECK: arith.select %[[READ_OK]], %[[READ_COUNT_I32]], %[[READ_FAILURE]] : i32
+// CHECK: %[[TOKEN_VALUE_SCRATCH:.*]] = obelisk_rt.bytes.scratch 2
+// CHECK: %[[TOKEN_UNKNOWN_SCRATCH:.*]] = obelisk_rt.bytes.scratch 2
+// CHECK: %[[TOKEN_STATUS:.*]], %[[TOKEN_KIND:.*]], %[[TOKEN_ADDRESS:.*]] = obelisk_rt.file.readmem_token
+// CHECK-NEXT: obelisk_sim.status.check %[[TOKEN_STATUS]]
+// CHECK: obelisk_rt.bytes.to_packed %[[TOKEN_VALUE_SCRATCH]]
+// CHECK: obelisk_rt.bytes.to_packed %[[TOKEN_UNKNOWN_SCRATCH]]
 // CHECK: %[[EOF_STATUS:.*]], %[[EOF_VALUE:.*]] = obelisk_rt.file.eof
 // CHECK: %[[EOF_FAILURE:.*]] = arith.constant 0 : i32
 // CHECK: %[[EOF_OK:.*]] = obelisk_rt.status.is %[[EOF_STATUS]], 0

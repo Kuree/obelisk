@@ -40,6 +40,7 @@ enum class RuntimeSignature {
   FileOpen,
   FileDescriptorStatus,
   FileBytesCount,
+  FileReadMemToken,
   FileByteOut,
   FileUngetc,
   FileBufferOut,

@@ -1717,6 +1717,18 @@ def SimFileReadPackedOp : SimFileOp<"file.read_packed",
   let hasVerifier = 1;
 }
 
+def SimFileReadMemTokenOp : SimFileOp<"file.readmem_token",
+    (ins SimContextType:$context, I32:$descriptor, I32Attr:$radix),
+    (outs SimLogicType:$data, I32:$kind, I64:$address)> {
+  let summary = "read one IEEE $readmem data or address token";
+  let description = [{
+    Reads one token using the lexical grammar shared by `$readmemb` and
+    `$readmemh`. The four-state `data` preserves 0, 1, X, and Z. `kind` is one
+    of the public runtime readmem token constants.
+  }];
+  let hasVerifier = 1;
+}
+
 def SimFileEofOp : SimFileOp<"file.eof",
     (ins SimContextType:$context, I32:$descriptor), (outs I32:$result),
     [MemRead<SimIOResource>]>;

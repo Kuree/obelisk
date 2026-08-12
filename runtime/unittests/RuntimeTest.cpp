@@ -1461,6 +1461,60 @@ TEST_F(RuntimeTest, ReadsWritesAndPositionsBinaryFiles) {
   EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
 }
 
+TEST_F(RuntimeTest, ReadMemTokenizerPreservesFourStateWordsAndAddresses) {
+  TempDirectory temporary;
+  std::filesystem::path path = temporary.file("memory.hex");
+  {
+    std::ofstream output(path);
+    output << "aZ /* gap */ @1f // reposition\n10x_1";
+  }
+  uint32_t descriptor = open(path, "r");
+  std::array<uint8_t, 2> value{}, unknown{};
+  uint32_t kind = 0;
+  uint64_t address = 0;
+  ASSERT_EQ(obelisk_rt_v1_file_readmem_token(
+                context, descriptor, 16, 13, value.data(), value.size(),
+                unknown.data(), unknown.size(), &kind, &address),
+            OBELISK_RT_OK);
+  EXPECT_EQ(kind, OBELISK_RT_READMEM_DATA);
+  EXPECT_EQ(value, (std::array<uint8_t, 2>{0xaf, 0x00}));
+  EXPECT_EQ(unknown, (std::array<uint8_t, 2>{0x0f, 0x00}));
+  ASSERT_EQ(obelisk_rt_v1_file_readmem_token(
+                context, descriptor, 16, 13, value.data(), value.size(),
+                unknown.data(), unknown.size(), &kind, &address),
+            OBELISK_RT_OK);
+  EXPECT_EQ(kind, OBELISK_RT_READMEM_ADDRESS);
+  EXPECT_EQ(address, 0x1fu);
+  ASSERT_EQ(obelisk_rt_v1_file_readmem_token(
+                context, descriptor, 16, 13, value.data(), value.size(),
+                unknown.data(), unknown.size(), &kind, &address),
+            OBELISK_RT_OK);
+  EXPECT_EQ(kind, OBELISK_RT_READMEM_DATA);
+  EXPECT_EQ(value, (std::array<uint8_t, 2>{0x01, 0x10}));
+  EXPECT_EQ(unknown, (std::array<uint8_t, 2>{0xf0, 0x00}));
+  ASSERT_EQ(obelisk_rt_v1_file_readmem_token(
+                context, descriptor, 16, 13, value.data(), value.size(),
+                unknown.data(), unknown.size(), &kind, &address),
+            OBELISK_RT_OK);
+  EXPECT_EQ(kind, OBELISK_RT_READMEM_EOF);
+  EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
+}
+
+TEST_F(RuntimeTest, ReadMemTokenizerRejectsMalformedInput) {
+  TempDirectory temporary;
+  std::filesystem::path path = temporary.file("bad.hex");
+  { std::ofstream(path) << "@"; }
+  uint32_t descriptor = open(path, "r");
+  uint8_t value = 0, unknown = 0;
+  uint32_t kind = 0;
+  uint64_t address = 0;
+  EXPECT_EQ(obelisk_rt_v1_file_readmem_token(
+                context, descriptor, 16, 8, &value, 1, &unknown, 1, &kind,
+                &address),
+            OBELISK_RT_FORMAT_ERROR);
+  EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
+}
+
 TEST_F(RuntimeTest, ReadsBytesLinesAndReportsEOF) {
   TempDirectory temporary;
   std::filesystem::path path = temporary.file("lines.bin");

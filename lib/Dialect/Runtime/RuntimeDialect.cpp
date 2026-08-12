@@ -313,7 +313,8 @@ static LogicalResult verifyLocalConsumers(Operation *producer, Value value,
 LogicalResult RTScratchOp::verify() {
   if (getSizeAttr().getValue().isNegative())
     return emitOpError("scratch byte count must be nonnegative");
-  return verifyLocalConsumers<RTFileReadOp, RTPackedFromBytesOp>(
+  return verifyLocalConsumers<RTFileReadOp, RTFileReadMemTokenOp,
+                              RTPackedFromBytesOp>(
       *this, getResult(), "stack-backed scratch span");
 }
 

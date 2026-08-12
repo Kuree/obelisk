@@ -92,6 +92,10 @@ LLVM::LLVMFunctionType getFunctionType(runtime::RuntimeCall call,
   case runtime::RuntimeSignature::FileBytesCount:
     arguments = {abi.pointer, abi.i32, abi.pointer, abi.i64, abi.pointer};
     break;
+  case runtime::RuntimeSignature::FileReadMemToken:
+    arguments = {abi.pointer, abi.i32,     abi.i32, abi.i64,     abi.pointer,
+                 abi.i64,     abi.pointer, abi.i64, abi.pointer, abi.pointer};
+    break;
   case runtime::RuntimeSignature::FileByteOut:
     arguments = {abi.pointer, abi.i32, abi.pointer};
     break;
@@ -828,6 +832,19 @@ public:
       return replaceStatusAndLoad(
           {operands[0], operands[1], data, size, output}, output, abi.i64,
           abi.alignments.i64);
+    }
+    case runtime::RuntimeCall::FileReadMemToken: {
+      auto [value, valueSize] = span(operands[4]);
+      auto [unknown, unknownSize] = span(operands[5]);
+      Value kind = allocate(abi.i32, abi.alignments.i32);
+      Value address = allocate(abi.i64, abi.alignments.i64);
+      Value status =
+          callStatus({operands[0], operands[1], operands[2], operands[3], value,
+                      valueSize, unknown, unknownSize, kind, address});
+      rewriter.replaceOp(
+          operation, ValueRange{status, load(abi.i32, kind, abi.alignments.i32),
+                                load(abi.i64, address, abi.alignments.i64)});
+      return success();
     }
     case runtime::RuntimeCall::FileGetc: {
       Value output = allocate(abi.i8, abi.alignments.i8);

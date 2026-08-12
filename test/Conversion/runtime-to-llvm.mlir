@@ -17,6 +17,7 @@
 // CHECK-DAG: llvm.func @obelisk_rt_v1_file_flush(!llvm.ptr, i32) -> i32
 // CHECK-DAG: llvm.func @obelisk_rt_v1_file_write(!llvm.ptr, i32, !llvm.ptr, i64, !llvm.ptr) -> i32
 // CHECK-DAG: llvm.func @obelisk_rt_v1_file_read(!llvm.ptr, i32, !llvm.ptr, i64, !llvm.ptr) -> i32
+// CHECK-DAG: llvm.func @obelisk_rt_v1_file_readmem_token(!llvm.ptr, i32, i32, i64, !llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr) -> i32
 // CHECK-DAG: llvm.func @obelisk_rt_v1_file_getc(!llvm.ptr, i32, !llvm.ptr) -> i32
 // CHECK-DAG: llvm.func @obelisk_rt_v1_file_ungetc(!llvm.ptr, i32, i8) -> i32
 // CHECK-DAG: llvm.func @obelisk_rt_v1_file_getline(!llvm.ptr, i32, i64, !llvm.ptr) -> i32
@@ -58,6 +59,7 @@
 // CHECK: llvm.zext {{.*}} : i1 to i32
 // CHECK: llvm.mlir.constant(16 : i32) : i32
 // CHECK: llvm.call @obelisk_rt_v1_display
+// CHECK: llvm.call @obelisk_rt_v1_file_readmem_token
 // CHECK: llvm.call @obelisk_rt_v1_file_getc
 // CHECK: llvm.call @obelisk_rt_v1_file_seek
 // CHECK: llvm.call @obelisk_rt_v1_fragment_execute

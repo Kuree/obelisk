@@ -125,6 +125,13 @@ func.func @runtime_calls(
   %read_status, %read = obelisk_rt.file.read %ctx, %fd, %mut_bytes :
       (!obelisk_rt.context, !obelisk_rt.fd, !obelisk_rt.mut_bytes) ->
       (!obelisk_rt.status, i64)
+  %radix = arith.constant 16 : i32
+  %bit_width = arith.constant 65 : i64
+  %token_status, %token_kind, %token_address =
+      obelisk_rt.file.readmem_token %ctx, %fd, %radix, %bit_width,
+          %mut_bytes, %mut_bytes :
+      (!obelisk_rt.context, !obelisk_rt.fd, i32, i64, !obelisk_rt.mut_bytes,
+       !obelisk_rt.mut_bytes) -> (!obelisk_rt.status, i32, i64)
   %getc_status, %read_byte = obelisk_rt.file.getc %ctx, %fd :
       (!obelisk_rt.context, !obelisk_rt.fd) -> (!obelisk_rt.status, i8)
   %ungetc_status = obelisk_rt.file.ungetc %ctx, %fd, %byte :

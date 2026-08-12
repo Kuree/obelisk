@@ -486,6 +486,47 @@ public:
   }
 };
 
+class ReadMemTokenConversion final
+    : public SimIOConversion<sim::SimFileReadMemTokenOp> {
+public:
+  using SimIOConversion::SimIOConversion;
+
+  LogicalResult
+  matchAndRewrite(sim::SimFileReadMemTokenOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto logicType = op.getData().getType();
+    auto packedType = IntegerType::get(rewriter.getContext(),
+                                       logicType.getWidth());
+    uint64_t byteSize =
+        (static_cast<uint64_t>(packedType.getWidth()) + 7) / 8;
+    auto mutableBytes = runtime::MutableByteSpanType::get(rewriter.getContext());
+    Value valueScratch = runtime::RTScratchOp::create(
+        rewriter, loc, mutableBytes, byteSize);
+    Value unknownScratch = runtime::RTScratchOp::create(
+        rewriter, loc, mutableBytes, byteSize);
+    Value radix = iConstant(rewriter, loc, rewriter.getI32Type(), op.getRadix());
+    Value bitWidth = iConstant(rewriter, loc, rewriter.getI64Type(),
+                               packedType.getWidth());
+    auto call = runtime::RTFileReadMemTokenOp::create(
+        rewriter, loc,
+        TypeRange{runtime::StatusType::get(rewriter.getContext()),
+                  rewriter.getI32Type(), rewriter.getI64Type()},
+        runtimeContext(rewriter, loc, adaptor.getContext().front()),
+        descriptor(rewriter, loc, adaptor.getDescriptor().front()), radix,
+        bitWidth, valueScratch, unknownScratch);
+    sim::SimStatusCheckOp::create(rewriter, loc, call.getStatus());
+    Value count = iConstant(rewriter, loc, rewriter.getI64Type(), byteSize);
+    Value value = runtime::RTPackedFromBytesOp::create(
+        rewriter, loc, packedType, valueScratch, count, false);
+    Value unknown = runtime::RTPackedFromBytesOp::create(
+        rewriter, loc, packedType, unknownScratch, count, false);
+    rewriter.replaceOp(op, ValueRange{value, unknown, call.getKind(),
+                                      call.getAddress()});
+    return success();
+  }
+};
+
 class EofConversion final : public SimIOConversion<sim::SimFileEofOp> {
 public:
   using SimIOConversion::SimIOConversion;
@@ -570,6 +611,7 @@ public:
         sim::SimDisplayOp, sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
         sim::SimFileCloseOp, sim::SimFileFlushOp, sim::SimFileGetcOp,
         sim::SimFileUngetcOp, sim::SimFileGetlineOp, sim::SimFileReadPackedOp,
+        sim::SimFileReadMemTokenOp,
         sim::SimFileEofOp, sim::SimFileSeekOp, sim::SimFileTellOp,
         sim::SimFileRewindOp, sim::SimDumpOpenOp, sim::SimDumpTimescaleOp,
         sim::SimDumpVarsOp, sim::SimDumpAllOp, sim::SimDumpControlOp,
@@ -598,6 +640,7 @@ void populateSimulationToRuntimePatterns(const TypeConverter &converter,
   patterns.add<BytesConstantConversion, TimeFormatConversion,
                DisplayConversion, GetcConversion,
                UngetcConversion, GetlineConversion, ReadPackedConversion,
+               ReadMemTokenConversion,
                EofConversion, SeekConversion, TellConversion>(converter,
                                                                context);
   patterns.add<TerminationConversion<sim::SimFinishOp, runtime::RTFinishOp>,

@@ -3005,6 +3005,33 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_BYTECODE;
     return sentinel(1, status == OBELISK_RT_OK ? count : 0);
   }
+  case OBELISK_RT_INTRINSIC_V1_FILE_READMEM_TOKEN: {
+    auto descriptor = scalar(0), radix = scalar(1);
+    Layout output = layoutAt(image, frame.function, outputRegister(0));
+    if (!descriptor || !radix || *descriptor > UINT32_MAX ||
+        (*radix != 2 && *radix != 16) ||
+        output.kind != OBELISK_RT_DBREG_LOGIC || output.width == 0)
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t byteSize = (uint64_t{output.width} + 7) / 8;
+    std::vector<uint8_t> value(static_cast<size_t>(byteSize));
+    std::vector<uint8_t> unknown(static_cast<size_t>(byteSize));
+    uint32_t kind = OBELISK_RT_READMEM_EOF;
+    uint64_t address = 0;
+    obelisk_rt_status status = obelisk_rt_v1_file_readmem_token(
+        context, static_cast<uint32_t>(*descriptor),
+        static_cast<uint32_t>(*radix), output.width, value.data(), byteSize,
+        unknown.data(), byteSize, &kind, &address);
+    if (status != OBELISK_RT_OK)
+      return status;
+    Logic data{output.width, true, LimbVector(limbCount(output.width)),
+               LimbVector(limbCount(output.width))};
+    std::memcpy(data.value.data(), value.data(), static_cast<size_t>(byteSize));
+    std::memcpy(data.unknown.data(), unknown.data(),
+                static_cast<size_t>(byteSize));
+    writeLogic(frame.data, output, data);
+    status = sentinel(1, kind);
+    return status == OBELISK_RT_OK ? sentinel(2, address) : status;
+  }
   case OBELISK_RT_INTRINSIC_V1_FILE_EOF: {
     auto descriptor = scalar(0);
     if (!descriptor || *descriptor > UINT32_MAX)
