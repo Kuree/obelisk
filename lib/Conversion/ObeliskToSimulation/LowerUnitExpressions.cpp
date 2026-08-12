@@ -502,6 +502,222 @@ FailureOr<Value> UnitLowering::lowerReplication(Operation *op) {
 }
 
 FailureOr<Value>
+UnitLowering::lowerVirtualInterfaceClock(
+    semantic::SVMemberAccessExpressionOp op, Value interface) {
+  Location location = getSemanticLocation(op);
+  auto interfaceType = dyn_cast<sim::VirtualInterfaceType>(interface.getType());
+  auto clockMember =
+      op->getAttrOfType<StringAttr>("virtual_interface_clock_member");
+  if (!interfaceType || !clockMember) {
+    emitError(location) << "clocking variable has no static clock member";
+    return failure();
+  }
+  if (auto required =
+          op->getAttrOfType<StringAttr>("virtual_interface_modport")) {
+    StringRef selected = interfaceType.getModport().getValue();
+    if (selected.empty() || selected != required.getValue()) {
+      emitError(location) << "clocking block requires modport '"
+                          << required.getValue() << "' but the handle selects '"
+                          << selected << "'";
+      return failure();
+    }
+  }
+  std::string key =
+      (Twine(interfaceType.getInterfaceName().getValue()) + "\n" +
+       clockMember.getValue())
+          .str();
+  VirtualMemberTargets *targets = nullptr;
+  bool isNet = false;
+  if (auto found = virtualInterfaceStorageMembers.find(key);
+      found != virtualInterfaceStorageMembers.end())
+    targets = &found->second;
+  else if (auto found = virtualInterfaceNetMembers.find(key);
+           found != virtualInterfaceNetMembers.end()) {
+    targets = &found->second;
+    isNet = true;
+  }
+  if (!targets || targets->empty()) {
+    emitError(location) << "clocking variable clock '" << clockMember.getValue()
+                        << "' has no elaborated descriptor";
+    return failure();
+  }
+  llvm::sort(*targets);
+  DenseMap<uint64_t, Value> &cache =
+      isNet ? virtualInterfaceNetHandles : virtualInterfaceStorageHandles;
+  DenseMap<uint64_t, Type> &types =
+      isNet ? virtualInterfaceNetTypes : virtualInterfaceStorageTypes;
+  SmallVector<Value> handles;
+  for (auto [scopeID, descriptorID] : *targets) {
+    (void)scopeID;
+    Value handle = cache.lookup(descriptorID);
+    if (!handle) {
+      Type elementType = types.lookup(descriptorID);
+      if (!elementType)
+        return emitError(location) << "clocking event descriptor has no type",
+               failure();
+      Type handleType =
+          isNet ? Type(sim::NetType::get(function.getContext(), elementType))
+                : Type(sim::RefType::get(function.getContext(), elementType));
+      OpBuilder entryBuilder(function.getContext());
+      entryBuilder.setInsertionPointToStart(&function.getBody().front());
+      Value context = function.getBody().front().getArgument(0);
+      handle = isNet
+                   ? Value(sim::SimContextNetOp::create(
+                         entryBuilder, location, handleType, context,
+                         entryBuilder.getI64IntegerAttr(descriptorID)))
+                   : Value(sim::SimContextStorageOp::create(
+                         entryBuilder, location, handleType, context,
+                         entryBuilder.getI64IntegerAttr(descriptorID)));
+      cache[descriptorID] = handle;
+    }
+    handles.push_back(handle);
+  }
+  if (handles.empty())
+    return failure();
+  Type selectedType = handles.front().getType();
+  for (Value handle : handles)
+    if (handle.getType() != selectedType) {
+      emitError(location)
+          << "clocking event has inconsistent types across interface instances";
+      return failure();
+    }
+  Value scope = sim::SimVirtualInterfaceScopeOp::create(
+      builder, location, builder.getI64Type(), interface);
+  Block *merge = addBlock();
+  merge->addArgument(selectedType, location);
+  for (auto [index, target] : llvm::enumerate(*targets)) {
+    Block *matched = addBlock();
+    Block *next = addBlock();
+    Value expected = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(),
+        builder.getI64IntegerAttr(target.first));
+    Value equal = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, scope, expected);
+    cf::CondBranchOp::create(builder, location, equal, matched, ValueRange{},
+                             next, ValueRange{});
+    setCurrent(matched);
+    cf::BranchOp::create(builder, location, merge, ValueRange{handles[index]});
+    setCurrent(next);
+  }
+  if (failed(emitRuntimeFatal(
+          location,
+          "clocking variable access used a null or invalid interface handle.")))
+    return failure();
+  setCurrent(merge);
+  return merge->getArgument(0);
+}
+
+FailureOr<Value> UnitLowering::lowerClockingInputSample(
+    Value source, uint64_t sourceDescriptor, Value clock,
+    uint64_t clockDescriptor, sim::EdgeKind edge, bool oneStep,
+    Location location) {
+  Type sourceType = getReferenceElementType(source);
+  if (auto net = dyn_cast<sim::NetType>(source.getType()))
+    sourceType = net.getElementType();
+  if (!sourceType)
+    return failure();
+  std::string key =
+      (Twine("clocking-input|") + Twine(sourceDescriptor) + "|" +
+       Twine(clockDescriptor) + "|" + Twine(static_cast<uint32_t>(edge)) +
+       "|" + (oneStep ? "1step" : "zero"))
+          .str();
+  uint64_t siteID = stableCodeUnitID(key);
+  if (!alternateClockSamplePlans.contains(key)) {
+    alternateClockSamplePlans[key] = {siteID, 1, sourceType};
+    MLIRContext *context = function.getContext();
+    std::string symbol =
+        (function.getSymName() + ".$clocking_input." + Twine(siteID)).str();
+    auto parentHierarchy =
+        function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+    StringRef parentName = parentHierarchy ? parentHierarchy.getValue()
+                                           : function.getSymName();
+    std::string hierarchy =
+        (Twine(parentName) + ".$clocking_input." + Twine(siteID)).str();
+    OpBuilder outlineBuilder(function);
+    outlineBuilder.setInsertionPoint(function);
+    SmallVector<Type> inputs{function.getArgumentTypes().front(),
+                             source.getType(), clock.getType()};
+    auto sourceKind = isa<sim::NetType>(source.getType())
+                          ? sim::CaptureKind::Net
+                          : sim::CaptureKind::Storage;
+    auto clockKind = isa<sim::NetType>(clock.getType())
+                         ? sim::CaptureKind::Net
+                         : sim::CaptureKind::Storage;
+    SmallVector<DictionaryAttr> argumentAttrs{
+        captureMetadata(outlineBuilder, sim::CaptureKind::Context),
+        captureMetadata(outlineBuilder, sourceKind, sourceDescriptor),
+        captureMetadata(outlineBuilder, clockKind, clockDescriptor)};
+    SmallVector<NamedAttribute> attributes{
+        outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
+        outlineBuilder.getNamedAttr(
+            "home_region",
+            sim::EventRegionAttr::get(context, sim::EventRegion::Active)),
+        outlineBuilder.getNamedAttr(
+            "domain", sim::ExecutionDomainAttr::get(
+                          context, sim::ExecutionDomain::Design)),
+        outlineBuilder.getNamedAttr(
+            "obelisk_sim.clocked_sample_plan",
+            outlineBuilder.getDictionaryAttr({
+                outlineBuilder.getNamedAttr("key",
+                                            outlineBuilder.getStringAttr(key)),
+                outlineBuilder.getNamedAttr(
+                    "id", outlineBuilder.getI64IntegerAttr(siteID)),
+                outlineBuilder.getNamedAttr(
+                    "hierarchy", outlineBuilder.getStringAttr(hierarchy))})),
+        outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
+                                    outlineBuilder.getStringAttr(hierarchy))};
+    sim::SimFuncOp sampler = sim::SimFuncOp::create(
+        outlineBuilder, location, symbol,
+        FunctionType::get(context, inputs, TypeRange{}), sim::EntryKind::Always,
+        attributes, argumentAttrs);
+    SymbolTable::setSymbolVisibility(sampler, SymbolTable::Visibility::Private);
+    Block &entry = sampler.getBody().front();
+    Block *wait = new Block();
+    Block *sample = new Block();
+    sampler.getBody().push_back(wait);
+    sampler.getBody().push_back(sample);
+    OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
+    cf::BranchOp::create(entryBuilder, location, wait);
+    OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
+    auto suspend = sim::SimSuspendEdgeOp::create(
+        waitBuilder, location, edge, entry.getArgument(2), ValueRange{},
+        sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, sample);
+    // Clocking inputs are latched in Observed. Clocking-block waiters resume
+    // in Reactive, so both #1step and #0 sampling are complete first.
+    suspend->setAttr(
+        "resume_region",
+        sim::EventRegionAttr::get(context, sim::EventRegion::Observed));
+    OpBuilder sampleBuilder = OpBuilder::atBlockEnd(sample);
+    Value sampled;
+    if (oneStep)
+      sampled = sim::SimSampledReadOp::create(
+          sampleBuilder, location, sourceType, entry.getArgument(0),
+          entry.getArgument(1));
+    else if (isa<sim::NetType>(source.getType()))
+      sampled = sim::SimNetReadOp::create(sampleBuilder, location, sourceType,
+                                          entry.getArgument(1));
+    else
+      sampled = sim::SimRefLoadOp::create(sampleBuilder, location, sourceType,
+                                          entry.getArgument(1));
+    Value gate = arith::ConstantOp::create(
+        sampleBuilder, location, sampleBuilder.getI1Type(),
+        sampleBuilder.getBoolAttr(true));
+    sim::SimClockedSampleUpdateOp::create(
+        sampleBuilder, location, entry.getArgument(0), sampled, gate,
+        sampleBuilder.getI64IntegerAttr(siteID),
+        sampleBuilder.getI64IntegerAttr(1));
+    cf::BranchOp::create(sampleBuilder, location, wait);
+    sampler->setAttr(sim::metadata::lowered, builder.getUnitAttr());
+  }
+  return sim::SimClockedSampleReadOp::create(
+             builder, location, sourceType,
+             function.getBody().front().getArgument(0),
+             builder.getI64IntegerAttr(siteID), builder.getI64IntegerAttr(1),
+             builder.getI64IntegerAttr(0))
+      .getResult();
+}
+
+FailureOr<Value>
 UnitLowering::lowerVirtualInterfaceMember(
     semantic::SVMemberAccessExpressionOp op, Value interface, Type elementType,
     bool lvalue) {
@@ -511,6 +727,29 @@ UnitLowering::lowerVirtualInterfaceMember(
   if (!interfaceType || !member) {
     emitError(location) << "virtual interface member has no static identity";
     return failure();
+  }
+  if (auto required =
+          op->getAttrOfType<StringAttr>("virtual_interface_modport")) {
+    StringRef selected = interfaceType.getModport().getValue();
+    if (selected.empty() || selected != required.getValue()) {
+      emitError(location)
+          << "virtual interface member requires modport '"
+          << required.getValue() << "' but the handle selects '" << selected
+          << "'";
+      return failure();
+    }
+  }
+  if (auto direction = op->getAttrOfType<semantic::SVArgumentDirectionAttr>(
+          "virtual_interface_access_direction")) {
+    if (lvalue && direction.getValue() == semantic::SVArgumentDirection::In) {
+      emitError(location) << "cannot write an input virtual-interface member";
+      return failure();
+    }
+    if (!lvalue && op->hasAttr("virtual_interface_clocking") &&
+        direction.getValue() == semantic::SVArgumentDirection::Out) {
+      emitError(location) << "cannot read an output clocking variable";
+      return failure();
+    }
   }
   std::string key =
       (Twine(interfaceType.getInterfaceName().getValue()) + "\n" +
@@ -535,6 +774,27 @@ UnitLowering::lowerVirtualInterfaceMember(
     return failure();
   }
   llvm::sort(*targets);
+
+  bool clockedRead = !lvalue && op->hasAttr("virtual_interface_clocking");
+  if (clockedRead) {
+    auto eventEdge = op->getAttrOfType<semantic::EdgeKindAttr>(
+        "virtual_interface_clock_event_edge");
+    if (!eventEdge ||
+        op->hasAttr("virtual_interface_clock_event_has_iff")) {
+      emitError(location)
+          << "clocking variable has no supported static clock event";
+      return failure();
+    }
+    if (!op->hasAttr("virtual_interface_clock_input_skew_one_step")) {
+      auto delay = op->getAttrOfType<StringAttr>(
+          "virtual_interface_clock_input_skew_delay");
+      if (!delay || delay.getValue() != "0") {
+        emitError(location)
+            << "clocking input skew currently requires #1step or #0";
+        return failure();
+      }
+    }
+  }
 
   SmallVector<Value> staticTargets;
   staticTargets.reserve(targets->size());
@@ -563,10 +823,80 @@ UnitLowering::lowerVirtualInterfaceMember(
       virtualInterfaceWrittenSensitivity.insert(selected);
   }
 
+  SmallVector<Value> clockedSamples;
+  if (clockedRead) {
+    auto clockMember = op->getAttrOfType<StringAttr>(
+        "virtual_interface_clock_member");
+    std::string clockKey =
+        (Twine(interfaceType.getInterfaceName().getValue()) + "\n" +
+         clockMember.getValue())
+            .str();
+    VirtualMemberTargets *clockTargets = nullptr;
+    bool clockIsNet = false;
+    if (auto found = virtualInterfaceStorageMembers.find(clockKey);
+        found != virtualInterfaceStorageMembers.end())
+      clockTargets = &found->second;
+    else if (auto found = virtualInterfaceNetMembers.find(clockKey);
+             found != virtualInterfaceNetMembers.end()) {
+      clockTargets = &found->second;
+      clockIsNet = true;
+    }
+    if (!clockTargets)
+      return failure();
+    llvm::sort(*clockTargets);
+    bool oneStep =
+        op->hasAttr("virtual_interface_clock_input_skew_one_step");
+    auto edgeAttr = op->getAttrOfType<semantic::EdgeKindAttr>(
+        "virtual_interface_clock_event_edge");
+    for (auto [index, target] : llvm::enumerate(*targets)) {
+      auto clockTarget = llvm::find_if(
+          *clockTargets,
+          [&](auto candidate) { return candidate.first == target.first; });
+      if (clockTarget == clockTargets->end())
+        return emitError(location)
+                   << "clocking input source and clock instances do not match",
+               failure();
+      uint64_t clockDescriptor = clockTarget->second;
+      DenseMap<uint64_t, Value> &clockCache =
+          clockIsNet ? virtualInterfaceNetHandles
+                     : virtualInterfaceStorageHandles;
+      Value clockHandle = clockCache.lookup(clockDescriptor);
+      if (!clockHandle) {
+        DenseMap<uint64_t, Type> &clockTypes =
+            clockIsNet ? virtualInterfaceNetTypes
+                       : virtualInterfaceStorageTypes;
+        Type clockElement = clockTypes.lookup(clockDescriptor);
+        Type clockType =
+            clockIsNet ? Type(sim::NetType::get(function.getContext(),
+                                                clockElement))
+                       : Type(sim::RefType::get(function.getContext(),
+                                               clockElement));
+        OpBuilder entryBuilder(function.getContext());
+        entryBuilder.setInsertionPointToStart(&function.getBody().front());
+        Value context = function.getBody().front().getArgument(0);
+        clockHandle =
+            clockIsNet
+                ? Value(sim::SimContextNetOp::create(
+                      entryBuilder, location, clockType, context,
+                      entryBuilder.getI64IntegerAttr(clockDescriptor)))
+                : Value(sim::SimContextStorageOp::create(
+                      entryBuilder, location, clockType, context,
+                      entryBuilder.getI64IntegerAttr(clockDescriptor)));
+        clockCache[clockDescriptor] = clockHandle;
+      }
+      FailureOr<Value> sample = lowerClockingInputSample(
+          staticTargets[index], target.second, clockHandle, clockDescriptor,
+          static_cast<sim::EdgeKind>(edgeAttr.getValue()), oneStep, location);
+      if (failed(sample))
+        return failure();
+      clockedSamples.push_back(*sample);
+    }
+  }
+
   Value scope = sim::SimVirtualInterfaceScopeOp::create(
       builder, location, builder.getI64Type(), interface);
   Block *merge = addBlock();
-  merge->addArgument(selectedType, location);
+  merge->addArgument(clockedRead ? elementType : selectedType, location);
   for (auto [index, target] : llvm::enumerate(*targets)) {
     auto [scopeID, descriptorID] = target;
     (void)descriptorID;
@@ -580,7 +910,8 @@ UnitLowering::lowerVirtualInterfaceMember(
     cf::CondBranchOp::create(builder, location, equal, matched, ValueRange{},
                              next, ValueRange{});
     setCurrent(matched);
-    Value selected = staticTargets[index];
+    Value selected =
+        clockedRead ? clockedSamples[index] : staticTargets[index];
     cf::BranchOp::create(builder, location, merge, ValueRange{selected});
     setCurrent(next);
   }
@@ -589,6 +920,8 @@ UnitLowering::lowerVirtualInterfaceMember(
     return failure();
   setCurrent(merge);
   Value selected = merge->getArgument(0);
+  if (clockedRead)
+    return selected;
   if (lvalue)
     return selected;
   if (isNet)
@@ -641,13 +974,15 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
                                          reference)
         .getResult();
   }
-  FailureOr<Type> virtualResultType = getNormalizedSemanticType(op);
   FailureOr<Type> receiverType = getNormalizedSemanticType(children.front());
   if (succeeded(receiverType) && isa<sim::VirtualInterfaceType>(*receiverType)) {
     FailureOr<Value> virtualInput = lowerExpression(children.front());
-    if (failed(virtualResultType))
-      return failure();
     if (failed(virtualInput))
+      return failure();
+    if (op->hasAttr("virtual_interface_clocking_block_event"))
+      return lowerVirtualInterfaceClock(op, *virtualInput);
+    FailureOr<Type> virtualResultType = getNormalizedSemanticType(op);
+    if (failed(virtualResultType))
       return failure();
     return lowerVirtualInterfaceMember(op, *virtualInput, *virtualResultType,
                                        lvalue);
@@ -659,7 +994,7 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
     return failure();
   }
   unsigned ordinal = ordinalAttr.getValue().getZExtValue();
-  FailureOr<Type> resultType = std::move(virtualResultType);
+  FailureOr<Type> resultType = getNormalizedSemanticType(op);
   FailureOr<Value> input = lowerExpression(children.front(), lvalue);
   if (failed(resultType) || failed(input))
     return failure();

@@ -262,8 +262,17 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
       SmallVector<Operation *> children = getChildren(event);
       if (children.empty())
         return;
+      // A virtual clocking-block event is lowered directly to the dynamically
+      // selected clock descriptor. Outlining its void-typed surface
+      // expression as a value observer would lose that interface handle.
+      if (children.front()->hasAttr(
+              "virtual_interface_clocking_block_event"))
+        return;
       ObserverResult primaryResult = ObserverResult::Value;
-      FailureOr<Type> primaryType = getNormalizedSemanticType(children.front());
+      FailureOr<Type> primaryType =
+          children.front()->hasAttr("virtual_interface_clocking_block_event")
+              ? FailureOr<Type>(sim::LogicType::get(module.getContext(), 1))
+              : getNormalizedSemanticType(children.front());
       if (succeeded(primaryType) && isa<sim::EventType>(*primaryType))
         primaryResult = ObserverResult::Event;
       observerCandidates.push_back({children.front(), primaryResult, "primary",

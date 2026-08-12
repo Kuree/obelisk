@@ -224,6 +224,7 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
     return (Twine(identity) + "\n" + member).str();
   };
   design.walk([&](sim::SimStorageDeclOp storage) {
+    virtualInterfaceStorageTypes[storage.getId()] = storage.getType();
     auto scope = interfaceScopes.find(storage.getScopeId());
     StringAttr member = storage->getAttrOfType<StringAttr>(
         "obelisk_sim.virtual_interface_member");
@@ -233,6 +234,7 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
           .push_back({storage.getScopeId(), storage.getId()});
   });
   design.walk([&](sim::SimNetDeclOp net) {
+    virtualInterfaceNetTypes[net.getId()] = net.getType();
     auto scope = interfaceScopes.find(net.getScopeId());
     StringAttr member = net->getAttrOfType<StringAttr>(
         "obelisk_sim.virtual_interface_member");
@@ -378,6 +380,30 @@ Block *UnitLowering::addBlock() {
   Block *block = new Block();
   function.getBody().push_back(block);
   return block;
+}
+
+bool UnitLowering::isCurrentClockingOccurrence(Block *block) const {
+  DenseSet<Block *> visiting;
+  std::function<bool(Block *)> reachesOccurrence = [&](Block *candidate) {
+    if (clockingEventContinuations.contains(candidate))
+      return true;
+    if (timingBoundaryContinuations.contains(candidate))
+      return false;
+    // A backedge within the currently inspected predecessor SCC does not
+    // introduce a new entry path. Its external predecessors decide whether
+    // the whole zero-time loop remains in the clocking occurrence.
+    if (!visiting.insert(candidate).second)
+      return true;
+    auto predecessors = candidate->getPredecessors();
+    if (predecessors.empty()) {
+      visiting.erase(candidate);
+      return false;
+    }
+    bool all = llvm::all_of(predecessors, reachesOccurrence);
+    visiting.erase(candidate);
+    return all;
+  };
+  return reachesOccurrence(block);
 }
 
 void UnitLowering::setCurrent(Block *block) {

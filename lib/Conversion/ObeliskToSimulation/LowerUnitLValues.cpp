@@ -8,6 +8,8 @@
 
 #include "llvm/ADT/STLExtras.h"
 
+#include <cmath>
+#include <limits>
 #include <optional>
 #include <utility>
 
@@ -1016,6 +1018,181 @@ LogicalResult UnitLowering::writeLValue(Operation *destination, Value value,
                              location, delay);
 }
 
+LogicalResult UnitLowering::lowerClockingOutputAssignment(
+    semantic::SVMemberAccessExpressionOp destination, Value value,
+    Location location) {
+  bool synchronizedToCurrentEvent =
+      isCurrentClockingOccurrence(current);
+  SmallVector<Operation *> children = getChildren(destination);
+  if (children.size() != 1)
+    return emitError(location) << "clocking output has no interface receiver";
+  FailureOr<Value> interface = lowerExpression(children.front());
+  FailureOr<Type> elementType = getNormalizedSemanticType(destination);
+  if (failed(interface) || failed(elementType))
+    return failure();
+  FailureOr<Value> target = lowerVirtualInterfaceMember(
+      destination, *interface, *elementType, /*lvalue=*/true);
+  FailureOr<Value> clock = lowerVirtualInterfaceClock(destination, *interface);
+  if (failed(target) || failed(clock))
+    return failure();
+  auto targetRef = dyn_cast<sim::RefType>((*target).getType());
+  if (!targetRef) {
+    emitError(location)
+        << "clocking output to a resolved net is not yet supported";
+    return failure();
+  }
+
+  auto eventEdge = destination->getAttrOfType<semantic::EdgeKindAttr>(
+      "virtual_interface_clock_event_edge");
+  auto skewEdge = destination->getAttrOfType<semantic::EdgeKindAttr>(
+      "virtual_interface_clock_output_skew_edge");
+  if (!eventEdge ||
+      destination->hasAttr("virtual_interface_clock_event_has_iff")) {
+    emitError(location) << "clocking output has no supported static event";
+    return failure();
+  }
+  semantic::EdgeKind selectedEdge =
+      skewEdge && skewEdge.getValue() != semantic::EdgeKind::Change
+          ? skewEdge.getValue()
+          : eventEdge.getValue();
+  sim::EdgeKind edge = static_cast<sim::EdgeKind>(selectedEdge);
+
+  uint64_t delayTicks = 0;
+  if (auto spelling = destination->getAttrOfType<StringAttr>(
+          "virtual_interface_clock_output_skew_delay")) {
+    auto unit = destination->getAttrOfType<IntegerAttr>(
+        "virtual_interface_clock_time_unit_fs");
+    auto precision = destination->getAttrOfType<IntegerAttr>(
+        "virtual_interface_clock_time_precision_fs");
+    if (!unit || !precision || unit.getValue().isZero() ||
+        precision.getValue().isZero()) {
+      emitError(location) << "clocking output has invalid time scale";
+      return failure();
+    }
+    uint64_t unitFS = unit.getValue().getZExtValue();
+    uint64_t precisionFS = precision.getValue().getZExtValue();
+    auto isRealAttr = destination->getAttrOfType<BoolAttr>(
+        "virtual_interface_clock_output_skew_delay_is_real");
+    bool isReal = isRealAttr && isRealAttr.getValue();
+    long double scaled = 0;
+    if (isReal) {
+      double amount = 0;
+      if (spelling.getValue().getAsDouble(amount) || !std::isfinite(amount) ||
+          amount < 0) {
+        emitError(location) << "clocking output skew is not finite and nonnegative";
+        return failure();
+      }
+      scaled = std::round(amount * static_cast<long double>(unitFS) /
+                          static_cast<long double>(precisionFS)) *
+               precisionFS;
+    } else {
+      FailureOr<ParsedConstant> parsed =
+          parseSVInteger(spelling.getValue(), 64, location);
+      if (failed(parsed))
+        return failure();
+      if (!parsed->unknown.isZero() || parsed->value.isNegative())
+        scaled = 0;
+      else
+        scaled = static_cast<long double>(parsed->value.getZExtValue()) *
+                 unitFS;
+    }
+    if (scaled > std::numeric_limits<uint64_t>::max()) {
+      emitError(location) << "clocking output skew exceeds simulation time";
+      return failure();
+    }
+    delayTicks = static_cast<uint64_t>(scaled);
+  }
+
+  uint64_t node = destination->getAttrOfType<IntegerAttr>("node_id")
+                      ? destination->getAttrOfType<IntegerAttr>("node_id")
+                            .getValue()
+                            .getZExtValue()
+                      : 0;
+  std::string identity =
+      (function.getSymName() + ".$clocking_output." + Twine(node)).str();
+  uint64_t codeUnitID = stableCodeUnitID(identity);
+  uint64_t scopeID = 0;
+  if (auto parentID = function.getCodeUnitId())
+    for (sim::SimCodeUnitDeclOp declaration :
+         function->getParentOfType<sim::SimDesignOp>()
+             .getBody()
+             .front()
+             .getOps<sim::SimCodeUnitDeclOp>())
+      if (declaration.getId() == *parentID) {
+        scopeID = declaration.getScopeId();
+        break;
+      }
+
+  OpBuilder outlineBuilder(function);
+  outlineBuilder.setInsertionPoint(function);
+  sim::SimCodeUnitDeclOp::create(
+      outlineBuilder, location, codeUnitID, scopeID, sim::EntryKind::Fork,
+      outlineBuilder.getStringAttr(identity),
+      outlineBuilder.getStringAttr("clocking output drive"),
+      outlineBuilder.getUnitAttr());
+  MLIRContext *context = function.getContext();
+  SmallVector<Type> inputs{function.getBody().front().getArgument(0).getType(),
+                           (*target).getType(), (*clock).getType(),
+                           value.getType()};
+  SmallVector<DictionaryAttr> argumentAttrs{
+      captureMetadata(outlineBuilder, sim::CaptureKind::Context),
+      captureMetadata(outlineBuilder, sim::CaptureKind::Formal),
+      captureMetadata(outlineBuilder, sim::CaptureKind::Formal),
+      captureMetadata(outlineBuilder, sim::CaptureKind::Value)};
+  SmallVector<NamedAttribute> attributes{
+      outlineBuilder.getNamedAttr("code_unit_id",
+                                  outlineBuilder.getI64IntegerAttr(codeUnitID)),
+      outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
+      outlineBuilder.getNamedAttr(
+          "home_region",
+          synchronizedToCurrentEvent
+              ? sim::EventRegionAttr::get(context, sim::EventRegion::Reactive)
+              : function.getHomeRegionAttr()),
+      outlineBuilder.getNamedAttr(
+          "domain", function.getDomainAttr()),
+      outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
+                                  outlineBuilder.getStringAttr(identity))};
+  sim::SimFuncOp driver = sim::SimFuncOp::create(
+      outlineBuilder, location, identity,
+      FunctionType::get(context, inputs, TypeRange{}), sim::EntryKind::Fork,
+      attributes, argumentAttrs);
+  SymbolTable::setSymbolVisibility(driver, SymbolTable::Visibility::Private);
+  Block &entry = driver.getBody().front();
+  Block *wait = synchronizedToCurrentEvent ? nullptr : new Block();
+  Block *drive = new Block();
+  if (wait)
+    driver.getBody().push_back(wait);
+  driver.getBody().push_back(drive);
+  OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
+  if (wait) {
+    cf::BranchOp::create(entryBuilder, location, wait);
+    OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
+    sim::SimSuspendEdgeOp::create(
+        waitBuilder, location, edge, entry.getArgument(2), ValueRange{},
+        sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, drive);
+  } else {
+    // A drive issued by a continuation of @(clocking_block) belongs to that
+    // clocking occurrence. Waiting here would silently move it one cycle.
+    cf::BranchOp::create(entryBuilder, location, drive);
+  }
+  OpBuilder driveBuilder = OpBuilder::atBlockEnd(drive);
+  Value delay;
+  if (delayTicks)
+    delay = sim::SimTimeConstantOp::create(
+        driveBuilder, location, sim::TimeType::get(context),
+        driveBuilder.getI64IntegerAttr(delayTicks));
+  sim::SimNBAEnqueueOp::create(driveBuilder, location, entry.getArgument(3),
+                               entry.getArgument(1), delay,
+                               sim::NBASiteAttr{});
+  sim::SimReturnOp::create(driveBuilder, location, ValueRange{});
+  driver->setAttr(sim::metadata::lowered, builder.getUnitAttr());
+  Value processContext = function.getBody().front().getArgument(0);
+  sim::SimSpawnOp::create(builder, location, driver.getSymNameAttr(),
+                          ValueRange{processContext, *target, *clock, value},
+                          ArrayAttr{}, ArrayAttr{});
+  return success();
+}
+
 FailureOr<Value>
 UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
   Location location = getSemanticLocation(op);
@@ -1070,6 +1247,17 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
                                    location, isSignedNode(destination));
   if (failed(value))
     return failure();
+  if (auto member = dyn_cast<semantic::SVMemberAccessExpressionOp>(destination);
+      member && member->hasAttr("virtual_interface_clocking")) {
+    if (timed) {
+      emitError(location)
+          << "an assignment timing control cannot be combined with a clocking output";
+      return failure();
+    }
+    if (failed(lowerClockingOutputAssignment(member, *value, location)))
+      return failure();
+    return *value;
+  }
   if (!timed) {
     LogicalResult written =
         compound

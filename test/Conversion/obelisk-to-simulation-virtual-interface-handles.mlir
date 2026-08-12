@@ -1,4 +1,8 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: sed 's/virtual_interface_clock_input_skew_one_step/virtual_interface_clock_input_skew_delay = "0"/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=INPUT-ZERO
+// RUN: sed 's/virtual_interface_clock_input_skew_one_step/virtual_interface_clock_input_skew_delay = "2"/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=INPUT-SKEW
+// RUN: sed 's/virtual_interface_clocking_block_event/virtual_interface_clock_event_has_iff, virtual_interface_clocking_block_event/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=CLOCK-IFF
+// RUN: sed 's/definition_kind = 0 : i32/definition_kind = 2 : i32/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=PROGRAM
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 1 : i32, hierarchical_name = "bus_if", name = "bus_if", node_id = 0 : i64, sym_name = "s0.bus_if"} {}
@@ -11,12 +15,14 @@ module {
           obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.bus", name = "bus_if", node_id = 7 : i64, sym_name = "s7.bus_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s9.bus_if} {
             obelisk.sv.symbol.variable attributes {hierarchical_name = "top.bus.signal", lifetime = 1 : i32, name = "signal", node_id = 23 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s12.signal"} {}
             obelisk.sv.symbol.net attributes {hierarchical_name = "top.bus.ready", is_implicit = false, name = "ready", net_kind = 1 : i32, node_id = 24 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s13.ready"} {}
+            obelisk.sv.symbol.variable attributes {hierarchical_name = "top.bus.clk", lifetime = 1 : i32, name = "clk", node_id = 70 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s19.clk"} {}
           }
         }
         obelisk.sv.symbol.instance attributes {hierarchical_name = "top.other", is_uninstantiated = false, name = "other", node_id = 50 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if, sym_name = "s14.other"} {
           obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.other", name = "bus_if", node_id = 51 : i64, sym_name = "s15.bus_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s9.bus_if} {
             obelisk.sv.symbol.variable attributes {hierarchical_name = "top.other.signal", lifetime = 1 : i32, name = "signal", node_id = 52 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s16.signal"} {}
             obelisk.sv.symbol.net attributes {hierarchical_name = "top.other.ready", is_implicit = false, name = "ready", net_kind = 1 : i32, node_id = 53 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s17.ready"} {}
+            obelisk.sv.symbol.variable attributes {hierarchical_name = "top.other.clk", lifetime = 1 : i32, name = "clk", node_id = 71 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s20.clk"} {}
           }
         }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.vif", lifetime = 1 : i32, name = "vif", node_id = 8 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s9.bus_if, "">, sym_name = "s8.vif"} {}
@@ -46,10 +52,10 @@ module {
               }
               obelisk.sv.statement.expression_statement attributes {node_id = 34 : i64} {
                 obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 35 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
-                  obelisk.sv.expression.member_access attributes {is_signed = false, member_name = "signal", node_id = 36 : i64, referenced_path = "top.bus_if.signal", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.bus::@s7.bus_if::@s12.signal, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  obelisk.sv.expression.member_access attributes {is_signed = false, member_name = "signal", node_id = 36 : i64, referenced_path = "top.bus_if.signal", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.bus::@s7.bus_if::@s12.signal, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, virtual_interface_access_direction = 1 : i32, virtual_interface_clock_event_edge = 1 : i32, virtual_interface_clock_member = "clk", virtual_interface_clock_output_skew_delay = "0", virtual_interface_clock_output_skew_edge = 0 : i32, virtual_interface_clock_time_precision_fs = 1000000 : i64, virtual_interface_clock_time_unit_fs = 1000000 : i64, virtual_interface_clocking, virtual_interface_clocking_block = "cb"} {
                     obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 37 : i64, referenced_path = "top.vif", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s8.vif, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s9.bus_if, "">} {}
                   }
-                  obelisk.sv.expression.member_access attributes {is_signed = false, member_name = "ready", node_id = 38 : i64, referenced_path = "top.bus_if.ready", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.bus::@s7.bus_if::@s13.ready, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  obelisk.sv.expression.member_access attributes {is_signed = false, member_name = "ready", node_id = 38 : i64, referenced_path = "top.bus_if.ready", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.bus::@s7.bus_if::@s13.ready, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, virtual_interface_access_direction = 0 : i32, virtual_interface_clock_event_edge = 1 : i32, virtual_interface_clock_input_skew_edge = 0 : i32, virtual_interface_clock_input_skew_one_step, virtual_interface_clock_member = "clk", virtual_interface_clock_time_precision_fs = 1000000 : i64, virtual_interface_clock_time_unit_fs = 1000000 : i64, virtual_interface_clocking, virtual_interface_clocking_block = "cb"} {
                     obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 39 : i64, referenced_path = "top.vif", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s8.vif, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s9.bus_if, "">} {}
                   }
                 }
@@ -59,6 +65,26 @@ module {
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 42 : i64, referenced_path = "top.vif", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s8.vif, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s9.bus_if, "">} {}
                   obelisk.sv.expression.conversion attributes {is_signed = false, node_id = 43 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s9.bus_if, "">} {
                     obelisk.sv.expression.null_literal attributes {is_signed = false, node_id = 44 : i64, semantic_type = !obelisk.null} {}
+                  }
+                }
+              }
+              obelisk.sv.statement.timed attributes {node_id = 73 : i64} {
+                obelisk.sv.timing.signal_event attributes {edge_kind = 0 : i32, has_iff = false, node_id = 74 : i64} {
+                  obelisk.sv.expression.member_access attributes {is_signed = false, member_name = "cb", node_id = 75 : i64, referenced_path = "top.bus_if.cb", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s9.bus_if::@s11.bus_if::@s21.cb, semantic_type = !obelisk.void, virtual_interface_clock_event_edge = 1 : i32, virtual_interface_clock_member = "clk", virtual_interface_clocking_block_event} {
+                    obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 76 : i64, referenced_path = "top.vif", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s8.vif, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s9.bus_if, "">} {}
+                  }
+                }
+                obelisk.sv.statement.conditional attributes {check_kind = 0 : i32, condition_count = 1 : i64, condition_pattern_flags = array<i64: 0>, has_else = false, node_id = 83 : i64} {
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "1'b1", is_signed = false, node_id = 84 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {}
+                  obelisk.sv.statement.expression_statement attributes {node_id = 77 : i64} {
+                  obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 78 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    obelisk.sv.expression.member_access attributes {is_signed = false, member_name = "signal", node_id = 79 : i64, referenced_path = "top.bus_if.signal", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.bus::@s7.bus_if::@s12.signal, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, virtual_interface_access_direction = 1 : i32, virtual_interface_clock_event_edge = 1 : i32, virtual_interface_clock_member = "clk", virtual_interface_clock_output_skew_delay = "0", virtual_interface_clock_output_skew_edge = 0 : i32, virtual_interface_clock_time_precision_fs = 1000000 : i64, virtual_interface_clock_time_unit_fs = 1000000 : i64, virtual_interface_clocking, virtual_interface_clocking_block = "cb"} {
+                      obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 80 : i64, referenced_path = "top.vif", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s8.vif, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s9.bus_if, "">} {}
+                    }
+                    obelisk.sv.expression.conversion attributes {is_signed = false, node_id = 81 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      obelisk.sv.expression.integer_literal attributes {constant_value = "1'b0", is_signed = false, node_id = 82 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {}
+                    }
+                  }
                   }
                 }
               }
@@ -77,7 +103,9 @@ module {
           }
         }
         obelisk.sv.symbol.instance attributes {hierarchical_name = "top.bus_if", is_uninstantiated = false, is_virtual_interface_type_instance = true, name = "bus_if", node_id = 21 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if, sym_name = "s9.bus_if"} {
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.bus_if", name = "bus_if", node_id = 22 : i64, sym_name = "s11.bus_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {}
+          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.bus_if", name = "bus_if", node_id = 22 : i64, sym_name = "s11.bus_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+            obelisk.sv.symbol.clocking_block attributes {hierarchical_name = "top.bus_if.cb", is_default = false, is_global = false, name = "cb", node_id = 72 : i64, sym_name = "s21.cb"} {}
+          }
         }
       }
     }
@@ -88,20 +116,41 @@ module {
 // CHECK: obelisk_sim.scope.decl [[OTHER:[0-9]+]] parent 1 hierarchy "top.other" debug "bus_if" interface "@s2.$root::@s5.top::@s9.bus_if"
 // CHECK-DAG: obelisk_sim.storage.decl [[SIGNAL:[0-9]+]] in [[BUS]] : !obelisk_sim.logic<1> design hierarchy "top.bus.signal"
 // CHECK-DAG: obelisk_sim.net.decl [[READY:[0-9]+]] in [[BUS]] : !obelisk_sim.logic<1> design hierarchy "top.bus.ready"
+// CHECK-DAG: obelisk_sim.storage.decl [[CLK:[0-9]+]] in [[BUS]] : !obelisk_sim.logic<1> design hierarchy "top.bus.clk"
 // CHECK-DAG: obelisk_sim.storage.decl [[OTHER_SIGNAL:[0-9]+]] in [[OTHER]] : !obelisk_sim.logic<1> design hierarchy "top.other.signal"
 // CHECK-DAG: obelisk_sim.net.decl [[OTHER_READY:[0-9]+]] in [[OTHER]] : !obelisk_sim.logic<1> design hierarchy "top.other.ready"
+// CHECK-DAG: obelisk_sim.storage.decl [[OTHER_CLK:[0-9]+]] in [[OTHER]] : !obelisk_sim.logic<1> design hierarchy "top.other.clk"
 // CHECK: obelisk_sim.storage.decl {{[0-9]+}} in 1 : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s9.bus_if", ""> design hierarchy "top.vif"
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// Each elaborated input has an Observed-region sampler.
+// CHECK: obelisk_sim.assert.sampled_read
+// CHECK: obelisk_sim.assert.clocked_sample_update
+// A clocking output drive is outlined so evaluating the assignment does not
+// block its caller; the child waits for the selected clock and publishes NBA.
+// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.36
+// CHECK: obelisk_sim.suspend.edge posedge
+// CHECK: obelisk_sim.nba.enqueue
+// A drive issued after @(vif.cb) belongs to the current occurrence and does
+// not suspend for another edge.
+// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.79
+// CHECK-SAME: home_region = 10 : i32
+// CHECK-NOT: obelisk_sim.suspend.edge
+// CHECK: obelisk_sim.nba.enqueue
+// CHECK-LABEL: obelisk_sim.func private @unit_0(
 // CHECK-DAG: obelisk_sim.virtual_interface.scope
 // CHECK-DAG: obelisk_sim.context.storage %arg0{{.*}}[[SIGNAL]]
 // CHECK-DAG: obelisk_sim.context.storage %arg0{{.*}}[[OTHER_SIGNAL]]
 // CHECK-DAG: obelisk_sim.ref.store
 // CHECK-DAG: obelisk_sim.ref.load
-// CHECK-DAG: obelisk_sim.context.net %arg0{{.*}}[[READY]]
-// CHECK-DAG: obelisk_sim.context.net %arg0{{.*}}[[OTHER_READY]]
-// CHECK-DAG: obelisk_sim.net.read
-// CHECK-DAG: virtual interface member access used a null or invalid handle.
-// CHECK-LABEL: obelisk_sim.func private
+// Reads select the retained value for the handle's scope instead of
+// resampling at each use.
+// CHECK: obelisk_sim.assert.clocked_sample_read
+// CHECK: obelisk_sim.spawn @{{.*}}clocking_output
+// A virtual clocking-block event waits on the selected instance's declared
+// clock edge and resumes in Reactive after Observed sampling.
+// CHECK: obelisk_sim.suspend.edge posedge
+// CHECK-SAME: resume_region = 10 : i32
+// CHECK-DAG: clocking variable access used a null or invalid interface handle.
+// CHECK-LABEL: obelisk_sim.func private @unit_1(
 // CHECK-SAME: entry_kind = 4 : i32
 // CHECK-DAG: %[[READY_HANDLE:.*]] = obelisk_sim.context.net %arg0{{.*}}[[READY]]
 // CHECK-DAG: %[[OTHER_READY_HANDLE:.*]] = obelisk_sim.context.net %arg0{{.*}}[[OTHER_READY]]
@@ -109,3 +158,13 @@ module {
 // sensitivity; the final two operands are loop-carried rematerializations.
 // CHECK: obelisk_sim.suspend.any {{.*}} edges [0, 0, 0]
 // CHECK-NOT: obelisk.sv.
+// INPUT-SKEW: clocking input skew currently requires #1step or #0
+// CLOCK-IFF: virtual clocking-block events with iff are not yet supported
+// INPUT-ZERO: obelisk_sim.assert.clocked_sample_update
+// INPUT-ZERO: obelisk_sim.net.read
+// Program-domain clocking output helpers preserve Reactive/Program so their
+// NBA is committed through the Re-NBA path.
+// PROGRAM-LABEL: obelisk_sim.func private @unit_0.$clocking_output.79
+// PROGRAM-SAME: domain = 1 : i32
+// PROGRAM-SAME: home_region = 10 : i32
+// PROGRAM: obelisk_sim.nba.enqueue

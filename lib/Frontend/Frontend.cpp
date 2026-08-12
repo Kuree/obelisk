@@ -1386,6 +1386,144 @@ private:
     } else if constexpr (std::same_as<T, slang::ast::MemberAccessExpression>) {
       setReferencedSymbol<Op>(attrs, node.member);
       attrs.set("member_name", builder.getStringAttr(node.member.name));
+      if (node.member.kind == slang::ast::SymbolKind::ModportPort) {
+        const auto &port =
+            node.member.template as<slang::ast::ModportPortSymbol>();
+        attrs.set("virtual_interface_access_direction",
+                  slangir::ArgumentDirectionAttr::get(
+                      builder.getContext(), convertEnum(port.direction)));
+        if (const slang::ast::Scope *scope = port.getParentScope())
+          attrs.set("virtual_interface_modport",
+                    builder.getStringAttr(scope->asSymbol().name));
+      } else if (node.member.kind == slang::ast::SymbolKind::ClockVar) {
+        const auto &clockVar =
+            node.member.template as<slang::ast::ClockVarSymbol>();
+        attrs.set("virtual_interface_access_direction",
+                  slangir::ArgumentDirectionAttr::get(
+                      builder.getContext(), convertEnum(clockVar.direction)));
+        attrs.set("virtual_interface_clocking", builder.getUnitAttr());
+        const slang::ast::Type &receiverType =
+            unwrapTypeAliases(node.value().type->getCanonicalType());
+        if (receiverType.kind == slang::ast::SymbolKind::VirtualInterfaceType) {
+          const auto &virtualType =
+              receiverType.as<slang::ast::VirtualInterfaceType>();
+          if (virtualType.modport)
+            attrs.set("virtual_interface_modport",
+                      builder.getStringAttr(virtualType.modport->name));
+        }
+        if (const slang::ast::Scope *scope = clockVar.getParentScope()) {
+          attrs.set("virtual_interface_clocking_block",
+                    builder.getStringAttr(scope->asSymbol().name));
+          const auto &clocking =
+              scope->asSymbol().as<slang::ast::ClockingBlockSymbol>();
+          const auto *event = clocking.getEvent()
+                                  .as_if<slang::ast::SignalEventControl>();
+          if (event) {
+            attrs.set("virtual_interface_clock_event_edge",
+                      slangir::EdgeKindAttr::get(builder.getContext(),
+                                                convertEnum(event->edge)));
+            const slang::ast::Symbol *clockSymbol = nullptr;
+            if (auto *named =
+                    event->expr.as_if<slang::ast::NamedValueExpression>())
+              clockSymbol = &named->symbol;
+            else if (auto *hierarchical = event->expr.as_if<
+                         slang::ast::HierarchicalValueExpression>())
+              clockSymbol = &hierarchical->symbol;
+            if (clockSymbol)
+              attrs.set("virtual_interface_clock_member",
+                        builder.getStringAttr(clockSymbol->name));
+            if (event->iffCondition)
+              attrs.set("virtual_interface_clock_event_has_iff",
+                        builder.getUnitAttr());
+          }
+
+          slang::TimeScale scale =
+              scope->getTimeScale().value_or(slang::TimeScale{});
+          attrs.set("virtual_interface_clock_time_unit_fs",
+                    builder.getI64IntegerAttr(getFemtoseconds(scale.base)));
+          attrs.set(
+              "virtual_interface_clock_time_precision_fs",
+              builder.getI64IntegerAttr(getFemtoseconds(scale.precision)));
+        }
+        auto addSkew = [&](StringRef prefix,
+                           const slang::ast::ClockingSkew &skew,
+                           bool defaultOneStep) {
+          attrs.set((prefix + "_edge").str(),
+                    slangir::EdgeKindAttr::get(builder.getContext(),
+                                              convertEnum(skew.edge)));
+          if (!skew.delay) {
+            if (!skew.hasValue() && defaultOneStep)
+              attrs.set((prefix + "_one_step").str(), builder.getUnitAttr());
+            else if (!skew.hasValue())
+              attrs.set((prefix + "_delay").str(),
+                        builder.getStringAttr("0"));
+            return;
+          }
+          if (skew.delay->kind == slang::ast::TimingControlKind::OneStepDelay) {
+            attrs.set((prefix + "_one_step").str(), builder.getUnitAttr());
+            return;
+          }
+          if (const auto *delay =
+                  skew.delay->as_if<slang::ast::DelayControl>()) {
+            slang::ast::EvalContext evalContext(clockVar);
+            slang::ConstantValue value = delay->expr.eval(evalContext);
+            if (value) {
+              attrs.set((prefix + "_delay").str(),
+                        builder.getStringAttr(formatConstant(value)));
+              attrs.set((prefix + "_delay_is_real").str(),
+                        builder.getBoolAttr(value.isReal() || value.isShortReal()));
+            }
+          }
+        };
+        const auto &clocking = clockVar.getParentScope()
+                                    ->asSymbol()
+                                    .template as<slang::ast::ClockingBlockSymbol>();
+        slang::ast::ClockingSkew inputSkew = clockVar.inputSkew.hasValue()
+                                                  ? clockVar.inputSkew
+                                                  : clocking.getDefaultInputSkew();
+        slang::ast::ClockingSkew outputSkew =
+            clockVar.outputSkew.hasValue() ? clockVar.outputSkew
+                                           : clocking.getDefaultOutputSkew();
+        addSkew("virtual_interface_clock_input_skew", inputSkew,
+                /*defaultOneStep=*/true);
+        addSkew("virtual_interface_clock_output_skew", outputSkew,
+                /*defaultOneStep=*/false);
+      } else if (node.member.kind == slang::ast::SymbolKind::ClockingBlock) {
+        const auto &clocking =
+            node.member.template as<slang::ast::ClockingBlockSymbol>();
+        attrs.set("virtual_interface_clocking_block_event",
+                  builder.getUnitAttr());
+        const slang::ast::Type &receiverType =
+            unwrapTypeAliases(node.value().type->getCanonicalType());
+        if (receiverType.kind == slang::ast::SymbolKind::VirtualInterfaceType) {
+          const auto &virtualType =
+              receiverType.as<slang::ast::VirtualInterfaceType>();
+          if (virtualType.modport)
+            attrs.set("virtual_interface_modport",
+                      builder.getStringAttr(virtualType.modport->name));
+        }
+        if (const auto *event =
+                clocking.getEvent().template as_if<
+                    slang::ast::SignalEventControl>()) {
+          attrs.set("virtual_interface_clock_event_edge",
+                    slangir::EdgeKindAttr::get(builder.getContext(),
+                                              convertEnum(event->edge)));
+          const slang::ast::Symbol *clockSymbol = nullptr;
+          if (auto *named =
+                  event->expr.template as_if<
+                      slang::ast::NamedValueExpression>())
+            clockSymbol = &named->symbol;
+          else if (auto *hierarchical = event->expr.template as_if<
+                       slang::ast::HierarchicalValueExpression>())
+            clockSymbol = &hierarchical->symbol;
+          if (clockSymbol)
+            attrs.set("virtual_interface_clock_member",
+                      builder.getStringAttr(clockSymbol->name));
+          if (event->iffCondition)
+            attrs.set("virtual_interface_clock_event_has_iff",
+                      builder.getUnitAttr());
+        }
+      }
       if (node.member.kind == slang::ast::SymbolKind::Field) {
         const auto &field = node.member.template as<slang::ast::FieldSymbol>();
         attrs.set("field_ordinal",
@@ -1847,6 +1985,10 @@ private:
                   builder.getBoolAttr(node.inputSkew.delay != nullptr));
       SET_OP_ATTR(HasOutputDelay,
                   builder.getBoolAttr(node.outputSkew.delay != nullptr));
+    } else if constexpr (std::same_as<T, slang::ast::ModportPortSymbol>) {
+      attrs.set("direction",
+                slangir::ArgumentDirectionAttr::get(
+                    builder.getContext(), convertEnum(node.direction)));
     } else if constexpr (std::same_as<T,
                                       slang::ast::ClockingBlockSymbol>) {
       SET_OP_ATTR(IsDefault, builder.getBoolAttr(node.isDefault));

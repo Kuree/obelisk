@@ -85,6 +85,9 @@ private:
   lowerVirtualInterfaceMember(semantic::SVMemberAccessExpressionOp op,
                               ::mlir::Value interface,
                               ::mlir::Type elementType, bool lvalue);
+  ::mlir::FailureOr<::mlir::Value>
+  lowerVirtualInterfaceClock(semantic::SVMemberAccessExpressionOp op,
+                             ::mlir::Value interface);
   ::mlir::LogicalResult guardTaggedUnionMember(::mlir::Value input,
                                                unsigned ordinal,
                                                ::mlir::Location location);
@@ -97,6 +100,9 @@ private:
                                                   bool lvalue);
   ::mlir::FailureOr<::mlir::Value>
   lowerAssignment(semantic::SVAssignmentExpressionOp op);
+  ::mlir::LogicalResult lowerClockingOutputAssignment(
+      semantic::SVMemberAccessExpressionOp destination, ::mlir::Value value,
+      ::mlir::Location location);
   ::mlir::FailureOr<CapturedLValue>
   captureLValue(::mlir::Operation *destination, ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
@@ -168,6 +174,10 @@ private:
   ::mlir::FailureOr<::mlir::Value> lowerAlternateClockSample(
       ::mlir::Operation *expression, ::mlir::Operation *gateExpression,
       semantic::SVSignalEventControlOp clock, uint64_t depth, uint64_t age,
+      ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value> lowerClockingInputSample(
+      ::mlir::Value source, uint64_t sourceDescriptor, ::mlir::Value clock,
+      uint64_t clockDescriptor, sim::EdgeKind edge, bool oneStep,
       ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op);
@@ -295,6 +305,7 @@ private:
                      bool resultSigned = false);
   ::mlir::Block *addBlock();
   void setCurrent(::mlir::Block *block);
+  bool isCurrentClockingOccurrence(::mlir::Block *block) const;
   void emitBranch(::mlir::Block *destination);
   void emitControlLeaves(size_t first, ::mlir::Location location);
   ::mlir::InFlightDiagnostic unsupported(::mlir::Operation *op);
@@ -324,8 +335,12 @@ private:
   ::llvm::StringMap<VirtualMemberTargets> virtualInterfaceNetMembers;
   ::llvm::DenseMap<uint64_t, ::mlir::Value> virtualInterfaceStorageHandles;
   ::llvm::DenseMap<uint64_t, ::mlir::Value> virtualInterfaceNetHandles;
+  ::llvm::DenseMap<uint64_t, ::mlir::Type> virtualInterfaceStorageTypes;
+  ::llvm::DenseMap<uint64_t, ::mlir::Type> virtualInterfaceNetTypes;
   ::llvm::SetVector<::mlir::Value> virtualInterfaceReadSensitivity;
   ::llvm::SetVector<::mlir::Value> virtualInterfaceWrittenSensitivity;
+  ::llvm::DenseSet<::mlir::Block *> clockingEventContinuations;
+  ::llvm::DenseSet<::mlir::Block *> timingBoundaryContinuations;
   ::llvm::StringMap<semantic::SVCovergroupTypeOp> semanticCovergroups;
   ::mlir::Value thisObject;
   ::mlir::Value taskControlActivation;

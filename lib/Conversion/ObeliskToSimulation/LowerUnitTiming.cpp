@@ -188,19 +188,19 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
                                              ValueRange continuationOperands) {
   Location location = getSemanticLocation(control);
   auto emitDirect = [&](Value watched, sim::EdgeKind edge, Block *successor,
-                        ValueRange operands) {
+                        ValueRange operands, sim::EventRegionAttr resume = {}) {
     if (isa<sim::EventType>(watched.getType()))
       sim::SimSuspendEventOp::create(builder, location, watched, operands,
                                      sim::ContinuationSiteAttr{},
-                                     sim::EventRegionAttr{}, successor);
+                                     resume, successor);
     else if (edge == sim::EdgeKind::Change)
       sim::SimSuspendChangeOp::create(builder, location, watched, operands,
                                       sim::ContinuationSiteAttr{},
-                                      sim::EventRegionAttr{}, successor);
+                                      resume, successor);
     else
       sim::SimSuspendEdgeOp::create(builder, location, edge, watched, operands,
                                     sim::ContinuationSiteAttr{},
-                                    sim::EventRegionAttr{}, successor);
+                                    resume, successor);
   };
   auto evaluateInitial = [&](Operation *expression) -> FailureOr<Value> {
     FailureOr<Value> value = lowerExpression(expression);
@@ -265,7 +265,18 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       unsupported(event) << " (event expression inventory)";
       return failure();
     }
-    FailureOr<Type> watchedType = getNormalizedSemanticType(children.front());
+    bool clockingBlockEvent = children.front()->hasAttr(
+        "virtual_interface_clocking_block_event");
+    if (clockingBlockEvent &&
+        children.front()->hasAttr("virtual_interface_clock_event_has_iff")) {
+      emitError(location)
+          << "virtual clocking-block events with iff are not yet supported";
+      return failure();
+    }
+    FailureOr<Type> watchedType =
+        children.front()->hasAttr("virtual_interface_clocking_block_event")
+            ? FailureOr<Type>(sim::LogicType::get(function.getContext(), 1))
+            : getNormalizedSemanticType(children.front());
     if (failed(watchedType))
       return failure();
     bool computed =
@@ -279,8 +290,18 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
     if (failed(handle))
       return failure();
     auto edge = static_cast<sim::EdgeKind>(event.getEdgeKind());
+    if (auto clockingEdge = children.front()->getAttrOfType<semantic::EdgeKindAttr>(
+            "virtual_interface_clock_event_edge"))
+      edge = static_cast<sim::EdgeKind>(clockingEdge.getValue());
     if (!event.getHasIff()) {
-      emitDirect(*handle, edge, continuation, continuationOperands);
+      sim::EventRegionAttr resume =
+          clockingBlockEvent
+              ? sim::EventRegionAttr::get(function.getContext(),
+                                          sim::EventRegion::Reactive)
+              : sim::EventRegionAttr{};
+      emitDirect(*handle, edge, continuation, continuationOperands, resume);
+      if (clockingBlockEvent)
+        clockingEventContinuations.insert(continuation);
       return success();
     }
 
@@ -320,7 +341,9 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
     computed |=
         event.getHasIff() || !isAddressableExpression(eventChildren.front());
     FailureOr<Type> watchedType =
-        getNormalizedSemanticType(eventChildren.front());
+        eventChildren.front()->hasAttr("virtual_interface_clocking_block_event")
+            ? FailureOr<Type>(sim::LogicType::get(function.getContext(), 1))
+            : getNormalizedSemanticType(eventChildren.front());
     if (failed(watchedType))
       return failure();
     computed |= isa<sim::EventType>(*watchedType);
@@ -478,6 +501,10 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
   }
 
   Block *continuation = addBlock();
+  // A new timing boundary ends any clocking occurrence inherited while this
+  // continuation block was allocated. emitEventSuspend reattaches it only for
+  // a virtual clocking-block event.
+  timingBoundaryContinuations.insert(continuation);
   if (isa<semantic::SVDelayControlOp>(control)) {
     FailureOr<Value> delay = lowerDelayValue(control);
     if (failed(delay))
