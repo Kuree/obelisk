@@ -256,6 +256,13 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   if (auto op = dyn_cast<sim::SimProcessStatusOp>(operation))
     return emitIntrinsic(plan, kIntrinsicProcessStatus, {op.getProcess()},
                          {op.getStatus()});
+  if (auto op = dyn_cast<sim::SimProcessRandomStateOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicProcessRandomGet, {op.getProcess()},
+                         {op.getState(), op.getIncrement()});
+  if (auto op = dyn_cast<sim::SimProcessSetRandomStateOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicProcessRandomSet,
+                         {op.getProcess(), op.getState(), op.getIncrement()},
+                         {});
   if (std::optional<LogicalResult> encoded =
           encodeContainerOperation(plan, operation))
     return *encoded;

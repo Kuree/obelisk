@@ -61,6 +61,102 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           builder, location, builder.getI32Type(), *receiver);
       return convert(status, *resultType, true, location, true);
     }
+    if (method == "get_randstate" || method == "set_randstate" ||
+        method == "srandom") {
+      size_t expectedChildren = method == "get_randstate" ? 1 : 2;
+      if (children.size() != expectedChildren) {
+        emitError(location) << "process::" << method
+                            << " has malformed method arguments";
+        return failure();
+      }
+      FailureOr<Value> receiver = lowerExpression(children.front());
+      if (failed(receiver) || !isa<sim::ProcessType>((*receiver).getType())) {
+        emitError(location) << "process::" << method
+                            << " receiver is not a process object";
+        return failure();
+      }
+      Type i64 = builder.getI64Type();
+      Type stringType = sim::StringType::get(function.getContext());
+      if (method == "get_randstate") {
+        auto state = sim::SimProcessRandomStateOp::create(builder, location,
+                                                          *receiver);
+        Value stateText = sim::SimStringFormatIntegerOp::create(
+            builder, location, stringType, state.getState(),
+            builder.getI32IntegerAttr(16), builder.getBoolAttr(false));
+        Value separator = sim::SimStringLiteralOp::create(
+            builder, location, stringType, builder.getStringAttr(":"));
+        Value incrementText = sim::SimStringFormatIntegerOp::create(
+            builder, location, stringType, state.getIncrement(),
+            builder.getI32IntegerAttr(16), builder.getBoolAttr(false));
+        return sim::SimStringConcatOp::create(
+                   builder, location, stringType,
+                   ValueRange{stateText, separator, incrementText})
+            .getResult();
+      }
+      FailureOr<Value> argument = lowerExpression(children[1]);
+      if (failed(argument))
+        return failure();
+      if (method == "srandom") {
+        argument = convert(*argument, builder.getI32Type(),
+                           isSignedNode(children[1]), location);
+        if (failed(argument))
+          return failure();
+        Value seed = arith::ExtUIOp::create(builder, location, i64, *argument);
+        Value increment = arith::ConstantOp::create(
+            builder, location, i64,
+            builder.getIntegerAttr(
+                i64, APInt(64, OBELISK_RT_RANDOM_DEFAULT_INCREMENT)));
+        Value multiplier = arith::ConstantOp::create(
+            builder, location, i64,
+            builder.getIntegerAttr(i64,
+                                   APInt(64, OBELISK_RT_RANDOM_MULTIPLIER)));
+        Value state = arith::AddIOp::create(builder, location, increment, seed);
+        state = arith::MulIOp::create(builder, location, state, multiplier);
+        state = arith::AddIOp::create(builder, location, state, increment);
+        sim::SimProcessSetRandomStateOp::create(builder, location, *receiver,
+                                                state, increment);
+        return dummyResult();
+      }
+      if (!isa<sim::StringType>((*argument).getType())) {
+        emitError(location) << "process::set_randstate argument is not a string";
+        return failure();
+      }
+      auto old = sim::SimProcessRandomStateOp::create(builder, location,
+                                                      *receiver);
+      Type i32 = builder.getI32Type();
+      Value cursor = arith::ConstantOp::create(builder, location, i32,
+                                               builder.getI32IntegerAttr(0));
+      auto stateField = sim::SimStringScanFieldOp::create(
+          builder, location, TypeRange{stringType, i32, i32}, *argument,
+          cursor, builder.getStringAttr(""), static_cast<uint32_t>('x'));
+      auto incrementField = sim::SimStringScanFieldOp::create(
+          builder, location, TypeRange{stringType, i32, i32}, *argument,
+          stateField.getNextCursor(), builder.getStringAttr(":"),
+          static_cast<uint32_t>('x'));
+      Value parsedState = sim::SimStringParseIntegerOp::create(
+          builder, location, i64, stateField.getField(),
+          builder.getI32IntegerAttr(16));
+      Value parsedIncrement = sim::SimStringParseIntegerOp::create(
+          builder, location, i64, incrementField.getField(),
+          builder.getI32IntegerAttr(16));
+      Value zero = arith::ConstantOp::create(builder, location, i32,
+                                             builder.getI32IntegerAttr(0));
+      Value stateMatched = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, stateField.getOk(),
+          zero);
+      Value incrementMatched = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne,
+          incrementField.getOk(), zero);
+      Value matched = arith::AndIOp::create(builder, location, stateMatched,
+                                            incrementMatched);
+      Value state = arith::SelectOp::create(builder, location, matched,
+                                            parsedState, old.getState());
+      Value increment = arith::SelectOp::create(
+          builder, location, matched, parsedIncrement, old.getIncrement());
+      sim::SimProcessSetRandomStateOp::create(builder, location, *receiver,
+                                              state, increment);
+      return dummyResult();
+    }
     if (method == "await") {
       if (children.size() != 1) {
         emitError(location) << "process::await requires one receiver";

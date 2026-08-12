@@ -710,7 +710,7 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
       return status;
     obelisk_rt_reparent_process_children_unlocked(
         context, kNativeLogicalProcessTag | token, scheduled.parent);
-    context->terminatedNativeProcesses.insert(token);
+    context->terminatedNativeProcesses.insert(token, scheduled.random);
     if (!scheduled.signalSubscriptions.empty())
       obelisk_rt_unregister_signal_wait_unlocked(
           context, scheduled.signalSubscriptions, token, false);
@@ -1059,7 +1059,8 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       obelisk_rt_reparent_process_children_unlocked(
           context, kNativeLogicalProcessTag | scheduled.token,
           scheduled.parent);
-      context->terminatedNativeProcesses.insert(scheduled.token);
+      context->terminatedNativeProcesses.insert(scheduled.token,
+                                                scheduled.random);
       obelisk_rt_unregister_signal_wait_unlocked(
           context, scheduled.signalSubscriptions, scheduled.token, false);
       scheduled.instance = nullptr;

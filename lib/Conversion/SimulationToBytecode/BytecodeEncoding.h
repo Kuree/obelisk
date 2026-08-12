@@ -72,6 +72,10 @@ constexpr uint32_t kIntrinsicProcessCurrent =
     OBELISK_RT_INTRINSIC_V1_PROCESS_CURRENT;
 constexpr uint32_t kIntrinsicProcessStatus =
     OBELISK_RT_INTRINSIC_V1_PROCESS_STATUS;
+constexpr uint32_t kIntrinsicProcessRandomGet =
+    OBELISK_RT_INTRINSIC_V1_PROCESS_RANDOM_GET;
+constexpr uint32_t kIntrinsicProcessRandomSet =
+    OBELISK_RT_INTRINSIC_V1_PROCESS_RANDOM_SET;
 constexpr uint32_t kIntrinsicNBA = OBELISK_RT_INTRINSIC_V1_NBA;
 constexpr uint32_t kIntrinsicStaticNBA = OBELISK_RT_INTRINSIC_V1_STATIC_NBA;
 constexpr uint32_t kIntrinsicEventTrigger =

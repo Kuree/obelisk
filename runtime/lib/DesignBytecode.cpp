@@ -2754,6 +2754,10 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
           context->terminatedNativeProcesses.rangeCount(), nativeTasks));
       context->terminatedDesignTasks.reserveRanges(checkedSizeSum(
           context->terminatedDesignTasks.rangeCount(), designTasks));
+      context->terminatedNativeProcesses.reserveRandomStates(checkedSizeSum(
+          context->terminatedNativeProcesses.randomStateCount(), nativeTasks));
+      context->terminatedDesignTasks.reserveRandomStates(checkedSizeSum(
+          context->terminatedDesignTasks.randomStateCount(), designTasks));
       context->killedNativeProcesses.reserveRanges(checkedSizeSum(
           context->killedNativeProcesses.rangeCount(),
           checkedSizeSum(nativeTasks,
@@ -2780,7 +2784,8 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
         uint64_t token = OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG | process.token;
         if (!process.instance || !contains(token) || token == preservedActive)
           continue;
-        context->terminatedNativeProcesses.insert(process.token);
+        context->terminatedNativeProcesses.insert(process.token,
+                                                   process.random);
         context->killedNativeProcesses.insert(process.token);
         if (!process.started)
           obelisk_rt_unregister_unstarted_actor(context, process.phase, token);
@@ -2802,7 +2807,7 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
       for (ScheduledDesignTask &task : context->scheduledDesignTasks) {
         if (task.terminated || !contains(task.id) || task.id == preservedActive)
           continue;
-        context->terminatedDesignTasks.insert(task.id);
+        context->terminatedDesignTasks.insert(task.id, task.random);
         context->killedDesignTasks.insert(task.id);
         if (!task.started)
           obelisk_rt_unregister_unstarted_actor(context, task.phase, task.id);
@@ -3048,6 +3053,12 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
           context->terminatedNativeProcesses.rangeCount(), nativeTaskCount));
       context->terminatedDesignTasks.reserveRanges(checkedSizeSum(
           context->terminatedDesignTasks.rangeCount(), designTaskCount));
+      context->terminatedNativeProcesses.reserveRandomStates(checkedSizeSum(
+          context->terminatedNativeProcesses.randomStateCount(),
+          nativeTaskCount));
+      context->terminatedDesignTasks.reserveRandomStates(checkedSizeSum(
+          context->terminatedDesignTasks.randomStateCount(),
+          designTaskCount));
       context->killedNativeProcesses.reserveRanges(checkedSizeSum(
           context->killedNativeProcesses.rangeCount(), nativeTaskCount));
       context->killedDesignTasks.reserveRanges(checkedSizeSum(
@@ -3057,7 +3068,9 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
           uint64_t token = (UINT64_C(1) << 63) | process.token;
           if (!process.instance || !contains(token) || token == root)
             continue;
-          if (context->terminatedNativeProcesses.insert(process.token).second)
+          if (context->terminatedNativeProcesses
+                  .insert(process.token, process.random)
+                  .second)
             insertedNativeTerminations.push_back(process.token);
           if (context->killedNativeProcesses.insert(process.token).second)
             insertedNativeKills.push_back(process.token);
@@ -3065,7 +3078,8 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
         for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
           if (task.terminated || !contains(task.id) || task.id == root)
             continue;
-          if (context->terminatedDesignTasks.insert(task.id).second)
+          if (context->terminatedDesignTasks.insert(task.id, task.random)
+                  .second)
             insertedDesignTerminations.push_back(task.id);
           if (context->killedDesignTasks.insert(task.id).second)
             insertedDesignKills.push_back(task.id);
@@ -3289,6 +3303,12 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
           context->terminatedNativeProcesses.rangeCount(), nativeTaskCount));
       context->terminatedDesignTasks.reserveRanges(checkedSizeSum(
           context->terminatedDesignTasks.rangeCount(), designTaskCount));
+      context->terminatedNativeProcesses.reserveRandomStates(checkedSizeSum(
+          context->terminatedNativeProcesses.randomStateCount(),
+          nativeTaskCount));
+      context->terminatedDesignTasks.reserveRandomStates(checkedSizeSum(
+          context->terminatedDesignTasks.randomStateCount(),
+          designTaskCount));
       context->killedNativeProcesses.reserveRanges(checkedSizeSum(
           context->killedNativeProcesses.rangeCount(), nativeTaskCount));
       context->killedDesignTasks.reserveRanges(checkedSizeSum(
@@ -3299,7 +3319,9 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
           if (!process.instance || (token == current && !cancelCurrent) ||
               !isTargetMember(process.controls))
             continue;
-          if (context->terminatedNativeProcesses.insert(process.token).second)
+          if (context->terminatedNativeProcesses
+                  .insert(process.token, process.random)
+                  .second)
             insertedNativeTerminations.push_back(process.token);
           if (context->killedNativeProcesses.insert(process.token).second)
             insertedNativeKills.push_back(process.token);
@@ -3308,7 +3330,8 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
           if (task.terminated || (task.id == current && !cancelCurrent) ||
               !isTargetMember(task.controls))
             continue;
-          if (context->terminatedDesignTasks.insert(task.id).second)
+          if (context->terminatedDesignTasks.insert(task.id, task.random)
+                  .second)
             insertedDesignTerminations.push_back(task.id);
           if (context->killedDesignTasks.insert(task.id).second)
             insertedDesignKills.push_back(task.id);
@@ -3988,7 +4011,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         } else {
           obelisk_rt_reparent_process_children_unlocked(context, task.id,
                                                         task.parent);
-          context->terminatedDesignTasks.insert(task.id);
+          context->terminatedDesignTasks.insert(task.id, task.random);
           releaseDesignTaskOwnedStatesUnlocked(context, task.id);
           obelisk_rt_release_controls_unlocked(context, task.controls);
           task.controls.clear();

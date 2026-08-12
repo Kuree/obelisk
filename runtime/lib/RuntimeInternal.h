@@ -97,7 +97,35 @@ public:
     return {true};
   }
 
+  InsertResult insert(uint64_t token,
+                      const obelisk_rt_random_state_v1 &randomState) {
+    auto state = std::lower_bound(
+        randomStates.begin(), randomStates.end(), token,
+        [](const auto &entry, uint64_t value) { return entry.first < value; });
+    if (state != randomStates.end() && state->first == token) {
+      state->second = randomState;
+      return insert(token);
+    }
+    randomStates.insert(state, {token, randomState});
+    try {
+      return insert(token);
+    } catch (...) {
+      state = std::lower_bound(randomStates.begin(), randomStates.end(), token,
+                               [](const auto &entry, uint64_t value) {
+                                 return entry.first < value;
+                               });
+      if (state != randomStates.end() && state->first == token)
+        randomStates.erase(state);
+      throw;
+    }
+  }
+
   size_t erase(uint64_t token) {
+    auto state = std::lower_bound(
+        randomStates.begin(), randomStates.end(), token,
+        [](const auto &entry, uint64_t value) { return entry.first < value; });
+    if (state != randomStates.end() && state->first == token)
+      randomStates.erase(state);
     auto found = std::lower_bound(
         ranges.begin(), ranges.end(), token,
         [](const auto &range, uint64_t value) { return range.second < value; });
@@ -133,11 +161,24 @@ public:
   // The callers reserve once before transactional batches. One new range per
   // token is the worst case and also leaves enough room for rollback splits.
   void reserveRanges(size_t rangeCount) { ranges.reserve(rangeCount); }
+  void reserveRandomStates(size_t stateCount) {
+    randomStates.reserve(stateCount);
+  }
   size_t rangeCount() const { return ranges.size(); }
+  size_t randomStateCount() const { return randomStates.size(); }
+  obelisk_rt_random_state_v1 *randomState(uint64_t token) {
+    auto found = std::lower_bound(
+        randomStates.begin(), randomStates.end(), token,
+        [](const auto &entry, uint64_t value) { return entry.first < value; });
+    return found != randomStates.end() && found->first == token
+               ? &found->second
+               : nullptr;
+  }
   bool empty() const { return ranges.empty(); }
 
 private:
   std::vector<std::pair<uint64_t, uint64_t>> ranges;
+  std::vector<std::pair<uint64_t, obelisk_rt_random_state_v1>> randomStates;
 };
 
 // Small persistent design frames are recycled within a simulation context.

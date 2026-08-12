@@ -183,6 +183,73 @@ module attributes {
                   }
                 }
               }
+              obelisk.sv.statement.expression_statement attributes {node_id = 1000 : i64} {
+                obelisk.sv.expression.call attributes {
+                  argument_count = 2 : i64, callee_name = "srandom",
+                  constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>,
+                  has_inline_constraints = false, has_iterator_expression = false,
+                  has_output_arguments = false, has_this_class = true,
+                  is_signed = false, is_super_class = false,
+                  is_system_call = false, node_id = 1001 : i64,
+                  referenced_path = "std::process::srandom",
+                  referenced_symbol = @s7.std::@s6.process::@s23.srandom,
+                  semantic_type = !obelisk.void, subroutine_kind = 0 : i32
+                } {
+                  obelisk.sv.expression.named_value attributes {
+                    is_signed = false, node_id = 1002 : i64,
+                    referenced_path = "process_front.p",
+                    referenced_symbol = @s1.$root::@s3.process_front::@s4.process_front::@s5.p,
+                    semantic_type = !obelisk.class_handle<@s7.std::@s6.process>
+                  } {
+                  }
+                  obelisk.sv.expression.integer_literal attributes {
+                    constant_value = "-1", is_declared_unsized = true,
+                    is_signed = true, node_id = 1003 : i64,
+                    semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
+                  } {
+                  }
+                }
+              }
+              obelisk.sv.statement.expression_statement attributes {node_id = 1004 : i64} {
+                obelisk.sv.expression.call attributes {
+                  argument_count = 2 : i64, callee_name = "set_randstate",
+                  constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>,
+                  has_inline_constraints = false, has_iterator_expression = false,
+                  has_output_arguments = false, has_this_class = true,
+                  is_signed = false, is_super_class = false,
+                  is_system_call = false, node_id = 1005 : i64,
+                  referenced_path = "std::process::set_randstate",
+                  referenced_symbol = @s7.std::@s6.process::@s24.set_randstate,
+                  semantic_type = !obelisk.void, subroutine_kind = 0 : i32
+                } {
+                  obelisk.sv.expression.named_value attributes {
+                    is_signed = false, node_id = 1006 : i64,
+                    referenced_path = "process_front.p",
+                    referenced_symbol = @s1.$root::@s3.process_front::@s4.process_front::@s5.p,
+                    semantic_type = !obelisk.class_handle<@s7.std::@s6.process>
+                  } {
+                  }
+                  obelisk.sv.expression.call attributes {
+                    argument_count = 1 : i64, callee_name = "get_randstate",
+                    constraint_restrictions = [], defaulted_arguments = array<i64: 0>,
+                    has_inline_constraints = false, has_iterator_expression = false,
+                    has_output_arguments = false, has_this_class = true,
+                    is_signed = false, is_super_class = false,
+                    is_system_call = false, node_id = 1007 : i64,
+                    referenced_path = "std::process::get_randstate",
+                    referenced_symbol = @s7.std::@s6.process::@s25.get_randstate,
+                    semantic_type = !obelisk.string, subroutine_kind = 0 : i32
+                  } {
+                    obelisk.sv.expression.named_value attributes {
+                      is_signed = false, node_id = 1008 : i64,
+                      referenced_path = "process_front.p",
+                      referenced_symbol = @s1.$root::@s3.process_front::@s4.process_front::@s5.p,
+                      semantic_type = !obelisk.class_handle<@s7.std::@s6.process>
+                    } {
+                    }
+                  }
+                }
+              }
               obelisk.sv.statement.expression_statement attributes {node_id = 26 : i64} {
                 obelisk.sv.expression.call attributes {
                   argument_count = 0 : i64, callee_name = "await",
@@ -351,6 +418,50 @@ module attributes {
         obelisk.sv.statement.list attributes {node_id = 51 : i64} {
         }
       }
+      obelisk.sv.symbol.subroutine attributes {
+        hierarchical_name = "std::process::srandom", is_builtin,
+        name = "srandom", node_id = 1009 : i64,
+        semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.void, false>,
+        subroutine_kind = 0 : i32, sym_name = "s23.srandom",
+        time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
+      } {
+        obelisk.sv.symbol.formal_argument attributes {
+          direction = 0 : i32, hierarchical_name = "std::process::srandom.seed",
+          name = "seed", node_id = 1010 : i64,
+          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
+          sym_name = "s26.seed"
+        } {
+        }
+        obelisk.sv.statement.list attributes {node_id = 1011 : i64} {
+        }
+      }
+      obelisk.sv.symbol.subroutine attributes {
+        hierarchical_name = "std::process::set_randstate", is_builtin,
+        name = "set_randstate", node_id = 1012 : i64,
+        semantic_type = !obelisk.subroutine<(!obelisk.string) -> !obelisk.void, false>,
+        subroutine_kind = 0 : i32, sym_name = "s24.set_randstate",
+        time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
+      } {
+        obelisk.sv.symbol.formal_argument attributes {
+          direction = 0 : i32,
+          hierarchical_name = "std::process::set_randstate.state",
+          name = "state", node_id = 1013 : i64,
+          semantic_type = !obelisk.string, sym_name = "s27.state"
+        } {
+        }
+        obelisk.sv.statement.list attributes {node_id = 1014 : i64} {
+        }
+      }
+      obelisk.sv.symbol.subroutine attributes {
+        hierarchical_name = "std::process::get_randstate", is_builtin,
+        name = "get_randstate", node_id = 1015 : i64,
+        semantic_type = !obelisk.subroutine<() -> !obelisk.string, false>,
+        subroutine_kind = 0 : i32, sym_name = "s25.get_randstate",
+        time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
+      } {
+        obelisk.sv.statement.list attributes {node_id = 1016 : i64} {
+        }
+      }
     }
   }
 }
@@ -360,6 +471,11 @@ module attributes {
 // operations, while every standard method maps to the matching control op.
 // CHECK: obelisk_sim.storage.decl {{.*}} : !obelisk_sim.process design hierarchy "process_front.p"
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
+// The signed int seed -1 is zero-extended to 0xffffffff. Constant folding
+// pins the canonical two-step PCG state and default increment, so explicit
+// seeding is independent of the process's ancestry-derived stream.
+// CHECK: %[[SEEDED_STATE:.*]] = arith.constant 1030331529624350213 : i64
+// CHECK: %[[DEFAULT_INCREMENT:.*]] = arith.constant 1442695040888963407 : i64
 // CHECK: %[[NULL:.*]] = obelisk_sim.process.null
 // CHECK: obelisk_sim.ref.store %[[NULL]] to {{.*}} : !obelisk_sim.process
 // CHECK: %[[CURRENT:.*]] = obelisk_sim.process.current
@@ -369,6 +485,20 @@ module attributes {
 // CHECK: %[[PROCESS1:.*]] = obelisk_sim.ref.load {{.*}} : {{.*}} -> !obelisk_sim.process
 // CHECK: %[[STATUS:.*]] = obelisk_sim.process.status %[[PROCESS1]]
 // CHECK: obelisk_sim.ref.store %[[STATUS]] to {{.*}} : i32
+// CHECK: %[[PROCESS_SEED:.*]] = obelisk_sim.ref.load {{.*}} : {{.*}} -> !obelisk_sim.process
+// CHECK: obelisk_sim.process.set_random_state %[[PROCESS_SEED]], %[[SEEDED_STATE]], %[[DEFAULT_INCREMENT]]
+// CHECK: %[[PROCESS_STREAM:.*]] = obelisk_sim.ref.load {{.*}} : {{.*}} -> !obelisk_sim.process
+// CHECK: %[[RNG_STATE:.*]], %[[RNG_INCREMENT:.*]] = obelisk_sim.process.random_state %[[PROCESS_STREAM]]
+// CHECK: %[[STATE_TEXT:.*]] = obelisk_sim.string.format_integer %[[RNG_STATE]] radix = 16 signed = false
+// CHECK: %[[SEPARATOR:.*]] = obelisk_sim.string.literal ":"
+// CHECK: %[[INCREMENT_TEXT:.*]] = obelisk_sim.string.format_integer %[[RNG_INCREMENT]] radix = 16 signed = false
+// CHECK: %[[SNAPSHOT:.*]] = obelisk_sim.string.concat %[[STATE_TEXT]], %[[SEPARATOR]], %[[INCREMENT_TEXT]]
+// CHECK: %[[OLD_STATE:.*]], %[[OLD_INCREMENT:.*]] = obelisk_sim.process.random_state %[[PROCESS_STREAM]]
+// CHECK: obelisk_sim.string.scan_field %[[SNAPSHOT]]
+// CHECK: obelisk_sim.string.scan_field %[[SNAPSHOT]]
+// CHECK: %[[SELECTED_STATE:.*]] = arith.select {{.*}}, {{.*}}, %[[OLD_STATE]]
+// CHECK: %[[SELECTED_INCREMENT:.*]] = arith.select {{.*}}, {{.*}}, %[[OLD_INCREMENT]]
+// CHECK: obelisk_sim.process.set_random_state %[[PROCESS_STREAM]], %[[SELECTED_STATE]], %[[SELECTED_INCREMENT]]
 // CHECK: %[[PROCESS2:.*]] = obelisk_sim.ref.load {{.*}} : {{.*}} -> !obelisk_sim.process
 // CHECK: obelisk_sim.suspend.await %[[PROCESS2]] to ^[[AWAIT:bb[0-9]+]]
 // CHECK: ^[[AWAIT]]:

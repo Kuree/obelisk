@@ -3323,7 +3323,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           uint64_t token = scheduled.token;
           obelisk_rt_reparent_process_children_unlocked(
               context, kNativeLogicalProcessTag | token, scheduled.parent);
-          context->terminatedNativeProcesses.insert(token);
+          context->terminatedNativeProcesses.insert(token, scheduled.random);
           scheduled.instance = nullptr;
           ++context->schedulerDeadProcessCount;
           context->schedulerCompactionPending = true;

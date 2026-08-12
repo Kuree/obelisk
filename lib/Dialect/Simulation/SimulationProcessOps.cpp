@@ -750,6 +750,14 @@ LogicalResult SimProcessStatusOp::verify() {
   return verifyProcessContext(getOperation());
 }
 
+LogicalResult SimProcessRandomStateOp::verify() {
+  return verifyProcessContext(getOperation());
+}
+
+LogicalResult SimProcessSetRandomStateOp::verify() {
+  return verifyProcessContext(getOperation());
+}
+
 LogicalResult SimControlEnterOp::verify() {
   return verifyPositive(*this, getTargetIdAttr(), "control target ID");
 }

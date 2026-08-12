@@ -19,6 +19,7 @@ extern "C" {
 typedef struct obelisk_rt_context obelisk_rt_context;
 typedef struct obelisk_rt_gc_lane_v1 obelisk_rt_gc_lane_v1;
 typedef struct obelisk_rt_object_v1 obelisk_rt_object_v1;
+typedef struct obelisk_rt_random_state_v1 obelisk_rt_random_state_v1;
 
 // Functional-coverage handles are context-local monotonically allocated IDs.
 // Zero is the language null value and never names a live instance.
@@ -783,6 +784,8 @@ enum {
   OBELISK_RT_INTRINSIC_V1_DUMP_FLUSH = UINT32_C(0x0001022b),
   OBELISK_RT_INTRINSIC_V1_PROCESS_CURRENT = UINT32_C(0x0001022c),
   OBELISK_RT_INTRINSIC_V1_PROCESS_STATUS = UINT32_C(0x0001022d),
+  OBELISK_RT_INTRINSIC_V1_PROCESS_RANDOM_GET = UINT32_C(0x0001022e),
+  OBELISK_RT_INTRINSIC_V1_PROCESS_RANDOM_SET = UINT32_C(0x0001022f),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -2397,6 +2400,14 @@ uint64_t obelisk_rt_v1_process_current(obelisk_rt_context *context);
 obelisk_rt_status obelisk_rt_v1_process_status(
     obelisk_rt_context *context, uint64_t logical_process,
     obelisk_rt_process_state *out_state);
+// Read or restore a process's independent random stream. Context-owned
+// tombstones retain the two state words after FINISHED or KILLED.
+obelisk_rt_status obelisk_rt_v1_process_random_get(
+    obelisk_rt_context *context, uint64_t logical_process,
+    obelisk_rt_random_state_v1 *out_state);
+obelisk_rt_status obelisk_rt_v1_process_random_set(
+    obelisk_rt_context *context, uint64_t logical_process,
+    const obelisk_rt_random_state_v1 *state);
 // Apply one IEEE process-object control transaction. External targets are
 // updated before return. A control of the executing logical process returns a
 // disposition which the caller must publish as its fragment action. Returns
@@ -2847,10 +2858,10 @@ enum {
 // PCG-XSH-RR stream state. The increment is always odd for runtime-created
 // streams. Both words are explicit so generated code can snapshot and step an
 // object-local stream without a runtime call.
-typedef struct obelisk_rt_random_state_v1 {
+struct obelisk_rt_random_state_v1 {
   uint64_t state;
   uint64_t increment;
-} obelisk_rt_random_state_v1;
+};
 
 // Shared PCG-XSH-RR parameters used by process and object-local streams.
 #define OBELISK_RT_RANDOM_MULTIPLIER UINT64_C(6364136223846793005)

@@ -2092,6 +2092,28 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         obelisk_rt_v1_process_status(context, *logicalProcess, &state);
     return status == OBELISK_RT_OK ? sentinel(0, state) : status;
   }
+  case OBELISK_RT_INTRINSIC_V1_PROCESS_RANDOM_GET: {
+    auto logicalProcess = scalar(0);
+    obelisk_rt_random_state_v1 state{};
+    if (!logicalProcess)
+      return OBELISK_RT_INVALID_BYTECODE;
+    obelisk_rt_status status =
+        obelisk_rt_v1_process_random_get(context, *logicalProcess, &state);
+    if (status != OBELISK_RT_OK)
+      return status;
+    status = sentinel(0, state.state);
+    return status == OBELISK_RT_OK ? sentinel(1, state.increment) : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_PROCESS_RANDOM_SET: {
+    auto logicalProcess = scalar(0);
+    auto state = scalar(1);
+    auto increment = scalar(2);
+    if (!logicalProcess || !state || !increment)
+      return OBELISK_RT_INVALID_BYTECODE;
+    obelisk_rt_random_state_v1 snapshot{*state, *increment};
+    return obelisk_rt_v1_process_random_set(context, *logicalProcess,
+                                             &snapshot);
+  }
   case OBELISK_RT_INTRINSIC_V1_DUMP_OPEN: {
     auto path = bytes(0);
     if (!path)

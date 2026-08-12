@@ -1679,6 +1679,31 @@ def SimProcessStatusOp : SimOp<"process.status", [
   let hasVerifier = 1;
 }
 
+def SimProcessRandomStateOp : SimOp<"process.random_state", [
+    MemoryEffects<[MemRead<SimSchedulerResource>, MemRead<SimProcessResource>]>
+  ]> {
+  let summary = "read one IEEE process object's random stream state";
+  let description = [{
+    Returns the two opaque words comprising the selected process's random
+    stream. Process identities retain this state after FINISHED or KILLED, so
+    a referenced process tombstone continues to support random-state methods.
+  }];
+  let arguments = (ins SimProcessType:$process);
+  let results = (outs I64:$state, I64:$increment);
+  let assemblyFormat = "$process attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimProcessSetRandomStateOp : SimOp<"process.set_random_state", [
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemRead<SimProcessResource>, MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "restore one IEEE process object's random stream state";
+  let arguments = (ins SimProcessType:$process, I64:$state, I64:$increment);
+  let assemblyFormat = "$process `,` $state `,` $increment attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimProcessControlOp : SimOp<"process.control", [
     Terminator, DeclareOpInterfaceMethods<BranchOpInterface>,
     MemoryEffects<[MemRead<SimSchedulerResource>,

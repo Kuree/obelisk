@@ -417,6 +417,10 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
                            {pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_status", i32,
                            {pointer, i64, pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_random_get", i32,
+                           {pointer, i64, pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_random_set", i32,
+                           {pointer, i64, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_control", i32,
                            {pointer, i64, i32, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_fail",

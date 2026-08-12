@@ -18,6 +18,10 @@ module {
       %equal = obelisk_sim.process.equal %null, %current
       // CHECK: %[[STATUS:.*]] = obelisk_sim.process.status %[[CURRENT]]
       %status = obelisk_sim.process.status %current
+      // CHECK: %[[RNG_STATE:.*]], %[[RNG_INCREMENT:.*]] = obelisk_sim.process.random_state %[[CURRENT]]
+      %rng_state, %rng_increment = obelisk_sim.process.random_state %current
+      // CHECK: obelisk_sim.process.set_random_state %[[CURRENT]], %[[RNG_STATE]], %[[RNG_INCREMENT]]
+      obelisk_sim.process.set_random_state %current, %rng_state, %rng_increment
       // CHECK: obelisk_sim.process.control suspend %[[CURRENT]] to ^[[SUSPEND_CONT:.*]](%[[STATUS]] : i32)
       obelisk_sim.process.control suspend %current to ^after_suspend(%status : i32)
 

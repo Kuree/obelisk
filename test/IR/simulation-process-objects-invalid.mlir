@@ -27,6 +27,14 @@ module {
 // -----
 
 module {
+  %null = obelisk_sim.process.null
+  // expected-error @below {{'obelisk_sim.process.random_state' op must be nested in obelisk_sim.func}}
+  %state, %increment = obelisk_sim.process.random_state %null
+}
+
+// -----
+
+module {
   obelisk_sim.design @observer_control {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 observer hierarchy "top.observer"
@@ -76,6 +84,25 @@ module {
       // expected-error @below {{type mismatch for bb argument #0 of successor #0}}
       obelisk_sim.process.control suspend %current to ^continued(%value : i32)
     ^continued(%forwarded: i64):
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @postponed_process_random_write {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 task hierarchy "top.postponed_rng"
+    obelisk_sim.func @postponed(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 12 : i32, home_region = 16 : i32,
+                    code_unit_id = 1 : i64} {
+      %current = obelisk_sim.process.current
+      %seed = arith.constant 1 : i64
+      // expected-error @below {{'obelisk_sim.process.set_random_state' op is not permitted in a read-only postponed code unit}}
+      obelisk_sim.process.set_random_state %current, %seed, %seed
       obelisk_sim.return
     }
   }

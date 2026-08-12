@@ -110,6 +110,74 @@ public:
   }
 };
 
+class ProcessRandomStateConversion final
+    : public OpConversionPattern<sim::SimProcessRandomStateOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimProcessRandomStateOp operation,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getProcess().size() != 1)
+      return failure();
+    Location location = operation.getLoc();
+    Type i64 = rewriter.getI64Type();
+    Value context = loadCurrentRuntimeContext(rewriter, location);
+    Value outState = entryAlloca(rewriter, location, i64, 2, 8);
+    Value zero = llvmConstant(rewriter, location, i64, 0);
+    LLVM::StoreOp::create(rewriter, location, zero, outState, 8);
+    Value incrementAddress = byteGEP(rewriter, location, outState, 8);
+    LLVM::StoreOp::create(rewriter, location, zero, incrementAddress, 8);
+    Value status = LLVM::CallOp::create(
+                       rewriter, location, TypeRange{rewriter.getI32Type()},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_process_random_get"),
+                       ValueRange{context, adaptor.getProcess().front(),
+                                  outState})
+                       .getResult();
+    reportRuntimeControlStatus(rewriter, location, context, status);
+    Value state = LLVM::LoadOp::create(rewriter, location, i64, outState, 8);
+    Value increment =
+        LLVM::LoadOp::create(rewriter, location, i64, incrementAddress, 8);
+    rewriter.replaceOp(operation, ValueRange{state, increment});
+    return success();
+  }
+};
+
+class ProcessSetRandomStateConversion final
+    : public OpConversionPattern<sim::SimProcessSetRandomStateOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimProcessSetRandomStateOp operation,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getProcess().size() != 1 || adaptor.getState().size() != 1 ||
+        adaptor.getIncrement().size() != 1)
+      return failure();
+    Location location = operation.getLoc();
+    Type i64 = rewriter.getI64Type();
+    Value context = loadCurrentRuntimeContext(rewriter, location);
+    Value state = entryAlloca(rewriter, location, i64, 2, 8);
+    LLVM::StoreOp::create(rewriter, location, adaptor.getState().front(), state,
+                          8);
+    Value incrementAddress = byteGEP(rewriter, location, state, 8);
+    LLVM::StoreOp::create(rewriter, location, adaptor.getIncrement().front(),
+                          incrementAddress, 8);
+    Value status = LLVM::CallOp::create(
+                       rewriter, location, TypeRange{rewriter.getI32Type()},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_process_random_set"),
+                       ValueRange{context, adaptor.getProcess().front(), state})
+                       .getResult();
+    reportRuntimeControlStatus(rewriter, location, context, status);
+    rewriter.eraseOp(operation);
+    return success();
+  }
+};
+
 class DisableChildrenConversion final
     : public OpConversionPattern<sim::SimDisableChildrenOp> {
 public:
@@ -457,6 +525,7 @@ void populateControlToLLVMConversionPatterns(RewritePatternSet &patterns,
                ControlLeaveConversion, ControlDisableConversion,
                ProcessNullConversion, ProcessCurrentConversion,
                ProcessEqualConversion, ProcessStatusConversion,
+               ProcessRandomStateConversion, ProcessSetRandomStateConversion,
                MonitorRegisterConversion, MonitorControlConversion,
                MonitorCurrentConversion>(converter, context);
   patterns.add<OnceConversion<sim::SimStaticOnceOp>>(

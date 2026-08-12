@@ -1005,6 +1005,12 @@ ABI_FUNCTION(obelisk_rt_v1_process_current,
 ABI_FUNCTION(obelisk_rt_v1_process_status,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t,
                                    obelisk_rt_process_state *));
+ABI_FUNCTION(obelisk_rt_v1_process_random_get,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t,
+                                   obelisk_rt_random_state_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_process_random_set,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t,
+                                   const obelisk_rt_random_state_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_process_control,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t,
                                    obelisk_rt_process_control_kind,
