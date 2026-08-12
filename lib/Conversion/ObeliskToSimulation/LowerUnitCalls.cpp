@@ -32,6 +32,73 @@ bool isWeakReferenceCall(semantic::SVCallExpressionOp op) {
 FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
+  std::optional<StringRef> referencedPath = op.getReferencedPath();
+  if (referencedPath && referencedPath->starts_with("std::process::")) {
+    StringRef method =
+        referencedPath->drop_front(StringRef("std::process::").size());
+    auto dummyResult = [&]() -> Value {
+      return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                       builder.getBoolAttr(false));
+    };
+    if (method == "self") {
+      if (!children.empty()) {
+        emitError(location) << "process::self requires no arguments";
+        return failure();
+      }
+      return sim::SimProcessCurrentOp::create(builder, location).getResult();
+    }
+    if (method == "status") {
+      if (children.size() != 1) {
+        emitError(location) << "process::status requires one receiver";
+        return failure();
+      }
+      FailureOr<Value> receiver = lowerExpression(children.front());
+      FailureOr<Type> resultType = getNormalizedSemanticType(op);
+      if (failed(receiver) || failed(resultType) ||
+          !isa<sim::ProcessType>((*receiver).getType()))
+        return failure();
+      Value status = sim::SimProcessStatusOp::create(
+          builder, location, builder.getI32Type(), *receiver);
+      return convert(status, *resultType, true, location, true);
+    }
+    if (method == "await") {
+      if (children.size() != 1) {
+        emitError(location) << "process::await requires one receiver";
+        return failure();
+      }
+      FailureOr<Value> receiver = lowerExpression(children.front());
+      if (failed(receiver) || !isa<sim::ProcessType>((*receiver).getType()))
+        return failure();
+      Block *continuation = addBlock();
+      sim::SimSuspendAwaitOp::create(
+          builder, location, *receiver, ValueRange{},
+          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
+      setCurrent(continuation);
+      return dummyResult();
+    }
+    std::optional<sim::ProcessControlKind> kind =
+        llvm::StringSwitch<std::optional<sim::ProcessControlKind>>(method)
+            .Case("kill", sim::ProcessControlKind::Kill)
+            .Case("suspend", sim::ProcessControlKind::Suspend)
+            .Case("resume", sim::ProcessControlKind::Resume)
+            .Default(std::nullopt);
+    if (kind) {
+      if (children.size() != 1) {
+        emitError(location) << "process::" << method
+                            << " requires one receiver";
+        return failure();
+      }
+      FailureOr<Value> receiver = lowerExpression(children.front());
+      if (failed(receiver) || !isa<sim::ProcessType>((*receiver).getType()))
+        return failure();
+      Block *continuation = addBlock();
+      sim::SimProcessControlOp::create(
+          builder, location, *kind, *receiver, ValueRange{},
+          sim::ContinuationSiteAttr{}, continuation);
+      setCurrent(continuation);
+      return dummyResult();
+    }
+  }
   if (op->hasAttr(randomizeAttrName) ||
       op->hasAttr(randomizeDispatchAttrName))
     return lowerRandomize(op);

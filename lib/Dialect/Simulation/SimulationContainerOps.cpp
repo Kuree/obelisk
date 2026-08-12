@@ -139,6 +139,8 @@ std::optional<uint64_t> getProvenanceSpan(Type type) {
     return getProvenanceSpan(driver.getElementType());
   if (isa<EventType>(type))
     return uint64_t{1};
+  if (isa<ProcessType>(type))
+    return uint64_t{64};
   if (std::optional<unsigned> packed = getPackedWidth(type))
     return *packed;
   if (isa<TimeType>(type) || type.isF64())
@@ -471,6 +473,10 @@ LogicalResult SimContainerCreateOp::verify() {
   } else if (isa<EventType>(element)) {
     expectedKind = 8;
     expectedSize = sizeof(uint64_t);
+  } else if (isa<ProcessType>(element)) {
+    expectedKind = 1;
+    expectedSize = sizeof(uint64_t);
+    expectedWidth = 64;
   } else if (Type scalar = getPackedScalarType(element)) {
     std::optional<unsigned> width = getPackedWidth(element);
     if (!width || *width == 0)

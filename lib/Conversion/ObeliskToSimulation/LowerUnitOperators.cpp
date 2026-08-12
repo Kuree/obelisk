@@ -351,7 +351,9 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
   if (isa<semantic::SVNullLiteralOp>(children[0])) {
     rhs = lowerExpression(children[1]);
     if (succeeded(rhs)) {
-      if (isa<sim::ClassHandleType>((*rhs).getType()))
+      if (isa<sim::ProcessType>((*rhs).getType()))
+        lhs = sim::SimProcessNullOp::create(builder, location).getResult();
+      else if (isa<sim::ClassHandleType>((*rhs).getType()))
         lhs = sim::SimClassNullOp::create(builder, location, (*rhs).getType())
                   .getResult();
       else if (isa<sim::EventType>((*rhs).getType()))
@@ -361,7 +363,9 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
   } else if (isa<semantic::SVNullLiteralOp>(children[1])) {
     lhs = lowerExpression(children[0]);
     if (succeeded(lhs)) {
-      if (isa<sim::ClassHandleType>((*lhs).getType()))
+      if (isa<sim::ProcessType>((*lhs).getType()))
+        rhs = sim::SimProcessNullOp::create(builder, location).getResult();
+      else if (isa<sim::ClassHandleType>((*lhs).getType()))
         rhs = sim::SimClassNullOp::create(builder, location, (*lhs).getType())
                   .getResult();
       else if (isa<sim::EventType>((*lhs).getType()))
@@ -523,6 +527,23 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
     Value compared =
         arith::CmpIOp::create(builder, location, predicate, lhsID, rhsID);
     return convert(compared, *resultType, false, location);
+  }
+  if (isa<sim::ProcessType>((*lhs).getType()) ||
+      isa<sim::ProcessType>((*rhs).getType())) {
+    if (!isa<sim::ProcessType>((*lhs).getType()) ||
+        !isa<sim::ProcessType>((*rhs).getType()) ||
+        (kind != Binary::Equality && kind != Binary::Inequality &&
+         kind != Binary::CaseEquality && kind != Binary::CaseInequality)) {
+      unsupported(op) << " (process-handle operator)";
+      return failure();
+    }
+    Value equal = sim::SimProcessEqualOp::create(builder, location, *lhs, *rhs);
+    if (kind == Binary::Inequality || kind == Binary::CaseInequality)
+      equal = arith::XOrIOp::create(
+          builder, location, equal,
+          arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                    builder.getBoolAttr(true)));
+    return convert(equal, *resultType, false, location);
   }
   if (isa<sim::EventType>((*lhs).getType()) ||
       isa<sim::EventType>((*rhs).getType())) {
@@ -1061,6 +1082,9 @@ FailureOr<Value> UnitLowering::conditionalEqual(Value lhs, Value rhs, Type type,
                                  left, right)
         .getResult();
   }
+  if (isa<sim::ProcessType>(type))
+    return sim::SimProcessEqualOp::create(builder, location, lhs, rhs)
+        .getResult();
   if (isa<sim::EventType>(type))
     return sim::SimEventEqualOp::create(builder, location, builder.getI1Type(),
                                         lhs, rhs)
@@ -1310,8 +1334,8 @@ FailureOr<Value> UnitLowering::logicalEqual(Value lhs, Value rhs, Type type,
         builder, location, arith::CmpIPredicate::eq, *left, *right);
     return fromBits(equal);
   }
-  if (isa<FloatType, sim::StringType, sim::ClassHandleType, sim::EventType>(
-          type)) {
+  if (isa<FloatType, sim::StringType, sim::ClassHandleType, sim::ProcessType,
+          sim::EventType>(type)) {
     FailureOr<Value> equal = conditionalEqual(lhs, rhs, type, location);
     if (failed(equal))
       return failure();

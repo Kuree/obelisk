@@ -134,6 +134,12 @@ describeContainerElementImpl(Type type, Location location) {
     result.valueSize = sizeof(uint64_t);
     return result;
   }
+  if (isa<sim::ProcessType>(type)) {
+    result.kind = OBELISK_RT_ELEMENT_BITS;
+    result.valueSize = sizeof(uint64_t);
+    result.bitWidth = 64;
+    return result;
+  }
   if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(type)) {
     result.kind = OBELISK_RT_ELEMENT_CONTAINER_HANDLE;
     result.valueSize = sizeof(void *);
@@ -1442,6 +1448,9 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
       return lowerStringLiteralValue(builder, children.front(), *target,
                                      getSemanticLocation(op));
     if (isa<semantic::SVNullLiteralOp>(children.front())) {
+      if (isa<sim::ProcessType>(*target))
+        return sim::SimProcessNullOp::create(builder, getSemanticLocation(op))
+            .getResult();
       if (isa<sim::ClassHandleType>(*target))
         return sim::SimClassNullOp::create(builder, getSemanticLocation(op),
                                            *target)

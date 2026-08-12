@@ -586,10 +586,21 @@ static FailureOr<ArrayAttr> normalizeDictionaryFields(DictionaryAttr fields,
 static FailureOr<Type> normalizeType(Type type, Location location,
                                      bool allowRealScalar) {
   MLIRContext *context = type.getContext();
-  if (auto classHandle = dyn_cast<semantic::ClassHandleType>(type))
+  if (auto classHandle = dyn_cast<semantic::ClassHandleType>(type)) {
+    SymbolRefAttr className = classHandle.getClassName();
+    auto sourceName = [](StringRef symbol) {
+      size_t separator = symbol.find('.');
+      return separator == StringRef::npos ? symbol
+                                         : symbol.drop_front(separator + 1);
+    };
+    if (className.getNestedReferences().size() == 1 &&
+        sourceName(className.getRootReference().getValue()) == "std" &&
+        sourceName(className.getLeafReference().getValue()) == "process")
+      return sim::ProcessType::get(context);
     return sim::ClassHandleType::get(
         context, FlatSymbolRefAttr::get(
                      getSimulationClassSymbol(classHandle.getClassName())));
+  }
   if (auto integer = dyn_cast<IntegerType>(type)) {
     if (!integer.isSignless()) {
       emitError(location) << "signed or unsigned builtin integer survived "
@@ -742,6 +753,8 @@ static FailureOr<Type> normalizeType(Type type, Location location,
   }
   if (isa<semantic::EventType>(type))
     return sim::EventType::get(context);
+  if (isa<semantic::ProcessType>(type))
+    return sim::ProcessType::get(context);
   if (auto covergroup = dyn_cast<semantic::CovergroupHandleType>(type))
     return sim::CovergroupHandleType::get(
         context, SymbolRefAttr::get(context, getSimulationCovergroupSymbol(
@@ -1084,6 +1097,8 @@ FailureOr<sim::FrozenConstantAttr> freezeSemanticConstant(Operation *symbol) {
 }
 
 Value createDefaultValue(OpBuilder &builder, Location location, Type type) {
+  if (isa<sim::ProcessType>(type))
+    return sim::SimProcessNullOp::create(builder, location);
   if (isa<sim::ClassHandleType>(type))
     return sim::SimClassNullOp::create(builder, location, type);
   if (isa<sim::CovergroupHandleType>(type))
