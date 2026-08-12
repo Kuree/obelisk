@@ -43,10 +43,12 @@ module {
         obelisk.sv.symbol.variable attributes {hierarchical_name = "Leaf::this", is_compiler_generated, is_const, name = "this", node_id = 5 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.Leaf>, sym_name = "s5.leaf_this"} {
         }
       }
-      obelisk.sv.type.class_type attributes {bitstream_width = 64 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "Parent", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "Parent", node_id = 6 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s6.Parent>, sym_name = "s6.Parent", this_variable_path = "Parent::this", this_variable_symbol = @s1.$root::@s2::@s6.Parent::@s9.parent_this} {
+      obelisk.sv.type.class_type attributes {bitstream_width = 96 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "Parent", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "Parent", node_id = 6 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s6.Parent>, sym_name = "s6.Parent", this_variable_path = "Parent::this", this_variable_symbol = @s1.$root::@s2::@s6.Parent::@s9.parent_this} {
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "Parent::y", name = "y", node_id = 7 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s7.y"} {
         }
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "Parent::leaf", name = "leaf", node_id = 8 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.Leaf>, sym_name = "s8.leaf"} {
+        }
+        obelisk.sv.symbol.class_property attributes {hierarchical_name = "Parent::leaf2", name = "leaf2", node_id = 34 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.Leaf>, sym_name = "s30.leaf2"} {
         }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "Parent::this", is_compiler_generated, is_const, name = "this", node_id = 9 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s6.Parent>, sym_name = "s9.parent_this"} {
         }
@@ -81,7 +83,8 @@ module {
 // CHECK-DAG: obelisk_sim.func private @[[LEAF_POST:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "Leaf::post_randomize"
 // CHECK-LABEL: obelisk_sim.func private @{{unit_[0-9]+}}{{.*}}obelisk_sim.hierarchical_name = "top"
 // CHECK: %[[LEAF_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s6_Parent_field_1]
-// CHECK: %[[HOOK_LEAF:.*]] = obelisk_sim.managed.load %[[LEAF_REF]]
+// CHECK: %[[LEAF2_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s6_Parent_field_2]
+// CHECK: %[[HOOK_LEAF:.*]] = obelisk_sim.managed.load %[[LEAF_REF]] : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Leaf>
 // CHECK: %[[HOOK_NULL:.*]] = obelisk_sim.managed.is_null %[[HOOK_LEAF]]
 // CHECK: %[[HOOK_NONNULL:.*]] = arith.xori %[[HOOK_NULL]], {{%true[^ ]*}}
 // CHECK: %[[HOOK_ENABLED:.*]] = arith.andi {{.*}}, %[[HOOK_NONNULL]]
@@ -90,11 +93,11 @@ module {
 // CHECK-NEXT: obelisk_sim.class.direct_call @[[LEAF_PRE]] %[[HOOK_LEAF]]({{.*}})
 // CHECK-NEXT: cf.br ^[[AFTER_PRE]]
 // CHECK: ^[[AFTER_PRE]]:
-// CHECK: %[[MODE_LEAF:.*]] = obelisk_sim.managed.load %[[LEAF_REF]]
+// CHECK: %[[MODE_LEAF:.*]] = obelisk_sim.managed.load %[[LEAF_REF]] : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Leaf>
 // CHECK: %[[MODE_NULL:.*]] = obelisk_sim.managed.is_null %[[MODE_LEAF]]
 // CHECK: cf.cond_br %[[MODE_NULL]]
 // CHECK: obelisk_sim.class.field_ref %[[MODE_LEAF]][@__obelisk_class_s3_Leaf_field___obelisk_constraint_mode]
-// CHECK: %[[LEAF:.*]] = obelisk_sim.managed.load %[[LEAF_REF]]
+// CHECK: %[[LEAF:.*]] = obelisk_sim.managed.load %[[LEAF_REF]] : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Leaf>
 // CHECK: %[[NULL:.*]] = obelisk_sim.managed.is_null %[[LEAF]]
 // CHECK: cf.cond_br %[[NULL]], ^[[MERGE:bb[0-9]+]]({{.*}}%false{{.*}}), ^[[OBJECT_BLOCK:bb[0-9]+]]
 // CHECK: ^[[OBJECT_BLOCK]]:
@@ -104,7 +107,7 @@ module {
 // CHECK: cf.br ^[[MERGE]]
 // CHECK: ^[[MERGE]]({{.*}}, %[[CHILD_ENABLED:.*]]: i1):
 // CHECK: arith.andi {{.*}}, %[[CHILD_ENABLED]] : i1
-// CHECK: %[[STATE_CHILD:.*]] = obelisk_sim.managed.load %[[LEAF_REF]]
+// CHECK: %[[STATE_CHILD:.*]] = obelisk_sim.managed.load %[[LEAF_REF]] : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Leaf>
 // CHECK: %[[STATE_NULL:.*]] = obelisk_sim.managed.is_null %[[STATE_CHILD]]
 // CHECK: cf.cond_br %[[STATE_NULL]], ^[[STATE_RESUME:bb[0-9]+]]({{.*}} : i32), ^[[STATE_PRESENT:bb[0-9]+]]
 // CHECK: ^[[STATE_PRESENT]]:
@@ -113,11 +116,27 @@ module {
 // CHECK: cf.br ^[[STATE_RESUME]](%[[LIMIT]] : i32)
 // CHECK: ^[[STATE_RESUME]](%[[CAPTURE:.*]]: i32):
 // CHECK: %[[EXTENDED_CAPTURE:.*]] = arith.extui %[[CAPTURE]] : i32 to i64
-// CHECK: obelisk_sim.random.solve {{.*}} captures(%[[EXTENDED_CAPTURE]])
+// CHECK: %[[STATE2_CHILD:.*]] = obelisk_sim.managed.load %[[LEAF2_REF]] : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Leaf>
+// CHECK: %[[STATE2_NULL:.*]] = obelisk_sim.managed.is_null %[[STATE2_CHILD]]
+// CHECK: cf.cond_br %[[STATE2_NULL]], ^[[STATE2_RESUME:bb[0-9]+]]({{.*}} : i32), ^[[STATE2_PRESENT:bb[0-9]+]]
+// CHECK: ^[[STATE2_PRESENT]]:
+// CHECK: %[[LIMIT2_REF:.*]] = obelisk_sim.class.field_ref %[[STATE2_CHILD]][@__obelisk_class_s3_Leaf_field_1]
+// CHECK: %[[LIMIT2:.*]] = obelisk_sim.managed.load %[[LIMIT2_REF]]
+// CHECK: cf.br ^[[STATE2_RESUME]](%[[LIMIT2]] : i32)
+// CHECK: ^[[STATE2_RESUME]](%[[CAPTURE2:.*]]: i32):
+// CHECK: %[[EXTENDED_CAPTURE2:.*]] = arith.extui %[[CAPTURE2]] : i32 to i64
+// CHECK: obelisk_sim.random.solve_wide {{.*}}, %[[EXTENDED_CAPTURE]], %[[EXTENDED_CAPTURE2]] {program =
 // CHECK: ^[[POST_DISPATCH:bb[0-9]+]]:  // 3 preds:
 // CHECK-NEXT: cf.cond_br %[[HOOK_ENABLED]], ^[[POST:bb[0-9]+]], ^[[AFTER_POST:bb[0-9]+]]
 // CHECK: %[[COMMIT_X_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s3_Leaf_field_0]
 // CHECK: obelisk_sim.managed.store {{.*}} to %[[COMMIT_X_REF]]
+// CHECK-NEXT: cf.br ^[[NEXT_CHILD:bb[0-9]+]]
+// CHECK: ^[[NEXT_CHILD]]:
+// CHECK: cf.cond_br {{.*}}, ^[[STORE_CHILD2:bb[0-9]+]], ^[[POST_DISPATCH]]
+// CHECK: ^[[STORE_CHILD2]]:
+// CHECK: %[[COMMIT_LEAF2:.*]] = obelisk_sim.managed.load %[[LEAF2_REF]] : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Leaf>
+// CHECK: %[[COMMIT_X2_REF:.*]] = obelisk_sim.class.field_ref %[[COMMIT_LEAF2]][@__obelisk_class_s3_Leaf_field_0]
+// CHECK: obelisk_sim.managed.store {{.*}} to %[[COMMIT_X2_REF]]
 // CHECK-NEXT: cf.br ^[[POST_DISPATCH]]
 // CHECK: ^[[POST]]:
 // CHECK-NEXT: obelisk_sim.class.direct_call @[[LEAF_POST]] %[[HOOK_LEAF]]()
