@@ -1063,8 +1063,14 @@ enum {
   OBELISK_RT_SUSPEND_FOREVER = 7,
   OBELISK_RT_SUSPEND_FRONTIER = 8,
   OBELISK_RT_SUSPEND_CHILDREN = 9,
-  OBELISK_RT_SUSPEND_OBSERVER = 10
+  OBELISK_RT_SUSPEND_OBSERVER = 10,
+  // Wait for a managed mailbox predicate. The sole wait entry contains the
+  // mailbox object address; flags select NOT_EMPTY or NOT_FULL below.
+  OBELISK_RT_SUSPEND_MAILBOX = 11
 };
+
+#define OBELISK_RT_WAIT_MAILBOX_NOT_EMPTY UINT32_C(0)
+#define OBELISK_RT_WAIT_MAILBOX_NOT_FULL UINT32_C(1)
 
 typedef struct obelisk_rt_fragment_action_v1 {
   obelisk_rt_fragment_action_kind kind;

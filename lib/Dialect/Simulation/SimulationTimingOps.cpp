@@ -148,6 +148,9 @@ SuccessorOperands SimSuspendAnyOp::getSuccessorOperands(unsigned index) {
 SuccessorOperands SimSuspendEventOp::getSuccessorOperands(unsigned index) {
   return makeContinuationSuccessorOperands(*this, index);
 }
+SuccessorOperands SimSuspendMailboxOp::getSuccessorOperands(unsigned index) {
+  return makeContinuationSuccessorOperands(*this, index);
+}
 SuccessorOperands SimSuspendObserveOp::getSuccessorOperands(unsigned index) {
   return makeContinuationSuccessorOperands(*this, index);
 }
@@ -250,6 +253,14 @@ MutableOperandRange SimSuspendAnyOp::getContinuationOperandsMutable() {
                              getNumOperands() - watchedCount);
 }
 LogicalResult SimSuspendEventOp::verify() {
+  return verifyContinuation(*this, getContinuationOperands(),
+                            getContinuation());
+}
+LogicalResult SimSuspendMailboxOp::verify() {
+  if (llvm::none_of(getContinuationOperands(),
+                    [&](Value value) { return value == getMailbox(); }))
+    return emitOpError(
+        "requires the mailbox as a continuation operand to preserve its GC root");
   return verifyContinuation(*this, getContinuationOperands(),
                             getContinuation());
 }

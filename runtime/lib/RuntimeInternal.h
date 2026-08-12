@@ -384,6 +384,9 @@ struct ScheduledProcess {
   bool explicitlySuspended = false;
 };
 
+obelisk_rt_status obelisk_rt_mailbox_wait_ready(
+    obelisk_rt_object_v1 *mailbox, uint32_t predicate, bool &ready);
+
 struct SignalValueSnapshot {
   uint64_t sequence = 0;
   bool value = false;

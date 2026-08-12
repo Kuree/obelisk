@@ -35,6 +35,8 @@ LogicalResult serializeRuntimeWait(Operation *operation, Value wait,
     waitFlags = OBELISK_RT_WAIT_LEVEL_TRUE;
   else if (isa<sim::SimSuspendEdgeIffOp>(operation))
     waitFlags = OBELISK_RT_WAIT_EDGE_IFF;
+  else if (auto mailbox = dyn_cast<sim::SimSuspendMailboxOp>(operation))
+    waitFlags = static_cast<uint32_t>(mailbox.getKind());
   if (operation->hasAttr(sim::metadata::topLevelWildcardWait) &&
       isa<sim::SimSuspendChangeOp, sim::SimSuspendAnyOp>(operation))
     waitFlags |= OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
@@ -77,6 +79,10 @@ LogicalResult serializeRuntimeWait(Operation *operation, Value wait,
       })
       .Case<sim::SimSuspendEventOp>([&](auto op) {
         watched.push_back(op.getEvent());
+        watchedEdges.push_back(noEdge);
+      })
+      .Case<sim::SimSuspendMailboxOp>([&](auto op) {
+        watched.push_back(op.getMailbox());
         watchedEdges.push_back(noEdge);
       })
       .Case<sim::SimSuspendAwaitOp>([&](auto op) {

@@ -41,6 +41,16 @@ module attributes {
       %get_ok, %get = "obelisk_sim.mailbox.try_get"(%mailbox) :
         (!obelisk_sim.mailbox<!obelisk_sim.string>) ->
         (i1, !obelisk_sim.string)
+      // CHECK: obelisk_sim.suspend.mailbox %[[MAILBOX]] not_empty
+      obelisk_sim.suspend.mailbox %mailbox not_empty to ^not_full(
+        %mailbox : !obelisk_sim.mailbox<!obelisk_sim.string>) :
+        !obelisk_sim.mailbox<!obelisk_sim.string>
+    ^not_full(%live: !obelisk_sim.mailbox<!obelisk_sim.string>):
+      // CHECK: obelisk_sim.suspend.mailbox %{{.*}} not_full
+      obelisk_sim.suspend.mailbox %live not_full to ^done(
+        %live : !obelisk_sim.mailbox<!obelisk_sim.string>) :
+        !obelisk_sim.mailbox<!obelisk_sim.string>
+    ^done(%still_live: !obelisk_sim.mailbox<!obelisk_sim.string>):
       obelisk_sim.return
     }
   }
@@ -51,4 +61,5 @@ module attributes {
 // NATIVE: llvm.call @obelisk_rt_v1_mailbox_try_peek
 // NATIVE: llvm.call @obelisk_rt_v1_mailbox_num
 // NATIVE: llvm.call @obelisk_rt_v1_mailbox_try_get
+// NATIVE: llvm.mlir.constant(11 : i32)
 // BYTECODE: obelisk.bytecode.image

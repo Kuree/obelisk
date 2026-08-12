@@ -569,6 +569,7 @@ static_assert(OBELISK_RT_SUSPEND_FOREVER == 7);
 static_assert(OBELISK_RT_SUSPEND_FRONTIER == 8);
 static_assert(OBELISK_RT_SUSPEND_CHILDREN == 9);
 static_assert(OBELISK_RT_SUSPEND_OBSERVER == 10);
+static_assert(OBELISK_RT_SUSPEND_MAILBOX == 11);
 static_assert(OBELISK_RT_ACTION_FRAME_WAIT_RECORD == 1);
 static_assert(OBELISK_RT_FRAME_CAPTURE == 1);
 static_assert(OBELISK_RT_FRAME_CONTINUATION == 2);

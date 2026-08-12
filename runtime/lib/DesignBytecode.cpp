@@ -3555,6 +3555,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         bool awaited = false;
         bool childrenDone = false;
         bool eventTriggered = false;
+        bool mailboxReady = false;
         bool signalTriggered =
             iterator->signalTriggered ||
             ((iterator->suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
@@ -3567,6 +3568,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
           ++context->signalDiagnostics.readinessCalls;
         if (iterator->started &&
             (iterator->suspendKind == OBELISK_RT_SUSPEND_EVENT ||
+             iterator->suspendKind == OBELISK_RT_SUSPEND_MAILBOX ||
              iterator->suspendKind == OBELISK_RT_SUSPEND_AWAIT ||
              iterator->suspendKind == OBELISK_RT_SUSPEND_JOIN) &&
             iterator->waitSize >= sizeof(obelisk_rt_wait_record_v1) &&
@@ -3589,6 +3591,17 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
                 eventTriggered |=
                     generation != iterator->waitGenerations[index];
               }
+          } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_MAILBOX) {
+            if (wait->count == 1) {
+              obelisk_rt_status status = obelisk_rt_mailbox_wait_ready(
+                  reinterpret_cast<obelisk_rt_object_v1 *>(
+                      entries[0].stable_id),
+                  wait->flags, mailboxReady);
+              if (status != OBELISK_RT_OK) {
+                context->schedulerStatus = status;
+                return status;
+              }
+            }
           } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_AWAIT)
             awaited = wait->count == 1 && obelisk_rt_logical_process_terminated(
                           context, entries[0].stable_id);
@@ -3614,7 +3627,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         }
         bool runnable =
             !iterator->terminated && !iterator->explicitlySuspended &&
-            (!iterator->started || awaited || eventTriggered ||
+            (!iterator->started || awaited || eventTriggered || mailboxReady ||
              signalTriggered || childrenDone ||
              iterator->suspendKind == OBELISK_RT_SUSPEND_NONE ||
              (iterator->suspendKind == OBELISK_RT_SUSPEND_DELAY
@@ -3622,6 +3635,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
                   : (iterator->suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_EDGE &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_EVENT &&
+                     iterator->suspendKind != OBELISK_RT_SUSPEND_MAILBOX &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_AWAIT &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_JOIN &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_FOREVER &&
@@ -3863,7 +3877,11 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
             wait->flags & ~OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
         bool suppressActiveSelf =
             (wait->flags & OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF) != 0;
-        bool validFlags =
+        bool mailboxWait =
+            action.suspend_kind == OBELISK_RT_SUSPEND_MAILBOX;
+        bool validFlags = mailboxWait
+          ? wait->flags <= OBELISK_RT_WAIT_MAILBOX_NOT_FULL
+          :
             (wait->flags &
              ~(OBELISK_RT_WAIT_LEVEL_TRUE | OBELISK_RT_WAIT_EDGE_IFF |
                              OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF)) == 0 &&
@@ -3881,7 +3899,8 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
             (action.suspend_kind == OBELISK_RT_SUSPEND_EDGE &&
              behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF && wait->count != 2) ||
             (action.suspend_kind == OBELISK_RT_SUSPEND_FOREVER &&
-             wait->count != 0)) {
+             wait->count != 0) ||
+            (mailboxWait && wait->count != 1)) {
           finalizeStatus = OBELISK_RT_INVALID_FRAME;
           break;
         }

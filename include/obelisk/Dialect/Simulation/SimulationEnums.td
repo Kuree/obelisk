@@ -438,6 +438,17 @@ def SimComputeActionKind
   let cppNamespace = "::obelisk::sim";
 }
 
+def SimMailboxWaitNotEmpty
+    : I32EnumAttrCase<"NotEmpty", 0, "not_empty">;
+def SimMailboxWaitNotFull
+    : I32EnumAttrCase<"NotFull", 1, "not_full">;
+def SimMailboxWaitKind
+    : I32EnumAttr<"MailboxWaitKind", "mailbox readiness predicate", [
+        SimMailboxWaitNotEmpty, SimMailboxWaitNotFull
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 // IEEE 1800 process object control methods. Keep these as a typed enum so
 // Simulation IR never relies on stringly-typed built-in method names.
 def SimProcessControlKill

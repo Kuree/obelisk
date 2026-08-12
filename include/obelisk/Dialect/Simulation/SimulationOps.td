@@ -2962,6 +2962,20 @@ def SimSuspendEventOp : SimSuspendOp<"suspend.event", (ins SimEventType:$event)>
     (`(` $continuation_operands^ `:` type($continuation_operands) `)`)? attr-dict}];
 }
 
+def SimSuspendMailboxOp : SimSuspendOp<"suspend.mailbox", (
+    ins SimMailboxType:$mailbox, SimMailboxWaitKind:$kind)> {
+  let summary = "suspend until a mailbox can complete a blocking operation";
+  let description = [{
+    Suspends on the mailbox's not-empty or not-full predicate. The mailbox
+    must also be passed to the continuation, which keeps the managed handle in
+    the canonical process frame and therefore rooted while the process waits.
+  }];
+  let assemblyFormat = [{$mailbox $kind `to` $continuation
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`)?
+    attr-dict `:` type($mailbox)}];
+  let hasVerifier = 1;
+}
+
 def SimSuspendObserveOp : SimOp<"suspend.observe", [
     Terminator,
     DeclareOpInterfaceMethods<BranchOpInterface>,

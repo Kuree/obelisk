@@ -12,6 +12,21 @@ module {
 // -----
 
 module {
+  obelisk_sim.func @missing_mailbox_root(
+      %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+      %mailbox: !obelisk_sim.mailbox<i32> {obelisk_sim.capture_kind = 1 : i32})
+      attributes {entry_kind = 1 : i32} {
+    // expected-error @+1 {{requires the mailbox as a continuation operand to preserve its GC root}}
+    obelisk_sim.suspend.mailbox %mailbox not_empty to ^done :
+      !obelisk_sim.mailbox<i32>
+  ^done:
+    obelisk_sim.return
+  }
+}
+
+// -----
+
+module {
   func.func @wrong_element_metadata(%bound: i64) {
     // expected-error @+1 {{element metadata does not match the mailbox element type}}
     %mailbox = "obelisk_sim.mailbox.create"(%bound) {

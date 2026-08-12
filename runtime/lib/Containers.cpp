@@ -3001,6 +3001,23 @@ obelisk_rt_v1_mailbox_num(obelisk_rt_object_v1 *mailbox, uint32_t *outCount) {
   return OBELISK_RT_OK;
 }
 
+obelisk_rt_status obelisk_rt_mailbox_wait_ready(
+    obelisk_rt_object_v1 *mailbox, uint32_t predicate, bool &ready) {
+  ready = false;
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(mailbox, snapshot);
+  if (status != OBELISK_RT_OK ||
+      snapshot.kind != OBELISK_RT_CONTAINER_QUEUE)
+    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+  if (predicate == OBELISK_RT_WAIT_MAILBOX_NOT_EMPTY)
+    ready = snapshot.size != 0;
+  else if (predicate == OBELISK_RT_WAIT_MAILBOX_NOT_FULL)
+    ready = !queueIsFull(snapshot);
+  else
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return OBELISK_RT_OK;
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_queue_pop(obelisk_rt_object_v1 *queue, uint32_t front,
                         void *outValue, void *outUnknown,

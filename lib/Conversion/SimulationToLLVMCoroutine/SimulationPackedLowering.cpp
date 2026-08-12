@@ -416,6 +416,7 @@ LogicalResult lowerPackedSimulationOperations(
       sim::SimPackedUnflattenOp, sim::SimSuspendDelayOp,
       sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
       sim::SimSuspendLevelOp, sim::SimSuspendAnyOp, sim::SimSuspendEventOp,
+      sim::SimSuspendMailboxOp,
       sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
       sim::SimSuspendChildrenOp, sim::SimSuspendObserveOp,
       sim::SimProcessControlOp>(

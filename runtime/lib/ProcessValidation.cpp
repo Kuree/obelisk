@@ -360,6 +360,11 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
     valid = wait->flags == 0 && wait->count == 1 && wait->payload == 0 &&
             wait->auxiliary == 0 && entriesMatch(false, 0);
     break;
+  case OBELISK_RT_SUSPEND_MAILBOX:
+    valid = wait->flags <= OBELISK_RT_WAIT_MAILBOX_NOT_FULL &&
+            wait->count == 1 && wait->payload == 0 && wait->auxiliary == 0 &&
+            entriesMatch(false, 0);
+    break;
   case OBELISK_RT_SUSPEND_JOIN:
     valid = wait->flags <= 1 && wait->count != 0 && wait->payload == 0 &&
             wait->auxiliary == 0 && entriesMatch(false, 0);
@@ -398,7 +403,7 @@ obelisk_rt_status validateAction(obelisk_rt_process_instance_v1 &instance,
     break;
   case OBELISK_RT_FRAGMENT_SUSPEND: {
     if (action.suspend_kind < OBELISK_RT_SUSPEND_DELAY ||
-        action.suspend_kind > OBELISK_RT_SUSPEND_OBSERVER)
+        action.suspend_kind > OBELISK_RT_SUSPEND_MAILBOX)
       return OBELISK_RT_INVALID_ARGUMENT;
     obelisk_rt_status status = validateWait(instance, action, bytecode);
     if (status != OBELISK_RT_OK)

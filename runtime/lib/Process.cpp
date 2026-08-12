@@ -139,6 +139,17 @@ bool nativeWaitReady(obelisk_rt_context &context,
         return true;
     }
     return false;
+  case OBELISK_RT_SUSPEND_MAILBOX: {
+    if (wait->count != 1)
+      return false;
+    bool ready = false;
+    obelisk_rt_status status = obelisk_rt_mailbox_wait_ready(
+        reinterpret_cast<obelisk_rt_object_v1 *>(entries[0].stable_id),
+        wait->flags, ready);
+    if (status != OBELISK_RT_OK)
+      context.schedulerStatus = status;
+    return status == OBELISK_RT_OK && ready;
+  }
   case OBELISK_RT_SUSPEND_AWAIT:
     return wait->count == 1 &&
            obelisk_rt_logical_process_terminated(
