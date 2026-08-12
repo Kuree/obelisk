@@ -224,6 +224,12 @@ inline constexpr ::mlir::StringLiteral randomNestedConstraintModesAttrName =
     "obelisk_sim.random_nested_constraint_modes";
 inline constexpr ::mlir::StringLiteral randomNestedHooksAttrName =
     "obelisk_sim.random_nested_hooks";
+inline constexpr ::mlir::StringLiteral randomNestedStateFieldAttrName =
+    "obelisk_sim.random_nested_state_field";
+inline constexpr ::mlir::StringLiteral randomNestedStateConcreteTypeAttrName =
+    "obelisk_sim.random_nested_state_concrete_type";
+inline constexpr ::mlir::StringLiteral randomNestedStateStorageTypeAttrName =
+    "obelisk_sim.random_nested_state_storage_type";
 inline constexpr ::mlir::StringLiteral randomPropertyPathAttrName =
     "reference_path";
 inline constexpr ::mlir::StringLiteral randomPropertyModeStorageAttrName =

@@ -2214,33 +2214,6 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
       }
     }
-    llvm::SmallPtrSet<Operation *, 16> randomPropertySources;
-    for (const RandomProperty &property : properties)
-      randomPropertySources.insert(property.source);
-    for (Operation *root : constraintRoots) {
-      auto block = root->getParentOfType<semantic::SVConstraintBlockSymbolOp>();
-      auto owner = block ? nestedConstraintOwners.find(block)
-                         : nestedConstraintOwners.end();
-      if (owner == nestedConstraintOwners.end())
-        continue;
-      root->walk([&](Operation *nested) {
-        auto reference =
-            nested->getAttrOfType<SymbolRefAttr>("referenced_symbol");
-        auto symbol = reference
-                          ? semanticSymbols.find(reference.getLeafReference())
-                          : semanticSymbols.end();
-        auto childProperty =
-            symbol != semanticSymbols.end()
-                ? dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second)
-                : semantic::SVClassPropertySymbolOp{};
-        if (childProperty && !randomPropertySources.contains(childProperty)) {
-          emitError(getSemanticLocation(childProperty))
-              << "nested object constraints that read non-random child state "
-                 "require guarded child-state captures";
-          invalid = true;
-        }
-      });
-    }
     llvm::DenseMap<Operation *, unsigned> randomIndices;
     for (auto [index, property] : llvm::enumerate(properties))
       randomIndices[property.source] = index;
@@ -3209,6 +3182,25 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
 
     auto annotateConstraint = [&](Operation *constraint) {
+      auto block = constraint->getParentOfType<
+          semantic::SVConstraintBlockSymbolOp>();
+      auto nestedOwner = block ? nestedConstraintOwners.find(block)
+                               : nestedConstraintOwners.end();
+      NestedObjectPlan *frozenNestedOwner =
+          nestedOwner != nestedConstraintOwners.end() ? nestedOwner->second
+                                                       : nullptr;
+      if (!frozenNestedOwner)
+        if (auto index = constraint->getAttrOfType<IntegerAttr>(
+                randomConstraintBlockAttrName);
+            index && !index.getValue().isNegative() &&
+            index.getValue().getActiveBits() <= 32) {
+          unsigned value = index.getValue().getZExtValue();
+          for (NestedObjectPlan &plan : nestedObjectPlans)
+            if (llvm::is_contained(plan.globalConstraintIndices, value)) {
+              frozenNestedOwner = &plan;
+              break;
+            }
+        }
       constraint->walk([&](Operation *nested) {
         auto reference =
             nested->getAttrOfType<SymbolRefAttr>("referenced_symbol");
@@ -3243,6 +3235,18 @@ void ObeliskSimPreparePass::runOnOperation() {
             nested->setAttr(randomVariableAttrName,
                             builder.getI32IntegerAttr(index->second));
           }
+        } else if (property && frozenNestedOwner &&
+                   property.getLifetime() !=
+                       semantic::SVVariableLifetime::Static &&
+                   llvm::is_contained(frozenNestedOwner->hierarchy,
+                                      getOwningClass(property))) {
+          nested->setAttr(randomNestedStateFieldAttrName,
+                          frozenNestedOwner->field);
+          nested->setAttr(
+              randomNestedStateConcreteTypeAttrName,
+              TypeAttr::get(frozenNestedOwner->concreteType));
+          nested->setAttr(randomNestedStateStorageTypeAttrName,
+                          TypeAttr::get(frozenNestedOwner->storageType));
         }
         if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
                 semantic::SVSpecparamSymbolOp>(symbol->second))

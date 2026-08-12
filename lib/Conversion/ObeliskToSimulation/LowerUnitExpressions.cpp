@@ -47,6 +47,70 @@ bool isTaggedUnionType(Type type) {
 FailureOr<Value>
 UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
                               bool lvalue) {
+  if (auto objectField =
+          op->getAttrOfType<FlatSymbolRefAttr>(randomNestedStateFieldAttrName)) {
+    auto concreteTypeAttr = op->getAttrOfType<TypeAttr>(
+        randomNestedStateConcreteTypeAttrName);
+    auto storageTypeAttr =
+        op->getAttrOfType<TypeAttr>(randomNestedStateStorageTypeAttrName);
+    auto childField =
+        op->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.class_field");
+    auto parentType =
+        thisObject ? dyn_cast<sim::ClassHandleType>(thisObject.getType())
+                   : sim::ClassHandleType{};
+    auto concreteType = concreteTypeAttr
+                            ? dyn_cast<sim::ClassHandleType>(
+                                  concreteTypeAttr.getValue())
+                            : sim::ClassHandleType{};
+    auto storageType = storageTypeAttr
+                           ? dyn_cast<sim::ClassHandleType>(
+                                 storageTypeAttr.getValue())
+                           : sim::ClassHandleType{};
+    FailureOr<Type> elementType = getNormalizedSemanticType(op);
+    if (lvalue || !parentType || !concreteType || !storageType ||
+        !childField || failed(elementType)) {
+      emitError(getSemanticLocation(op))
+          << "nested randomization state capture is malformed";
+      return failure();
+    }
+    Location location = getSemanticLocation(op);
+    Type objectReferenceType = sim::ManagedRefType::get(
+        function.getContext(), storageType, parentType.getClassName());
+    Value objectReference = sim::SimClassFieldRefOp::create(
+        builder, location, objectReferenceType, thisObject, objectField);
+    Value object = sim::SimManagedLoadOp::create(
+        builder, location, storageType, objectReference);
+    Value isNull = sim::SimManagedIsNullOp::create(
+        builder, location, builder.getI1Type(), object);
+    Block *missing = addBlock();
+    Block *present = addBlock();
+    Block *resume = addBlock();
+    resume->addArgument(*elementType, location);
+    // A null random child contributes neither variables nor constraints. Its
+    // constraint-mode bits are disabled by lowerRandomize; provide a default
+    // SSA capture here solely to keep eagerly materialized solver operands
+    // null-safe.
+    cf::CondBranchOp::create(builder, location, isNull, missing, ValueRange{},
+                             present, ValueRange{});
+    setCurrent(missing);
+    Value defaultValue = createDefaultValue(builder, location, *elementType);
+    if (!defaultValue)
+      return failure();
+    cf::BranchOp::create(builder, location, resume, ValueRange{defaultValue});
+    setCurrent(present);
+    if (object.getType() != concreteType)
+      object = sim::SimClassCastOp::create(builder, location, concreteType,
+                                           object);
+    Type childReferenceType = sim::ManagedRefType::get(
+        function.getContext(), *elementType, concreteType.getClassName());
+    Value childReference = sim::SimClassFieldRefOp::create(
+        builder, location, childReferenceType, object, childField);
+    Value value = sim::SimManagedLoadOp::create(
+        builder, location, *elementType, childReference);
+    cf::BranchOp::create(builder, location, resume, ValueRange{value});
+    setCurrent(resume);
+    return resume->getArgument(0);
+  }
   if (auto field =
           op->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.class_field")) {
     if (!thisObject) {
