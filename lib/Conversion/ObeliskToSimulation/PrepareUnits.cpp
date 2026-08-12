@@ -175,11 +175,10 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
   for (auto [index, source] : llvm::enumerate(sourceUnits)) {
     if (auto exported =
             source->getAttrOfType<StringAttr>("dpi_export_c_identifier")) {
-      emitError(getSemanticLocation(source))
+      emitWarning(getSemanticLocation(source))
           << "DPI export '" << exported.getValue()
-          << "' is not supported by simulation lowering";
-      invalid = true;
-      continue;
+          << "' has no generated C entry point; lowering its SystemVerilog "
+             "body for internal calls only";
     }
     FailureOr<sim::EntryKind> entryKind = getEntryKind(source);
     if (failed(entryKind)) {

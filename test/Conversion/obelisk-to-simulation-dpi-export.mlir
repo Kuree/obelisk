@@ -1,4 +1,4 @@
-// RUN: not obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "dpi_export", name = "dpi_export", node_id = 0 : i64, sym_name = "s0.dpi_export"} {
@@ -23,4 +23,5 @@ module {
   }
 }
 
-// CHECK: DPI export 'exported_c' is not supported by simulation lowering
+// CHECK: warning: DPI export 'exported_c' has no generated C entry point; lowering its SystemVerilog body for internal calls only
+// CHECK-NOT: error:
