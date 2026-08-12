@@ -100,6 +100,11 @@ std::optional<StringRef> getConstantSpelling(Operation *operation) {
   if (auto constant =
           operation->getAttrOfType<StringAttr>(staticNetConstantAttrName))
     return constant.getValue();
+  // Elaboration folded this expression to a constant. A bound or a count
+  // written as parameter arithmetic is as constant as a literal is. This comes
+  // last so that a spelling any earlier pass established still wins.
+  if (auto folded = operation->getAttrOfType<StringAttr>(foldedConstantAttrName))
+    return folded.getValue();
   return std::nullopt;
 }
 

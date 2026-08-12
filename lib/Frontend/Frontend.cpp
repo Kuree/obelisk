@@ -73,6 +73,12 @@ template <typename Value> std::string formatConstant(const Value &value) {
   return value.toString(slang::SVInt::MAX_BITS, /*exactUnknowns=*/true);
 }
 
+/// Value of an expression that elaboration folded to an integer constant. It
+/// is redundant with the expression tree beneath it, so consumers may ignore
+/// it; what it buys is not having to fold that tree a second time. Read back
+/// under the same name by the simulation lowering.
+constexpr llvm::StringLiteral foldedConstantAttrName = "folded_constant";
+
 std::string formatConstant(const slang::ConstantValue &value) {
   if (value.isString())
     return value.str();
@@ -1311,6 +1317,23 @@ private:
     } else if constexpr (std::same_as<T, slang::ast::FieldSymbol>) {
       SET_OP_ATTR(BitOffset, builder.getI64IntegerAttr(node.bitOffset));
       SET_OP_ATTR(FieldIndex, builder.getI64IntegerAttr(node.fieldIndex));
+    }
+
+    // Elaboration already folds the expressions that SystemVerilog requires to
+    // be constant - a part-select bound, a replication count - and caches the
+    // result on the node. Carrying that value across means those reach lowering
+    // as the constants they are, instead of re-implementing constant evaluation
+    // against the imported tree. Nodes that carry their own literal value are
+    // left alone; the folded attribute is only for what is computed.
+    constexpr bool carriesOwnLiteralValue =
+        std::same_as<T, slang::ast::IntegerLiteral> ||
+        std::same_as<T, slang::ast::UnbasedUnsizedIntegerLiteral>;
+    if constexpr (std::derived_from<T, slang::ast::Expression> &&
+                  !carriesOwnLiteralValue) {
+      if (const slang::ConstantValue *folded = node.getConstant();
+          folded && folded->isInteger())
+        attrs.set(foldedConstantAttrName,
+                  builder.getStringAttr(formatConstant(*folded)));
     }
 
     if constexpr (std::same_as<T, slang::ast::IntegerLiteral> ||

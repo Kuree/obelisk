@@ -132,6 +132,10 @@ inline constexpr ::mlir::StringLiteral placeholderAttrName =
     "obelisk_sim.placeholder";
 inline constexpr ::mlir::StringLiteral staticNetConstantAttrName =
     "obelisk_sim.static_net_constant";
+/// Value elaboration folded an expression to, carried over by the frontend.
+/// Written by the Slang importer, so the spelling is fixed there as well.
+inline constexpr ::mlir::StringLiteral foldedConstantAttrName =
+    "folded_constant";
 inline constexpr ::llvm::StringLiteral captureKindAttrName =
     sim::metadata::captureKind;
 inline constexpr ::llvm::StringLiteral descriptorIdAttrName =
