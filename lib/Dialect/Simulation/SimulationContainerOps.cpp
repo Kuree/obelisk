@@ -579,7 +579,8 @@ LogicalResult SimContainerCreateOp::verify() {
   } else if (isa<StringType>(element)) {
     expectedKind = 5;
     expectedSize = sizeof(void *);
-  } else if (isa<DynamicArrayType, QueueType, AssocArrayType>(element)) {
+  } else if (isa<DynamicArrayType, QueueType, MailboxType, AssocArrayType>(
+                 element)) {
     expectedKind = 6;
     expectedSize = sizeof(void *);
   } else if (isa<EventType>(element)) {
@@ -654,6 +655,105 @@ LogicalResult SimQueueInsertOp::verify() {
 LogicalResult SimMailboxTryPutOp::verify() {
   if (getValue().getType() != getMailbox().getType().getElementType())
     return emitOpError("message type must exactly match the mailbox element");
+  return success();
+}
+
+LogicalResult SimMailboxCreateOp::verify() {
+  Type element = getResult().getType().getElementType();
+  if (getTypeId() == 0)
+    return emitOpError("element type ID must be nonzero");
+  if (getElementKind() < 1 || getElementKind() > 8)
+    return emitOpError("element kind is outside the runtime ABI");
+  if ((getElementFlags() & ~3u) != 0)
+    return emitOpError("element flags contain an unknown runtime ABI bit");
+  if (getValueSize() == 0 || getAlignment() == 0 ||
+      !llvm::isPowerOf2_64(getAlignment()) ||
+      getValueSize() % getAlignment() != 0)
+    return emitOpError("element size and alignment are invalid");
+  ArrayRef<int64_t> traceOffsets = getTraceOffsets();
+  ArrayRef<int32_t> traceKinds = getTraceKinds();
+  if (traceOffsets.size() != traceKinds.size())
+    return emitOpError("trace offset and kind inventories must match");
+  if (getElementKind() != 7 && !traceOffsets.empty())
+    return emitOpError("only aggregate elements carry explicit trace slots");
+  int64_t previousOffset = -1;
+  for (auto [offset, kind] : llvm::zip_equal(traceOffsets, traceKinds)) {
+    if (offset < 0 || static_cast<uint64_t>(offset) > getValueSize() ||
+        sizeof(void *) > getValueSize() - static_cast<uint64_t>(offset))
+      return emitOpError("trace slot is outside the element value plane");
+    if (static_cast<uint64_t>(offset) % alignof(void *) != 0)
+      return emitOpError("trace slot is not pointer aligned");
+    if (!isValidManagedTraceKind(kind))
+      return emitOpError("trace slot kind is outside the runtime ABI");
+    if (offset <= previousOffset)
+      return emitOpError("trace slot offsets must be strictly increasing");
+    previousOffset = offset;
+  }
+  uint32_t expectedKind = 0;
+  uint64_t expectedSize = 0;
+  uint64_t expectedWidth = 0;
+  bool fourState = false;
+  SmallVector<int64_t, 2> expectedTraceOffsets;
+  SmallVector<int32_t, 2> expectedTraceKinds;
+  if (auto integer = dyn_cast<IntegerType>(element)) {
+    expectedKind = 1;
+    expectedSize = (integer.getWidth() + 7) / 8;
+    expectedWidth = integer.getWidth();
+  } else if (auto logic = dyn_cast<LogicType>(element)) {
+    expectedKind = 2;
+    expectedSize = (logic.getWidth() + 7) / 8;
+    expectedWidth = logic.getWidth();
+    fourState = true;
+  } else if (auto real = dyn_cast<FloatType>(element)) {
+    expectedKind = 3;
+    expectedSize = real.getWidth() / 8;
+    expectedWidth = real.getWidth();
+  } else if (isa<ClassHandleType>(element)) {
+    expectedKind = 4;
+    expectedSize = sizeof(void *);
+  } else if (isa<StringType>(element)) {
+    expectedKind = 5;
+    expectedSize = sizeof(void *);
+  } else if (isa<DynamicArrayType, QueueType, MailboxType, AssocArrayType>(
+                 element)) {
+    expectedKind = 6;
+    expectedSize = sizeof(void *);
+  } else if (isa<EventType>(element)) {
+    expectedKind = 8;
+    expectedSize = sizeof(uint64_t);
+  } else if (isa<ProcessType>(element)) {
+    expectedKind = 1;
+    expectedSize = sizeof(uint64_t);
+    expectedWidth = 64;
+  } else if (Type scalar = getPackedScalarType(element)) {
+    std::optional<unsigned> width = getPackedWidth(element);
+    if (!width || *width == 0)
+      return emitOpError("packed element has no canonical width");
+    fourState = isa<LogicType>(scalar);
+    expectedKind = fourState ? 2 : 1;
+    expectedSize = (*width + 7) / 8;
+    expectedWidth = *width;
+  } else if (isAggregateType(element)) {
+    std::optional<uint64_t> width = getProvenanceSpan(element);
+    if (!width || *width == 0)
+      return emitOpError("aggregate element has no canonical layout");
+    element.walk([&](LogicType) { fourState = true; });
+    expectedKind = 7;
+    expectedSize = (*width + 7) / 8;
+    expectedWidth = expectedSize * 8;
+    if (failed(collectExpectedManagedTrace(
+            element, expectedTraceOffsets, expectedTraceKinds)))
+      return emitOpError("aggregate element has no canonical trace layout");
+  }
+  if (expectedKind == 0 || getElementKind() != expectedKind ||
+      getValueSize() != expectedSize || getBitWidth() != expectedWidth ||
+      ((getElementFlags() & 1u) != 0) != fourState)
+    return emitOpError(
+        "element metadata does not match the mailbox element type");
+  if (traceOffsets != ArrayRef<int64_t>(expectedTraceOffsets) ||
+      traceKinds != ArrayRef<int32_t>(expectedTraceKinds))
+    return emitOpError(
+        "trace inventory does not match the mailbox element type");
   return success();
 }
 
@@ -752,7 +852,8 @@ LogicalResult SimAssocCreateOp::verify() {
   } else if (isa<StringType>(element)) {
     expectedKind = 5;
     expectedSize = sizeof(void *);
-  } else if (isa<DynamicArrayType, QueueType, AssocArrayType>(element)) {
+  } else if (isa<DynamicArrayType, QueueType, MailboxType, AssocArrayType>(
+                 element)) {
     expectedKind = 6;
     expectedSize = sizeof(void *);
   } else if (isa<EventType>(element)) {

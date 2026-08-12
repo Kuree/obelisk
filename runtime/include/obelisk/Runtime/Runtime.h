@@ -1842,6 +1842,13 @@ obelisk_rt_status obelisk_rt_v1_container_create_typed(
     const obelisk_rt_element_trace_slot_v1 *trace_slots,
     uint64_t trace_slot_count, uint64_t size, uint64_t bound,
     obelisk_rt_object_v1 **out_container);
+obelisk_rt_status obelisk_rt_v1_mailbox_create_typed(
+    obelisk_rt_gc_lane_v1 *lane, uint64_t type_id, uint32_t element_kind,
+    uint32_t element_flags, uint64_t value_size, uint64_t alignment,
+    uint64_t bit_width,
+    const obelisk_rt_element_trace_slot_v1 *trace_slots,
+    uint64_t trace_slot_count, int64_t bound,
+    obelisk_rt_object_v1 **out_mailbox);
 uint64_t obelisk_rt_v1_container_size(obelisk_rt_object_v1 *container);
 obelisk_rt_status obelisk_rt_v1_container_read(obelisk_rt_object_v1 *container,
                                                int64_t index, void *out_value,
@@ -1874,6 +1881,20 @@ obelisk_rt_status obelisk_rt_v1_queue_pop(obelisk_rt_object_v1 *queue,
                                           uint32_t front, void *out_value,
                                           void *out_unknown,
                                           uint32_t *out_present);
+// Atomic nonblocking mailbox operations. Mailboxes use the managed queue
+// representation internally, but these entry points preserve the distinct
+// success contract required by IEEE 1800 mailbox methods.
+obelisk_rt_status obelisk_rt_v1_mailbox_try_put(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *mailbox,
+    const void *value, const void *unknown, uint32_t *out_success);
+obelisk_rt_status obelisk_rt_v1_mailbox_num(obelisk_rt_object_v1 *mailbox,
+                                            uint32_t *out_count);
+obelisk_rt_status obelisk_rt_v1_mailbox_try_peek(
+    obelisk_rt_object_v1 *mailbox, void *out_value, void *out_unknown,
+    uint32_t *out_present);
+obelisk_rt_status obelisk_rt_v1_mailbox_try_get(
+    obelisk_rt_object_v1 *mailbox, void *out_value, void *out_unknown,
+    uint32_t *out_present);
 obelisk_rt_status obelisk_rt_v1_queue_insert(obelisk_rt_gc_lane_v1 *lane,
                                              obelisk_rt_object_v1 *queue,
                                              int64_t index, const void *value,

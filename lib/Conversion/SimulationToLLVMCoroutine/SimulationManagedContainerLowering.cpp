@@ -276,6 +276,211 @@ public:
   }
 };
 
+class MailboxCreateConversion final
+    : public OpConversionPattern<sim::SimMailboxCreateOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimMailboxCreateOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getBound().size() != 1)
+      return failure();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i32 = rewriter.getI32Type();
+    Type i64 = rewriter.getI64Type();
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    Value output = entryAlloca(rewriter, op.getLoc(), pointer, 1, 8);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer),
+                          output, 8);
+    auto c32 = [&](uint32_t value) {
+      return llvmConstant(rewriter, op.getLoc(), i32, value);
+    };
+    auto c64 = [&](uint64_t value) {
+      return llvmConstant(rewriter, op.getLoc(), i64, value);
+    };
+    ArrayRef<int64_t> traceOffsets = op.getTraceOffsets();
+    ArrayRef<int32_t> traceKinds = op.getTraceKinds();
+    Value traceSlots = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
+    if (!traceOffsets.empty()) {
+      std::string bytes(
+          traceOffsets.size() * sizeof(obelisk_rt_element_trace_slot_v1), '\0');
+      for (auto [index, offset, kind] :
+           llvm::enumerate(traceOffsets, traceKinds)) {
+        obelisk_rt_element_trace_slot_v1 slot{
+            static_cast<uint64_t>(offset),
+            static_cast<obelisk_rt_managed_slot_kind_v1>(kind), 0};
+        std::memcpy(bytes.data() +
+                        index * sizeof(obelisk_rt_element_trace_slot_v1),
+                    &slot, sizeof(slot));
+      }
+      ModuleOp module = op->getParentOfType<ModuleOp>();
+      std::string name =
+          "__obelisk_mailbox_element_trace_" + std::to_string(op.getTypeId());
+      LLVM::GlobalOp global = module.lookupSymbol<LLVM::GlobalOp>(name);
+      if (!global)
+        global = makeByteArrayGlobal(module, op.getLoc(), name, bytes);
+      traceSlots = LLVM::AddressOfOp::create(rewriter, op.getLoc(), global);
+    }
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_mailbox_create_typed"),
+            ValueRange{lane, c64(op.getTypeId()), c32(op.getElementKind()),
+                       c32(op.getElementFlags()), c64(op.getValueSize()),
+                       c64(op.getAlignment()), c64(op.getBitWidth()),
+                       traceSlots, c64(traceOffsets.size()),
+                       adaptor.getBound().front(), output})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    Value result =
+        LLVM::LoadOp::create(rewriter, op.getLoc(), pointer, output, 8);
+    rewriter.replaceOp(op, managedObjectHandle(rewriter, op.getLoc(), result));
+    return success();
+  }
+};
+
+class MailboxNumConversion final
+    : public OpConversionPattern<sim::SimMailboxNumOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimMailboxNumOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getMailbox().size() != 1)
+      return failure();
+    Type i32 = rewriter.getI32Type();
+    Value count = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          llvmConstant(rewriter, op.getLoc(), i32, 0), count,
+                          4);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_mailbox_num"),
+            ValueRange{managedObjectPointer(rewriter, op.getLoc(),
+                                            adaptor.getMailbox().front()),
+                       count})
+            .getResult();
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.replaceOp(
+        op, LLVM::LoadOp::create(rewriter, op.getLoc(), i32, count, 4));
+    return success();
+  }
+};
+
+class MailboxTryPutConversion final
+    : public OpConversionPattern<sim::SimMailboxTryPutOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimMailboxTryPutOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getMailbox().size() != 1 || adaptor.getValue().empty() ||
+        adaptor.getValue().size() > 2)
+      return failure();
+    SmallVector<Value> storage;
+    for (Value value : adaptor.getValue()) {
+      Value slot = entryAlloca(rewriter, op.getLoc(), value.getType(), 1, 8);
+      LLVM::StoreOp::create(rewriter, op.getLoc(), value, slot, 8);
+      storage.push_back(slot);
+    }
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Value unknown = storage.size() == 2
+                        ? storage[1]
+                        : Value(LLVM::ZeroOp::create(rewriter, op.getLoc(),
+                                                    pointer));
+    Type i32 = rewriter.getI32Type();
+    Value successStorage = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          llvmConstant(rewriter, op.getLoc(), i32, 0),
+                          successStorage, 4);
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_mailbox_try_put"),
+            ValueRange{lane,
+                       managedObjectPointer(rewriter, op.getLoc(),
+                                            adaptor.getMailbox().front()),
+                       storage.front(), unknown, successStorage})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    Value loaded =
+        LLVM::LoadOp::create(rewriter, op.getLoc(), i32, successStorage, 4);
+    rewriter.replaceOp(op, LLVM::TruncOp::create(
+                               rewriter, op.getLoc(), rewriter.getI1Type(),
+                               loaded));
+    return success();
+  }
+};
+
+template <typename Op, bool Remove>
+class MailboxTryReadConversion final : public OpConversionPattern<Op> {
+public:
+  using OpConversionPattern<Op>::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(Op op,
+                  typename OpConversionPattern<Op>::OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getMailbox().size() != 1)
+      return failure();
+    SmallVector<Type> types;
+    if (failed(this->getTypeConverter()->convertType(op.getValue().getType(),
+                                                     types)) ||
+        types.empty() || types.size() > 2)
+      return failure();
+    SmallVector<Value> storage;
+    for (Type type : types) {
+      Value zero = zeroNativeValue(rewriter, op.getLoc(), type);
+      if (!zero)
+        return failure();
+      Value slot = entryAlloca(rewriter, op.getLoc(), type, 1, 8);
+      LLVM::StoreOp::create(rewriter, op.getLoc(), zero, slot, 8);
+      storage.push_back(slot);
+    }
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Value unknown = storage.size() == 2
+                        ? storage[1]
+                        : Value(LLVM::ZeroOp::create(rewriter, op.getLoc(),
+                                                    pointer));
+    Type i32 = rewriter.getI32Type();
+    Value present = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          llvmConstant(rewriter, op.getLoc(), i32, 0), present,
+                          4);
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(
+                rewriter.getContext(), Remove ? "obelisk_rt_v1_mailbox_try_get"
+                                              : "obelisk_rt_v1_mailbox_try_peek"),
+            ValueRange{managedObjectPointer(rewriter, op.getLoc(),
+                                            adaptor.getMailbox().front()),
+                       storage.front(), unknown, present})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    Value loaded = LLVM::LoadOp::create(rewriter, op.getLoc(), i32, present, 4);
+    SmallVector<SmallVector<Value>> replacements;
+    replacements.push_back({LLVM::TruncOp::create(
+        rewriter, op.getLoc(), rewriter.getI1Type(), loaded)});
+    SmallVector<Value> values;
+    for (auto [type, slot] : llvm::zip_equal(types, storage))
+      values.push_back(
+          LLVM::LoadOp::create(rewriter, op.getLoc(), type, slot, 8));
+    replacements.push_back(std::move(values));
+    rewriter.replaceOpWithMultiple(op, std::move(replacements));
+    return success();
+  }
+};
+
 class RandomNextConversion final
     : public OpConversionPattern<sim::SimRandomNextOp> {
 public:
@@ -947,7 +1152,11 @@ void populateManagedContainerToLLVMConversionPatterns(
       ContainerSizeConversion, ContainerCreateLikeConversion,
       ContainerCreateConversion, ContainerCloneConversion,
       ContainerDeleteConversion, QueueDeleteConversion,
-      QueueInsertConversion, ContainerReadConversion,
+      QueueInsertConversion, MailboxCreateConversion, MailboxNumConversion,
+      MailboxTryPutConversion,
+      MailboxTryReadConversion<sim::SimMailboxTryPeekOp, false>,
+      MailboxTryReadConversion<sim::SimMailboxTryGetOp, true>,
+      ContainerReadConversion,
       ContainerWriteConversion, RandomNextConversion, RandomSeedConversion,
       RandomBoundedConversion, RandomDistributionConversion,
       RandomCycleNextConversion, RandomSolveConversion>(converter, context);

@@ -242,6 +242,11 @@ void declareNativeRuntimeABI(ModuleOp module) {
       {managedPointer, managedI32, managedI64, managedI32, managedI32,
        managedI64, managedI64, managedI64, managedPointer, managedI64,
        managedI64, managedI64, managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_mailbox_create_typed", managedI32,
+      {managedPointer, managedI64, managedI32, managedI32, managedI64,
+       managedI64, managedI64, managedPointer, managedI64, managedI64,
+       managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_clone", managedI32,
                            {managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_delete", managedI32,
@@ -251,6 +256,17 @@ void declareNativeRuntimeABI(ModuleOp module) {
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_queue_insert", managedI32,
                            {managedPointer, managedPointer, managedI64,
                             managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_mailbox_try_put", managedI32,
+                           {managedPointer, managedPointer, managedPointer,
+                            managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_mailbox_num", managedI32,
+                           {managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_mailbox_try_peek", managedI32,
+                           {managedPointer, managedPointer, managedPointer,
+                            managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_mailbox_try_get", managedI32,
+                           {managedPointer, managedPointer, managedPointer,
+                            managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_bounded", managedI32,
                            {managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_distribution",

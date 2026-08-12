@@ -541,8 +541,19 @@ def SimMailboxCreateOp : SimOp<"mailbox.create", [
     MemoryEffects<[MemWrite<SimHeapResource>]>
   ]> {
   let summary = "create a typed bounded or unbounded mailbox";
-  let arguments = (ins I64:$bound);
+  let arguments = (ins
+    I64:$bound,
+    I64Attr:$type_id,
+    I32Attr:$element_kind,
+    I32Attr:$element_flags,
+    I64Attr:$value_size,
+    I64Attr:$alignment,
+    I64Attr:$bit_width,
+    DenseI64ArrayAttr:$trace_offsets,
+    DenseI32ArrayAttr:$trace_kinds
+  );
   let results = (outs SimMailboxType:$result);
+  let hasVerifier = 1;
 }
 
 def SimMailboxNumOp : SimOp<"mailbox.num", [

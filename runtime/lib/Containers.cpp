@@ -2573,6 +2573,22 @@ extern "C" obelisk_rt_status obelisk_rt_v1_container_create_typed(
       outContainer);
 }
 
+extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_create_typed(
+    obelisk_rt_gc_lane_v1 *lane, uint64_t typeID, uint32_t elementKind,
+    uint32_t elementFlags, uint64_t valueSize, uint64_t alignment,
+    uint64_t bitWidth,
+    const obelisk_rt_element_trace_slot_v1 *traceSlots, uint64_t traceSlotCount,
+    int64_t bound, obelisk_rt_object_v1 **outMailbox) {
+  if (bound < 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  uint64_t queueBound =
+      bound == 0 ? UINT64_MAX : static_cast<uint64_t>(bound - 1);
+  return obelisk_rt_v1_container_create_typed(
+      lane, OBELISK_RT_CONTAINER_QUEUE, typeID, elementKind, elementFlags,
+      valueSize, alignment, bitWidth, traceSlots, traceSlotCount, 0, queueBound,
+      outMailbox);
+}
+
 extern "C" obelisk_rt_status obelisk_rt_v1_assoc_create_typed(
     obelisk_rt_gc_lane_v1 *lane, uint64_t typeID, uint32_t elementKind,
     uint32_t elementFlags, uint64_t valueSize, uint64_t alignment,
@@ -2861,12 +2877,15 @@ obelisk_rt_v1_container_delete(obelisk_rt_object_v1 *container) {
       nullptr);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_queue_push(obelisk_rt_gc_lane_v1 *lane,
-                         obelisk_rt_object_v1 *queue, uint32_t front,
-                         const void *value, const void *unknown) {
+static obelisk_rt_status queuePushImpl(obelisk_rt_gc_lane_v1 *lane,
+                                      obelisk_rt_object_v1 *queue,
+                                      uint32_t front, const void *value,
+                                      const void *unknown,
+                                      uint32_t *outInserted) {
   if (!lane || !queue || front > 1)
     return OBELISK_RT_INVALID_ARGUMENT;
+  if (outInserted)
+    *outInserted = 0;
   if (obelisk_rt_managed_object_context(queue) !=
       obelisk_rt_managed_lane_context(lane))
     return OBELISK_RT_INVALID_HANDLE;
@@ -2890,7 +2909,8 @@ obelisk_rt_v1_queue_push(obelisk_rt_gc_lane_v1 *lane,
   struct Push {
     uint32_t front;
     const std::vector<uint8_t> *value;
-  } push{front, &prepared};
+    uint32_t *inserted;
+  } push{front, &prepared, outInserted};
   return obelisk_rt_managed_object_access(
       queue, OBELISK_RT_MANAGED_CONTAINER,
       [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
@@ -2898,8 +2918,14 @@ obelisk_rt_v1_queue_push(obelisk_rt_gc_lane_v1 *lane,
         if (extent != sizeof(ContainerHeader))
           return OBELISK_RT_INVALID_HANDLE;
         auto *header = reinterpret_cast<ContainerHeader *>(object);
-        if (header->kind != OBELISK_RT_CONTAINER_QUEUE ||
-            header->size >= header->capacity || queueIsFull(*header))
+        if (header->kind != OBELISK_RT_CONTAINER_QUEUE)
+          return OBELISK_RT_INVALID_ARGUMENT;
+        // A competing producer may fill the bounded FIFO after the optimistic
+        // snapshot above. That is a normal failed try_put, not a lifecycle
+        // error; leave `inserted` clear and report success to the runtime ABI.
+        if (queueIsFull(*header))
+          return OBELISK_RT_OK;
+        if (header->size >= header->capacity)
           return OBELISK_RT_INVALID_LIFECYCLE;
         if (push->front)
           header->head = (header->head - 1) & (header->capacity - 1);
@@ -2918,10 +2944,43 @@ obelisk_rt_v1_queue_push(obelisk_rt_gc_lane_v1 *lane,
         if (status == OBELISK_RT_OK) {
           ++header->size;
           ++header->epoch;
+          if (push->inserted)
+            *push->inserted = 1;
         }
         return status;
       },
       &push);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_queue_push(obelisk_rt_gc_lane_v1 *lane,
+                         obelisk_rt_object_v1 *queue, uint32_t front,
+                         const void *value, const void *unknown) {
+  return queuePushImpl(lane, queue, front, value, unknown, nullptr);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_try_put(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *mailbox,
+    const void *value, const void *unknown, uint32_t *outSuccess) {
+  if (!outSuccess)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return queuePushImpl(lane, mailbox, 0, value, unknown, outSuccess);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_mailbox_num(obelisk_rt_object_v1 *mailbox, uint32_t *outCount) {
+  if (!outCount)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outCount = 0;
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(mailbox, snapshot);
+  if (status != OBELISK_RT_OK ||
+      snapshot.kind != OBELISK_RT_CONTAINER_QUEUE)
+    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+  if (snapshot.size > UINT32_MAX)
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  *outCount = static_cast<uint32_t>(snapshot.size);
+  return OBELISK_RT_OK;
 }
 
 extern "C" obelisk_rt_status
@@ -2983,6 +3042,63 @@ obelisk_rt_v1_queue_pop(obelisk_rt_object_v1 *queue, uint32_t front,
         return status;
       },
       &pop);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_try_peek(
+    obelisk_rt_object_v1 *mailbox, void *outValue, void *outUnknown,
+    uint32_t *outPresent) {
+  if (!outValue || !outPresent)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outPresent = 0;
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(mailbox, snapshot);
+  if (status != OBELISK_RT_OK ||
+      snapshot.kind != OBELISK_RT_CONTAINER_QUEUE)
+    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+  if ((snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) && !outUnknown)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  initializeElementDefault(snapshot.element, outValue, outUnknown);
+  struct Peek {
+    void *value;
+    void *unknown;
+    uint32_t *present;
+  } peek{outValue, outUnknown, outPresent};
+  return obelisk_rt_managed_object_access(
+      mailbox, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
+        auto *peek = static_cast<Peek *>(opaque);
+        if (extent != sizeof(ContainerHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<ContainerHeader *>(object);
+        if (header->kind != OBELISK_RT_CONTAINER_QUEUE)
+          return OBELISK_RT_INVALID_ARGUMENT;
+        if (header->size == 0)
+          return OBELISK_RT_OK;
+        uint64_t stride = elementStride(header->element);
+        obelisk_rt_status status =
+            accessBuffer(header->buffer, [&](uint8_t *data, uint64_t size) {
+              uint64_t offset = header->head * stride;
+              if (offset > size || stride > size - offset)
+                return OBELISK_RT_INVALID_HANDLE;
+              std::memcpy(peek->value, data + offset,
+                          static_cast<size_t>(header->element->value_size));
+              if (header->element->flags & OBELISK_RT_ELEMENT_FOUR_STATE)
+                std::memcpy(peek->unknown,
+                            data + offset + header->element->value_size,
+                            static_cast<size_t>(header->element->value_size));
+              return OBELISK_RT_OK;
+            });
+        if (status == OBELISK_RT_OK)
+          *peek->present = 1;
+        return status;
+      },
+      &peek);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_try_get(
+    obelisk_rt_object_v1 *mailbox, void *outValue, void *outUnknown,
+    uint32_t *outPresent) {
+  return obelisk_rt_v1_queue_pop(mailbox, 1, outValue, outUnknown, outPresent);
 }
 
 extern "C" obelisk_rt_status
