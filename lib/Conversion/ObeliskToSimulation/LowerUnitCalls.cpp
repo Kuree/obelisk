@@ -65,21 +65,21 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         method == "srandom") {
       size_t expectedChildren = method == "get_randstate" ? 1 : 2;
       if (children.size() != expectedChildren) {
-        emitError(location) << "process::" << method
-                            << " has malformed method arguments";
+        emitError(location)
+            << "process::" << method << " has malformed method arguments";
         return failure();
       }
       FailureOr<Value> receiver = lowerExpression(children.front());
       if (failed(receiver) || !isa<sim::ProcessType>((*receiver).getType())) {
-        emitError(location) << "process::" << method
-                            << " receiver is not a process object";
+        emitError(location)
+            << "process::" << method << " receiver is not a process object";
         return failure();
       }
       Type i64 = builder.getI64Type();
       Type stringType = sim::StringType::get(function.getContext());
       if (method == "get_randstate") {
-        auto state = sim::SimProcessRandomStateOp::create(builder, location,
-                                                          *receiver);
+        auto state =
+            sim::SimProcessRandomStateOp::create(builder, location, *receiver);
         Value stateText = sim::SimStringFormatIntegerOp::create(
             builder, location, stringType, state.getState(),
             builder.getI32IntegerAttr(16), builder.getBoolAttr(false));
@@ -118,17 +118,18 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return dummyResult();
       }
       if (!isa<sim::StringType>((*argument).getType())) {
-        emitError(location) << "process::set_randstate argument is not a string";
+        emitError(location)
+            << "process::set_randstate argument is not a string";
         return failure();
       }
-      auto old = sim::SimProcessRandomStateOp::create(builder, location,
-                                                      *receiver);
+      auto old =
+          sim::SimProcessRandomStateOp::create(builder, location, *receiver);
       Type i32 = builder.getI32Type();
       Value cursor = arith::ConstantOp::create(builder, location, i32,
                                                builder.getI32IntegerAttr(0));
       auto stateField = sim::SimStringScanFieldOp::create(
-          builder, location, TypeRange{stringType, i32, i32}, *argument,
-          cursor, builder.getStringAttr(""), static_cast<uint32_t>('x'));
+          builder, location, TypeRange{stringType, i32, i32}, *argument, cursor,
+          builder.getStringAttr(""), static_cast<uint32_t>('x'));
       auto incrementField = sim::SimStringScanFieldOp::create(
           builder, location, TypeRange{stringType, i32, i32}, *argument,
           stateField.getNextCursor(), builder.getStringAttr(":"),
@@ -141,12 +142,12 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           builder.getI32IntegerAttr(16));
       Value zero = arith::ConstantOp::create(builder, location, i32,
                                              builder.getI32IntegerAttr(0));
-      Value stateMatched = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ne, stateField.getOk(),
-          zero);
-      Value incrementMatched = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ne,
-          incrementField.getOk(), zero);
+      Value stateMatched =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                stateField.getOk(), zero);
+      Value incrementMatched =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                incrementField.getOk(), zero);
       Value matched = arith::AndIOp::create(builder, location, stateMatched,
                                             incrementMatched);
       Value state = arith::SelectOp::create(builder, location, matched,
@@ -166,9 +167,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       if (failed(receiver) || !isa<sim::ProcessType>((*receiver).getType()))
         return failure();
       Block *continuation = addBlock();
-      sim::SimSuspendAwaitOp::create(
-          builder, location, *receiver, ValueRange{},
-          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
+      sim::SimSuspendAwaitOp::create(builder, location, *receiver, ValueRange{},
+                                     sim::ContinuationSiteAttr{},
+                                     sim::EventRegionAttr{}, continuation);
       setCurrent(continuation);
       return dummyResult();
     }
@@ -180,8 +181,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
             .Default(std::nullopt);
     if (kind) {
       if (children.size() != 1) {
-        emitError(location) << "process::" << method
-                            << " requires one receiver";
+        emitError(location)
+            << "process::" << method << " requires one receiver";
         return failure();
       }
       FailureOr<Value> receiver = lowerExpression(children.front());
@@ -195,8 +196,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       return dummyResult();
     }
   }
-  if (op->hasAttr(randomizeAttrName) ||
-      op->hasAttr(randomizeDispatchAttrName))
+  if (op->hasAttr(randomizeAttrName) || op->hasAttr(randomizeDispatchAttrName))
     return lowerRandomize(op);
   StringRef covergroupMethod = op.getCalleeName();
   if ((covergroupMethod == "sample" || covergroupMethod == "start" ||
@@ -297,9 +297,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     FailureOr<Value> setterEnabled;
     if (children.size() == 2) {
       FailureOr<Value> argument = lowerExpression(children.back());
-      setterEnabled = succeeded(argument)
-                          ? truthValue(*argument, location)
-                          : FailureOr<Value>(failure());
+      setterEnabled = succeeded(argument) ? truthValue(*argument, location)
+                                          : FailureOr<Value>(failure());
       if (failed(setterEnabled))
         return failure();
     }
@@ -319,8 +318,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
             arith::ConstantOp::create(builder, location, i64,
                                       builder.getI64IntegerAttr(1)));
         sim::SimRefStoreOp::create(builder, location, mode, reference);
-        return arith::ConstantOp::create(builder, location,
-                                         builder.getI1Type(),
+        return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                          builder.getBoolAttr(false))
             .getResult();
       }
@@ -514,9 +512,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       APInt blockIndex =
           blockIndexAttr ? blockIndexAttr.getValue() : APInt(1, 0);
       if (!blockIndexAttr || blockIndex.isNegative() ||
-          blockIndex.getActiveBits() > 64 ||
-          blockIndex.getZExtValue() >= 64 || storage.isNegative() ||
-          storage.getActiveBits() > 63) {
+          blockIndex.getActiveBits() > 64 || blockIndex.getZExtValue() >= 64 ||
+          storage.isNegative() || storage.getActiveBits() > 63) {
         emitError(location)
             << "static constraint_mode storage metadata is malformed";
         return failure();
@@ -536,8 +533,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
             arith::ConstantOp::create(builder, location, i64,
                                       builder.getI64IntegerAttr(1)));
         sim::SimRefStoreOp::create(builder, location, mode, reference);
-        return arith::ConstantOp::create(builder, location,
-                                         builder.getI1Type(),
+        return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                          builder.getBoolAttr(false))
             .getResult();
       }
@@ -1059,6 +1055,17 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     }
   }
   if (!callee) {
+    if (op.getHasThisClass() && !children.empty()) {
+      FailureOr<Type> receiverType =
+          getNormalizedSemanticType(children.front());
+      if (succeeded(receiverType) &&
+          isa<sim::VirtualInterfaceType>(*receiverType)) {
+        emitError(location)
+            << "virtual-interface method is not imported by the selected "
+               "modport (exported methods are not yet supported)";
+        return failure();
+      }
+    }
     unsupported(op) << " (indirect or system call)";
     return failure();
   }
@@ -1342,15 +1349,26 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   bool directTask = op->hasAttr("obelisk_sim.is_task");
   SmallVector<Value> operands{function.getBody().front().getArgument(0)};
   auto formals = op->getAttrOfType<ArrayAttr>(calleeFormalsAttrName);
+  auto virtualCallees =
+      op->getAttrOfType<ArrayAttr>("obelisk_sim.virtual_interface_callees");
   bool staticClassReceiver = op->hasAttr(staticClassReceiverAttrName);
-  if (!formals || formals.size() + (staticClassReceiver ? 1 : 0) !=
-                      children.size()) {
+  unsigned receiverCount = staticClassReceiver || virtualCallees ? 1 : 0;
+  if (!formals || formals.size() + receiverCount != children.size()) {
     emitError(location)
         << "direct call has no complete frozen formal inventory";
     return failure();
   }
   ArrayRef<Operation *> actuals = children;
-  if (staticClassReceiver) {
+  Value virtualScope;
+  if (virtualCallees) {
+    FailureOr<Value> receiver = lowerExpression(children.front());
+    if (failed(receiver) ||
+        !isa<sim::VirtualInterfaceType>((*receiver).getType()))
+      return failure();
+    virtualScope = sim::SimVirtualInterfaceScopeOp::create(
+        builder, location, builder.getI64Type(), *receiver);
+    actuals = actuals.drop_front();
+  } else if (staticClassReceiver) {
     // Static methods do not receive an object, but an object-qualified call
     // still evaluates its prefix expression before the explicit arguments.
     if (failed(lowerExpression(children.front())))
@@ -1497,19 +1515,20 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   if (auto reads = op->getAttrOfType<ArrayAttr>(calleeReadCapturesAttrName))
     for (Attribute read : reads)
       readCaptures.insert(cast<StringAttr>(read).getValue());
-  if (auto captures = op->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
-    for (Attribute captureAttr : captures) {
-      StringRef path = cast<StringAttr>(captureAttr).getValue();
-      Value capture = values.lookup(path);
-      if (!capture) {
-        emitError(location)
-            << "direct callee capture has no frozen local binding: " << path;
-        return failure();
+  if (!virtualCallees)
+    if (auto captures = op->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
+      for (Attribute captureAttr : captures) {
+        StringRef path = cast<StringAttr>(captureAttr).getValue();
+        Value capture = values.lookup(path);
+        if (!capture) {
+          emitError(location)
+              << "direct callee capture has no frozen local binding: " << path;
+          return failure();
+        }
+        if (readCaptures.contains(path))
+          recordSensitivity(capture);
+        operands.push_back(capture);
       }
-      if (readCaptures.contains(path))
-        recordSensitivity(capture);
-      operands.push_back(capture);
-    }
   BoolAttr dpiTaskAttr = op->getAttrOfType<BoolAttr>("obelisk.dpi.is_task");
   bool dpiTask = dpiTaskAttr && dpiTaskAttr.getValue();
   sim::SimFuncOp directCallee =
@@ -1527,7 +1546,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   if (!directTask)
     for (const CopyOut &copyOut : copyOuts)
       callResultTypes.push_back(copyOut.formalType);
-  ValueRange callResults;
+  SmallVector<Value> callResults;
   if (auto importID = op->getAttrOfType<IntegerAttr>("obelisk.dpi.import_id")) {
     if (operands.empty())
       return emitError(location) << "DPI call is missing its runtime context",
@@ -1587,17 +1606,108 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         builder.getI32IntegerAttr(sourceLine),
         builder.getI32IntegerAttr(sourceColumn), runtimeContext, operands);
     sim::SimStatusCheckOp::create(builder, location, call.getResults().back());
-    callResults = call.getResults().drop_back();
+    llvm::append_range(callResults, call.getResults().drop_back());
   } else if (!directTask) {
-    auto call =
-        sim::SimCallOp::create(builder, location, callResultTypes, callee,
-                               operands, ArrayAttr{}, ArrayAttr{});
-    callResults = call.getResults();
+    if (!virtualCallees) {
+      auto call =
+          sim::SimCallOp::create(builder, location, callResultTypes, callee,
+                                 operands, ArrayAttr{}, ArrayAttr{});
+      llvm::append_range(callResults, call.getResults());
+    } else {
+      Block *merge = addBlock();
+      for (Type type : callResultTypes)
+        merge->addArgument(type, location);
+      for (Attribute candidateAttr : virtualCallees) {
+        auto candidate = cast<DictionaryAttr>(candidateAttr);
+        Block *matched = addBlock();
+        Block *next = addBlock();
+        Value expected =
+            arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                      candidate.getAs<IntegerAttr>("scope"));
+        Value equal =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                  virtualScope, expected);
+        cf::CondBranchOp::create(builder, location, equal, matched,
+                                 ValueRange{}, next, ValueRange{});
+        setCurrent(matched);
+        SmallVector<Value> candidateOperands(operands);
+        for (Attribute captureAttr : candidate.getAs<ArrayAttr>("captures")) {
+          StringRef path = cast<StringAttr>(captureAttr).getValue();
+          Value capture = values.lookup(path);
+          if (!capture)
+            return emitError(location)
+                       << "virtual-interface callee capture has no binding: "
+                       << path,
+                   failure();
+          candidateOperands.push_back(capture);
+        }
+        for (Attribute readAttr : candidate.getAs<ArrayAttr>("read_captures")) {
+          Value capture = values.lookup(cast<StringAttr>(readAttr).getValue());
+          if (capture)
+            recordSensitivity(capture);
+        }
+        auto selected =
+            sim::SimCallOp::create(builder, location, callResultTypes,
+                                   candidate.getAs<FlatSymbolRefAttr>("callee"),
+                                   candidateOperands, ArrayAttr{}, ArrayAttr{});
+        cf::BranchOp::create(builder, location, merge, selected.getResults());
+        setCurrent(next);
+      }
+      if (failed(emitRuntimeFatal(
+              location,
+              "virtual interface call used a null or invalid handle.")))
+        return failure();
+      setCurrent(merge);
+      llvm::append_range(callResults, merge->getArguments());
+    }
   } else {
     Block *continuation = addBlock();
-    sim::SimTaskCallOp::create(builder, location, callee, operands,
-                               builder.getI64IntegerAttr(operands.size()),
-                               sim::ContinuationSiteAttr{}, continuation);
+    if (!virtualCallees) {
+      sim::SimTaskCallOp::create(builder, location, callee, operands,
+                                 builder.getI64IntegerAttr(operands.size()),
+                                 sim::ContinuationSiteAttr{}, continuation);
+    } else {
+      for (Attribute candidateAttr : virtualCallees) {
+        auto candidate = cast<DictionaryAttr>(candidateAttr);
+        Block *matched = addBlock();
+        Block *next = addBlock();
+        Value expected =
+            arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                      candidate.getAs<IntegerAttr>("scope"));
+        Value equal =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                  virtualScope, expected);
+        cf::CondBranchOp::create(builder, location, equal, matched,
+                                 ValueRange{}, next, ValueRange{});
+        setCurrent(matched);
+        SmallVector<Value> candidateOperands(operands);
+        for (Attribute captureAttr : candidate.getAs<ArrayAttr>("captures")) {
+          StringRef path = cast<StringAttr>(captureAttr).getValue();
+          Value capture = values.lookup(path);
+          if (!capture)
+            return emitError(location)
+                       << "virtual-interface task capture has no binding: "
+                       << path,
+                   failure();
+          candidateOperands.push_back(capture);
+        }
+        for (Attribute readAttr : candidate.getAs<ArrayAttr>("read_captures")) {
+          Value capture = values.lookup(cast<StringAttr>(readAttr).getValue());
+          if (capture)
+            recordSensitivity(capture);
+        }
+        sim::SimTaskCallOp::create(
+            builder, location, candidate.getAs<FlatSymbolRefAttr>("callee"),
+            candidateOperands,
+            builder.getI64IntegerAttr(candidateOperands.size()),
+            sim::ContinuationSiteAttr{}, continuation);
+        setCurrent(next);
+      }
+      if (failed(emitRuntimeFatal(
+              location,
+              "virtual interface task call used a null or invalid handle.")))
+        return failure();
+    }
     setCurrent(continuation);
   }
   if (!directTask) {
@@ -1662,7 +1772,6 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                                    builder.getBoolAttr(false))
       .getResult();
 }
-
 
 FailureOr<Value>
 UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {

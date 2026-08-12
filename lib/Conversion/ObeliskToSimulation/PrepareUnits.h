@@ -29,11 +29,19 @@ struct PreparedUnit {
   ObserverResult observerResult = ObserverResult::None;
 };
 
+struct PreparedVirtualInterfaceCallee {
+  mlir::Operation *source;
+  mlir::SymbolRefAttr interfaceIdentity;
+  std::string method;
+  std::string design;
+};
+
 struct PreparedUnits {
   mlir::SmallVector<PreparedUnit> units;
   llvm::StringMap<mlir::Operation *> directCalleeSources;
   llvm::DenseMap<mlir::Operation *, std::string> directCalleeNames;
   llvm::DenseMap<mlir::Operation *, sim::SimCodeUnitDeclOp> declarations;
+  mlir::SmallVector<PreparedVirtualInterfaceCallee> virtualInterfaceCallees;
   uint64_t rootID;
 
   /// Resolve a direct call by semantic symbol identity, falling back to its
@@ -41,6 +49,11 @@ struct PreparedUnits {
   mlir::Operation *
   resolveDirectCallee(ir::SVCallExpressionOp call,
                       const llvm::StringMap<mlir::Operation *> &symbols) const;
+
+  /// Resolve every elaborated implementation selected by a virtual-interface
+  /// receiver. The returned units are ordered by scope ID by the caller.
+  mlir::SmallVector<mlir::Operation *>
+  resolveVirtualInterfaceCallees(ir::SVCallExpressionOp call) const;
 };
 
 /// Assign stable identities to ordinary, observer, fork, and root code units,

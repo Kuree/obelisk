@@ -127,9 +127,9 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
     llvm::StringSet<> seenPaths;
     llvm::StringSet<> seenLocals;
     llvm::StringSet<> seenConstants;
-    auto qualifiedAutomaticPath = [&](StringRef path, SymbolRefAttr reference,
-                                      Operation *referencedSymbol)
-        -> std::optional<std::string> {
+    auto qualifiedAutomaticPath =
+        [&](StringRef path, SymbolRefAttr reference,
+            Operation *referencedSymbol) -> std::optional<std::string> {
       if (!reference || !referencedSymbol ||
           !isAutomaticLocalSymbol(referencedSymbol) ||
           !descriptors.contains(path))
@@ -266,14 +266,13 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       bool changed = false;
       for (Attribute attribute : foreach.getLoopDimensions()) {
         auto dimension = dyn_cast<DictionaryAttr>(attribute);
-        auto path = dimension
-                        ? dimension.getAs<StringAttr>(
-                              foreach_metadata::iteratorPath)
-                        : StringAttr{};
-        auto reference = dimension
-                             ? dimension.getAs<SymbolRefAttr>(
-                                   foreach_metadata::iteratorSymbol)
-                             : SymbolRefAttr{};
+        auto path =
+            dimension
+                ? dimension.getAs<StringAttr>(foreach_metadata::iteratorPath)
+                : StringAttr{};
+        auto reference = dimension ? dimension.getAs<SymbolRefAttr>(
+                                         foreach_metadata::iteratorSymbol)
+                                   : SymbolRefAttr{};
         Operation *referencedSymbol = nullptr;
         if (reference) {
           auto symbol = semanticSymbols.find(reference.getLeafReference());
@@ -282,7 +281,7 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
         }
         auto qualified =
             path ? qualifiedAutomaticPath(path.getValue(), reference,
-                                           referencedSymbol)
+                                          referencedSymbol)
                  : std::nullopt;
         if (!qualified) {
           dimensions.push_back(attribute);
@@ -291,13 +290,14 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
         NamedAttrList rewritten(dimension);
         rewritten.set(foreach_metadata::iteratorPath,
                       StringAttr::get(foreach.getContext(), *qualified));
-        dimensions.push_back(DictionaryAttr::get(foreach.getContext(),
-                                                 rewritten.getAttrs()));
+        dimensions.push_back(
+            DictionaryAttr::get(foreach.getContext(), rewritten.getAttrs()));
         changed = true;
       }
       if (changed)
-        foreach->setAttr("loop_dimensions",
-                         ArrayAttr::get(foreach.getContext(), dimensions));
+        foreach
+          ->setAttr("loop_dimensions",
+                    ArrayAttr::get(foreach.getContext(), dimensions));
     });
 
     bool initializesDesignStorage =
@@ -336,9 +336,9 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
         auto property = dyn_cast<DictionaryAttr>(attribute);
         if (!property)
           continue;
-        for (StringRef name : {randomPropertyPathAttrName,
-                               randomRandCKeyPathAttrName,
-                               randomRandCPositionPathAttrName}) {
+        for (StringRef name :
+             {randomPropertyPathAttrName, randomRandCKeyPathAttrName,
+              randomRandCPositionPathAttrName}) {
           auto path = property.getAs<StringAttr>(name);
           if (!path)
             continue;
@@ -406,6 +406,9 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       Operation *target = units.resolveDirectCallee(call, semanticSymbols);
       if (target && targets.insert(target).second)
         callEdges[unit.source].push_back(target);
+      for (Operation *candidate : units.resolveVirtualInterfaceCallees(call))
+        if (targets.insert(candidate).second)
+          callEdges[unit.source].push_back(candidate);
       auto addRandomizeHook = [&](StringRef attrName) {
         auto reference = call->getAttrOfType<FlatSymbolRefAttr>(attrName);
         auto hook = reference
@@ -423,6 +426,12 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
   for (const PreparedUnit &unit : units.units)
     unit.source->walk([&](semantic::SVCallExpressionOp call) {
       Operation *target = units.resolveDirectCallee(call, semanticSymbols);
+      if (!target) {
+        SmallVector<Operation *> candidates =
+            units.resolveVirtualInterfaceCallees(call);
+        if (!candidates.empty())
+          target = candidates.front();
+      }
       auto task = dyn_cast_or_null<semantic::SVSubroutineSymbolOp>(target);
       if (!task ||
           task.getSubroutineKind() != semantic::SVSubroutineKind::Task ||

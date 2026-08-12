@@ -124,6 +124,43 @@ Operation *PreparedUnits::resolveDirectCallee(
   return nullptr;
 }
 
+SmallVector<Operation *> PreparedUnits::resolveVirtualInterfaceCallees(
+    semantic::SVCallExpressionOp call) const {
+  SmallVector<Operation *> children = getChildren(call);
+  if (!call.getHasThisClass() || children.empty())
+    return {};
+  auto typeAttr = children.front()->getAttrOfType<TypeAttr>("semantic_type");
+  auto interface =
+      typeAttr ? dyn_cast<semantic::VirtualInterfaceType>(typeAttr.getValue())
+               : semantic::VirtualInterfaceType{};
+  if (!interface)
+    return {};
+  SymbolRefAttr identity = interface.getInterfaceName();
+  StringRef selectedModport = interface.getModport().getValue();
+  auto topInstance = [](Operation *operation) {
+    semantic::SVInstanceSymbolOp result;
+    for (Operation *parent = operation; parent; parent = parent->getParentOp())
+      if (auto instance = dyn_cast<semantic::SVInstanceSymbolOp>(parent))
+        result = instance;
+    return result;
+  };
+  semantic::SVInstanceSymbolOp callerDesign = topInstance(call);
+  if (!callerDesign)
+    return {};
+  StringRef design = getHierarchyName(callerDesign);
+  SmallVector<Operation *> result;
+  for (const PreparedVirtualInterfaceCallee &candidate :
+       virtualInterfaceCallees) {
+    if (candidate.method != call.getCalleeName() ||
+        candidate.interfaceIdentity != identity || candidate.design != design)
+      continue;
+    if (selectedModport.empty() ||
+        call->hasAttr("virtual_interface_call_import"))
+      result.push_back(candidate.source);
+  }
+  return result;
+}
+
 FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
     ModuleOp module, semantic::SVRootSymbolOp semanticRoot,
     ArrayRef<Operation *> sourceUnits,
@@ -210,11 +247,66 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
                             std::move(codeUnitHierarchy),
                             {},
                             ObserverResult::None});
+    if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(source)) {
+      auto body =
+          subroutine->getParentOfType<semantic::SVInstanceBodySymbolOp>();
+      if (body && !body->hasAttr("is_virtual_interface_type_instance")) {
+        auto identity =
+            body->getAttrOfType<SymbolRefAttr>("virtual_interface_identity");
+        semantic::SVInstanceSymbolOp top;
+        for (Operation *parent = subroutine; parent;
+             parent = parent->getParentOp())
+          if (auto instance = dyn_cast<semantic::SVInstanceSymbolOp>(parent))
+            top = instance;
+        if (identity && top)
+          result.virtualInterfaceCallees.push_back(
+              {source, identity, subroutine.getName().value_or("").str(),
+               getHierarchyName(top).str()});
+      }
+    }
     if (!isa<semantic::SVPortConnectionOp, semantic::SVVariableSymbolOp,
              semantic::SVNetSymbolOp, semantic::SVClassPropertySymbolOp>(
             source)) {
       result.directCalleeSources[hierarchy] = source;
       result.directCalleeNames[source] = symbol;
+    }
+  }
+  for (auto [index, lhsRecord] :
+       llvm::enumerate(result.virtualInterfaceCallees)) {
+    auto lhs = cast<semantic::SVSubroutineSymbolOp>(lhsRecord.source);
+    for (const PreparedVirtualInterfaceCallee &rhsRecord :
+         ArrayRef<PreparedVirtualInterfaceCallee>(
+             result.virtualInterfaceCallees)
+             .drop_front(index + 1)) {
+      if (lhsRecord.interfaceIdentity != rhsRecord.interfaceIdentity ||
+          lhsRecord.method != rhsRecord.method ||
+          lhsRecord.design != rhsRecord.design)
+        continue;
+      auto rhs = cast<semantic::SVSubroutineSymbolOp>(rhsRecord.source);
+      bool compatible = lhs.getSemanticType() == rhs.getSemanticType() &&
+                        lhs.getSubroutineKind() == rhs.getSubroutineKind();
+      SmallVector<semantic::SVFormalArgumentSymbolOp> lhsFormals;
+      SmallVector<semantic::SVFormalArgumentSymbolOp> rhsFormals;
+      for (Operation *child : getChildren(lhs))
+        if (auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child))
+          lhsFormals.push_back(formal);
+      for (Operation *child : getChildren(rhs))
+        if (auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child))
+          rhsFormals.push_back(formal);
+      compatible &= lhsFormals.size() == rhsFormals.size();
+      if (compatible)
+        for (auto [lhsFormal, rhsFormal] :
+             llvm::zip_equal(lhsFormals, rhsFormals))
+          compatible &=
+              lhsFormal.getDirection() == rhsFormal.getDirection() &&
+              lhsFormal.getSemanticType() == rhsFormal.getSemanticType();
+      if (!compatible) {
+        emitError(getSemanticLocation(rhs))
+            << "virtual-interface call candidates have incompatible "
+               "subroutine ABIs";
+        emitRemark(getSemanticLocation(lhs)) << "other candidate is here";
+        invalid = true;
+      }
     }
   }
   if (invalid)
@@ -265,8 +357,7 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
       // A virtual clocking-block event is lowered directly to the dynamically
       // selected clock descriptor. Outlining its void-typed surface
       // expression as a value observer would lose that interface handle.
-      if (children.front()->hasAttr(
-              "virtual_interface_clocking_block_event"))
+      if (children.front()->hasAttr("virtual_interface_clocking_block_event"))
         return;
       ObserverResult primaryResult = ObserverResult::Value;
       FailureOr<Type> primaryType =

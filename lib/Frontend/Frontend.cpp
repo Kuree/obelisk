@@ -60,10 +60,9 @@ namespace {
 
 std::string formatReal(double value) {
   std::array<char, 64> buffer;
-  auto [end, error] =
-      std::to_chars(buffer.data(), buffer.data() + buffer.size(), value,
-                    std::chars_format::general,
-                    std::numeric_limits<double>::max_digits10);
+  auto [end, error] = std::to_chars(
+      buffer.data(), buffer.data() + buffer.size(), value,
+      std::chars_format::general, std::numeric_limits<double>::max_digits10);
   if (error != std::errc())
     llvm_unreachable("buffer is too small to format a double");
   return std::string(buffer.data(), end);
@@ -111,8 +110,8 @@ bool isWholeTypeSigned(const slang::ast::Type &sourceType) {
   return element->isSigned();
 }
 
-const slang::ast::Type *getDeclaredSelectionType(
-    const slang::ast::Expression &expression) {
+const slang::ast::Type *
+getDeclaredSelectionType(const slang::ast::Expression &expression) {
   using namespace slang::ast;
   if (ValueExpressionBase::isKind(expression.kind))
     return &expression.as<ValueExpressionBase>().symbol.getType();
@@ -120,8 +119,7 @@ const slang::ast::Type *getDeclaredSelectionType(
     return nullptr;
 
   const auto &select = expression.as<ElementSelectExpression>();
-  const slang::ast::Type *valueType =
-      getDeclaredSelectionType(select.value());
+  const slang::ast::Type *valueType = getDeclaredSelectionType(select.value());
   if (!valueType)
     return nullptr;
   const slang::ast::Type &selectedType = unwrapTypeAliases(*valueType);
@@ -135,16 +133,14 @@ const slang::ast::Type *getDeclaredSelectionType(
 bool isEffectivelySigned(const slang::ast::Expression &expression) {
   using namespace slang::ast;
   if (ValueExpressionBase::isKind(expression.kind))
-    return isWholeTypeSigned(expression.as<ValueExpressionBase>()
-                                 .symbol.getType());
+    return isWholeTypeSigned(
+        expression.as<ValueExpressionBase>().symbol.getType());
   if (expression.kind != ExpressionKind::ElementSelect)
     return expression.type->isSigned();
 
   const auto &select = expression.as<ElementSelectExpression>();
-  const slang::ast::Type *valueType =
-      getDeclaredSelectionType(select.value());
-  const slang::ast::Type *resultType =
-      getDeclaredSelectionType(expression);
+  const slang::ast::Type *valueType = getDeclaredSelectionType(select.value());
+  const slang::ast::Type *resultType = getDeclaredSelectionType(expression);
   if (!valueType || !resultType)
     return expression.type->isSigned();
 
@@ -836,8 +832,8 @@ public:
         for (StringRef component : targetPath.drop_front())
           nested.push_back(
               FlatSymbolRefAttr::get(builder.getContext(), component));
-        references.push_back(SymbolRefAttr::get(
-            builder.getContext(), targetPath.front(), nested));
+        references.push_back(SymbolRefAttr::get(builder.getContext(),
+                                                targetPath.front(), nested));
       }
       pending.operation->setAttr(pending.attributeName,
                                  builder.getArrayAttr(references));
@@ -1416,18 +1412,19 @@ private:
                     builder.getStringAttr(scope->asSymbol().name));
           const auto &clocking =
               scope->asSymbol().as<slang::ast::ClockingBlockSymbol>();
-          const auto *event = clocking.getEvent()
-                                  .as_if<slang::ast::SignalEventControl>();
+          const auto *event =
+              clocking.getEvent().as_if<slang::ast::SignalEventControl>();
           if (event) {
             attrs.set("virtual_interface_clock_event_edge",
                       slangir::EdgeKindAttr::get(builder.getContext(),
-                                                convertEnum(event->edge)));
+                                                 convertEnum(event->edge)));
             const slang::ast::Symbol *clockSymbol = nullptr;
             if (auto *named =
                     event->expr.as_if<slang::ast::NamedValueExpression>())
               clockSymbol = &named->symbol;
-            else if (auto *hierarchical = event->expr.as_if<
-                         slang::ast::HierarchicalValueExpression>())
+            else if (auto *hierarchical =
+                         event->expr
+                             .as_if<slang::ast::HierarchicalValueExpression>())
               clockSymbol = &hierarchical->symbol;
             if (clockSymbol)
               attrs.set("virtual_interface_clock_member",
@@ -1450,13 +1447,12 @@ private:
                            bool defaultOneStep) {
           attrs.set((prefix + "_edge").str(),
                     slangir::EdgeKindAttr::get(builder.getContext(),
-                                              convertEnum(skew.edge)));
+                                               convertEnum(skew.edge)));
           if (!skew.delay) {
             if (!skew.hasValue() && defaultOneStep)
               attrs.set((prefix + "_one_step").str(), builder.getUnitAttr());
             else if (!skew.hasValue())
-              attrs.set((prefix + "_delay").str(),
-                        builder.getStringAttr("0"));
+              attrs.set((prefix + "_delay").str(), builder.getStringAttr("0"));
             return;
           }
           if (skew.delay->kind == slang::ast::TimingControlKind::OneStepDelay) {
@@ -1470,17 +1466,19 @@ private:
             if (value) {
               attrs.set((prefix + "_delay").str(),
                         builder.getStringAttr(formatConstant(value)));
-              attrs.set((prefix + "_delay_is_real").str(),
-                        builder.getBoolAttr(value.isReal() || value.isShortReal()));
+              attrs.set(
+                  (prefix + "_delay_is_real").str(),
+                  builder.getBoolAttr(value.isReal() || value.isShortReal()));
             }
           }
         };
-        const auto &clocking = clockVar.getParentScope()
-                                    ->asSymbol()
-                                    .template as<slang::ast::ClockingBlockSymbol>();
-        slang::ast::ClockingSkew inputSkew = clockVar.inputSkew.hasValue()
-                                                  ? clockVar.inputSkew
-                                                  : clocking.getDefaultInputSkew();
+        const auto &clocking =
+            clockVar.getParentScope()
+                ->asSymbol()
+                .template as<slang::ast::ClockingBlockSymbol>();
+        slang::ast::ClockingSkew inputSkew =
+            clockVar.inputSkew.hasValue() ? clockVar.inputSkew
+                                          : clocking.getDefaultInputSkew();
         slang::ast::ClockingSkew outputSkew =
             clockVar.outputSkew.hasValue() ? clockVar.outputSkew
                                            : clocking.getDefaultOutputSkew();
@@ -1503,18 +1501,19 @@ private:
                       builder.getStringAttr(virtualType.modport->name));
         }
         if (const auto *event =
-                clocking.getEvent().template as_if<
-                    slang::ast::SignalEventControl>()) {
+                clocking.getEvent()
+                    .template as_if<slang::ast::SignalEventControl>()) {
           attrs.set("virtual_interface_clock_event_edge",
                     slangir::EdgeKindAttr::get(builder.getContext(),
-                                              convertEnum(event->edge)));
+                                               convertEnum(event->edge)));
           const slang::ast::Symbol *clockSymbol = nullptr;
           if (auto *named =
-                  event->expr.template as_if<
-                      slang::ast::NamedValueExpression>())
+                  event->expr
+                      .template as_if<slang::ast::NamedValueExpression>())
             clockSymbol = &named->symbol;
-          else if (auto *hierarchical = event->expr.template as_if<
-                       slang::ast::HierarchicalValueExpression>())
+          else if (auto *hierarchical =
+                       event->expr.template as_if<
+                           slang::ast::HierarchicalValueExpression>())
             clockSymbol = &hierarchical->symbol;
           if (clockSymbol)
             attrs.set("virtual_interface_clock_member",
@@ -1526,8 +1525,7 @@ private:
       }
       if (node.member.kind == slang::ast::SymbolKind::Field) {
         const auto &field = node.member.template as<slang::ast::FieldSymbol>();
-        attrs.set("field_ordinal",
-                  builder.getI64IntegerAttr(field.fieldIndex));
+        attrs.set("field_ordinal", builder.getI64IntegerAttr(field.fieldIndex));
         attrs.set("packed_offset", builder.getI64IntegerAttr(field.bitOffset));
       }
     } else if constexpr (std::same_as<T, slang::ast::TaggedPattern>) {
@@ -1583,10 +1581,33 @@ private:
               std::get_if<const slang::ast::SubroutineSymbol *>(
                   &node.subroutine))
         calledSubroutine = *subroutine;
+      if (node.thisClass()) {
+        const slang::ast::Type &receiverType = *node.thisClass()->type;
+        if (receiverType.isVirtualInterface()) {
+          const auto &virtualType =
+              receiverType.as<slang::ast::VirtualInterfaceType>();
+          if (virtualType.modport) {
+            attrs.set("virtual_interface_call_modport",
+                      builder.getStringAttr(virtualType.modport->name));
+            for (const auto &prototype :
+                 virtualType.modport
+                     ->membersOfType<slang::ast::MethodPrototypeSymbol>()) {
+              if (prototype.name != node.getSubroutineName())
+                continue;
+              if (prototype.flags.has(slang::ast::MethodFlags::ModportImport))
+                attrs.set("virtual_interface_call_import",
+                          builder.getUnitAttr());
+              if (prototype.flags.has(slang::ast::MethodFlags::ModportExport))
+                attrs.set("virtual_interface_call_export",
+                          builder.getUnitAttr());
+            }
+          }
+        }
+      }
       auto formalArguments =
-          calledSubroutine ? calledSubroutine->getArguments()
-                           : std::span<
-                                 const slang::ast::FormalArgumentSymbol *const>();
+          calledSubroutine
+              ? calledSubroutine->getArguments()
+              : std::span<const slang::ast::FormalArgumentSymbol *const>();
       for (auto [index, argument] : llvm::enumerate(node.arguments())) {
         bool isDefaulted =
             index < formalArguments.size() &&
@@ -1989,12 +2010,10 @@ private:
       attrs.set("direction",
                 slangir::ArgumentDirectionAttr::get(
                     builder.getContext(), convertEnum(node.direction)));
-    } else if constexpr (std::same_as<T,
-                                      slang::ast::ClockingBlockSymbol>) {
+    } else if constexpr (std::same_as<T, slang::ast::ClockingBlockSymbol>) {
       SET_OP_ATTR(IsDefault, builder.getBoolAttr(node.isDefault));
       SET_OP_ATTR(IsGlobal, builder.getBoolAttr(node.isGlobal));
-    } else if constexpr (std::same_as<T,
-                                      slang::ast::AssertionPortSymbol>) {
+    } else if constexpr (std::same_as<T, slang::ast::AssertionPortSymbol>) {
       if (node.direction)
         SET_OP_ATTR(Direction,
                     slangir::ArgumentDirectionAttr::get(
@@ -2014,7 +2033,7 @@ private:
       SET_OP_ATTR(PortSymbols, builder.getArrayAttr(portSymbols));
       SET_OP_ATTR(PortPaths, builder.getArrayAttr(portPaths));
       SmallVector<const slang::ast::Symbol *> ports(node.ports.begin(),
-                                                     node.ports.end());
+                                                    node.ports.end());
       currentPendingReferenceArrays.push_back(
           {std::move(ports), Op::getPortSymbolsAttrName(operationName)});
       SET_OP_ATTR(HasDefaultInstance,
@@ -2203,20 +2222,16 @@ private:
       uint64_t sampleFormals = 0;
       for (const auto &formal :
            node.template membersOfType<slang::ast::FormalArgumentSymbol>())
-        sampleFormals += formal.flags.has(
-            slang::ast::VariableFlags::CoverageSampleFormal);
-      SET_OP_ATTR(SampleFormalCount,
-                  builder.getI64IntegerAttr(sampleFormals));
+        sampleFormals +=
+            formal.flags.has(slang::ast::VariableFlags::CoverageSampleFormal);
+      SET_OP_ATTR(SampleFormalCount, builder.getI64IntegerAttr(sampleFormals));
       SET_OP_ATTR(HasCoverageEvent,
                   builder.getBoolAttr(node.getCoverageEvent() != nullptr));
-    } else if constexpr (std::same_as<T,
-                                      slang::ast::CovergroupBodySymbol>) {
-      SET_OP_ATTR(OptionCount,
-                  builder.getI64IntegerAttr(node.options.size()));
+    } else if constexpr (std::same_as<T, slang::ast::CovergroupBodySymbol>) {
+      SET_OP_ATTR(OptionCount, builder.getI64IntegerAttr(node.options.size()));
     } else if constexpr (std::same_as<T, slang::ast::CoverpointSymbol>) {
       SET_OP_ATTR(HasIff, builder.getBoolAttr(node.getIffExpr() != nullptr));
-      SET_OP_ATTR(OptionCount,
-                  builder.getI64IntegerAttr(node.options.size()));
+      SET_OP_ATTR(OptionCount, builder.getI64IntegerAttr(node.options.size()));
     } else if constexpr (std::same_as<T, slang::ast::CoverageBinSymbol>) {
       SET_OP_ATTR(BinsKind,
                   slangir::CoverageBinKindAttr::get(
@@ -2231,14 +2246,12 @@ private:
                   builder.getBoolAttr(node.getNumberOfBinsExpr() != nullptr));
       SET_OP_ATTR(HasSetCoverage,
                   builder.getBoolAttr(node.getSetCoverageExpr() != nullptr));
-      SET_OP_ATTR(HasWith,
-                  builder.getBoolAttr(node.getWithExpr() != nullptr));
+      SET_OP_ATTR(HasWith, builder.getBoolAttr(node.getWithExpr() != nullptr));
       SET_OP_ATTR(ValueCount,
                   builder.getI64IntegerAttr(node.getValues().size()));
       SET_OP_ATTR(TransitionSetCount,
                   builder.getI64IntegerAttr(node.getTransList().size()));
-    } else if constexpr (std::same_as<T,
-                                      slang::ast::NewCovergroupExpression>) {
+    } else if constexpr (std::same_as<T, slang::ast::NewCovergroupExpression>) {
       SET_OP_ATTR(ArgumentCount,
                   builder.getI64IntegerAttr(node.arguments.size()));
     } else if constexpr (std::same_as<T, slang::ast::ConditionalStatement>) {
@@ -2254,8 +2267,7 @@ private:
       SET_OP_ATTR(ConditionPatternFlags,
                   builder.getDenseI64ArrayAttr(patternFlags));
       SET_OP_ATTR(HasElse, builder.getBoolAttr(node.ifFalse != nullptr));
-    } else if constexpr (std::same_as<T,
-                                      slang::ast::ConditionalExpression>) {
+    } else if constexpr (std::same_as<T, slang::ast::ConditionalExpression>) {
       SET_OP_ATTR(ConditionCount,
                   builder.getI64IntegerAttr(node.conditions.size()));
       SmallVector<int64_t> patternFlags;
@@ -2316,22 +2328,21 @@ private:
       for (const auto &item : node.items()) {
         hasWeight.push_back(item.weight.has_value());
         weightKinds.push_back(
-            item.weight && item.weight->kind ==
-                               slang::ast::DistExpression::DistWeight::PerRange);
+            item.weight &&
+            item.weight->kind ==
+                slang::ast::DistExpression::DistWeight::PerRange);
       }
       SET_OP_ATTR(ItemCount, builder.getI64IntegerAttr(node.items().size()));
-      SET_OP_ATTR(ItemHasWeight,
-                  builder.getDenseI64ArrayAttr(hasWeight));
-      SET_OP_ATTR(ItemWeightKinds,
-                  builder.getDenseI64ArrayAttr(weightKinds));
+      SET_OP_ATTR(ItemHasWeight, builder.getDenseI64ArrayAttr(hasWeight));
+      SET_OP_ATTR(ItemWeightKinds, builder.getDenseI64ArrayAttr(weightKinds));
       const auto *defaultWeight = node.defaultWeight();
       SET_OP_ATTR(HasDefaultWeight,
                   builder.getBoolAttr(defaultWeight != nullptr));
-      SET_OP_ATTR(
-          DefaultWeightKind,
-          builder.getI64IntegerAttr(
-              defaultWeight && defaultWeight->kind ==
-                                   slang::ast::DistExpression::DistWeight::PerRange));
+      SET_OP_ATTR(DefaultWeightKind,
+                  builder.getI64IntegerAttr(
+                      defaultWeight &&
+                      defaultWeight->kind ==
+                          slang::ast::DistExpression::DistWeight::PerRange));
     } else if constexpr (std::same_as<T, slang::ast::StructurePattern>) {
       SmallVector<int64_t> ordinals;
       ordinals.reserve(node.patterns.size());
@@ -2443,8 +2454,7 @@ private:
       SET_OP_ATTR(LoopDimensions, builder.getArrayAttr(dimensions));
     }
 
-    if constexpr (std::same_as<T,
-                                  slang::ast::AssertionInstanceExpression>) {
+    if constexpr (std::same_as<T, slang::ast::AssertionInstanceExpression>) {
       setReferencedSymbol<Op>(attrs, node.symbol);
       SmallVector<Attribute> formalSymbols;
       SmallVector<Attribute> formalPaths;
@@ -2453,12 +2463,10 @@ private:
         formalSymbols.push_back(getSemanticSymbolReference(*formal));
         formalPaths.push_back(builder.getStringAttr(getSymbolPath(*formal)));
         argumentKinds.push_back(
-            std::holds_alternative<const slang::ast::Expression *>(actual)
-                ? 0
-                : std::holds_alternative<const slang::ast::AssertionExpr *>(
-                      actual)
-                      ? 1
-                      : 2);
+            std::holds_alternative<const slang::ast::Expression *>(actual) ? 0
+            : std::holds_alternative<const slang::ast::AssertionExpr *>(actual)
+                ? 1
+                : 2);
       }
       SmallVector<Attribute> localSymbols;
       SmallVector<Attribute> localPaths;
@@ -2493,7 +2501,7 @@ private:
           {std::move(formals),
            Op::getArgumentFormalSymbolsAttrName(operationName)});
       SmallVector<const slang::ast::Symbol *> locals(node.localVars.begin(),
-                                                      node.localVars.end());
+                                                     node.localVars.end());
       currentPendingReferenceArrays.push_back(
           {std::move(locals),
            Op::getLocalVariableSymbolsAttrName(operationName)});

@@ -181,8 +181,7 @@ describeContainerElementImpl(Type type, Location location) {
             << type;
         return failure();
       }
-      result.traceOffsets.push_back(
-          static_cast<int64_t>(slot.bitOffset / 8));
+      result.traceOffsets.push_back(static_cast<int64_t>(slot.bitOffset / 8));
       result.traceKinds.push_back(static_cast<int32_t>(*kind));
     }
     bool fourState = false;
@@ -214,35 +213,42 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
   ModuleOp module = function->getParentOfType<ModuleOp>();
   sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
   DenseMap<uint64_t, StringAttr> interfaceScopes;
-  design.walk([&](sim::SimScopeDeclOp scope) {
-    if (std::optional<StringRef> hierarchy = scope.getHierarchicalName())
-      scopeIDs[*hierarchy] = scope.getId();
-    if (StringAttr identity = scope.getInterfaceTypeAttr())
-      interfaceScopes[scope.getId()] = identity;
-  });
+  // Unit-lowering passes may run concurrently for sibling functions.  The
+  // design declarations are immutable here, but recursively walking the whole
+  // design would also traverse function bodies while sibling passes rewrite
+  // them.  Inventory only the declaration operations in the design body.
+  for (Operation &operation : design.getBody().front())
+    if (auto scope = dyn_cast<sim::SimScopeDeclOp>(operation)) {
+      if (std::optional<StringRef> hierarchy = scope.getHierarchicalName())
+        scopeIDs[*hierarchy] = scope.getId();
+      if (StringAttr identity = scope.getInterfaceTypeAttr())
+        interfaceScopes[scope.getId()] = identity;
+    }
   auto memberKey = [](StringRef identity, StringRef member) {
     return (Twine(identity) + "\n" + member).str();
   };
-  design.walk([&](sim::SimStorageDeclOp storage) {
-    virtualInterfaceStorageTypes[storage.getId()] = storage.getType();
-    auto scope = interfaceScopes.find(storage.getScopeId());
-    StringAttr member = storage->getAttrOfType<StringAttr>(
-        "obelisk_sim.virtual_interface_member");
-    if (scope != interfaceScopes.end() && member)
-      virtualInterfaceStorageMembers[memberKey(scope->second.getValue(),
-                                               member.getValue())]
-          .push_back({storage.getScopeId(), storage.getId()});
-  });
-  design.walk([&](sim::SimNetDeclOp net) {
-    virtualInterfaceNetTypes[net.getId()] = net.getType();
-    auto scope = interfaceScopes.find(net.getScopeId());
-    StringAttr member = net->getAttrOfType<StringAttr>(
-        "obelisk_sim.virtual_interface_member");
-    if (scope != interfaceScopes.end() && member)
-      virtualInterfaceNetMembers[memberKey(scope->second.getValue(),
-                                           member.getValue())]
-          .push_back({net.getScopeId(), net.getId()});
-  });
+  for (Operation &operation : design.getBody().front())
+    if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
+      virtualInterfaceStorageTypes[storage.getId()] = storage.getType();
+      auto scope = interfaceScopes.find(storage.getScopeId());
+      StringAttr member = storage->getAttrOfType<StringAttr>(
+          "obelisk_sim.virtual_interface_member");
+      if (scope != interfaceScopes.end() && member)
+        virtualInterfaceStorageMembers[memberKey(scope->second.getValue(),
+                                                 member.getValue())]
+            .push_back({storage.getScopeId(), storage.getId()});
+    }
+  for (Operation &operation : design.getBody().front())
+    if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
+      virtualInterfaceNetTypes[net.getId()] = net.getType();
+      auto scope = interfaceScopes.find(net.getScopeId());
+      StringAttr member = net->getAttrOfType<StringAttr>(
+          "obelisk_sim.virtual_interface_member");
+      if (scope != interfaceScopes.end() && member)
+        virtualInterfaceNetMembers[memberKey(scope->second.getValue(),
+                                             member.getValue())]
+            .push_back({net.getScopeId(), net.getId()});
+    }
   for (Operation &topLevel : module.getBody()->getOperations())
     if (auto root = dyn_cast<semantic::SVRootSymbolOp>(topLevel))
       root->walk([&](semantic::SVCovergroupTypeOp covergroup) {
@@ -259,8 +265,8 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
   if (function.getEntryKind() == sim::EntryKind::Task)
     if (auto targetID = function->getAttrOfType<IntegerAttr>(
             "obelisk_sim.control_target_id"))
-      taskControlActivation = sim::SimControlEnterOp::create(
-          builder, function.getLoc(), targetID);
+      taskControlActivation =
+          sim::SimControlEnterOp::create(builder, function.getLoc(), targetID);
   auto bindings = function->getAttrOfType<ArrayAttr>(bindingsAttrName);
   if (auto inherited = function->getAttrOfType<ArrayAttr>("inherited_controls"))
     for (Attribute attribute : inherited) {
@@ -826,7 +832,7 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
   if (isa<sim::VirtualInterfaceType>(value.getType()) &&
       isa<sim::VirtualInterfaceType>(targetType))
     return sim::SimVirtualInterfaceCastOp::create(builder, location, targetType,
-                                                   value)
+                                                  value)
         .getResult();
   if (isa<sim::DynamicArrayType, sim::QueueType>(value.getType()) &&
       isa<sim::DynamicArrayType, sim::QueueType>(targetType)) {
@@ -1220,8 +1226,7 @@ LogicalResult UnitLowering::emitFunctionReturn(
         return failure();
     }
     if (taskControlActivation)
-      sim::SimControlLeaveOp::create(builder, location,
-                                     taskControlActivation);
+      sim::SimControlLeaveOp::create(builder, location, taskControlActivation);
     sim::SimReturnOp::create(builder, location, ValueRange{});
     return success();
   }
@@ -1328,10 +1333,10 @@ LogicalResult UnitLowering::emitRuntimeFatal(Location location,
       function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
   StringAttr scope =
       function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
-  sim::SimDisplayOp::create(
-      builder, location, context, descriptor, ValueRange{item}, true, 10,
-      builder.getDenseI32ArrayAttr({0}), scope, StringAttr{}, timeMultiplier,
-      IntegerAttr{});
+  sim::SimDisplayOp::create(builder, location, context, descriptor,
+                            ValueRange{item}, true, 10,
+                            builder.getDenseI32ArrayAttr({0}), scope,
+                            StringAttr{}, timeMultiplier, IntegerAttr{});
   Value verbosity = arith::ConstantOp::create(
       builder, location, builder.getI32Type(), builder.getI32IntegerAttr(1));
   sim::SimFatalOp::create(builder, location, context, verbosity);
@@ -1343,8 +1348,7 @@ LogicalResult UnitLowering::emitRuntimeFatal(Location location,
 // fact separately from the normalized 32-bit constant value.
 static bool fillsWidenedUnknown(Operation *source, Type targetType) {
   auto literal = dyn_cast<semantic::SVIntegerLiteralOp>(source);
-  auto declaredUnsized =
-      source->getAttrOfType<BoolAttr>("is_declared_unsized");
+  auto declaredUnsized = source->getAttrOfType<BoolAttr>("is_declared_unsized");
   if (!literal || !declaredUnsized || !declaredUnsized.getValue())
     return false;
   FailureOr<Type> sourceType = getNormalizedSemanticType(source);
@@ -1356,8 +1360,7 @@ static bool fillsWidenedUnknown(Operation *source, Type targetType) {
   std::optional<unsigned> targetWidth =
       targetScalar ? sim::getPackedWidth(targetScalar) : std::nullopt;
   std::optional<StringRef> spelling = getConstantSpelling(source);
-  if (!sourceWidth || !targetWidth || *targetWidth <= *sourceWidth ||
-      !spelling)
+  if (!sourceWidth || !targetWidth || *targetWidth <= *sourceWidth || !spelling)
     return false;
   FailureOr<ParsedConstant> parsed =
       parseSVInteger(*spelling, *sourceWidth, getSemanticLocation(source));
@@ -1368,8 +1371,7 @@ static bool fillsWidenedUnknown(Operation *source, Type targetType) {
 // target signedness controls widening (for example, a signed operand in a
 // common unsigned binary or case context must be zero-extended), unlike an
 // ordinary assignment conversion, which extends according to the source.
-FailureOr<Value>
-UnitLowering::lowerContextDeterminedExpression(Operation *op) {
+FailureOr<Value> UnitLowering::lowerContextDeterminedExpression(Operation *op) {
   auto conversion = dyn_cast<semantic::SVConversionExpressionOp>(op);
   SmallVector<Operation *> children =
       conversion ? getChildren(conversion) : SmallVector<Operation *>{};
@@ -1434,8 +1436,7 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
   }
   if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(op))
     return lowerNamedValue(named, lvalue);
-  if (auto interface =
-          dyn_cast<semantic::SVArbitrarySymbolExpressionOp>(op)) {
+  if (auto interface = dyn_cast<semantic::SVArbitrarySymbolExpressionOp>(op)) {
     if (lvalue) {
       emitError(getSemanticLocation(op))
           << "an interface instance is not an assignable value";
@@ -1527,8 +1528,8 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
       return failure();
     bool sourceSigned = isSignedNode(children.front()) ||
                         fillsWidenedUnknown(children.front(), *target);
-    return convert(*input, *target, sourceSigned,
-                   getSemanticLocation(op), isSignedNode(op));
+    return convert(*input, *target, sourceSigned, getSemanticLocation(op),
+                   isSignedNode(op));
   }
   if (isa<semantic::SVCopyClassExpressionOp>(op)) {
     SmallVector<Operation *> children = getChildren(op);
@@ -1816,8 +1817,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     return success();
   if (auto assertion = dyn_cast<semantic::SVImmediateAssertionStatementOp>(op))
     return lowerImmediateAssertion(assertion);
-  if (auto assertion =
-          dyn_cast<semantic::SVConcurrentAssertionStatementOp>(op))
+  if (auto assertion = dyn_cast<semantic::SVConcurrentAssertionStatementOp>(op))
     return lowerConcurrentAssertion(assertion);
   if (isa<semantic::SVExpressionStatementOp>(op)) {
     if (children.size() != 1) {
@@ -2087,8 +2087,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   for (Operation *root : roots)
     root->walk([&](semantic::SVBlockStatementOp block) {
       auto path = block.getBlockPathAttr();
-      auto targetID = block->getAttrOfType<IntegerAttr>(
-          "obelisk_sim.control_target_id");
+      auto targetID =
+          block->getAttrOfType<IntegerAttr>("obelisk_sim.control_target_id");
       SmallVector<Operation *> contents = getChildren(block);
       if (path && targetID && contents.size() == 1 &&
           isa<semantic::SVImmediateAssertionStatementOp>(contents.front()))
@@ -2178,9 +2178,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       function->getAttrOfType<StringAttr>("obelisk_sim.primitive_name");
   llvm::SetVector<Value> implicitProcessWrites;
   llvm::SetVector<Value> *savedWrites = observedWrites;
-  bool excludesWrittenSensitivity =
-      entryKind == sim::EntryKind::AlwaysComb ||
-      entryKind == sim::EntryKind::AlwaysLatch;
+  bool excludesWrittenSensitivity = entryKind == sim::EntryKind::AlwaysComb ||
+                                    entryKind == sim::EntryKind::AlwaysLatch;
   if (excludesWrittenSensitivity) {
     observedWrites = &implicitProcessWrites;
     observeNonblockingWrites = true;
