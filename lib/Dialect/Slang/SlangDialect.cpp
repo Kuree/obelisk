@@ -85,8 +85,11 @@ IntegralType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 }
 
 LogicalResult
-ErrorType::verify(llvm::function_ref<InFlightDiagnostic()> emitError, bool) {
-  return emitError() << "error recovery type cannot appear in valid Slang IR";
+ErrorType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                  bool invalid) {
+  if (invalid)
+    return emitError() << "error recovery type cannot appear in valid Slang IR";
+  return success();
 }
 
 LogicalResult

@@ -692,7 +692,13 @@ public:
       break;
     }
     case SK::ErrorType:
-      llvm_unreachable("error recovery type cannot be converted to Slang IR");
+      // Slang uses ErrorType in declarations that it type-checks but does not
+      // elaborate, such as parameter-dependent members of an uninstantiated
+      // definition. Preserve that unavailable type without treating it as an
+      // error in the selected design. Invalid* nodes reached in elaborated
+      // code are diagnosed separately by recordInvalidNode.
+      result = slangir::ErrorType::get(context, /*invalid=*/false);
+      break;
     default:
       llvm_unreachable("unhandled canonical slang semantic type");
     }
