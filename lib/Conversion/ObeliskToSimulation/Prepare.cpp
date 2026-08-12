@@ -1581,6 +1581,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       StringAttr referencePath;
       Type type;
       uint64_t width;
+      unsigned modeIndex;
       bool isSigned;
       bool isRandC;
       FlatSymbolRefAttr randcKeyField;
@@ -1590,7 +1591,16 @@ void ObeliskSimPreparePass::runOnOperation() {
       IntegerAttr randomModeStorage;
       SmallVector<RandomSubdomain> domains;
     };
+    struct RandomContainerProperty {
+      Operation *source;
+      FlatSymbolRefAttr field;
+      Type type;
+      Type elementType;
+      unsigned elementWidth;
+      unsigned modeIndex;
+    };
     SmallVector<RandomProperty> properties;
+    SmallVector<RandomContainerProperty> containerProperties;
     SmallVector<Operation *> constraintRoots;
     SmallVector<EffectiveConstraintGroup> constraintGroups;
     semantic::SVSubroutineSymbolOp preRandomizeHook;
@@ -1599,6 +1609,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       for (auto [index, child] : llvm::enumerate(callChildren))
         if (index != receiverIndex && isa<semantic::SVConstraintListOp>(child))
           constraintRoots.push_back(child);
+    unsigned randomPropertyIndex = 0;
     for (semantic::SVClassTypeOp classType : hierarchy) {
       for (Operation *member : getChildren(classType)) {
         if (semantic::SVSubroutineSymbolOp method = getClassMethod(member);
@@ -1636,6 +1647,9 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
         if (auto property =
                 dyn_cast<semantic::SVClassPropertySymbolOp>(member)) {
+          unsigned modeIndex = randomPropertyIndex;
+          if (property.getRandMode() != semantic::SVRandMode::None)
+            ++randomPropertyIndex;
           bool isStatic =
               property.getLifetime() == semantic::SVVariableLifetime::Static;
           if (explicitPropertyList
@@ -1663,6 +1677,33 @@ void ObeliskSimPreparePass::runOnOperation() {
             referencePath = builder.getStringAttr(path);
           } else {
             field = classFieldSymbols.lookup(property);
+          }
+          if (auto array = dyn_cast<sim::DynamicArrayType>(*type)) {
+            if (isStatic) {
+              emitError(getSemanticLocation(property))
+                  << "static random dynamic arrays are not executable yet";
+              invalid = true;
+              continue;
+            }
+            if (property.getRandMode() == semantic::SVRandMode::RandC) {
+              emitError(getSemanticLocation(property))
+                  << "randc dynamic arrays require per-element cyclic state";
+              invalid = true;
+              continue;
+            }
+            std::optional<unsigned> elementWidth =
+                sim::getPackedWidth(array.getElementType());
+            if (!elementWidth || *elementWidth == 0 || *elementWidth > 64) {
+              emitError(getSemanticLocation(property))
+                  << "random dynamic array elements must be packed integral "
+                     "values no wider than 64 bits";
+              invalid = true;
+              continue;
+            }
+            containerProperties.push_back({property, field, *type,
+                                           array.getElementType(),
+                                           *elementWidth, modeIndex});
+            continue;
           }
           std::optional<unsigned> width = sim::getPackedWidth(*type);
           if (!width || *width == 0 || (!field && !referencePath)) {
@@ -1721,6 +1762,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             continue;
           }
           properties.push_back({property, field, referencePath, *type, *width,
+                                modeIndex,
                                 isSignedSemanticType(*semanticPropertyType),
                                 isRandC, randcKeyField, randcPositionField,
                                 randcKeyPath, randcPositionPath,
@@ -1729,7 +1771,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
       }
     }
-    if (properties.size() > 64) {
+    if (properties.size() + containerProperties.size() > 64) {
       emitError(getSemanticLocation(call))
           << "the executable rand_mode boundary is 64 effective random "
              "properties";
@@ -1809,7 +1851,26 @@ void ObeliskSimPreparePass::runOnOperation() {
             constraintRoots.push_back(child);
       }
     }
-
+    for (const RandomContainerProperty &property : containerProperties) {
+      bool referenced = llvm::any_of(constraintRoots, [&](Operation *root) {
+        bool found = false;
+        root->walk([&](Operation *nested) {
+          auto reference =
+              nested->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+          if (reference && reference.getLeafReference() ==
+                               property.source->getAttrOfType<StringAttr>(
+                                   SymbolTable::getSymbolAttrName()))
+            found = true;
+        });
+        return found;
+      });
+      if (referenced) {
+        emitError(getSemanticLocation(property.source))
+            << "constraints on random dynamic arrays require runtime "
+               "size-aware solving";
+        invalid = true;
+      }
+    }
     // Clone declaration-owned constraints into the call before expanding
     // function calls. A dynamic randomize dispatch has one frozen call per
     // concrete class, so mutating the shared class declaration would leak one
@@ -2576,6 +2637,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder.getNamedAttr("type", TypeAttr::get(property.type)),
           builder.getNamedAttr("width",
                                builder.getI64IntegerAttr(property.width)),
+          builder.getNamedAttr(randomPropertyModeIndexAttrName,
+                               builder.getI32IntegerAttr(property.modeIndex)),
           builder.getNamedAttr("is_signed",
                                builder.getBoolAttr(property.isSigned)),
           builder.getNamedAttr("is_randc",
@@ -2634,6 +2697,20 @@ void ObeliskSimPreparePass::runOnOperation() {
                   builder.getI32IntegerAttr(receiverIndex));
     call->setAttr(randomPropertiesAttrName,
                   builder.getArrayAttr(propertyAttrs));
+    SmallVector<Attribute> containerPropertyAttrs;
+    for (const RandomContainerProperty &property : containerProperties)
+      containerPropertyAttrs.push_back(builder.getDictionaryAttr({
+          builder.getNamedAttr("field", property.field),
+          builder.getNamedAttr("type", TypeAttr::get(property.type)),
+          builder.getNamedAttr("element_type",
+                               TypeAttr::get(property.elementType)),
+          builder.getNamedAttr("element_width",
+                               builder.getI64IntegerAttr(property.elementWidth)),
+          builder.getNamedAttr(randomPropertyModeIndexAttrName,
+                               builder.getI32IntegerAttr(property.modeIndex)),
+      }));
+    call->setAttr(randomContainerPropertiesAttrName,
+                  builder.getArrayAttr(containerPropertyAttrs));
     call->setAttr(randomTotalWidthAttrName,
                   builder.getI64IntegerAttr(totalWidth));
     call->setAttr(randomConstraintCountAttrName,

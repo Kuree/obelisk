@@ -97,6 +97,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   }
 
   auto properties = op->getAttrOfType<ArrayAttr>(randomPropertiesAttrName);
+  auto containerProperties =
+      op->getAttrOfType<ArrayAttr>(randomContainerPropertiesAttrName);
   auto totalWidthAttr =
       op->getAttrOfType<IntegerAttr>(randomTotalWidthAttrName);
   auto receiverIndexAttr =
@@ -105,7 +107,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       op->getAttrOfType<IntegerAttr>(randomConstraintCountAttrName);
   auto staticConstraintStorages = op->getAttrOfType<DenseI64ArrayAttr>(
       constraintModeStaticStoragesAttrName);
-  if (children.empty() || !properties || !totalWidthAttr ||
+  if (children.empty() || !properties || !containerProperties ||
+      !totalWidthAttr ||
       !receiverIndexAttr || !constraintCountAttr) {
     emitError(location) << "randomize call has no frozen constraint plan";
     return failure();
@@ -222,6 +225,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   struct Property {
     Type type;
     unsigned width;
+    unsigned modeIndex;
     bool isSigned;
     Value reference;
     bool isRandC;
@@ -245,6 +249,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     auto typeAttr = property ? property.getAs<TypeAttr>("type") : TypeAttr{};
     auto widthAttr =
         property ? property.getAs<IntegerAttr>("width") : IntegerAttr{};
+    auto modeIndexAttr = property
+                             ? property.getAs<IntegerAttr>(
+                                   randomPropertyModeIndexAttrName)
+                             : IntegerAttr{};
     auto signedAttr =
         property ? property.getAs<BoolAttr>("is_signed") : BoolAttr{};
     auto randcAttr =
@@ -254,7 +262,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             ? property.getAs<IntegerAttr>(randomPropertyModeStorageAttrName)
             : IntegerAttr{};
     if (static_cast<bool>(field) == static_cast<bool>(referencePath) ||
-        !typeAttr || !widthAttr || !signedAttr || !randcAttr ||
+        !typeAttr || !widthAttr || !modeIndexAttr || !signedAttr ||
+        !randcAttr || modeIndexAttr.getValue().isNegative() ||
+        modeIndexAttr.getValue().getActiveBits() > 32 ||
+        modeIndexAttr.getValue().getZExtValue() >= 64 ||
         widthAttr.getValue().isZero() || widthAttr.getValue().isNegative() ||
         widthAttr.getValue().getActiveBits() > 64) {
       emitError(location) << "randomize property plan is malformed";
@@ -449,6 +460,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     planned.push_back({type,
                        static_cast<unsigned>(width),
+                       static_cast<unsigned>(
+                           modeIndexAttr.getValue().getZExtValue()),
                        signedAttr.getValue(),
                        reference,
                        randcAttr.getValue(),
@@ -462,6 +475,60 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   }
   if (plannedWidth != totalWidth) {
     emitError(location) << "randomize property plan width is inconsistent";
+    return failure();
+  }
+  struct ContainerProperty {
+    Type type;
+    Type elementType;
+    unsigned elementWidth;
+    unsigned modeIndex;
+    Value reference;
+  };
+  SmallVector<ContainerProperty> plannedContainers;
+  for (Attribute propertyAttr : containerProperties) {
+    auto property = dyn_cast<DictionaryAttr>(propertyAttr);
+    auto field = property ? property.getAs<FlatSymbolRefAttr>("field")
+                          : FlatSymbolRefAttr{};
+    auto typeAttr = property ? property.getAs<TypeAttr>("type") : TypeAttr{};
+    auto elementTypeAttr =
+        property ? property.getAs<TypeAttr>("element_type") : TypeAttr{};
+    auto elementWidthAttr =
+        property ? property.getAs<IntegerAttr>("element_width")
+                 : IntegerAttr{};
+    auto modeIndexAttr = property
+                             ? property.getAs<IntegerAttr>(
+                                   randomPropertyModeIndexAttrName)
+                             : IntegerAttr{};
+    if (!field || !typeAttr || !elementTypeAttr || !elementWidthAttr ||
+        !modeIndexAttr || elementWidthAttr.getValue().isNegative() ||
+        elementWidthAttr.getValue().isZero() ||
+        elementWidthAttr.getValue().getActiveBits() > 32 ||
+        elementWidthAttr.getValue().getZExtValue() > 64 ||
+        modeIndexAttr.getValue().isNegative() ||
+        modeIndexAttr.getValue().getActiveBits() > 32 ||
+        modeIndexAttr.getValue().getZExtValue() >= 64) {
+      emitError(location) << "random dynamic-array plan is malformed";
+      return failure();
+    }
+    auto array = dyn_cast<sim::DynamicArrayType>(typeAttr.getValue());
+    uint64_t elementWidth = elementWidthAttr.getValue().getZExtValue();
+    if (!array || array.getElementType() != elementTypeAttr.getValue() ||
+        sim::getPackedWidth(elementTypeAttr.getValue()) != elementWidth) {
+      emitError(location) << "random dynamic-array type is inconsistent";
+      return failure();
+    }
+    Type referenceType = sim::ManagedRefType::get(
+        function.getContext(), typeAttr.getValue(), objectType.getClassName());
+    Value reference = sim::SimClassFieldRefOp::create(
+        builder, location, referenceType, receiver, field);
+    plannedContainers.push_back(
+        {typeAttr.getValue(), elementTypeAttr.getValue(),
+         static_cast<unsigned>(elementWidth),
+         static_cast<unsigned>(modeIndexAttr.getValue().getZExtValue()),
+         reference});
+  }
+  if (planned.size() + plannedContainers.size() > 64) {
+    emitError(location) << "randomize plan exceeds its 64-property boundary";
     return failure();
   }
   bool hasRandC = llvm::any_of(
@@ -565,8 +632,11 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   Value mask = arith::ConstantOp::create(
       builder, location, assignmentType,
       builder.getIntegerAttr(assignmentType, domainMask));
-  uint64_t propertyModeMask =
-      planned.size() == 64 ? UINT64_MAX : (uint64_t{1} << planned.size()) - 1;
+  uint64_t propertyModeMask = 0;
+  for (const Property &property : planned)
+    propertyModeMask |= uint64_t{1} << property.modeIndex;
+  for (const ContainerProperty &property : plannedContainers)
+    propertyModeMask |= uint64_t{1} << property.modeIndex;
   Value relevantMode;
   if (checkerOnly)
     relevantMode = constant64(propertyModeMask);
@@ -578,10 +648,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   if (!checkerOnly && !op->hasAttr(randomizeExplicitPropertiesAttrName)) {
     Value context = function.getBody().front().getArgument(0);
     Type referenceType = sim::RefType::get(function.getContext(), i64);
-    for (auto [index, property] : llvm::enumerate(planned)) {
+    for (const Property &property : planned) {
       if (!property.randomModeStorage)
         continue;
-      uint64_t bit = uint64_t{1} << index;
+      uint64_t bit = uint64_t{1} << property.modeIndex;
       relevantMode = arith::AndIOp::create(builder, location, relevantMode,
                                            constant64(~bit));
       Value reference = sim::SimContextStorageOp::create(
@@ -813,7 +883,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   Value mutableMask = constantAssignment64(0);
   SmallVector<Value> propertyEnabled;
   uint64_t currentOffset = 0;
-  for (auto [index, property] : llvm::enumerate(planned)) {
+  for (Property &property : planned) {
     FailureOr<Value> current = loadReference(property.reference, location);
     if (failed(current))
       return failure();
@@ -831,7 +901,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                        constantAssignment(valueMask));
 
     Value propertyMode = arith::AndIOp::create(
-        builder, location, relevantMode, constant64(uint64_t{1} << index));
+        builder, location, relevantMode,
+        constant64(uint64_t{1} << property.modeIndex));
     Value enabled =
         checkerOnly
             ? arith::ConstantOp::create(builder, location, builder.getI1Type(),
@@ -5003,6 +5074,68 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   }
   cf::BranchOp::create(builder, location, commitDone);
   setCurrent(commitDone);
+  for (const ContainerProperty &property : plannedContainers) {
+    Block *enabledBlock = addBlock();
+    Block *header = addBlock();
+    Block *body = addBlock();
+    Block *nextProperty = addBlock();
+    Value propertyMode = arith::AndIOp::create(
+        builder, location, relevantMode,
+        constant64(uint64_t{1} << property.modeIndex));
+    Value enabled =
+        checkerOnly
+            ? arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                        builder.getBoolAttr(false))
+                  .getResult()
+            : arith::CmpIOp::create(builder, location,
+                                    arith::CmpIPredicate::eq, propertyMode,
+                                    constant64(0))
+                  .getResult();
+    cf::CondBranchOp::create(builder, location, enabled, enabledBlock,
+                             ValueRange{}, nextProperty, ValueRange{});
+
+    setCurrent(enabledBlock);
+    Value container =
+        sim::SimManagedLoadOp::create(builder, location, property.type,
+                                      property.reference);
+    Value size = sim::SimContainerSizeOp::create(
+        builder, location, i64, container);
+    Value containerState = sim::SimManagedLoadOp::create(
+        builder, location, i64, stateReference);
+    header->addArgument(i64, location);
+    header->addArgument(i64, location);
+    cf::BranchOp::create(builder, location, header,
+                         ValueRange{constant64(0), containerState});
+
+    setCurrent(header);
+    Value index = header->getArgument(0);
+    Value loopState = header->getArgument(1);
+    Value more = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ult, index, size);
+    cf::CondBranchOp::create(builder, location, more, body, ValueRange{},
+                             nextProperty, ValueRange{});
+
+    setCurrent(body);
+    Value nextState = loopState;
+    Value bits = next64(nextState);
+    Type scalarType = IntegerType::get(function.getContext(),
+                                       property.elementWidth);
+    if (property.elementWidth != 64)
+      bits = arith::TruncIOp::create(builder, location, scalarType, bits);
+    FailureOr<Value> element =
+        convert(bits, property.elementType, false, location, false);
+    if (failed(element))
+      return failure();
+    sim::SimContainerWriteOp::create(builder, location, container, index,
+                                     *element);
+    sim::SimManagedStoreOp::create(builder, location, nextState,
+                                   stateReference);
+    Value nextIndex = arith::AddIOp::create(builder, location, index,
+                                            constant64(1));
+    cf::BranchOp::create(builder, location, header,
+                         ValueRange{nextIndex, nextState});
+    setCurrent(nextProperty);
+  }
   cf::BranchOp::create(builder, location, postBlock);
 
   setCurrent(postBlock);
