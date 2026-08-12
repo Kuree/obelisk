@@ -32,6 +32,140 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                              Value receiverOverride) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
+  if (op->hasAttr(randomizeNestedDispatchAttrName)) {
+    auto receiverIndexAttr =
+        op->getAttrOfType<IntegerAttr>(randomReceiverIndexAttrName);
+    auto field = op->getAttrOfType<FlatSymbolRefAttr>(
+        randomizeNestedDispatchFieldAttrName);
+    auto storageTypeAttr = op->getAttrOfType<TypeAttr>(
+        randomizeNestedDispatchStorageAttrName);
+    FailureOr<Type> resultType = getNormalizedSemanticType(op);
+    if (!receiverIndexAttr || !field || !storageTypeAttr ||
+        failed(resultType) || receiverIndexAttr.getValue().isNegative() ||
+        receiverIndexAttr.getValue().getActiveBits() > 64 ||
+        receiverIndexAttr.getValue().getZExtValue() >= children.size() ||
+        !isa<sim::ClassHandleType>(storageTypeAttr.getValue())) {
+      emitError(location)
+          << "nested randomize dispatch has malformed metadata";
+      return failure();
+    }
+    unsigned receiverIndex =
+        static_cast<unsigned>(receiverIndexAttr.getValue().getZExtValue());
+    FailureOr<Value> loweredReceiver =
+        receiverOverride ? FailureOr<Value>(receiverOverride)
+                         : lowerExpression(children[receiverIndex]);
+    if (failed(loweredReceiver) ||
+        !isa<sim::ClassHandleType>((*loweredReceiver).getType())) {
+      emitError(location)
+          << "nested randomize dispatch receiver is not a class object";
+      return failure();
+    }
+    if (auto planClass = op->getAttrOfType<FlatSymbolRefAttr>(
+            randomizePlanClassAttrName)) {
+      Type targetType =
+          sim::ClassHandleType::get(function.getContext(), planClass);
+      if ((*loweredReceiver).getType() != targetType)
+        loweredReceiver = sim::SimClassCastOp::create(
+                              builder, location, targetType, *loweredReceiver)
+                              .getResult();
+    }
+    auto receiverType =
+        dyn_cast<sim::ClassHandleType>((*loweredReceiver).getType());
+    if (!receiverType)
+      return failure();
+    Type referenceType = sim::ManagedRefType::get(
+        function.getContext(), storageTypeAttr.getValue(),
+        receiverType.getClassName());
+    Value reference = sim::SimClassFieldRefOp::create(
+        builder, location, referenceType, *loweredReceiver, field);
+    FailureOr<Value> object = loadReference(reference, location);
+    if (failed(object))
+      return failure();
+    Value isNull = sim::SimManagedIsNullOp::create(
+        builder, location, builder.getI1Type(), *object);
+
+    SmallVector<semantic::SVCallExpressionOp> alternatives;
+    semantic::SVCallExpressionOp nullAlternative;
+    for (Operation *child : children) {
+      auto alternative = dyn_cast<semantic::SVCallExpressionOp>(child);
+      if (!alternative ||
+          (!alternative->hasAttr(randomizeAttrName) &&
+           !alternative->hasAttr(randomizeNestedDispatchAttrName)))
+        continue;
+      DictionaryAttr selectedPlan;
+      if (auto selectedPlans = alternative->getAttrOfType<ArrayAttr>(
+              randomizeNestedPlansAttrName))
+        for (Attribute selectedAttr : selectedPlans)
+          if (auto selected = dyn_cast<DictionaryAttr>(selectedAttr);
+              selected && selected.getAs<FlatSymbolRefAttr>("field") == field) {
+            selectedPlan = selected;
+            break;
+          }
+      if (!selectedPlan)
+        continue;
+      if (selectedPlan.get("null"))
+        nullAlternative = alternative;
+      else
+        alternatives.push_back(alternative);
+    }
+    if (!nullAlternative) {
+      emitError(location)
+          << "nested randomize dispatch has no null alternative";
+      return failure();
+    }
+    Block *done = addBlock();
+    Value doneResult = done->addArgument(*resultType, location);
+    Block *nullBlock = addBlock();
+    Block *nonNullBlock = addBlock();
+    cf::CondBranchOp::create(builder, location, isNull, nullBlock,
+                             ValueRange{}, nonNullBlock, ValueRange{});
+    setCurrent(nullBlock);
+    FailureOr<Value> nullResult =
+        lowerRandomize(nullAlternative, *loweredReceiver);
+    if (failed(nullResult))
+      return failure();
+    cf::BranchOp::create(builder, location, done, ValueRange{*nullResult});
+    setCurrent(nonNullBlock);
+    for (semantic::SVCallExpressionOp alternative : alternatives) {
+      FlatSymbolRefAttr planClass;
+      if (auto selectedPlans = alternative->getAttrOfType<ArrayAttr>(
+              randomizeNestedPlansAttrName))
+        for (Attribute selectedAttr : selectedPlans)
+          if (auto selected = dyn_cast<DictionaryAttr>(selectedAttr);
+              selected &&
+              selected.getAs<FlatSymbolRefAttr>("field") == field) {
+            planClass = selected.getAs<FlatSymbolRefAttr>("class");
+            break;
+          }
+      if (!planClass) {
+        emitError(location)
+            << "nested randomize alternative has no target class";
+        return failure();
+      }
+      Value matches = sim::SimClassIsInstanceOp::create(
+          builder, location, *object, planClass);
+      Block *selected = addBlock();
+      Block *next = addBlock();
+      cf::CondBranchOp::create(builder, location, matches, selected,
+                               ValueRange{}, next, ValueRange{});
+      setCurrent(selected);
+      FailureOr<Value> result =
+          lowerRandomize(alternative, *loweredReceiver);
+      if (failed(result))
+        return failure();
+      cf::BranchOp::create(builder, location, done, ValueRange{*result});
+      setCurrent(next);
+    }
+    FailureOr<Value> noPlan = convert(
+        arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                  builder.getBoolAttr(false)),
+        *resultType, false, location);
+    if (failed(noPlan))
+      return failure();
+    cf::BranchOp::create(builder, location, done, ValueRange{*noPlan});
+    setCurrent(done);
+    return doneResult;
+  }
   if (op->hasAttr(randomizeDispatchAttrName)) {
     auto receiverIndexAttr =
         op->getAttrOfType<IntegerAttr>(randomReceiverIndexAttrName);
@@ -60,7 +194,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       if (auto alternative = dyn_cast<semantic::SVCallExpressionOp>(child);
           alternative &&
           alternative->hasAttr(randomizePlanClassAttrName) &&
-          alternative->hasAttr(randomizeAttrName))
+          (alternative->hasAttr(randomizeAttrName) ||
+           alternative->hasAttr(randomizeNestedDispatchAttrName)))
         alternatives.push_back(alternative);
 
     Block *done = addBlock();

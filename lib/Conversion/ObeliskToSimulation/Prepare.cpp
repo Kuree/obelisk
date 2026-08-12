@@ -1335,7 +1335,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (!call.getIsSystemCall() || call.getCalleeName() != "randomize")
       return false;
     if (call->hasAttr(randomizeAttrName) ||
-        call->hasAttr(randomizeDispatchAttrName))
+        call->hasAttr(randomizeDispatchAttrName) ||
+        call->hasAttr(randomizeNestedDispatchAttrName))
       return true;
     SmallVector<Operation *> callChildren = getChildren(call);
     uint64_t argumentCount = call.getArgumentCount();
@@ -1765,14 +1766,149 @@ void ObeliskSimPreparePass::runOnOperation() {
                   invalid = true;
                   continue;
                 }
-                if (llvm::is_contained(candidateHierarchy,
-                                       declaredClass->second))
+                bool compatible = llvm::is_contained(candidateHierarchy,
+                                                     declaredClass->second);
+                if (!compatible && declaredClass->second.getIsInterface()) {
+                  StringRef targetInterface =
+                      semanticObjectType.getClassName().getLeafReference();
+                  for (semantic::SVClassTypeOp hierarchyClass :
+                       candidateHierarchy) {
+                    for (Attribute attribute :
+                         hierarchyClass.getImplementedInterfaces()) {
+                      auto type = dyn_cast<TypeAttr>(attribute);
+                      auto interface =
+                          type ? dyn_cast<semantic::ClassHandleType>(
+                                     type.getValue())
+                               : semantic::ClassHandleType{};
+                      if (interface &&
+                          interface.getClassName().getLeafReference() ==
+                              targetInterface) {
+                        compatible = true;
+                        break;
+                      }
+                    }
+                    if (compatible)
+                      break;
+                  }
+                }
+                if (compatible)
                   concreteClasses.push_back(candidate);
               }
-            if (concreteClasses.size() != 1) {
+            DictionaryAttr selectedPlan;
+            if (auto selectedPlans =
+                    call->getAttrOfType<ArrayAttr>(randomizeNestedPlansAttrName))
+              for (Attribute selectedAttr : selectedPlans)
+                if (auto selected = dyn_cast<DictionaryAttr>(selectedAttr);
+                    selected &&
+                    selected.getAs<FlatSymbolRefAttr>("field") == field) {
+                  selectedPlan = selected;
+                  break;
+                }
+            bool selectedProperty = static_cast<bool>(selectedPlan);
+            if (concreteClasses.size() != 1 && !selectedProperty) {
+              struct NestedDynamicPlan {
+                semantic::SVClassTypeOp classType;
+                unsigned depth;
+              };
+              SmallVector<NestedDynamicPlan> dynamicPlans;
+              for (semantic::SVClassTypeOp candidate : concreteClasses) {
+                SmallVector<semantic::SVClassTypeOp> candidateHierarchy;
+                if (failed(collectClassHierarchy(
+                        candidate, candidateHierarchy,
+                        "nested object randomization dispatch"))) {
+                  invalid = true;
+                  return true;
+                }
+                dynamicPlans.push_back(
+                    {candidate,
+                     static_cast<unsigned>(candidateHierarchy.size())});
+              }
+              llvm::sort(dynamicPlans,
+                         [&](const NestedDynamicPlan &lhs,
+                             const NestedDynamicPlan &rhs) {
+                           if (lhs.depth != rhs.depth)
+                             return lhs.depth > rhs.depth;
+                           return classSymbols.lookup(lhs.classType).getValue() <
+                                  classSymbols.lookup(rhs.classType).getValue();
+                         });
+              SmallVector<semantic::SVCallExpressionOp> alternatives;
+              auto addSelection = [&](semantic::SVCallExpressionOp alternative,
+                                      Attribute dynamicClass) {
+                SmallVector<Attribute> selections;
+                if (auto existing = alternative->getAttrOfType<ArrayAttr>(
+                        randomizeNestedPlansAttrName))
+                  llvm::append_range(selections, existing);
+                SmallVector<NamedAttribute> attributes{
+                    builder.getNamedAttr("field", field)};
+                if (dynamicClass)
+                  attributes.push_back(
+                      builder.getNamedAttr("class", dynamicClass));
+                else
+                  attributes.push_back(builder.getNamedAttr(
+                      "null", builder.getUnitAttr()));
+                selections.push_back(builder.getDictionaryAttr(attributes));
+                alternative->setAttr(randomizeNestedPlansAttrName,
+                                     builder.getArrayAttr(selections));
+              };
+              for (const NestedDynamicPlan &plan : dynamicPlans) {
+                auto alternative =
+                    cast<semantic::SVCallExpressionOp>(call->clone());
+                addSelection(
+                    alternative,
+                    FlatSymbolRefAttr::get(
+                        context, classSymbols.lookup(plan.classType).getValue()));
+                alternatives.push_back(alternative);
+              }
+              auto nullAlternative =
+                  cast<semantic::SVCallExpressionOp>(call->clone());
+              addSelection(nullAlternative, {});
+              alternatives.push_back(nullAlternative);
+              OpBuilder alternativeBuilder =
+                  OpBuilder::atBlockEnd(&call->getRegion(0).front());
+              for (semantic::SVCallExpressionOp alternative : alternatives) {
+                alternativeBuilder.insert(alternative);
+                freezeRandomizeContract(alternative);
+              }
+              call->setAttr(randomizeNestedDispatchAttrName,
+                            builder.getUnitAttr());
+              call->setAttr(randomizeNestedDispatchFieldAttrName, field);
+              call->setAttr(randomizeNestedDispatchStorageAttrName,
+                            TypeAttr::get(objectType));
+              call->setAttr(randomReceiverIndexAttrName,
+                            builder.getI32IntegerAttr(receiverIndex));
+              if (explicitPropertyList) {
+                for (Operation *argument : explicitPropertyArguments)
+                  argument->erase();
+                call->setAttr("argument_count", builder.getI64IntegerAttr(1));
+                call->setAttr("defaulted_arguments",
+                              builder.getDenseI64ArrayAttr({0}));
+              }
+              return true;
+            }
+            if (selectedProperty && selectedPlan.get("null"))
+              continue;
+            if (selectedProperty) {
+              auto selectedClass =
+                  selectedPlan.getAs<FlatSymbolRefAttr>("class");
+              auto selected = llvm::find_if(
+                  concreteClasses, [&](semantic::SVClassTypeOp candidate) {
+                    return selectedClass &&
+                           classSymbols.lookup(candidate).getValue() ==
+                               selectedClass.getValue();
+                  });
+              if (selected == concreteClasses.end()) {
+                emitError(getSemanticLocation(property))
+                    << "nested randomization alternative has an invalid "
+                       "dynamic class";
+                invalid = true;
+                continue;
+              }
+              concreteClasses.assign(1, *selected);
+            }
+            if (concreteClasses.empty()) {
               emitError(getSemanticLocation(property))
-                  << "rand object handle requires a unique concrete dynamic "
-                     "class in the closed-world hierarchy";
+                  << "rand object handle has no concrete dynamic class in "
+                     "the closed-world hierarchy";
               invalid = true;
               continue;
             }

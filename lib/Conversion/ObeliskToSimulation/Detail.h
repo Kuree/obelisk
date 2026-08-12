@@ -148,6 +148,14 @@ inline constexpr ::mlir::StringLiteral randomizeAttrName =
     "obelisk_sim.randomize";
 inline constexpr ::mlir::StringLiteral randomizeDispatchAttrName =
     "obelisk_sim.randomize_dispatch";
+inline constexpr ::mlir::StringLiteral randomizeNestedDispatchAttrName =
+    "obelisk_sim.randomize_nested_dispatch";
+inline constexpr ::mlir::StringLiteral randomizeNestedDispatchFieldAttrName =
+    "obelisk_sim.randomize_nested_dispatch_field";
+inline constexpr ::mlir::StringLiteral randomizeNestedDispatchStorageAttrName =
+    "obelisk_sim.randomize_nested_dispatch_storage_type";
+inline constexpr ::mlir::StringLiteral randomizeNestedPlansAttrName =
+    "obelisk_sim.randomize_nested_plans";
 inline constexpr ::mlir::StringLiteral randomizePlanClassAttrName =
     "obelisk_sim.randomize_plan_class";
 inline constexpr ::mlir::StringLiteral objectRandomDispatchClassesAttrName =
