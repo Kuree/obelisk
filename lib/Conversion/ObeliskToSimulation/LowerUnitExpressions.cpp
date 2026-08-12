@@ -1269,6 +1269,33 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
         .getResult();
   }
   uint64_t elementCount = sim::getAggregateNumElements(*resultType);
+  if (structured && structured.getHasDefaultSetter()) {
+    if (structured.getMemberSetterCount() != 0 ||
+        structured.getTypeSetterCount() != 0 ||
+        structured.getIndexSetterCount() != 0 || children.size() != 1) {
+      unsupported(op) << " (mixed aggregate assignment-pattern setters)";
+      return failure();
+    }
+    Operation *defaultNode = children.front();
+    FailureOr<Value> value = lowerExpression(defaultNode);
+    if (failed(value))
+      return failure();
+    SmallVector<Value> elements;
+    elements.reserve(elementCount);
+    for (uint64_t index = 0; index < elementCount; ++index) {
+      FailureOr<Value> converted = convert(
+          *value, sim::getAggregateElementType(*resultType, index),
+          isSignedNode(defaultNode) ||
+              isa<semantic::SVUnbasedUnsizedIntegerLiteralOp>(defaultNode),
+          getSemanticLocation(defaultNode));
+      if (failed(converted))
+        return failure();
+      elements.push_back(*converted);
+    }
+    return sim::SimAggregateConstructOp::create(builder, location, *resultType,
+                                                elements)
+        .getResult();
+  }
   if (structured && structured.getMemberSetterCount() != 0) {
     auto ordinals = structured.getMemberSetterOrdinals();
     if (!ordinals || structured.getMemberSetterCount() != elementCount ||
@@ -1304,6 +1331,58 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
   if (structured) {
     unsupported(op) << " (aggregate assignment-pattern setters)";
     return failure();
+  }
+  if (isa<semantic::SVReplicatedAssignmentPatternExpressionOp>(op)) {
+    if (children.size() < 2 || !getConstantSpelling(children.front())) {
+      emitError(location)
+          << "replicated assignment pattern requires a constant count";
+      return failure();
+    }
+    FailureOr<Type> countType = getNormalizedSemanticType(children.front());
+    std::optional<unsigned> countWidth =
+        succeeded(countType) ? sim::getPackedWidth(*countType) : std::nullopt;
+    FailureOr<ParsedConstant> count =
+        countWidth ? parseSVInteger(*getConstantSpelling(children.front()),
+                                    *countWidth, location)
+                   : FailureOr<ParsedConstant>(failure());
+    if (failed(count) || !count->unknown.isZero() ||
+        count->value.getActiveBits() > 64) {
+      emitError(location) << "invalid replicated assignment-pattern count";
+      return failure();
+    }
+    uint64_t repetitions = count->value.getZExtValue();
+    ArrayRef<Operation *> items = ArrayRef(children).drop_front();
+    if (repetitions > elementCount || items.empty() ||
+        repetitions != elementCount / items.size() ||
+        elementCount % items.size() != 0) {
+      emitError(location)
+          << "replicated assignment-pattern inventory does not match target";
+      return failure();
+    }
+    SmallVector<Value> itemValues;
+    itemValues.reserve(items.size());
+    for (Operation *item : items) {
+      FailureOr<Value> value = lowerExpression(item);
+      if (failed(value))
+        return failure();
+      itemValues.push_back(*value);
+    }
+    SmallVector<Value> elements;
+    elements.reserve(elementCount);
+    for (uint64_t repetition = 0; repetition < repetitions; ++repetition)
+      for (auto [itemIndex, item] : llvm::enumerate(items)) {
+        uint64_t elementIndex = elements.size();
+        FailureOr<Value> converted = convert(
+            itemValues[itemIndex],
+            sim::getAggregateElementType(*resultType, elementIndex),
+            isSignedNode(item), getSemanticLocation(item));
+        if (failed(converted))
+          return failure();
+        elements.push_back(*converted);
+      }
+    return sim::SimAggregateConstructOp::create(builder, location, *resultType,
+                                                elements)
+        .getResult();
   }
   if (children.size() != elementCount) {
     unsupported(op) << " (assignment pattern element inventory)";

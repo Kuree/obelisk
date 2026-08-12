@@ -1594,7 +1594,8 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
   if (auto tagged = dyn_cast<semantic::SVTaggedUnionExpressionOp>(op))
     return lowerTaggedUnion(tagged);
   if (isa<semantic::SVSimpleAssignmentPatternExpressionOp,
-          semantic::SVStructuredAssignmentPatternExpressionOp>(op))
+          semantic::SVStructuredAssignmentPatternExpressionOp,
+          semantic::SVReplicatedAssignmentPatternExpressionOp>(op))
     return lowerAssignmentPattern(op);
   if (isa<semantic::SVNewArrayExpressionOp>(op))
     return lowerNewArray(op);
