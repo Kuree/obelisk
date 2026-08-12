@@ -830,10 +830,26 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
     return sim::SimClassCastOp::create(builder, location, targetType, value)
         .getResult();
   if (isa<sim::VirtualInterfaceType>(value.getType()) &&
-      isa<sim::VirtualInterfaceType>(targetType))
+      isa<sim::VirtualInterfaceType>(targetType)) {
+    auto source = cast<sim::VirtualInterfaceType>(value.getType());
+    auto target = cast<sim::VirtualInterfaceType>(targetType);
+    if (source.getInterfaceName() != target.getInterfaceName()) {
+      emitError(location)
+          << "cannot convert between different virtual-interface "
+             "specializations";
+      return failure();
+    }
+    StringRef sourceModport = source.getModport().getValue();
+    StringRef targetModport = target.getModport().getValue();
+    if (!sourceModport.empty() && sourceModport != targetModport) {
+      emitError(location)
+          << "cannot remove or change a virtual-interface modport view";
+      return failure();
+    }
     return sim::SimVirtualInterfaceCastOp::create(builder, location, targetType,
                                                   value)
         .getResult();
+  }
   if (isa<sim::DynamicArrayType, sim::QueueType>(value.getType()) &&
       isa<sim::DynamicArrayType, sim::QueueType>(targetType)) {
     Type sourceElement =

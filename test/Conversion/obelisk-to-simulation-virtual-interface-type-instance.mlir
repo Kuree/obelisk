@@ -15,17 +15,24 @@ module {
         // Slang creates these compile-time-only instances to resolve the two
         // parameterized virtual-interface types. They are not design scopes.
         obelisk.sv.symbol.instance attributes {hierarchical_name = "top.bus_if", is_uninstantiated = false, is_virtual_interface_type_instance = true, name = "bus_if", node_id = 7 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if, sym_name = "s7.bus_if"} {
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.bus_if", name = "bus_if", node_id = 8 : i64, sym_name = "s8.bus_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.bus_if", name = "bus_if", node_id = 8 : i64, sym_name = "s8.bus_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s7.bus_if} {
             obelisk.sv.symbol.variable attributes {hierarchical_name = "top.bus_if.synthetic_a", lifetime = 1 : i32, name = "synthetic_a", node_id = 9 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s9.synthetic_a"} {
             }
           }
         }
         obelisk.sv.symbol.instance attributes {hierarchical_name = "top.bus_if", is_uninstantiated = false, is_virtual_interface_type_instance = true, name = "bus_if", node_id = 10 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if, sym_name = "s10.bus_if"} {
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.bus_if", name = "bus_if", node_id = 11 : i64, sym_name = "s11.bus_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.bus_if", name = "bus_if", node_id = 11 : i64, sym_name = "s11.bus_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s10.bus_if} {
             obelisk.sv.symbol.variable attributes {hierarchical_name = "top.bus_if.synthetic_b", lifetime = 1 : i32, name = "synthetic_b", node_id = 12 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s12.synthetic_b"} {
             }
           }
         }
+        // Typedef aliases retain the canonical specialization and only add a
+        // modport view; they do not create a third interface type.
+        obelisk.sv.type.type_alias attributes {hierarchical_name = "top.vif_a_t", name = "vif_a_t", node_id = 13 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s7.bus_if, "">, sym_name = "s13.vif_a_t"} {}
+        obelisk.sv.type.type_alias attributes {hierarchical_name = "top.vif_a_m_t", name = "vif_a_m_t", node_id = 14 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s7.bus_if, "m">, sym_name = "s14.vif_a_m_t"} {}
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.vif_a", lifetime = 1 : i32, name = "vif_a", node_id = 15 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s7.bus_if, "">, sym_name = "s15.vif_a"} {}
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.vif_a_m", lifetime = 1 : i32, name = "vif_a_m", node_id = 16 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s7.bus_if, "m">, sym_name = "s16.vif_a_m"} {}
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.vif_b", lifetime = 1 : i32, name = "vif_b", node_id = 17 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s10.bus_if, "">, sym_name = "s17.vif_b"} {}
       }
     }
   }
@@ -34,6 +41,9 @@ module {
 // CHECK: obelisk_sim.scope.decl 0 hierarchy "\\$root "
 // CHECK: obelisk_sim.scope.decl 1 parent 0 hierarchy "top"
 // CHECK: obelisk_sim.storage.decl 0 in 1 {{.*}} hierarchy "top.sentinel"
+// CHECK-DAG: obelisk_sim.storage.decl {{[0-9]+}} in 1 : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s7.bus_if", ""> {{.*}} hierarchy "top.vif_a"
+// CHECK-DAG: obelisk_sim.storage.decl {{[0-9]+}} in 1 : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s7.bus_if", "m"> {{.*}} hierarchy "top.vif_a_m"
+// CHECK-DAG: obelisk_sim.storage.decl {{[0-9]+}} in 1 : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s10.bus_if", ""> {{.*}} hierarchy "top.vif_b"
 // CHECK-NOT: hierarchy "top.bus_if
 // CHECK-NOT: synthetic_a
 // CHECK-NOT: synthetic_b

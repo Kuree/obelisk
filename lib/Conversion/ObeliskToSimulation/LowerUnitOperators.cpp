@@ -545,6 +545,13 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       unsupported(op) << " (virtual-interface operator)";
       return failure();
     }
+    auto lhsType = cast<sim::VirtualInterfaceType>((*lhs).getType());
+    auto rhsType = cast<sim::VirtualInterfaceType>((*rhs).getType());
+    if (lhsType.getInterfaceName() != rhsType.getInterfaceName()) {
+      emitError(location)
+          << "cannot compare different virtual-interface specializations";
+      return failure();
+    }
     Value equal = sim::SimVirtualInterfaceEqualOp::create(builder, location,
                                                            *lhs, *rhs);
     if (kind == Binary::Inequality || kind == Binary::CaseInequality)
