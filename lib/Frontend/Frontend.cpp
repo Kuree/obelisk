@@ -840,18 +840,54 @@ public:
 #define SLANG_AST_NODE(Category, Kind, CppType)                                \
   void handle(const slang::ast::CppType &node) {                               \
     if constexpr (isInvalidSemanticNode<slang::ast::CppType>)                  \
-      sawInvalidNode = true;                                                   \
+      recordInvalidNode(node, #CppType);                                       \
     else                                                                       \
       importNode<slangir::CppType##Op>(node);                                  \
   }
 #include "obelisk/Dialect/Slang/SlangASTNodes.def"
 #undef SLANG_AST_NODE
 
-  void handle(const slang::ast::InvalidStatement &) { sawInvalidNode = true; }
-  void handle(const slang::ast::InvalidExpression &) { sawInvalidNode = true; }
-  void handle(const slang::ast::InvalidSymbol &) { sawInvalidNode = true; }
+  void handle(const slang::ast::InvalidStatement &node) {
+    recordInvalidNode(node, "InvalidStatement");
+  }
+  void handle(const slang::ast::InvalidExpression &node) {
+    recordInvalidNode(node, "InvalidExpression");
+  }
+  void handle(const slang::ast::InvalidSymbol &node) {
+    recordInvalidNode(node, "InvalidSymbol");
+  }
 
 private:
+  /// slang represents code it deliberately never elaborates - the unselected
+  /// arm of a generate condition, the body of an uninstantiated module, an
+  /// unspecialized generic class - with Invalid* placeholders, and suppresses
+  /// the diagnostics that would describe them because that code is not part of
+  /// the design. Such a placeholder says nothing about the design's validity;
+  /// only one reached through elaborated code makes the AST unusable.
+  template <typename Node>
+  void recordInvalidNode(const Node &node, StringRef kind) {
+    // A symbol records the scope it belongs to. An expression or a statement
+    // does not, so for those the scope being visited is what stands in for it.
+    const slang::ast::Scope *scope = nullptr;
+    if constexpr (std::derived_from<Node, slang::ast::Symbol>)
+      scope = node.getParentScope();
+    if (!scope)
+      scope = getCurrentScope();
+    if (scope && scope->isUninstantiated())
+      return;
+    sawInvalidNode = true;
+    slang::SourceLocation location;
+    if constexpr (requires { node.sourceRange; })
+      location = node.sourceRange.start();
+    else if constexpr (std::derived_from<Node, slang::ast::Symbol>)
+      location = node.location;
+    // slang stays silent for most of these, so naming the node and its source
+    // is the only thing that makes the failure diagnosable.
+    emitError(location.valid() ? sourceLocation(location)
+                               : UnknownLoc::get(builder.getContext()))
+        << "invalid semantic AST node in elaborated code: " << kind;
+  }
+
   void importReferencedSymbol(const slang::ast::Symbol &symbol) {
     if (emittedSymbolPaths.contains(&symbol))
       return;
@@ -2916,11 +2952,8 @@ importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
   for (const slang::ast::Symbol *definition : compilation->getDefinitions())
     definition->visit(importer);
   compilation->getRoot().visit(importer);
-  if (failed(importer.finalizeReferences()) || !importer.succeeded()) {
-    emitError(UnknownLoc::get(&context))
-        << "slang compilation contained an invalid semantic AST node";
+  if (failed(importer.finalizeReferences()) || !importer.succeeded())
     return failure();
-  }
   for (const slang::ast::Compilation::DPIExport &entry :
        compilation->getDPIExports())
     importer.markDPIExport(*entry.subroutine, entry.cIdentifier);
