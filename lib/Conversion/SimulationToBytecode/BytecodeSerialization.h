@@ -74,7 +74,7 @@ inline bool containsLogic(mlir::Type type) {
 }
 
 inline std::optional<uint32_t> simulationWidth(mlir::Type type) {
-  if (mlir::isa<sim::CovergroupHandleType>(type) ||
+  if (mlir::isa<sim::CovergroupHandleType, sim::VirtualInterfaceType>(type) ||
       sim::isManagedHandleType(type))
     return 64;
   if (std::optional<unsigned> packed = sim::getPackedWidth(type))

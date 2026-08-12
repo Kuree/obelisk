@@ -212,6 +212,10 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
       current(&function.getBody().front()) {
   builder.setInsertionPointToStart(current);
   ModuleOp module = function->getParentOfType<ModuleOp>();
+  module.walk([&](sim::SimScopeDeclOp scope) {
+    if (std::optional<StringRef> hierarchy = scope.getHierarchicalName())
+      scopeIDs[*hierarchy] = scope.getId();
+  });
   for (Operation &topLevel : module.getBody()->getOperations())
     if (auto root = dyn_cast<semantic::SVRootSymbolOp>(topLevel))
       root->walk([&](semantic::SVCovergroupTypeOp covergroup) {
@@ -767,6 +771,11 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
   if (isa<sim::ClassHandleType>(value.getType()) &&
       isa<sim::ClassHandleType>(targetType))
     return sim::SimClassCastOp::create(builder, location, targetType, value)
+        .getResult();
+  if (isa<sim::VirtualInterfaceType>(value.getType()) &&
+      isa<sim::VirtualInterfaceType>(targetType))
+    return sim::SimVirtualInterfaceCastOp::create(builder, location, targetType,
+                                                   value)
         .getResult();
   if (isa<sim::DynamicArrayType, sim::QueueType>(value.getType()) &&
       isa<sim::DynamicArrayType, sim::QueueType>(targetType)) {
@@ -1374,6 +1383,29 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
   }
   if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(op))
     return lowerNamedValue(named, lvalue);
+  if (auto interface =
+          dyn_cast<semantic::SVArbitrarySymbolExpressionOp>(op)) {
+    if (lvalue) {
+      emitError(getSemanticLocation(op))
+          << "an interface instance is not an assignable value";
+      return failure();
+    }
+    FailureOr<Type> type = getNormalizedSemanticType(op);
+    auto virtualType = succeeded(type)
+                           ? dyn_cast<sim::VirtualInterfaceType>(*type)
+                           : sim::VirtualInterfaceType{};
+    auto scope = scopeIDs.find(interface.getReferencedPath());
+    if (!virtualType || scope == scopeIDs.end() || scope->second == 0) {
+      emitError(getSemanticLocation(op))
+          << "interface reference has no executable elaborated scope: "
+          << interface.getReferencedPath();
+      return failure();
+    }
+    return sim::SimVirtualInterfaceBindOp::create(
+               builder, getSemanticLocation(op), virtualType,
+               builder.getI64IntegerAttr(scope->second))
+        .getResult();
+  }
   if (auto hierarchical =
           dyn_cast<semantic::SVHierarchicalValueExpressionOp>(op))
     return lowerReferencedValue(op, hierarchical.getReferencedPath(), lvalue);
@@ -1432,6 +1464,10 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
             .getResult();
       if (isa<sim::CovergroupHandleType>(*target))
         return sim::SimCovergroupNullOp::create(
+                   builder, getSemanticLocation(op), *target)
+            .getResult();
+      if (isa<sim::VirtualInterfaceType>(*target))
+        return sim::SimVirtualInterfaceNullOp::create(
                    builder, getSemanticLocation(op), *target)
             .getResult();
     }

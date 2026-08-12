@@ -760,13 +760,22 @@ static FailureOr<Type> normalizeType(Type type, Location location,
         context, SymbolRefAttr::get(context, getSimulationCovergroupSymbol(
                                                  covergroup.getCovergroupName())
                                                  .getValue()));
+  if (auto interface = dyn_cast<semantic::VirtualInterfaceType>(type)) {
+    std::string identity;
+    llvm::raw_string_ostream stream(identity);
+    stream << interface.getInterfaceName();
+    return sim::VirtualInterfaceType::get(
+        context, StringAttr::get(context, identity),
+        interface.getModport());
+  }
   if (isa<semantic::StringType>(type))
     return sim::StringType::get(context);
   if (type.isF64() || type.isF32())
     return type;
   if (isa<sim::LogicType, sim::TimeType, sim::ContextType, sim::RefType,
           sim::NetType, sim::DriverType, sim::EventType, sim::ProcessType,
-          sim::ClassHandleType, sim::StringType, sim::DynamicArrayType,
+          sim::ClassHandleType, sim::VirtualInterfaceType, sim::StringType,
+          sim::DynamicArrayType,
           sim::QueueType, sim::AssocArrayType, sim::ManagedRefType>(type) ||
       sim::isAggregateType(type))
     return type;
@@ -1103,6 +1112,8 @@ Value createDefaultValue(OpBuilder &builder, Location location, Type type) {
     return sim::SimClassNullOp::create(builder, location, type);
   if (isa<sim::CovergroupHandleType>(type))
     return sim::SimCovergroupNullOp::create(builder, location, type);
+  if (isa<sim::VirtualInterfaceType>(type))
+    return sim::SimVirtualInterfaceNullOp::create(builder, location, type);
   if (isa<sim::EventType>(type))
     return sim::SimEventNullOp::create(builder, location, type);
   if (sim::isManagedHandleType(type))

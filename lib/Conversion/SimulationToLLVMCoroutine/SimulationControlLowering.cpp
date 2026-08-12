@@ -44,6 +44,64 @@ public:
   }
 };
 
+class VirtualInterfaceNullConversion final
+    : public OpConversionPattern<sim::SimVirtualInterfaceNullOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimVirtualInterfaceNullOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    rewriter.replaceOpWithNewOp<arith::ConstantOp>(
+        operation, rewriter.getI64Type(), rewriter.getI64IntegerAttr(0));
+    return success();
+  }
+};
+
+class VirtualInterfaceBindConversion final
+    : public OpConversionPattern<sim::SimVirtualInterfaceBindOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimVirtualInterfaceBindOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    rewriter.replaceOpWithNewOp<arith::ConstantOp>(
+        operation, rewriter.getI64Type(), operation.getScopeIdAttr());
+    return success();
+  }
+};
+
+class VirtualInterfaceCastConversion final
+    : public OpConversionPattern<sim::SimVirtualInterfaceCastOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimVirtualInterfaceCastOp operation,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getInput().size() != 1)
+      return failure();
+    rewriter.replaceOp(operation, adaptor.getInput());
+    return success();
+  }
+};
+
+class VirtualInterfaceEqualConversion final
+    : public OpConversionPattern<sim::SimVirtualInterfaceEqualOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimVirtualInterfaceEqualOp operation,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getLhs().size() != 1 || adaptor.getRhs().size() != 1)
+      return failure();
+    rewriter.replaceOpWithNewOp<arith::CmpIOp>(
+        operation, arith::CmpIPredicate::eq, adaptor.getLhs().front(),
+        adaptor.getRhs().front());
+    return success();
+  }
+};
+
 class ProcessCurrentConversion final
     : public OpConversionPattern<sim::SimProcessCurrentOp> {
 public:
@@ -523,7 +581,10 @@ void populateControlToLLVMConversionPatterns(RewritePatternSet &patterns,
   MLIRContext *context = patterns.getContext();
   patterns.add<DisableChildrenConversion, ControlEnterConversion,
                ControlLeaveConversion, ControlDisableConversion,
-               ProcessNullConversion, ProcessCurrentConversion,
+               VirtualInterfaceNullConversion,
+               VirtualInterfaceBindConversion, VirtualInterfaceCastConversion,
+               VirtualInterfaceEqualConversion, ProcessNullConversion,
+               ProcessCurrentConversion,
                ProcessEqualConversion, ProcessStatusConversion,
                ProcessRandomStateConversion, ProcessSetRandomStateConversion,
                MonitorRegisterConversion, MonitorControlConversion,

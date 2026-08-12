@@ -359,6 +359,10 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       else if (isa<sim::EventType>((*rhs).getType()))
         lhs = sim::SimEventNullOp::create(builder, location, (*rhs).getType())
                   .getResult();
+      else if (isa<sim::VirtualInterfaceType>((*rhs).getType()))
+        lhs = sim::SimVirtualInterfaceNullOp::create(
+                  builder, location, (*rhs).getType())
+                  .getResult();
     }
   } else if (isa<semantic::SVNullLiteralOp>(children[1])) {
     lhs = lowerExpression(children[0]);
@@ -370,6 +374,10 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
                   .getResult();
       else if (isa<sim::EventType>((*lhs).getType()))
         rhs = sim::SimEventNullOp::create(builder, location, (*lhs).getType())
+                  .getResult();
+      else if (isa<sim::VirtualInterfaceType>((*lhs).getType()))
+        rhs = sim::SimVirtualInterfaceNullOp::create(
+                  builder, location, (*lhs).getType())
                   .getResult();
     }
   } else {
@@ -527,6 +535,24 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
     Value compared =
         arith::CmpIOp::create(builder, location, predicate, lhsID, rhsID);
     return convert(compared, *resultType, false, location);
+  }
+  if (isa<sim::VirtualInterfaceType>((*lhs).getType()) ||
+      isa<sim::VirtualInterfaceType>((*rhs).getType())) {
+    if (!isa<sim::VirtualInterfaceType>((*lhs).getType()) ||
+        !isa<sim::VirtualInterfaceType>((*rhs).getType()) ||
+        (kind != Binary::Equality && kind != Binary::Inequality &&
+         kind != Binary::CaseEquality && kind != Binary::CaseInequality)) {
+      unsupported(op) << " (virtual-interface operator)";
+      return failure();
+    }
+    Value equal = sim::SimVirtualInterfaceEqualOp::create(builder, location,
+                                                           *lhs, *rhs);
+    if (kind == Binary::Inequality || kind == Binary::CaseInequality)
+      equal = arith::XOrIOp::create(
+          builder, location, equal,
+          arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                    builder.getBoolAttr(true)));
+    return convert(equal, *resultType, false, location);
   }
   if (isa<sim::ProcessType>((*lhs).getType()) ||
       isa<sim::ProcessType>((*rhs).getType())) {
@@ -1084,6 +1110,9 @@ FailureOr<Value> UnitLowering::conditionalEqual(Value lhs, Value rhs, Type type,
   }
   if (isa<sim::ProcessType>(type))
     return sim::SimProcessEqualOp::create(builder, location, lhs, rhs)
+        .getResult();
+  if (isa<sim::VirtualInterfaceType>(type))
+    return sim::SimVirtualInterfaceEqualOp::create(builder, location, lhs, rhs)
         .getResult();
   if (isa<sim::EventType>(type))
     return sim::SimEventEqualOp::create(builder, location, builder.getI1Type(),

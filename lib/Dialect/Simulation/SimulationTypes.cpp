@@ -42,7 +42,7 @@ bool isNormalizedValueType(Type type) {
   if (auto integer = dyn_cast<IntegerType>(type))
     return integer.isSignless();
   return isa<FloatType>(type) || isa<LogicType>(type) ||
-         isa<CovergroupHandleType, ProcessType>(type) ||
+         isa<CovergroupHandleType, VirtualInterfaceType, ProcessType>(type) ||
          isManagedHandleType(type) || isAggregateType(type);
 }
 
@@ -523,6 +523,16 @@ CovergroupHandleType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                              SymbolRefAttr covergroupName) {
   if (!covergroupName || covergroupName.getRootReference().empty())
     return emitError() << "covergroup handle requires a declaration symbol";
+  return success();
+}
+
+LogicalResult VirtualInterfaceType::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError,
+    StringAttr interfaceName, StringAttr modport) {
+  if (!interfaceName || interfaceName.empty())
+    return emitError() << "virtual interface requires an interface identity";
+  if (!modport)
+    return emitError() << "virtual interface requires a modport string";
   return success();
 }
 

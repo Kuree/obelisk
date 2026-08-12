@@ -683,9 +683,19 @@ public:
       const auto &interface = type.as<slang::ast::VirtualInterfaceType>();
       std::string_view modport =
           interface.modport ? interface.modport->name : std::string_view();
+      SymbolRefAttr interfaceIdentity;
+      for (const auto &[body, identity] : virtualInterfaceIdentities)
+        if (body->hasSameType(interface.iface.body)) {
+          interfaceIdentity = identity;
+          break;
+        }
+      if (!interfaceIdentity) {
+        interfaceIdentity = buildSymbolReference(interface.iface);
+        virtualInterfaceIdentities.emplace_back(&interface.iface.body,
+                                                interfaceIdentity);
+      }
       result = slangir::VirtualInterfaceType::get(
-          context, buildSymbolReference(interface.iface),
-          StringAttr::get(context, modport));
+          context, interfaceIdentity, StringAttr::get(context, modport));
       break;
     }
     case SK::ErrorType:
@@ -702,6 +712,8 @@ private:
   MLIRContext *context;
   SymbolReferenceBuilder buildSymbolReference;
   llvm::DenseMap<const slang::ast::Type *, Type> cache;
+  SmallVector<std::pair<const slang::ast::InstanceBodySymbol *, SymbolRefAttr>>
+      virtualInterfaceIdentities;
 };
 
 /// Exhaustive concrete visitor for the selected semantic AST. The macro expands

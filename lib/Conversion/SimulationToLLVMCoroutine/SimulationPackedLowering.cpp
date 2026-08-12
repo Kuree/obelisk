@@ -191,7 +191,7 @@ LogicalResult lowerPackedSimulationOperations(
   packedConverter.addConversion([context](Type type) -> std::optional<Type> {
     if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
             sim::ProcessType, sim::ControlType, sim::ObserverType,
-            sim::CovergroupHandleType>(type))
+            sim::CovergroupHandleType, sim::VirtualInterfaceType>(type))
       return IntegerType::get(context, 64);
     return std::nullopt;
   });

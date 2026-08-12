@@ -313,6 +313,7 @@ private:
   ::llvm::StringSet<> automaticLocals;
   ::llvm::StringMap<::mlir::Value> copyOutDestinations;
   ::llvm::StringMap<::mlir::Value> iteratorIndices;
+  ::llvm::StringMap<uint64_t> scopeIDs;
   ::llvm::StringMap<semantic::SVCovergroupTypeOp> semanticCovergroups;
   ::mlir::Value thisObject;
   ::mlir::Value taskControlActivation;

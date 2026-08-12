@@ -183,6 +183,50 @@ def SimCovergroupNullOp : SimOp<"covergroup.null", [Pure, ConstantLike]> {
   let hasVerifier = 1;
 }
 
+def SimVirtualInterfaceNullOp
+    : SimOp<"virtual_interface.null", [Pure, ConstantLike]> {
+  let summary = "typed null virtual interface handle";
+  let results = (outs SimVirtualInterfaceType:$result);
+  let assemblyFormat = "attr-dict `:` qualified(type($result))";
+}
+
+def SimVirtualInterfaceBindOp
+    : SimOp<"virtual_interface.bind", [Pure, ConstantLike]> {
+  let summary = "bind an elaborated interface instance as a virtual handle";
+  let description = [{
+    Produces the stable scope identity of an elaborated interface instance.
+    Zero is reserved for null; consequently every bind scope must be nonzero.
+  }];
+  let arguments = (ins I64Attr:$scope_id);
+  let results = (outs SimVirtualInterfaceType:$result);
+  let assemblyFormat = "$scope_id attr-dict `:` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
+def SimVirtualInterfaceCastOp
+    : SimOp<"virtual_interface.cast", [Pure]> {
+  let summary = "change the static modport view of a virtual interface";
+  let arguments = (ins SimVirtualInterfaceType:$input);
+  let results = (outs SimVirtualInterfaceType:$result);
+  let assemblyFormat = [{
+    $input attr-dict `:` qualified(type($input)) `to` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVirtualInterfaceEqualOp
+    : SimOp<"virtual_interface.equal", [Pure, Commutative]> {
+  let summary = "compare virtual interface identities, including null";
+  let arguments = (ins SimVirtualInterfaceType:$lhs,
+                       SimVirtualInterfaceType:$rhs);
+  let results = (outs I1:$equal);
+  let assemblyFormat = [{
+    $lhs `,` $rhs attr-dict `:` qualified(type($lhs)) `,`
+    qualified(type($rhs))
+  }];
+  let hasVerifier = 1;
+}
+
 def SimCovergroupCreateOp : SimOp<"covergroup.create", [
     MemoryEffects<[MemRead<SimCoverageResource>,
                    MemWrite<SimCoverageResource>]>

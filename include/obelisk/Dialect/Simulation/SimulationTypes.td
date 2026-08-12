@@ -156,6 +156,22 @@ def SimCovergroupHandleType : SimType<"CovergroupHandle"> {
   let genVerifyDecl = 1;
 }
 
+// A virtual interface is an elaborated design-scope identity.  Keep its
+// opaque canonical specialization key and modport view until physical
+// lowering so that values from distinct specializations cannot be mixed.
+// The key is inherited from semantic IR and is not a resolvable Simulation
+// dialect symbol.
+def SimVirtualInterfaceType : SimType<"VirtualInterface"> {
+  let mnemonic = "virtual_interface";
+  let summary = "nullable statically typed virtual interface handle";
+  let parameters = (ins
+    "::mlir::StringAttr":$interfaceName,
+    "::mlir::StringAttr":$modport
+  );
+  let assemblyFormat = "`<` $interfaceName `,` $modport `>`";
+  let genVerifyDecl = 1;
+}
+
 // Class identity deliberately remains in the executable type. Lowering this
 // to a physical pointer before hierarchy analysis would lose the distinction
 // between inherited fields, interface views, and checked casts.

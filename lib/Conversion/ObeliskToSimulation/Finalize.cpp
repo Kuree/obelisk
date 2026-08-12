@@ -65,7 +65,8 @@ static bool isExecutableType(Type type) {
          isa<sim::ContextType, sim::BytesType, sim::LogicType, sim::TimeType,
              sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
              sim::ProcessType, sim::ClassHandleType, sim::CovergroupHandleType,
-             sim::StringType, sim::DynamicArrayType, sim::QueueType,
+             sim::VirtualInterfaceType, sim::StringType, sim::DynamicArrayType,
+             sim::QueueType,
              sim::AssocArrayType, sim::ReferencePathType, sim::ManagedRefType,
              sim::ArgumentRefType, sim::ControlType, sim::ObserverType>(type) ||
          sim::isAggregateType(type);

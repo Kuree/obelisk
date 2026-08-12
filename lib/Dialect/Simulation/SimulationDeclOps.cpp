@@ -150,6 +150,39 @@ LogicalResult SimCovergroupNullOp::verify() {
   return verifyCovergroupHandle(*this, getResult().getType());
 }
 
+LogicalResult SimVirtualInterfaceBindOp::verify() {
+  if (failed(verifyPositive(*this, getScopeIdAttr(), "interface scope ID")))
+    return failure();
+  SimDesignOp design = (*this)->getParentOfType<SimDesignOp>();
+  if (!design)
+    return emitOpError("requires an enclosing simulation design");
+  bool found = false;
+  for (SimScopeDeclOp scope : design.getBody().front().getOps<SimScopeDeclOp>())
+    found |= scope.getId() == getScopeId();
+  if (!found)
+    return emitOpError("references an unknown interface scope ID ")
+           << getScopeId();
+  return success();
+}
+
+LogicalResult SimVirtualInterfaceCastOp::verify() {
+  if (getInput().getType().getInterfaceName() !=
+      getResult().getType().getInterfaceName())
+    return emitOpError("cannot change the interface specialization");
+  StringRef source = getInput().getType().getModport().getValue();
+  StringRef target = getResult().getType().getModport().getValue();
+  if (!source.empty() && source != target)
+    return emitOpError("cannot remove or change a selected modport");
+  return success();
+}
+
+LogicalResult SimVirtualInterfaceEqualOp::verify() {
+  if (getLhs().getType().getInterfaceName() !=
+      getRhs().getType().getInterfaceName())
+    return emitOpError("cannot compare different interface specializations");
+  return success();
+}
+
 LogicalResult SimCovergroupCreateOp::verify() {
   SimCovergroupDeclOp declaration =
       lookupCovergroup(*this, getDeclarationAttr());
