@@ -9,6 +9,7 @@
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 
@@ -1140,6 +1141,16 @@ LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
   auto path = op.getBlockPathAttr();
   SmallVector<Operation *> contents = getChildren(op);
   auto lowerContents = [&]() {
+    // A statement block is a lexical scope. Keep bindings introduced by the
+    // block (and bindings that shadow an outer declaration) from leaking into
+    // the lowering of following statements. The values themselves remain in
+    // SSA; only name resolution returns to the enclosing scope.
+    llvm::StringMap<Value> enclosingValues = values;
+    llvm::StringMap<Value> enclosingLValues = lvalues;
+    llvm::scope_exit restoreBindings([&] {
+      values = std::move(enclosingValues);
+      lvalues = std::move(enclosingLValues);
+    });
     if (op.getBlockKind() == semantic::SVStatementBlockKind::Sequential)
       return lowerSequence(contents);
     return lowerFork(op);
@@ -1214,8 +1225,7 @@ LogicalResult UnitLowering::lowerDisable(semantic::SVDisableStatementOp op) {
   uint64_t targetID = targetIDAttr.getValue().getZExtValue();
   bool hierarchical = op.getIsHierarchical();
   auto assertion = assertionControlIDs.find(path.getValue());
-  if (assertion != assertionControlIDs.end() &&
-      assertion->second == targetID) {
+  if (assertion != assertionControlIDs.end() && assertion->second == targetID) {
     sim::SimControlDisableOp::create(
         builder, location, builder.getI64IntegerAttr(targetID), Value{},
         builder.getBoolAttr(hierarchical));

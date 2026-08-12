@@ -1038,8 +1038,27 @@ private:
   }
 
   std::string getSymbolPath(const slang::ast::Symbol &symbol) {
-    if (std::string path = symbol.getHierarchicalPath(); !path.empty())
+    if (auto found = resolvedSymbolPaths.find(&symbol);
+        found != resolvedSymbolPaths.end())
+      return found->second;
+
+    if (std::string path = symbol.getHierarchicalPath(); !path.empty()) {
+      // Slang's display-oriented hierarchical path intentionally omits
+      // lexical block identity. That makes two legal shadowing declarations
+      // look identical and used to collapse their frozen bindings downstream.
+      // Preserve the familiar path for the first declaration and disambiguate
+      // later variables with a stable importer-local suffix. References call
+      // this helper with the declaration symbol and therefore receive exactly
+      // the same identity.
+      if (symbol.kind == slang::ast::SymbolKind::Variable) {
+        auto [claimed, inserted] =
+            claimedVariablePaths.try_emplace(path, &symbol);
+        if (!inserted && claimed->second != &symbol)
+          path += ".$shadow." + std::to_string(nextShadowedSymbolId++);
+      }
+      resolvedSymbolPaths.try_emplace(&symbol, path);
       return path;
+    }
 
     if (auto found = anonymousSymbolPaths.find(&symbol);
         found != anonymousSymbolPaths.end())
@@ -1055,6 +1074,7 @@ private:
       path += '.';
     path += "$anon." + std::to_string(nextAnonymousSymbolId++);
     anonymousSymbolPaths.try_emplace(&symbol, path);
+    resolvedSymbolPaths.try_emplace(&symbol, path);
     return path;
   }
 
@@ -2995,6 +3015,8 @@ private:
   const slang::ast::Compilation &compilation;
   SlangTypeConverter typeConverter;
   llvm::DenseMap<const slang::ast::Symbol *, std::string> anonymousSymbolPaths;
+  llvm::DenseMap<const slang::ast::Symbol *, std::string> resolvedSymbolPaths;
+  llvm::StringMap<const slang::ast::Symbol *> claimedVariablePaths;
   llvm::DenseMap<const slang::ast::Symbol *, StringAttr> internalSymbolNames;
   llvm::DenseMap<const slang::ast::Symbol *, SmallVector<std::string, 8>>
       emittedSymbolPaths;
@@ -3009,6 +3031,7 @@ private:
   SmallVector<PendingReferenceArraySeed, 2> currentPendingReferenceArrays;
   int64_t nextNodeId = 0;
   uint64_t nextAnonymousSymbolId = 0;
+  uint64_t nextShadowedSymbolId = 0;
   uint64_t nextInternalSymbolId = 0;
   bool sawInvalidNode = false;
 };
