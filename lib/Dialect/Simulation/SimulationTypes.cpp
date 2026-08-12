@@ -64,6 +64,14 @@ QueueType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 }
 
 LogicalResult
+MailboxType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                    Type elementType) {
+  if (!isNormalizedValueType(elementType))
+    return emitError() << "element must be a normalized simulation value";
+  return success();
+}
+
+LogicalResult
 AssocArrayType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                        Type keyType, Type elementType, bool signedKey,
                        bool wildcardIndex) {

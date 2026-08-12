@@ -213,6 +213,14 @@ def SimQueueType : SimType<"Queue"> {
   let genVerifyDecl = 1;
 }
 
+def SimMailboxType : SimType<"Mailbox"> {
+  let mnemonic = "mailbox";
+  let summary = "managed typed SystemVerilog mailbox handle";
+  let parameters = (ins "::mlir::Type":$elementType);
+  let assemblyFormat = "`<` $elementType `>`";
+  let genVerifyDecl = 1;
+}
+
 def SimAssocArrayType : SimType<"AssocArray"> {
   let mnemonic = "assoc_array";
   let summary = "managed SystemVerilog associative array value";

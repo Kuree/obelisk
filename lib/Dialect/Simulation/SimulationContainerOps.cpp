@@ -312,7 +312,7 @@ bool getManagedHandleSlots(Type type,
       return static_cast<uint32_t>(ManagedHandleKind::Class);
     if (isa<StringType>(leaf))
       return static_cast<uint32_t>(ManagedHandleKind::String);
-    if (isa<DynamicArrayType, QueueType, AssocArrayType>(leaf))
+    if (isa<DynamicArrayType, QueueType, MailboxType, AssocArrayType>(leaf))
       return static_cast<uint32_t>(ManagedHandleKind::Container);
     if (isa<ReferencePathType>(leaf))
       return static_cast<uint32_t>(ManagedHandleKind::ReferencePath);
@@ -447,7 +447,7 @@ bool getManagedHandleOffsets(Type type,
 
 bool isManagedHandleType(Type type) {
   return isa<ClassHandleType, StringType, DynamicArrayType, QueueType,
-             AssocArrayType, ReferencePathType>(type);
+             MailboxType, AssocArrayType, ReferencePathType>(type);
 }
 
 LogicalResult SimManagedNullOp::verify() {
@@ -649,6 +649,28 @@ LogicalResult SimQueueInsertOp::verify() {
   if (queue.getElementType() != getValue().getType())
     return emitOpError("value type must match the queue element");
   return success();
+}
+
+LogicalResult SimMailboxTryPutOp::verify() {
+  if (getValue().getType() != getMailbox().getType().getElementType())
+    return emitOpError("message type must exactly match the mailbox element");
+  return success();
+}
+
+static LogicalResult verifyMailboxRead(Operation *operation,
+                                       MailboxType mailbox, Type valueType) {
+  if (valueType != mailbox.getElementType())
+    return operation->emitOpError(
+        "message result must exactly match the mailbox element");
+  return success();
+}
+
+LogicalResult SimMailboxTryPeekOp::verify() {
+  return verifyMailboxRead(*this, getMailbox().getType(), getValue().getType());
+}
+
+LogicalResult SimMailboxTryGetOp::verify() {
+  return verifyMailboxRead(*this, getMailbox().getType(), getValue().getType());
 }
 
 LogicalResult SimContainerReadOp::verify() {

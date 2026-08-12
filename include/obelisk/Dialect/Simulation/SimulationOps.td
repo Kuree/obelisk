@@ -534,6 +534,52 @@ def SimQueueInsertOp : SimOp<"queue.insert", [
   let hasVerifier = 1;
 }
 
+// A mailbox is not a queue value: handles alias one shared FIFO, its bound is
+// a run-time constructor argument, and blocking methods participate in process
+// scheduling. Preserve that distinction in executable IR.
+def SimMailboxCreateOp : SimOp<"mailbox.create", [
+    MemoryEffects<[MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "create a typed bounded or unbounded mailbox";
+  let arguments = (ins I64:$bound);
+  let results = (outs SimMailboxType:$result);
+}
+
+def SimMailboxNumOp : SimOp<"mailbox.num", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "return the current number of messages";
+  let arguments = (ins SimMailboxType:$mailbox);
+  let results = (outs I32:$result);
+}
+
+def SimMailboxTryPutOp : SimOp<"mailbox.try_put", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "attempt to append one message without blocking";
+  let arguments = (ins SimMailboxType:$mailbox, AnyType:$value);
+  let results = (outs I1:$success);
+  let hasVerifier = 1;
+}
+
+def SimMailboxTryPeekOp : SimOp<"mailbox.try_peek", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "attempt to copy the oldest message without removing it";
+  let arguments = (ins SimMailboxType:$mailbox);
+  let results = (outs I1:$success, AnyType:$value);
+  let hasVerifier = 1;
+}
+
+def SimMailboxTryGetOp : SimOp<"mailbox.try_get", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "attempt to remove and copy the oldest message";
+  let arguments = (ins SimMailboxType:$mailbox);
+  let results = (outs I1:$success, AnyType:$value);
+  let hasVerifier = 1;
+}
+
 def SimRandomNextOp : SimOp<"random.next", [
     MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>]>
   ]> {
