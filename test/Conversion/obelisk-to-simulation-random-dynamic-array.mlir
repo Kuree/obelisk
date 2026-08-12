@@ -8,6 +8,8 @@ module {
       obelisk.sv.type.class_type attributes {bitstream_width = 0 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s3.C", this_variable_path = "C::this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s5.this} {
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::data", name = "data", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.dynarray<!obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s4.data"} {
         }
+        obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::items", name = "items", node_id = 13 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.queue<!obelisk.integral<32, true, false, 31 : 0, int>, 0>, sym_name = "s13.items"} {
+        }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "C::this", is_compiler_generated, is_const, name = "this", node_id = 5 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s5.this"} {
         }
       }
@@ -40,3 +42,7 @@ module {
 // CHECK: ^[[HEADER]](%[[INDEX:.*]]: i64, %[[STATE:.*]]: i64):
 // CHECK: arith.cmpi ult, %[[INDEX]], %[[SIZE]]
 // CHECK: obelisk_sim.container.write %[[ARRAY]], %[[INDEX]],
+// CHECK: %[[QUEUE:.*]] = obelisk_sim.managed.load {{.*}} -> !obelisk_sim.queue<i32, 0>
+// CHECK: %[[QUEUE_SIZE:.*]] = obelisk_sim.container.size %[[QUEUE]]
+// CHECK: arith.cmpi ult, {{.*}}, %[[QUEUE_SIZE]]
+// CHECK: obelisk_sim.container.write %[[QUEUE]],

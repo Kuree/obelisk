@@ -1678,30 +1678,37 @@ void ObeliskSimPreparePass::runOnOperation() {
           } else {
             field = classFieldSymbols.lookup(property);
           }
-          if (auto array = dyn_cast<sim::DynamicArrayType>(*type)) {
+          if (isa<sim::DynamicArrayType, sim::QueueType>(*type)) {
+            Type elementType = isa<sim::DynamicArrayType>(*type)
+                                   ? cast<sim::DynamicArrayType>(*type)
+                                         .getElementType()
+                                   : cast<sim::QueueType>(*type).getElementType();
             if (isStatic) {
               emitError(getSemanticLocation(property))
-                  << "static random dynamic arrays are not executable yet";
+                  << "static random dynamic containers are not executable "
+                     "yet";
               invalid = true;
               continue;
             }
             if (property.getRandMode() == semantic::SVRandMode::RandC) {
               emitError(getSemanticLocation(property))
-                  << "randc dynamic arrays require per-element cyclic state";
+                  << "randc dynamic containers require per-element cyclic "
+                     "state";
               invalid = true;
               continue;
             }
             std::optional<unsigned> elementWidth =
-                sim::getPackedWidth(array.getElementType());
+                sim::getPackedWidth(elementType);
             if (!elementWidth || *elementWidth == 0 || *elementWidth > 64) {
               emitError(getSemanticLocation(property))
-                  << "random dynamic array elements must be packed integral "
+                  << "random dynamic container elements must be packed "
+                     "integral "
                      "values no wider than 64 bits";
               invalid = true;
               continue;
             }
             containerProperties.push_back({property, field, *type,
-                                           array.getElementType(),
+                                           elementType,
                                            *elementWidth, modeIndex});
             continue;
           }
@@ -1866,7 +1873,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       });
       if (referenced) {
         emitError(getSemanticLocation(property.source))
-            << "constraints on random dynamic arrays require runtime "
+            << "constraints on random dynamic containers require runtime "
                "size-aware solving";
         invalid = true;
       }

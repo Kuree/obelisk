@@ -507,14 +507,19 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         modeIndexAttr.getValue().isNegative() ||
         modeIndexAttr.getValue().getActiveBits() > 32 ||
         modeIndexAttr.getValue().getZExtValue() >= 64) {
-      emitError(location) << "random dynamic-array plan is malformed";
+      emitError(location) << "random dynamic-container plan is malformed";
       return failure();
     }
-    auto array = dyn_cast<sim::DynamicArrayType>(typeAttr.getValue());
+    Type containerElementType;
+    if (auto array = dyn_cast<sim::DynamicArrayType>(typeAttr.getValue()))
+      containerElementType = array.getElementType();
+    else if (auto queue = dyn_cast<sim::QueueType>(typeAttr.getValue()))
+      containerElementType = queue.getElementType();
     uint64_t elementWidth = elementWidthAttr.getValue().getZExtValue();
-    if (!array || array.getElementType() != elementTypeAttr.getValue() ||
+    if (!containerElementType ||
+        containerElementType != elementTypeAttr.getValue() ||
         sim::getPackedWidth(elementTypeAttr.getValue()) != elementWidth) {
-      emitError(location) << "random dynamic-array type is inconsistent";
+      emitError(location) << "random dynamic-container type is inconsistent";
       return failure();
     }
     Type referenceType = sim::ManagedRefType::get(
