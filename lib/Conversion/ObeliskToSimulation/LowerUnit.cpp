@@ -584,10 +584,16 @@ UnitLowering::traverseAssoc(Value array, Value key, int32_t direction,
 
 FailureOr<Value> UnitLowering::loadReference(Value reference,
                                              Location location) {
-  if (auto type = dyn_cast<sim::RefType>(reference.getType()))
+  if (auto type = dyn_cast<sim::RefType>(reference.getType())) {
+    if (sampleAssertionValues && sim::getPackedWidth(type.getElementType()))
+      return sim::SimSampledReadOp::create(
+                 builder, location, type.getElementType(),
+                 function.getBody().front().getArgument(0), reference)
+          .getResult();
     return sim::SimRefLoadOp::create(builder, location, type.getElementType(),
                                      reference)
         .getResult();
+  }
   if (auto type = dyn_cast<sim::ManagedRefType>(reference.getType()))
     return sim::SimManagedLoadOp::create(builder, location,
                                          type.getElementType(), reference)
