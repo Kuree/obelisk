@@ -140,6 +140,15 @@ describeContainerElementImpl(Type type, Location location) {
     result.bitWidth = 64;
     return result;
   }
+  // Virtual-interface handles are nullable 64-bit elaborated scope IDs. They
+  // contain no managed pointer and therefore use the ordinary bits container
+  // ABI, just like process IDs.
+  if (isa<sim::VirtualInterfaceType>(type)) {
+    result.kind = OBELISK_RT_ELEMENT_BITS;
+    result.valueSize = sizeof(uint64_t);
+    result.bitWidth = 64;
+    return result;
+  }
   if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(type)) {
     result.kind = OBELISK_RT_ELEMENT_CONTAINER_HANDLE;
     result.valueSize = sizeof(void *);

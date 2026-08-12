@@ -193,7 +193,7 @@ def SimVirtualInterfaceNullOp
 }
 
 def SimVirtualInterfaceBindOp
-    : SimOp<"virtual_interface.bind", [Pure, ConstantLike]> {
+    : SimOp<"virtual_interface.bind", [Pure]> {
   let summary = "bind an elaborated interface instance as a virtual handle";
   let description = [{
     Produces the stable scope identity of an elaborated interface instance.
