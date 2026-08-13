@@ -61,6 +61,12 @@ module {
           }
           obelisk.sv.symbol.variable attributes {hierarchical_name = "function_local_sensitivity.transform.read_only", lifetime = 1 : i32, name = "read_only", node_id = 31 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>, sym_name = "s11.read_only"} {
           }
+          // Compile-time declarations may be direct subroutine children. They
+          // stay in this symbol table rather than being cloned into sim.func.
+          obelisk.sv.symbol.iterator attributes {array_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, hierarchical_name = "function_local_sensitivity.transform.i", index_method_name = "", is_const, name = "i", node_id = 32 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s12.i"} {
+          }
+          obelisk.sv.type.type_alias attributes {hierarchical_name = "function_local_sensitivity.transform.local_t", name = "local_t", node_id = 33 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s13.local_t"} {
+          }
         }
       }
     }

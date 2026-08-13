@@ -5716,9 +5716,10 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
       }
       for (Operation *child : getChildren(unit.source)) {
-        if (isa<semantic::SVFormalArgumentSymbolOp,
-                semantic::SVVariableSymbolOp,
-                semantic::SVStatementBlockSymbolOp>(child))
+        // Declarative children remain in the frozen semantic symbol table.
+        // Cloning any Symbol into the isolated simulation function would put
+        // it below an operation without the SymbolTable trait.
+        if (isa<SymbolOpInterface>(child))
           continue;
         Operation *clonedChild = bodyBuilder.clone(*child);
         if (constructor && owner && owner.getBaseClass() && !initialized) {
