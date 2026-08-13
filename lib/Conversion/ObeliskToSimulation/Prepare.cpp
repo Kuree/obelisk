@@ -1631,10 +1631,11 @@ void ObeliskSimPreparePass::runOnOperation() {
       unsigned outerModeIndex;
       semantic::SVSubroutineSymbolOp preHook;
       semantic::SVSubroutineSymbolOp postHook;
+      SmallVector<RandomObjectPathElement> nestedObjectPath;
     };
     SmallVector<RandomProperty, 0> properties;
     SmallVector<RandomContainerProperty> containerProperties;
-    SmallVector<NestedObjectPlan> nestedObjectPlans;
+    SmallVector<NestedObjectPlan, 0> nestedObjectPlans;
     SmallVector<Operation *> constraintRoots;
     SmallVector<EffectiveConstraintGroup> constraintGroups;
     semantic::SVSubroutineSymbolOp preRandomizeHook;
@@ -2045,15 +2046,6 @@ void ObeliskSimPreparePass::runOnOperation() {
                           candidate, candidateHierarchy,
                           "recursive nested object dispatch")))
                     return failure();
-                  SmallVector<EffectiveConstraintGroup> candidateConstraints;
-                  collectEffectiveConstraints(candidateHierarchy,
-                                              candidateConstraints);
-                  if (!candidateConstraints.empty()) {
-                    emitError(getSemanticLocation(edgeProperty))
-                        << "constraints on recursively nested rand objects "
-                           "require path-aware constraint composition";
-                    return failure();
-                  }
                   for (semantic::SVClassTypeOp candidateClass :
                        candidateHierarchy)
                     for (Operation *member : getChildren(candidateClass))
@@ -2215,12 +2207,6 @@ void ObeliskSimPreparePass::runOnOperation() {
               SmallVector<EffectiveConstraintGroup> recursiveConstraints;
               collectEffectiveConstraints(recursiveHierarchy,
                                           recursiveConstraints);
-              if (!recursiveConstraints.empty()) {
-                emitError(getSemanticLocation(edgeProperty))
-                    << "constraints on recursively nested rand objects "
-                       "require path-aware constraint composition";
-                return failure();
-              }
               for (semantic::SVClassTypeOp recursiveClass :
                    recursiveHierarchy)
                 for (Operation *member : getChildren(recursiveClass))
@@ -2239,6 +2225,21 @@ void ObeliskSimPreparePass::runOnOperation() {
                       context, classSymbols.lookup(concreteClass).getValue()));
               path.push_back({classFieldSymbols.lookup(edgeProperty),
                               concreteType, edgeStorageType, edgeModeIndex});
+              if (!recursiveConstraints.empty()) {
+                NestedObjectPlan recursivePlan{
+                    edgeProperty,
+                    field,
+                    rootNestedConcreteType,
+                    objectType,
+                    recursiveHierarchy,
+                    std::move(recursiveConstraints),
+                    {},
+                    modeIndex,
+                    {},
+                    {},
+                    path};
+                nestedObjectPlans.push_back(std::move(recursivePlan));
+              }
               unsigned recursiveModeIndex = 0;
               for (semantic::SVClassTypeOp recursiveClass :
                    recursiveHierarchy) {
@@ -2539,7 +2540,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                 {},
                 modeIndex,
                 nestedPreHook,
-                nestedPostHook};
+                nestedPostHook,
+                {}};
             nestedPlan.constraintGroups =
                 std::move(nestedEffectiveConstraints);
             nestedObjectPlans.push_back(std::move(nestedPlan));
@@ -2860,6 +2862,16 @@ void ObeliskSimPreparePass::runOnOperation() {
           return &plan;
       return nullptr;
     };
+    auto objectPathsEqual = [](ArrayRef<RandomObjectPathElement> lhs,
+                               ArrayRef<RandomObjectPathElement> rhs) {
+      return lhs.size() == rhs.size() &&
+             llvm::equal(lhs, rhs, [](const RandomObjectPathElement &left,
+                                      const RandomObjectPathElement &right) {
+               return left.field == right.field &&
+                      left.concreteType == right.concreteType &&
+                      left.storageType == right.storageType;
+             });
+    };
     NestedObjectPlan *randomValueOwner = nullptr;
     auto getRandomPropertyIndex = [&](Operation *source)
         -> std::optional<unsigned> {
@@ -2867,7 +2879,9 @@ void ObeliskSimPreparePass::runOnOperation() {
         if (property.source != source)
           continue;
         if (randomValueOwner) {
-          if (property.nestedObjectField == randomValueOwner->field)
+          if (property.nestedObjectField == randomValueOwner->field &&
+              objectPathsEqual(property.nestedObjectPath,
+                               randomValueOwner->nestedObjectPath))
             return index;
         } else if (!property.nestedObjectField) {
           return index;
@@ -3799,14 +3813,34 @@ void ObeliskSimPreparePass::runOnOperation() {
       indices.reserve(plan.globalConstraintIndices.size());
       for (unsigned index : plan.globalConstraintIndices)
         indices.push_back(index);
-      nestedConstraintModeAttrs.push_back(builder.getDictionaryAttr({
+      SmallVector<NamedAttribute> attributes{
           builder.getNamedAttr("field", plan.field),
           builder.getNamedAttr("concrete_type",
                                TypeAttr::get(plan.concreteType)),
           builder.getNamedAttr("storage_type", TypeAttr::get(plan.storageType)),
+          builder.getNamedAttr("outer_mode_index",
+                               builder.getI32IntegerAttr(plan.outerModeIndex)),
           builder.getNamedAttr("global_indices",
                                builder.getDenseI64ArrayAttr(indices)),
-      }));
+      };
+      if (!plan.nestedObjectPath.empty()) {
+        SmallVector<Attribute> path;
+        for (const RandomObjectPathElement &element : plan.nestedObjectPath)
+          path.push_back(builder.getDictionaryAttr({
+              builder.getNamedAttr("field", element.field),
+              builder.getNamedAttr("concrete_type",
+                                   TypeAttr::get(element.concreteType)),
+              builder.getNamedAttr("storage_type",
+                                   TypeAttr::get(element.storageType)),
+              builder.getNamedAttr(
+                  "rand_mode_index",
+                  builder.getI32IntegerAttr(element.modeIndex)),
+          }));
+        attributes.push_back(builder.getNamedAttr(
+            "path", builder.getArrayAttr(path)));
+      }
+      nestedConstraintModeAttrs.push_back(
+          builder.getDictionaryAttr(attributes));
     }
     call->setAttr(randomNestedConstraintModesAttrName,
                   builder.getArrayAttr(nestedConstraintModeAttrs));
@@ -3920,6 +3954,20 @@ void ObeliskSimPreparePass::runOnOperation() {
               TypeAttr::get(frozenNestedOwner->concreteType));
           nested->setAttr(randomNestedStateStorageTypeAttrName,
                           TypeAttr::get(frozenNestedOwner->storageType));
+          if (!frozenNestedOwner->nestedObjectPath.empty()) {
+            SmallVector<Attribute> path;
+            for (const RandomObjectPathElement &element :
+                 frozenNestedOwner->nestedObjectPath)
+              path.push_back(builder.getDictionaryAttr({
+                  builder.getNamedAttr("field", element.field),
+                  builder.getNamedAttr(
+                      "concrete_type", TypeAttr::get(element.concreteType)),
+                  builder.getNamedAttr(
+                      "storage_type", TypeAttr::get(element.storageType)),
+              }));
+            nested->setAttr(randomNestedStatePathAttrName,
+                            builder.getArrayAttr(path));
+          }
         }
         if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
                 semantic::SVSpecparamSymbolOp>(symbol->second))

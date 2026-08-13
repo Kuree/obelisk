@@ -53,6 +53,8 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
         randomNestedStateConcreteTypeAttrName);
     auto storageTypeAttr =
         op->getAttrOfType<TypeAttr>(randomNestedStateStorageTypeAttrName);
+    auto pathAttr =
+        op->getAttrOfType<ArrayAttr>(randomNestedStatePathAttrName);
     auto childField =
         op->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.class_field");
     auto parentType =
@@ -101,6 +103,54 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
     if (object.getType() != concreteType)
       object = sim::SimClassCastOp::create(builder, location, concreteType,
                                            object);
+    if (pathAttr) {
+      for (Attribute pathElementAttr : pathAttr) {
+        auto pathElement = dyn_cast<DictionaryAttr>(pathElementAttr);
+        auto pathField =
+            pathElement
+                ? pathElement.getAs<FlatSymbolRefAttr>("field")
+                : FlatSymbolRefAttr{};
+        auto pathConcreteTypeAttr =
+            pathElement ? pathElement.getAs<TypeAttr>("concrete_type")
+                        : TypeAttr{};
+        auto pathStorageTypeAttr =
+            pathElement ? pathElement.getAs<TypeAttr>("storage_type")
+                        : TypeAttr{};
+        auto pathConcreteType =
+            pathConcreteTypeAttr
+                ? dyn_cast<sim::ClassHandleType>(
+                      pathConcreteTypeAttr.getValue())
+                : sim::ClassHandleType{};
+        auto pathStorageType =
+            pathStorageTypeAttr
+                ? dyn_cast<sim::ClassHandleType>(
+                      pathStorageTypeAttr.getValue())
+                : sim::ClassHandleType{};
+        if (!pathField || !pathConcreteType || !pathStorageType) {
+          emitError(location)
+              << "nested randomization state path is malformed";
+          return failure();
+        }
+        Type pathReferenceType = sim::ManagedRefType::get(
+            function.getContext(), pathStorageType,
+            concreteType.getClassName());
+        Value pathReference = sim::SimClassFieldRefOp::create(
+            builder, location, pathReferenceType, object, pathField);
+        Value nextObject = sim::SimManagedLoadOp::create(
+            builder, location, pathStorageType, pathReference);
+        Value pathNull = sim::SimManagedIsNullOp::create(
+            builder, location, builder.getI1Type(), nextObject);
+        Block *nextPresent = addBlock();
+        cf::CondBranchOp::create(builder, location, pathNull, missing,
+                                 ValueRange{}, nextPresent, ValueRange{});
+        setCurrent(nextPresent);
+        object = nextObject;
+        if (object.getType() != pathConcreteType)
+          object = sim::SimClassCastOp::create(
+              builder, location, pathConcreteType, object);
+        concreteType = pathConcreteType;
+      }
+    }
     Type childReferenceType = sim::ManagedRefType::get(
         function.getContext(), *elementType, concreteType.getClassName());
     Value childReference = sim::SimClassFieldRefOp::create(

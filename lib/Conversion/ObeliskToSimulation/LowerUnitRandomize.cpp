@@ -1164,7 +1164,13 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     auto globalIndices =
         nested ? nested.getAs<DenseI64ArrayAttr>("global_indices")
                : DenseI64ArrayAttr{};
+    auto outerModeIndexAttr =
+        nested ? nested.getAs<IntegerAttr>("outer_mode_index") : IntegerAttr{};
+    auto pathAttr = nested ? nested.getAs<ArrayAttr>("path") : ArrayAttr{};
     if (!field || !concreteTypeAttr || !storageTypeAttr || !globalIndices ||
+        !outerModeIndexAttr || outerModeIndexAttr.getValue().isNegative() ||
+        outerModeIndexAttr.getValue().getActiveBits() > 32 ||
+        outerModeIndexAttr.getValue().getZExtValue() >= 64 ||
         globalIndices.empty() || globalIndices.size() > 64 ||
         !isa<sim::ClassHandleType>(concreteTypeAttr.getValue()) ||
         !isa<sim::ClassHandleType>(storageTypeAttr.getValue())) {
@@ -1181,6 +1187,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       globalMask |= uint64_t{1} << index;
     }
+    SmallVector<ObjectPathElement> path;
+    if (failed(parseNestedObjectPath(pathAttr, path)))
+      return failure();
     Type objectReferenceType = sim::ManagedRefType::get(
         function.getContext(), storageTypeAttr.getValue(),
         objectType.getClassName());
@@ -1191,21 +1200,29 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return failure();
     Value isNull = sim::SimManagedIsNullOp::create(
         builder, location, builder.getI1Type(), *loadedObject);
-    Value nullMask = arith::SelectOp::create(
-        builder, location, isNull, constant64(globalMask), constant64(0));
-    nullNestedConstraintMask = arith::OrIOp::create(
-        builder, location, nullNestedConstraintMask, nullMask);
-    Block *nullBlock = addBlock();
+    uint64_t outerModeIndex = outerModeIndexAttr.getValue().getZExtValue();
+    Value outerModeBit = arith::AndIOp::create(
+        builder, location, mode, constant64(uint64_t{1} << outerModeIndex));
+    Value outerDisabled = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne, outerModeBit,
+        constant64(0));
+    Value rootInactive = arith::OrIOp::create(builder, location, isNull,
+                                              outerDisabled);
+    Block *disabledBlock = addBlock();
     Block *objectBlock = addBlock();
     Block *mergeBlock = addBlock();
     mergeBlock->addArgument(i64, location);
-    cf::CondBranchOp::create(builder, location, isNull, nullBlock,
+    mergeBlock->addArgument(builder.getI1Type(), location);
+    cf::CondBranchOp::create(builder, location, rootInactive, disabledBlock,
                              ValueRange{}, objectBlock, ValueRange{});
 
-    setCurrent(nullBlock);
-    Value nullMode = arith::OrIOp::create(builder, location, constraintMode,
-                                          constant64(globalMask));
-    cf::BranchOp::create(builder, location, mergeBlock, ValueRange{nullMode});
+    setCurrent(disabledBlock);
+    Value disabledMode = arith::OrIOp::create(
+        builder, location, constraintMode, constant64(globalMask));
+    Value trueValue = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    cf::BranchOp::create(builder, location, mergeBlock,
+                         ValueRange{disabledMode, trueValue});
 
     setCurrent(objectBlock);
     Value object = *loadedObject;
@@ -1214,6 +1231,62 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           builder, location, concreteTypeAttr.getValue(), object);
     auto concreteType =
         cast<sim::ClassHandleType>(concreteTypeAttr.getValue());
+    for (const ObjectPathElement &element : path) {
+      sim::SimClassDeclOp currentDeclaration =
+          SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+              function, concreteType.getClassName());
+      while (currentDeclaration &&
+             !currentDeclaration->hasAttr("obelisk_sim.random_mode_field")) {
+        if (!currentDeclaration.getBaseAttr())
+          break;
+        currentDeclaration =
+            SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+                function, currentDeclaration.getBaseAttr());
+      }
+      auto currentModeField =
+          currentDeclaration
+              ? currentDeclaration->getAttrOfType<FlatSymbolRefAttr>(
+                    "obelisk_sim.random_mode_field")
+              : FlatSymbolRefAttr{};
+      if (!currentModeField) {
+        emitError(location)
+            << "nested constraint path has no rand_mode field";
+        return failure();
+      }
+      Type modeReferenceType = sim::ManagedRefType::get(
+          function.getContext(), i64, concreteType.getClassName());
+      Value modeReference = sim::SimClassFieldRefOp::create(
+          builder, location, modeReferenceType, object, currentModeField);
+      Value objectMode = sim::SimManagedLoadOp::create(
+          builder, location, i64, modeReference);
+      Value edgeModeBit = arith::AndIOp::create(
+          builder, location, objectMode,
+          constant64(uint64_t{1} << element.modeIndex));
+      Value edgeDisabled = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, edgeModeBit,
+          constant64(0));
+      Type edgeReferenceType = sim::ManagedRefType::get(
+          function.getContext(), element.storageType,
+          concreteType.getClassName());
+      Value edgeReference = sim::SimClassFieldRefOp::create(
+          builder, location, edgeReferenceType, object, element.field);
+      FailureOr<Value> loadedEdge = loadReference(edgeReference, location);
+      if (failed(loadedEdge))
+        return failure();
+      Value edgeNull = sim::SimManagedIsNullOp::create(
+          builder, location, builder.getI1Type(), *loadedEdge);
+      Value edgeInactive = arith::OrIOp::create(
+          builder, location, edgeDisabled, edgeNull);
+      Block *nextObjectBlock = addBlock();
+      cf::CondBranchOp::create(builder, location, edgeInactive, disabledBlock,
+                               ValueRange{}, nextObjectBlock, ValueRange{});
+      setCurrent(nextObjectBlock);
+      object = *loadedEdge;
+      if (object.getType() != element.concreteType)
+        object = sim::SimClassCastOp::create(
+            builder, location, element.concreteType, object);
+      concreteType = cast<sim::ClassHandleType>(element.concreteType);
+    }
     sim::SimClassDeclOp nestedDeclaration =
         SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
             function, concreteType.getClassName());
@@ -1247,17 +1320,28 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
          llvm::enumerate(globalIndices.asArrayRef())) {
       Value localBit = arith::AndIOp::create(
           builder, location, nestedMode, constant64(uint64_t{1} << localIndex));
-      if (static_cast<uint64_t>(globalIndex) != localIndex)
+      if (static_cast<uint64_t>(globalIndex) > localIndex)
         localBit = arith::ShLIOp::create(
             builder, location, localBit,
             constant64(static_cast<uint64_t>(globalIndex) - localIndex));
+      else if (static_cast<uint64_t>(globalIndex) < localIndex)
+        localBit = arith::ShRUIOp::create(
+            builder, location, localBit,
+            constant64(localIndex - static_cast<uint64_t>(globalIndex)));
       mappedMode =
           arith::OrIOp::create(builder, location, mappedMode, localBit);
     }
+    Value falseValue = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(false));
     cf::BranchOp::create(builder, location, mergeBlock,
-                         ValueRange{mappedMode});
+                         ValueRange{mappedMode, falseValue});
     setCurrent(mergeBlock);
     constraintMode = mergeBlock->getArgument(0);
+    Value inactiveMask = arith::SelectOp::create(
+        builder, location, mergeBlock->getArgument(1),
+        constant64(globalMask), constant64(0));
+    nullNestedConstraintMask = arith::OrIOp::create(
+        builder, location, nullNestedConstraintMask, inactiveMask);
   }
   if (staticConstraintStorages) {
     Value context = function.getBody().front().getArgument(0);

@@ -95,12 +95,19 @@ module {
 // CHECK: ^[[AFTER_PRE]]:
 // CHECK: %[[MODE_LEAF:.*]] = obelisk_sim.managed.load %[[LEAF_REF]] : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Leaf>
 // CHECK: %[[MODE_NULL:.*]] = obelisk_sim.managed.is_null %[[MODE_LEAF]]
-// CHECK: %[[NULL_BIT0:.*]] = arith.extui %[[MODE_NULL]] : i1 to i64
-// CHECK: cf.cond_br %[[MODE_NULL]]
+// CHECK: %[[MODE_DISABLED:.*]] = arith.cmpi ne, {{.*}}, {{.*}} : i64
+// CHECK: %[[MODE_INACTIVE:.*]] = arith.ori %[[MODE_NULL]], %[[MODE_DISABLED]] : i1
+// CHECK: cf.cond_br %[[MODE_INACTIVE]]
 // CHECK: obelisk_sim.class.field_ref %[[MODE_LEAF]][@__obelisk_class_s3_Leaf_field___obelisk_constraint_mode]
+// CHECK: ^{{bb[0-9]+}}(%{{.*}}: i64, %[[INACTIVE0:.*]]: i1):
+// CHECK: %[[NULL_BIT0:.*]] = arith.extui %[[INACTIVE0]] : i1 to i64
 // CHECK: %[[MODE_LEAF2:.*]] = obelisk_sim.managed.load %[[LEAF2_REF]] : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Leaf>
 // CHECK: %[[MODE_NULL2:.*]] = obelisk_sim.managed.is_null %[[MODE_LEAF2]]
-// CHECK: %[[NULL_BIT1:.*]] = arith.select %[[MODE_NULL2]], {{.*}}, {{.*}} : i64
+// CHECK: %[[MODE_DISABLED2:.*]] = arith.cmpi ne, {{.*}}, {{.*}} : i64
+// CHECK: %[[MODE_INACTIVE2:.*]] = arith.ori %[[MODE_NULL2]], %[[MODE_DISABLED2]] : i1
+// CHECK: cf.cond_br %[[MODE_INACTIVE2]]
+// CHECK: ^{{bb[0-9]+}}(%{{.*}}: i64, %[[INACTIVE1:.*]]: i1):
+// CHECK: %[[NULL_BIT1:.*]] = arith.select %[[INACTIVE1]], {{.*}}, {{.*}} : i64
 // CHECK: %[[NULL_MASK:.*]] = arith.ori %[[NULL_BIT0]], %[[NULL_BIT1]] : i64
 // CHECK: %[[STATIC_MODE_REF:.*]] = obelisk_sim.context.storage {{.*}} : !obelisk_sim.ref<i64>
 // CHECK: %[[STATIC_MODE:.*]] = obelisk_sim.ref.load %[[STATIC_MODE_REF]]
