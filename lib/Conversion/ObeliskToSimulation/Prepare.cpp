@@ -2026,13 +2026,14 @@ void ObeliskSimPreparePass::runOnOperation() {
                 FlatSymbolRefAttr::get(
                     context,
                     classSymbols.lookup(concreteClasses.front()).getValue()));
-            llvm::SmallPtrSet<Operation *, 8> recursiveConcreteClasses;
             bool recursiveDispatchCreated = false;
             // IEEE 1800 active random objects are solved as one object graph;
             // recursively flatten eligible descendant leaves into this plan
             // instead of emitting sequential child randomize calls. Dynamic
-            // dispatch, aliases, cycles, local constraints, and local hooks
-            // need path-aware plans of their own and remain explicit errors.
+            // dispatch and runtime object identity keep distinct paths to an
+            // aliased object coherent. A recursive type cycle still needs a
+            // runtime graph walk because static path expansion cannot know
+            // whether the next edge is an alias or a fresh object.
             std::function<LogicalResult(
                 semantic::SVClassPropertySymbolOp, Type, unsigned,
                 SmallVector<RandomObjectPathElement>,
@@ -2286,12 +2287,6 @@ void ObeliskSimPreparePass::runOnOperation() {
                 emitError(getSemanticLocation(edgeProperty))
                     << "cyclic rand object graphs require identity-aware "
                        "recursive planning";
-                return failure();
-              }
-              if (!recursiveConcreteClasses.insert(concreteClass).second) {
-                emitError(getSemanticLocation(edgeProperty))
-                    << "potentially aliased recursive rand object paths "
-                       "require identity-aware planning";
                 return failure();
               }
               SmallVector<semantic::SVClassTypeOp> recursiveHierarchy;

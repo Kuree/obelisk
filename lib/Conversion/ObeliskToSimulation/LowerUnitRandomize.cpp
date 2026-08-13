@@ -461,6 +461,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     std::optional<uint64_t> randomModeStorage;
     SmallVector<PropertyDomain> domains;
     SmallVector<ObjectPathElement> nestedObjectPath;
+    FlatSymbolRefAttr nestedObjectRootField;
+    Value nestedObjectID;
   };
   SmallVector<Property, 0> planned;
   uint64_t plannedWidth = 0;
@@ -844,7 +846,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                        {},
                        randomModeStorage,
                        std::move(propertyDomains),
-                       std::move(nestedObjectPath)});
+                       std::move(nestedObjectPath),
+                       nestedObjectField,
+                       {}});
     plannedWidth += width;
   }
   if (plannedWidth != totalWidth) {
@@ -864,6 +868,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     FlatSymbolRefAttr nestedModeField;
     SmallVector<ObjectPathElement> nestedObjectPath;
     bool inertClassHandles;
+    FlatSymbolRefAttr nestedObjectRootField;
   };
   SmallVector<ContainerProperty> plannedContainers;
   for (Attribute propertyAttr : containerProperties) {
@@ -996,7 +1001,41 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
              : 0,
          nestedModeField,
          std::move(nestedObjectPath),
-         inertClassHandles});
+         inertClassHandles,
+         nestedObjectField});
+  }
+  SmallVector<bool> containerNeedsIdentity(plannedContainers.size(), false);
+  auto sameContainerOccurrence = [](const ContainerProperty &left,
+                                    const ContainerProperty &right) {
+    if (left.nestedObjectRootField != right.nestedObjectRootField ||
+        left.nestedObjectPath.size() != right.nestedObjectPath.size())
+      return false;
+    return llvm::equal(
+        left.nestedObjectPath, right.nestedObjectPath,
+        [](const ObjectPathElement &leftElement,
+           const ObjectPathElement &rightElement) {
+          return leftElement.field == rightElement.field;
+        });
+  };
+  auto containerOwnerType = [](const ContainerProperty &property) {
+    return property.nestedObjectPath.empty()
+               ? property.nestedObjectType
+               : property.nestedObjectPath.back().concreteType;
+  };
+  for (auto [leftIndex, left] : llvm::enumerate(plannedContainers)) {
+    if (!left.nestedObjectReference)
+      continue;
+    for (auto [relativeRightIndex, right] : llvm::enumerate(
+             ArrayRef(plannedContainers).drop_front(leftIndex + 1))) {
+      unsigned rightIndex = leftIndex + 1 + relativeRightIndex;
+      if (!right.nestedObjectReference ||
+          left.nestedField != right.nestedField ||
+          containerOwnerType(left) != containerOwnerType(right) ||
+          sameContainerOccurrence(left, right))
+        continue;
+      containerNeedsIdentity[leftIndex] = true;
+      containerNeedsIdentity[rightIndex] = true;
+    }
   }
   bool hasRandC = llvm::any_of(
       planned, [](const Property &property) { return property.isRandC; });
@@ -1064,6 +1103,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     DictionaryAttr plan;
     Value object;
     Value enabled;
+    Value objectID;
   };
   SmallVector<NestedHookRuntime> nestedHookRuntimes;
   auto callNestedHook = [&](DictionaryAttr plan, StringRef prefix,
@@ -1243,16 +1283,34 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       object = pathMergeBlock->getArgument(0);
       enabled = pathMergeBlock->getArgument(1);
     }
+    Value objectID = sim::SimClassIdOp::create(builder, location, object);
+    Value alreadyVisited = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+    for (const NestedHookRuntime &previous : nestedHookRuntimes) {
+      Value sameID = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, objectID,
+          previous.objectID);
+      Value previousMatch = arith::AndIOp::create(
+          builder, location, previous.enabled, sameID);
+      alreadyVisited = arith::OrIOp::create(builder, location, alreadyVisited,
+                                            previousMatch);
+    }
+    Value firstVisit = arith::XOrIOp::create(
+        builder, location, alreadyVisited,
+        arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                  builder.getBoolAttr(true)));
+    Value callEnabled =
+        arith::AndIOp::create(builder, location, enabled, firstVisit);
     Block *callBlock = addBlock();
     Block *mergeBlock = addBlock();
-    cf::CondBranchOp::create(builder, location, enabled, callBlock,
+    cf::CondBranchOp::create(builder, location, callEnabled, callBlock,
                              ValueRange{}, mergeBlock, ValueRange{});
     setCurrent(callBlock);
     if (failed(callNestedHook(hook, "pre", object)))
       return failure();
     cf::BranchOp::create(builder, location, mergeBlock);
     setCurrent(mergeBlock);
-    nestedHookRuntimes.push_back({hook, object, enabled});
+    nestedHookRuntimes.push_back({hook, object, callEnabled, objectID});
   }
   Value nullNestedConstraintMask = constant64(0);
   for (Attribute nestedAttr : nestedConstraintModes) {
@@ -1741,8 +1799,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   Value currentAssignment = constantAssignment64(0);
   Value mutableMask = constantAssignment64(0);
   SmallVector<Value> propertyEnabled;
+  SmallVector<uint32_t> propertyOffsets;
   uint64_t currentOffset = 0;
   for (Property &property : planned) {
+    propertyOffsets.push_back(static_cast<uint32_t>(currentOffset));
     Value nestedEnabled;
     FailureOr<Value> current = [&]() -> FailureOr<Value> {
       if (property.nestedObjectReference) {
@@ -1757,6 +1817,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         Block *mergeBlock = addBlock();
         mergeBlock->addArgument(property.type, location);
         mergeBlock->addArgument(builder.getI1Type(), location);
+        mergeBlock->addArgument(i64, location);
         cf::CondBranchOp::create(builder, location, isNull, nullBlock,
                                  ValueRange{}, objectBlock, ValueRange{});
 
@@ -1766,7 +1827,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             ValueRange{createDefaultValue(builder, location, property.type),
                        arith::ConstantOp::create(
                            builder, location, builder.getI1Type(),
-                           builder.getBoolAttr(false))});
+                           builder.getBoolAttr(false)),
+                       constant64(0)});
 
         setCurrent(objectBlock);
         Value object = *loadedObject;
@@ -1849,9 +1911,12 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                       .getResult();
         }
         cf::BranchOp::create(builder, location, mergeBlock,
-                             ValueRange{*value, childEnabled});
+                             ValueRange{*value, childEnabled,
+                                        sim::SimClassIdOp::create(
+                                            builder, location, object)});
         setCurrent(mergeBlock);
         nestedEnabled = mergeBlock->getArgument(1);
+        property.nestedObjectID = mergeBlock->getArgument(2);
         return mergeBlock->getArgument(0);
       }
       if (!property.isContainerSize)
@@ -2029,6 +2094,57 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     mutableMask =
         arith::OrIOp::create(builder, location, mutableMask, enabledMask);
     currentOffset += property.width;
+  }
+  struct AliasEquality {
+    uint32_t leftOffset;
+    uint32_t rightOffset;
+    unsigned width;
+    Value active;
+  };
+  SmallVector<AliasEquality> aliasEqualities;
+  auto sameObjectOccurrence = [](const Property &left,
+                                 const Property &right) {
+    if (left.nestedObjectRootField != right.nestedObjectRootField ||
+        left.nestedObjectPath.size() != right.nestedObjectPath.size())
+      return false;
+    return llvm::equal(
+        left.nestedObjectPath, right.nestedObjectPath,
+        [](const ObjectPathElement &leftElement,
+           const ObjectPathElement &rightElement) {
+          return leftElement.field == rightElement.field;
+        });
+  };
+  auto objectOwnerType = [](const Property &property) {
+    return property.nestedObjectPath.empty()
+               ? property.nestedObjectType
+               : property.nestedObjectPath.back().concreteType;
+  };
+  for (auto [leftIndex, left] : llvm::enumerate(planned)) {
+    if (!left.nestedObjectReference)
+      continue;
+    for (auto [relativeRightIndex, right] :
+         llvm::enumerate(ArrayRef(planned).drop_front(leftIndex + 1))) {
+      unsigned rightIndex = leftIndex + 1 + relativeRightIndex;
+      if (!right.nestedObjectReference ||
+          left.nestedField != right.nestedField ||
+          objectOwnerType(left) != objectOwnerType(right) ||
+          sameObjectOccurrence(left, right))
+        continue;
+      if (left.type != right.type || left.width != right.width) {
+        emitError(location)
+            << "aliased random-object field plans have inconsistent types";
+        return failure();
+      }
+      Value bothEnabled = arith::AndIOp::create(
+          builder, location, propertyEnabled[leftIndex],
+          propertyEnabled[rightIndex]);
+      Value sameID = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, left.nestedObjectID,
+          right.nestedObjectID);
+      aliasEqualities.push_back(
+          {propertyOffsets[leftIndex], propertyOffsets[rightIndex], left.width,
+           arith::AndIOp::create(builder, location, bothEnabled, sameID)});
+    }
   }
   Value fixedAssignment = arith::AndIOp::create(
       builder, location, currentAssignment,
@@ -3403,6 +3519,26 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         emittedSoft = true;
       }
     }
+  }
+  // A statically distinct path can reach the same active random object. The
+  // flattened solver gives each occurrence its own bit slice, so identify the
+  // owner at runtime and make corresponding fields equal exactly when both
+  // paths are active aliases. This preserves the one-variable-per-object rule
+  // from IEEE 1800 while leaving non-aliased paths independent.
+  for (const AliasEquality &alias : aliasEqualities) {
+    uint32_t capture = static_cast<uint32_t>(programCaptures.size());
+    programCaptures.push_back(
+        arith::ExtUIOp::create(builder, location, i64, alias.active));
+    instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 1, false, capture);
+    instruction(OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, alias.width, false,
+                alias.leftOffset);
+    instruction(OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, alias.width, false,
+                alias.rightOffset);
+    instruction(OBELISK_RT_RANDOM_EQ_V1, 1);
+    instruction(OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1);
+    instruction(OBELISK_RT_RANDOM_END_HARD_V1, 1, false,
+                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1);
+    emittedHard = true;
   }
   if (!emittedHard) {
     emitLiteral(true);
@@ -6298,10 +6434,18 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   }
   cf::BranchOp::create(builder, location, commitDone);
   setCurrent(commitDone);
-  for (const ContainerProperty &property : plannedContainers) {
+  struct NestedContainerRuntime {
+    Type ownerType;
+    FlatSymbolRefAttr field;
+    Value objectID;
+    Value active;
+  };
+  SmallVector<NestedContainerRuntime> nestedContainerRuntimes;
+  for (auto [containerIndex, property] :
+       llvm::enumerate(plannedContainers)) {
     if (property.inertClassHandles)
       continue;
-    Block *enabledBlock = addBlock();
+    Block *entryBlock = addBlock();
     Block *header = addBlock();
     Block *body = addBlock();
     Block *nextProperty = addBlock();
@@ -6317,12 +6461,14 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                     arith::CmpIPredicate::eq, propertyMode,
                                     constant64(0))
                   .getResult();
-    cf::CondBranchOp::create(builder, location, enabled, enabledBlock,
-                             ValueRange{}, nextProperty, ValueRange{});
-
-    setCurrent(enabledBlock);
-    Value containerReference = property.reference;
+    Value container;
+    Block *randomizeBlock;
     if (property.nestedObjectReference) {
+      bool needsIdentity = containerNeedsIdentity[containerIndex];
+      Block *inactiveBlock = needsIdentity ? addBlock() : nextProperty;
+      cf::CondBranchOp::create(builder, location, enabled, entryBlock,
+                               ValueRange{}, inactiveBlock, ValueRange{});
+      setCurrent(entryBlock);
       FailureOr<Value> loadedObject =
           loadReference(property.nestedObjectReference, location);
       if (failed(loadedObject))
@@ -6330,7 +6476,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       Value isNull = sim::SimManagedIsNullOp::create(
           builder, location, builder.getI1Type(), *loadedObject);
       Block *objectBlock = addBlock();
-      cf::CondBranchOp::create(builder, location, isNull, nextProperty,
+      cf::CondBranchOp::create(builder, location, isNull, inactiveBlock,
                                ValueRange{}, objectBlock, ValueRange{});
       setCurrent(objectBlock);
       Value object = *loadedObject;
@@ -6364,14 +6510,13 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             builder, location, builder.getI1Type(), *loadedEdge);
         Value edgeNonNull = arith::XOrIOp::create(
             builder, location, edgeNull,
-            arith::ConstantOp::create(builder, location,
-                                      builder.getI1Type(),
+            arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                       builder.getBoolAttr(true)));
         Value edgeActive = arith::AndIOp::create(
             builder, location, edgeEnabled, edgeNonNull);
         Block *edgeBlock = addBlock();
         cf::CondBranchOp::create(builder, location, edgeActive, edgeBlock,
-                                 ValueRange{}, nextProperty, ValueRange{});
+                                 ValueRange{}, inactiveBlock, ValueRange{});
         setCurrent(edgeBlock);
         object = *loadedEdge;
         if (object.getType() != element.concreteType)
@@ -6383,8 +6528,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       Type modeReferenceType = sim::ManagedRefType::get(
           function.getContext(), i64, concreteType.getClassName());
       Value childModeReference = sim::SimClassFieldRefOp::create(
-          builder, location, modeReferenceType, object,
-          objectModeField);
+          builder, location, modeReferenceType, object, objectModeField);
       Value childMode = sim::SimManagedLoadOp::create(
           builder, location, i64, childModeReference);
       Value childModeBit = arith::AndIOp::create(
@@ -6393,20 +6537,84 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       Value childEnabled = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::eq, childModeBit,
           constant64(0));
-      Block *childEnabledBlock = addBlock();
+      Block *childActiveBlock = addBlock();
       cf::CondBranchOp::create(builder, location, childEnabled,
-                               childEnabledBlock, ValueRange{}, nextProperty,
+                               childActiveBlock, ValueRange{}, inactiveBlock,
                                ValueRange{});
-      setCurrent(childEnabledBlock);
+      setCurrent(childActiveBlock);
       Type fieldReferenceType = sim::ManagedRefType::get(
           function.getContext(), property.type, concreteType.getClassName());
-      containerReference = sim::SimClassFieldRefOp::create(
+      Value containerReference = sim::SimClassFieldRefOp::create(
           builder, location, fieldReferenceType, object,
           property.nestedField);
+      container = sim::SimManagedLoadOp::create(
+          builder, location, property.type, containerReference);
+      randomizeBlock = childActiveBlock;
+      if (needsIdentity) {
+        Block *resolvedBlock = addBlock();
+        resolvedBlock->addArgument(property.type, location);
+        resolvedBlock->addArgument(i64, location);
+        resolvedBlock->addArgument(builder.getI1Type(), location);
+        Value objectID = sim::SimClassIdOp::create(builder, location, object);
+        cf::BranchOp::create(builder, location, resolvedBlock,
+                             ValueRange{container, objectID,
+                                        arith::ConstantOp::create(
+                                            builder, location,
+                                            builder.getI1Type(),
+                                            builder.getBoolAttr(true))});
+
+        setCurrent(inactiveBlock);
+        Value missingContainer =
+            createDefaultValue(builder, location, property.type);
+        if (!missingContainer)
+          return failure();
+        cf::BranchOp::create(
+            builder, location, resolvedBlock,
+            ValueRange{missingContainer, constant64(0),
+                       arith::ConstantOp::create(
+                           builder, location, builder.getI1Type(),
+                           builder.getBoolAttr(false))});
+
+        setCurrent(resolvedBlock);
+        container = resolvedBlock->getArgument(0);
+        objectID = resolvedBlock->getArgument(1);
+        Value active = resolvedBlock->getArgument(2);
+        Type ownerType = containerOwnerType(property);
+        Value alreadyVisited = arith::ConstantOp::create(
+            builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+        for (const NestedContainerRuntime &previous : nestedContainerRuntimes) {
+          if (previous.ownerType != ownerType ||
+              previous.field != property.nestedField)
+            continue;
+          Value sameID = arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::eq, objectID,
+              previous.objectID);
+          Value previousMatch = arith::AndIOp::create(
+              builder, location, previous.active, sameID);
+          alreadyVisited = arith::OrIOp::create(
+              builder, location, alreadyVisited, previousMatch);
+        }
+        nestedContainerRuntimes.push_back(
+            {ownerType, property.nestedField, objectID, active});
+        Value firstVisit = arith::XOrIOp::create(
+            builder, location, alreadyVisited,
+            arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                      builder.getBoolAttr(true)));
+        Value randomize =
+            arith::AndIOp::create(builder, location, active, firstVisit);
+        randomizeBlock = addBlock();
+        cf::CondBranchOp::create(builder, location, randomize, randomizeBlock,
+                                 ValueRange{}, nextProperty, ValueRange{});
+        setCurrent(randomizeBlock);
+      }
+    } else {
+      randomizeBlock = entryBlock;
+      cf::CondBranchOp::create(builder, location, enabled, entryBlock,
+                               ValueRange{}, nextProperty, ValueRange{});
+      setCurrent(entryBlock);
+      container = sim::SimManagedLoadOp::create(
+          builder, location, property.type, property.reference);
     }
-    Value container =
-        sim::SimManagedLoadOp::create(builder, location, property.type,
-                                      containerReference);
     Value size = sim::SimContainerSizeOp::create(
         builder, location, i64, container);
     Value containerState = sim::SimManagedLoadOp::create(

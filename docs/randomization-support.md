@@ -20,7 +20,13 @@ observable randomization behavior (rand state, effective constraints, or
 non-builtin lifecycle hooks). Null and behaviorally inert concrete classes
 share one no-op alternative. Behavior-bearing alternatives retain their
 effective virtual `pre_randomize` and `post_randomize` hooks in the selected
-whole-object-graph plan.
+whole-object-graph plan. For finite acyclic type graphs, runtime class identity
+also joins distinct paths that reach the same object: corresponding packed
+leaves are one solver variable, lifecycle hooks run once, and each dynamic
+container field is randomized once. Recursive type cycles remain an explicit
+boundary because a static path expansion cannot distinguish an ancestor alias
+from an arbitrarily long chain of fresh objects; they require a runtime object
+graph walk.
 
 | Feature | Current boundary |
 | --- | --- |

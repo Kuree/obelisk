@@ -123,7 +123,7 @@ module {
 // CHECK: obelisk_sim.managed.load %[[X_REF]]
 // CHECK: obelisk_sim.class.field_ref %[[LEAF]][@__obelisk_class_s3_Leaf_field___obelisk_rand_mode]
 // CHECK: cf.br ^[[MERGE]]
-// CHECK: ^[[MERGE]]({{.*}}, %[[CHILD_ENABLED:.*]]: i1):
+// CHECK: ^[[MERGE]]({{.*}}, %[[CHILD_ENABLED:.*]]: i1, {{.*}}: i64):
 // CHECK: arith.andi {{.*}}, %[[CHILD_ENABLED]] : i1
 // CHECK: %[[STATE_CHILD:.*]] = obelisk_sim.managed.load %[[LEAF_REF]] : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Leaf>
 // CHECK: %[[STATE_NULL:.*]] = obelisk_sim.managed.is_null %[[STATE_CHILD]]
@@ -143,7 +143,7 @@ module {
 // CHECK: cf.br ^[[STATE2_RESUME]](%[[LIMIT2]] : i32)
 // CHECK: ^[[STATE2_RESUME]](%[[CAPTURE2:.*]]: i32):
 // CHECK: %[[EXTENDED_CAPTURE2:.*]] = arith.extui %[[CAPTURE2]] : i32 to i64
-// CHECK: obelisk_sim.random.solve_wide {{.*}}, %[[EXTENDED_CAPTURE]], %[[EXTENDED_CAPTURE2]] {program =
+// CHECK: obelisk_sim.random.solve_wide {{.*}}, %[[EXTENDED_CAPTURE]], %[[EXTENDED_CAPTURE2]], {{.*}} {program =
 // CHECK: ^[[POST_DISPATCH:bb[0-9]+]]:  // 3 preds:
 // CHECK-NEXT: cf.cond_br %[[HOOK_ENABLED]], ^[[POST:bb[0-9]+]], ^[[AFTER_POST:bb[0-9]+]]
 // CHECK: %[[COMMIT_X_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s3_Leaf_field_0]
