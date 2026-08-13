@@ -6333,6 +6333,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           context, builder.getStringAttr(capture.first), argument,
           sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{}));
     }
+    for (const PreparedConstant &constant : unitConstants[classType])
+      bindings.push_back(sim::ConstantBindingAttr::get(
+          context, builder.getStringAttr(constant.path), constant.value));
     FunctionType type = FunctionType::get(context, inputs, {});
     std::string hierarchy =
         (getHierarchyName(classType) + Twine("::new")).str();

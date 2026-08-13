@@ -568,6 +568,16 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
     if (!llvm::is_contained(targets, target))
       targets.push_back(target);
   };
+  auto mergeConstantCaptures = [&](Operation *destination,
+                                   Operation *source) {
+    auto &constants = result.constants[destination];
+    llvm::StringSet<> seen;
+    for (const PreparedConstant &constant : constants)
+      seen.insert(constant.path);
+    for (const PreparedConstant &constant : result.constants[source])
+      if (seen.insert(constant.path).second)
+        constants.push_back(constant);
+  };
 
   // Constructor execution includes the base constructor first and then every
   // declaration-order instance-property initializer. Model both lifecycle
@@ -585,8 +595,13 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       if (found != classesBySymbol.end())
         addEdge(constructor, constructorSources.lookup(found->second));
     }
-    for (Operation *property : propertyInitializers[classType])
+    for (Operation *property : propertyInitializers[classType]) {
       addEdge(constructor, property);
+      // Property initializers are cloned into the constructor rather than
+      // called as independent units. Their immutable bindings must therefore
+      // be present on the constructor that lowers the cloned expression.
+      mergeConstantCaptures(constructor, property);
+    }
   }
 
   // A childless new-class expression invokes a synthesized constructor and
