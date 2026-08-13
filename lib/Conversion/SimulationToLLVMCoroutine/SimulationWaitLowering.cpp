@@ -47,6 +47,8 @@ LogicalResult serializeRuntimeWait(Operation *operation, Value wait,
   Value payload = llvmConstant(builder, location, i64, 0);
   if (auto delay = dyn_cast<sim::SimSuspendDelayOp>(operation))
     payload = asI64(builder, location, delay.getDelay());
+  else if (auto semaphore = dyn_cast<sim::SimSuspendSemaphoreOp>(operation))
+    payload = asI64(builder, location, semaphore.getKeys());
   storeAt(builder, location, wait, 16, payload, 8);
   storeAt(builder, location, wait, 24, llvmConstant(builder, location, i64, 0),
           8);
@@ -83,6 +85,10 @@ LogicalResult serializeRuntimeWait(Operation *operation, Value wait,
       })
       .Case<sim::SimSuspendMailboxOp>([&](auto op) {
         watched.push_back(op.getMailbox());
+        watchedEdges.push_back(noEdge);
+      })
+      .Case<sim::SimSuspendSemaphoreOp>([&](auto op) {
+        watched.push_back(op.getSemaphore());
         watchedEdges.push_back(noEdge);
       })
       .Case<sim::SimSuspendAwaitOp>([&](auto op) {

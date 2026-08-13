@@ -1,6 +1,7 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 //
 // CHECK: !obelisk_sim.mailbox<!obelisk_sim.string>
+// CHECK: obelisk_sim.storage.decl {{.*}} : !obelisk_sim.semaphore
 // CHECK: obelisk_sim.mailbox.create
 // CHECK: obelisk_sim.mailbox.try_put
 // CHECK: obelisk_sim.suspend.mailbox {{.*}} not_full
@@ -12,6 +13,10 @@
 // CHECK: obelisk_sim.mailbox.try_peek
 // CHECK: obelisk_sim.mailbox.try_get
 // CHECK: obelisk_sim.mailbox.num
+// CHECK: obelisk_sim.semaphore.create
+// CHECK: obelisk_sim.semaphore.put
+// CHECK: obelisk_sim.semaphore.try_get
+// CHECK: obelisk_sim.suspend.semaphore
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, original_source_range = !obelisk.source_range<"../../../../tmp/mailbox-nonblocking-probe.sv", 1, 1, "../../../../tmp/mailbox-nonblocking-probe.sv", 14, 10, "">, source_end_column = 10 : i64, source_end_line = 14 : i64, source_file = "../../../../tmp/mailbox-nonblocking-probe.sv", source_range = !obelisk.source_range<"../../../../tmp/mailbox-nonblocking-probe.sv", 1, 1, "../../../../tmp/mailbox-nonblocking-probe.sv", 14, 10, "">, sym_name = "s0.top"} {
@@ -22,6 +27,8 @@ module {
     obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 3 : i64, original_source_range = !obelisk.source_range<"../../../../tmp/mailbox-nonblocking-probe.sv", 1, 8, "../../../../tmp/mailbox-nonblocking-probe.sv", 1, 8, "">, referenced_path = "top", referenced_symbol = @s0.top, source_end_column = 8 : i64, source_end_line = 1 : i64, source_file = "../../../../tmp/mailbox-nonblocking-probe.sv", source_range = !obelisk.source_range<"../../../../tmp/mailbox-nonblocking-probe.sv", 1, 8, "../../../../tmp/mailbox-nonblocking-probe.sv", 1, 8, "">, sym_name = "s3.top"} {
       obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64, original_source_range = !obelisk.source_range<"../../../../tmp/mailbox-nonblocking-probe.sv", 1, 1, "../../../../tmp/mailbox-nonblocking-probe.sv", 14, 10, "">, source_end_column = 10 : i64, source_end_line = 14 : i64, source_file = "../../../../tmp/mailbox-nonblocking-probe.sv", source_range = !obelisk.source_range<"../../../../tmp/mailbox-nonblocking-probe.sv", 1, 1, "../../../../tmp/mailbox-nonblocking-probe.sv", 14, 10, "">, sym_name = "s4.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.m", lifetime = 1 : i32, name = "m", node_id = 5 : i64, original_source_range = !obelisk.source_range<"../../../../tmp/mailbox-nonblocking-probe.sv", 2, 21, "../../../../tmp/mailbox-nonblocking-probe.sv", 2, 22, "">, semantic_type = !obelisk.class_handle<@s7.std::@s6.mailbox>, source_end_column = 22 : i64, source_end_line = 2 : i64, source_file = "../../../../tmp/mailbox-nonblocking-probe.sv", source_range = !obelisk.source_range<"../../../../tmp/mailbox-nonblocking-probe.sv", 2, 21, "../../../../tmp/mailbox-nonblocking-probe.sv", 2, 22, "">, sym_name = "s5.m"} {
+        }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.sem", lifetime = 1 : i32, name = "sem", node_id = 1000 : i64, semantic_type = !obelisk.class_handle<@s7.std::@s32.semaphore>, sym_name = "s1000.sem"} {
         }
         obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "top", node_id = 6 : i64, original_source_range = !obelisk.source_range<"../../../../tmp/mailbox-nonblocking-probe.sv", 3, 11, "../../../../tmp/mailbox-nonblocking-probe.sv", 13, 6, "">, source_end_column = 6 : i64, source_end_line = 13 : i64, source_file = "../../../../tmp/mailbox-nonblocking-probe.sv", source_range = !obelisk.source_range<"../../../../tmp/mailbox-nonblocking-probe.sv", 3, 11, "../../../../tmp/mailbox-nonblocking-probe.sv", 13, 6, "">, sym_name = "s8"} {
           obelisk.sv.symbol.variable attributes {hierarchical_name = "top.input_value", lifetime = 1 : i32, name = "input_value", node_id = 7 : i64, original_source_range = !obelisk.source_range<"../../../../tmp/mailbox-nonblocking-probe.sv", 4, 12, "../../../../tmp/mailbox-nonblocking-probe.sv", 4, 31, "">, semantic_type = !obelisk.string, source_end_column = 31 : i64, source_end_line = 4 : i64, source_file = "../../../../tmp/mailbox-nonblocking-probe.sv", source_range = !obelisk.source_range<"../../../../tmp/mailbox-nonblocking-probe.sv", 4, 12, "../../../../tmp/mailbox-nonblocking-probe.sv", 4, 31, "">, sym_name = "s9.input_value"} {
@@ -127,6 +134,42 @@ module {
                   obelisk.sv.expression.call attributes {argument_count = 0 : i64, callee_name = "num", constraint_restrictions = [], defaulted_arguments = array<i64>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_signed = true, is_super_class = false, is_system_call = false, node_id = 47 : i64, original_source_range = !obelisk.source_range<"../../../../tmp/mailbox-nonblocking-probe.sv", 12, 10, "../../../../tmp/mailbox-nonblocking-probe.sv", 12, 15, "">, referenced_path = "std::mailbox#(string)::num", referenced_symbol = @s7.std::@s41.mailbox::@s6.mailbox::@s45.num, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_end_column = 15 : i64, source_end_line = 12 : i64, source_file = "../../../../tmp/mailbox-nonblocking-probe.sv", source_range = !obelisk.source_range<"../../../../tmp/mailbox-nonblocking-probe.sv", 12, 10, "../../../../tmp/mailbox-nonblocking-probe.sv", 12, 15, "">, subroutine_kind = 0 : i32} {
                     obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 48 : i64, original_source_range = !obelisk.source_range<"../../../../tmp/mailbox-nonblocking-probe.sv", 12, 10, "../../../../tmp/mailbox-nonblocking-probe.sv", 12, 11, "">, referenced_path = "top.m", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.m, semantic_type = !obelisk.class_handle<@s7.std::@s6.mailbox>, source_end_column = 11 : i64, source_end_line = 12 : i64, source_file = "../../../../tmp/mailbox-nonblocking-probe.sv", source_range = !obelisk.source_range<"../../../../tmp/mailbox-nonblocking-probe.sv", 12, 10, "../../../../tmp/mailbox-nonblocking-probe.sv", 12, 11, "">} {
                     }
+                  }
+                }
+              }
+              obelisk.sv.statement.expression_statement attributes {node_id = 1001 : i64} {
+                obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 1002 : i64, semantic_type = !obelisk.class_handle<@s7.std::@s32.semaphore>} {
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 1003 : i64, referenced_path = "top.sem", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s1000.sem, semantic_type = !obelisk.class_handle<@s7.std::@s32.semaphore>} {
+                  }
+                  obelisk.sv.expression.new_class attributes {is_signed = false, is_super_class = false, node_id = 1004 : i64, semantic_type = !obelisk.class_handle<@s7.std::@s32.semaphore>} {
+                    obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "new", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = false, node_id = 1005 : i64, referenced_path = "std::semaphore::new", semantic_type = !obelisk.void, subroutine_kind = 0 : i32} {
+                      obelisk.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 1006 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                      }
+                    }
+                  }
+                }
+              }
+              obelisk.sv.statement.expression_statement attributes {node_id = 1007 : i64} {
+                obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "put", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_signed = false, is_super_class = false, is_system_call = false, node_id = 1008 : i64, referenced_path = "std::semaphore::put", semantic_type = !obelisk.void, subroutine_kind = 0 : i32} {
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 1009 : i64, referenced_path = "top.sem", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s1000.sem, semantic_type = !obelisk.class_handle<@s7.std::@s32.semaphore>} {
+                  }
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "2", is_declared_unsized = true, is_signed = true, node_id = 1010 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  }
+                }
+              }
+              obelisk.sv.statement.expression_statement attributes {node_id = 1011 : i64} {
+                obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "try_get", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_signed = true, is_super_class = false, is_system_call = false, node_id = 1012 : i64, referenced_path = "std::semaphore::try_get", semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32} {
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 1013 : i64, referenced_path = "top.sem", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s1000.sem, semantic_type = !obelisk.class_handle<@s7.std::@s32.semaphore>} {
+                  }
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 1014 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  }
+                }
+              }
+              obelisk.sv.statement.expression_statement attributes {node_id = 1015 : i64} {
+                obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "get", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_signed = false, is_super_class = false, is_system_call = false, node_id = 1016 : i64, referenced_path = "std::semaphore::get", semantic_type = !obelisk.void, subroutine_kind = 1 : i32} {
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 1017 : i64, referenced_path = "top.sem", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s1000.sem, semantic_type = !obelisk.class_handle<@s7.std::@s32.semaphore>} {
+                  }
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 1018 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                   }
                 }
               }

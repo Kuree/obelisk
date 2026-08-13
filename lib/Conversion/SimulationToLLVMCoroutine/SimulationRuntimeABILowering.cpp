@@ -261,12 +261,19 @@ void declareNativeRuntimeABI(ModuleOp module) {
                             managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_mailbox_num", managedI32,
                            {managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_mailbox_try_peek", managedI32,
-                           {managedPointer, managedPointer, managedPointer,
-                            managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_mailbox_try_get", managedI32,
-                           {managedPointer, managedPointer, managedPointer,
-                            managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_mailbox_try_peek", managedI32,
+      {managedPointer, managedPointer, managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_mailbox_try_get", managedI32,
+      {managedPointer, managedPointer, managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_semaphore_create", managedI32,
+                           {managedPointer, managedI32, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_semaphore_put", managedI32,
+                           {managedPointer, managedI32});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_semaphore_try_get",
+                           managedI32,
+                           {managedPointer, managedI32, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_bounded", managedI32,
                            {managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_distribution",

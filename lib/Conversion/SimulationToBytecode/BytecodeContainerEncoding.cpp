@@ -80,6 +80,15 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
   if (auto op = dyn_cast<sim::SimMailboxTryGetOp>(operation))
     return emitIntrinsic(plan, kIntrinsicMailboxTryGet, {op.getMailbox()},
                          {op.getSuccess(), op.getValue()});
+  if (auto op = dyn_cast<sim::SimSemaphoreCreateOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicSemaphoreCreate, {op.getKeys()},
+                         {op.getResult()});
+  if (auto op = dyn_cast<sim::SimSemaphorePutOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicSemaphorePut,
+                         {op.getSemaphore(), op.getKeys()}, {});
+  if (auto op = dyn_cast<sim::SimSemaphoreTryGetOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicSemaphoreTryGet,
+                         {op.getSemaphore(), op.getKeys()}, {op.getSuccess()});
   if (auto op = dyn_cast<sim::SimRandomNextOp>(operation))
     return emitIntrinsic(plan, kIntrinsicRandomNext, {}, {op.getResult()});
   if (auto op = dyn_cast<sim::SimSampledReadOp>(operation))

@@ -732,6 +732,18 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 2 && managed(input(0)) &&
            twoStateBits(output(0), 1) && managedValue(output(1));
+  case OBELISK_RT_INTRINSIC_V1_SEMAPHORE_CREATE:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 1 && twoStateBits(input(0), 32) &&
+           managed(output(0));
+  case OBELISK_RT_INTRINSIC_V1_SEMAPHORE_PUT:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 0 && managed(input(0)) &&
+           twoStateBits(input(1), 32);
+  case OBELISK_RT_INTRINSIC_V1_SEMAPHORE_TRY_GET:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 1 && managed(input(0)) &&
+           twoStateBits(input(1), 32) && twoStateBits(output(0), 1);
   case OBELISK_RT_INTRINSIC_V1_RANDOM_BOUNDED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
@@ -2411,7 +2423,7 @@ bool validateImage(const Image &image) {
             (instruction.auxiliary & OBELISK_RT_ACTION_RESUME_REGION_MASK) >>
             OBELISK_RT_ACTION_RESUME_REGION_SHIFT;
         if (instruction.flags < OBELISK_RT_SUSPEND_DELAY ||
-            instruction.flags > OBELISK_RT_SUSPEND_OBSERVER ||
+            instruction.flags > OBELISK_RT_SUSPEND_SEMAPHORE ||
             instruction.destination || instruction.source1 ||
             instruction.source2 ||
             (instruction.auxiliary & ~resumeFlags) != 0 ||

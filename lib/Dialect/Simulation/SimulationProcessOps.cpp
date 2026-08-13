@@ -332,9 +332,9 @@ LogicalResult SimFuncOp::verify() {
     WalkResult blocking = getBody().walk([&](Operation *op) {
       if (isa<SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
               SimSuspendEdgeIffOp, SimSuspendLevelOp, SimSuspendAnyOp,
-              SimSuspendEventOp, SimSuspendMailboxOp, SimSuspendObserveOp,
-              SimSuspendForeverOp, SimSuspendAwaitOp, SimSuspendJoinOp,
-              SimSuspendChildrenOp>(op)) {
+              SimSuspendEventOp, SimSuspendMailboxOp, SimSuspendSemaphoreOp,
+              SimSuspendObserveOp, SimSuspendForeverOp, SimSuspendAwaitOp,
+              SimSuspendJoinOp, SimSuspendChildrenOp>(op)) {
         op->emitOpError(getEntryKind() == EntryKind::Function
                             ? "is not permitted in a zero-time function entry"
                             : "is not permitted in a zero-time observer entry");

@@ -3556,6 +3556,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         bool childrenDone = false;
         bool eventTriggered = false;
         bool mailboxReady = false;
+        bool semaphoreReady = false;
         bool signalTriggered =
             iterator->signalTriggered ||
             ((iterator->suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
@@ -3569,6 +3570,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         if (iterator->started &&
             (iterator->suspendKind == OBELISK_RT_SUSPEND_EVENT ||
              iterator->suspendKind == OBELISK_RT_SUSPEND_MAILBOX ||
+             iterator->suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE ||
              iterator->suspendKind == OBELISK_RT_SUSPEND_AWAIT ||
              iterator->suspendKind == OBELISK_RT_SUSPEND_JOIN) &&
             iterator->waitSize >= sizeof(obelisk_rt_wait_record_v1) &&
@@ -3602,6 +3604,19 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
                 return status;
               }
             }
+          } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE) {
+            if (wait->count == 1 && wait->payload <= UINT32_MAX) {
+              obelisk_rt_status status = obelisk_rt_semaphore_wait_ready(
+                  context,
+                  reinterpret_cast<obelisk_rt_object_v1 *>(
+                      entries[0].stable_id),
+                  static_cast<int32_t>(wait->payload), iterator->waitSequence,
+                  semaphoreReady);
+              if (status != OBELISK_RT_OK) {
+                context->schedulerStatus = status;
+                return status;
+              }
+            }
           } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_AWAIT)
             awaited = wait->count == 1 && obelisk_rt_logical_process_terminated(
                           context, entries[0].stable_id);
@@ -3628,7 +3643,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         bool runnable =
             !iterator->terminated && !iterator->explicitlySuspended &&
             (!iterator->started || awaited || eventTriggered || mailboxReady ||
-             signalTriggered || childrenDone ||
+             semaphoreReady || signalTriggered || childrenDone ||
              iterator->suspendKind == OBELISK_RT_SUSPEND_NONE ||
              (iterator->suspendKind == OBELISK_RT_SUSPEND_DELAY
                   ? iterator->wakeTime <= context->schedulerTime
@@ -3636,6 +3651,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
                      iterator->suspendKind != OBELISK_RT_SUSPEND_EDGE &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_EVENT &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_MAILBOX &&
+                     iterator->suspendKind != OBELISK_RT_SUSPEND_SEMAPHORE &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_AWAIT &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_JOIN &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_FOREVER &&
@@ -3680,6 +3696,19 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
            !(std::tuple{selectedRegion, selectedRank,
                         selectedInsertionSequence} < maximumKey)))
         return OBELISK_RT_OK;
+      if (found->suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE) {
+        const auto *wait = reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
+            found->frame.data() + found->waitOffset);
+        bool acquired = false;
+        obelisk_rt_status status =
+            obelisk_rt_semaphore_wait_acquire(wait, acquired);
+        if (status != OBELISK_RT_OK) {
+          context->schedulerStatus = status;
+          return status;
+        }
+        if (!acquired)
+          return OBELISK_RT_OK;
+      }
       size_t selectedIndex =
           static_cast<size_t>(found - context->scheduledDesignTasks.begin());
       task = std::move(context->scheduledDesignTasks[selectedIndex]);
@@ -3877,22 +3906,24 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
             wait->flags & ~OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
         bool suppressActiveSelf =
             (wait->flags & OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF) != 0;
-        bool mailboxWait =
-            action.suspend_kind == OBELISK_RT_SUSPEND_MAILBOX;
-        bool validFlags = mailboxWait
-          ? wait->flags <= OBELISK_RT_WAIT_MAILBOX_NOT_FULL
-          :
-            (wait->flags &
-             ~(OBELISK_RT_WAIT_LEVEL_TRUE | OBELISK_RT_WAIT_EDGE_IFF |
-                             OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF)) == 0 &&
-            (!suppressActiveSelf || (signalWait && behaviorFlags == 0)) &&
-            (behaviorFlags == OBELISK_RT_WAIT_FLAGS_NONE ||
-             (action.suspend_kind == OBELISK_RT_SUSPEND_JOIN &&
-              behaviorFlags <= 1) ||
-             (action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE &&
-              behaviorFlags == OBELISK_RT_WAIT_LEVEL_TRUE) ||
-             (action.suspend_kind == OBELISK_RT_SUSPEND_EDGE &&
-              behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF));
+        bool mailboxWait = action.suspend_kind == OBELISK_RT_SUSPEND_MAILBOX;
+        bool semaphoreWait =
+            action.suspend_kind == OBELISK_RT_SUSPEND_SEMAPHORE;
+        bool validFlags =
+            mailboxWait
+                ? wait->flags <= OBELISK_RT_WAIT_MAILBOX_NOT_FULL
+                : (wait->flags &
+                   ~(OBELISK_RT_WAIT_LEVEL_TRUE | OBELISK_RT_WAIT_EDGE_IFF |
+                     OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF)) == 0 &&
+                      (!suppressActiveSelf ||
+                       (signalWait && behaviorFlags == 0)) &&
+                      (behaviorFlags == OBELISK_RT_WAIT_FLAGS_NONE ||
+                       (action.suspend_kind == OBELISK_RT_SUSPEND_JOIN &&
+                        behaviorFlags <= 1) ||
+                       (action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE &&
+                        behaviorFlags == OBELISK_RT_WAIT_LEVEL_TRUE) ||
+                       (action.suspend_kind == OBELISK_RT_SUSPEND_EDGE &&
+                        behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF));
         if (!validFlags ||
             (action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE &&
              behaviorFlags == OBELISK_RT_WAIT_LEVEL_TRUE && wait->count != 1) ||
@@ -3900,7 +3931,10 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
              behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF && wait->count != 2) ||
             (action.suspend_kind == OBELISK_RT_SUSPEND_FOREVER &&
              wait->count != 0) ||
-            (mailboxWait && wait->count != 1)) {
+            (mailboxWait && wait->count != 1) ||
+            (semaphoreWait && (wait->flags != 0 || wait->count != 1 ||
+                               wait->payload > UINT32_MAX ||
+                               static_cast<int32_t>(wait->payload) < 0))) {
           finalizeStatus = OBELISK_RT_INVALID_FRAME;
           break;
         }
@@ -3934,6 +3968,15 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         task.suspendKind = action.suspend_kind;
         task.waitOffset = action.payload;
         task.waitSize = sizeof(obelisk_rt_wait_record_v1) + entries;
+        if (action.suspend_kind == OBELISK_RT_SUSPEND_SEMAPHORE) {
+          if (context->nextWaitSequence == 0) {
+            finalizeStatus = OBELISK_RT_OUT_OF_RESOURCES;
+            break;
+          }
+          task.waitSequence = context->nextWaitSequence++;
+        } else {
+          task.waitSequence = 0;
+        }
         task.waitGenerations.clear();
         task.signalTriggered = false;
         task.startupProcess = false;

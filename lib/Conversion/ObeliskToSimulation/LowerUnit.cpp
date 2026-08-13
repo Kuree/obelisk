@@ -156,7 +156,7 @@ describeContainerElementImpl(Type type, Location location) {
     return result;
   }
   if (isa<sim::DynamicArrayType, sim::QueueType, sim::MailboxType,
-          sim::AssocArrayType>(type)) {
+          sim::SemaphoreType, sim::AssocArrayType>(type)) {
     result.kind = OBELISK_RT_ELEMENT_CONTAINER_HANDLE;
     result.valueSize = sizeof(void *);
     return result;

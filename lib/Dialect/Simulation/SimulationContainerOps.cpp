@@ -312,7 +312,8 @@ bool getManagedHandleSlots(Type type,
       return static_cast<uint32_t>(ManagedHandleKind::Class);
     if (isa<StringType>(leaf))
       return static_cast<uint32_t>(ManagedHandleKind::String);
-    if (isa<DynamicArrayType, QueueType, MailboxType, AssocArrayType>(leaf))
+    if (isa<DynamicArrayType, QueueType, MailboxType, SemaphoreType,
+            AssocArrayType>(leaf))
       return static_cast<uint32_t>(ManagedHandleKind::Container);
     if (isa<ReferencePathType>(leaf))
       return static_cast<uint32_t>(ManagedHandleKind::ReferencePath);
@@ -447,7 +448,8 @@ bool getManagedHandleOffsets(Type type,
 
 bool isManagedHandleType(Type type) {
   return isa<ClassHandleType, StringType, DynamicArrayType, QueueType,
-             MailboxType, AssocArrayType, ReferencePathType>(type);
+             MailboxType, SemaphoreType, AssocArrayType, ReferencePathType>(
+      type);
 }
 
 LogicalResult SimManagedNullOp::verify() {
@@ -579,8 +581,8 @@ LogicalResult SimContainerCreateOp::verify() {
   } else if (isa<StringType>(element)) {
     expectedKind = 5;
     expectedSize = sizeof(void *);
-  } else if (isa<DynamicArrayType, QueueType, MailboxType, AssocArrayType>(
-                 element)) {
+  } else if (isa<DynamicArrayType, QueueType, MailboxType, SemaphoreType,
+                 AssocArrayType>(element)) {
     expectedKind = 6;
     expectedSize = sizeof(void *);
   } else if (isa<EventType>(element)) {
@@ -714,8 +716,8 @@ LogicalResult SimMailboxCreateOp::verify() {
   } else if (isa<StringType>(element)) {
     expectedKind = 5;
     expectedSize = sizeof(void *);
-  } else if (isa<DynamicArrayType, QueueType, MailboxType, AssocArrayType>(
-                 element)) {
+  } else if (isa<DynamicArrayType, QueueType, MailboxType, SemaphoreType,
+                 AssocArrayType>(element)) {
     expectedKind = 6;
     expectedSize = sizeof(void *);
   } else if (isa<EventType>(element)) {
@@ -852,8 +854,8 @@ LogicalResult SimAssocCreateOp::verify() {
   } else if (isa<StringType>(element)) {
     expectedKind = 5;
     expectedSize = sizeof(void *);
-  } else if (isa<DynamicArrayType, QueueType, MailboxType, AssocArrayType>(
-                 element)) {
+  } else if (isa<DynamicArrayType, QueueType, MailboxType, SemaphoreType,
+                 AssocArrayType>(element)) {
     expectedKind = 6;
     expectedSize = sizeof(void *);
   } else if (isa<EventType>(element)) {

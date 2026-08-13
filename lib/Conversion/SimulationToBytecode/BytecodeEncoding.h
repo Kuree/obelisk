@@ -240,6 +240,12 @@ constexpr uint32_t kIntrinsicMailboxTryPeek =
     OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_PEEK;
 constexpr uint32_t kIntrinsicMailboxTryGet =
     OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_GET;
+constexpr uint32_t kIntrinsicSemaphoreCreate =
+    OBELISK_RT_INTRINSIC_V1_SEMAPHORE_CREATE;
+constexpr uint32_t kIntrinsicSemaphorePut =
+    OBELISK_RT_INTRINSIC_V1_SEMAPHORE_PUT;
+constexpr uint32_t kIntrinsicSemaphoreTryGet =
+    OBELISK_RT_INTRINSIC_V1_SEMAPHORE_TRY_GET;
 constexpr uint32_t kIntrinsicAssocCreate = OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE;
 constexpr uint32_t kIntrinsicAssocRead = OBELISK_RT_INTRINSIC_V1_ASSOC_READ;
 constexpr uint32_t kIntrinsicAssocWrite = OBELISK_RT_INTRINSIC_V1_ASSOC_WRITE;

@@ -221,6 +221,11 @@ def SimMailboxType : SimType<"Mailbox"> {
   let genVerifyDecl = 1;
 }
 
+def SimSemaphoreType : SimType<"Semaphore"> {
+  let mnemonic = "semaphore";
+  let summary = "managed SystemVerilog semaphore handle";
+}
+
 def SimAssocArrayType : SimType<"AssocArray"> {
   let mnemonic = "assoc_array";
   let summary = "managed SystemVerilog associative array value";

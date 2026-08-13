@@ -32,12 +32,78 @@ bool isMailboxCall(semantic::SVCallExpressionOp op) {
   return path && path.getValue().starts_with("std::mailbox#(");
 }
 
+bool isSemaphoreCall(semantic::SVCallExpressionOp op) {
+  auto path = op->getAttrOfType<StringAttr>("referenced_path");
+  return path && path.getValue().starts_with("std::semaphore::");
+}
+
 } // namespace
 
 FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
   std::optional<StringRef> referencedPath = op.getReferencedPath();
+  if (referencedPath && referencedPath->starts_with("std::semaphore::")) {
+    StringRef method = op.getCalleeName();
+    if (children.empty())
+      return emitError(location) << "semaphore method has no receiver",
+             failure();
+    FailureOr<Value> receiver = lowerExpression(children.front());
+    if (failed(receiver) || !isa<sim::SemaphoreType>((*receiver).getType()))
+      return failure();
+    if (children.size() != 2)
+      return emitError(location)
+                 << "semaphore::" << method << " requires one key count",
+             failure();
+    FailureOr<Value> keys = lowerExpression(children[1]);
+    keys = succeeded(keys) ? convert(*keys, builder.getI32Type(),
+                                     isSignedNode(children[1]), location, true)
+                           : FailureOr<Value>(failure());
+    if (failed(keys))
+      return failure();
+    if (method == "put") {
+      sim::SimSemaphorePutOp::create(builder, location, *receiver, *keys);
+      return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                       builder.getBoolAttr(false))
+          .getResult();
+    }
+    if (method == "try_get") {
+      Value success = sim::SimSemaphoreTryGetOp::create(builder, location,
+                                                        *receiver, *keys);
+      FailureOr<Type> resultType = getNormalizedSemanticType(op);
+      return failed(resultType)
+                 ? FailureOr<Value>(failure())
+                 : convert(success, *resultType, false, location, true);
+    }
+    if (method == "get") {
+      Block *attempt = addBlock();
+      attempt->addArgument((*receiver).getType(), location);
+      attempt->addArgument(builder.getI32Type(), location);
+      Block *wait = addBlock();
+      wait->addArgument((*receiver).getType(), location);
+      wait->addArgument(builder.getI32Type(), location);
+      Block *done = addBlock();
+      cf::BranchOp::create(builder, location, attempt,
+                           ValueRange{*receiver, *keys});
+      setCurrent(attempt);
+      Value success = sim::SimSemaphoreTryGetOp::create(
+          builder, location, attempt->getArgument(0), attempt->getArgument(1));
+      cf::CondBranchOp::create(builder, location, success, done, ValueRange{},
+                               wait,
+                               attempt->getArguments());
+      setCurrent(wait);
+      sim::SimSuspendSemaphoreOp::create(
+          builder, location, wait->getArgument(0), wait->getArgument(1),
+          ValueRange{}, sim::ContinuationSiteAttr{}, sim::EventRegionAttr{},
+          done);
+      setCurrent(done);
+      return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                       builder.getBoolAttr(false))
+          .getResult();
+    }
+    return emitError(location) << "unsupported semaphore method " << method,
+           failure();
+  }
   if (referencedPath && referencedPath->starts_with("std::mailbox#(")) {
     StringRef method = op.getCalleeName();
     if (children.empty()) {
@@ -2072,6 +2138,24 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
                descriptor->alignment, descriptor->bitWidth,
                builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
                builder.getDenseI32ArrayAttr(descriptor->traceKinds))
+        .getResult();
+  }
+  if (call && isSemaphoreCall(call) && call.getCalleeName() == "new") {
+    SmallVector<Operation *> actuals = getChildren(call);
+    FailureOr<Type> resultType = getNormalizedSemanticType(op);
+    if (actuals.size() != 1 || failed(resultType) ||
+        !isa<sim::SemaphoreType>(*resultType))
+      return emitError(location)
+                 << "semaphore constructor requires one resolved key count",
+             failure();
+    FailureOr<Value> keys = lowerExpression(actuals.front());
+    keys = succeeded(keys)
+               ? convert(*keys, builder.getI32Type(),
+                         isSignedNode(actuals.front()), location, true)
+               : FailureOr<Value>(failure());
+    if (failed(keys))
+      return failure();
+    return sim::SimSemaphoreCreateOp::create(builder, location, *keys)
         .getResult();
   }
   if (call && isWeakReferenceCall(call) && call.getCalleeName() == "new") {

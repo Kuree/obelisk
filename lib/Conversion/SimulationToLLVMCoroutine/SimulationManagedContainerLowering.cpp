@@ -373,6 +373,97 @@ public:
   }
 };
 
+class SemaphoreCreateConversion final
+    : public OpConversionPattern<sim::SimSemaphoreCreateOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimSemaphoreCreateOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getKeys().size() != 1)
+      return failure();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i32 = rewriter.getI32Type();
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    Value output = entryAlloca(rewriter, op.getLoc(), pointer, 1, 8);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer),
+                          output, 8);
+    Value status = LLVM::CallOp::create(
+                       rewriter, op.getLoc(), TypeRange{i32},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_semaphore_create"),
+                       ValueRange{lane, adaptor.getKeys().front(), output})
+                       .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    Value result =
+        LLVM::LoadOp::create(rewriter, op.getLoc(), pointer, output, 8);
+    rewriter.replaceOp(op, managedObjectHandle(rewriter, op.getLoc(), result));
+    return success();
+  }
+};
+
+class SemaphorePutConversion final
+    : public OpConversionPattern<sim::SimSemaphorePutOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimSemaphorePutOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getSemaphore().size() != 1 || adaptor.getKeys().size() != 1)
+      return failure();
+    Type i32 = rewriter.getI32Type();
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_semaphore_put"),
+            ValueRange{managedObjectPointer(rewriter, op.getLoc(),
+                                            adaptor.getSemaphore().front()),
+                       adaptor.getKeys().front()})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+class SemaphoreTryGetConversion final
+    : public OpConversionPattern<sim::SimSemaphoreTryGetOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimSemaphoreTryGetOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getSemaphore().size() != 1 || adaptor.getKeys().size() != 1)
+      return failure();
+    Type i32 = rewriter.getI32Type();
+    Value successStorage = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          llvmConstant(rewriter, op.getLoc(), i32, 0),
+                          successStorage, 4);
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_semaphore_try_get"),
+            ValueRange{managedObjectPointer(rewriter, op.getLoc(),
+                                            adaptor.getSemaphore().front()),
+                       adaptor.getKeys().front(), successStorage})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    Value loaded =
+        LLVM::LoadOp::create(rewriter, op.getLoc(), i32, successStorage, 4);
+    rewriter.replaceOp(op, LLVM::TruncOp::create(rewriter, op.getLoc(),
+                                                 rewriter.getI1Type(), loaded));
+    return success();
+  }
+};
+
 class MailboxTryPutConversion final
     : public OpConversionPattern<sim::SimMailboxTryPutOp> {
 public:
@@ -1148,18 +1239,19 @@ public:
 void populateManagedContainerToLLVMConversionPatterns(
     RewritePatternSet &patterns, TypeConverter &converter) {
   MLIRContext *context = patterns.getContext();
-  patterns.add<
-      ContainerSizeConversion, ContainerCreateLikeConversion,
-      ContainerCreateConversion, ContainerCloneConversion,
-      ContainerDeleteConversion, QueueDeleteConversion,
-      QueueInsertConversion, MailboxCreateConversion, MailboxNumConversion,
-      MailboxTryPutConversion,
-      MailboxTryReadConversion<sim::SimMailboxTryPeekOp, false>,
-      MailboxTryReadConversion<sim::SimMailboxTryGetOp, true>,
-      ContainerReadConversion,
-      ContainerWriteConversion, RandomNextConversion, RandomSeedConversion,
-      RandomBoundedConversion, RandomDistributionConversion,
-      RandomCycleNextConversion, RandomSolveConversion>(converter, context);
+  patterns
+      .add<ContainerSizeConversion, ContainerCreateLikeConversion,
+           ContainerCreateConversion, ContainerCloneConversion,
+           ContainerDeleteConversion, QueueDeleteConversion,
+           QueueInsertConversion, MailboxCreateConversion, MailboxNumConversion,
+           MailboxTryPutConversion, SemaphoreCreateConversion,
+           SemaphorePutConversion, SemaphoreTryGetConversion,
+           MailboxTryReadConversion<sim::SimMailboxTryPeekOp, false>,
+           MailboxTryReadConversion<sim::SimMailboxTryGetOp, true>,
+           ContainerReadConversion, ContainerWriteConversion,
+           RandomNextConversion, RandomSeedConversion, RandomBoundedConversion,
+           RandomDistributionConversion, RandomCycleNextConversion,
+           RandomSolveConversion>(converter, context);
   patterns.add<RandomSolveWideConversion, SampledReadConversion,
                SampledHistoryConversion, ClockedSampleUpdateConversion,
                ClockedSampleReadConversion>(converter, context);

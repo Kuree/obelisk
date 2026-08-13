@@ -1,6 +1,7 @@
 //===- DesignBytecodeRoots.cpp - Bytecode managed roots -----------------===//
 
 #include "DesignBytecodeRoots.h"
+#include "ProcessValidation.h"
 
 #include <algorithm>
 #include <cstring>
@@ -159,6 +160,31 @@ void obelisk_rt_enumerate_design_managed_roots(
           }
         }
       }
+    }
+    auto visitSemaphoreWait = [&](uint32_t suspendKind,
+                                  const obelisk_rt_wait_record_v1 *wait) {
+      if (suspendKind != OBELISK_RT_SUSPEND_SEMAPHORE || !wait ||
+          wait->count != 1)
+        return;
+      const auto *entries = reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(
+          reinterpret_cast<const uint8_t *>(wait) + sizeof(*wait));
+      auto *semaphore = reinterpret_cast<obelisk_rt_object_v1 *>(
+          entries[0].stable_id);
+      visit(visitorEnvironment, &semaphore);
+    };
+    for (const ScheduledProcess &process : context->scheduledProcesses)
+      if (process.instance)
+        visitSemaphoreWait(process.suspendKind,
+                           obelisk::process::currentWait(process));
+    for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
+      if (task.terminated ||
+          task.waitSize < sizeof(obelisk_rt_wait_record_v1) ||
+          task.waitOffset > task.scratchOffset ||
+          task.waitSize > task.scratchOffset - task.waitOffset)
+        continue;
+      const auto *wait = reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
+          task.frame.data() + task.waitOffset);
+      visitSemaphoreWait(task.suspendKind, wait);
     }
     for (ScheduledNBA &update : context->scheduledNBAs)
       if (update.managedValue)

@@ -103,6 +103,14 @@ Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
                       static_cast<uint32_t>(suspend.getKind()),
                       ArrayRef<uint32_t>(&edge, 1), {suspend.getMailbox()});
   }
+  if (auto suspend = dyn_cast<sim::SimSuspendSemaphoreOp>(operation)) {
+    uint32_t edge = OBELISK_RT_WAIT_EDGE_NONE;
+    return encodeWait(plan, suspend.getOperation(),
+                      suspend.getContinuationOperands(),
+                      OBELISK_RT_SUSPEND_SEMAPHORE, OBELISK_RT_WAIT_FLAGS_NONE,
+                      ArrayRef<uint32_t>(&edge, 1), {suspend.getSemaphore()},
+                      suspend.getKeys());
+  }
   if (auto suspend = dyn_cast<sim::SimSuspendForeverOp>(operation))
     return encodeWait(plan, suspend.getOperation(),
                       suspend.getContinuationOperands(),

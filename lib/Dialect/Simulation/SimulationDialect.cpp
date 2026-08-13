@@ -47,10 +47,10 @@ namespace obelisk::sim {
 bool isSuspensionOp(Operation *operation) {
   return isa<SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
              SimSuspendEdgeIffOp, SimSuspendLevelOp, SimSuspendAnyOp,
-             SimSuspendEventOp, SimSuspendMailboxOp, SimSuspendForeverOp, SimSuspendAwaitOp,
-             SimSuspendJoinOp, SimSuspendChildrenOp, SimSuspendObserveOp,
-             SimTaskCallOp, SimClassVirtualTaskCallOp,
-             SimProcessControlOp>(operation);
+             SimSuspendEventOp, SimSuspendMailboxOp, SimSuspendSemaphoreOp,
+             SimSuspendForeverOp, SimSuspendAwaitOp, SimSuspendJoinOp,
+             SimSuspendChildrenOp, SimSuspendObserveOp, SimTaskCallOp,
+             SimClassVirtualTaskCallOp, SimProcessControlOp>(operation);
 }
 
 bool isStartupEntryKind(EntryKind kind) {
@@ -70,7 +70,7 @@ bool isStartupEntryKind(EntryKind kind) {
 uint32_t getWaitEntryCount(Operation *operation) {
   return TypeSwitch<Operation *, uint32_t>(operation)
       .Case<SimSuspendChangeOp, SimSuspendLevelOp, SimSuspendEdgeOp,
-            SimSuspendEventOp, SimSuspendMailboxOp,
+            SimSuspendEventOp, SimSuspendMailboxOp, SimSuspendSemaphoreOp,
             SimSuspendAwaitOp>([](auto) { return 1; })
       .Case<SimSuspendEdgeIffOp>([](auto) { return 2; })
       .Case<SimSuspendAnyOp>(

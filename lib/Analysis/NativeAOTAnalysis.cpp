@@ -365,9 +365,10 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     } else if (isa<sim::SimSuspendEventOp>(operation)) {
       requireBytecodeFragment(operation, "event wait requires dynamic state");
       excludeBytecodeActor(operation);
-    } else if (isa<sim::SimSuspendMailboxOp>(operation)) {
+    } else if (isa<sim::SimSuspendMailboxOp, sim::SimSuspendSemaphoreOp>(
+                   operation)) {
       requireBytecodeFragment(operation,
-                              "mailbox wait requires managed dynamic state");
+                              "managed wait requires dynamic runtime state");
       excludeBytecodeActor(operation);
     } else if (isa<sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
                    sim::SimSuspendChildrenOp, sim::SimTaskCallOp,

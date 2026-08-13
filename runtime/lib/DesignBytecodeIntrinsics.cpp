@@ -534,6 +534,35 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     }
     return status == OBELISK_RT_OK ? sentinel(0, present) : status;
   }
+  case OBELISK_RT_INTRINSIC_V1_SEMAPHORE_CREATE: {
+    std::optional<uint64_t> keys = scalar(0);
+    if (!keys)
+      return OBELISK_RT_INVALID_BYTECODE;
+    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    if (!lane)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    obelisk_rt_object_v1 *result = nullptr;
+    obelisk_rt_status status = obelisk_rt_v1_semaphore_create(
+        lane, static_cast<int32_t>(*keys), &result);
+    return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), result)
+               ? OBELISK_RT_INVALID_BYTECODE
+               : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_SEMAPHORE_PUT: {
+    std::optional<uint64_t> keys = scalar(1);
+    return keys ? obelisk_rt_v1_semaphore_put(readManaged(inputRegister(0)),
+                                              static_cast<int32_t>(*keys))
+                : OBELISK_RT_INVALID_BYTECODE;
+  }
+  case OBELISK_RT_INTRINSIC_V1_SEMAPHORE_TRY_GET: {
+    std::optional<uint64_t> keys = scalar(1);
+    if (!keys)
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint32_t success = 0;
+    obelisk_rt_status status = obelisk_rt_v1_semaphore_try_get(
+        readManaged(inputRegister(0)), static_cast<int32_t>(*keys), &success);
+    return status == OBELISK_RT_OK ? sentinel(0, success) : status;
+  }
   case OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE: {
     std::array<std::optional<uint64_t>, 8> inputs;
     for (uint32_t index = 0; index != 6; ++index)

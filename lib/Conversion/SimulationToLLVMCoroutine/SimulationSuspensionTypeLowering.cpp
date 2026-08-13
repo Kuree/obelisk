@@ -52,6 +52,10 @@ SmallVector<int32_t> suspensionWaitWidths(Operation *operation) {
         watched.push_back(op.getMailbox());
         scalarEdge.push_back(false);
       })
+      .Case<sim::SimSuspendSemaphoreOp>([&](auto op) {
+        watched.push_back(op.getSemaphore());
+        scalarEdge.push_back(false);
+      })
       .Case<sim::SimSuspendAwaitOp>([&](auto op) {
         watched.push_back(op.getProcess());
         scalarEdge.push_back(false);
@@ -240,6 +244,7 @@ void populateSuspensionTypeConversionPatterns(RewritePatternSet &patterns,
                SimSuspendTypeConversion<sim::SimSuspendAnyOp>,
                SimSuspendTypeConversion<sim::SimSuspendEventOp>,
                SimSuspendTypeConversion<sim::SimSuspendMailboxOp>,
+               SimSuspendTypeConversion<sim::SimSuspendSemaphoreOp>,
                SimSuspendTypeConversion<sim::SimSuspendForeverOp>,
                SimSuspendTypeConversion<sim::SimSuspendAwaitOp>,
                SimSuspendTypeConversion<sim::SimSuspendJoinOp>,

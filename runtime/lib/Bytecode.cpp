@@ -1571,7 +1571,7 @@ bool validAction(const obelisk_rt_fragment_action_v1 &action) {
            action.payload == 0 && action.auxiliary == 0;
   case OBELISK_RT_FRAGMENT_SUSPEND:
     return action.suspend_kind >= OBELISK_RT_SUSPEND_DELAY &&
-           action.suspend_kind <= OBELISK_RT_SUSPEND_CHILDREN;
+           action.suspend_kind <= OBELISK_RT_SUSPEND_SEMAPHORE;
   case OBELISK_RT_FRAGMENT_TERMINATE:
     return action.suspend_kind == OBELISK_RT_SUSPEND_NONE &&
            action.continuation == 0 && action.auxiliary == 0;

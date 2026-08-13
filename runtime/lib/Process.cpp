@@ -112,6 +112,121 @@ void initializeProcessContextLock(
     lock = std::unique_lock<std::recursive_mutex>(context->mutex);
 }
 
+static bool semaphoreWaitTargets(const obelisk_rt_wait_record_v1 *wait,
+                                 obelisk_rt_object_v1 *semaphore) {
+  if (!wait || wait->count != 1)
+    return false;
+  const obelisk_rt_wait_entry_v1 *entry = waitEntries(wait);
+  return reinterpret_cast<obelisk_rt_object_v1 *>(entry[0].stable_id) ==
+         semaphore;
+}
+
+static const obelisk_rt_wait_record_v1 *
+designTaskWait(const ScheduledDesignTask &task) {
+  if (task.waitSize < sizeof(obelisk_rt_wait_record_v1) ||
+      task.waitOffset > task.scratchOffset ||
+      task.waitSize > task.scratchOffset - task.waitOffset)
+    return nullptr;
+  return reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
+      task.frame.data() + task.waitOffset);
+}
+
+static obelisk_rt_status semaphoreQueuedAcquisitionReady(
+    obelisk_rt_context *context, obelisk_rt_object_v1 *semaphore,
+    bool &ready) {
+  ready = false;
+  uint64_t firstSequence = UINT64_MAX;
+  const obelisk_rt_wait_record_v1 *first = nullptr;
+  auto consider = [&](bool live, uint32_t suspendKind, uint64_t sequence,
+                      const obelisk_rt_wait_record_v1 *wait) {
+    if (live && suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE && sequence != 0 &&
+        sequence < firstSequence && semaphoreWaitTargets(wait, semaphore)) {
+      firstSequence = sequence;
+      first = wait;
+    }
+  };
+  for (const ScheduledProcess &process : context->scheduledProcesses)
+    consider(process.instance != nullptr &&
+                 process.instance != context->activeNativeProcess,
+             process.suspendKind,
+             process.waitSequence, currentWait(process));
+  for (const ScheduledDesignTask &task : context->scheduledDesignTasks)
+    consider(!task.terminated, task.suspendKind, task.waitSequence,
+             designTaskWait(task));
+  if (!first)
+    return OBELISK_RT_OK;
+  if (first->flags != 0 || first->payload > UINT32_MAX ||
+      static_cast<int32_t>(first->payload) < 0 || first->auxiliary != 0)
+    return OBELISK_RT_INVALID_FRAME;
+  return obelisk_rt_semaphore_keys_ready(
+      semaphore, static_cast<int32_t>(first->payload), ready);
+}
+
+obelisk_rt_status
+obelisk_rt_semaphore_wait_ready(obelisk_rt_context *context,
+                                obelisk_rt_object_v1 *semaphore, int32_t keys,
+                                uint64_t waitSequence, bool &ready) {
+  ready = false;
+  if (!context || !semaphore || waitSequence == 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  auto isEarlier = [&](uint32_t suspendKind, uint64_t sequence,
+                       const obelisk_rt_wait_record_v1 *wait) {
+    if (suspendKind != OBELISK_RT_SUSPEND_SEMAPHORE || sequence == 0 ||
+        sequence >= waitSequence || !wait || wait->count != 1)
+      return false;
+    const obelisk_rt_wait_entry_v1 *entry = waitEntries(wait);
+    return reinterpret_cast<obelisk_rt_object_v1 *>(entry[0].stable_id) ==
+           semaphore;
+  };
+  for (const ScheduledProcess &process : context->scheduledProcesses)
+    if (process.instance &&
+        isEarlier(process.suspendKind, process.waitSequence,
+                  currentWait(process)))
+      return OBELISK_RT_OK;
+  for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
+    if (!task.terminated &&
+        isEarlier(task.suspendKind, task.waitSequence, designTaskWait(task)))
+      return OBELISK_RT_OK;
+  }
+  return obelisk_rt_semaphore_keys_ready(semaphore, keys, ready);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_semaphore_try_get(
+    obelisk_rt_object_v1 *semaphore, int32_t keys, uint32_t *outSuccess) {
+  if (!semaphore || !outSuccess)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outSuccess = 0;
+  if (keys < 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  obelisk_rt_context *context = obelisk_rt_managed_object_context(semaphore);
+  if (!context)
+    return OBELISK_RT_INVALID_HANDLE;
+  ContextMutexLock lock(context);
+  if (keys != 0) {
+    bool queuedAcquisitionReady = false;
+    obelisk_rt_status status = semaphoreQueuedAcquisitionReady(
+        context, semaphore, queuedAcquisitionReady);
+    if (status != OBELISK_RT_OK || queuedAcquisitionReady)
+      return status;
+  }
+  return obelisk_rt_semaphore_try_get_raw(semaphore, keys, outSuccess);
+}
+
+obelisk_rt_status obelisk_rt_semaphore_wait_acquire(
+    const obelisk_rt_wait_record_v1 *wait, bool &acquired) {
+  acquired = false;
+  if (!wait || wait->flags != 0 || wait->count != 1 ||
+      wait->payload > UINT32_MAX || static_cast<int32_t>(wait->payload) < 0 ||
+      wait->auxiliary != 0)
+    return OBELISK_RT_INVALID_FRAME;
+  const obelisk_rt_wait_entry_v1 *entry = waitEntries(wait);
+  uint32_t success = 0;
+  obelisk_rt_status status = obelisk_rt_semaphore_try_get_raw(
+      reinterpret_cast<obelisk_rt_object_v1 *>(entry[0].stable_id),
+      static_cast<int32_t>(wait->payload), &success);
+  acquired = success != 0;
+  return status;
+}
 
 bool nativeWaitReady(obelisk_rt_context &context,
                      const ScheduledProcess &process) {
@@ -146,6 +261,18 @@ bool nativeWaitReady(obelisk_rt_context &context,
     obelisk_rt_status status = obelisk_rt_mailbox_wait_ready(
         reinterpret_cast<obelisk_rt_object_v1 *>(entries[0].stable_id),
         wait->flags, ready);
+    if (status != OBELISK_RT_OK)
+      context.schedulerStatus = status;
+    return status == OBELISK_RT_OK && ready;
+  }
+  case OBELISK_RT_SUSPEND_SEMAPHORE: {
+    if (wait->count != 1 || wait->payload > UINT32_MAX)
+      return false;
+    bool ready = false;
+    obelisk_rt_status status = obelisk_rt_semaphore_wait_ready(
+        &context,
+        reinterpret_cast<obelisk_rt_object_v1 *>(entries[0].stable_id),
+        static_cast<int32_t>(wait->payload), process.waitSequence, ready);
     if (status != OBELISK_RT_OK)
       context.schedulerStatus = status;
     return status == OBELISK_RT_OK && ready;
@@ -1990,6 +2117,13 @@ obelisk_rt_status adoptScheduledSuspendUnlocked(
   scheduled.suspendKind = action.suspend_kind;
   scheduled.waitOffset = action.payload;
   scheduled.waitSize = action.auxiliary;
+  if (action.suspend_kind == OBELISK_RT_SUSPEND_SEMAPHORE) {
+    if (context->nextWaitSequence == 0)
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    scheduled.waitSequence = context->nextWaitSequence++;
+  } else {
+    scheduled.waitSequence = 0;
+  }
   updateNativeAOTContinuationRank(scheduled, action.continuation);
   scheduled.observedEpoch = context->schedulerEpoch;
   scheduled.waitGenerations.clear();
@@ -2350,9 +2484,23 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         }
       }
       if (selected) {
-        context->schedulerCursor = (selectedIndex + 1) % processCount;
         ScheduledProcess &candidate =
             context->scheduledProcesses[selectedIndex];
+        selectedResuming =
+            candidate.started &&
+            candidate.suspendKind != OBELISK_RT_SUSPEND_NONE;
+        if (candidate.suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE) {
+          bool acquired = false;
+          obelisk_rt_status status = obelisk_rt_semaphore_wait_acquire(
+              currentWait(candidate), acquired);
+          if (status != OBELISK_RT_OK) {
+            context->schedulerStatus = status;
+            return status;
+          }
+          if (!acquired)
+            continue;
+        }
+        context->schedulerCursor = (selectedIndex + 1) % processCount;
         if (candidate.aotActorSlot != UINT32_MAX) {
           uint32_t node = findNativeAOTNodeUnlocked(
               context, candidate.aotActorSlot, candidate.instance->continuation);
@@ -2370,9 +2518,6 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         }
         candidate.signalTriggered = false;
         context->nativePollCandidates.erase(candidate.token);
-        selectedResuming =
-            candidate.started &&
-            candidate.suspendKind != OBELISK_RT_SUSPEND_NONE;
         if (!candidate.started)
           obelisk_rt_unregister_unstarted_actor(
               context, candidate.phase,

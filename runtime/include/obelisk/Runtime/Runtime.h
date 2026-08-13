@@ -896,6 +896,9 @@ enum {
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_TYPE_QUERY = UINT32_C(0x00010455),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE = UINT32_C(0x00010456),
   OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE_WIDE_STATE = UINT32_C(0x00010457),
+  OBELISK_RT_INTRINSIC_V1_SEMAPHORE_CREATE = UINT32_C(0x00010458),
+  OBELISK_RT_INTRINSIC_V1_SEMAPHORE_PUT = UINT32_C(0x00010459),
+  OBELISK_RT_INTRINSIC_V1_SEMAPHORE_TRY_GET = UINT32_C(0x0001045a),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -1069,7 +1072,10 @@ enum {
   OBELISK_RT_SUSPEND_OBSERVER = 10,
   // Wait for a managed mailbox predicate. The sole wait entry contains the
   // mailbox object address; flags select NOT_EMPTY or NOT_FULL below.
-  OBELISK_RT_SUSPEND_MAILBOX = 11
+  OBELISK_RT_SUSPEND_MAILBOX = 11,
+  // Wait for a managed semaphore acquisition. The sole wait entry contains
+  // the semaphore object address and payload is the nonnegative key count.
+  OBELISK_RT_SUSPEND_SEMAPHORE = 12
 };
 
 #define OBELISK_RT_WAIT_MAILBOX_NOT_EMPTY UINT32_C(0)
@@ -1862,6 +1868,14 @@ obelisk_rt_status obelisk_rt_v1_mailbox_create_typed(
     uint64_t bit_width, const obelisk_rt_element_trace_slot_v1 *trace_slots,
     uint64_t trace_slot_count, int64_t bound,
     obelisk_rt_object_v1 **out_mailbox);
+obelisk_rt_status
+obelisk_rt_v1_semaphore_create(obelisk_rt_gc_lane_v1 *lane, int32_t keys,
+                               obelisk_rt_object_v1 **out_semaphore);
+obelisk_rt_status obelisk_rt_v1_semaphore_put(obelisk_rt_object_v1 *semaphore,
+                                              int32_t keys);
+obelisk_rt_status
+obelisk_rt_v1_semaphore_try_get(obelisk_rt_object_v1 *semaphore, int32_t keys,
+                                uint32_t *out_success);
 uint64_t obelisk_rt_v1_container_size(obelisk_rt_object_v1 *container);
 obelisk_rt_status obelisk_rt_v1_container_read(obelisk_rt_object_v1 *container,
                                                int64_t index, void *out_value,

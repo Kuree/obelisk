@@ -371,6 +371,7 @@ struct ScheduledProcess {
   uint32_t homeRegion = OBELISK_RT_REGION_ACTIVE;
   uint32_t scheduleRank = UINT32_MAX;
   uint64_t insertionSequence = 0;
+  uint64_t waitSequence = 0;
   obelisk_rt_random_state_v1 random{};
   // Executable event-region ordinal. Normally the immutable home region,
   // temporarily an inactive region after #0 or an explicit resume override.
@@ -384,8 +385,20 @@ struct ScheduledProcess {
   bool explicitlySuspended = false;
 };
 
-obelisk_rt_status obelisk_rt_mailbox_wait_ready(
-    obelisk_rt_object_v1 *mailbox, uint32_t predicate, bool &ready);
+obelisk_rt_status obelisk_rt_mailbox_wait_ready(obelisk_rt_object_v1 *mailbox,
+                                                uint32_t predicate,
+                                                bool &ready);
+obelisk_rt_status
+obelisk_rt_semaphore_keys_ready(obelisk_rt_object_v1 *semaphore, int32_t keys,
+                                bool &ready);
+obelisk_rt_status obelisk_rt_semaphore_try_get_raw(
+    obelisk_rt_object_v1 *semaphore, int32_t keys, uint32_t *outSuccess);
+obelisk_rt_status
+obelisk_rt_semaphore_wait_ready(obelisk_rt_context *context,
+                                obelisk_rt_object_v1 *semaphore, int32_t keys,
+                                uint64_t waitSequence, bool &ready);
+obelisk_rt_status obelisk_rt_semaphore_wait_acquire(
+    const obelisk_rt_wait_record_v1 *wait, bool &acquired);
 
 struct SignalValueSnapshot {
   uint64_t sequence = 0;
@@ -531,6 +544,7 @@ struct ScheduledDesignTask {
   uint32_t scheduleRank = UINT32_MAX;
   uint32_t queuedRegion = 0;
   uint64_t insertionSequence = 0;
+  uint64_t waitSequence = 0;
   obelisk_rt_random_state_v1 random{};
   bool started = false;
   bool urgent = false;
@@ -873,6 +887,7 @@ struct obelisk_rt_context {
   uint32_t nextNativeAutomaticID = 1;
   uint64_t nextDesignTaskID = 1;
   uint64_t nextProcessInsertionSequence = 1;
+  uint64_t nextWaitSequence = 1;
   uint64_t activeDesignTaskID = 0;
   uint32_t activeDesignTaskPhase = 0;
   uint32_t activeHomeRegion = UINT32_MAX;

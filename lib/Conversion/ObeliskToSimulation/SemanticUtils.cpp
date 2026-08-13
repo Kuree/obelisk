@@ -608,6 +608,10 @@ static FailureOr<Type> normalizeType(Type type, Location location,
         sourceName(className.getRootReference().getValue()) == "std" &&
         sourceName(className.getLeafReference().getValue()) == "process")
       return sim::ProcessType::get(context);
+    if (className.getNestedReferences().size() == 1 &&
+        sourceName(className.getRootReference().getValue()) == "std" &&
+        sourceName(className.getLeafReference().getValue()) == "semaphore")
+      return sim::SemaphoreType::get(context);
     return sim::ClassHandleType::get(
         context, FlatSymbolRefAttr::get(
                      getSimulationClassSymbol(classHandle.getClassName())));
@@ -788,7 +792,8 @@ static FailureOr<Type> normalizeType(Type type, Location location,
           sim::NetType, sim::DriverType, sim::EventType, sim::ProcessType,
           sim::ClassHandleType, sim::VirtualInterfaceType, sim::ChandleType,
           sim::StringType, sim::DynamicArrayType, sim::QueueType,
-          sim::MailboxType, sim::AssocArrayType, sim::ManagedRefType>(type) ||
+          sim::MailboxType, sim::SemaphoreType, sim::AssocArrayType,
+          sim::ManagedRefType>(type) ||
       sim::isAggregateType(type))
     return type;
 
@@ -1246,6 +1251,8 @@ sim::ComputeActionKind getFragmentActionKind(Operation *terminator) {
           [](auto) { return sim::ComputeActionKind::SuspendEvent; })
       .Case<sim::SimSuspendMailboxOp>(
           [](auto) { return sim::ComputeActionKind::SuspendMailbox; })
+      .Case<sim::SimSuspendSemaphoreOp>(
+          [](auto) { return sim::ComputeActionKind::SuspendSemaphore; })
       .Case<sim::SimSuspendForeverOp>(
           [](auto) { return sim::ComputeActionKind::SuspendAny; })
       .Case<sim::SimSuspendAwaitOp>(
@@ -1272,10 +1279,11 @@ sim::ContinuationSiteAttr getContinuationSite(Operation *operation) {
             sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
             sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
             sim::SimSuspendEventOp, sim::SimSuspendMailboxOp,
-            sim::SimSuspendObserveOp, sim::SimSuspendForeverOp,
-            sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
-            sim::SimSuspendChildrenOp, sim::SimTaskCallOp,
-            sim::SimClassVirtualTaskCallOp, sim::SimProcessControlOp>(
+            sim::SimSuspendSemaphoreOp, sim::SimSuspendObserveOp,
+            sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp,
+            sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp,
+            sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp,
+            sim::SimProcessControlOp>(
           [&](auto op) { site = op.getSiteAttr(); });
   return site;
 }
@@ -1286,11 +1294,11 @@ void setContinuationSite(Operation *operation, sim::ContinuationSiteAttr site) {
             sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
             sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
             sim::SimSuspendEventOp, sim::SimSuspendMailboxOp,
-            sim::SimSuspendObserveOp, sim::SimSuspendForeverOp,
-            sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
-            sim::SimSuspendChildrenOp, sim::SimTaskCallOp,
-            sim::SimClassVirtualTaskCallOp, sim::SimProcessControlOp>(
-          [&](auto op) { op.setSiteAttr(site); });
+            sim::SimSuspendSemaphoreOp, sim::SimSuspendObserveOp,
+            sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp,
+            sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp,
+            sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp,
+            sim::SimProcessControlOp>([&](auto op) { op.setSiteAttr(site); });
 }
 
 ReexecutingBlockSet getReexecutingBlocks(sim::SimFuncOp function) {

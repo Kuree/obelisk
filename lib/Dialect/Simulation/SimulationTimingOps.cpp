@@ -151,6 +151,9 @@ SuccessorOperands SimSuspendEventOp::getSuccessorOperands(unsigned index) {
 SuccessorOperands SimSuspendMailboxOp::getSuccessorOperands(unsigned index) {
   return makeContinuationSuccessorOperands(*this, index);
 }
+SuccessorOperands SimSuspendSemaphoreOp::getSuccessorOperands(unsigned index) {
+  return makeContinuationSuccessorOperands(*this, index);
+}
 SuccessorOperands SimSuspendObserveOp::getSuccessorOperands(unsigned index) {
   return makeContinuationSuccessorOperands(*this, index);
 }
@@ -261,6 +264,10 @@ LogicalResult SimSuspendMailboxOp::verify() {
                     [&](Value value) { return value == getMailbox(); }))
     return emitOpError(
         "requires the mailbox as a continuation operand to preserve its GC root");
+  return verifyContinuation(*this, getContinuationOperands(),
+                            getContinuation());
+}
+LogicalResult SimSuspendSemaphoreOp::verify() {
   return verifyContinuation(*this, getContinuationOperands(),
                             getContinuation());
 }

@@ -21,6 +21,7 @@ const uint64_t stringDescriptorToken = UINT64_C(0x535452494e475631);
 const uint64_t containerDescriptorToken = UINT64_C(0x434f4e5441494e31);
 const uint64_t bufferDescriptorToken = UINT64_C(0x4255464645525631);
 const uint64_t referencePathDescriptorToken = UINT64_C(0x5245465041544831);
+const uint64_t semaphoreDescriptorToken = UINT64_C(0x53454d4150485631);
 
 struct StringHeader {
   const void *descriptor;
@@ -52,8 +53,14 @@ struct ContainerHeader {
   uint64_t keyWidth;
 };
 
+struct SemaphoreHeader {
+  const void *descriptor;
+  int64_t keys;
+};
+
 static_assert(sizeof(BufferHeader) == 16);
 static_assert(sizeof(ContainerHeader) == 104);
+static_assert(sizeof(SemaphoreHeader) == 16);
 
 struct AssocSlot {
   uint64_t hash;
@@ -2587,6 +2594,115 @@ extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_create_typed(
       lane, OBELISK_RT_CONTAINER_QUEUE, typeID, elementKind, elementFlags,
       valueSize, alignment, bitWidth, traceSlots, traceSlotCount, 0, queueBound,
       outMailbox);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_semaphore_create(obelisk_rt_gc_lane_v1 *lane, int32_t keys,
+                               obelisk_rt_object_v1 **outSemaphore) {
+  if (!lane || !outSemaphore)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outSemaphore = nullptr;
+  obelisk_rt_object_v1 *semaphore = nullptr;
+  obelisk_rt_status status = obelisk_rt_managed_allocate(
+      lane, OBELISK_RT_MANAGED_CONTAINER, sizeof(SemaphoreHeader),
+      alignof(SemaphoreHeader), &semaphoreDescriptorToken, &semaphore);
+  if (status != OBELISK_RT_OK)
+    return status;
+  struct Initialize {
+    int64_t keys;
+  } initialize{keys};
+  status = obelisk_rt_managed_object_access(
+      semaphore, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *opaque, uint8_t *object, uint64_t extent) {
+        if (extent != sizeof(SemaphoreHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<SemaphoreHeader *>(object);
+        header->descriptor = &semaphoreDescriptorToken;
+        header->keys = static_cast<Initialize *>(opaque)->keys;
+        return OBELISK_RT_OK;
+      },
+      &initialize);
+  if (status == OBELISK_RT_OK)
+    *outSemaphore = semaphore;
+  return status;
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_semaphore_put(obelisk_rt_object_v1 *semaphore, int32_t keys) {
+  if (!semaphore || keys < 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  struct Put {
+    int64_t keys;
+  } put{keys};
+  return obelisk_rt_managed_object_access(
+      semaphore, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *opaque, uint8_t *object, uint64_t extent) {
+        if (extent != sizeof(SemaphoreHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<SemaphoreHeader *>(object);
+        auto *put = static_cast<Put *>(opaque);
+        if (header->descriptor != &semaphoreDescriptorToken)
+          return OBELISK_RT_INVALID_HANDLE;
+        if (header->keys > INT64_MAX - put->keys)
+          return OBELISK_RT_OUT_OF_RESOURCES;
+        header->keys += put->keys;
+        return OBELISK_RT_OK;
+      },
+      &put);
+}
+
+obelisk_rt_status obelisk_rt_semaphore_try_get_raw(
+    obelisk_rt_object_v1 *semaphore, int32_t keys, uint32_t *outSuccess) {
+  if (!semaphore || !outSuccess)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outSuccess = 0;
+  if (keys < 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  struct Get {
+    int64_t keys;
+    uint32_t *success;
+  } get{keys, outSuccess};
+  return obelisk_rt_managed_object_access(
+      semaphore, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *opaque, uint8_t *object, uint64_t extent) {
+        if (extent != sizeof(SemaphoreHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<SemaphoreHeader *>(object);
+        auto *get = static_cast<Get *>(opaque);
+        if (header->descriptor != &semaphoreDescriptorToken)
+          return OBELISK_RT_INVALID_HANDLE;
+        if (get->keys <= header->keys) {
+          header->keys -= get->keys;
+          *get->success = 1;
+        }
+        return OBELISK_RT_OK;
+      },
+      &get);
+}
+
+obelisk_rt_status
+obelisk_rt_semaphore_keys_ready(obelisk_rt_object_v1 *semaphore, int32_t keys,
+                                bool &ready) {
+  ready = false;
+  if (!semaphore || keys < 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  struct Ready {
+    int64_t keys;
+    bool *ready;
+  } query{keys, &ready};
+  return obelisk_rt_managed_object_access(
+      semaphore, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *opaque, uint8_t *object, uint64_t extent) {
+        if (extent != sizeof(SemaphoreHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *header = reinterpret_cast<SemaphoreHeader *>(object);
+        auto *query = static_cast<Ready *>(opaque);
+        if (header->descriptor != &semaphoreDescriptorToken)
+          return OBELISK_RT_INVALID_HANDLE;
+        *query->ready = query->keys <= header->keys;
+        return OBELISK_RT_OK;
+      },
+      &query);
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_assoc_create_typed(

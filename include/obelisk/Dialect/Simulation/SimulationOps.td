@@ -591,6 +591,32 @@ def SimMailboxTryGetOp : SimOp<"mailbox.try_get", [
   let hasVerifier = 1;
 }
 
+def SimSemaphoreCreateOp : SimOp<"semaphore.create", [
+    MemoryEffects<[MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "create a semaphore with an initial signed key count";
+  let arguments = (ins I32:$keys);
+  let results = (outs SimSemaphoreType:$result);
+}
+
+def SimSemaphorePutOp : SimOp<"semaphore.put", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "return keys to a semaphore";
+  let arguments = (ins SimSemaphoreType:$semaphore, I32:$keys);
+}
+
+def SimSemaphoreTryGetOp : SimOp<"semaphore.try_get", [
+    MemoryEffects<[
+      MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+      MemRead<SimSchedulerResource>
+    ]>
+  ]> {
+  let summary = "attempt to obtain semaphore keys without blocking";
+  let arguments = (ins SimSemaphoreType:$semaphore, I32:$keys);
+  let results = (outs I1:$success);
+}
+
 def SimRandomNextOp : SimOp<"random.next", [
     MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>]>
   ]> {
@@ -1867,7 +1893,7 @@ def SimProcessControlOp : SimOp<"process.control", [
                        OptionalAttr<SimContinuationSiteAttr>:$site);
   let successors = (successor AnySuccessor:$continuation);
   let assemblyFormat = [{$kind $process `to` $continuation
-    (`(` $continuation_operands^ `:` type($continuation_operands) `)`) ?
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`)?
     attr-dict}];
   let hasVerifier = 1;
 }
@@ -2985,6 +3011,21 @@ def SimSuspendMailboxOp : SimSuspendOp<"suspend.mailbox", (
   let assemblyFormat = [{$mailbox $kind `to` $continuation
     (`(` $continuation_operands^ `:` type($continuation_operands) `)`)?
     attr-dict `:` type($mailbox)}];
+  let hasVerifier = 1;
+}
+
+def SimSuspendSemaphoreOp : SimSuspendOp<"suspend.semaphore", (
+    ins SimSemaphoreType:$semaphore, I32:$keys)> {
+  let summary = "suspend for a FIFO semaphore acquisition";
+  let description = [{
+    Suspends until this waiter is at the head of the semaphore's FIFO wait
+    order and the scheduler has atomically obtained the requested keys for it.
+    The handle and key count are copied into the runtime wait record, which is
+    a precise GC root and remains stable across suspension.
+  }];
+  let assemblyFormat = [{$keys `from` $semaphore `to` $continuation
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`)?
+    attr-dict `:` type($semaphore)}];
   let hasVerifier = 1;
 }
 
