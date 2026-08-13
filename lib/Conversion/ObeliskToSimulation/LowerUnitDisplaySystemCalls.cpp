@@ -128,6 +128,13 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
                    (*value).getType())) {
       output.items.push_back(*value);
       output.flags.push_back(16);
+    } else if (isa<sim::ClassHandleType>((*value).getType())) {
+      // IEEE 1800-2017 21.2.1.7 gives class handles singular assignment-
+      // pattern formatting: null is spelled "null" and non-null rendering is
+      // implementation dependent. Preserve the typed handle for the runtime
+      // instead of pretending it is a packed integer.
+      output.items.push_back(*value);
+      output.flags.push_back(64);
     } else if (auto unionType =
                    dyn_cast<sim::UnpackedUnionType>((*value).getType());
                unionType && unionType.getIsTagged()) {
@@ -160,7 +167,7 @@ UnitLowering::lowerStringFormatSystemCall(semantic::SVCallExpressionOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
   StringRef name = op.getCalleeName();
-  bool task = name == "$sformat";
+  bool task = op.getSubroutineKind() == semantic::SVSubroutineKind::Task;
   size_t formatIndex = task ? 1 : 0;
   if (children.size() <= formatIndex) {
     emitError(location) << name << " requires "

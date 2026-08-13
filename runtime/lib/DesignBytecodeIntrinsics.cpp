@@ -2712,7 +2712,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     arguments.reserve(itemCount);
     for (uint32_t index = 0; index != itemCount; ++index) {
       uint32_t itemFlags = read32(flags + uint64_t{index} * 4);
-      if ((itemFlags & ~uint32_t{63}) != 0 ||
+      if ((itemFlags & ~uint32_t{127}) != 0 ||
           ((itemFlags & 4) != 0 && (itemFlags & 3) != 0))
         return OBELISK_RT_INVALID_BYTECODE;
       if ((itemFlags & 2) != 0) {
@@ -2749,6 +2749,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             itemFlags != 16)
           return OBELISK_RT_INVALID_BYTECODE;
         arguments.push_back({OBELISK_RT_ARG_MANAGED_CONTAINER, 0, 0,
+                             frame.data + layout.offset, nullptr});
+      } else if ((itemFlags & 64) != 0) {
+        if (layout.kind != OBELISK_RT_DBREG_MANAGED || layout.size != 8 ||
+            itemFlags != 64)
+          return OBELISK_RT_INVALID_BYTECODE;
+        arguments.push_back({OBELISK_RT_ARG_MANAGED_OBJECT, 0, 0,
                              frame.data + layout.offset, nullptr});
       } else if ((itemFlags & 4) != 0) {
         if (itemFlags != 4)

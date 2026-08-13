@@ -3297,6 +3297,39 @@ TEST_F(RuntimeTest, DesignatedFormatWarnsAndContinuesOnArgumentMismatch) {
   EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
 }
 
+TEST_F(ManagedHeapTest, FormatsClassHandlesAsSingularPatterns) {
+  obelisk_rt_object_v1 *object = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &object),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *nullObject = nullptr;
+  const obelisk_rt_arg_v1 arguments[] = {
+      {OBELISK_RT_ARG_MANAGED_OBJECT, 0, 0, &object, nullptr},
+      {OBELISK_RT_ARG_MANAGED_OBJECT, 0, 0, &nullObject, nullptr}};
+  obelisk_rt_format_env_v1 environment{};
+  environment.time_multiplier = 1;
+  RuntimeBuffer output;
+  ASSERT_EQ(obelisk_rt_v1_format(context, "%p|%0p", 6, arguments,
+                                 std::size(arguments), &environment,
+                                 output.out()),
+            OBELISK_RT_OK);
+  EXPECT_EQ(output.str(),
+            "class@" + std::to_string(obelisk_rt_v1_object_id(object)) +
+                "|null");
+
+  obelisk_rt_string_v1 string = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "not-a-class", 11, &string),
+            OBELISK_RT_OK);
+  ASSERT_EQ(string & UINT64_C(3), UINT64_C(0));
+  auto *notClass = reinterpret_cast<obelisk_rt_object_v1 *>(
+      static_cast<uintptr_t>(string));
+  const obelisk_rt_arg_v1 invalid[] = {
+      {OBELISK_RT_ARG_MANAGED_OBJECT, 0, 0, &notClass, nullptr}};
+  EXPECT_EQ(obelisk_rt_v1_format(context, "%p", 2, invalid,
+                                 std::size(invalid), &environment,
+                                 output.out()),
+            OBELISK_RT_INVALID_HANDLE);
+}
+
 TEST_F(ManagedHeapTest, CollectsCyclesAndClearsWeakReferences) {
   obelisk_rt_object_v1 *first = nullptr;
   obelisk_rt_object_v1 *second = nullptr;

@@ -59,6 +59,14 @@ func.func @materializer_roundtrip(%status: !obelisk_rt.status) -> i1 {
   return %same : i1
 }
 
+func.func @managed_object_argument(%object: i64) {
+  %argument = obelisk_rt.argument.managed_object %object :
+      (i64) -> !obelisk_rt.arg
+  %arguments = obelisk_rt.argument.array %argument :
+      (!obelisk_rt.arg) -> !obelisk_rt.args
+  return
+}
+
 func.func @cross_block_pure_arguments(%bytes: !obelisk_rt.bytes) {
   %empty = obelisk_rt.argument.empty : () -> !obelisk_rt.arg
   %string = obelisk_rt.argument.bytes %bytes {is_format_string = true} :

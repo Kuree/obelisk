@@ -47,6 +47,9 @@
 // CHECK: ^bb1:
 // CHECK-NOT: llvm.alloca
 // CHECK: llvm.call @obelisk_rt_v1_file_getc
+// CHECK-LABEL: func.func @managed_object_argument
+// CHECK: llvm.mlir.constant(7 : i32) : i32
+// CHECK: llvm.insertvalue
 // CHECK-LABEL: func.func @runtime_calls
 // CHECK-DAG: llvm.alloca {{.*}} x !llvm.ptr {alignment = 8 : i64}
 // CHECK-DAG: llvm.alloca {{.*}} x i8 {alignment = 1 : i64}

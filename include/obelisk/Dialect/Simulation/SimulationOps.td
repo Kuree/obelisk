@@ -1614,10 +1614,11 @@ def SimDisplayOp : SimOp<"display", [
     consumes no entry from `items`; bit 2 marks an f64 real operand; bit 3
     marks a managed string; bit 4 marks a managed container. Bit 5 is reserved
     for the designated literal or managed-string format operand of
-    `string.output_format` and is invalid on `display`. `scope` and
-    `library_cell` carry the elaborated call-site information used by `%m` and
-    `%l`. `time_multiplier` converts a numeric `%t` argument from the invoking
-    scope's time unit to the design precision used by the runtime clock.
+    `string.output_format` and is invalid on `display`; bit 6 marks a managed
+    class handle. `scope` and `library_cell` carry the elaborated call-site
+    information used by `%m` and `%l`. `time_multiplier` converts a numeric
+    `%t` argument from the invoking scope's time unit to the design precision
+    used by the runtime clock.
   }];
   let arguments = (ins SimContextType:$context, I32:$descriptor,
                        Variadic<AnyType>:$items, BoolAttr:$append_newline,

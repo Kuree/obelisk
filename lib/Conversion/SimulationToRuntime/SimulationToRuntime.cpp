@@ -136,6 +136,15 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
           converted.front()));
       continue;
     }
+    if (isa<sim::ClassHandleType>(sourceType)) {
+      if (converted.size() != 1)
+        return rewriter.notifyMatchFailure(
+            op, "class-handle output item did not convert 1:1");
+      arguments.push_back(runtime::RTArgumentManagedObjectOp::create(
+          rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
+          converted.front()));
+      continue;
+    }
     if (sourceType.isF64()) {
       if (converted.size() != 1)
         return rewriter.notifyMatchFailure(

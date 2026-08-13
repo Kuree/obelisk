@@ -4,6 +4,7 @@
 
 #include "obelisk/Dialect/Runtime/RuntimeABI.h"
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
+#include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -306,6 +307,7 @@ enum class RuntimeMaterializer {
   ArgumentBytes,
   ArgumentManagedString,
   ArgumentManagedContainer,
+  ArgumentManagedObject,
   ArgumentArray,
   FormatEnvironment,
   DescriptorFromBits,
@@ -541,7 +543,9 @@ public:
       Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
       argument = insertStructValue(
           rewriter, location, argument,
-          llvmIntegerConstant(rewriter, location, abi.i32, 5), 0);
+          llvmIntegerConstant(rewriter, location, abi.i32,
+                              OBELISK_RT_ARG_MANAGED_STRING),
+          0);
       argument = insertStructValue(
           rewriter, location, argument,
           llvmIntegerConstant(rewriter, location, abi.i32,
@@ -563,7 +567,27 @@ public:
       Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
       argument = insertStructValue(
           rewriter, location, argument,
-          llvmIntegerConstant(rewriter, location, abi.i32, 6), 0);
+          llvmIntegerConstant(rewriter, location, abi.i32,
+                              OBELISK_RT_ARG_MANAGED_CONTAINER),
+          0);
+      argument = insertStructValue(rewriter, location, argument, *data, 3);
+      rewriter.replaceOp(operation, argument);
+      return success();
+    }
+    case RuntimeMaterializer::ArgumentManagedObject: {
+      FailureOr<Value> data =
+          allocateAtFunctionEntry(operation, rewriter, abi,
+                                  operands[0].getType(), 1, abi.alignments.i64);
+      if (failed(data))
+        return failure();
+      LLVM::StoreOp::create(rewriter, location, operands[0], *data,
+                            abi.alignments.i64);
+      Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
+      argument = insertStructValue(
+          rewriter, location, argument,
+          llvmIntegerConstant(rewriter, location, abi.i32,
+                              OBELISK_RT_ARG_MANAGED_OBJECT),
+          0);
       argument = insertStructValue(rewriter, location, argument, *data, 3);
       rewriter.replaceOp(operation, argument);
       return success();
@@ -970,6 +994,8 @@ void populateRuntimePatterns(const TypeConverter &converter,
                                ArgumentManagedString);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentManagedContainerOp,
                                ArgumentManagedContainer);
+  OBELISK_RUNTIME_MATERIALIZER(RTArgumentManagedObjectOp,
+                               ArgumentManagedObject);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentArrayOp, ArgumentArray);
   OBELISK_RUNTIME_MATERIALIZER(RTFormatEnvironmentOp, FormatEnvironment);
   OBELISK_RUNTIME_MATERIALIZER(RTFileDescriptorFromBitsOp, DescriptorFromBits);

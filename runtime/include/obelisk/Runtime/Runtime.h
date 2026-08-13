@@ -2956,7 +2956,10 @@ enum {
   OBELISK_RT_ARG_MANAGED_STRING = 5,
   // data points to one obelisk_rt_object_v1 pointer word naming a sequential
   // container; size must be zero.
-  OBELISK_RT_ARG_MANAGED_CONTAINER = 6
+  OBELISK_RT_ARG_MANAGED_CONTAINER = 6,
+  // data points to one obelisk_rt_object_v1 pointer word naming a class
+  // object; size must be zero. This representation is accepted by %p.
+  OBELISK_RT_ARG_MANAGED_OBJECT = 7
 };
 
 typedef uint32_t obelisk_rt_arg_flags;

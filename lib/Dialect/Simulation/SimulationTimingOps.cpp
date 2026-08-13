@@ -482,18 +482,21 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
       return operation->emitOpError("item flags require more display operands");
     Value item = items[itemIndex++];
     if (!isa<BytesType, StringType, DynamicArrayType, QueueType, AssocArrayType,
-             IntegerType, LogicType>(item.getType()) &&
+             ClassHandleType, IntegerType, LogicType>(item.getType()) &&
         !item.getType().isF64())
       return operation->emitOpError(
           "items must be literal bytes, packed integers, or f64 reals; "
-          "managed strings and containers are also accepted");
-    if ((flags & ~63) != 0)
+          "managed strings, containers, and class handles are also accepted");
+    if ((flags & ~127) != 0)
       return operation->emitOpError(
           "display item flags contain an unknown bit");
     if ((flags & 16) != 0 &&
         !isa<DynamicArrayType, QueueType, AssocArrayType>(item.getType()))
       return operation->emitOpError(
           "container display flags require a container operand");
+    if ((flags & 64) != 0 && !isa<ClassHandleType>(item.getType()))
+      return operation->emitOpError(
+          "class-handle display flags require a class-handle operand");
     if ((flags & 4) != 0 && !item.getType().isF64())
       return operation->emitOpError(
           "real display items must have f64 operands");
@@ -519,6 +522,10 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
       if (flags != 16)
         return operation->emitOpError(
             "managed container items require only the container flag");
+    } else if (isa<ClassHandleType>(item.getType())) {
+      if (flags != 64)
+        return operation->emitOpError(
+            "class-handle items require only the class-handle flag");
     } else if (item.getType().isF64()) {
       if (flags != 4)
         return operation->emitOpError("f64 items require only the real flag");

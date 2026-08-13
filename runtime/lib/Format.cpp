@@ -632,6 +632,24 @@ obelisk_rt_status formatArgument(std::string &output,
         return status;
       return formatStringValue(output, std::move(value), options);
     }
+    if (argument.kind == OBELISK_RT_ARG_MANAGED_OBJECT) {
+      if (argument.size != 0 || !argument.data || argument.unknown)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      obelisk_rt_object_v1 *object = nullptr;
+      std::memcpy(&object, argument.data, sizeof(object));
+      if (!object)
+        return formatStringValue(output, "null", options);
+      if (obelisk_rt_managed_object_kind(object) != OBELISK_RT_MANAGED_CLASS)
+        return OBELISK_RT_INVALID_HANDLE;
+      uint64_t identity = obelisk_rt_v1_object_id(object);
+      if (identity == 0)
+        return OBELISK_RT_INVALID_HANDLE;
+      // IEEE 1800-2017 leaves non-null handle rendering implementation
+      // dependent. Use the stable object identity, not a host address, so
+      // output remains deterministic across native and bytecode execution.
+      std::string value = "class@" + std::to_string(identity);
+      return formatStringValue(output, std::move(value), options);
+    }
     std::string value = scalarPattern(argument);
     if (value.empty() && argument.kind != OBELISK_RT_ARG_STRING &&
         argument.kind != OBELISK_RT_ARG_MANAGED_STRING)
@@ -810,6 +828,8 @@ char defaultSpecifier(const obelisk_rt_arg_v1 &argument,
   case OBELISK_RT_ARG_REAL:
     return 'f';
   case OBELISK_RT_ARG_MANAGED_CONTAINER:
+    return 'p';
+  case OBELISK_RT_ARG_MANAGED_OBJECT:
     return 'p';
   default:
     return 0;

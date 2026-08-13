@@ -85,6 +85,12 @@ def RTArgumentManagedContainerOp
   let results = (outs RTArgumentType:$result);
 }
 
+def RTArgumentManagedObjectOp
+    : RTOp<"argument.managed_object", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins I64:$value);
+  let results = (outs RTArgumentType:$result);
+}
+
 def RTArgumentArrayOp : RTOp<"argument.array", [MemoryEffects<[MemAlloc]>]> {
   let arguments = (ins Variadic<RTArgumentType>:$arguments);
   let results = (outs RTArgumentArrayType:$result);
