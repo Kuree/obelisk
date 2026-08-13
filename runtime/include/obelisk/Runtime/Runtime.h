@@ -899,6 +899,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_SEMAPHORE_CREATE = UINT32_C(0x00010458),
   OBELISK_RT_INTRINSIC_V1_SEMAPHORE_PUT = UINT32_C(0x00010459),
   OBELISK_RT_INTRINSIC_V1_SEMAPHORE_TRY_GET = UINT32_C(0x0001045a),
+  OBELISK_RT_INTRINSIC_V1_EVENT_CREATE = UINT32_C(0x0001045b),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -2700,6 +2701,10 @@ void obelisk_rt_v1_scheduler_real_transition(obelisk_rt_context *context,
                                              const void *new_value);
 void obelisk_rt_v1_scheduler_event(obelisk_rt_context *context,
                                    uint64_t stable_id, uint32_t nonblocking);
+// Allocate one fresh named-event synchronization identity. Dynamic event IDs
+// remain valid for the lifetime of the simulation context.
+obelisk_rt_status obelisk_rt_v1_scheduler_event_create(
+    obelisk_rt_context *context, uint64_t *out_stable_id);
 // Trigger immediately, or enqueue a nonblocking named-event occurrence after
 // `delay` design-precision ticks. A nonzero delay with a blocking trigger is
 // invalid and records a scheduler failure.

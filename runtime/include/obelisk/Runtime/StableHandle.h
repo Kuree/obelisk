@@ -8,6 +8,11 @@
 
 #define OBELISK_RT_STABLE_HANDLE_AUTOMATIC_TAG (UINT64_C(1) << 63)
 #define OBELISK_RT_STABLE_HANDLE_STATIC_TAG (UINT64_C(1) << 62)
+// Dynamic named events occupy a disjoint positive-ID namespace. Reserving
+// this bit prevents synchronization identities from aliasing global state
+// offsets while retaining the nonnegative representation used by bytecode
+// event handles.
+#define OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG (UINT64_C(1) << 61)
 #define OBELISK_RT_STABLE_HANDLE_TAG_MASK                                  \
   (OBELISK_RT_STABLE_HANDLE_AUTOMATIC_TAG |                                \
    OBELISK_RT_STABLE_HANDLE_STATIC_TAG)
@@ -56,7 +61,8 @@ static inline int obelisk_rt_stable_handle_decode(
     decoded->offset = (int32_t)handle;
     return 1;
   }
-  if ((handle & OBELISK_RT_STABLE_HANDLE_TAG_MASK) != 0)
+  if ((handle & (OBELISK_RT_STABLE_HANDLE_TAG_MASK |
+                 OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG)) != 0)
     return 0;
   decoded->kind = OBELISK_RT_STABLE_HANDLE_GLOBAL;
   decoded->offset = (int64_t)handle;
@@ -66,8 +72,9 @@ static inline int obelisk_rt_stable_handle_decode(
 static inline uint64_t obelisk_rt_stable_handle_encode(
     obelisk_rt_stable_handle_kind_v1 kind, uint32_t id, int64_t offset) {
   if (kind == OBELISK_RT_STABLE_HANDLE_GLOBAL)
-    return offset >= 0 && (uint64_t)offset <
-                              OBELISK_RT_STABLE_HANDLE_STATIC_TAG
+    return offset >= 0 &&
+                   (uint64_t)offset <
+                       OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG
                ? (uint64_t)offset
                : UINT64_MAX;
   if (offset < INT32_MIN || offset > INT32_MAX)

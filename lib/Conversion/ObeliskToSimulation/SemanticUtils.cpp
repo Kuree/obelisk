@@ -1195,7 +1195,7 @@ Value createDefaultValue(OpBuilder &builder, Location location, Type type) {
   if (isa<sim::ChandleType>(type))
     return sim::SimChandleNullOp::create(builder, location);
   if (isa<sim::EventType>(type))
-    return sim::SimEventNullOp::create(builder, location, type);
+    return sim::SimEventCreateOp::create(builder, location, type);
   if (sim::isManagedHandleType(type))
     return sim::SimManagedNullOp::create(builder, location, type);
   if (sim::isAggregateType(type))

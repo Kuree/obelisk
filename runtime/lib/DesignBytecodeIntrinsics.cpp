@@ -563,6 +563,25 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         readManaged(inputRegister(0)), static_cast<int32_t>(*keys), &success);
     return status == OBELISK_RT_OK ? sentinel(0, success) : status;
   }
+  case OBELISK_RT_INTRINSIC_V1_EVENT_CREATE: {
+    if (!context)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    Layout output = layoutAt(image, frame.function, outputRegister(0));
+    uint64_t stableID = UINT64_MAX;
+    obelisk_rt_status status =
+        obelisk_rt_v1_scheduler_event_create(context, &stableID);
+    if (status != OBELISK_RT_OK)
+      return status;
+    uint32_t kind = OBELISK_RT_DESCRIPTOR_EVENT;
+    int64_t start = static_cast<int64_t>(stableID);
+    int64_t end = start == INT64_MAX ? start : start + 1;
+    std::memset(frame.data + output.offset, 0, output.size);
+    std::memcpy(frame.data + output.offset, &kind, sizeof(kind));
+    std::memcpy(frame.data + output.offset + 8, &start, sizeof(start));
+    std::memcpy(frame.data + output.offset + 16, &start, sizeof(start));
+    std::memcpy(frame.data + output.offset + 24, &end, sizeof(end));
+    return OBELISK_RT_OK;
+  }
   case OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE: {
     std::array<std::optional<uint64_t>, 8> inputs;
     for (uint32_t index = 0; index != 6; ++index)
@@ -1522,6 +1541,27 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                  ? OBELISK_RT_INVALID_BYTECODE
                  : status;
     }
+    if (output.kind == OBELISK_RT_DBREG_HANDLE) {
+      if (*planeSize != sizeof(uint64_t) || output.size < 32)
+        return OBELISK_RT_INVALID_BYTECODE;
+      uint64_t stableID = UINT64_MAX;
+      obelisk_rt_status status = obelisk_rt_v1_object_read(
+          object, offset, &stableID, sizeof(stableID));
+      if (status != OBELISK_RT_OK)
+        return status;
+      uint32_t kind = OBELISK_RT_DESCRIPTOR_EVENT;
+      int64_t start = static_cast<int64_t>(stableID);
+      int64_t begin = start == kInvalidHandleStart ? 0 : start;
+      int64_t end = start == kInvalidHandleStart
+                        ? 0
+                        : (start == INT64_MAX ? start : start + 1);
+      std::memset(frame.data + output.offset, 0, output.size);
+      std::memcpy(frame.data + output.offset, &kind, sizeof(kind));
+      std::memcpy(frame.data + output.offset + 8, &begin, sizeof(begin));
+      std::memcpy(frame.data + output.offset + 16, &start, sizeof(start));
+      std::memcpy(frame.data + output.offset + 24, &end, sizeof(end));
+      return OBELISK_RT_OK;
+    }
     uint64_t scratchPlaneSize = ((uint64_t{output.width} + 63) / 64) * 8;
     bool fourState = output.kind == OBELISK_RT_DBREG_LOGIC;
     if (*planeSize > scratchPlaneSize ||
@@ -1549,6 +1589,19 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         return OBELISK_RT_INVALID_BYTECODE;
       return obelisk_rt_v1_object_field_store(object, offset,
                                               readManaged(inputRegister(1)));
+    }
+    if (input.kind == OBELISK_RT_DBREG_HANDLE) {
+      if (*planeSize != sizeof(uint64_t) || input.size < 32)
+        return OBELISK_RT_INVALID_BYTECODE;
+      uint32_t kind = 0;
+      uint64_t stableID = UINT64_MAX;
+      std::memcpy(&kind, frame.data + input.offset, sizeof(kind));
+      std::memcpy(&stableID, frame.data + input.offset + 16,
+                  sizeof(stableID));
+      if (kind != OBELISK_RT_DESCRIPTOR_EVENT)
+        return OBELISK_RT_INVALID_BYTECODE;
+      return obelisk_rt_v1_object_write(object, offset, &stableID,
+                                        sizeof(stableID));
     }
     uint64_t scratchPlaneSize = ((uint64_t{input.width} + 63) / 64) * 8;
     bool fourState = input.kind == OBELISK_RT_DBREG_LOGIC;

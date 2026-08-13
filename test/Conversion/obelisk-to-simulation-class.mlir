@@ -23,6 +23,8 @@ module attributes {
       obelisk.sv.type.class_type attributes {bitstream_width = 32 : i64, declared_interfaces = [!obelisk.class_handle<@s1.$root::@s2::@s33.stream_child>], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "supported_object", implemented_interfaces = [!obelisk.class_handle<@s1.$root::@s2::@s33.stream_child>, !obelisk.class_handle<@s1.$root::@s2::@s30.stream_interface>], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "supported_object", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.supported_object>, sym_name = "s3.supported_object", this_variable_path = "supported_object::this", this_variable_symbol = @s1.$root::@s2::@s3.supported_object::@s22.this} {
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "supported_object::field", name = "field", node_id = 4 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s4.field"} {
         }
+        obelisk.sv.symbol.class_property attributes {hierarchical_name = "supported_object::trigger", name = "trigger", node_id = 1006 : i64, semantic_type = !obelisk.event, sym_name = "s35.trigger"} {
+        }
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "supported_object::static_field", lifetime = 1 : i32, name = "static_field", node_id = 40 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s23.static_field"} {
           obelisk.sv.expression.integer_literal attributes {constant_value = "7", is_declared_unsized = true, is_signed = true, node_id = 41 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
           }
@@ -150,13 +152,13 @@ module attributes {
 
 // CHECK: obelisk_sim.class.decl {{.*}}debug_name = "stream_interface"
 // CHECK: obelisk_sim.class.decl @{{[^ ]*supported_object}} {{.*}}debug_name = "supported_object"
+// CHECK: obelisk_sim.class.field {{.*}} : !obelisk_sim.event {{.*}}debug_name = "trigger"
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rng_state"
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rng_increment"
 // CHECK: obelisk_sim.storage.decl {{.*}}hierarchy "supported_object::static_field"
 // CHECK: obelisk_sim.class.alloc
 // CHECK-NEXT: {{.*}} = obelisk_sim.random.next
 // CHECK-NEXT: {{.*}} = obelisk_sim.random.next
-// CHECK: obelisk_sim.class.field_ref
 // CHECK: obelisk_sim.ref.store
 // CHECK: obelisk_sim.call @{{unit_[0-9]+}}({{.*}}) : (!obelisk_sim.context, i32) -> ()
 // The common interface receiver lets canonicalization share one dominating
@@ -175,4 +177,7 @@ module attributes {
 // CHECK-COUNT-2: obelisk_sim.string.scan_field
 // CHECK-COUNT-2: obelisk_sim.string.parse_integer
 // CHECK-COUNT-2: obelisk_sim.managed.store
+// CHECK: {{.*}} = obelisk_sim.event.create
+// CHECK: obelisk_sim.class.field_ref {{.*}} : {{.*}} -> !obelisk_sim.managed_ref<!obelisk_sim.event
+// CHECK: obelisk_sim.managed.store {{.*}} : !obelisk_sim.event
 // CHECK-NOT: obelisk.sv.

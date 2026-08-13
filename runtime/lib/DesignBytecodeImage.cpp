@@ -744,6 +744,9 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && managed(input(0)) &&
            twoStateBits(input(1), 32) && twoStateBits(output(0), 1);
+  case OBELISK_RT_INTRINSIC_V1_EVENT_CREATE:
+    return signature.flags == 0 && site.inputCount == 0 &&
+           site.outputCount == 1 && handle(output(0));
   case OBELISK_RT_INTRINSIC_V1_RANDOM_BOUNDED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&

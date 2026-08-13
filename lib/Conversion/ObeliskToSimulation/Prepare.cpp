@@ -5548,14 +5548,31 @@ void ObeliskSimPreparePass::runOnOperation() {
             unit.source->getParentOp());
         if (!owner)
           return;
+        Value receiver = unit.function.getBody().front().getArgument(1);
         for (Operation *member : getChildren(owner)) {
           auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(member);
           if (!property ||
               property.getLifetime() == semantic::SVVariableLifetime::Static)
             continue;
           SmallVector<Operation *> initializer = getChildren(property);
-          if (initializer.empty())
+          if (initializer.empty()) {
+            FailureOr<Type> type = getNormalizedSemanticType(property);
+            FlatSymbolRefAttr field = classFieldSymbols.lookup(property);
+            if (succeeded(type) && isa<sim::EventType>(*type) && field) {
+              Value event = sim::SimEventCreateOp::create(
+                  initializerBuilder, getSemanticLocation(property), *type);
+              auto receiverType = cast<sim::ClassHandleType>(receiver.getType());
+              Type referenceType = sim::ManagedRefType::get(
+                  context, *type, receiverType.getClassName());
+              Value reference = sim::SimClassFieldRefOp::create(
+                  initializerBuilder, getSemanticLocation(property),
+                  referenceType, receiver, field);
+              sim::SimManagedStoreOp::create(initializerBuilder,
+                                             getSemanticLocation(property),
+                                             event, reference);
+            }
             continue;
+          }
           Operation *cloned = initializerBuilder.clone(*initializer.front());
           if (FlatSymbolRefAttr field = classFieldSymbols.lookup(property))
             cloned->setAttr("obelisk_sim.initialize_field", field);
@@ -5975,8 +5992,24 @@ void ObeliskSimPreparePass::runOnOperation() {
           property.getLifetime() == semantic::SVVariableLifetime::Static)
         continue;
       SmallVector<Operation *> initializer = getChildren(property);
-      if (initializer.empty())
+      if (initializer.empty()) {
+        FailureOr<Type> type = getNormalizedSemanticType(property);
+        FlatSymbolRefAttr field = classFieldSymbols.lookup(property);
+        if (succeeded(type) && isa<sim::EventType>(*type) && field) {
+          Value event = sim::SimEventCreateOp::create(
+              bodyBuilder, getSemanticLocation(property), *type);
+          auto receiverType = cast<sim::ClassHandleType>(receiver.getType());
+          Type referenceType = sim::ManagedRefType::get(
+              context, *type, receiverType.getClassName());
+          Value reference = sim::SimClassFieldRefOp::create(
+              bodyBuilder, getSemanticLocation(property), referenceType,
+              receiver, field);
+          sim::SimManagedStoreOp::create(bodyBuilder,
+                                         getSemanticLocation(property), event,
+                                         reference);
+        }
         continue;
+      }
       Operation *cloned = bodyBuilder.clone(*initializer.front());
       if (FlatSymbolRefAttr field = classFieldSymbols.lookup(property))
         cloned->setAttr("obelisk_sim.initialize_field", field);

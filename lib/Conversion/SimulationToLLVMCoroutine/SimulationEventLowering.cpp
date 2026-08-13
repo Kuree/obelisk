@@ -21,6 +21,36 @@ Value loadCurrentRuntimeContext(ConversionPatternRewriter &rewriter,
   return LLVM::LoadOp::create(rewriter, location, pointer, address, 8);
 }
 
+class EventCreateConversion final
+    : public OpConversionPattern<sim::SimEventCreateOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimEventCreateOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location location = operation.getLoc();
+    Value context = loadCurrentRuntimeContext(rewriter, location);
+    Value output = entryAlloca(rewriter, location, rewriter.getI64Type(), 1, 8);
+    LLVM::StoreOp::create(
+        rewriter, location,
+        llvmConstant(rewriter, location, rewriter.getI64Type(), UINT64_MAX),
+        output, 8);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_scheduler_event_create"),
+            ValueRange{context, output})
+            .getResult();
+    reportManagedStatus(rewriter, location, context, status);
+    rewriter.replaceOp(operation, LLVM::LoadOp::create(
+                                      rewriter, location,
+                                      rewriter.getI64Type(), output, 8));
+    return success();
+  }
+};
+
 class EventTriggerConversion final
     : public OpConversionPattern<sim::SimEventTriggerOp> {
 public:
@@ -96,7 +126,8 @@ public:
 
 void populateEventToLLVMConversionPatterns(RewritePatternSet &patterns,
                                            TypeConverter &converter) {
-  patterns.add<EventTriggerConversion, EventTriggeredConversion,
+  patterns.add<EventCreateConversion, EventTriggerConversion,
+               EventTriggeredConversion,
                EventEqualConversion>(converter, patterns.getContext());
 }
 

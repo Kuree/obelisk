@@ -246,6 +246,8 @@ constexpr uint32_t kIntrinsicSemaphorePut =
     OBELISK_RT_INTRINSIC_V1_SEMAPHORE_PUT;
 constexpr uint32_t kIntrinsicSemaphoreTryGet =
     OBELISK_RT_INTRINSIC_V1_SEMAPHORE_TRY_GET;
+constexpr uint32_t kIntrinsicEventCreate =
+    OBELISK_RT_INTRINSIC_V1_EVENT_CREATE;
 constexpr uint32_t kIntrinsicAssocCreate = OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE;
 constexpr uint32_t kIntrinsicAssocRead = OBELISK_RT_INTRINSIC_V1_ASSOC_READ;
 constexpr uint32_t kIntrinsicAssocWrite = OBELISK_RT_INTRINSIC_V1_ASSOC_WRITE;

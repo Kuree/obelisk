@@ -41,7 +41,7 @@ namespace obelisk::sim {
 bool isNormalizedValueType(Type type) {
   if (auto integer = dyn_cast<IntegerType>(type))
     return integer.isSignless();
-  return isa<FloatType>(type) || isa<LogicType>(type) ||
+  return isa<FloatType>(type) || isa<LogicType, EventType>(type) ||
          isa<CovergroupHandleType, VirtualInterfaceType, ChandleType,
              ProcessType>(type) ||
          isManagedHandleType(type) || isAggregateType(type);

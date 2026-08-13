@@ -450,7 +450,15 @@ def SimManagedIsNullOp : SimOp<"managed.is_null", [Pure]> {
 }
 
 def SimEventNullOp : SimOp<"event.null", [Pure, ConstantLike]> {
-  let summary = "null/default event handle";
+  let summary = "null event handle";
+  let results = (outs SimEventType:$result);
+  let assemblyFormat = "attr-dict";
+}
+
+def SimEventCreateOp : SimOp<"event.create", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>]>
+  ]> {
+  let summary = "create a fresh named-event synchronization object";
   let results = (outs SimEventType:$result);
   let assemblyFormat = "attr-dict";
 }

@@ -12,6 +12,8 @@ static constexpr StringLiteral continuousStoreAttrName =
 
 std::optional<LogicalResult>
 Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
+  if (auto op = dyn_cast<sim::SimEventCreateOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicEventCreate, {}, {op.getResult()});
   if (isa<sim::SimEventNullOp>(operation)) {
     uint32_t destination = reg(plan, operation->getResult(0));
     const Layout &layout = plan.layouts[destination];

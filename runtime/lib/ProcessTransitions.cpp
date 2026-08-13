@@ -1105,6 +1105,29 @@ extern "C" void obelisk_rt_v1_scheduler_event(obelisk_rt_context *context,
   obelisk_rt_v1_scheduler_event_after(context, stableID, nonblocking, 0);
 }
 
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_event_create(
+    obelisk_rt_context *context, uint64_t *outStableID) {
+  if (!context || !outStableID)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outStableID = UINT64_MAX;
+  try {
+    ContextMutexLock lock(context);
+    if (context->schedulerStatus != OBELISK_RT_OK)
+      return context->schedulerStatus;
+    if (context->nextDynamicEventID == 0 ||
+        context->nextDynamicEventID >=
+            OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG)
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    *outStableID = OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG |
+                   context->nextDynamicEventID++;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
+
 extern "C" void obelisk_rt_v1_scheduler_event_after(obelisk_rt_context *context,
                                                     uint64_t stableID,
                                                     uint32_t nonblocking,

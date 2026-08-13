@@ -883,6 +883,7 @@ struct obelisk_rt_context {
   std::unordered_set<uint64_t> designPollCandidates;
   ReusableByteBufferPool designTaskFrames;
   uint64_t nextSchedulerSequence = 1;
+  uint64_t nextDynamicEventID = 1;
   uint64_t nextNativeProcessToken = 1;
   uint32_t nextNativeAutomaticID = 1;
   uint64_t nextDesignTaskID = 1;
