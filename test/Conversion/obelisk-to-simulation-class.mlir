@@ -23,6 +23,8 @@ module attributes {
       obelisk.sv.type.class_type attributes {bitstream_width = 32 : i64, declared_interfaces = [!obelisk.class_handle<@s1.$root::@s2::@s33.stream_child>], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "supported_object", implemented_interfaces = [!obelisk.class_handle<@s1.$root::@s2::@s33.stream_child>, !obelisk.class_handle<@s1.$root::@s2::@s30.stream_interface>], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "supported_object", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.supported_object>, sym_name = "s3.supported_object", this_variable_path = "supported_object::this", this_variable_symbol = @s1.$root::@s2::@s3.supported_object::@s22.this} {
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "supported_object::field", name = "field", node_id = 4 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s4.field"} {
         }
+        obelisk.sv.symbol.class_property attributes {hierarchical_name = "supported_object::bits", name = "bits", node_id = 1100 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s36.bits"} {
+        }
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "supported_object::trigger", name = "trigger", node_id = 1006 : i64, semantic_type = !obelisk.event, sym_name = "s35.trigger"} {
         }
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "supported_object::static_field", lifetime = 1 : i32, name = "static_field", node_id = 40 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s23.static_field"} {
@@ -96,6 +98,40 @@ module attributes {
               }
               obelisk.sv.statement.variable_declaration attributes {node_id = 1003 : i64, referenced_path = "supported_class_use.stream", referenced_symbol = @s1.$root::@s17.supported_class_use::@s18.supported_class_use::@s19::@s32.stream} {
               }
+              obelisk.sv.statement.expression_statement attributes {node_id = 1103 : i64} {
+                obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = true, node_id = 1104 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  obelisk.sv.expression.member_access attributes {field_ordinal = 64 : i64, node_id = 1105 : i64, packed_offset = 0 : i64, referenced_path = "supported_object::field", referenced_symbol = @s1.$root::@s2::@s3.supported_object::@s4.field, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    obelisk.sv.expression.named_value attributes {node_id = 1110 : i64, referenced_path = "supported_class_use.object", referenced_symbol = @s1.$root::@s17.supported_class_use::@s18.supported_class_use::@s19::@s20.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.supported_object>} {
+                    }
+                  }
+                  obelisk.sv.expression.element_select attributes {node_id = 1106 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                    obelisk.sv.expression.member_access attributes {field_ordinal = 64 : i64, node_id = 1107 : i64, packed_offset = 0 : i64, referenced_path = "supported_object::bits", referenced_symbol = @s1.$root::@s2::@s3.supported_object::@s36.bits, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                      obelisk.sv.expression.named_value attributes {node_id = 1108 : i64, referenced_path = "supported_class_use.object", referenced_symbol = @s1.$root::@s17.supported_class_use::@s18.supported_class_use::@s19::@s20.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.supported_object>} {
+                      }
+                    }
+                    obelisk.sv.expression.integer_literal attributes {constant_value = "3", is_declared_unsized = true, is_signed = true, node_id = 1109 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                }
+              }
+              obelisk.sv.statement.expression_statement attributes {node_id = 1111 : i64} {
+                obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = true, node_id = 1112 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  obelisk.sv.expression.member_access attributes {field_ordinal = 64 : i64, node_id = 1113 : i64, packed_offset = 0 : i64, referenced_path = "supported_object::field", referenced_symbol = @s1.$root::@s2::@s3.supported_object::@s4.field, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    obelisk.sv.expression.named_value attributes {node_id = 1114 : i64, referenced_path = "supported_class_use.object", referenced_symbol = @s1.$root::@s17.supported_class_use::@s18.supported_class_use::@s19::@s20.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.supported_object>} {
+                    }
+                  }
+                  obelisk.sv.expression.range_select attributes {is_signed = false, node_id = 1115 : i64, selection_kind = 0 : i32, semantic_type = !obelisk.ranged_packed_array<5 : 2 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                    obelisk.sv.expression.member_access attributes {field_ordinal = 64 : i64, node_id = 1116 : i64, packed_offset = 0 : i64, referenced_path = "supported_object::bits", referenced_symbol = @s1.$root::@s2::@s3.supported_object::@s36.bits, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                      obelisk.sv.expression.named_value attributes {node_id = 1117 : i64, referenced_path = "supported_class_use.object", referenced_symbol = @s1.$root::@s17.supported_class_use::@s18.supported_class_use::@s19::@s20.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.supported_object>} {
+                      }
+                    }
+                    obelisk.sv.expression.integer_literal attributes {constant_value = "5", is_declared_unsized = true, is_signed = true, node_id = 1118 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
+                    obelisk.sv.expression.integer_literal attributes {constant_value = "2", is_declared_unsized = true, is_signed = true, node_id = 1119 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                }
+              }
               obelisk.sv.statement.expression_statement attributes {node_id = 34 : i64} {
                 obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 35 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                   obelisk.sv.expression.member_access attributes {field_ordinal = 64 : i64, node_id = 36 : i64, packed_offset = 0 : i64, referenced_path = "supported_object::field", referenced_symbol = @s1.$root::@s2::@s3.supported_object::@s4.field, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
@@ -152,6 +188,7 @@ module attributes {
 
 // CHECK: obelisk_sim.class.decl {{.*}}debug_name = "stream_interface"
 // CHECK: obelisk_sim.class.decl @{{[^ ]*supported_object}} {{.*}}debug_name = "supported_object"
+// CHECK: obelisk_sim.class.field @[[BITS_FIELD:[^ ]+]] {{.*}} : !obelisk_sim.packed_array<7 : 0 x i1> {{.*}}debug_name = "bits"
 // CHECK: obelisk_sim.class.field {{.*}} : !obelisk_sim.event {{.*}}debug_name = "trigger"
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rng_state"
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rng_increment"
@@ -159,6 +196,13 @@ module attributes {
 // CHECK: obelisk_sim.class.alloc
 // CHECK-NEXT: {{.*}} = obelisk_sim.random.next
 // CHECK-NEXT: {{.*}} = obelisk_sim.random.next
+// CHECK: %[[BITS_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@[[BITS_FIELD]]]
+// CHECK-NEXT: %[[BITS:.*]] = obelisk_sim.managed.load %[[BITS_REF]]
+// CHECK-NEXT: %[[SELECTED:.*]] = obelisk_sim.aggregate.extract %[[BITS]][4]
+// CHECK: %[[RANGE_BASE:.*]] = obelisk_sim.managed.load %[[BITS_REF]]
+// CHECK-NEXT: %[[FLAT_BITS:.*]] = obelisk_sim.packed.flatten %[[RANGE_BASE]]
+// CHECK-NEXT: %[[SHIFTED_BITS:.*]] = arith.shrui %[[FLAT_BITS]], {{.*}}
+// CHECK-NEXT: {{.*}} = arith.trunci %[[SHIFTED_BITS]] : i8 to i4
 // CHECK: obelisk_sim.ref.store
 // CHECK: obelisk_sim.call @{{unit_[0-9]+}}({{.*}}) : (!obelisk_sim.context, i32) -> ()
 // The common interface receiver lets canonicalization share one dominating

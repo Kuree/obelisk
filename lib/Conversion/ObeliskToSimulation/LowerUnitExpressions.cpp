@@ -2496,9 +2496,17 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
     return failure();
 
   Type sourceValueType = (*input).getType();
-  if (auto reference = dyn_cast<sim::RefType>(sourceValueType))
-    sourceValueType = reference.getElementType();
-  else if (auto net = dyn_cast<sim::NetType>(sourceValueType))
+  if (Type elementType = getReferenceElementType(*input)) {
+    sourceValueType = elementType;
+    // Ordinary simulation references have first-class subreference
+    // operations below. Managed, formal, and escaping references do not;
+    // read their aggregate value before applying an rvalue selection.
+    if (!lvalue && !isa<sim::RefType>((*input).getType())) {
+      input = loadReference(*input, location);
+      if (failed(input))
+        return failure();
+    }
+  } else if (auto net = dyn_cast<sim::NetType>(sourceValueType))
     sourceValueType = net.getElementType();
   else if (auto driver = dyn_cast<sim::DriverType>(sourceValueType))
     sourceValueType = driver.getElementType();
