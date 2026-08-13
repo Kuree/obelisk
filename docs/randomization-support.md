@@ -15,6 +15,13 @@ domains without `solve before`; finite semantic domains require a future
 domain-index traversal. It checks a complete aggregate domain through 2^20
 assignments and otherwise retains the global bounded-solver limit.
 
+Recursive polymorphic object paths specialize only dynamic classes with
+observable randomization behavior (rand state, effective constraints, or
+non-builtin lifecycle hooks). Null and behaviorally inert concrete classes
+share one no-op alternative. Behavior-bearing alternatives retain their
+effective virtual `pre_randomize` and `post_randomize` hooks in the selected
+whole-object-graph plan.
+
 | Feature | Current boundary |
 | --- | --- |
 | Generator | Executable PCG-XSH-RR with explicit `{state, increment}` state and the existing `--seed=<u64>` option. The bounded draw uses rejection debiasing. |

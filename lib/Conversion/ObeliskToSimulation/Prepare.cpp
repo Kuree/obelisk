@@ -2127,18 +2127,32 @@ void ObeliskSimPreparePass::runOnOperation() {
                           candidate, candidateHierarchy,
                           "recursive nested object dispatch")))
                     return failure();
+                  bool hasRandomProperty = false;
+                  bool hasLifecycleHook = false;
                   for (semantic::SVClassTypeOp candidateClass :
                        candidateHierarchy)
-                    for (Operation *member : getChildren(candidateClass))
-                      if (auto method = getClassMethod(member);
-                          method &&
-                          method.getIsPrePostRandomize().value_or(false) &&
-                          !method.getIsBuiltin().value_or(false)) {
-                        emitError(getSemanticLocation(method))
-                            << "polymorphic hooks on recursively nested rand "
-                               "objects require compact lifecycle dispatch";
-                        return failure();
-                      }
+                    for (Operation *member : getChildren(candidateClass)) {
+                      if (auto property = dyn_cast<
+                              semantic::SVClassPropertySymbolOp>(member))
+                        hasRandomProperty |=
+                            property.getRandMode() !=
+                            semantic::SVRandMode::None;
+                      if (auto method = getClassMethod(member))
+                        hasLifecycleHook |=
+                            method.getIsPrePostRandomize().value_or(false) &&
+                            !method.getIsBuiltin().value_or(false);
+                    }
+                  SmallVector<EffectiveConstraintGroup> effectiveConstraints;
+                  collectEffectiveConstraints(candidateHierarchy,
+                                              effectiveConstraints);
+                  // Null and a concrete object with no rand state,
+                  // constraints, or lifecycle hooks have identical recursive
+                  // randomization behavior: they contribute no variables or
+                  // predicates and invoke no callbacks. Share one default
+                  // dispatch alternative for every such concrete class.
+                  if (!hasRandomProperty && !hasLifecycleHook &&
+                      effectiveConstraints.empty())
+                    continue;
                   dynamicPlans.push_back(
                       {candidate,
                        static_cast<unsigned>(candidateHierarchy.size())});

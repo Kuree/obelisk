@@ -60,12 +60,16 @@ module {
           obelisk.sv.statement.list attributes {node_id = 29 : i64} {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "leaf_a::pre_randomize", is_builtin, name = "pre_randomize", node_id = 30 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s21.pre_randomize", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "leaf_a::pre_randomize", is_pre_post_randomize, name = "pre_randomize", node_id = 30 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s21.pre_randomize", this_variable_path = "leaf_a::pre_randomize.this", this_variable_symbol = @s1.$root::@s2::@s17.leaf_a::@s21.pre_randomize::@s87.this, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.list attributes {node_id = 31 : i64} {
           }
+          obelisk.sv.symbol.variable attributes {hierarchical_name = "leaf_a::pre_randomize.this", is_compiler_generated, is_const, name = "this", node_id = 137 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s17.leaf_a>, sym_name = "s87.this"} {
+          }
         }
-        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "leaf_a::post_randomize", is_builtin, name = "post_randomize", node_id = 32 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s22.post_randomize", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "leaf_a::post_randomize", is_pre_post_randomize, name = "post_randomize", node_id = 32 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s22.post_randomize", this_variable_path = "leaf_a::post_randomize.this", this_variable_symbol = @s1.$root::@s2::@s17.leaf_a::@s22.post_randomize::@s88.this, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.list attributes {node_id = 33 : i64} {
+          }
+          obelisk.sv.symbol.variable attributes {hierarchical_name = "leaf_a::post_randomize.this", is_compiler_generated, is_const, name = "this", node_id = 138 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s17.leaf_a>, sym_name = "s88.this"} {
           }
         }
         obelisk.sv.symbol.subroutine attributes {hierarchical_name = "leaf_a::get_randstate", is_builtin, name = "get_randstate", node_id = 34 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.string, false>, subroutine_kind = 0 : i32, sym_name = "s23.get_randstate", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
@@ -283,6 +287,10 @@ module {
 // A constraint declared by the descendant's one-level owner participates in
 // every concrete plan alongside the recursively flattened leaves. The null
 // descendant selects the null plan without replacing either object handle.
+// Polymorphic lifecycle hooks remain in their selected whole-graph plan and
+// are guarded by the same ancestor null and rand_mode checks.
+// CHECK-DAG: obelisk_sim.func private @[[LEAF_A_PRE:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "leaf_a::pre_randomize"
+// CHECK-DAG: obelisk_sim.func private @[[LEAF_A_POST:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "leaf_a::post_randomize"
 // CHECK-LABEL: obelisk_sim.func private @{{unit_[0-9]+}}{{.*}}obelisk_sim.hierarchical_name = "top"
 // CHECK-DAG: %[[MIDDLE_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s64_root_field_0]
 // CHECK-DAG: %[[DISPATCH_MIDDLE:.*]] = obelisk_sim.managed.load %[[MIDDLE_REF]]
@@ -300,5 +308,7 @@ module {
 // CHECK-DAG: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s17_leaf_a_field_0]
 // CHECK-DAG: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s3_leaf_base_field_0] {{.*}}class_handle<@__obelisk_class_s32_leaf_b>
 // CHECK-DAG: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s32_leaf_b_field_0]
+// CHECK-DAG: obelisk_sim.class.direct_call @[[LEAF_A_PRE]]
+// CHECK-DAG: obelisk_sim.class.direct_call @[[LEAF_A_POST]]
 // CHECK-NOT: obelisk_sim.managed.store {{.*}} to %[[MIDDLE_REF]] :
 // CHECK-NOT: obelisk_sim.managed.store {{.*}} to %[[LEAF_REF]] :
