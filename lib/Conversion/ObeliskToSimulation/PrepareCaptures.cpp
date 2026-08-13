@@ -120,10 +120,49 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
                         ArrayRef<semantic::SVClassTypeOp> classSources) {
   bool invalid = false;
   PreparedCaptures result;
+  PreparedUnits analysisUnits = units;
+  llvm::DenseMap<Operation *, Operation *> constructorSources;
+  llvm::DenseMap<Operation *, SmallVector<Operation *>> propertyInitializers;
+  llvm::StringMap<semantic::SVClassTypeOp> classesBySymbol;
+  for (semantic::SVClassTypeOp classType : classSources) {
+    auto handle =
+        dyn_cast<semantic::ClassHandleType>(classType.getSemanticType());
+    if (handle)
+      classesBySymbol[handle.getClassName().getLeafReference()] = classType;
+
+    Operation *constructor = nullptr;
+    for (Operation *child : getChildren(classType)) {
+      semantic::SVSubroutineSymbolOp method = getClassMethod(child);
+      if (method && method.getIsConstructor().value_or(false)) {
+        constructor = method;
+        break;
+      }
+    }
+    if (!constructor && !classType.getIsInterface())
+      constructor = classType;
+    if (constructor)
+      constructorSources[classType] = constructor;
+
+    for (Operation *child : getChildren(classType)) {
+      auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(child);
+      if (!property ||
+          property.getLifetime() == semantic::SVVariableLifetime::Static ||
+          getChildren(property).empty())
+        continue;
+      propertyInitializers[classType].push_back(property);
+      // Instance-property initializers execute in the constructor, but Slang
+      // keeps them on their declarations. Analyze each declaration as a
+      // synthetic zero-time source so its direct and transitive captures can
+      // participate in the same closure as ordinary code units.
+      analysisUnits.units.push_back(
+          {property, 0, sim::EntryKind::Function, {}, {}, {},
+           ObserverResult::None});
+    }
+  }
   llvm::DenseMap<Operation *, llvm::StringSet<>> subroutineLocalDescriptors;
   llvm::DenseMap<Operation *, llvm::StringSet<>> writtenDescriptors;
 
-  for (const PreparedUnit &unit : units.units) {
+  for (const PreparedUnit &unit : analysisUnits.units) {
     llvm::StringSet<> seenPaths;
     llvm::StringSet<> seenLocals;
     llvm::StringSet<> seenConstants;
@@ -394,19 +433,21 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
   // Do not propagate it into an enclosing continuous or wildcard process's
   // implicit sensitivity set; otherwise a read-modify-write loop variable can
   // make the caller retrigger itself forever at the same simulation time.
-  for (const PreparedUnit &unit : units.units)
+  for (const PreparedUnit &unit : analysisUnits.units)
     for (const auto &path : subroutineLocalDescriptors[unit.source])
       if (writtenDescriptors[unit.source].contains(path.getKey()))
         result.readDescriptors[unit.source].erase(path.getKey());
 
   llvm::DenseMap<Operation *, SmallVector<Operation *>> callEdges;
-  for (const PreparedUnit &unit : units.units) {
+  for (const PreparedUnit &unit : analysisUnits.units) {
     llvm::SmallDenseSet<Operation *> targets;
     unit.source->walk([&](semantic::SVCallExpressionOp call) {
-      Operation *target = units.resolveDirectCallee(call, semanticSymbols);
+      Operation *target =
+          analysisUnits.resolveDirectCallee(call, semanticSymbols);
       if (target && targets.insert(target).second)
         callEdges[unit.source].push_back(target);
-      for (Operation *candidate : units.resolveVirtualInterfaceCallees(call))
+      for (Operation *candidate :
+           analysisUnits.resolveVirtualInterfaceCallees(call))
         if (targets.insert(candidate).second)
           callEdges[unit.source].push_back(candidate);
       auto addRandomizeHook = [&](StringRef attrName) {
@@ -438,12 +479,13 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
     });
   }
 
-  for (const PreparedUnit &unit : units.units)
+  for (const PreparedUnit &unit : analysisUnits.units)
     unit.source->walk([&](semantic::SVCallExpressionOp call) {
-      Operation *target = units.resolveDirectCallee(call, semanticSymbols);
+      Operation *target =
+          analysisUnits.resolveDirectCallee(call, semanticSymbols);
       if (!target) {
         SmallVector<Operation *> candidates =
-            units.resolveVirtualInterfaceCallees(call);
+            analysisUnits.resolveVirtualInterfaceCallees(call);
         if (!candidates.empty())
           target = candidates.front();
       }
@@ -476,6 +518,67 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
           return;
         }
       }
+    });
+
+  auto resolveClass = [&](semantic::SVNewClassExpressionOp construct)
+      -> semantic::SVClassTypeOp {
+    if (construct.getIsSuperClass()) {
+      auto owner = construct->getParentOfType<semantic::SVClassTypeOp>();
+      if (!owner || !owner.getBaseClass())
+        return {};
+      auto handle = dyn_cast<semantic::ClassHandleType>(*owner.getBaseClass());
+      auto found = handle ? classesBySymbol.find(
+                                handle.getClassName().getLeafReference())
+                          : classesBySymbol.end();
+      return found == classesBySymbol.end() ? semantic::SVClassTypeOp{}
+                                             : found->second;
+    }
+    auto type = construct->getAttrOfType<TypeAttr>("semantic_type");
+    auto handle = type ? dyn_cast<semantic::ClassHandleType>(type.getValue())
+                       : semantic::ClassHandleType{};
+    auto found = handle
+                     ? classesBySymbol.find(
+                           handle.getClassName().getLeafReference())
+                     : classesBySymbol.end();
+    return found == classesBySymbol.end() ? semantic::SVClassTypeOp{}
+                                           : found->second;
+  };
+  auto addEdge = [&](Operation *source, Operation *target) {
+    if (!source || !target)
+      return;
+    auto &targets = callEdges[source];
+    if (!llvm::is_contained(targets, target))
+      targets.push_back(target);
+  };
+
+  // Constructor execution includes the base constructor first and then every
+  // declaration-order instance-property initializer. Model both lifecycle
+  // edges explicitly because neither is necessarily nested under the
+  // semantic constructor operation.
+  for (semantic::SVClassTypeOp classType : classSources) {
+    Operation *constructor = constructorSources.lookup(classType);
+    if (!constructor)
+      continue;
+    if (std::optional<Type> baseType = classType.getBaseClass()) {
+      auto handle = dyn_cast<semantic::ClassHandleType>(*baseType);
+      auto found = handle ? classesBySymbol.find(
+                                handle.getClassName().getLeafReference())
+                          : classesBySymbol.end();
+      if (found != classesBySymbol.end())
+        addEdge(constructor, constructorSources.lookup(found->second));
+    }
+    for (Operation *property : propertyInitializers[classType])
+      addEdge(constructor, property);
+  }
+
+  // A childless new-class expression invokes a synthesized constructor and
+  // therefore has no semantic call operation from which to infer an edge.
+  // Explicit constructor calls are harmlessly deduplicated here as well.
+  for (const PreparedUnit &unit : analysisUnits.units)
+    unit.source->walk([&](semantic::SVNewClassExpressionOp construct) {
+      semantic::SVClassTypeOp classType = resolveClass(construct);
+      if (classType)
+        addEdge(unit.source, constructorSources.lookup(classType));
     });
 
   SmallVector<std::pair<Operation *, Operation *>> virtualOverrideEdges;
@@ -513,13 +616,13 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       mergeCaptures(method, overridden);
       mergeCaptures(overridden, method);
     }
-    for (const PreparedUnit &unit : units.units)
-      for (Operation *target : callEdges[unit.source])
-        mergeCaptures(unit.source, target);
+    for (const auto &edge : callEdges)
+      for (Operation *target : edge.second)
+        mergeCaptures(edge.first, target);
   } while (changed);
 
-  for (const PreparedUnit &unit : units.units) {
-    llvm::sort(result.descriptors[unit.source],
+  for (auto &entry : result.descriptors)
+    llvm::sort(entry.second,
                [](const auto &lhs, const auto &rhs) {
                  if (lhs.second.kind != rhs.second.kind)
                    return lhs.second.kind < rhs.second.kind;
@@ -527,6 +630,7 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
                    return lhs.second.id < rhs.second.id;
                  return lhs.first < rhs.first;
                });
+  for (const PreparedUnit &unit : analysisUnits.units) {
     llvm::sort(
         result.locals[unit.source],
         [](const auto &lhs, const auto &rhs) { return lhs.path < rhs.path; });

@@ -2100,8 +2100,21 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
     }
     FlatSymbolRefAttr constructor = FlatSymbolRefAttr::get(
         function.getContext(), constructorName.getValue());
+    SmallVector<Value> arguments;
+    if (auto captures = op->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
+      for (Attribute captureAttr : captures) {
+        StringRef path = cast<StringAttr>(captureAttr).getValue();
+        Value capture = values.lookup(path);
+        if (!capture) {
+          emitError(location)
+              << "implicit constructor capture has no frozen local binding: "
+              << path;
+          return failure();
+        }
+        arguments.push_back(capture);
+      }
     sim::SimClassDirectCallOp::create(builder, location, TypeRange{},
-                                      constructor, receiver, ValueRange{});
+                                      constructor, receiver, arguments);
     if (!op.getIsSuperClass())
       return receiver;
     return arith::ConstantOp::create(builder, location, builder.getI1Type(),
