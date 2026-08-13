@@ -85,11 +85,38 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
                             : sim::DynamicArrayType{};
     auto queue = succeeded(memoryType) ? dyn_cast<sim::QueueType>(*memoryType)
                                        : sim::QueueType{};
-    if (!array && !dynamicArray && !queue) {
+    auto associative = succeeded(memoryType)
+                           ? dyn_cast<sim::AssocArrayType>(*memoryType)
+                           : sim::AssocArrayType{};
+    if (!array && !dynamicArray && !queue && !associative) {
       emitError(getSemanticLocation(actual))
-          << name
-          << " currently requires an unpacked array, dynamic array, or queue";
+          << name << " requires an unpacked array";
       return failure();
+    }
+    if (associative &&
+        (!sim::getPackedWidth(associative.getKeyType()) ||
+         associative.getWildcardIndex())) {
+      emitError(getSemanticLocation(actual))
+          << name << " associative array indices must be integral";
+      return failure();
+    }
+    if (auto semanticType =
+            actual->getAttrOfType<TypeAttr>("semantic_type")) {
+      if (auto semanticArray =
+              dyn_cast<semantic::AssocArrayType>(semanticType.getValue())) {
+        if (isa<semantic::EnumType>(semanticArray.getKeyType()) ||
+            isa<semantic::EnumType>(semanticArray.getElementType())) {
+          emitError(getSemanticLocation(actual))
+              << name << " enum associative arrays require enumerator "
+                         "validation metadata";
+          return failure();
+        }
+      } else if (isa<semantic::EnumType>(semanticType.getValue())) {
+        emitError(getSemanticLocation(actual))
+            << name << " enum memory elements require enumerator validation "
+                       "metadata";
+        return failure();
+      }
     }
     SmallVector<sim::UnpackedArrayType> dimensions;
     Type elementType;
@@ -100,8 +127,9 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
         elementType = dimension.getElementType();
       }
     } else {
-      elementType = dynamicArray ? dynamicArray.getElementType()
-                                 : queue.getElementType();
+      elementType = dynamicArray   ? dynamicArray.getElementType()
+                    : queue        ? queue.getElementType()
+                                   : associative.getElementType();
     }
     std::optional<unsigned> elementWidth = sim::getPackedWidth(elementType);
     if (!elementWidth || *elementWidth == 0) {
@@ -149,6 +177,12 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
         if (failed(loaded))
           return failure();
         memory = cloneSequentialValue(*loaded, location);
+        if (associative) {
+          FailureOr<Value> allocated = ensureAssocArray(memory, location);
+          if (failed(allocated))
+            return failure();
+          memory = *allocated;
+        }
         if (isa<sim::RefType>((*memoryReference).getType()))
           sim::SimRefStoreOp::create(builder, location, memory,
                                      *memoryReference);
@@ -193,19 +227,37 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       return arith::ConstantOp::create(builder, location, i64,
                                        builder.getI64IntegerAttr(value));
     };
-    Value low = indexConstant(
-        array ? std::min(dimensions.front().getLeft(),
-                         dimensions.front().getRight())
-              : 0);
+    int64_t associativeLow = 0;
+    int64_t associativeHigh = 0;
+    if (associative) {
+      unsigned keyWidth = *sim::getPackedWidth(associative.getKeyType());
+      if (associative.getSignedKey()) {
+        associativeLow = keyWidth == 64
+                             ? INT64_MIN
+                             : -(int64_t{1} << (keyWidth - 1));
+        associativeHigh = keyWidth == 64
+                              ? INT64_MAX
+                              : (int64_t{1} << (keyWidth - 1)) - 1;
+      } else {
+        associativeHigh = keyWidth == 64
+                              ? static_cast<int64_t>(UINT64_MAX)
+                              : static_cast<int64_t>((uint64_t{1} << keyWidth) -
+                                                     1);
+      }
+    }
+    Value low = indexConstant(array ? std::min(dimensions.front().getLeft(),
+                                               dimensions.front().getRight())
+                                    : associativeLow);
     Value high;
     if (array)
       high = indexConstant(std::max(dimensions.front().getLeft(),
                                     dimensions.front().getRight()));
-    else {
+    else if (!associative) {
       Value size = sim::SimContainerSizeOp::create(builder, location, i64,
                                                    memory);
       high = arith::SubIOp::create(builder, location, size, indexConstant(1));
-    }
+    } else
+      high = indexConstant(associativeHigh);
     uint64_t rowSizeValue = 1;
     for (sim::UnpackedArrayType dimension :
          array ? ArrayRef<sim::UnpackedArrayType>(dimensions).drop_front()
@@ -234,8 +286,18 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     FailureOr<Value> finish = addressArgument(3, high);
     if (failed(start) || failed(finish))
       return failure();
-    Value descending = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::sgt, *start, *finish);
+    bool hasExplicitFinish =
+        children.size() >= 4 &&
+        !isa<semantic::SVEmptyArgumentExpressionOp>(children[3]);
+    bool unsignedAddress = associative && !associative.getSignedKey();
+    auto greaterThan = unsignedAddress ? arith::CmpIPredicate::ugt
+                                       : arith::CmpIPredicate::sgt;
+    auto lessEqual = unsignedAddress ? arith::CmpIPredicate::ule
+                                     : arith::CmpIPredicate::sle;
+    auto greaterEqual = unsignedAddress ? arith::CmpIPredicate::uge
+                                        : arith::CmpIPredicate::sge;
+    Value descending = arith::CmpIOp::create(builder, location, greaterThan,
+                                             *start, *finish);
     auto emitMessage = [&](StringRef severity, StringRef detail) {
       Value standardError = constant(i32, static_cast<int32_t>(0x80000002u));
       Value item = sim::SimBytesConstantOp::create(
@@ -268,13 +330,13 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
 
     auto withinInclusiveRange = [&](Value value) -> Value {
       Value atOrBelowStart = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::sle, value, *start);
+          builder, location, lessEqual, value, *start);
       Value atOrAboveStart = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::sge, value, *start);
+          builder, location, greaterEqual, value, *start);
       Value atOrAboveFinish = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::sge, value, *finish);
+          builder, location, greaterEqual, value, *finish);
       Value atOrBelowFinish = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::sle, value, *finish);
+          builder, location, lessEqual, value, *finish);
       Value withinDescending = arith::AndIOp::create(
           builder, location, atOrBelowStart, atOrAboveFinish);
       Value withinAscending = arith::AndIOp::create(
@@ -284,11 +346,9 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     };
     auto withinMemory = [&](Value value) -> Value {
       Value withinLow =
-          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::sge,
-                                value, low);
+          arith::CmpIOp::create(builder, location, greaterEqual, value, low);
       Value withinHigh =
-          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::sle,
-                                value, high);
+          arith::CmpIOp::create(builder, location, lessEqual, value, high);
       return arith::AndIOp::create(builder, location, withinLow, withinHigh);
     };
     Value validBounds = arith::AndIOp::create(
@@ -405,9 +465,16 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       }
       if (failed(storeReference(elementReference, element, location)))
         return failure();
-    } else {
+    } else if (!associative) {
       sim::SimContainerWriteOp::create(builder, location, memory, address,
                                        element);
+    } else {
+      FailureOr<Value> key =
+          convert(address, associative.getKeyType(), false, location,
+                  associative.getSignedKey());
+      if (failed(key))
+        return failure();
+      sim::SimAssocWriteOp::create(builder, location, memory, *key, element);
     }
     Value step = arith::SelectOp::create(builder, location, descending,
                                          indexConstant(-1), indexConstant(1));
@@ -441,8 +508,10 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
         arith::MulIOp::create(builder, location, expectedWords, rowSize);
     Value countMatches = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, wordCount, expectedWords);
-    Value suppressWarning =
-        arith::OrIOp::create(builder, location, sawFileAddress, countMatches);
+    Value suppressWarning = arith::OrIOp::create(
+        builder, location, sawFileAddress, countMatches);
+    if (!hasExplicitFinish)
+      suppressWarning = constant(builder.getI1Type(), 1);
     cf::CondBranchOp::create(builder, location, suppressWarning, exit,
                              ValueRange{}, warnWordCount, ValueRange{});
 
