@@ -364,6 +364,7 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
     size_t skippedArguments = 0;
     StringRef severity;
     bool fatal = false;
+    bool stringOutput = false;
   };
   std::optional<DisplayKind> display;
   if (name == "$display")
@@ -398,7 +399,19 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
     display = DisplayKind{true, false, 8};
   else if (name == "$fwriteh")
     display = DisplayKind{true, false, 16};
-  else if (name == "$info")
+  else if (name == "$swrite") {
+    display = DisplayKind{false, false, 10};
+    display->stringOutput = true;
+  } else if (name == "$swriteb") {
+    display = DisplayKind{false, false, 2};
+    display->stringOutput = true;
+  } else if (name == "$swriteo") {
+    display = DisplayKind{false, false, 8};
+    display->stringOutput = true;
+  } else if (name == "$swriteh") {
+    display = DisplayKind{false, false, 16};
+    display->stringOutput = true;
+  } else if (name == "$info")
     display = DisplayKind{false, true, 10, 0x80000002u, 0, "INFO", false};
   else if (name == "$warning")
     display = DisplayKind{false, true, 10, 0x80000002u, 0, "WARNING", false};
@@ -409,7 +422,8 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
         DisplayKind{false,   true, 10, 0x80000002u, children.empty() ? 0u : 1u,
                     "FATAL", true};
   if (display) {
-    size_t firstItem = display->file ? 1 : display->skippedArguments;
+    size_t firstItem =
+        display->file || display->stringOutput ? 1 : display->skippedArguments;
     if (children.size() < firstItem) {
       emitError(location) << name << " has too few arguments";
       return failure();
@@ -484,6 +498,36 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
         } else if (isa<sim::StringType>((*value).getType())) {
           items.push_back(*value);
           flags.push_back(8);
+        } else if (auto array =
+                       dyn_cast<sim::UnpackedArrayType>((*value).getType());
+                   array && isa<IntegerType>(array.getElementType()) &&
+                   cast<IntegerType>(array.getElementType()).getWidth() == 8) {
+          SmallVector<Value> characters;
+          unsigned count = sim::getAggregateNumElements(array);
+          Type logicType = sim::LogicType::get(function.getContext(), 8);
+          characters.reserve(count);
+          for (unsigned index = 0; index != count; ++index) {
+            Value character = sim::SimAggregateExtractOp::create(
+                builder, getSemanticLocation(child), array.getElementType(),
+                *value, index);
+            FailureOr<Value> converted = convert(character, logicType, false,
+                                                 getSemanticLocation(child));
+            if (failed(converted))
+              return failure();
+            characters.push_back(*converted);
+          }
+          Value packed = sim::SimLogicConcatOp::create(
+              builder, getSemanticLocation(child),
+              sim::LogicType::get(function.getContext(), count * 8),
+              characters);
+          // IEEE 1800-2017 21.2.1: an unpacked byte-array expression with no
+          // corresponding conversion is formatted as a character string.
+          // Preserve left-bound-to-right-bound ordering in the packed value;
+          // string.from_packed reads its most-significant byte first.
+          items.push_back(sim::SimStringFromPackedOp::create(
+              builder, getSemanticLocation(child),
+              sim::StringType::get(function.getContext()), packed));
+          flags.push_back(8);
         } else if (isa<sim::DynamicArrayType, sim::QueueType,
                        sim::AssocArrayType>((*value).getType())) {
           items.push_back(*value);
@@ -539,6 +583,67 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
           ++exponent;
         timePrecision = builder.getI32IntegerAttr(exponent);
       }
+    }
+    if (display->stringOutput) {
+      Operation *destinationNode = children.front();
+      if (auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(
+              destinationNode)) {
+        SmallVector<Operation *> assignmentChildren = getChildren(assignment);
+        if (!assignmentChildren.empty())
+          destinationNode = assignmentChildren.front();
+      }
+      FailureOr<Value> destination = lowerExpression(destinationNode, true);
+      if (failed(destination)) {
+        emitError(getSemanticLocation(destinationNode))
+            << name << " destination must be a writable variable";
+        return failure();
+      }
+      Type destinationType = getReferenceElementType(*destination);
+      bool integral =
+          isa<IntegerType, sim::LogicType, sim::PackedArrayType,
+              sim::PackedStructType, sim::PackedUnionType>(destinationType);
+      bool byteArray = false;
+      if (auto array = dyn_cast<sim::UnpackedArrayType>(destinationType))
+        if (auto element = dyn_cast<IntegerType>(array.getElementType()))
+          byteArray = element.getWidth() == 8;
+      if (!isa<sim::StringType>(destinationType) && !integral && !byteArray) {
+        emitError(getSemanticLocation(destinationNode))
+            << name
+            << " destination must have integral, unpacked byte array, or "
+               "string type";
+        return failure();
+      }
+      Value result = sim::SimStringOutputFormatOp::create(
+          builder, location, sim::StringType::get(function.getContext()),
+          context, items, display->radix, flags, lexicalScope,
+          op.getSystemLibraryCellAttr(), timeMultiplier, timePrecision);
+      FailureOr<Value> converted = failure();
+      if (byteArray) {
+        // IEEE 1800-2017 5.9 and 21.3.3: string assignment to an unpacked
+        // byte array is left-justified, in left-bound-to-right-bound order.
+        // getc returns zero beyond the string, providing the required fill.
+        SmallVector<Value> bytes;
+        unsigned count = sim::getAggregateNumElements(destinationType);
+        Type elementType =
+            cast<sim::UnpackedArrayType>(destinationType).getElementType();
+        bytes.reserve(count);
+        for (unsigned index = 0; index != count; ++index) {
+          Value position =
+              arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                        builder.getI64IntegerAttr(index));
+          bytes.push_back(sim::SimStringGetcOp::create(
+              builder, location, elementType, result, position));
+        }
+        converted = sim::SimAggregateConstructOp::create(
+                        builder, location, destinationType, bytes)
+                        .getResult();
+      } else {
+        converted = convert(result, destinationType, false, location);
+      }
+      if (failed(converted) ||
+          failed(storeReference(*destination, *converted, location)))
+        return failure();
+      return dummyTaskResult();
     }
     if (display->fatal)
       sim::SimFatalOp::create(builder, location, context, verbosity);

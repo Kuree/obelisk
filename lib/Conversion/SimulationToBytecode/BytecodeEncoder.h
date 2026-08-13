@@ -71,6 +71,8 @@ private:
                                     uint32_t flags = 0);
   uint32_t emitBytesConstant(FunctionPlan &plan, llvm::ArrayRef<uint8_t> bytes);
   uint32_t emitU64Constant(FunctionPlan &plan, uint64_t value);
+  template <typename Op>
+  uint32_t emitOutputFormatMetadata(FunctionPlan &plan, Op op);
 
   mlir::LogicalResult encodeClassDirectCall(FunctionPlan &plan,
                                             sim::SimClassDirectCallOp call);
@@ -81,6 +83,9 @@ private:
                              sim::SimClassVirtualTaskCallOp call);
   std::optional<mlir::LogicalResult>
   encodeClassOperation(FunctionPlan &plan, mlir::Operation *operation);
+  mlir::LogicalResult
+  encodeStringOutputFormat(FunctionPlan &plan,
+                           sim::SimStringOutputFormatOp op);
   mlir::LogicalResult encodeDisplay(FunctionPlan &plan, sim::SimDisplayOp op);
   uint64_t emit(Instruction instruction);
   std::pair<uint64_t, uint64_t> addMap(FunctionPlan &destinationPlan,

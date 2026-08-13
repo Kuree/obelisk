@@ -457,53 +457,69 @@ MutableOperandRange SimSuspendJoinOp::getContinuationOperandsMutable() {
   return MutableOperandRange(getOperation(), count, getNumOperands() - count);
 }
 
-LogicalResult SimDisplayOp::verify() {
-  int64_t radix = getDefaultRadix();
+static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
+                                       ArrayRef<int32_t> itemFlags,
+                                       int64_t radix,
+                                       IntegerAttr timeMultiplier) {
   if (radix != 2 && radix != 8 && radix != 10 && radix != 16)
-    return emitOpError("default radix must be 2, 8, 10, or 16");
-  if (IntegerAttr multiplier = getTimeMultiplierAttr())
-    if (!multiplier.getValue().isStrictlyPositive())
-      return emitOpError("time multiplier must be positive");
+    return operation->emitOpError("default radix must be 2, 8, 10, or 16");
+  if (timeMultiplier && !timeMultiplier.getValue().isStrictlyPositive())
+    return operation->emitOpError("time multiplier must be positive");
   unsigned itemIndex = 0;
-  for (int32_t flags : getItemFlags()) {
+  for (int32_t flags : itemFlags) {
     if ((flags & 2) != 0) {
       if (flags != 2)
-        return emitOpError("omitted display items cannot carry other flags");
+        return operation->emitOpError(
+            "omitted display items cannot carry other flags");
       continue;
     }
-    if (itemIndex == getItems().size())
-      return emitOpError("item flags require more display operands");
-    Value item = getItems()[itemIndex++];
+    if (itemIndex == items.size())
+      return operation->emitOpError("item flags require more display operands");
+    Value item = items[itemIndex++];
     if (!isa<BytesType, StringType, DynamicArrayType, QueueType, AssocArrayType,
              IntegerType, LogicType>(item.getType()) &&
         !item.getType().isF64())
-      return emitOpError(
+      return operation->emitOpError(
           "items must be literal bytes, packed integers, or f64 reals; "
           "managed strings and containers are also accepted");
     if ((flags & ~31) != 0)
-      return emitOpError("display item flags contain an unknown bit");
+      return operation->emitOpError(
+          "display item flags contain an unknown bit");
     if ((flags & 16) != 0 &&
         !isa<DynamicArrayType, QueueType, AssocArrayType>(item.getType()))
-      return emitOpError("container display flags require a container operand");
+      return operation->emitOpError(
+          "container display flags require a container operand");
     if ((flags & 4) != 0 && !item.getType().isF64())
-      return emitOpError("real display items must have f64 operands");
+      return operation->emitOpError(
+          "real display items must have f64 operands");
     if ((flags & 4) == 0 && item.getType().isF64())
-      return emitOpError("f64 display operands must be marked real");
+      return operation->emitOpError("f64 display operands must be marked real");
     if ((flags & 5) == 5)
-      return emitOpError("real display items cannot be marked signed");
+      return operation->emitOpError(
+          "real display items cannot be marked signed");
     if (isa<BytesType>(item.getType()) && flags != 0)
-      return emitOpError("literal byte items cannot be signed");
+      return operation->emitOpError("literal byte items cannot be signed");
     if (isa<StringType>(item.getType()) && flags != 8)
-      return emitOpError(
+      return operation->emitOpError(
           "managed string display items require the string flag");
     if (isa<DynamicArrayType, QueueType, AssocArrayType>(item.getType()) &&
         flags != 16)
-      return emitOpError(
+      return operation->emitOpError(
           "managed container display items require the container flag");
   }
-  if (itemIndex != getItems().size())
-    return emitOpError("requires one flag entry per display item");
+  if (itemIndex != items.size())
+    return operation->emitOpError("requires one flag entry per display item");
   return success();
+}
+
+LogicalResult SimDisplayOp::verify() {
+  return verifyOutputItems(*this, getItems(), getItemFlags(), getDefaultRadix(),
+                           getTimeMultiplierAttr());
+}
+
+LogicalResult SimStringOutputFormatOp::verify() {
+  return verifyOutputItems(*this, getItems(), getItemFlags(), getDefaultRadix(),
+                           getTimeMultiplierAttr());
 }
 
 static LogicalResult verifyPackedFileResult(Operation *operation, Type type) {

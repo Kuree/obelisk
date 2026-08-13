@@ -209,6 +209,17 @@ def RTFormatOp : RTOp<"format", [
   let hasVerifier = 1;
 }
 
+def RTStringOutputFormatOp : RTOp<"string_output_format", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemAlloc<RTRuntimeResource>, MemRead, MemAlloc]>
+]> {
+  let arguments = (ins RTContextType:$context,
+                       RTArgumentArrayType:$items,
+                       RTFormatEnvironmentType:$environment,
+                       RTRadix:$default_radix);
+  let results = (outs RTStatusType:$status, AnyType:$string);
+}
+
 def RTDisplayOp : RTOp<"display", [
   MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
                  MemWrite<RTIOResource>, MemRead]>

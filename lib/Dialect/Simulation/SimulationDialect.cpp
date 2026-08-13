@@ -259,6 +259,9 @@ InlineLegality getInlineLegality(SimCallOp call, SimFuncOp callee) {
     if (auto display = dyn_cast<SimDisplayOp>(operation);
         display && !display.getScopeAttr())
       legality = InlineLegality::UnfrozenDisplayScope;
+    else if (auto format = dyn_cast<SimStringOutputFormatOp>(operation);
+             format && !format.getScopeAttr())
+      legality = InlineLegality::UnfrozenDisplayScope;
     else if (hasUnknownInlineMetadata(operation))
       legality = InlineLegality::UnknownMetadata;
     return legality == InlineLegality::Legal ? WalkResult::advance()

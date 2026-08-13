@@ -101,6 +101,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
                          {op.getResult()});
   if (auto op = dyn_cast<sim::SimTimeNowOp>(operation))
     return emitIntrinsic(plan, kIntrinsicTimeNow, {}, {op.getResult()});
+  if (auto op = dyn_cast<sim::SimStringOutputFormatOp>(operation))
+    return encodeStringOutputFormat(plan, op);
   if (auto op = dyn_cast<sim::SimDisplayOp>(operation))
     return encodeDisplay(plan, op);
   if (auto op = dyn_cast<sim::SimFileOpenMCDOp>(operation))

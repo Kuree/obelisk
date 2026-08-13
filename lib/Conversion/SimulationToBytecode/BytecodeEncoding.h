@@ -15,6 +15,8 @@ namespace obelisk::bytecode {
 
 constexpr uint32_t kInvalidRegister = UINT32_MAX;
 
+constexpr uint32_t kIntrinsicStringOutputFormat =
+    OBELISK_RT_INTRINSIC_V1_FORMAT;
 constexpr uint32_t kIntrinsicDisplay = OBELISK_RT_INTRINSIC_V1_DISPLAY;
 constexpr uint32_t kIntrinsicFinish = OBELISK_RT_INTRINSIC_V1_FINISH;
 constexpr uint32_t kIntrinsicStop = OBELISK_RT_INTRINSIC_V1_STOP;

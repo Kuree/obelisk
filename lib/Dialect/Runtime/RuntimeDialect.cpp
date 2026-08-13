@@ -354,14 +354,14 @@ LogicalResult RTArgumentBytesOp::verify() {
 }
 
 LogicalResult RTArgumentArrayOp::verify() {
-  return verifyLocalConsumers<RTFormatOp, RTDisplayOp>(
+  return verifyLocalConsumers<RTFormatOp, RTStringOutputFormatOp, RTDisplayOp>(
       *this, getResult(), "stack-backed format argument array");
 }
 
 LogicalResult RTFormatEnvironmentOp::verify() {
   if (!getTimeMultiplierAttr().getValue().isStrictlyPositive())
     return emitOpError("time multiplier must be positive");
-  return verifyLocalConsumers<RTFormatOp, RTDisplayOp>(
+  return verifyLocalConsumers<RTFormatOp, RTStringOutputFormatOp, RTDisplayOp>(
       *this, getResult(), "stack-backed format environment");
 }
 

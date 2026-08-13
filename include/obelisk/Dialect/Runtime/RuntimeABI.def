@@ -21,6 +21,8 @@ OBELISK_RUNTIME_CALL(TerminationRequested, RTTerminationRequestedOp,
 OBELISK_RUNTIME_CALL(SchedulerTime, RTSchedulerTimeOp,
                      obelisk_rt_v1_scheduler_time, SchedulerTime)
 OBELISK_RUNTIME_CALL(Format, RTFormatOp, obelisk_rt_v1_format, Format)
+OBELISK_RUNTIME_CALL(StringOutputFormat, RTStringOutputFormatOp,
+                     obelisk_rt_v1_string_output_format, StringOutputFormat)
 OBELISK_RUNTIME_CALL(Display, RTDisplayOp, obelisk_rt_v1_display, Display)
 OBELISK_RUNTIME_CALL(TimeFormat, RTTimeFormatOp, obelisk_rt_v1_time_format,
                      TimeFormat)

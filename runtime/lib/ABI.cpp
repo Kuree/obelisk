@@ -815,6 +815,11 @@ ABI_FUNCTION(obelisk_rt_v1_format,
                                    const obelisk_rt_arg_v1 *, uint64_t,
                                    const obelisk_rt_format_env_v1 *,
                                    obelisk_rt_buffer_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_string_output_format,
+             obelisk_rt_status (*)(obelisk_rt_context *, obelisk_rt_radix,
+                                   const obelisk_rt_arg_v1 *, uint64_t,
+                                   const obelisk_rt_format_env_v1 *,
+                                   obelisk_rt_string_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_display,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint32_t,
                                    obelisk_rt_radix, const obelisk_rt_arg_v1 *,

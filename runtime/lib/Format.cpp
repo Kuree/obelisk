@@ -914,6 +914,32 @@ obelisk_rt_v1_time_format(obelisk_rt_context *context, int32_t units,
   });
 }
 
+extern "C" obelisk_rt_status obelisk_rt_v1_string_output_format(
+    obelisk_rt_context *context, obelisk_rt_radix defaultRadix,
+    const obelisk_rt_arg_v1 *items, uint64_t itemCount,
+    const obelisk_rt_format_env_v1 *environment,
+    obelisk_rt_string_v1 *outString) {
+  if (!context || !outString || (itemCount != 0 && !items))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outString = 0;
+  return guarded(context, [&] {
+    std::string output;
+    std::string error;
+    TimeOverride timeFormat = snapshotTimeFormat(context);
+    obelisk_rt_status status = buildDisplay(
+        output, defaultRadix, items, itemCount, environment, timeFormat, error);
+    if (status != OBELISK_RT_OK) {
+      setLastError(context, std::move(error));
+      return status;
+    }
+    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    if (!lane)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    return obelisk_rt_v1_string_create(lane, output.data(), output.size(),
+                                       outString);
+  });
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
                       uint32_t appendNewline, obelisk_rt_radix defaultRadix,

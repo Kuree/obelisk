@@ -2595,10 +2595,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     std::memcpy(statusAddress, &statusBits, sizeof(statusBits));
     return OBELISK_RT_OK;
   }
+  case OBELISK_RT_INTRINSIC_V1_FORMAT:
   case OBELISK_RT_INTRINSIC_V1_DISPLAY: {
+    bool stringOutput = signature.id == OBELISK_RT_INTRINSIC_V1_FORMAT;
     auto metadata = bytes(0);
-    auto descriptor = scalar(1);
-    if (!metadata || !descriptor || descriptor.value() > UINT32_MAX ||
+    auto descriptor = stringOutput ? std::optional<uint64_t>(0) : scalar(1);
+    if (!metadata || !descriptor || *descriptor > UINT32_MAX ||
         metadata->size < 44 || read32(metadata->data) != 1)
       return OBELISK_RT_INVALID_BYTECODE;
     uint32_t newline = read32(metadata->data + 4);
@@ -2619,9 +2621,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     const uint8_t *flags = metadata->data + 44;
     const char *scope = reinterpret_cast<const char *>(flags + flagsSize);
     const char *library = scope + scopeSize;
-    uint32_t physical = 2;
+    uint32_t physical = stringOutput ? 1 : 2;
     std::vector<Logic> values;
-    values.reserve(site.inputCount - 2);
+    values.reserve(site.inputCount - physical);
     std::vector<double> realValues;
     realValues.reserve(itemCount);
     std::vector<obelisk_rt_arg_v1> arguments;
@@ -2650,8 +2652,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         if (layout.kind != OBELISK_RT_DBREG_STRING || layout.size != 8 ||
             (itemFlags & 7) != 0)
           return OBELISK_RT_INVALID_BYTECODE;
-        arguments.push_back({OBELISK_RT_ARG_MANAGED_STRING,
-                             OBELISK_RT_ARG_FORMAT_STRING, 0,
+        arguments.push_back({OBELISK_RT_ARG_MANAGED_STRING, 0, 0,
                              frame.data + layout.offset, nullptr});
       } else if ((itemFlags & 16) != 0) {
         if (layout.kind != OBELISK_RT_DBREG_MANAGED || layout.size != 8 ||
@@ -2689,10 +2690,19 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     obelisk_rt_format_env_v1 environment{scope,       scopeSize, library,
                                          librarySize, 0,         precision,
                                          nullptr,     0,         multiplier};
-    return obelisk_rt_v1_display(context, static_cast<uint32_t>(*descriptor),
-                                 newline, static_cast<obelisk_rt_radix>(radix),
-                                 arguments.data(), arguments.size(),
-                                 &environment);
+    if (!stringOutput)
+      return obelisk_rt_v1_display(
+          context, static_cast<uint32_t>(*descriptor), newline,
+          static_cast<obelisk_rt_radix>(radix), arguments.data(),
+          arguments.size(), &environment);
+    obelisk_rt_string_v1 result = 0;
+    obelisk_rt_status status = obelisk_rt_v1_string_output_format(
+        context, static_cast<obelisk_rt_radix>(radix), arguments.data(),
+        arguments.size(), &environment, &result);
+    if (status != OBELISK_RT_OK)
+      return status;
+    return writeString(outputRegister(0), result) ? OBELISK_RT_OK
+                                                  : OBELISK_RT_INVALID_BYTECODE;
   }
   case OBELISK_RT_INTRINSIC_V1_FINISH:
   case OBELISK_RT_INTRINSIC_V1_STOP:

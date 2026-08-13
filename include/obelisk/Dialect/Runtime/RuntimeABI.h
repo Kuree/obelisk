@@ -29,6 +29,7 @@ enum class RuntimeSignature {
   TerminationRequested,
   SchedulerTime,
   Format,
+  StringOutputFormat,
   Display,
   TimeFormat,
   DumpOpen,

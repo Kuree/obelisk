@@ -973,6 +973,16 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && input(0) &&
            input(0)->kind == OBELISK_RT_DBREG_REAL64 && string(output(0));
+  case OBELISK_RT_INTRINSIC_V1_FORMAT:
+    if (site.inputCount < 1 || site.outputCount != 1 || !bytes(input(0)) ||
+        !string(output(0)))
+      return false;
+    for (uint32_t index = 1; index < site.inputCount; ++index)
+      if (!bytes(input(index)) && !numeric(input(index)) &&
+          !floating(input(index)) && !string(input(index)) &&
+          !managed(input(index)))
+        return false;
+    return true;
   case OBELISK_RT_INTRINSIC_V1_DISPLAY:
     if (site.inputCount < 2 || site.outputCount != 0 || !bytes(input(0)) ||
         !bits(input(1), 32))

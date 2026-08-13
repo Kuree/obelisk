@@ -3248,6 +3248,11 @@ obelisk_rt_v1_format(obelisk_rt_context *context, const char *format,
                      uint64_t argument_count,
                      const obelisk_rt_format_env_v1 *environment,
                      obelisk_rt_buffer_v1 *out_buffer);
+obelisk_rt_status obelisk_rt_v1_string_output_format(
+    obelisk_rt_context *context, obelisk_rt_radix default_radix,
+    const obelisk_rt_arg_v1 *items, uint64_t item_count,
+    const obelisk_rt_format_env_v1 *environment,
+    obelisk_rt_string_v1 *out_string);
 // $timeformat (IEEE 1800 20.4.2). `units` is the decimal exponent in seconds
 // of the unit %t reports in; `fraction_digits` and `width` are its precision
 // and minimum field width, the latter covering the suffix too. The override

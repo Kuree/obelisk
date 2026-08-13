@@ -104,6 +104,12 @@ func.func @runtime_calls(
        !obelisk_rt.format_env) -> (!obelisk_rt.status, !obelisk_rt.buffer)
   obelisk_rt.buffer.release %formatted : (!obelisk_rt.buffer) -> ()
 
+  // CHECK: obelisk_rt.string_output_format
+  %string_status, %string = obelisk_rt.string_output_format %ctx, %args, %env
+      {default_radix = 8 : i32} :
+      (!obelisk_rt.context, !obelisk_rt.args, !obelisk_rt.format_env) ->
+      (!obelisk_rt.status, i64)
+
   %display_status = obelisk_rt.display %ctx, %fd, %newline, %args, %env
       {default_radix = 16 : i32} :
       (!obelisk_rt.context, !obelisk_rt.fd, i1, !obelisk_rt.args,

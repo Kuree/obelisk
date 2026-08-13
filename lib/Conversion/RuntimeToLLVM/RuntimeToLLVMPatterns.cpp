@@ -57,6 +57,10 @@ LLVM::LLVMFunctionType getFunctionType(runtime::RuntimeCall call,
     arguments = {abi.pointer, abi.pointer, abi.i64,    abi.pointer,
                  abi.i64,     abi.pointer, abi.pointer};
     break;
+  case runtime::RuntimeSignature::StringOutputFormat:
+    arguments = {abi.pointer, abi.i32, abi.pointer,
+                 abi.i64,     abi.pointer, abi.pointer};
+    break;
   case runtime::RuntimeSignature::Display:
     arguments = {abi.pointer, abi.i32, abi.i32,    abi.i32,
                  abi.pointer, abi.i64, abi.pointer};
@@ -776,6 +780,17 @@ public:
                                    argumentData, argumentCount, operands[3],
                                    output},
                                   output, abi.span, abi.alignments.span);
+    }
+    case runtime::RuntimeCall::StringOutputFormat: {
+      auto format = cast<runtime::RTStringOutputFormatOp>(operation);
+      Value radix = LLVM::ConstantOp::create(
+          rewriter, location, abi.i32,
+          static_cast<int64_t>(format.getDefaultRadix()));
+      auto [itemData, itemCount] = span(operands[1]);
+      Value output = allocate(abi.i64, abi.alignments.i64);
+      return replaceStatusAndLoad(
+          {operands[0], radix, itemData, itemCount, operands[2], output},
+          output, abi.i64, abi.alignments.i64);
     }
     case runtime::RuntimeCall::Display: {
       auto display = cast<runtime::RTDisplayOp>(operation);

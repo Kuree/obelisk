@@ -94,6 +94,78 @@ public:
   using OpConversionPattern<Op>::OpConversionPattern;
 };
 
+template <typename Op, typename Adaptor>
+static FailureOr<std::pair<Value, Value>>
+buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
+  Location loc = op.getLoc();
+  SmallVector<Value> arguments;
+  unsigned itemIndex = 0;
+  for (int32_t flags : op.getItemFlags()) {
+    if ((flags & 2) != 0) {
+      arguments.push_back(runtime::RTArgumentEmptyOp::create(
+          rewriter, loc, runtime::ArgumentType::get(rewriter.getContext())));
+      continue;
+    }
+    ValueRange converted = adaptor.getItems()[itemIndex];
+    Type sourceType = op.getItems()[itemIndex++].getType();
+    if (isa<sim::BytesType>(sourceType)) {
+      if (converted.size() != 1)
+        return rewriter.notifyMatchFailure(
+            op, "literal byte item did not convert 1:1");
+      arguments.push_back(runtime::RTArgumentBytesOp::create(
+          rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
+          converted.front(), true));
+      continue;
+    }
+    if (isa<sim::StringType>(sourceType)) {
+      if (converted.size() != 1)
+        return rewriter.notifyMatchFailure(
+            op, "managed string output item did not convert 1:1");
+      arguments.push_back(runtime::RTArgumentManagedStringOp::create(
+          rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
+          converted.front(), false));
+      continue;
+    }
+    if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
+            sourceType)) {
+      if (converted.size() != 1)
+        return rewriter.notifyMatchFailure(
+            op, "managed container output item did not convert 1:1");
+      arguments.push_back(runtime::RTArgumentManagedContainerOp::create(
+          rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
+          converted.front()));
+      continue;
+    }
+    if (sourceType.isF64()) {
+      if (converted.size() != 1)
+        return rewriter.notifyMatchFailure(
+            op, "real output item did not convert 1:1");
+      arguments.push_back(runtime::RTArgumentRealOp::create(
+          rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
+          converted.front()));
+      continue;
+    }
+    if (converted.size() != 1 && converted.size() != 2)
+      return rewriter.notifyMatchFailure(
+          op, "packed output item must convert to one or two planes");
+    Value unknown = converted.size() == 2 ? converted[1] : Value();
+    arguments.push_back(runtime::RTArgumentPackedOp::create(
+        rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
+        converted.front(), unknown, (flags & 1) != 0));
+  }
+  Value array = runtime::RTArgumentArrayOp::create(
+      rewriter, loc, runtime::ArgumentArrayType::get(rewriter.getContext()),
+      arguments);
+  std::string scope = op.getScope().value_or("").empty() ? displayScope(op)
+                                                         : op.getScope()->str();
+  Value environment = runtime::RTFormatEnvironmentOp::create(
+      rewriter, loc, runtime::FormatEnvironmentType::get(rewriter.getContext()),
+      scope, op.getLibraryCell().value_or(""), 0,
+      op.getTimePrecision().value_or(0), "",
+      op.getTimeMultiplier().value_or(1));
+  return std::make_pair(array, environment);
+}
+
 class BytesConstantConversion final
     : public SimIOConversion<sim::SimBytesConstantOp> {
 public:
@@ -139,81 +211,46 @@ public:
     Location loc = op.getLoc();
     Value context = runtimeContext(rewriter, loc, adaptor.getContext().front());
     Value fd = descriptor(rewriter, loc, adaptor.getDescriptor().front());
-    SmallVector<Value> arguments;
-    unsigned itemIndex = 0;
-    for (int32_t flags : op.getItemFlags()) {
-      if ((flags & 2) != 0) {
-        arguments.push_back(runtime::RTArgumentEmptyOp::create(
-            rewriter, loc, runtime::ArgumentType::get(rewriter.getContext())));
-        continue;
-      }
-      ValueRange converted = adaptor.getItems()[itemIndex];
-      Type sourceType = op.getItems()[itemIndex++].getType();
-      if (isa<sim::BytesType>(sourceType)) {
-        if (converted.size() != 1)
-          return rewriter.notifyMatchFailure(op,
-                                             "literal byte item did not convert 1:1");
-        arguments.push_back(runtime::RTArgumentBytesOp::create(
-            rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
-            converted.front(), true));
-        continue;
-      }
-      if (isa<sim::StringType>(sourceType)) {
-        if (converted.size() != 1)
-          return rewriter.notifyMatchFailure(
-              op, "managed string display item did not convert 1:1");
-        arguments.push_back(runtime::RTArgumentManagedStringOp::create(
-            rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
-            converted.front(), true));
-        continue;
-      }
-      if (isa<sim::DynamicArrayType, sim::QueueType,
-              sim::AssocArrayType>(sourceType)) {
-        if (converted.size() != 1)
-          return rewriter.notifyMatchFailure(
-              op, "managed container display item did not convert 1:1");
-        arguments.push_back(runtime::RTArgumentManagedContainerOp::create(
-            rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
-            converted.front()));
-        continue;
-      }
-      if (sourceType.isF64()) {
-        if (converted.size() != 1)
-          return rewriter.notifyMatchFailure(
-              op, "real display item did not convert 1:1");
-        arguments.push_back(runtime::RTArgumentRealOp::create(
-            rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
-            converted.front()));
-        continue;
-      }
-      if (converted.size() != 1 && converted.size() != 2)
-        return rewriter.notifyMatchFailure(
-            op, "packed display item must convert to one or two planes");
-      Value unknown = converted.size() == 2 ? converted[1] : Value();
-      arguments.push_back(runtime::RTArgumentPackedOp::create(
-          rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
-          converted.front(), unknown, (flags & 1) != 0));
-    }
-    Value array = runtime::RTArgumentArrayOp::create(
-        rewriter, loc, runtime::ArgumentArrayType::get(rewriter.getContext()),
-        arguments);
-    std::string scope = op.getScope().value_or("").empty()
-                            ? displayScope(op)
-                            : op.getScope()->str();
-    Value environment = runtime::RTFormatEnvironmentOp::create(
-        rewriter, loc,
-        runtime::FormatEnvironmentType::get(rewriter.getContext()),
-        scope, op.getLibraryCell().value_or(""), 0,
-        op.getTimePrecision().value_or(0), "",
-        op.getTimeMultiplier().value_or(1));
+    FailureOr<std::pair<Value, Value>> output =
+        buildOutputList(op, adaptor, rewriter);
+    if (failed(output))
+      return failure();
     Value newline = iConstant(rewriter, loc, rewriter.getI1Type(),
                               op.getAppendNewline() ? 1 : 0);
     auto radix = static_cast<runtime::Radix>(op.getDefaultRadix());
     Value status = runtime::RTDisplayOp::create(
         rewriter, loc, runtime::StatusType::get(rewriter.getContext()), context,
-        fd, newline, array, environment, radix);
+        fd, newline, output->first, output->second, radix);
     sim::SimStatusCheckOp::create(rewriter, loc, status);
     rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+class StringOutputFormatConversion final
+    : public SimIOConversion<sim::SimStringOutputFormatOp> {
+public:
+  using SimIOConversion::SimIOConversion;
+
+  LogicalResult
+  matchAndRewrite(sim::SimStringOutputFormatOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    FailureOr<std::pair<Value, Value>> output =
+        buildOutputList(op, adaptor, rewriter);
+    if (failed(output))
+      return failure();
+    Type resultType = getTypeConverter()->convertType(op.getResult().getType());
+    if (!resultType)
+      return failure();
+    auto call = runtime::RTStringOutputFormatOp::create(
+        rewriter, loc,
+        TypeRange{runtime::StatusType::get(rewriter.getContext()), resultType},
+        runtimeContext(rewriter, loc, adaptor.getContext().front()),
+        output->first, output->second,
+        static_cast<runtime::Radix>(op.getDefaultRadix()));
+    sim::SimStatusCheckOp::create(rewriter, loc, call.getStatus());
+    rewriter.replaceOp(op, call.getString());
     return success();
   }
 };
@@ -608,7 +645,8 @@ public:
         sim::SimBytesConstantOp, sim::SimTimeFormatOp, sim::SimFinishOp,
         sim::SimStopOp,
         sim::SimFatalOp, sim::SimTerminationRequestedOp, sim::SimTimeNowOp,
-        sim::SimDisplayOp, sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
+        sim::SimDisplayOp, sim::SimStringOutputFormatOp,
+        sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
         sim::SimFileCloseOp, sim::SimFileFlushOp, sim::SimFileGetcOp,
         sim::SimFileUngetcOp, sim::SimFileGetlineOp, sim::SimFileReadPackedOp,
         sim::SimFileReadMemTokenOp,
@@ -638,7 +676,7 @@ void populateSimulationToRuntimePatterns(const TypeConverter &converter,
                                          RewritePatternSet &patterns) {
   MLIRContext *context = patterns.getContext();
   patterns.add<BytesConstantConversion, TimeFormatConversion,
-               DisplayConversion, GetcConversion,
+               DisplayConversion, StringOutputFormatConversion, GetcConversion,
                UngetcConversion, GetlineConversion, ReadPackedConversion,
                ReadMemTokenConversion,
                EofConversion, SeekConversion, TellConversion>(converter,

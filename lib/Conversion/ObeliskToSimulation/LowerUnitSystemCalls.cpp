@@ -1233,7 +1233,8 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
                   "$writeb",    "$writeo",     "$writeh",         "$fdisplay",
                   "$fdisplayb", "$fdisplayo",  "$fdisplayh",      "$fwrite",
                   "$fwriteb",   "$fwriteo",    "$fwriteh",        "$info",
-                  "$warning",   "$error",      "$fatal"},
+                  "$warning",   "$error",      "$fatal",         "$swrite",
+                  "$swriteb",   "$swriteo",    "$swriteh"},
                  true)
           .Default(false);
   if (displayCall)

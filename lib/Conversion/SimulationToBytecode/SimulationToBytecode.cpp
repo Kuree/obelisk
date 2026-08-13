@@ -26,6 +26,7 @@
 #include <optional>
 #include <string>
 #include <tuple>
+#include <type_traits>
 
 using namespace mlir;
 
@@ -333,10 +334,14 @@ uint32_t Encoder::emitU64Constant(FunctionPlan &plan, uint64_t value) {
   return result;
 }
 
-LogicalResult Encoder::encodeDisplay(FunctionPlan &plan, sim::SimDisplayOp op) {
+template <typename Op>
+uint32_t Encoder::emitOutputFormatMetadata(FunctionPlan &plan, Op op) {
   SmallVector<uint8_t> metadata;
   append32(metadata, 1);
-  append32(metadata, op.getAppendNewline() ? 1 : 0);
+  if constexpr (std::is_same_v<Op, sim::SimDisplayOp>)
+    append32(metadata, op.getAppendNewline() ? 1 : 0);
+  else
+    append32(metadata, 0);
   append32(metadata, op.getDefaultRadix());
   append32(metadata, op.getItemFlags().size());
   StringRef scope = op.getScope().value_or("");
@@ -351,7 +356,24 @@ LogicalResult Encoder::encodeDisplay(FunctionPlan &plan, sim::SimDisplayOp op) {
     append32(metadata, static_cast<uint32_t>(flag));
   llvm::append_range(metadata, scope.bytes());
   llvm::append_range(metadata, library.bytes());
-  uint32_t metadataRegister = emitBytesConstant(plan, metadata);
+  return emitBytesConstant(plan, metadata);
+}
+
+LogicalResult
+Encoder::encodeStringOutputFormat(FunctionPlan &plan,
+                                  sim::SimStringOutputFormatOp op) {
+  uint32_t metadataRegister = emitOutputFormatMetadata(plan, op);
+  if (metadataRegister == kInvalidRegister)
+    return op.emitOpError("cannot allocate output-format metadata register");
+  SmallVector<uint32_t> inputs{metadataRegister};
+  for (Value item : op.getItems())
+    inputs.push_back(reg(plan, item));
+  return emitIntrinsicRegisters(plan, kIntrinsicStringOutputFormat, inputs,
+                                {reg(plan, op.getResult())});
+}
+
+LogicalResult Encoder::encodeDisplay(FunctionPlan &plan, sim::SimDisplayOp op) {
+  uint32_t metadataRegister = emitOutputFormatMetadata(plan, op);
   if (metadataRegister == kInvalidRegister)
     return op.emitOpError("cannot allocate display metadata register");
   SmallVector<uint32_t> inputs{metadataRegister, reg(plan, op.getDescriptor())};
@@ -429,7 +451,8 @@ bool Encoder::mayCollect(Operation *operation) {
       sim::SimStringFromPackedOp, sim::SimStringConcatOp,
       sim::SimStringRepeatOp, sim::SimStringPutcOp, sim::SimStringSubstrOp,
       sim::SimStringCaseConvertOp, sim::SimStringFormatIntegerOp,
-      sim::SimStringFormatRealOp, sim::SimStringScanFieldOp,
+      sim::SimStringFormatRealOp, sim::SimStringOutputFormatOp,
+      sim::SimStringScanFieldOp,
       sim::SimFileGetlineStringOp, sim::SimFileScanFieldOp,
       sim::SimFileErrorStringOp,
       sim::SimPlusargValueOp, sim::SimCallOp,

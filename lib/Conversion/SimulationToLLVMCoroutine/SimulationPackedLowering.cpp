@@ -335,7 +335,8 @@ LogicalResult lowerPackedSimulationOperations(
   packedTarget.addIllegalOp<
       sim::SimBytesConstantOp, sim::SimFinishOp, sim::SimStopOp,
       sim::SimFatalOp, sim::SimTerminationRequestedOp, sim::SimTimeNowOp,
-      sim::SimDisplayOp, sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
+      sim::SimDisplayOp, sim::SimStringOutputFormatOp,
+      sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
       sim::SimFileCloseOp, sim::SimFileFlushOp, sim::SimFileGetcOp,
       sim::SimFileUngetcOp, sim::SimFileGetlineOp, sim::SimFileReadPackedOp,
       sim::SimFileEofOp, sim::SimFileSeekOp, sim::SimFileTellOp,

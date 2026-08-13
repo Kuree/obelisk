@@ -943,6 +943,31 @@ def SimStringFormatRealOp
   let summary = "format a real into a managed string";
 }
 
+def SimStringOutputFormatOp : SimOp<"string.output_format", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+                   MemRead<SimIOResource>]>
+  ]> {
+  let summary = "format a SystemVerilog output list into a managed string";
+  let description = [{
+    This is the result-producing counterpart of `display`: it applies the
+    `$write` output-list rules without writing a descriptor. `item_flags` and
+    the call-site formatting environment have the same representation and
+    semantics as `display`.
+  }];
+  let arguments = (ins SimContextType:$context, Variadic<AnyType>:$items,
+                       I32Attr:$default_radix,
+                       DenseI32ArrayAttr:$item_flags,
+                       OptionalAttr<StrAttr>:$scope,
+                       OptionalAttr<StrAttr>:$library_cell,
+                       OptionalAttr<I64Attr>:$time_multiplier,
+                       OptionalAttr<I32Attr>:$time_precision);
+  let results = (outs SimStringType:$result);
+  let assemblyFormat = [{$context `(` $items `)`
+    `radix` `=` $default_radix `flags` `=` $item_flags attr-dict
+    `:` type($items)}];
+  let hasVerifier = 1;
+}
+
 def SimClassAllocOp : SimOp<"class.alloc", [
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
