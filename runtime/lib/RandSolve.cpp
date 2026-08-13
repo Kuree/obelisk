@@ -730,7 +730,8 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
     std::vector<DomainGroup> domainGroups;
     uint64_t encodedDomainMask = 0;
     if (encodedDomains) {
-      if (domainGroupCount == 0 || domainRecordCount == 0)
+      if (domainGroupCount == 0 || domainRecordCount == 0 ||
+          domainGroupCount > domainRecordCount)
         return OBELISK_RT_INVALID_ARGUMENT;
       domainGroups.resize(domainGroupCount);
       std::vector<uint8_t> seen(domainGroupCount, 0);
@@ -838,16 +839,6 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
         return OBELISK_RT_INVALID_ARGUMENT;
       if (overlap != 0)
         domainMutableMask |= group.targetMask;
-      else {
-        uint64_t field = (start >> group.targetOffset) & widthMask(group.width);
-        bool legal =
-            std::any_of(group.patterns.begin(), group.patterns.end(),
-                        [&](const DomainPattern &pattern) {
-                          return (field & pattern.mask) == pattern.value;
-                        });
-        if (!legal)
-          return OBELISK_RT_OK;
-      }
     }
     uint64_t ordinaryMutableMask = mutableMask & ~domainMutableMask;
     unsigned ordinaryMutableWidth = countBits(ordinaryMutableMask);

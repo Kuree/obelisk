@@ -4882,13 +4882,14 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       llvm::all_of(proposalDefinitions, isClosedDefinition);
   exactProposal |= closedDefinitionProposal;
   // Mode changes can reach the residual block even when the default-mode
-  // proposal is exact.  Reject programs whose semantic-domain metadata the
-  // wide runtime cannot yet interpret instead of generating a latent failure.
-  if (wideProgram &&
-      (hasSolveBefore || hasFiniteDomains || !distPlans.empty())) {
+  // proposal is exact. Reject ordered or weighted metadata that the wide
+  // runtime cannot interpret instead of generating a latent failure. Finite
+  // semantic domains use the same versioned mixed-radix traversal as the
+  // narrow residual solver.
+  if (wideProgram && (hasSolveBefore || !distPlans.empty())) {
     emitError(location)
-        << "wide residual random fallback does not yet support solve before, "
-           "dist, or finite semantic domains";
+        << "wide residual random fallback does not yet support solve before "
+           "or dist";
     return failure();
   }
 
@@ -5893,7 +5894,19 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                     constantAssignment64(pattern.value));
           member = arith::OrIOp::create(builder, location, member, matches);
         }
-        satisfied = arith::AndIOp::create(builder, location, satisfied, member);
+        Value mutableField = mutableMask;
+        if (offset != 0)
+          mutableField = arith::ShRUIOp::create(builder, location, mutableField,
+                                                constantAssignment64(offset));
+        mutableField = arith::AndIOp::create(builder, location, mutableField,
+                                             constantAssignment64(fieldMask));
+        Value inactive =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                  mutableField, constantAssignment64(0));
+        Value accepted =
+            arith::OrIOp::create(builder, location, member, inactive);
+        satisfied =
+            arith::AndIOp::create(builder, location, satisfied, accepted);
       }
       domainPropertyOffset += property.width;
     }

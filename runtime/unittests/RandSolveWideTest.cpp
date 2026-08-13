@@ -4,6 +4,7 @@
 
 #include "gtest/gtest.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -33,9 +34,18 @@ struct Instruction {
   std::vector<uint64_t> literal;
 };
 
+struct DomainRecord {
+  uint32_t group;
+  uint32_t targetOffset;
+  uint16_t width;
+  uint64_t mask;
+  uint64_t value;
+};
+
 std::vector<uint8_t> program(uint32_t aggregateWidth, uint32_t captureCount,
                              std::vector<Instruction> instructions,
-                             uint32_t flags = 0) {
+                             uint32_t flags = 0,
+                             std::vector<DomainRecord> domains = {}) {
   std::vector<uint64_t> literals;
   for (Instruction &instruction : instructions) {
     if (instruction.opcode != OBELISK_RT_RANDOM_PUSH_LITERAL_V1)
@@ -64,6 +74,22 @@ std::vector<uint8_t> program(uint32_t aggregateWidth, uint32_t captureCount,
   }
   for (uint64_t literal : literals)
     append64(bytes, literal);
+  if ((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) != 0) {
+    uint32_t groupCount = 0;
+    for (const DomainRecord &domain : domains)
+      groupCount = std::max(groupCount, domain.group + 1);
+    append32(bytes, groupCount);
+    append32(bytes, static_cast<uint32_t>(domains.size()));
+    for (const DomainRecord &domain : domains) {
+      append32(bytes, domain.group);
+      append32(bytes, domain.targetOffset);
+      append16(bytes, domain.width);
+      append16(bytes, 0);
+      append32(bytes, 0);
+      append64(bytes, domain.mask);
+      append64(bytes, domain.value);
+    }
+  }
   return bytes;
 }
 
@@ -306,6 +332,93 @@ TEST_F(RandSolveWideTest, CarriesEnumerationAcrossWordBoundary) {
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment[0], 0u);
   EXPECT_EQ(assignment[1], 1u);
+}
+
+TEST_F(RandSolveWideTest, TraversesFiniteDomainAcrossWordBoundary) {
+  std::vector<uint8_t> bytes =
+      program(65, 0,
+              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 63},
+               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 0, {2}},
+               {OBELISK_RT_RANDOM_EQ_V1, 1},
+               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS,
+              {{0, 63, 2, 3, 1}, {0, 63, 2, 3, 2}});
+  uint64_t start[] = {0, 0};
+  uint64_t mutableMask[] = {uint64_t{1} << 63, 1};
+  uint64_t assignment[] = {UINT64_MAX, UINT64_MAX};
+  uint32_t success = 0;
+  uint64_t nextState = 0;
+  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
+                2, 73, 17, nullptr, 0, nullptr, 0, assignment, &success,
+                &nextState),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 1u);
+  EXPECT_EQ(assignment[0], 0u);
+  EXPECT_EQ(assignment[1], 1u);
+  EXPECT_NE(nextState, 73u);
+}
+
+TEST_F(RandSolveWideTest, AllowsUnnamedValueInInactiveFiniteDomain) {
+  std::vector<uint8_t> bytes =
+      program(65, 0,
+              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
+               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS,
+              {{0, 63, 2, 3, 1}, {0, 63, 2, 3, 2}});
+  uint64_t start[] = {0, 0};
+  uint64_t mutableMask[] = {0, 0};
+  uint64_t assignment[] = {UINT64_MAX, UINT64_MAX};
+  uint32_t success = 0;
+  uint64_t nextState = 0;
+  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
+                1, 79, 19, nullptr, 0, nullptr, 0, assignment, &success,
+                &nextState),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 1u);
+  EXPECT_EQ(assignment[0], 0u);
+  EXPECT_EQ(assignment[1], 0u);
+  EXPECT_EQ(nextState, 79u);
+
+  mutableMask[0] = uint64_t{1} << 63;
+  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
+                1, 79, 19, nullptr, 0, nullptr, 0, assignment, &success,
+                &nextState),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(success, 0u);
+}
+
+TEST_F(RandSolveWideTest, RejectsMalformedFiniteDomainMetadata) {
+  auto rejects = [&](std::vector<uint8_t> bytes) {
+    uint64_t start[] = {0, 0};
+    uint64_t mutableMask[] = {UINT64_MAX, 1};
+    uint64_t assignment[] = {0, 0};
+    uint32_t success = 1;
+    uint64_t nextState = 0;
+    EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                  context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
+                  1, 83, 21, nullptr, 0, nullptr, 0, assignment, &success,
+                  &nextState),
+              OBELISK_RT_INVALID_ARGUMENT);
+    EXPECT_EQ(success, 0u);
+  };
+  std::vector<Instruction> truth = {
+      {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
+      {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+       OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}};
+
+  rejects(program(65, 0, truth, OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS,
+                  {{1, 63, 2, 3, 1}}));
+  rejects(program(65, 0, truth, OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS,
+                  {{0, 63, 2, 3, 1}, {1, 64, 1, 1, 0}}));
+  std::vector<uint8_t> truncated = program(
+      65, 0, truth, OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS, {{0, 63, 2, 3, 1}});
+  truncated.pop_back();
+  rejects(std::move(truncated));
 }
 
 TEST_F(RandSolveWideTest, HonorsConstraintModeMask) {

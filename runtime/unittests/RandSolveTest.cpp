@@ -305,7 +305,7 @@ TEST_F(RandSolveTest, SamplesDistAcrossSparseFiniteDomain) {
   }
 }
 
-TEST_F(RandSolveTest, RejectsInvalidFixedDomainValueAndPartialMutation) {
+TEST_F(RandSolveTest, AllowsInvalidFixedDomainValueButRejectsPartialMutation) {
   std::vector<uint8_t> bytes =
       program(4, 0,
               {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
@@ -317,7 +317,8 @@ TEST_F(RandSolveTest, RejectsInvalidFixedDomainValueAndPartialMutation) {
                                              bytes.size(), 4, 0, 0, 2, nullptr,
                                              0, &assignment, &success),
             OBELISK_RT_OK);
-  EXPECT_EQ(success, 0u);
+  EXPECT_EQ(success, 1u);
+  EXPECT_EQ(assignment, 4u);
   EXPECT_EQ(obelisk_rt_v1_random_solve_modes(context, bytes.data(),
                                              bytes.size(), 1, 3, 0, 2, nullptr,
                                              0, &assignment, &success),
@@ -339,6 +340,7 @@ TEST_F(RandSolveTest, RejectsMalformedFiniteDomainMetadata) {
 
   rejects(program(4, 0, truth, false, {}, {},
                   {{0, 0, 2, 3, 1}, {1, 1, 2, 3, 2}}));
+  rejects(program(4, 0, truth, false, {}, {}, {{1, 0, 2, 3, 1}}));
   rejects(program(4, 0, truth, false, {}, {},
                   {{0, 0, 4, 8, 0}, {0, 0, 4, 4, 0}}));
   rejects(program(64, 0, truth, false, {}, {}, {{0, 0, 64, 0, 0}}));

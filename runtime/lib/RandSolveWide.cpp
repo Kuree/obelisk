@@ -30,6 +30,21 @@ struct WideInstruction {
   WideValue literal;
 };
 
+struct DomainPattern {
+  uint64_t mask = 0;
+  uint64_t value = 0;
+  uint64_t freeMask = 0;
+  uint64_t cardinality = 0;
+};
+
+struct DomainGroup {
+  uint32_t targetOffset = 0;
+  uint16_t width = 0;
+  std::vector<DomainPattern> patterns;
+  uint64_t cardinality = 0;
+  bool fullCardinality = false;
+};
+
 struct WideProgram {
   uint32_t aggregateWidth = 0;
   uint32_t maxDepth = 0;
@@ -37,6 +52,7 @@ struct WideProgram {
   std::vector<uint32_t> captureWidths;
   std::vector<uint64_t> captureOffsets;
   std::vector<WideInstruction> instructions;
+  std::vector<DomainGroup> domainGroups;
 };
 
 uint16_t read16(const uint8_t *bytes) {
@@ -72,12 +88,53 @@ bool bit(const WideValue &value, uint32_t index) {
          ((value.words[index / 64] >> (index % 64)) & 1) != 0;
 }
 
+uint64_t widthMask(uint32_t width) {
+  return width >= 64 ? UINT64_MAX : (uint64_t{1} << width) - 1;
+}
+
+uint64_t compressBits(uint64_t value, uint64_t mask) {
+  uint64_t compressed = 0;
+  unsigned output = 0;
+  for (unsigned input = 0; input != 64; ++input) {
+    uint64_t selected = uint64_t{1} << input;
+    if ((mask & selected) == 0)
+      continue;
+    if ((value & selected) != 0)
+      compressed |= uint64_t{1} << output;
+    ++output;
+  }
+  return compressed;
+}
+
+uint64_t expandBits(uint64_t value, uint64_t mask) {
+  uint64_t expanded = 0;
+  unsigned input = 0;
+  for (unsigned output = 0; output != 64; ++output) {
+    uint64_t selected = uint64_t{1} << output;
+    if ((mask & selected) == 0)
+      continue;
+    if ((value & (uint64_t{1} << input)) != 0)
+      expanded |= selected;
+    ++input;
+  }
+  return expanded;
+}
+
+unsigned countBits(uint64_t value) {
+  return static_cast<unsigned>(__builtin_popcountll(value));
+}
+
 void setBit(WideValue &value, uint32_t index, bool selected) {
   uint64_t mask = uint64_t{1} << (index % 64);
   if (selected)
     value.words[index / 64] |= mask;
   else
     value.words[index / 64] &= ~mask;
+}
+
+void insert(WideValue &value, uint32_t offset, uint32_t width, uint64_t field) {
+  for (uint32_t bitIndex = 0; bitIndex != width; ++bitIndex)
+    setBit(value, offset + bitIndex, ((field >> bitIndex) & 1) != 0);
 }
 
 bool truth(const WideValue &value) {
@@ -299,9 +356,11 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
   uint32_t encodedCaptureCount = read32(bytes + 16);
   uint32_t flags = read32(bytes + 20);
   uint32_t literalWordCount = read32(bytes + 24);
+  bool encodedDomains = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) != 0;
   if (result.aggregateWidth == 0 || encodedCaptureCount != captureCount ||
       read32(bytes + 28) != 0 ||
-      (flags & ~OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0)
+      (flags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
+                 OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS)) != 0)
     return false;
   result.hasSoft = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0;
   uint64_t instructionBytes = static_cast<uint64_t>(instructionCount) *
@@ -315,6 +374,23 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
     return false;
   uint64_t literalOffset = expectedSize;
   expectedSize += literalBytes;
+  uint32_t domainGroupCount = 0;
+  uint32_t domainRecordCount = 0;
+  uint64_t domainRecordsOffset = 0;
+  if (encodedDomains) {
+    if (expectedSize > UINT64_MAX - OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE ||
+        size < expectedSize + OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE)
+      return false;
+    domainGroupCount = read32(bytes + expectedSize);
+    domainRecordCount = read32(bytes + expectedSize + 4);
+    domainRecordsOffset = expectedSize + OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE;
+    if (domainRecordCount > (UINT64_MAX - domainRecordsOffset) /
+                                OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE)
+      return false;
+    expectedSize =
+        domainRecordsOffset + static_cast<uint64_t>(domainRecordCount) *
+                                  OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE;
+  }
   if (expectedSize != size)
     return false;
 
@@ -434,6 +510,68 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
       std::any_of(result.captureWidths.begin(), result.captureWidths.end(),
                   [](uint32_t width) { return width == 0; }))
     return false;
+
+  if (encodedDomains) {
+    if (domainGroupCount == 0 || domainRecordCount == 0 ||
+        domainGroupCount > domainRecordCount)
+      return false;
+    result.domainGroups.resize(domainGroupCount);
+    std::vector<uint8_t> seen(domainGroupCount, 0);
+    WideValue encodedMask(result.aggregateWidth);
+    const uint8_t *cursor = bytes + domainRecordsOffset;
+    for (uint32_t index = 0; index != domainRecordCount; ++index) {
+      uint32_t groupIndex = read32(cursor);
+      uint32_t targetOffset = read32(cursor + 4);
+      uint16_t width = read16(cursor + 8);
+      uint16_t reserved16 = read16(cursor + 10);
+      uint32_t reserved32 = read32(cursor + 12);
+      uint64_t patternMask = read64(cursor + 16);
+      uint64_t patternValue = read64(cursor + 24);
+      cursor += OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE;
+      uint64_t fieldMask = width == 0 ? 0 : widthMask(width);
+      if (groupIndex >= domainGroupCount || width == 0 || width > 64 ||
+          targetOffset > result.aggregateWidth ||
+          width > result.aggregateWidth - targetOffset || reserved16 != 0 ||
+          reserved32 != 0 || (patternMask & ~fieldMask) != 0 ||
+          (patternValue & ~patternMask) != 0 ||
+          (width == 64 && patternMask == 0))
+        return false;
+      DomainGroup &group = result.domainGroups[groupIndex];
+      if (seen[groupIndex] &&
+          (group.targetOffset != targetOffset || group.width != width))
+        return false;
+      if (!seen[groupIndex]) {
+        seen[groupIndex] = 1;
+        group.targetOffset = targetOffset;
+        group.width = width;
+        for (uint32_t bitIndex = 0; bitIndex != width; ++bitIndex) {
+          if (bit(encodedMask, targetOffset + bitIndex))
+            return false;
+          setBit(encodedMask, targetOffset + bitIndex, true);
+        }
+      }
+      for (const DomainPattern &other : group.patterns)
+        if (((patternValue ^ other.value) & (patternMask & other.mask)) == 0)
+          return false;
+      uint64_t freeMask = fieldMask & ~patternMask;
+      unsigned freeBits = countBits(freeMask);
+      if (freeBits == 64)
+        return false;
+      uint64_t cardinality = uint64_t{1} << freeBits;
+      uint64_t updated = 0;
+      bool overflow =
+          __builtin_add_overflow(group.cardinality, cardinality, &updated);
+      if (group.fullCardinality || (overflow && updated != 0))
+        return false;
+      group.fullCardinality = overflow;
+      group.cardinality = updated;
+      group.patterns.push_back(
+          {patternMask, patternValue, freeMask, cardinality});
+    }
+    if (std::any_of(seen.begin(), seen.end(),
+                    [](uint8_t value) { return value == 0; }))
+      return false;
+  }
   result.maxDepth = static_cast<uint32_t>(maxDepth);
   uint64_t requiredCaptureWords = 0;
   for (size_t index = 0; index != result.captureWidths.size(); ++index) {
@@ -696,15 +834,16 @@ int compareSoft(const std::array<uint8_t, 64> &lhs,
   return 0;
 }
 
-void advanceMutable(WideValue &candidate, const WideValue &mutableMask) {
+bool advanceMutable(WideValue &candidate, const WideValue &mutableMask) {
   for (uint32_t index = 0; index != candidate.width; ++index) {
     if (!bit(mutableMask, index))
       continue;
     bool current = bit(candidate, index);
     setBit(candidate, index, !current);
     if (!current)
-      return;
+      return true;
   }
+  return false;
 }
 
 } // namespace
@@ -760,11 +899,81 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
     normalize(start);
     normalize(mutableMask);
 
-    unsigned mutableBits = 0;
-    for (uint64_t word : mutableMask.words)
-      mutableBits += static_cast<unsigned>(__builtin_popcountll(word));
-    bool finiteDomain = mutableBits < 64;
-    uint64_t domainSize = finiteDomain ? uint64_t{1} << mutableBits : 0;
+    obelisk_rt_random_state_v1 randomState{rngState, rngIncrement};
+    WideValue ordinaryMutableMask = mutableMask;
+    std::vector<uint64_t> domainIndices(program.domainGroups.size(), 0);
+    auto groupIndexForField = [](const DomainGroup &group, uint64_t field,
+                                 uint64_t &groupIndex) {
+      uint64_t base = 0;
+      for (const DomainPattern &pattern : group.patterns) {
+        if ((field & pattern.mask) == pattern.value) {
+          groupIndex = base + compressBits(field, pattern.freeMask);
+          return true;
+        }
+        base += pattern.cardinality;
+      }
+      return false;
+    };
+    auto materializeGroup = [](const DomainGroup &group, uint64_t groupIndex) {
+      uint64_t base = 0;
+      for (const DomainPattern &pattern : group.patterns) {
+        if (groupIndex - base < pattern.cardinality)
+          return pattern.value |
+                 expandBits(groupIndex - base, pattern.freeMask);
+        base += pattern.cardinality;
+      }
+      return uint64_t{0};
+    };
+    for (size_t index = 0; index != program.domainGroups.size(); ++index) {
+      const DomainGroup &group = program.domainGroups[index];
+      WideValue mutableField =
+          extract(mutableMask.words.data(), mutableMask.words.size(),
+                  group.targetOffset, group.width);
+      uint64_t overlap = mutableField.words.front();
+      uint64_t fieldMask = widthMask(group.width);
+      if (overlap != 0 && overlap != fieldMask)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      uint64_t field = extract(start.words.data(), start.words.size(),
+                               group.targetOffset, group.width)
+                           .words.front();
+      uint64_t groupIndex = 0;
+      bool legal = groupIndexForField(group, field, groupIndex);
+      if (overlap == 0)
+        continue;
+      insert(ordinaryMutableMask, group.targetOffset, group.width, 0);
+      if (!legal) {
+        if (group.fullCardinality)
+          return OBELISK_RT_INVALID_ARGUMENT;
+        obelisk_rt_status status = obelisk_rt_v1_random_state_bounded(
+            &randomState, group.cardinality, &groupIndex);
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
+      domainIndices[index] = groupIndex;
+      insert(start, group.targetOffset, group.width,
+             materializeGroup(group, groupIndex));
+    }
+
+    unsigned ordinaryMutableBits = 0;
+    for (uint64_t word : ordinaryMutableMask.words)
+      ordinaryMutableBits += static_cast<unsigned>(__builtin_popcountll(word));
+    bool finiteDomain = ordinaryMutableBits < 64;
+    uint64_t domainSize = finiteDomain ? uint64_t{1} << ordinaryMutableBits : 0;
+    for (const DomainGroup &group : program.domainGroups) {
+      WideValue mutableField =
+          extract(mutableMask.words.data(), mutableMask.words.size(),
+                  group.targetOffset, group.width);
+      if (!truth(mutableField))
+        continue;
+      uint64_t updated = 0;
+      if (!finiteDomain || group.fullCardinality ||
+          __builtin_mul_overflow(domainSize, group.cardinality, &updated)) {
+        finiteDomain = false;
+        domainSize = 0;
+      } else {
+        domainSize = updated;
+      }
+    }
     uint64_t attempts =
         finiteDomain ? std::min(maxAttempts, domainSize) : maxAttempts;
     bool complete = finiteDomain && attempts == domainSize;
@@ -785,6 +994,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
         std::copy(candidate.words.begin(), candidate.words.end(),
                   outAssignmentWords);
         *outSuccess = 1;
+        *outRngState = randomState.state;
         return OBELISK_RT_OK;
       }
       if (hard && program.hasSoft &&
@@ -793,12 +1003,30 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
         bestSoft = soft;
         hasBest = true;
       }
-      advanceMutable(candidate, mutableMask);
+      if (!advanceMutable(candidate, ordinaryMutableMask)) {
+        for (size_t index = 0; index != program.domainGroups.size(); ++index) {
+          const DomainGroup &group = program.domainGroups[index];
+          WideValue mutableField =
+              extract(mutableMask.words.data(), mutableMask.words.size(),
+                      group.targetOffset, group.width);
+          if (!truth(mutableField))
+            continue;
+          uint64_t next = domainIndices[index] + 1;
+          bool carry =
+              group.fullCardinality ? next == 0 : next == group.cardinality;
+          domainIndices[index] = carry ? 0 : next;
+          insert(candidate, group.targetOffset, group.width,
+                 materializeGroup(group, domainIndices[index]));
+          if (!carry)
+            break;
+        }
+      }
     }
     if (program.hasSoft && complete && hasBest) {
       std::copy(best.words.begin(), best.words.end(), outAssignmentWords);
       *outSuccess = 1;
     }
+    *outRngState = randomState.state;
     return OBELISK_RT_OK;
   } catch (const std::bad_alloc &) {
     return OBELISK_RT_OUT_OF_MEMORY;
