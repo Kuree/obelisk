@@ -1429,6 +1429,9 @@ FailureOr<Value> UnitLowering::lowerContextDeterminedExpression(Operation *op) {
   FailureOr<Type> target = getNormalizedSemanticType(op);
   if (failed(target) || !sim::getPackedScalarType(*target))
     return lowerExpression(op);
+  if (auto streaming = dyn_cast<
+          semantic::SVStreamingConcatenationExpressionOp>(children.front()))
+    return lowerStreaming(streaming, *target);
   FailureOr<Value> input = lowerExpression(children.front());
   if (failed(input))
     return failure();
@@ -1575,6 +1578,9 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
         return sim::SimChandleNullOp::create(builder, getSemanticLocation(op))
             .getResult();
     }
+    if (auto streaming = dyn_cast<
+            semantic::SVStreamingConcatenationExpressionOp>(children.front()))
+      return lowerStreaming(streaming, *target);
     FailureOr<Value> input = lowerExpression(children.front());
     if (failed(input))
       return failure();
@@ -1610,6 +1616,9 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
     return lowerConcatenation(op);
   if (isa<semantic::SVReplicationExpressionOp>(op))
     return lowerReplication(op);
+  if (auto streaming =
+          dyn_cast<semantic::SVStreamingConcatenationExpressionOp>(op))
+    return lowerStreaming(streaming);
   if (auto member = dyn_cast<semantic::SVMemberAccessExpressionOp>(op))
     return lowerMember(member, lvalue);
   if (auto tagged = dyn_cast<semantic::SVTaggedUnionExpressionOp>(op))

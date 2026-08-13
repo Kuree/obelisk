@@ -1399,6 +1399,22 @@ private:
                   builder.getBoolAttr(node.defaultSetter != nullptr));
     }
 
+    if constexpr (std::same_as<
+                      T, slang::ast::StreamingConcatenationExpression>) {
+      SET_OP_ATTR(SliceSize, builder.getI64IntegerAttr(node.getSliceSize()));
+      SET_OP_ATTR(BitstreamWidth,
+                  builder.getI64IntegerAttr(node.getBitstreamWidth()));
+      SET_OP_ATTR(StreamCount,
+                  builder.getI64IntegerAttr(node.streams().size()));
+      SmallVector<int64_t> withFlags;
+      withFlags.reserve(node.streams().size());
+      for (const auto &stream : node.streams())
+        withFlags.push_back(stream.withExpr != nullptr);
+      SET_OP_ATTR(StreamWithFlags,
+                  builder.getDenseI64ArrayAttr(withFlags));
+      SET_OP_ATTR(IsFixedSize, builder.getBoolAttr(node.isFixedSize()));
+    }
+
     if constexpr (std::same_as<T, slang::ast::NamedValueExpression> ||
                   std::same_as<T, slang::ast::HierarchicalValueExpression>) {
       setReferencedSymbol<Op>(attrs, node.symbol);

@@ -9,6 +9,7 @@
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
+#include <functional>
 #include <limits>
 #include <optional>
 
@@ -534,6 +535,229 @@ FailureOr<Value> UnitLowering::lowerConcatenation(Operation *op) {
     combined = arith::OrIOp::create(builder, location, combined, shifted);
   }
   return convert(combined, *resultType, false, location);
+}
+
+FailureOr<Value> UnitLowering::lowerStreaming(
+    semantic::SVStreamingConcatenationExpressionOp op, Type assignmentType) {
+  Location location = getSemanticLocation(op);
+  if (!op.getIsFixedSize())
+    return emitError(location)
+               << "dynamically sized streaming concatenations require the "
+                  "dynamic stream lowering",
+           failure();
+  if (llvm::any_of(op.getStreamWithFlags(),
+                   [](int64_t flag) { return flag != 0; }))
+    return emitError(location)
+               << "streaming with clauses require array stream lowering",
+           failure();
+
+  SmallVector<Operation *> children = getChildren(op);
+  if (children.size() != op.getStreamCount() || children.empty())
+    return op.emitError("malformed fixed streaming child inventory"),
+           failure();
+
+  SmallVector<Value> inputs;
+  SmallVector<unsigned> widths;
+  bool fourState = false;
+  uint64_t totalWidth = 0;
+  std::function<LogicalResult(Value, Location)> appendFixedValue;
+  appendFixedValue = [&](Value value, Location valueLocation) -> LogicalResult {
+    Type type = value.getType();
+    if (isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type)) {
+      unsigned count = sim::getAggregateNumElements(type);
+      for (unsigned ordinal = 0; ordinal < count; ++ordinal) {
+        Type elementType = sim::getAggregateElementType(type, ordinal);
+        Value element = sim::SimAggregateExtractOp::create(
+            builder, valueLocation, elementType, value, ordinal);
+        if (failed(appendFixedValue(element, valueLocation)))
+          return failure();
+      }
+      return success();
+    }
+    if (auto unionType = dyn_cast<sim::UnpackedUnionType>(type)) {
+      if (unionType.getIsTagged() ||
+          sim::getAggregateNumElements(unionType) == 0)
+        return emitError(valueLocation)
+                   << "fixed streams cannot flatten an empty or tagged "
+                      "unpacked union",
+               failure();
+      Type elementType = sim::getAggregateElementType(unionType, 0);
+      Value element = sim::SimUnionExtractOp::create(
+          builder, valueLocation, elementType, value, 0);
+      return appendFixedValue(element, valueLocation);
+    }
+    FailureOr<Value> scalar = toPackedScalar(value, valueLocation);
+    std::optional<unsigned> width =
+        succeeded(scalar) ? sim::getPackedWidth((*scalar).getType())
+                          : std::nullopt;
+    if (failed(scalar) || !width || *width == 0)
+      return emitError(valueLocation)
+                 << "fixed streaming operands must recursively contain "
+                    "nonempty bit-stream values",
+             failure();
+    if (totalWidth > std::numeric_limits<unsigned>::max() - *width)
+      return emitError(location) << "fixed stream width is not representable",
+             failure();
+    totalWidth += *width;
+    fourState |= isa<sim::LogicType>((*scalar).getType());
+    inputs.push_back(*scalar);
+    widths.push_back(*width);
+    return success();
+  };
+  for (Operation *child : children) {
+    FailureOr<Value> value = lowerExpression(child);
+    if (failed(value))
+      return failure();
+    if (failed(appendFixedValue(*value, getSemanticLocation(child))))
+      return failure();
+  }
+  if (totalWidth != op.getBitstreamWidth())
+    return op.emitError("fixed stream operand widths do not match metadata"),
+           failure();
+
+  Type streamScalar = fourState
+                          ? Type(sim::LogicType::get(function.getContext(),
+                                                    totalWidth))
+                          : Type(IntegerType::get(function.getContext(),
+                                                  totalWidth));
+  Value generic;
+  if (fourState) {
+    SmallVector<Value> logicInputs;
+    for (Value input : inputs) {
+      FailureOr<Value> logic = toLogic(input, location);
+      if (failed(logic))
+        return failure();
+      logicInputs.push_back(*logic);
+    }
+    generic = sim::SimLogicConcatOp::create(builder, location, streamScalar,
+                                             logicInputs);
+  } else {
+    auto resultType = cast<IntegerType>(streamScalar);
+    generic = arith::ConstantOp::create(builder, location, resultType,
+                                        builder.getIntegerAttr(resultType, 0));
+    unsigned trailing = totalWidth;
+    for (auto [input, width] : llvm::zip_equal(inputs, widths)) {
+      trailing -= width;
+      FailureOr<Value> extended =
+          convert(input, resultType, false, location);
+      if (failed(extended))
+        return failure();
+      Value placed = *extended;
+      if (trailing) {
+        Value amount = arith::ConstantOp::create(
+            builder, location, resultType,
+            builder.getIntegerAttr(resultType, trailing));
+        placed = arith::ShLIOp::create(builder, location, placed, amount);
+      }
+      generic = arith::OrIOp::create(builder, location, generic, placed);
+    }
+  }
+
+  // Slang encodes >> as slice size zero. IEEE 1800-2023 11.4.14.2 says >>
+  // preserves the generic stream, while << takes blocks from the right and
+  // appends them left-to-right. The final partial block is therefore the most
+  // significant block and is emitted last without padding.
+  uint64_t slice = op.getSliceSize();
+  Value reordered = generic;
+  if (slice != 0 && totalWidth > slice) {
+    SmallVector<Value> chunks;
+    for (uint64_t low = 0; low < totalWidth; low += slice) {
+      unsigned width = std::min<uint64_t>(slice, totalWidth - low);
+      if (fourState) {
+        chunks.push_back(sim::SimLogicExtractOp::create(
+            builder, location,
+            sim::LogicType::get(function.getContext(), width), generic, low));
+      } else {
+        auto fullType = cast<IntegerType>(streamScalar);
+        Value shifted = generic;
+        if (low) {
+          Value amount = arith::ConstantOp::create(
+              builder, location, fullType,
+              builder.getIntegerAttr(fullType, low));
+          shifted = arith::ShRUIOp::create(builder, location, generic, amount);
+        }
+        chunks.push_back(arith::TruncIOp::create(
+            builder, location,
+            IntegerType::get(function.getContext(), width), shifted));
+      }
+    }
+    if (fourState) {
+      reordered = sim::SimLogicConcatOp::create(builder, location, streamScalar,
+                                                 chunks);
+    } else {
+      auto fullType = cast<IntegerType>(streamScalar);
+      reordered = arith::ConstantOp::create(
+          builder, location, fullType, builder.getIntegerAttr(fullType, 0));
+      unsigned trailing = totalWidth;
+      for (Value chunk : chunks) {
+        unsigned width = cast<IntegerType>(chunk.getType()).getWidth();
+        trailing -= width;
+        Value extended = arith::ExtUIOp::create(builder, location, fullType,
+                                                chunk);
+        if (trailing) {
+          Value amount = arith::ConstantOp::create(
+              builder, location, fullType,
+              builder.getIntegerAttr(fullType, trailing));
+          extended =
+              arith::ShLIOp::create(builder, location, extended, amount);
+        }
+        reordered =
+            arith::OrIOp::create(builder, location, reordered, extended);
+      }
+    }
+  }
+
+  if (!assignmentType)
+    return reordered;
+  Type targetScalar = sim::getPackedScalarType(assignmentType);
+  std::optional<unsigned> targetWidth = sim::getPackedWidth(assignmentType);
+  if (!targetScalar || !targetWidth)
+    return emitError(location)
+               << "a fixed streaming source requires a fixed bit-stream "
+                  "assignment target",
+           failure();
+  if (*targetWidth < totalWidth)
+    return emitError(location)
+               << "streaming assignment target is narrower than its source",
+           failure();
+
+  // 11.4.14 requires source streams to be left-aligned: widening adds zeros
+  // on the right, unlike an ordinary integral assignment conversion.
+  if (*targetWidth != totalWidth) {
+    unsigned padding = *targetWidth - totalWidth;
+    if (isa<sim::LogicType>(targetScalar)) {
+      FailureOr<Value> logic = toLogic(reordered, location);
+      if (failed(logic))
+        return failure();
+      Value zeros = sim::SimLogicConstantOp::create(
+          builder, location,
+          sim::LogicType::get(function.getContext(), padding),
+          builder.getIntegerAttr(IntegerType::get(function.getContext(), padding),
+                                 0),
+          builder.getIntegerAttr(IntegerType::get(function.getContext(), padding),
+                                 0));
+      reordered = sim::SimLogicConcatOp::create(builder, location, targetScalar,
+                                                 ValueRange{*logic, zeros});
+    } else {
+      auto integerTarget = cast<IntegerType>(targetScalar);
+      FailureOr<Value> extended =
+          convert(reordered, integerTarget, false, location);
+      if (failed(extended))
+        return failure();
+      Value amount = arith::ConstantOp::create(
+          builder, location, integerTarget,
+          builder.getIntegerAttr(integerTarget, padding));
+      reordered =
+          arith::ShLIOp::create(builder, location, *extended, amount);
+    }
+  } else if (reordered.getType() != targetScalar) {
+    FailureOr<Value> converted =
+        convert(reordered, targetScalar, false, location);
+    if (failed(converted))
+      return failure();
+    reordered = *converted;
+  }
+  return convert(reordered, assignmentType, false, location);
 }
 
 FailureOr<Value> UnitLowering::lowerReplication(Operation *op) {

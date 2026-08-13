@@ -462,6 +462,29 @@ LogicalResult SVStructuredAssignmentPatternExpressionOp::verify() {
   return success();
 }
 
+LogicalResult SVStreamingConcatenationExpressionOp::verify() {
+  if (getStreamCountAttr().getValue().isNegative() ||
+      getSliceSizeAttr().getValue().isNegative() ||
+      getBitstreamWidthAttr().getValue().isNegative())
+    return emitOpError("stream counts, widths, and slice sizes must be "
+                       "nonnegative");
+  if (getStreamWithFlags().size() != getStreamCount())
+    return emitOpError("stream with-clause flags must match stream count");
+  uint64_t children = 0;
+  for (int64_t flag : getStreamWithFlags()) {
+    if (flag != 0 && flag != 1)
+      return emitOpError("stream with-clause flags must be zero or one");
+    if (children > std::numeric_limits<uint64_t>::max() - 1 - flag)
+      return emitOpError("stream child inventory overflows");
+    children += 1 + flag;
+  }
+  if (astBodySize(*this) != children)
+    return emitOpError("stream metadata does not match child inventory");
+  if (getIsFixedSize() && getBitstreamWidth() == 0)
+    return emitOpError("a fixed-size stream must have nonzero width");
+  return success();
+}
+
 LogicalResult SVForLoopStatementOp::verify() {
   if (getInitializerCountAttr().getValue().isNegative())
     return emitOpError("initializer_count must be nonnegative");

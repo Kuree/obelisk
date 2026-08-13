@@ -467,6 +467,17 @@ class ObeliskStructuredAssignmentPatternASTNodeOp<string mnemonic>
   let hasVerifier = 1;
 }
 
+class ObeliskStreamingConcatenationASTNodeOp<string mnemonic>
+    : ObeliskExpressionASTNodeOp<mnemonic, (ins
+        I64Attr:$slice_size,
+        I64Attr:$bitstream_width,
+        I64Attr:$stream_count,
+        DenseI64ArrayAttr:$stream_with_flags,
+        BoolAttr:$is_fixed_size
+      )> {
+  let hasVerifier = 1;
+}
+
 class ObeliskConstantExpressionASTNodeOp<string mnemonic>
     : ObeliskExpressionASTNodeOp<mnemonic, (ins
         StrAttr:$constant_value,

@@ -475,6 +475,17 @@ class SlangStructuredAssignmentPatternASTNodeOp<string mnemonic>
   let hasVerifier = 1;
 }
 
+class SlangStreamingConcatenationASTNodeOp<string mnemonic>
+    : SlangExpressionASTNodeOp<mnemonic, (ins
+        I64Attr:$slice_size,
+        I64Attr:$bitstream_width,
+        I64Attr:$stream_count,
+        DenseI64ArrayAttr:$stream_with_flags,
+        BoolAttr:$is_fixed_size
+      )> {
+  let hasVerifier = 1;
+}
+
 class SlangConstantExpressionASTNodeOp<string mnemonic>
     : SlangExpressionASTNodeOp<mnemonic, (ins
         StrAttr:$constant_value,

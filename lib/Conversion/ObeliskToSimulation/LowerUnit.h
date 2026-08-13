@@ -80,6 +80,9 @@ private:
   ::mlir::FailureOr<::mlir::Value> lowerConcatenation(::mlir::Operation *op);
   ::mlir::FailureOr<::mlir::Value> lowerReplication(::mlir::Operation *op);
   ::mlir::FailureOr<::mlir::Value>
+  lowerStreaming(semantic::SVStreamingConcatenationExpressionOp op,
+                 ::mlir::Type assignmentType = {});
+  ::mlir::FailureOr<::mlir::Value>
   lowerMember(semantic::SVMemberAccessExpressionOp op, bool lvalue);
   ::mlir::FailureOr<::mlir::Value>
   lowerVirtualInterfaceMember(semantic::SVMemberAccessExpressionOp op,
