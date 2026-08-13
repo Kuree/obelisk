@@ -305,9 +305,78 @@ void ObeliskSimPreparePass::runOnOperation() {
 
   // Enum identity is intentionally erased when semantic values are normalized
   // to executable packed types. Freeze the frontend's exact enumerator
-  // inventory on each dynamic cast before code units are cloned so lowering
-  // can preserve the LRM membership check without consulting semantic symbols.
+  // inventory on enum operations before code units are cloned so lowering can
+  // preserve the LRM membership and name lookups without consulting semantic
+  // symbols. The frontend inventory is required because anonymous and local
+  // typedef enums do not necessarily have a standalone semantic declaration.
+  auto freezeEnumValues = [&](Operation *owner, Operation *typedValue,
+                              ArrayAttr spellings,
+                              StringRef description) -> FailureOr<ArrayAttr> {
+    FailureOr<Type> normalized = getNormalizedSemanticType(typedValue);
+    if (failed(normalized))
+      return failure();
+    Type scalar = sim::getPackedScalarType(*normalized);
+    std::optional<unsigned> width =
+        scalar ? sim::getPackedWidth(scalar) : std::nullopt;
+    auto semanticType = typedValue->getAttrOfType<TypeAttr>("semantic_type");
+    if (!semanticType || !isa<semantic::EnumType>(semanticType.getValue()) ||
+        !spellings || spellings.empty()) {
+      emitError(getSemanticLocation(owner))
+          << description << " has no valid enumerator inventory";
+      return failure();
+    }
+    if (!width) {
+      emitError(getSemanticLocation(owner))
+          << description << " has a non-integral enum type";
+      return failure();
+    }
+    unsigned enumWidth = width.value();
+    SmallVector<Attribute> values;
+    values.reserve(spellings.size());
+    Type planeType = IntegerType::get(context, enumWidth);
+    for (Attribute attribute : spellings) {
+      auto spelling = dyn_cast<StringAttr>(attribute);
+      FailureOr<ParsedConstant> parsed =
+          spelling ? parseSVInteger(spelling.getValue(), enumWidth,
+                                    getSemanticLocation(owner))
+                   : FailureOr<ParsedConstant>(failure());
+      if (failed(parsed)) {
+        emitError(getSemanticLocation(owner))
+            << description << " has a malformed enumerator value";
+        return failure();
+      }
+      ArrayAttr planes = ArrayAttr::get(
+          context, {IntegerAttr::get(planeType, parsed->value),
+                    IntegerAttr::get(planeType, parsed->unknown)});
+      values.push_back(sim::FrozenConstantAttr::get(
+          context, *normalized, planes,
+          isSignedSemanticType(semanticType.getValue())));
+    }
+    return ArrayAttr::get(context, values);
+  };
+
   semanticRoot->walk([&](semantic::SVCallExpressionOp call) {
+    if (call.getIsSystemCall() && call.getCalleeName() == "name") {
+      SmallVector<Operation *> arguments = getChildren(call);
+      ArrayAttr names = call.getEnumMethodNamesAttr();
+      ArrayAttr spellings = call.getEnumMethodValuesAttr();
+      if (arguments.size() != 1 || !names || names.empty() || !spellings ||
+          names.size() != spellings.size()) {
+        emitError(getSemanticLocation(call))
+            << "enum name() has no valid enumerator inventory";
+        invalid = true;
+        return;
+      }
+      FailureOr<ArrayAttr> values = freezeEnumValues(
+          call, arguments.front(), spellings, "enum name()");
+      if (failed(values)) {
+        invalid = true;
+        return;
+      }
+      call->setAttr(enumMethodValuesAttrName, *values);
+      call->setAttr(enumMethodNamesAttrName, names);
+      return;
+    }
     if (call.getCalleeName() != "$cast")
       return;
     SmallVector<Operation *> arguments = getChildren(call);
@@ -339,46 +408,14 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       return;
     }
-    ArrayAttr spellings = call.getDynamicCastEnumValuesAttr();
-    FailureOr<Type> normalized = getNormalizedSemanticType(destination);
-    if (failed(normalized)) {
+    FailureOr<ArrayAttr> values =
+        freezeEnumValues(call, destination,
+                         call.getDynamicCastEnumValuesAttr(), "enum $cast");
+    if (failed(values)) {
       invalid = true;
       return;
     }
-    Type scalar = sim::getPackedScalarType(*normalized);
-    std::optional<unsigned> width =
-        scalar ? sim::getPackedWidth(scalar) : std::nullopt;
-    if (!spellings || spellings.empty() || !width) {
-      emitError(getSemanticLocation(call))
-          << "enum $cast has no frozen enumerator inventory";
-      invalid = true;
-      return;
-    }
-    SmallVector<Attribute> values;
-    values.reserve(spellings.size());
-    unsigned enumWidth = width.value();
-    Type planeType = IntegerType::get(context, enumWidth);
-    for (Attribute attribute : spellings) {
-      auto spelling = dyn_cast<StringAttr>(attribute);
-      FailureOr<ParsedConstant> parsed =
-          spelling ? parseSVInteger(spelling.getValue(), enumWidth,
-                                    getSemanticLocation(call))
-                   : FailureOr<ParsedConstant>(failure());
-      if (failed(parsed)) {
-        emitError(getSemanticLocation(call))
-            << "enum $cast has a malformed enumerator value";
-        invalid = true;
-        return;
-      }
-      ArrayAttr planes = ArrayAttr::get(
-          context, {IntegerAttr::get(planeType, parsed->value),
-                    IntegerAttr::get(planeType, parsed->unknown)});
-      values.push_back(sim::FrozenConstantAttr::get(
-          context, *normalized, planes,
-          isSignedSemanticType(semanticType.getValue())));
-    }
-    call->setAttr(dynamicCastEnumValuesAttrName,
-                  ArrayAttr::get(context, values));
+    call->setAttr(dynamicCastEnumValuesAttrName, *values);
   });
 
   // Assign compact, collision-free IDs from sorted elaborated paths. These

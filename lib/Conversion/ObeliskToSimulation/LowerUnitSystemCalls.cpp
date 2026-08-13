@@ -1022,6 +1022,55 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return convertResult(result);
   }
 
+  if (name == "name") {
+    if (children.size() != 1) {
+      emitError(location) << "enum name() requires exactly one receiver";
+      return failure();
+    }
+    auto semanticType =
+        children.front()->getAttrOfType<TypeAttr>("semantic_type");
+    ArrayAttr values =
+        op->getAttrOfType<ArrayAttr>(enumMethodValuesAttrName);
+    ArrayAttr names = op->getAttrOfType<ArrayAttr>(enumMethodNamesAttrName);
+    if (!semanticType || !isa<semantic::EnumType>(semanticType.getValue()) ||
+        !values || values.empty() || !names || values.size() != names.size()) {
+      emitError(location) << "enum name() has no valid frozen inventory";
+      return failure();
+    }
+    FailureOr<Value> receiver = lowerExpression(children.front());
+    if (failed(receiver) || !sim::getPackedScalarType((*receiver).getType())) {
+      emitError(location) << "enum name() requires a packed enum receiver";
+      return failure();
+    }
+
+    Type stringType = sim::StringType::get(function.getContext());
+    Value result = sim::SimStringLiteralOp::create(
+        builder, location, stringType, builder.getStringAttr(""));
+    for (auto [valueAttribute, nameAttribute] :
+         llvm::zip_equal(values, names)) {
+      auto frozen = dyn_cast<sim::FrozenConstantAttr>(valueAttribute);
+      auto spelling = dyn_cast<StringAttr>(nameAttribute);
+      FailureOr<Value> member =
+          frozen && frozen.getType() == (*receiver).getType()
+              ? sim::materializeFrozenConstant(builder, location, frozen)
+              : FailureOr<Value>(failure());
+      if (failed(member) || !spelling) {
+        emitError(location) << "enum name() has malformed frozen inventory";
+        return failure();
+      }
+      FailureOr<Value> equal = conditionalEqual(
+          *receiver, *member, (*receiver).getType(), location,
+          /*caseEquality=*/true);
+      if (failed(equal))
+        return failure();
+      Value candidate = sim::SimStringLiteralOp::create(
+          builder, location, stringType, spelling);
+      result = arith::SelectOp::create(builder, location, *equal, candidate,
+                                       result);
+    }
+    return convertResult(result);
+  }
+
   bool realMath = llvm::StringSwitch<bool>(name)
                       .Cases({"$ceil", "$floor", "$sqrt", "$exp", "$ln",
                               "$log10", "$pow", "$atan2", "$hypot"},

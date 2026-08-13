@@ -516,6 +516,8 @@ class ObeliskCallExpressionASTNodeOp<string mnemonic>
         OptionalAttr<DenseI64ArrayAttr>:$defaulted_arguments,
         OptionalAttr<ObeliskSVDynamicCastKind>:$dynamic_cast_kind,
         OptionalAttr<StrArrayAttr>:$dynamic_cast_enum_values,
+        OptionalAttr<StrArrayAttr>:$enum_method_values,
+        OptionalAttr<StrArrayAttr>:$enum_method_names,
         OptionalAttr<StrArrayAttr>:$readmem_enum_key_values,
         OptionalAttr<StrArrayAttr>:$readmem_enum_element_values
       )>;

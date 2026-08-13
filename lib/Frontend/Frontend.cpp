@@ -1658,6 +1658,24 @@ private:
       }
       SET_OP_ATTR(DefaultedArguments,
                   builder.getDenseI64ArrayAttr(defaultedArguments));
+      if (node.isSystemCall() && node.getSubroutineName() == "name" &&
+          node.arguments().size() == 1) {
+        const slang::ast::Type &receiverType =
+            node.arguments().front()->type->getCanonicalType();
+        if (receiverType.isEnum()) {
+          SmallVector<Attribute> values;
+          SmallVector<Attribute> names;
+          for (const slang::ast::EnumValueSymbol &value :
+               receiverType.as<slang::ast::EnumType>()
+                   .membersOfType<slang::ast::EnumValueSymbol>()) {
+            values.push_back(
+                builder.getStringAttr(formatConstant(value.getValue())));
+            names.push_back(builder.getStringAttr(value.name));
+          }
+          SET_OP_ATTR(EnumMethodValues, builder.getArrayAttr(values));
+          SET_OP_ATTR(EnumMethodNames, builder.getArrayAttr(names));
+        }
+      }
       if (node.isSystemCall() && node.getSubroutineName() == "$cast" &&
           node.arguments().size() == 2) {
         const slang::ast::Type &destinationType =
