@@ -1143,44 +1143,101 @@ FailureOr<sim::FrozenConstantAttr> freezeSemanticConstant(Operation *symbol) {
   }
 
   Builder builder(symbol->getContext());
-  Attribute payload;
-  if (isa<sim::StringType>(*normalized)) {
-    payload = spelling;
-  } else if (isa<FloatType>(*normalized)) {
-    double value = 0.0;
-    if (spelling.getValue().getAsDouble(value) || !std::isfinite(value)) {
-      emitError(location) << "real constant '" << spelling.getValue()
-                          << "' is not finite";
-      return failure();
+  std::function<FailureOr<sim::FrozenConstantAttr>(Type, Type, StringRef)>
+      freeze = [&](Type normalizedType, Type sourceType,
+                   StringRef text) -> FailureOr<sim::FrozenConstantAttr> {
+    text = text.trim();
+    Attribute payload;
+    if (isa<sim::StringType>(normalizedType)) {
+      payload = builder.getStringAttr(text);
+    } else if (isa<FloatType>(normalizedType)) {
+      double value = 0.0;
+      if (text.getAsDouble(value) || !std::isfinite(value)) {
+        emitError(location) << "real constant '" << text << "' is not finite";
+        return failure();
+      }
+      payload = builder.getFloatAttr(normalizedType, value);
+    } else if (auto array = dyn_cast<sim::UnpackedArrayType>(normalizedType)) {
+      if (isa<sim::StringType>(array.getElementType())) {
+        emitError(location)
+            << "string-valued unpacked-array constants are not executable yet";
+        return failure();
+      }
+      Type sourceElementType;
+      if (auto source = dyn_cast<semantic::RangedUnpackedArrayType>(sourceType))
+        sourceElementType = source.getElementType();
+      else if (auto source = dyn_cast<semantic::UnpackedArrayType>(sourceType))
+        sourceElementType = source.getElementType();
+      if (!sourceElementType || !text.consume_front("[") ||
+          !text.consume_back("]")) {
+        emitError(location)
+            << "malformed unpacked-array constant '" << text << "'";
+        return failure();
+      }
+      SmallVector<StringRef> elementSpellings;
+      unsigned depth = 0;
+      size_t begin = 0;
+      for (size_t index = 0; index != text.size(); ++index) {
+        if (text[index] == '[')
+          ++depth;
+        else if (text[index] == ']') {
+          if (depth == 0) {
+            emitError(location)
+                << "malformed unpacked-array constant '" << text << "'";
+            return failure();
+          }
+          --depth;
+        } else if (text[index] == ',' && depth == 0) {
+          elementSpellings.push_back(text.slice(begin, index));
+          begin = index + 1;
+        }
+      }
+      if (depth != 0) {
+        emitError(location)
+            << "malformed unpacked-array constant '" << text << "'";
+        return failure();
+      }
+      elementSpellings.push_back(text.drop_front(begin));
+      unsigned count = sim::getAggregateNumElements(array);
+      if (elementSpellings.size() != count) {
+        emitError(location)
+            << "unpacked-array constant has " << elementSpellings.size()
+            << " elements; expected " << count;
+        return failure();
+      }
+      SmallVector<Attribute> elements;
+      elements.reserve(count);
+      for (StringRef elementSpelling : elementSpellings) {
+        FailureOr<sim::FrozenConstantAttr> element =
+            freeze(array.getElementType(), sourceElementType, elementSpelling);
+        if (failed(element))
+          return failure();
+        elements.push_back(*element);
+      }
+      payload = builder.getArrayAttr(elements);
+    } else {
+      Type scalar = sim::getPackedScalarType(normalizedType);
+      std::optional<unsigned> width =
+          scalar ? sim::getPackedWidth(scalar) : std::nullopt;
+      if (!scalar || !width) {
+        emitError(location)
+            << "elaborated constant has unsupported normalized type "
+            << normalizedType;
+        return failure();
+      }
+      FailureOr<ParsedConstant> parsed = parseSVInteger(text, *width, location);
+      if (failed(parsed))
+        return failure();
+      auto planeType = builder.getIntegerType(*width);
+      payload = builder.getArrayAttr(
+          {builder.getIntegerAttr(planeType, parsed->value),
+           builder.getIntegerAttr(planeType, parsed->unknown)});
     }
-    payload = builder.getFloatAttr(*normalized, value);
-  } else {
-    Type scalar = sim::getPackedScalarType(*normalized);
-    if (!scalar) {
-      emitError(location)
-          << "elaborated constant has unsupported normalized type "
-          << *normalized;
-      return failure();
-    }
-    std::optional<unsigned> width = sim::getPackedWidth(scalar);
-    if (!width) {
-      emitError(location)
-          << "elaborated constant has unsupported normalized type "
-          << *normalized;
-      return failure();
-    }
-    FailureOr<ParsedConstant> parsed =
-        parseSVInteger(spelling.getValue(), *width, location);
-    if (failed(parsed))
-      return failure();
-    auto planeType = builder.getIntegerType(*width);
-    payload = builder.getArrayAttr(
-        {builder.getIntegerAttr(planeType, parsed->value),
-         builder.getIntegerAttr(planeType, parsed->unknown)});
-  }
-  return sim::FrozenConstantAttr::get(
-      symbol->getContext(), *normalized, payload,
-      isSignedSemanticType(semanticType.getValue()));
+    return sim::FrozenConstantAttr::get(symbol->getContext(), normalizedType,
+                                        payload,
+                                        isSignedSemanticType(sourceType));
+  };
+  return freeze(*normalized, semanticType.getValue(), spelling.getValue());
 }
 
 Value createDefaultValue(OpBuilder &builder, Location location, Type type) {

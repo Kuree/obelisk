@@ -497,7 +497,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         succeeded(receiverType) && isa<sim::StringType>(*receiverType);
     containerBuiltin =
         succeeded(receiverType) &&
-        isa<sim::DynamicArrayType, sim::QueueType>(*receiverType);
+        isa<sim::DynamicArrayType, sim::QueueType, sim::UnpackedArrayType>(
+            *receiverType);
     associativeBuiltin =
         succeeded(receiverType) && isa<sim::AssocArrayType>(*receiverType);
   }

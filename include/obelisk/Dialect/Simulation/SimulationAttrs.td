@@ -25,8 +25,9 @@ def SimFrozenConstantAttr
     Carries the exact value of a parameter, localparam, enum value, specparam,
     or elaborated genvar after whole-design elaboration has completed. Packed
     values use the same two-plane `[value, unknown]` representation as
-    `obelisk_sim.logic.constant`; real values use an f64 FloatAttr. The declared
-    normalized type is retained so packed aggregate shape is not lost.
+    `obelisk_sim.logic.constant`; real values use an f64 FloatAttr. Fixed
+    unpacked arrays use an ArrayAttr of recursively typed frozen constants.
+    The declared normalized type is retained so aggregate shape is not lost.
   }];
   let parameters = (ins
     AttributeSelfTypeParameter<"">:$type,

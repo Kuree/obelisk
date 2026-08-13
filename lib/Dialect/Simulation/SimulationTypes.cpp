@@ -122,11 +122,27 @@ FrozenConstantAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
              << "floating frozen constant requires a matching payload";
     return success();
   }
+  if (auto array = dyn_cast<UnpackedArrayType>(type)) {
+    auto elements = dyn_cast<ArrayAttr>(value);
+    unsigned count = getAggregateNumElements(array);
+    if (!elements || elements.size() != count)
+      return emitError()
+             << "fixed unpacked-array frozen constant requires exactly "
+             << count << " element payloads";
+    for (Attribute elementAttr : elements) {
+      auto element = dyn_cast<FrozenConstantAttr>(elementAttr);
+      if (!element || element.getType() != array.getElementType())
+        return emitError()
+               << "fixed unpacked-array frozen constant requires matching "
+                  "typed element payloads";
+    }
+    return success();
+  }
 
   Type scalar = getPackedScalarType(type);
   if (!scalar)
-    return emitError() << "frozen constant type must be floating or a fixed "
-                          "packed value, got "
+    return emitError() << "frozen constant type must be floating, a fixed "
+                          "unpacked array, or a fixed packed value, got "
                        << type;
   std::optional<unsigned> width = getPackedWidth(scalar);
   auto planes = dyn_cast<ArrayAttr>(value);
@@ -218,6 +234,26 @@ FailureOr<Value> materializeFrozenConstant(OpBuilder &builder,
     if (!value)
       return failure();
     return arith::ConstantOp::create(builder, location, type, value)
+        .getResult();
+  }
+  if (auto array = dyn_cast<UnpackedArrayType>(type)) {
+    auto elements = dyn_cast<ArrayAttr>(constant.getValue());
+    unsigned count = getAggregateNumElements(array);
+    if (!elements || elements.size() != count)
+      return failure();
+    SmallVector<Value> values;
+    values.reserve(count);
+    for (Attribute elementAttr : elements) {
+      auto element = dyn_cast<FrozenConstantAttr>(elementAttr);
+      if (!element || element.getType() != array.getElementType())
+        return failure();
+      FailureOr<Value> value =
+          materializeFrozenConstant(builder, location, element);
+      if (failed(value))
+        return failure();
+      values.push_back(*value);
+    }
+    return SimAggregateConstructOp::create(builder, location, type, values)
         .getResult();
   }
 

@@ -5,6 +5,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "llvm/ADT/StringSwitch.h"
 
 #include <string>
 #include <utility>
@@ -12,6 +13,73 @@
 using namespace mlir;
 
 namespace obelisk::simlowering {
+
+namespace {
+
+enum class ArrayMethod {
+  Unknown,
+  Size,
+  Delete,
+  Insert,
+  PopBack,
+  PopFront,
+  PushBack,
+  PushFront,
+  Reverse,
+  Shuffle,
+  Sort,
+  RSort,
+  Sum,
+  Product,
+  And,
+  Or,
+  Xor,
+  Find,
+  FindIndex,
+  FindFirst,
+  FindFirstIndex,
+  FindLast,
+  FindLastIndex,
+  Map,
+  Min,
+  Max,
+  Unique,
+  UniqueIndex,
+};
+
+ArrayMethod classifyArrayMethod(StringRef name) {
+  return llvm::StringSwitch<ArrayMethod>(name)
+      .Case("size", ArrayMethod::Size)
+      .Case("delete", ArrayMethod::Delete)
+      .Case("insert", ArrayMethod::Insert)
+      .Case("pop_back", ArrayMethod::PopBack)
+      .Case("pop_front", ArrayMethod::PopFront)
+      .Case("push_back", ArrayMethod::PushBack)
+      .Case("push_front", ArrayMethod::PushFront)
+      .Case("reverse", ArrayMethod::Reverse)
+      .Case("shuffle", ArrayMethod::Shuffle)
+      .Case("sort", ArrayMethod::Sort)
+      .Case("rsort", ArrayMethod::RSort)
+      .Case("sum", ArrayMethod::Sum)
+      .Case("product", ArrayMethod::Product)
+      .Case("and", ArrayMethod::And)
+      .Case("or", ArrayMethod::Or)
+      .Case("xor", ArrayMethod::Xor)
+      .Case("find", ArrayMethod::Find)
+      .Case("find_index", ArrayMethod::FindIndex)
+      .Case("find_first", ArrayMethod::FindFirst)
+      .Case("find_first_index", ArrayMethod::FindFirstIndex)
+      .Case("find_last", ArrayMethod::FindLast)
+      .Case("find_last_index", ArrayMethod::FindLastIndex)
+      .Case("map", ArrayMethod::Map)
+      .Case("min", ArrayMethod::Min)
+      .Case("max", ArrayMethod::Max)
+      .Case("unique", ArrayMethod::Unique)
+      .Case("unique_index", ArrayMethod::UniqueIndex)
+      .Default(ArrayMethod::Unknown);
+}
+
+} // namespace
 
 FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
                                                 Value receiverOverride,
@@ -26,12 +94,42 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
   }
   Operation *receiverNode = withClause ? children.back() : children.front();
   Operation *clause = withClause ? children.front() : nullptr;
-  StringRef name = op.getCalleeName();
-  bool mutatesReceiver = name == "delete" || name == "reverse" ||
-                         name == "shuffle" || name == "sort" ||
-                         name == "rsort" || name == "push_back" ||
-                         name == "push_front" || name == "pop_front" ||
-                         name == "pop_back" || name == "insert";
+  StringRef methodName = op.getCalleeName();
+  ArrayMethod method = classifyArrayMethod(methodName);
+  bool mutatesReceiver =
+      method == ArrayMethod::Delete || method == ArrayMethod::Reverse ||
+      method == ArrayMethod::Shuffle || method == ArrayMethod::Sort ||
+      method == ArrayMethod::RSort || method == ArrayMethod::PushBack ||
+      method == ArrayMethod::PushFront || method == ArrayMethod::PopFront ||
+      method == ArrayMethod::PopBack || method == ArrayMethod::Insert;
+  FailureOr<Type> semanticReceiverType =
+      getNormalizedSemanticType(receiverNode);
+  if (failed(semanticReceiverType))
+    return failure();
+  Type sourceElementType;
+  if (auto sourceType =
+          receiverNode->getAttrOfType<TypeAttr>("semantic_type")) {
+    Type type = sourceType.getValue();
+    if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(type))
+      sourceElementType = array.getElementType();
+    else if (auto array = dyn_cast<semantic::UnpackedArrayType>(type))
+      sourceElementType = array.getElementType();
+    else if (auto array = dyn_cast<semantic::DynArrayType>(type))
+      sourceElementType = array.getElementType();
+    else if (auto array = dyn_cast<semantic::AssocArrayType>(type))
+      sourceElementType = array.getElementType();
+    else if (auto queue = dyn_cast<semantic::QueueType>(type))
+      sourceElementType = queue.getElementType();
+  }
+  bool elementSigned =
+      sourceElementType && isSignedSemanticType(sourceElementType);
+  bool fixedReceiver = isa<sim::UnpackedArrayType>(*semanticReceiverType);
+  if (fixedReceiver && mutatesReceiver) {
+    emitError(location) << "fixed-array ordering methods are not executable "
+                           "yet: "
+                        << methodName;
+    return failure();
+  }
   FailureOr<Value> receiver;
   if (receiverOverride) {
     receiver = receiverOverride;
@@ -64,25 +162,33 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     return failure();
   Type receiverType = (*receiver).getType();
   Type elementType;
+  sim::UnpackedArrayType fixedArray;
   if (auto array = dyn_cast<sim::DynamicArrayType>(receiverType))
     elementType = array.getElementType();
   else if (auto queue = dyn_cast<sim::QueueType>(receiverType))
     elementType = queue.getElementType();
+  else if ((fixedArray = dyn_cast<sim::UnpackedArrayType>(receiverType)))
+    elementType = fixedArray.getElementType();
   else
     return failure();
 
-  if (name == "size") {
+  if (method == ArrayMethod::Size) {
     if (withClause || children.size() != 1)
       return emitError(location) << "size does not accept arguments or a "
                                     "with clause",
              failure();
-    Value size = sim::SimContainerSizeOp::create(
-        builder, location, builder.getI64Type(), *receiver);
+    Value size = fixedArray
+                     ? Value(arith::ConstantOp::create(
+                           builder, location, builder.getI64Type(),
+                           builder.getI64IntegerAttr(
+                               sim::getAggregateNumElements(fixedArray))))
+                     : Value(sim::SimContainerSizeOp::create(
+                           builder, location, builder.getI64Type(), *receiver));
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
     return failed(resultType) ? FailureOr<Value>(failure())
                               : convert(size, *resultType, false, location);
   }
-  if (name == "push_back") {
+  if (method == ArrayMethod::PushBack) {
     if (withClause || children.size() != 2)
       return emitError(location)
                  << "push_back requires exactly one value argument",
@@ -106,7 +212,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
                                      builder.getBoolAttr(false))
         .getResult();
   }
-  if (name == "push_front") {
+  if (method == ArrayMethod::PushFront) {
     if (withClause || children.size() != 2)
       return emitError(location)
                  << "push_front requires exactly one value argument",
@@ -127,8 +233,8 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
           builder, location, builder.getI64Type(), *receiver);
       Value capacity = arith::ConstantOp::create(
           builder, location, builder.getI64Type(),
-          builder.getI64IntegerAttr(
-              static_cast<uint64_t>(queue.getBound()) + 1));
+          builder.getI64IntegerAttr(static_cast<uint64_t>(queue.getBound()) +
+                                    1));
       Value full = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::uge, size, capacity);
       Block *trim = addBlock();
@@ -136,9 +242,9 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
       cf::CondBranchOp::create(builder, location, full, trim, ValueRange{},
                                insert, ValueRange{});
       setCurrent(trim);
-      Value one = arith::ConstantOp::create(
-          builder, location, builder.getI64Type(),
-          builder.getI64IntegerAttr(1));
+      Value one =
+          arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                    builder.getI64IntegerAttr(1));
       Value last = arith::SubIOp::create(builder, location, size, one);
       sim::SimQueueDeleteOp::create(builder, location, *receiver, last);
       cf::BranchOp::create(builder, location, insert);
@@ -152,7 +258,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
                                      builder.getBoolAttr(false))
         .getResult();
   }
-  if (name == "pop_front") {
+  if (method == ArrayMethod::PopFront) {
     if (withClause || children.size() != 1)
       return emitError(location) << "pop_front does not accept arguments",
              failure();
@@ -170,7 +276,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
                ? FailureOr<Value>(failure())
                : convert(value, *resultType, isSignedNode(op), location);
   }
-  if (name == "pop_back") {
+  if (method == ArrayMethod::PopBack) {
     if (withClause || children.size() != 1)
       return emitError(location) << "pop_back does not accept arguments",
              failure();
@@ -191,7 +297,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
                ? FailureOr<Value>(failure())
                : convert(value, *resultType, isSignedNode(op), location);
   }
-  if (name == "insert") {
+  if (method == ArrayMethod::Insert) {
     if (withClause || children.size() != 3)
       return emitError(location)
                  << "insert requires exactly an index and a value",
@@ -218,7 +324,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
                                      builder.getBoolAttr(false))
         .getResult();
   }
-  if (name == "delete") {
+  if (method == ArrayMethod::Delete) {
     if (withClause || children.size() > 2)
       return emitError(location)
                  << "delete accepts at most one index and no with clause",
@@ -299,12 +405,37 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     return arith::ConstantOp::create(builder, location, builder.getI64Type(),
                                      builder.getI64IntegerAttr(value));
   };
+  auto inputSize = [&]() -> Value {
+    if (fixedArray)
+      return indexConstant(sim::getAggregateNumElements(fixedArray));
+    return sim::SimContainerSizeOp::create(builder, location,
+                                           builder.getI64Type(), *receiver);
+  };
+  auto fixedSourceIndex = [&](Value ordinal) -> Value {
+    Value left = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(),
+        builder.getI64IntegerAttr(fixedArray.getLeft()));
+    return fixedArray.getLeft() <= fixedArray.getRight()
+               ? Value(arith::AddIOp::create(builder, location, left, ordinal))
+               : Value(arith::SubIOp::create(builder, location, left, ordinal));
+  };
   auto sourceIndex = [&](Value ordinal) -> Value {
-    if (!iteratorKeys)
-      return ordinal;
-    auto keys = cast<sim::QueueType>(iteratorKeys.getType());
-    return sim::SimContainerReadOp::create(
-        builder, location, keys.getElementType(), iteratorKeys, ordinal);
+    if (iteratorKeys) {
+      auto keys = cast<sim::QueueType>(iteratorKeys.getType());
+      return sim::SimContainerReadOp::create(
+          builder, location, keys.getElementType(), iteratorKeys, ordinal);
+    }
+    return fixedArray ? fixedSourceIndex(ordinal) : ordinal;
+  };
+  auto readInput = [&](Value ordinal) -> Value {
+    if (fixedArray)
+      return sim::SimArrayDynExtractOp::create(
+          builder, location, elementType, *receiver, fixedSourceIndex(ordinal));
+    return sim::SimContainerReadOp::create(builder, location, elementType,
+                                           *receiver, ordinal);
+  };
+  auto keyIsSigned = [&]() {
+    return clause ? isSignedNode(clause) : elementSigned;
   };
   auto evaluateClause = [&](StringRef path, Value element,
                             Value index) -> FailureOr<Value> {
@@ -312,8 +443,9 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     return clause ? lowerExpression(clause) : FailureOr<Value>(element);
   };
 
-  if (name == "sum" || name == "product" || name == "and" || name == "or" ||
-      name == "xor") {
+  if (method == ArrayMethod::Sum || method == ArrayMethod::Product ||
+      method == ArrayMethod::And || method == ArrayMethod::Or ||
+      method == ArrayMethod::Xor) {
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
     FailureOr<StringRef> path = iteratorPath();
     if (failed(resultType) || failed(path))
@@ -321,32 +453,84 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     SavedIterator saved = saveIterator(*path);
     Value initial;
     if (auto integer = dyn_cast<IntegerType>(*resultType)) {
-      APInt identity(integer.getWidth(), name == "product" ? 1 : 0);
-      if (name == "and")
+      APInt identity(integer.getWidth(),
+                     method == ArrayMethod::Product ? 1 : 0);
+      if (method == ArrayMethod::And)
         identity.setAllBits();
       initial =
           arith::ConstantOp::create(builder, location, integer,
                                     builder.getIntegerAttr(integer, identity));
     } else if (auto logic = dyn_cast<sim::LogicType>(*resultType)) {
-      APInt identity(logic.getWidth(), name == "product" ? 1 : 0);
-      if (name == "and")
+      APInt identity(logic.getWidth(), method == ArrayMethod::Product ? 1 : 0);
+      if (method == ArrayMethod::And)
         identity.setAllBits();
       Type plane = builder.getIntegerType(logic.getWidth());
       initial = sim::SimLogicConstantOp::create(
           builder, location, logic, builder.getIntegerAttr(plane, identity),
           builder.getIntegerAttr(plane, 0));
     } else if (isa<FloatType>(*resultType) &&
-               (name == "sum" || name == "product")) {
+               (method == ArrayMethod::Sum || method == ArrayMethod::Product)) {
       initial = arith::ConstantOp::create(
           builder, location, *resultType,
-          builder.getFloatAttr(*resultType, name == "product" ? 1.0 : 0.0));
+          builder.getFloatAttr(*resultType,
+                               method == ArrayMethod::Product ? 1.0 : 0.0));
     } else {
-      emitError(location) << "array reduction " << name
+      emitError(location) << "array reduction " << methodName
                           << " requires an arithmetic or packed result";
       return failure();
     }
-    Value size = sim::SimContainerSizeOp::create(
-        builder, location, builder.getI64Type(), *receiver);
+    auto combine = [&](Value accumulator, Value term) -> Value {
+      if (isa<IntegerType>(*resultType)) {
+        if (method == ArrayMethod::Sum)
+          return arith::AddIOp::create(builder, location, accumulator, term);
+        if (method == ArrayMethod::Product)
+          return arith::MulIOp::create(builder, location, accumulator, term);
+        if (method == ArrayMethod::And)
+          return arith::AndIOp::create(builder, location, accumulator, term);
+        if (method == ArrayMethod::Or)
+          return arith::OrIOp::create(builder, location, accumulator, term);
+        return arith::XOrIOp::create(builder, location, accumulator, term);
+      }
+      if (isa<FloatType>(*resultType))
+        return method == ArrayMethod::Sum
+                   ? Value(arith::AddFOp::create(builder, location, accumulator,
+                                                 term))
+                   : Value(arith::MulFOp::create(builder, location, accumulator,
+                                                 term));
+      sim::BinaryKind kind = method == ArrayMethod::Sum ? sim::BinaryKind::Add
+                             : method == ArrayMethod::Product
+                                 ? sim::BinaryKind::Mul
+                             : method == ArrayMethod::And ? sim::BinaryKind::And
+                             : method == ArrayMethod::Or  ? sim::BinaryKind::Or
+                                                         : sim::BinaryKind::Xor;
+      return sim::SimLogicBinaryOp::create(builder, location, *resultType, kind,
+                                           accumulator, term);
+    };
+
+    // Fixed arrays have a statically known extent.  Express their reduction
+    // as ordinary aggregate extracts and SSA operations so the canonicalizer
+    // can fold a constant aggregate without teaching lowering about constant
+    // payloads.
+    if (fixedArray) {
+      Value accumulator = initial;
+      unsigned count = sim::getAggregateNumElements(fixedArray);
+      for (unsigned ordinal = 0; ordinal < count; ++ordinal) {
+        Value element = sim::SimAggregateExtractOp::create(
+            builder, location, elementType, *receiver, ordinal);
+        Value index = indexConstant(ordinal);
+        FailureOr<Value> term = evaluateClause(*path, element, index);
+        FailureOr<Value> converted =
+            succeeded(term)
+                ? convert(*term, *resultType, keyIsSigned(), location)
+                : FailureOr<Value>(failure());
+        if (failed(converted))
+          return failure();
+        accumulator = combine(accumulator, *converted);
+      }
+      restoreIterator(saved);
+      return accumulator;
+    }
+    Value size = inputSize();
     Block *header = addBlock();
     header->addArgument(builder.getI64Type(), location);
     header->addArgument(*resultType, location);
@@ -363,48 +547,15 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     cf::CondBranchOp::create(builder, location, more, body, ValueRange{}, exit,
                              ValueRange{accumulator});
     setCurrent(body);
-    Value element = sim::SimContainerReadOp::create(
-        builder, location, elementType, *receiver, index);
+    Value element = readInput(index);
     FailureOr<Value> term = evaluateClause(*path, element, index);
     if (failed(term))
       return failure();
     FailureOr<Value> converted =
-        convert(*term, *resultType,
-                isSignedNode(clause ? clause : receiverNode), location);
+        convert(*term, *resultType, keyIsSigned(), location);
     if (failed(converted))
       return failure();
-    Value nextAccumulator;
-    if (isa<IntegerType>(*resultType)) {
-      if (name == "sum")
-        nextAccumulator =
-            arith::AddIOp::create(builder, location, accumulator, *converted);
-      else if (name == "product")
-        nextAccumulator =
-            arith::MulIOp::create(builder, location, accumulator, *converted);
-      else if (name == "and")
-        nextAccumulator =
-            arith::AndIOp::create(builder, location, accumulator, *converted);
-      else if (name == "or")
-        nextAccumulator =
-            arith::OrIOp::create(builder, location, accumulator, *converted);
-      else
-        nextAccumulator =
-            arith::XOrIOp::create(builder, location, accumulator, *converted);
-    } else if (isa<FloatType>(*resultType)) {
-      nextAccumulator =
-          name == "sum" ? Value(arith::AddFOp::create(builder, location,
-                                                      accumulator, *converted))
-                        : Value(arith::MulFOp::create(builder, location,
-                                                      accumulator, *converted));
-    } else {
-      sim::BinaryKind kind = name == "sum"       ? sim::BinaryKind::Add
-                             : name == "product" ? sim::BinaryKind::Mul
-                             : name == "and"     ? sim::BinaryKind::And
-                             : name == "or"      ? sim::BinaryKind::Or
-                                                 : sim::BinaryKind::Xor;
-      nextAccumulator = sim::SimLogicBinaryOp::create(
-          builder, location, *resultType, kind, accumulator, *converted);
-    }
+    Value nextAccumulator = combine(accumulator, *converted);
     Value next =
         arith::AddIOp::create(builder, location, index, indexConstant(1));
     cf::BranchOp::create(builder, location, header,
@@ -414,12 +565,11 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     return exit->getArgument(0);
   }
 
-  if (name == "reverse") {
+  if (method == ArrayMethod::Reverse) {
     if (withClause)
       return emitError(location) << "reverse does not accept a with clause",
              failure();
-    Value size = sim::SimContainerSizeOp::create(
-        builder, location, builder.getI64Type(), *receiver);
+    Value size = inputSize();
     Value two = indexConstant(2);
     Value half = arith::DivUIOp::create(builder, location, size, two);
     Block *header = addBlock();
@@ -456,7 +606,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         .getResult();
   }
 
-  if (name == "shuffle") {
+  if (method == ArrayMethod::Shuffle) {
     if (withClause)
       return emitError(location) << "shuffle does not accept a with clause",
              failure();
@@ -493,12 +643,14 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         .getResult();
   }
 
-  bool locator = name == "find" || name == "find_index" ||
-                 name == "find_first" || name == "find_first_index" ||
-                 name == "find_last" || name == "find_last_index";
+  bool locator =
+      method == ArrayMethod::Find || method == ArrayMethod::FindIndex ||
+      method == ArrayMethod::FindFirst ||
+      method == ArrayMethod::FindFirstIndex ||
+      method == ArrayMethod::FindLast || method == ArrayMethod::FindLastIndex;
   if (locator) {
     if (!withClause)
-      return emitError(location) << name << " requires a with clause",
+      return emitError(location) << methodName << " requires a with clause",
              failure();
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
     auto queue = succeeded(resultType) ? dyn_cast<sim::QueueType>(*resultType)
@@ -519,8 +671,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         builder.getDenseI32ArrayAttr(descriptor->traceKinds),
         OBELISK_RT_CONTAINER_QUEUE, bound);
     SavedIterator saved = saveIterator(*path);
-    Value size = sim::SimContainerSizeOp::create(
-        builder, location, builder.getI64Type(), *receiver);
+    Value size = inputSize();
     Block *header = addBlock();
     header->addArgument(builder.getI64Type(), location);
     Block *body = addBlock();
@@ -537,8 +688,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     cf::CondBranchOp::create(builder, location, more, body, ValueRange{}, exit,
                              ValueRange{});
     setCurrent(body);
-    Value element = sim::SimContainerReadOp::create(
-        builder, location, elementType, *receiver, index);
+    Value element = readInput(index);
     FailureOr<Value> predicate = evaluateClause(*path, element, index);
     FailureOr<Value> truth = succeeded(predicate)
                                  ? truthValue(*predicate, location)
@@ -548,7 +698,9 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     cf::CondBranchOp::create(builder, location, *truth, append, ValueRange{},
                              step, ValueRange{index});
     setCurrent(append);
-    bool indexResult = name.contains("index");
+    bool indexResult = method == ArrayMethod::FindIndex ||
+                       method == ArrayMethod::FindFirstIndex ||
+                       method == ArrayMethod::FindLastIndex;
     Value appended = element;
     if (indexResult) {
       FailureOr<Value> converted = convert(
@@ -557,13 +709,14 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         return failure();
       appended = *converted;
     }
-    if (name.starts_with("find_last"))
+    if (method == ArrayMethod::FindLast || method == ArrayMethod::FindLastIndex)
       sim::SimContainerDeleteOp::create(builder, location, result);
     Value outputIndex = sim::SimContainerSizeOp::create(
         builder, location, builder.getI64Type(), result);
     sim::SimContainerWriteOp::create(builder, location, result, outputIndex,
                                      appended);
-    if (name.starts_with("find_first"))
+    if (method == ArrayMethod::FindFirst ||
+        method == ArrayMethod::FindFirstIndex)
       cf::BranchOp::create(builder, location, exit);
     else
       cf::BranchOp::create(builder, location, step, ValueRange{index});
@@ -644,15 +797,14 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     return failure();
   };
 
-  if (name == "sort" || name == "rsort") {
+  if (method == ArrayMethod::Sort || method == ArrayMethod::RSort) {
     FailureOr<StringRef> path = iteratorPath();
     FailureOr<Type> keyType = clause ? getNormalizedSemanticType(clause)
                                      : FailureOr<Type>(elementType);
     if (failed(path) || failed(keyType))
       return failure();
     SavedIterator saved = saveIterator(*path);
-    Value size = sim::SimContainerSizeOp::create(
-        builder, location, builder.getI64Type(), *receiver);
+    Value size = inputSize();
     FailureOr<ContainerElementDescriptor> keyDescriptor =
         describeContainerElement(*keyType, location);
     if (failed(keyDescriptor))
@@ -685,8 +837,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     if (failed(evaluatedKey))
       return failure();
     FailureOr<Value> convertedKey =
-        convert(*evaluatedKey, *keyType,
-                isSignedNode(clause ? clause : receiverNode), location);
+        convert(*evaluatedKey, *keyType, keyIsSigned(), location);
     if (failed(convertedKey))
       return failure();
     sim::SimContainerWriteOp::create(builder, location, keys, keyIndex,
@@ -748,8 +899,8 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     Value convertedRight = sim::SimContainerReadOp::create(
         builder, location, *keyType, keys, rightIndex);
     FailureOr<Value> outOfOrder =
-        orderedCompare(convertedRight, convertedLeft, *keyType, name == "sort",
-                       isSignedNode(clause ? clause : receiverNode));
+        orderedCompare(convertedRight, convertedLeft, *keyType,
+                       method == ArrayMethod::Sort, keyIsSigned());
     if (failed(outOfOrder))
       return failure();
     cf::CondBranchOp::create(
@@ -785,7 +936,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         .getResult();
   }
 
-  if (name == "map") {
+  if (method == ArrayMethod::Map) {
     if (!withClause)
       return emitError(location) << "map requires a with clause", failure();
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
@@ -809,8 +960,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         describeContainerElement(resultElement, location);
     if (failed(descriptor))
       return failure();
-    Value size = sim::SimContainerSizeOp::create(
-        builder, location, builder.getI64Type(), *receiver);
+    Value size = inputSize();
     Value allocationSize = resultKind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
                                ? size
                                : indexConstant(0);
@@ -835,8 +985,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     cf::CondBranchOp::create(builder, location, more, body, ValueRange{}, exit,
                              ValueRange{});
     setCurrent(body);
-    Value element = sim::SimContainerReadOp::create(
-        builder, location, elementType, *receiver, index);
+    Value element = readInput(index);
     FailureOr<Value> mapped = evaluateClause(*path, element, index);
     if (failed(mapped))
       return failure();
@@ -854,7 +1003,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     return result;
   }
 
-  if (name == "min" || name == "max") {
+  if (method == ArrayMethod::Min || method == ArrayMethod::Max) {
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
     auto queue = succeeded(resultType) ? dyn_cast<sim::QueueType>(*resultType)
                                        : sim::QueueType{};
@@ -876,8 +1025,52 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         builder.getDenseI32ArrayAttr(descriptor->traceKinds),
         OBELISK_RT_CONTAINER_QUEUE, bound);
     SavedIterator saved = saveIterator(*path);
-    Value size = sim::SimContainerSizeOp::create(
-        builder, location, builder.getI64Type(), *receiver);
+
+    // Keep fixed-array selection in SSA form.  Static aggregate extracts are
+    // canonicalized through aggregate.construct, after which the normal arith
+    // folders reduce comparisons and selects for constant arrays.
+    if (fixedArray) {
+      unsigned count = sim::getAggregateNumElements(fixedArray);
+      assert(count && "a fixed unpacked array cannot be empty");
+      Value first = sim::SimAggregateExtractOp::create(
+          builder, location, elementType, *receiver, 0);
+      FailureOr<Value> firstKey =
+          evaluateClause(*path, first, indexConstant(0));
+      FailureOr<Value> convertedFirst =
+          succeeded(firstKey)
+              ? convert(*firstKey, *keyType, keyIsSigned(), location)
+              : FailureOr<Value>(failure());
+      if (failed(convertedFirst))
+        return failure();
+      Value best = first;
+      Value bestKey = *convertedFirst;
+      for (unsigned ordinal = 1; ordinal < count; ++ordinal) {
+        Value candidate = sim::SimAggregateExtractOp::create(
+            builder, location, elementType, *receiver, ordinal);
+        FailureOr<Value> candidateKey =
+            evaluateClause(*path, candidate, indexConstant(ordinal));
+        FailureOr<Value> convertedKey =
+            succeeded(candidateKey)
+                ? convert(*candidateKey, *keyType, keyIsSigned(), location)
+                : FailureOr<Value>(failure());
+        if (failed(convertedKey))
+          return failure();
+        FailureOr<Value> preferred =
+            orderedCompare(*convertedKey, bestKey, *keyType,
+                           method == ArrayMethod::Min, keyIsSigned());
+        if (failed(preferred))
+          return failure();
+        best = arith::SelectOp::create(builder, location, *preferred, candidate,
+                                       best);
+        bestKey = arith::SelectOp::create(builder, location, *preferred,
+                                          *convertedKey, bestKey);
+      }
+      sim::SimContainerWriteOp::create(builder, location, result,
+                                       indexConstant(0), best);
+      restoreIterator(saved);
+      return result;
+    }
+    Value size = inputSize();
     Value nonempty = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::ne, size, indexConstant(0));
     Block *initialize = addBlock();
@@ -892,14 +1085,12 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     cf::CondBranchOp::create(builder, location, nonempty, initialize,
                              ValueRange{}, exit, ValueRange{});
     setCurrent(initialize);
-    Value first = sim::SimContainerReadOp::create(
-        builder, location, elementType, *receiver, indexConstant(0));
+    Value first = readInput(indexConstant(0));
     FailureOr<Value> firstKey = evaluateClause(*path, first, indexConstant(0));
     if (failed(firstKey))
       return failure();
     FailureOr<Value> convertedFirst =
-        convert(*firstKey, *keyType,
-                isSignedNode(clause ? clause : receiverNode), location);
+        convert(*firstKey, *keyType, keyIsSigned(), location);
     if (failed(convertedFirst))
       return failure();
     cf::BranchOp::create(builder, location, header,
@@ -913,19 +1104,17 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     cf::CondBranchOp::create(builder, location, more, body, ValueRange{},
                              finish, ValueRange{best});
     setCurrent(body);
-    Value candidate = sim::SimContainerReadOp::create(
-        builder, location, elementType, *receiver, index);
+    Value candidate = readInput(index);
     FailureOr<Value> candidateKey = evaluateClause(*path, candidate, index);
     if (failed(candidateKey))
       return failure();
     FailureOr<Value> convertedKey =
-        convert(*candidateKey, *keyType,
-                isSignedNode(clause ? clause : receiverNode), location);
+        convert(*candidateKey, *keyType, keyIsSigned(), location);
     if (failed(convertedKey))
       return failure();
     FailureOr<Value> preferred =
-        orderedCompare(*convertedKey, bestKey, *keyType, name == "min",
-                       isSignedNode(clause ? clause : receiverNode));
+        orderedCompare(*convertedKey, bestKey, *keyType,
+                       method == ArrayMethod::Min, keyIsSigned());
     if (failed(preferred))
       return failure();
     Value nextBest =
@@ -945,7 +1134,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     return result;
   }
 
-  if (name == "unique" || name == "unique_index") {
+  if (method == ArrayMethod::Unique || method == ArrayMethod::UniqueIndex) {
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
     auto resultQueue = succeeded(resultType)
                            ? dyn_cast<sim::QueueType>(*resultType)
@@ -981,8 +1170,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         builder.getDenseI32ArrayAttr(keyDescriptor->traceKinds),
         OBELISK_RT_CONTAINER_QUEUE, UINT64_MAX);
     SavedIterator saved = saveIterator(*path);
-    Value size = sim::SimContainerSizeOp::create(
-        builder, location, builder.getI64Type(), *receiver);
+    Value size = inputSize();
     Block *outerHeader = addBlock();
     outerHeader->addArgument(builder.getI64Type(), location);
     Block *outerBody = addBlock();
@@ -1008,15 +1196,13 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     cf::CondBranchOp::create(builder, location, more, outerBody, ValueRange{},
                              exit, ValueRange{});
     setCurrent(outerBody);
-    Value candidate = sim::SimContainerReadOp::create(
-        builder, location, elementType, *receiver, inputIndex);
+    Value candidate = readInput(inputIndex);
     FailureOr<Value> candidateKey =
         evaluateClause(*path, candidate, inputIndex);
     if (failed(candidateKey))
       return failure();
     FailureOr<Value> convertedKey =
-        convert(*candidateKey, *keyType,
-                isSignedNode(clause ? clause : receiverNode), location);
+        convert(*candidateKey, *keyType, keyIsSigned(), location);
     if (failed(convertedKey))
       return failure();
     cf::BranchOp::create(
@@ -1052,7 +1238,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
                                     innerHeader->getArgument(3)});
     setCurrent(append);
     Value resultValue = append->getArgument(0);
-    if (name == "unique_index") {
+    if (method == ArrayMethod::UniqueIndex) {
       FailureOr<Value> convertedIndex =
           convert(sourceIndex(append->getArgument(2)),
                   resultQueue.getElementType(), true, location, true);
@@ -1077,7 +1263,8 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     return result;
   }
 
-  return emitError(location) << "unsupported dynamic-array method " << name,
+  return emitError(location)
+             << "unsupported dynamic-array method " << methodName,
          failure();
 }
 
