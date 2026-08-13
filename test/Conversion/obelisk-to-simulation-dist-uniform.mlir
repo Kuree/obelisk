@@ -1,11 +1,11 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK-LABEL: obelisk_sim.func private @unit_1(
+// CHECK-DAG: %[[HIGH:.*]] = arith.constant 100 : i32
+// CHECK-DAG: %[[LOW:.*]] = arith.constant 0 : i32
 // CHECK: %[[SEED_LOGIC:.*]] = obelisk_sim.ref.load
 // CHECK: %[[SEED_BITS:.*]] = obelisk_sim.logic.to_bits %[[SEED_LOGIC]]
 // CHECK-NOT: obelisk_sim.random.seed
-// CHECK: %[[HIGH:.*]] = arith.constant {{.*}} 100 : i32
-// CHECK: %[[LOW:.*]] = arith.constant {{.*}} 0 : i32
 // CHECK: %[[RESULT:.*]], %[[NEXT_SEED:.*]] = obelisk_sim.random.distribution {{.*}}, %[[SEED_BITS]], %[[LOW]], %[[HIGH]] {distribution = 0 : i32}
 // CHECK: %[[UPDATED:.*]] = obelisk_sim.logic.from_bits %[[NEXT_SEED]]
 // CHECK: obelisk_sim.ref.store %[[UPDATED]]

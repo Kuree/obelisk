@@ -5760,6 +5760,17 @@ void ObeliskSimPreparePass::runOnOperation() {
       SmallVector<Operation *> initializer = getChildren(symbol->second);
       if (initializer.empty())
         return;
+      // A static variable owns a separate zero-time initializer code unit,
+      // invoked by the root before any process is spawned.  Re-cloning that
+      // initializer into its procedural declaration would evaluate it a
+      // second time on first execution (and would require a second, different
+      // capture ABI).  The declaration is only a lexical occurrence of the
+      // already initialized descriptor-backed object.
+      if (auto variable =
+              dyn_cast<semantic::SVVariableSymbolOp>(symbol->second);
+          variable && variable.getLifetime() ==
+                          semantic::SVVariableLifetime::Static)
+        return;
       OpBuilder declarationBuilder =
           OpBuilder::atBlockEnd(&declaration->getRegion(0).front());
       auto memberOrdinals = symbol->second->getAttrOfType<DenseI64ArrayAttr>(

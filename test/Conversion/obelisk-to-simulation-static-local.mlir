@@ -8,10 +8,16 @@ module {
     }
     obelisk.sv.symbol.instance attributes {hierarchical_name = "supported_static_local", is_uninstantiated = false, name = "supported_static_local", node_id = 3 : i64, referenced_path = "supported_static_local", referenced_symbol = @s0.supported_static_local, sym_name = "s3.supported_static_local"} {
       obelisk.sv.symbol.instance_body attributes {hierarchical_name = "supported_static_local", name = "supported_static_local", node_id = 4 : i64, sym_name = "s4.supported_static_local"} {
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "supported_static_local.source", lifetime = 1 : i32, name = "source", node_id = 12 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s12.source"} {
+          obelisk.sv.expression.conversion attributes {node_id = 13 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+            obelisk.sv.expression.integer_literal attributes {constant_value = "1'b1", node_id = 14 : i64, semantic_type = !obelisk.ranged_packed_array<0 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+            }
+          }
+        }
         obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "supported_static_local", node_id = 5 : i64, sym_name = "s5"} {
           obelisk.sv.symbol.variable attributes {hierarchical_name = "supported_static_local.value", lifetime = 1 : i32, name = "value", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.value"} {
             obelisk.sv.expression.conversion attributes {node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
-              obelisk.sv.expression.integer_literal attributes {constant_value = "1'b1", node_id = 8 : i64, semantic_type = !obelisk.ranged_packed_array<0 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+              obelisk.sv.expression.named_value attributes {node_id = 8 : i64, referenced_path = "supported_static_local.source", referenced_symbol = @s1.$root::@s3.supported_static_local::@s4.supported_static_local::@s12.source, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
               }
             }
           }
@@ -27,7 +33,18 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.static.once
-// CHECK: cf.cond_br
+// A static initializer is called once by the root before the initial process;
+// its procedural declaration must not evaluate the initializer again.
+// CHECK-LABEL: obelisk_sim.func @__obelisk_root
+// CHECK: obelisk_sim.call @unit_0
+// CHECK: obelisk_sim.call @unit_1
+// CHECK: obelisk_sim.spawn @unit_2
+// CHECK-LABEL: obelisk_sim.func private @unit_0
 // CHECK: obelisk_sim.ref.store
+// CHECK-LABEL: obelisk_sim.func private @unit_1
+// CHECK: obelisk_sim.ref.load
+// CHECK: obelisk_sim.ref.store
+// CHECK-LABEL: obelisk_sim.func private @unit_2
+// CHECK-NOT: obelisk_sim.static.once
+// CHECK-NOT: obelisk_sim.ref.store
 // CHECK-NOT: obelisk.sv.
