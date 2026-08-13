@@ -385,6 +385,7 @@ private:
   ::llvm::DenseSet<::mlir::Block *> clockingEventContinuations;
   ::llvm::DenseSet<::mlir::Block *> timingBoundaryContinuations;
   ::llvm::StringMap<semantic::SVCovergroupTypeOp> semanticCovergroups;
+  ::llvm::StringSet<> coverageDefinitionNames;
   ::mlir::Value thisObject;
   ::mlir::Value taskControlActivation;
   ::llvm::SetVector<::mlir::Value> sensitivity;

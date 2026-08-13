@@ -265,11 +265,16 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
                                              member.getValue())]
             .push_back({net.getScopeId(), net.getId()});
     }
-  for (Operation &topLevel : module.getBody()->getOperations())
-    if (auto root = dyn_cast<semantic::SVRootSymbolOp>(topLevel))
+  for (Operation &topLevel : module.getBody()->getOperations()) {
+    if (auto definition = dyn_cast<semantic::SVDefinitionSymbolOp>(topLevel))
+      if (auto name = definition.getName())
+        coverageDefinitionNames.insert(*name);
+    if (auto root = dyn_cast<semantic::SVRootSymbolOp>(topLevel)) {
       root->walk([&](semantic::SVCovergroupTypeOp covergroup) {
         semanticCovergroups[covergroup.getSymName()] = covergroup;
       });
+    }
+  }
   if (auto argument =
           function->getAttrOfType<IntegerAttr>("obelisk_sim.this_argument")) {
     uint64_t index = argument.getValue().getZExtValue();

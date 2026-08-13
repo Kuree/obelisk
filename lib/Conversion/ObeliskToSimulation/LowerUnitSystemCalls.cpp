@@ -1267,6 +1267,185 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
   if (name == "$sscanf" || name == "$fscanf")
     return lowerScanSystemCall(op);
 
+  bool coverageCall =
+      llvm::StringSwitch<bool>(name)
+          .Cases({"$coverage_control", "$coverage_get_max", "$coverage_get",
+                  "$coverage_merge", "$coverage_save", "$set_coverage_db_name",
+                  "$load_coverage_db", "$get_coverage"},
+                 true)
+          .Default(false);
+  if (coverageCall) {
+    // IEEE 1800-2017 40.3.2 explicitly represents an implementation with no
+    // assertion, FSM, statement, or toggle coverage by SV_COV_NOCOV. Obelisk
+    // does not instrument those four code-coverage classes, so model that
+    // standardized capability result instead of inventing counters. The
+    // Clause 19 functional-coverage database routines remain unsupported when
+    // a design actually declares covergroups.
+    auto oneOf = [&](Value value, ArrayRef<int32_t> choices) -> Value {
+      Value result = arith::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+      for (int32_t choice : choices) {
+        Value equal =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                  value, constant(i32, choice));
+        result = arith::OrIOp::create(builder, location, result, equal);
+      }
+      return result;
+    };
+    auto status = [&](Value valid, Value success) -> FailureOr<Value> {
+      Value error = constant(i32, -1); // SV_COV_ERROR
+      return convertResult(
+          arith::SelectOp::create(builder, location, valid, success, error));
+    };
+    auto validCoverageType = [&](Value value) -> Value {
+      return oneOf(value, {20, 21, 22, 23});
+    };
+    auto validScopeDefinition = [&](Value value) -> Value {
+      return oneOf(value, {10, 11});
+    };
+    auto lowerCoverageTarget = [&](Operation *target) -> FailureOr<Value> {
+      if (isa<semantic::SVArbitrarySymbolExpressionOp>(target))
+        return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                         builder.getBoolAttr(true))
+            .getResult();
+      FailureOr<Value> lowered = lowerExpression(target);
+      if (failed(lowered) || !isa<sim::StringType>((*lowered).getType())) {
+        emitError(getSemanticLocation(target))
+            << "coverage scope must be a module instance or definition name";
+        return failure();
+      }
+      Value valid = arith::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+      SmallVector<StringRef> definitionNames;
+      definitionNames.reserve(coverageDefinitionNames.size());
+      for (const auto &entry : coverageDefinitionNames)
+        definitionNames.push_back(entry.getKey());
+      llvm::sort(definitionNames);
+      for (StringRef definitionName : definitionNames) {
+        Value candidate = sim::SimStringLiteralOp::create(
+            builder, location, sim::StringType::get(function.getContext()),
+            builder.getStringAttr(definitionName));
+        Value compared = sim::SimStringCompareOp::create(
+            builder, location, i32, *lowered, candidate,
+            builder.getBoolAttr(false));
+        Value equal =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                  compared, constant(i32, 0));
+        valid = arith::OrIOp::create(builder, location, valid, equal);
+      }
+      return valid;
+    };
+
+    if (name == "$coverage_control") {
+      if (children.size() != 4) {
+        emitError(location) << "$coverage_control requires four arguments";
+        return failure();
+      }
+      FailureOr<Value> control = lowerInteger(children[0], i32);
+      FailureOr<Value> coverageType = lowerInteger(children[1], i32);
+      FailureOr<Value> scope = lowerInteger(children[2], i32);
+      FailureOr<Value> target = lowerCoverageTarget(children[3]);
+      if (failed(control) || failed(coverageType) || failed(scope) ||
+          failed(target))
+        return failure();
+      Value valid = arith::AndIOp::create(
+          builder, location, oneOf(*control, {0, 1, 2, 3}),
+          arith::AndIOp::create(
+              builder, location, validCoverageType(*coverageType),
+              arith::AndIOp::create(builder, location,
+                                    validScopeDefinition(*scope), *target)));
+      Value stop =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                *control, constant(i32, 1));
+      Value reset =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                *control, constant(i32, 2));
+      Value stopOrReset = arith::OrIOp::create(builder, location, stop, reset);
+      Value result = arith::SelectOp::create(
+          builder, location, stopOrReset,
+          constant(i32, 1),  // SV_COV_OK: valid stop/reset are no-ops.
+          constant(i32, 0)); // SV_COV_NOCOV: check/start find no counters.
+      return status(valid, result);
+    }
+
+    if (name == "$coverage_get_max" || name == "$coverage_get") {
+      if (children.size() != 3) {
+        emitError(location) << name << " requires three arguments";
+        return failure();
+      }
+      FailureOr<Value> coverageType = lowerInteger(children[0], i32);
+      FailureOr<Value> scope = lowerInteger(children[1], i32);
+      FailureOr<Value> target = lowerCoverageTarget(children[2]);
+      if (failed(coverageType) || failed(scope) || failed(target))
+        return failure();
+      Value valid = arith::AndIOp::create(
+          builder, location, validCoverageType(*coverageType),
+          arith::AndIOp::create(builder, location, validScopeDefinition(*scope),
+                                *target));
+      return status(valid, constant(i32, 0)); // SV_COV_NOCOV
+    }
+
+    if (name == "$coverage_merge" || name == "$coverage_save") {
+      if (children.size() != 2) {
+        emitError(location) << name << " requires two arguments";
+        return failure();
+      }
+      FailureOr<Value> coverageType = lowerInteger(children[0], i32);
+      FailureOr<Value> databaseName = lowerExpression(children[1]);
+      if (failed(coverageType) || failed(databaseName) ||
+          !isa<sim::StringType>((*databaseName).getType())) {
+        emitError(location)
+            << name << " requires a coverage type and string name";
+        return failure();
+      }
+      // Nothing can have been saved without code-coverage instrumentation.
+      // Merge therefore reports ERROR (database/type not found), while save
+      // reports NOCOV and creates no entry, exactly as 40.3.2.4/.5 specify.
+      Value result = constant(i32, name == "$coverage_merge" ? -1 : 0);
+      return status(validCoverageType(*coverageType), result);
+    }
+
+    if (name == "$get_coverage") {
+      if (!children.empty()) {
+        emitError(location) << "$get_coverage takes no arguments";
+        return failure();
+      }
+      if (!semanticCovergroups.empty()) {
+        unsupported(op)
+            << " (coverage database aggregation with declared covergroups)";
+        return failure();
+      }
+      FailureOr<Type> resultType = getNormalizedSemanticType(op);
+      auto floatType = succeeded(resultType) ? dyn_cast<FloatType>(*resultType)
+                                             : FloatType{};
+      if (!floatType) {
+        emitError(location) << "$get_coverage has a non-real result type";
+        return failure();
+      }
+      return arith::ConstantOp::create(builder, location, floatType,
+                                       builder.getFloatAttr(floatType, 0.0))
+          .getResult();
+    }
+
+    if (children.size() != 1) {
+      emitError(location) << name << " requires one string argument";
+      return failure();
+    }
+    FailureOr<Value> databaseName = lowerExpression(children.front());
+    if (failed(databaseName) ||
+        !isa<sim::StringType>((*databaseName).getType())) {
+      emitError(location) << name << " requires a string argument";
+      return failure();
+    }
+    if (!semanticCovergroups.empty()) {
+      unsupported(op) << " (coverage database I/O with declared covergroups)";
+      return failure();
+    }
+    // With no covergroup types there is no data to name or load. Clause 19.9
+    // gives these tasks no status result or required side effect in that case.
+    return dummyTaskResult();
+  }
+
   unsupported(op) << " (unsupported system call " << name << ")";
   return failure();
 }
