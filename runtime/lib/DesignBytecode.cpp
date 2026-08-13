@@ -1277,8 +1277,48 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
     case OBELISK_RT_DB_INSERT: {
       Logic base = read(instruction.source0),
             inserted = read(instruction.source1);
+      bool negative = false;
+      uint64_t low = instruction.immediate;
+      uint64_t negativeMagnitude = 0;
+      if (instruction.flags == OBELISK_RT_DB_INSERT_DYNAMIC) {
+        Logic dynamic = read(instruction.source2);
+        if (anyUnknown(dynamic)) {
+          write(instruction.destination, base);
+          break;
+        }
+        negative = bit(dynamic.value, dynamic.width - 1);
+        if (negative) {
+          Logic magnitude = negate(dynamic);
+          bool fits = !magnitude.value.empty();
+          for (size_t index = 1; index < magnitude.value.size(); ++index)
+            fits &= magnitude.value[index] == 0;
+          if (!fits) {
+            write(instruction.destination, base);
+            break;
+          }
+          negativeMagnitude = magnitude.value[0];
+        } else {
+          bool fits = !dynamic.value.empty();
+          for (size_t index = 1; index < dynamic.value.size(); ++index)
+            fits &= dynamic.value[index] == 0;
+          if (!fits) {
+            write(instruction.destination, base);
+            break;
+          }
+          low = dynamic.value[0];
+        }
+      }
       for (uint64_t bitIndex = 0; bitIndex != inserted.width; ++bitIndex) {
-        uint64_t destination = instruction.immediate + bitIndex;
+        uint64_t destination = 0;
+        if (negative) {
+          if (bitIndex < negativeMagnitude)
+            continue;
+          destination = bitIndex - negativeMagnitude;
+        } else {
+          if (bitIndex > UINT64_MAX - low)
+            break;
+          destination = low + bitIndex;
+        }
         if (destination >= base.width)
           break;
         setBit(base.value, destination, bit(inserted.value, bitIndex));

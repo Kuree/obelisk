@@ -2799,6 +2799,45 @@ def SimBitsDynExtractOp : SimOp<"bits.dyn_extract", [Pure]> {
   let hasFolder = 1;
 }
 
+def SimLogicDynInsertOp
+    : SimOp<"logic.dyn_insert", [Pure, AllTypesMatch<["input", "result"]>]> {
+  let summary = "dynamically replace a four-state packed slice";
+  let description = [{
+    The low-bit index follows the same signed two's-complement normalization
+    contract as `logic.dyn_extract`. An unknown or wholly out-of-range index
+    leaves the input unchanged. A partially overlapping replacement updates
+    only the in-range input bits.
+  }];
+  let arguments = (ins SimLogicType:$input, SimLogicType:$replacement,
+                        AnyType:$low_bit);
+  let results = (outs SimLogicType:$result);
+  let assemblyFormat =
+      "$replacement `into` $input `at` $low_bit attr-dict `:` "
+      "functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimBitsDynInsertOp
+    : SimOp<"bits.dyn_insert", [Pure, AllTypesMatch<["input", "result"]>]> {
+  let summary = "dynamically replace a two-state packed slice";
+  let description = [{
+    The low-bit index follows the same signed two's-complement normalization
+    contract as `bits.dyn_extract`. An unknown or wholly out-of-range index
+    leaves the input unchanged. A partially overlapping replacement updates
+    only the in-range input bits.
+  }];
+  let arguments = (ins AnyInteger:$input, AnyInteger:$replacement,
+                        AnyType:$low_bit);
+  let results = (outs AnyInteger:$result);
+  let assemblyFormat =
+      "$replacement `into` $input `at` $low_bit attr-dict `:` "
+      "functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
 def SimLogicInsertOp
     : SimOp<"logic.insert", [Pure, AllTypesMatch<["input", "result"]>]> {
   let arguments = (ins SimLogicType

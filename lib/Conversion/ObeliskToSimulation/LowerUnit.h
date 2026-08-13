@@ -54,6 +54,7 @@ private:
     enum class Kind {
       Reference,
       PackedDynamicSlice,
+      PackedValueSlice,
       ContainerElement,
       AssociativeElement,
       AggregateElement,
@@ -68,12 +69,24 @@ private:
     ::mlir::Value reference;
     ::mlir::Value container;
     ::mlir::Value index;
+    uint64_t lowBit = 0;
     unsigned ordinal = 0;
     std::vector<CapturedLValue> children;
   };
 
+  struct PackedSelectionAddress {
+    ::mlir::Type scalarResultType;
+    bool constant = false;
+    uint64_t lowBit = 0;
+    ::mlir::Value dynamicLow;
+  };
+
   ::mlir::FailureOr<::mlir::Value> lowerExpression(::mlir::Operation *op,
                                                    bool lvalue = false);
+  ::mlir::FailureOr<PackedSelectionAddress>
+  lowerPackedSelectionAddress(::mlir::Operation *op,
+                              ::mlir::Type sourceValueType,
+                              ::mlir::Type resultType);
   ::mlir::FailureOr<::mlir::Value>
   lowerContextDeterminedExpression(::mlir::Operation *op);
   ::mlir::FailureOr<::mlir::Value>

@@ -338,6 +338,33 @@ module {
     %ok_bits6 = arith.cmpi eq, %bits6, %c0_i3 : i3
     %ok_bits_unknown = arith.cmpi eq, %bits_unknown, %c0_i3 : i3
 
+    // Dynamic replacements use the write-side bounds rules: unknown and
+    // wholly invalid indices are no-ops, while partial overlaps update only
+    // the in-range destination bits.
+    %replacement3 = obelisk_sim.logic.constant 6 : i3, 2 : i3 : !obelisk_sim.logic<3>
+    %insert_neg1 = obelisk_sim.logic.dyn_insert %replacement3 into %value5 at %idx_neg1 : (!obelisk_sim.logic<5>, !obelisk_sim.logic<3>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<5>
+    %insert4 = obelisk_sim.logic.dyn_insert %replacement3 into %value5 at %idx4 : (!obelisk_sim.logic<5>, !obelisk_sim.logic<3>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<5>
+    %insert6 = obelisk_sim.logic.dyn_insert %replacement3 into %value5 at %idx6 : (!obelisk_sim.logic<5>, !obelisk_sim.logic<3>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<5>
+    %insert_unknown = obelisk_sim.logic.dyn_insert %replacement3 into %value5 at %idx_unknown : (!obelisk_sim.logic<5>, !obelisk_sim.logic<3>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<5>
+    %expected_insert_neg1 = obelisk_sim.logic.constant 19 : i5, 5 : i5 : !obelisk_sim.logic<5>
+    %expected_insert4 = obelisk_sim.logic.constant 1 : i5, 4 : i5 : !obelisk_sim.logic<5>
+    %ok_insert_neg1 = obelisk_sim.logic.compare case_eq %insert_neg1, %expected_insert_neg1 : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> i1
+    %ok_insert4 = obelisk_sim.logic.compare case_eq %insert4, %expected_insert4 : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> i1
+    %ok_insert6 = obelisk_sim.logic.compare case_eq %insert6, %value5 : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> i1
+    %ok_insert_unknown = obelisk_sim.logic.compare case_eq %insert_unknown, %value5 : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> i1
+
+    %bits_replacement3 = arith.constant 6 : i3
+    %bits_insert_neg1 = obelisk_sim.bits.dyn_insert %bits_replacement3 into %bits5 at %idx_neg1 : (i5, i3, !obelisk_sim.logic<5>) -> i5
+    %bits_insert4 = obelisk_sim.bits.dyn_insert %bits_replacement3 into %bits5 at %idx4 : (i5, i3, !obelisk_sim.logic<5>) -> i5
+    %bits_insert6 = obelisk_sim.bits.dyn_insert %bits_replacement3 into %bits5 at %idx6 : (i5, i3, !obelisk_sim.logic<5>) -> i5
+    %bits_insert_unknown = obelisk_sim.bits.dyn_insert %bits_replacement3 into %bits5 at %idx_unknown : (i5, i3, !obelisk_sim.logic<5>) -> i5
+    %c23_i5 = arith.constant 23 : i5
+    %c5_i5 = arith.constant 5 : i5
+    %ok_bits_insert_neg1 = arith.cmpi eq, %bits_insert_neg1, %c23_i5 : i5
+    %ok_bits_insert4 = arith.cmpi eq, %bits_insert4, %c5_i5 : i5
+    %ok_bits_insert6 = arith.cmpi eq, %bits_insert6, %bits5 : i5
+    %ok_bits_insert_unknown = arith.cmpi eq, %bits_insert_unknown, %bits5 : i5
+
     // An unsigned source index is normalized by zero-extension before the
     // signed two's-complement dynamic-index contract is applied.
     %wide_bits37 = arith.constant 2147483648 : i37
@@ -367,8 +394,16 @@ module {
     %ok19 = arith.andi %ok18, %ok_bits6 : i1
     %ok20 = arith.andi %ok19, %ok_bits_unknown : i1
     %ok_selection = arith.andi %ok20, %ok_unsigned_index : i1
+    %ok_insert0 = arith.andi %ok_selection, %ok_insert_neg1 : i1
+    %ok_insert1 = arith.andi %ok_insert0, %ok_insert4 : i1
+    %ok_insert2 = arith.andi %ok_insert1, %ok_insert6 : i1
+    %ok_insert3 = arith.andi %ok_insert2, %ok_insert_unknown : i1
+    %ok_insert4_all = arith.andi %ok_insert3, %ok_bits_insert_neg1 : i1
+    %ok_insert5 = arith.andi %ok_insert4_all, %ok_bits_insert4 : i1
+    %ok_insert6_all = arith.andi %ok_insert5, %ok_bits_insert6 : i1
+    %ok_insert = arith.andi %ok_insert6_all, %ok_bits_insert_unknown : i1
     %remaining = func.call @exercise_remaining_ops() : () -> i1
-    %ok21 = arith.andi %ok_selection, %remaining : i1
+    %ok21 = arith.andi %ok_insert, %remaining : i1
     %result = arith.extui %ok21 : i1 to i32
     return %result : i32
   }

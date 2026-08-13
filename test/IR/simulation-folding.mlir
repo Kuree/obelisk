@@ -10,6 +10,7 @@ module {
     obelisk_sim.code_unit.decl 9000006 in 0 function hierarchy "test.folding.matching.9000006"
     obelisk_sim.code_unit.decl 9000007 in 0 function hierarchy "test.folding.pure_inquiries.9000007"
     obelisk_sim.code_unit.decl 9000008 in 0 function hierarchy "test.folding.conditional_merge.9000008"
+    obelisk_sim.code_unit.decl 9000009 in 0 function hierarchy "test.folding.dynamic_insert_constants.9000009"
     obelisk_sim.scope.decl 0
     obelisk_sim.func @constants(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> (!obelisk_sim.logic<4>, i4, i1) attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
       %x = obelisk_sim.logic.constant 10 : i4, 4 : i4 : !obelisk_sim.logic<4>
@@ -18,6 +19,23 @@ module {
       %bits = obelisk_sim.logic.to_bits %add : !obelisk_sim.logic<4> -> i4
       %truth = obelisk_sim.logic.is_true %add : !obelisk_sim.logic<4>
       obelisk_sim.return %add, %bits, %truth : !obelisk_sim.logic<4>, i4, i1
+    }
+
+    obelisk_sim.func @dynamic_insert_constants(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>, !obelisk_sim.logic<8>, i8, i8) attributes {entry_kind = 8 : i32, code_unit_id = 9000009 : i64} {
+      %base = obelisk_sim.logic.constant 165 : i8, 16 : i8 : !obelisk_sim.logic<8>
+      %replacement = obelisk_sim.logic.constant 6 : i3, 2 : i3 : !obelisk_sim.logic<3>
+      %negative = arith.constant -1 : i4
+      %high = arith.constant 7 : i4
+      %outside = arith.constant -3 : i4
+      %unknown = obelisk_sim.logic.constant 0 : i4, 1 : i4 : !obelisk_sim.logic<4>
+      %partial_low = obelisk_sim.logic.dyn_insert %replacement into %base at %negative : (!obelisk_sim.logic<8>, !obelisk_sim.logic<3>, i4) -> !obelisk_sim.logic<8>
+      %partial_high = obelisk_sim.logic.dyn_insert %replacement into %base at %high : (!obelisk_sim.logic<8>, !obelisk_sim.logic<3>, i4) -> !obelisk_sim.logic<8>
+      %unchanged_unknown = obelisk_sim.logic.dyn_insert %replacement into %base at %unknown : (!obelisk_sim.logic<8>, !obelisk_sim.logic<3>, !obelisk_sim.logic<4>) -> !obelisk_sim.logic<8>
+      %bits_base = arith.constant 165 : i8
+      %bits_replacement = arith.constant 6 : i3
+      %bits_partial = obelisk_sim.bits.dyn_insert %bits_replacement into %bits_base at %negative : (i8, i3, i4) -> i8
+      %bits_unchanged = obelisk_sim.bits.dyn_insert %bits_replacement into %bits_base at %outside : (i8, i3, i4) -> i8
+      obelisk_sim.return %partial_low, %partial_high, %unchanged_unknown, %bits_partial, %bits_unchanged : !obelisk_sim.logic<8>, !obelisk_sim.logic<8>, !obelisk_sim.logic<8>, i8, i8
     }
 
     obelisk_sim.func @controlling_bitwise(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %value: !obelisk_sim.logic<4> {obelisk_sim.capture_kind = 2 : i32}) -> (!obelisk_sim.logic<4>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>) attributes {entry_kind = 8 : i32, code_unit_id = 9000002 : i64} {
@@ -44,7 +62,7 @@ module {
       obelisk_sim.return %sum, %less : !obelisk_sim.logic<4>, !obelisk_sim.logic<1>
     }
 
-    obelisk_sim.func @structural(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %a: !obelisk_sim.logic<4> {obelisk_sim.capture_kind = 2 : i32}, %b: !obelisk_sim.logic<4> {obelisk_sim.capture_kind = 2 : i32}, %base: !obelisk_sim.logic<16> {obelisk_sim.capture_kind = 2 : i32}, %r4: !obelisk_sim.logic<4> {obelisk_sim.capture_kind = 2 : i32}, %r8: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 2 : i32}) -> (!obelisk_sim.logic<8>, !obelisk_sim.logic<4>, !obelisk_sim.logic<8>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>, !obelisk_sim.logic<2>, !obelisk_sim.logic<16>) attributes {entry_kind = 8 : i32, code_unit_id = 9000005 : i64} {
+    obelisk_sim.func @structural(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %a: !obelisk_sim.logic<4> {obelisk_sim.capture_kind = 2 : i32}, %b: !obelisk_sim.logic<4> {obelisk_sim.capture_kind = 2 : i32}, %base: !obelisk_sim.logic<16> {obelisk_sim.capture_kind = 2 : i32}, %r4: !obelisk_sim.logic<4> {obelisk_sim.capture_kind = 2 : i32}, %r8: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 2 : i32}) -> (!obelisk_sim.logic<8>, !obelisk_sim.logic<4>, !obelisk_sim.logic<8>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>, !obelisk_sim.logic<2>, !obelisk_sim.logic<16>, !obelisk_sim.logic<16>) attributes {entry_kind = 8 : i32, code_unit_id = 9000005 : i64} {
       %repeated = obelisk_sim.logic.concat %a, %a : (!obelisk_sim.logic<4>, !obelisk_sim.logic<4>) -> !obelisk_sim.logic<8>
       %repeat_slice = obelisk_sim.logic.extract %repeated from 4 : !obelisk_sim.logic<8> -> !obelisk_sim.logic<4>
       %concat = obelisk_sim.logic.concat %a, %b : (!obelisk_sim.logic<4>, !obelisk_sim.logic<4>) -> !obelisk_sim.logic<8>
@@ -57,7 +75,9 @@ module {
       %inside = obelisk_sim.logic.extract %inserted from 6 : !obelisk_sim.logic<16> -> !obelisk_sim.logic<2>
       %inner = obelisk_sim.logic.insert %r4 into %base at 6 : (!obelisk_sim.logic<16>, !obelisk_sim.logic<4>) -> !obelisk_sim.logic<16>
       %shadowed = obelisk_sim.logic.insert %r8 into %inner at 4 : (!obelisk_sim.logic<16>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<16>
-      obelisk_sim.return %repeated, %repeat_slice, %adjacent, %concat_low, %disjoint, %inside, %shadowed : !obelisk_sim.logic<8>, !obelisk_sim.logic<4>, !obelisk_sim.logic<8>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>, !obelisk_sim.logic<2>, !obelisk_sim.logic<16>
+      %known_index = arith.constant 4 : i32
+      %dynamic_known = obelisk_sim.logic.dyn_insert %r4 into %base at %known_index : (!obelisk_sim.logic<16>, !obelisk_sim.logic<4>, i32) -> !obelisk_sim.logic<16>
+      obelisk_sim.return %repeated, %repeat_slice, %adjacent, %concat_low, %disjoint, %inside, %shadowed, %dynamic_known : !obelisk_sim.logic<8>, !obelisk_sim.logic<4>, !obelisk_sim.logic<8>, !obelisk_sim.logic<4>, !obelisk_sim.logic<4>, !obelisk_sim.logic<2>, !obelisk_sim.logic<16>, !obelisk_sim.logic<16>
     }
 
     obelisk_sim.func @matching_fold(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>, i1, i1, i1, i1) attributes {entry_kind = 8 : i32, code_unit_id = 9000006 : i64} {
@@ -109,6 +129,15 @@ module {
 // CHECK: %[[TRUE:.*]] = arith.constant false
 // CHECK: obelisk_sim.return %[[LOGIC]], %[[BITS]], %[[TRUE]]
 
+// CHECK-LABEL: obelisk_sim.func @dynamic_insert_constants
+// CHECK-DAG: %[[PARTIAL_LOW:.*]] = obelisk_sim.logic.constant -89 : i8, 17 : i8
+// CHECK-DAG: %[[PARTIAL_HIGH:.*]] = obelisk_sim.logic.constant 37 : i8, 16 : i8
+// CHECK-DAG: %[[UNCHANGED_LOGIC:.*]] = obelisk_sim.logic.constant -91 : i8, 16 : i8
+// CHECK-DAG: %[[PARTIAL_BITS:.*]] = arith.constant -89 : i8
+// CHECK-DAG: %[[UNCHANGED_BITS:.*]] = arith.constant -91 : i8
+// CHECK-NOT: dyn_insert
+// CHECK: obelisk_sim.return %[[PARTIAL_LOW]], %[[PARTIAL_HIGH]], %[[UNCHANGED_LOGIC]], %[[PARTIAL_BITS]], %[[UNCHANGED_BITS]]
+
 // CHECK-LABEL: obelisk_sim.func @controlling_bitwise
 // CHECK: %[[ZERO:.*]] = obelisk_sim.logic.constant 0 : i4, 0 : i4
 // CHECK: %[[ONES:.*]] = obelisk_sim.logic.constant -1 : i4, 0 : i4
@@ -134,7 +163,8 @@ module {
 // CHECK: %[[DISJOINT:.*]] = obelisk_sim.logic.extract %arg3 from 0
 // CHECK: %[[INSIDE:.*]] = obelisk_sim.logic.extract %arg5 from 2
 // CHECK: %[[SHADOWED:.*]] = obelisk_sim.logic.insert %arg5 into %arg3 at 4
-// CHECK: obelisk_sim.return %[[REPEATED]], %arg1, %[[ADJACENT]], %arg2, %[[DISJOINT]], %[[INSIDE]], %[[SHADOWED]]
+// CHECK: %[[DYNAMIC_KNOWN:.*]] = obelisk_sim.logic.insert %arg4 into %arg3 at 4
+// CHECK: obelisk_sim.return %[[REPEATED]], %arg1, %[[ADJACENT]], %arg2, %[[DISJOINT]], %[[INSIDE]], %[[SHADOWED]], %[[DYNAMIC_KNOWN]]
 
 // CHECK-LABEL: obelisk_sim.func @matching_fold
 // CHECK: %[[MATCH_ONE:.*]] = obelisk_sim.logic.constant true, false : !obelisk_sim.logic<1>

@@ -132,6 +132,24 @@ module attributes {
                   }
                 }
               }
+              obelisk.sv.statement.expression_statement attributes {node_id = 1120 : i64} {
+                obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 1121 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  obelisk.sv.expression.range_select attributes {is_signed = false, node_id = 1122 : i64, selection_kind = 1 : i32, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                    obelisk.sv.expression.member_access attributes {field_ordinal = 64 : i64, node_id = 1123 : i64, packed_offset = 0 : i64, referenced_path = "supported_object::bits", referenced_symbol = @s1.$root::@s2::@s3.supported_object::@s36.bits, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                      obelisk.sv.expression.named_value attributes {node_id = 1124 : i64, referenced_path = "supported_class_use.object", referenced_symbol = @s1.$root::@s17.supported_class_use::@s18.supported_class_use::@s19::@s20.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.supported_object>} {
+                      }
+                    }
+                    obelisk.sv.expression.member_access attributes {field_ordinal = 64 : i64, is_signed = true, node_id = 1125 : i64, packed_offset = 0 : i64, referenced_path = "supported_object::field", referenced_symbol = @s1.$root::@s2::@s3.supported_object::@s4.field, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                      obelisk.sv.expression.named_value attributes {node_id = 1126 : i64, referenced_path = "supported_class_use.object", referenced_symbol = @s1.$root::@s17.supported_class_use::@s18.supported_class_use::@s19::@s20.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.supported_object>} {
+                      }
+                    }
+                    obelisk.sv.expression.integer_literal attributes {constant_value = "4", is_declared_unsized = true, is_signed = true, node_id = 1127 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "10", is_signed = false, node_id = 1128 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  }
+                }
+              }
               obelisk.sv.statement.expression_statement attributes {node_id = 34 : i64} {
                 obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 35 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                   obelisk.sv.expression.member_access attributes {field_ordinal = 64 : i64, node_id = 36 : i64, packed_offset = 0 : i64, referenced_path = "supported_object::field", referenced_symbol = @s1.$root::@s2::@s3.supported_object::@s4.field, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
@@ -203,6 +221,11 @@ module attributes {
 // CHECK-NEXT: %[[FLAT_BITS:.*]] = obelisk_sim.packed.flatten %[[RANGE_BASE]]
 // CHECK-NEXT: %[[SHIFTED_BITS:.*]] = arith.shrui %[[FLAT_BITS]], {{.*}}
 // CHECK-NEXT: {{.*}} = arith.trunci %[[SHIFTED_BITS]] : i8 to i4
+// CHECK: %[[WRITE_BASE:.*]] = obelisk_sim.managed.load %[[BITS_REF]]
+// CHECK-NEXT: %[[WRITE_FLAT:.*]] = obelisk_sim.packed.flatten %[[WRITE_BASE]]
+// CHECK-NEXT: %[[WRITE_UPDATED:.*]] = obelisk_sim.bits.dyn_insert {{.*}} into %[[WRITE_FLAT]] at {{.*}} : (i8, i4, i66) -> i8
+// CHECK-NEXT: %[[WRITE_REBUILT:.*]] = obelisk_sim.packed.unflatten %[[WRITE_UPDATED]]
+// CHECK-NEXT: obelisk_sim.managed.store %[[WRITE_REBUILT]] to %[[BITS_REF]]
 // CHECK: obelisk_sim.ref.store
 // CHECK: obelisk_sim.call @{{unit_[0-9]+}}({{.*}}) : (!obelisk_sim.context, i32) -> ()
 // The common interface receiver lets canonicalization share one dominating

@@ -685,6 +685,11 @@ enum {
   OBELISK_RT_DB_AGGREGATE_MANAGED = 2
 };
 
+// INSERT takes its signed two's-complement low-bit index from source2 when
+// this flag is set. Unknown, nonoverlapping, and partially overlapping writes
+// follow IEEE 1800 packed-selection assignment semantics.
+#define OBELISK_RT_DB_INSERT_DYNAMIC UINT16_C(1)
+
 typedef uint16_t obelisk_rt_design_select_kind;
 enum { OBELISK_RT_DB_SELECT_BINARY = 0, OBELISK_RT_DB_SELECT_FOUR_STATE = 1 };
 

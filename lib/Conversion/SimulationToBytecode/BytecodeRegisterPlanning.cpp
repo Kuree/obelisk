@@ -105,6 +105,16 @@ planTwoStateRegisters(sim::SimDesignOp design) {
           constrain(op.getResult(), op.getInput());
         } else if (auto op = dyn_cast<sim::SimLogicInsertOp>(operation)) {
           constrain(op.getResult(), op.getInput());
+        } else if (auto op =
+                       dyn_cast<sim::SimLogicDynInsertOp>(operation)) {
+          constrain(op.getResult(), op.getInput());
+          constrain(op.getResult(), op.getReplacement());
+          force(op.getLowBit());
+        } else if (auto op =
+                       dyn_cast<sim::SimBitsDynInsertOp>(operation)) {
+          constrain(op.getResult(), op.getInput());
+          constrain(op.getResult(), op.getReplacement());
+          force(op.getLowBit());
         } else if (auto op = dyn_cast<arith::SelectOp>(operation)) {
           constrain(op.getResult(), op.getTrueValue());
           constrain(op.getResult(), op.getFalseValue());

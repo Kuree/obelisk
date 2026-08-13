@@ -502,6 +502,18 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
           reg(plan, op.getLowBit())});
     return success();
   }
+  if (auto op = dyn_cast<sim::SimLogicDynInsertOp>(operation)) {
+    emit({Insert, OBELISK_RT_DB_INSERT_DYNAMIC, reg(plan, op.getResult()),
+          reg(plan, op.getInput()), reg(plan, op.getReplacement()),
+          reg(plan, op.getLowBit())});
+    return success();
+  }
+  if (auto op = dyn_cast<sim::SimBitsDynInsertOp>(operation)) {
+    emit({Insert, OBELISK_RT_DB_INSERT_DYNAMIC, reg(plan, op.getResult()),
+          reg(plan, op.getInput()), reg(plan, op.getReplacement()),
+          reg(plan, op.getLowBit())});
+    return success();
+  }
   if (auto op = dyn_cast<sim::SimLogicInsertOp>(operation)) {
     emit({Insert, 0, reg(plan, op.getResult()), reg(plan, op.getInput()),
           reg(plan, op.getReplacement()), 0, 0, op.getLowBit()});

@@ -3,6 +3,9 @@
 // RUN: obelisk-opt %s --mlir-print-debuginfo --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-inline{opt-level=3 caller-growth-percent=10000 caller-growth-constant=10000 design-growth-percent=10000 design-growth-constant=10000}),encode-obelisk-sim-to-bytecode{vpi=full})' | FileCheck %s --check-prefix=INLINED-DATABASE
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LOWER
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | opt -S -passes=verify | FileCheck %s --check-prefix=LLVM
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
+// RUN:   | %python %S/Inputs/dump-bytecode-instructions.py \
+// RUN:   | FileCheck %s --check-prefix=INSTRUCTIONS
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -62,9 +65,13 @@ module attributes {
           : !obelisk_sim.logic<65> -> !obelisk_sim.logic<64>
       %extended = obelisk_sim.logic.resize %narrow signed = true
           : !obelisk_sim.logic<64> -> !obelisk_sim.logic<65>
+      %replacement = obelisk_sim.logic.constant 6 : i3, 0 : i3 : !obelisk_sim.logic<3>
+      %index = obelisk_sim.logic.constant -1 : i8, 0 : i8 : !obelisk_sim.logic<8>
+      %updated = obelisk_sim.logic.dyn_insert %replacement into %extended at %index
+          : (!obelisk_sim.logic<65>, !obelisk_sim.logic<3>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<65>
       %storage = obelisk_sim.context.storage %ctx[0]
           : !obelisk_sim.ref<!obelisk_sim.logic<65>>
-      obelisk_sim.ref.store %extended to %storage
+      obelisk_sim.ref.store %updated to %storage
           {obelisk_sim.continuous_store} : !obelisk_sim.logic<65>,
           !obelisk_sim.ref<!obelisk_sim.logic<65>>
       obelisk_sim.override %storage = %extended assign true
@@ -96,6 +103,10 @@ module attributes {
 // ENCODE: obelisk.bytecode.function = 0 : i32
 // ENCODE: obelisk.bytecode.scratch_alignment = 8 : i64
 // ENCODE: obelisk.bytecode.function = 1 : i32
+
+// Dynamic INSERT carries its low-bit register in source2; static INSERT leaves
+// source2 zero and uses only the immediate field.
+// INSTRUCTIONS: opcode=22 flags=1 {{.*}}src2={{[0-9]+}} {{.*}}imm=0
 
 // Unified runtime artifact version 1 follows the database magic; the next word
 // is reserved.

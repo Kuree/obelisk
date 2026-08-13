@@ -299,6 +299,41 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
     }
   }
 
+  // Managed fields, ref formals, and escaping container paths cannot expose a
+  // stable interior reference across a safepoint. Capture their packed parent
+  // and rebuild it on a blocking write. Ordinary references and drivers keep
+  // using the first-class subreference operations in lowerSelection.
+  if (isa<semantic::SVElementSelectExpressionOp,
+          semantic::SVRangeSelectExpressionOp>(destination)) {
+    SmallVector<Operation *> selection = getChildren(destination);
+    if (!selection.empty()) {
+      FailureOr<Type> baseType =
+          getNormalizedSemanticType(selection.front());
+      if (succeeded(baseType) && sim::getPackedWidth(*baseType) &&
+          sim::getPackedWidth(*destinationType)) {
+        FailureOr<CapturedLValue> base =
+            captureLValue(selection.front(), location);
+        if (failed(base))
+          return failure();
+        bool hasDirectView =
+            base->kind == CapturedLValue::Kind::Reference &&
+            isa<sim::RefType, sim::DriverType>(base->reference.getType());
+        if (!hasDirectView) {
+          FailureOr<PackedSelectionAddress> address =
+              lowerPackedSelectionAddress(destination, *baseType,
+                                          *destinationType);
+          if (failed(address))
+            return failure();
+          captured.kind = CapturedLValue::Kind::PackedValueSlice;
+          captured.lowBit = address->lowBit;
+          captured.index = address->dynamicLow;
+          captured.children.push_back(std::move(*base));
+          return captured;
+        }
+      }
+    }
+  }
+
   FailureOr<Value> reference = lowerExpression(destination, true);
   if (failed(reference))
     return failure();
@@ -333,6 +368,47 @@ UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
     Value reference = sim::SimRefDynExtractOp::create(
         builder, location, selected, destination.reference, destination.index);
     return loadReference(reference, location);
+  }
+  case CapturedLValue::Kind::PackedValueSlice: {
+    if (destination.children.size() != 1)
+      return failure();
+    FailureOr<Value> base =
+        loadCapturedLValue(destination.children.front(), location);
+    FailureOr<Value> scalar =
+        succeeded(base) ? toPackedScalar(*base, location)
+                        : FailureOr<Value>(failure());
+    Type resultScalarType = sim::getPackedScalarType(destination.type);
+    if (failed(scalar) || !resultScalarType)
+      return failure();
+    Value selected;
+    if (destination.index) {
+      if (isa<sim::LogicType>((*scalar).getType()))
+        selected = sim::SimLogicDynExtractOp::create(
+            builder, location, resultScalarType, *scalar, destination.index);
+      else
+        selected = sim::SimBitsDynExtractOp::create(
+            builder, location, resultScalarType, *scalar, destination.index);
+    } else if (isa<sim::LogicType>((*scalar).getType())) {
+      selected = sim::SimLogicExtractOp::create(
+          builder, location, resultScalarType, *scalar,
+          builder.getI64IntegerAttr(destination.lowBit));
+    } else {
+      auto inputType = cast<IntegerType>((*scalar).getType());
+      Value shifted = *scalar;
+      if (destination.lowBit != 0) {
+        Value amount = arith::ConstantOp::create(
+            builder, location, inputType,
+            builder.getIntegerAttr(inputType, destination.lowBit));
+        shifted = arith::ShRUIOp::create(builder, location, shifted, amount);
+      }
+      auto resultType = cast<IntegerType>(resultScalarType);
+      selected = resultType == inputType
+                     ? shifted
+                     : Value(arith::TruncIOp::create(builder, location,
+                                                    resultType, shifted));
+    }
+    return convert(selected, destination.type, false, location,
+                   isSignedNode(destination.semanticNode));
   }
   case CapturedLValue::Kind::ContainerElement:
     return sim::SimContainerReadOp::create(builder, location, destination.type,
@@ -484,6 +560,7 @@ bool UnitLowering::haveSameCapturedStorage(const CapturedLValue &lhs,
            lhsField.getFieldAttr() == rhsField.getFieldAttr();
   }
   case CapturedLValue::Kind::PackedDynamicSlice:
+  case CapturedLValue::Kind::PackedValueSlice:
     return false;
   case CapturedLValue::Kind::AggregateElement:
     return lhs.ordinal == rhs.ordinal && lhs.children.size() == 1 &&
@@ -745,6 +822,56 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     setCurrent(resume);
     return success();
   }
+  case CapturedLValue::Kind::PackedValueSlice: {
+    if (destination.children.size() != 1)
+      return failure();
+    if (nonblocking) {
+      emitError(location)
+          << "nonblocking packed selection assignment requires a captured "
+             "partial-update path";
+      return failure();
+    }
+    CapturedLValue &base = destination.children.front();
+    FailureOr<Value> baseValue = loadCapturedLValue(base, location);
+    FailureOr<Value> converted =
+        convert(value, destination.type, sourceSigned, location,
+                isSignedNode(destination.semanticNode));
+    if (failed(baseValue) || failed(converted))
+      return failure();
+    FailureOr<Value> baseScalar = toPackedScalar(*baseValue, location);
+    FailureOr<Value> replacement = toPackedScalar(*converted, location);
+    if (failed(baseScalar) || failed(replacement))
+      return failure();
+
+    Value updated;
+    if (destination.index) {
+      if (isa<sim::LogicType>((*baseScalar).getType()))
+        updated = sim::SimLogicDynInsertOp::create(
+            builder, location, (*baseScalar).getType(), *baseScalar,
+            *replacement, destination.index);
+      else
+        updated = sim::SimBitsDynInsertOp::create(
+            builder, location, (*baseScalar).getType(), *baseScalar,
+            *replacement, destination.index);
+    } else if (isa<sim::LogicType>((*baseScalar).getType())) {
+      updated = sim::SimLogicInsertOp::create(
+          builder, location, (*baseScalar).getType(), *baseScalar,
+          *replacement, builder.getI64IntegerAttr(destination.lowBit));
+    } else {
+      Value low = arith::ConstantOp::create(
+          builder, location, builder.getI64Type(),
+          builder.getI64IntegerAttr(destination.lowBit));
+      updated = sim::SimBitsDynInsertOp::create(
+          builder, location, (*baseScalar).getType(), *baseScalar,
+          *replacement, low);
+    }
+    FailureOr<Value> rebuilt =
+        convert(updated, base.type, false, location,
+                isSignedNode(base.semanticNode));
+    if (failed(rebuilt))
+      return failure();
+    return writeCapturedLValue(base, *rebuilt, false, false, location);
+  }
   case CapturedLValue::Kind::ContainerElement: {
     if (destination.children.size() != 1)
       return failure();
@@ -978,6 +1105,9 @@ void UnitLowering::appendCapturedValues(const CapturedLValue &destination,
   } else if (destination.kind == CapturedLValue::Kind::StringCharacter ||
              destination.kind == CapturedLValue::Kind::PackedDynamicSlice) {
     values.push_back(destination.index);
+  } else if (destination.kind == CapturedLValue::Kind::PackedValueSlice &&
+             destination.index) {
+    values.push_back(destination.index);
   }
 }
 
@@ -1002,6 +1132,11 @@ LogicalResult UnitLowering::replaceCapturedValues(CapturedLValue &destination,
     destination.index = values[next++];
   } else if (destination.kind == CapturedLValue::Kind::StringCharacter ||
              destination.kind == CapturedLValue::Kind::PackedDynamicSlice) {
+    if (next >= values.size())
+      return failure();
+    destination.index = values[next++];
+  } else if (destination.kind == CapturedLValue::Kind::PackedValueSlice &&
+             destination.index) {
     if (next >= values.size())
       return failure();
     destination.index = values[next++];

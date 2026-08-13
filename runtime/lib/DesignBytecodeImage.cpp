@@ -1376,7 +1376,6 @@ bool validateInitialization(const Image &image, const Function &function,
     case OBELISK_RT_DB_ASHR:
     case OBELISK_RT_DB_COMPARE:
     case OBELISK_RT_DB_CONCAT:
-    case OBELISK_RT_DB_INSERT:
     case OBELISK_RT_DB_STORE_STATE:
     case OBELISK_RT_DB_OVERRIDE_STATE:
     case OBELISK_RT_DB_FADD:
@@ -1386,6 +1385,11 @@ bool validateInitialization(const Image &image, const Function &function,
     case OBELISK_RT_DB_FCOMPARE:
     case OBELISK_RT_DB_FPOW:
       valid = sources({instruction.source0, instruction.source1});
+      break;
+    case OBELISK_RT_DB_INSERT:
+      valid = sources({instruction.source0, instruction.source1}) &&
+              (instruction.flags != OBELISK_RT_DB_INSERT_DYNAMIC ||
+               sources({instruction.source2}));
       break;
     case OBELISK_RT_DB_SELECT:
       valid = sources(
@@ -2079,7 +2083,7 @@ bool validateImage(const Image &image) {
         break;
       }
       case OBELISK_RT_DB_INSERT: {
-        if (instruction.source2 || instruction.auxiliary ||
+        if (instruction.auxiliary ||
             !numeric(instruction.destination) ||
             !numeric(instruction.source0) ||
             !compatible(layoutAt(image, function, instruction.destination),
@@ -2088,7 +2092,12 @@ bool validateImage(const Image &image) {
                         functionIndex, pc, instruction.opcode);
         Layout destination = layoutAt(image, function, instruction.destination);
         Layout inserted = layoutAt(image, function, instruction.source1);
-        if (instruction.flags == OBELISK_RT_DB_AGGREGATE_MANAGED) {
+        if (instruction.flags == OBELISK_RT_DB_INSERT_DYNAMIC) {
+          if (instruction.immediate != 0 || !numeric(instruction.source1) ||
+              !numeric(instruction.source2))
+            return reject(__LINE__, "invalid instruction encoding or operands",
+                          functionIndex, pc, instruction.opcode);
+        } else if (instruction.flags == OBELISK_RT_DB_AGGREGATE_MANAGED) {
           if ((inserted.kind != OBELISK_RT_DBREG_MANAGED &&
                inserted.kind != OBELISK_RT_DBREG_STRING) ||
               inserted.width != 64 || (instruction.immediate & 63) != 0)
@@ -2098,8 +2107,9 @@ bool validateImage(const Image &image) {
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         }
-        if (instruction.immediate > destination.width ||
-            inserted.width > destination.width - instruction.immediate)
+        if (instruction.flags != OBELISK_RT_DB_INSERT_DYNAMIC &&
+            (instruction.immediate > destination.width ||
+             inserted.width > destination.width - instruction.immediate))
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;

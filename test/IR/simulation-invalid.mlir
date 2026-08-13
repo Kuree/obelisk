@@ -641,6 +641,42 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @bad_dynamic_insert_width {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_dynamic_insert_width.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = obelisk_sim.logic.constant 0 : i4, 0 : i4 : !obelisk_sim.logic<4>
+      %replacement = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
+      %index = arith.constant 0 : i32
+      // expected-error @+1 {{replacement width exceeds input width}}
+      %bad = obelisk_sim.logic.dyn_insert %replacement into %value at %index : (!obelisk_sim.logic<4>, !obelisk_sim.logic<8>, i32) -> !obelisk_sim.logic<4>
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @bad_bits_dynamic_insert_domain {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_bits_dynamic_insert_domain.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %raw_value = arith.constant 0 : i8
+      %raw_replacement = arith.constant 0 : i4
+      %value = builtin.unrealized_conversion_cast %raw_value : i8 to si8
+      %replacement = builtin.unrealized_conversion_cast %raw_replacement : i4 to si4
+      %index = arith.constant 0 : i32
+      // expected-error @+1 {{input, replacement, and result must be signless builtin integers}}
+      %bad = obelisk_sim.bits.dyn_insert %replacement into %value at %index : (si8, si4, i32) -> si8
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @bad_logical_not_width {
     obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_logical_not_width.bad.9000001"
     obelisk_sim.scope.decl 0

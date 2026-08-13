@@ -324,6 +324,95 @@ static FailureOr<LogicValue> dynamicExtract(OpBuilder &builder, Location loc,
   return LogicValue{resultValue, resultUnknown};
 }
 
+/// Build a poison-free partial dynamic replacement. The input is centered in
+/// a padded integer so every overlapping replacement has a nonnegative,
+/// in-range shift amount. Unknown and nonoverlapping indices select the
+/// original input unchanged.
+static FailureOr<LogicValue>
+dynamicInsert(OpBuilder &builder, Location loc, Value input,
+              Value inputUnknown, Value replacement, Value replacementUnknown,
+              Value low, Value lowUnknown) {
+  auto inputType = integerType(input);
+  auto replacementType = integerType(replacement);
+  auto lowType = integerType(low);
+  uint64_t padding = static_cast<uint64_t>(replacementType.getWidth()) - 1;
+  uint64_t paddedWidth64 =
+      static_cast<uint64_t>(inputType.getWidth()) + 2 * padding;
+  if (paddedWidth64 > std::numeric_limits<unsigned>::max())
+    return failure();
+  auto paddedType =
+      builder.getIntegerType(static_cast<unsigned>(paddedWidth64));
+
+  unsigned boundBits =
+      std::max(2u, llvm::Log2_64_Ceil(static_cast<uint64_t>(std::max(
+                                          inputType.getWidth(),
+                                          replacementType.getWidth())) +
+                                      1) +
+                       2);
+  uint64_t checkWidth64 =
+      std::max(static_cast<uint64_t>(lowType.getWidth()) + 1,
+               static_cast<uint64_t>(boundBits));
+  if (checkWidth64 > std::numeric_limits<unsigned>::max())
+    return failure();
+  unsigned checkWidth = static_cast<unsigned>(checkWidth64);
+  Value checkedLow = resizeInteger(builder, loc, low, checkWidth, true);
+  auto checkType = integerType(checkedLow);
+  Value indexKnown =
+      lowUnknown ? boolNot(builder, loc, isNonZero(builder, loc, lowUnknown))
+                 : boolConstant(builder, loc, true);
+  Value aboveLower = arith::CmpIOp::create(
+      builder, loc, arith::CmpIPredicate::sge, checkedLow,
+      signedConstant(builder, loc, checkType, -static_cast<int64_t>(padding)));
+  Value belowUpper = arith::CmpIOp::create(
+      builder, loc, arith::CmpIPredicate::slt, checkedLow,
+      signedConstant(builder, loc, checkType, inputType.getWidth()));
+  Value overlaps = boolAnd(builder, loc, indexKnown,
+                           boolAnd(builder, loc, aboveLower, belowUpper));
+
+  Value adjusted =
+      arith::AddIOp::create(builder, loc, checkedLow,
+                            integerConstant(builder, loc, checkType, padding));
+  Value paddedAmount =
+      resizeInteger(builder, loc, adjusted, paddedType.getWidth(), false);
+  Value safeAmount = select(builder, loc, overlaps, paddedAmount,
+                            zero(builder, loc, paddedType));
+
+  APInt lowMask =
+      APInt::getLowBitsSet(paddedType.getWidth(), replacementType.getWidth());
+  Value shiftedMask = arith::ShLIOp::create(
+      builder, loc, integerConstant(builder, loc, paddedType, lowMask),
+      safeAmount);
+  auto insertPlane = [&](Value base, Value piece) -> Value {
+    Value paddedBase =
+        resizeInteger(builder, loc, base, paddedType.getWidth(), false);
+    if (padding != 0)
+      paddedBase = arith::ShLIOp::create(
+          builder, loc, paddedBase,
+          integerConstant(builder, loc, paddedType, padding));
+    Value kept = arith::AndIOp::create(
+        builder, loc, paddedBase,
+        arith::XOrIOp::create(builder, loc, shiftedMask,
+                              ones(builder, loc, paddedType)));
+    Value widePiece =
+        resizeInteger(builder, loc, piece, paddedType.getWidth(), false);
+    Value shiftedPiece =
+        arith::ShLIOp::create(builder, loc, widePiece, safeAmount);
+    Value updated =
+        arith::OrIOp::create(builder, loc, kept, shiftedPiece);
+    if (padding != 0)
+      updated = arith::ShRUIOp::create(
+          builder, loc, updated,
+          integerConstant(builder, loc, paddedType, padding));
+    updated = resizeInteger(builder, loc, updated, inputType.getWidth(), false);
+    return select(builder, loc, overlaps, updated, base);
+  };
+
+  LogicValue result{insertPlane(input, replacement), Value()};
+  if (inputUnknown)
+    result.unknown = insertPlane(inputUnknown, replacementUnknown);
+  return result;
+}
+
 static SmallVector<Value> flattenConverted(ArrayRef<ValueRange> ranges) {
   SmallVector<Value> flattened;
   for (ValueRange range : ranges)
@@ -1508,6 +1597,48 @@ public:
   }
 };
 
+class DynamicInsertConversion final
+    : public LogicOpConversion<sim::SimLogicDynInsertOp> {
+public:
+  using LogicOpConversion::LogicOpConversion;
+
+  LogicalResult
+  matchAndRewrite(sim::SimLogicDynInsertOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    ArrayRef<ValueRange> operands = adaptor.getOperands();
+    LogicValue input = getLogic(operands, 0);
+    LogicValue replacement = getLogic(operands, 1);
+    Value lowUnknown = operands[2].size() == 2 ? operands[2][1] : Value();
+    FailureOr<LogicValue> result = dynamicInsert(
+        rewriter, op.getLoc(), input.value, input.unknown, replacement.value,
+        replacement.unknown, operands[2][0], lowUnknown);
+    if (failed(result))
+      return rewriter.notifyMatchFailure(op, "padded replacement width overflow");
+    replaceLogic(op, *result, rewriter);
+    return success();
+  }
+};
+
+class BitsDynamicInsertConversion final
+    : public LogicOpConversion<sim::SimBitsDynInsertOp> {
+public:
+  using LogicOpConversion::LogicOpConversion;
+
+  LogicalResult
+  matchAndRewrite(sim::SimBitsDynInsertOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    ArrayRef<ValueRange> operands = adaptor.getOperands();
+    Value lowUnknown = operands[2].size() == 2 ? operands[2][1] : Value();
+    FailureOr<LogicValue> result =
+        dynamicInsert(rewriter, op.getLoc(), operands[0][0], Value(),
+                      operands[1][0], Value(), operands[2][0], lowUnknown);
+    if (failed(result))
+      return rewriter.notifyMatchFailure(op, "padded replacement width overflow");
+    replaceInteger(op, result->value, rewriter);
+    return success();
+  }
+};
+
 class InsertConversion final : public LogicOpConversion<sim::SimLogicInsertOp> {
 public:
   using LogicOpConversion::LogicOpConversion;
@@ -1588,7 +1719,8 @@ public:
         sim::SimLogicBinaryOp, sim::SimLogicLogicalOp, sim::SimLogicShiftOp,
         sim::SimLogicCompareOp, sim::SimLogicConcatOp, sim::SimLogicReplicateOp,
         sim::SimLogicExtractOp, sim::SimLogicDynExtractOp,
-        sim::SimBitsDynExtractOp, sim::SimLogicInsertOp>();
+        sim::SimBitsDynExtractOp, sim::SimLogicDynInsertOp,
+        sim::SimBitsDynInsertOp, sim::SimLogicInsertOp>();
     target.addDynamicallyLegalDialect<arith::ArithDialect, func::FuncDialect,
                                       cf::ControlFlowDialect, scf::SCFDialect,
                                       sim::ObeliskSimulationDialect>(
@@ -1621,7 +1753,8 @@ static void populateSimulationToStandardPatternsImpl(
                BinaryConversion, LogicalConversion, ShiftConversion,
                CompareConversion, ConcatConversion, ReplicateConversion,
                ExtractConversion, DynamicExtractConversion,
-               BitsDynamicExtractConversion, InsertConversion>(
+               BitsDynamicExtractConversion, DynamicInsertConversion,
+               BitsDynamicInsertConversion, InsertConversion>(
       converter, patterns.getContext(), provenTwoStateOperations);
   patterns.add<BranchConversion, CondBranchConversion, SwitchConversion>(
       converter, patterns.getContext());

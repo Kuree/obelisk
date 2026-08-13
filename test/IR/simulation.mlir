@@ -57,6 +57,8 @@ module {
       %dynamic_logic_index = obelisk_sim.logic.dyn_extract %logic from %logic_index : (!obelisk_sim.logic<8>, !obelisk_sim.logic<32>) -> !obelisk_sim.logic<4>
       %dynamic_bits = obelisk_sim.bits.dyn_extract %bits from %logic_index : (i8, !obelisk_sim.logic<32>) -> i4
       %inserted = obelisk_sim.logic.insert %part into %logic at 2 : (!obelisk_sim.logic<8>, !obelisk_sim.logic<4>) -> !obelisk_sim.logic<8>
+      %dynamic_inserted = obelisk_sim.logic.dyn_insert %part into %logic at %logic_index : (!obelisk_sim.logic<8>, !obelisk_sim.logic<4>, !obelisk_sim.logic<32>) -> !obelisk_sim.logic<8>
+      %dynamic_bits_inserted = obelisk_sim.bits.dyn_insert %dynamic_bits into %bits at %index : (i8, i4, i32) -> i8
       %back_to_bits = obelisk_sim.logic.to_bits %inserted : !obelisk_sim.logic<8> -> i8
       %local = obelisk_sim.ref.alloc %logic : !obelisk_sim.logic<8> -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
       obelisk_sim.ref.store %binary to %local : !obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>
@@ -125,6 +127,8 @@ module {
 // CHECK: obelisk_sim.logic.logical and
 // CHECK: obelisk_sim.logic.shift left
 // CHECK: obelisk_sim.bits.dyn_extract
+// CHECK: obelisk_sim.logic.dyn_insert
+// CHECK: obelisk_sim.bits.dyn_insert
 // CHECK: obelisk_sim.ref.alloc
 // CHECK: obelisk_sim.ref.dyn_extract {{.*}}!obelisk_sim.logic<32>
 // CHECK: obelisk_sim.driver.extract

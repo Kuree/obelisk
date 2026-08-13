@@ -154,6 +154,40 @@ static LogicPlanes dynamicExtract(LogicPlanes input, const APInt &index,
           dynamicExtractPlane(input.unknown, index, resultWidth, true)};
 }
 
+/// Interpret `index` as a signed two's-complement low bit and replace the
+/// overlapping portion of one packed plane. Invalid and nonoverlapping
+/// selections leave the input unchanged.
+static APInt dynamicInsertPlane(const APInt &input, const APInt &replacement,
+                                const APInt &index) {
+  APInt result = input;
+  if (index.isNegative()) {
+    APInt magnitude = -index;
+    if (magnitude.uge(replacement.getBitWidth()) || !magnitude.isIntN(64))
+      return result;
+    uint64_t skipped = magnitude.getZExtValue();
+    for (uint64_t replacementBit = skipped;
+         replacementBit < replacement.getBitWidth(); ++replacementBit) {
+      uint64_t inputBit = replacementBit - skipped;
+      if (inputBit >= input.getBitWidth())
+        break;
+      result.setBitVal(inputBit, replacement[replacementBit]);
+    }
+    return result;
+  }
+
+  if (index.uge(input.getBitWidth()) || !index.isIntN(64))
+    return result;
+  uint64_t low = index.getZExtValue();
+  for (uint64_t replacementBit = 0;
+       replacementBit < replacement.getBitWidth(); ++replacementBit) {
+    uint64_t inputBit = low + replacementBit;
+    if (inputBit >= input.getBitWidth())
+      break;
+    result.setBitVal(inputBit, replacement[replacementBit]);
+  }
+  return result;
+}
+
 static bool isKnownInRangeIndex(const APInt &index, uint64_t inputWidth,
                                 uint64_t resultWidth, uint64_t &low) {
   if (index.isNegative() || index.uge(inputWidth))
@@ -774,6 +808,39 @@ OpFoldResult SimBitsDynExtractOp::fold(FoldAdaptor adaptor) {
   return IntegerAttr::get(getResult().getType(), result);
 }
 
+OpFoldResult SimLogicDynInsertOp::fold(FoldAdaptor adaptor) {
+  auto index = getConstantIndex(adaptor.getLowBit());
+  if (!index)
+    return {};
+  if (!index->value)
+    return getInput();
+  auto input = getLogicPlanes(adaptor.getInput());
+  auto replacement = getLogicPlanes(adaptor.getReplacement());
+  if (!input || !replacement)
+    return {};
+  return getLogicAttribute(
+      getContext(),
+      {dynamicInsertPlane(input->value, replacement->value, *index->value),
+       dynamicInsertPlane(input->unknown, replacement->unknown,
+                          *index->value)});
+}
+
+OpFoldResult SimBitsDynInsertOp::fold(FoldAdaptor adaptor) {
+  auto index = getConstantIndex(adaptor.getLowBit());
+  if (!index)
+    return {};
+  if (!index->value)
+    return getInput();
+  auto input = dyn_cast_or_null<IntegerAttr>(adaptor.getInput());
+  auto replacement =
+      dyn_cast_or_null<IntegerAttr>(adaptor.getReplacement());
+  if (!input || !replacement)
+    return {};
+  APInt result = dynamicInsertPlane(input.getValue(), replacement.getValue(),
+                                    *index->value);
+  return IntegerAttr::get(getResult().getType(), result);
+}
+
 OpFoldResult SimLogicInsertOp::fold(FoldAdaptor adaptor) {
   uint64_t low = getLowBit();
   unsigned width = getResult().getType().getWidth();
@@ -845,6 +912,25 @@ LogicalResult SimBitsDynExtractOp::verify() {
     return failure();
   if (getResult().getType().getWidth() > getInput().getType().getWidth())
     return emitOpError("result width exceeds input width");
+  return success();
+}
+LogicalResult SimLogicDynInsertOp::verify() {
+  if (failed(verifyNormalizedIndex(*this, getLowBit().getType())))
+    return failure();
+  if (getReplacement().getType().getWidth() > getInput().getType().getWidth())
+    return emitOpError("replacement width exceeds input width");
+  return success();
+}
+LogicalResult SimBitsDynInsertOp::verify() {
+  if (!getInput().getType().isSignless() ||
+      !getReplacement().getType().isSignless() ||
+      !getResult().getType().isSignless())
+    return emitOpError("input, replacement, and result must be signless "
+                       "builtin integers");
+  if (failed(verifyNormalizedIndex(*this, getLowBit().getType())))
+    return failure();
+  if (getReplacement().getType().getWidth() > getInput().getType().getWidth())
+    return emitOpError("replacement width exceeds input width");
   return success();
 }
 LogicalResult SimLogicInsertOp::verify() {
@@ -1224,6 +1310,29 @@ struct ConstantDynamicExtract final : OpRewritePattern<DynamicOp> {
     for (NamedAttribute attribute : op->getDiscardableAttrDictionary())
       replacement->setAttr(attribute.getName(), attribute.getValue());
     rewriter.replaceOp(op, replacement.getResult());
+    return success();
+  }
+};
+
+template <typename DynamicOp, typename StaticOp>
+struct ConstantDynamicInsert final : OpRewritePattern<DynamicOp> {
+  using OpRewritePattern<DynamicOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(DynamicOp op,
+                                PatternRewriter &rewriter) const override {
+    auto index = getConstantIndex(op.getLowBit());
+    if (!index || !index->value)
+      return failure();
+    uint64_t low;
+    if (!isKnownInRangeIndex(*index->value,
+                             op.getInput().getType().getWidth(),
+                             op.getReplacement().getType().getWidth(), low) ||
+        low > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+      return failure();
+    auto replacement = StaticOp::create(
+        rewriter, op.getLoc(), op.getResult().getType(), op.getInput(),
+        op.getReplacement(), rewriter.getI64IntegerAttr(low));
+    replaceWithNewOp(rewriter, op, replacement);
     return success();
   }
 };
@@ -1652,6 +1761,12 @@ void SimLogicExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,
 void SimLogicDynExtractOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
   results.add<ConstantDynamicExtract<SimLogicDynExtractOp, SimLogicExtractOp>>(
+      context);
+}
+
+void SimLogicDynInsertOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results.add<ConstantDynamicInsert<SimLogicDynInsertOp, SimLogicInsertOp>>(
       context);
 }
 
