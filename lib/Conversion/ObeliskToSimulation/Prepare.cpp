@@ -2054,8 +2054,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                           method.getIsPrePostRandomize().value_or(false) &&
                           !method.getIsBuiltin().value_or(false)) {
                         emitError(getSemanticLocation(method))
-                            << "hooks on recursively nested rand objects "
-                               "require path-aware lifecycle planning";
+                            << "polymorphic hooks on recursively nested rand "
+                               "objects require compact lifecycle dispatch";
                         return failure();
                       }
                   dynamicPlans.push_back(
@@ -2207,6 +2207,8 @@ void ObeliskSimPreparePass::runOnOperation() {
               SmallVector<EffectiveConstraintGroup> recursiveConstraints;
               collectEffectiveConstraints(recursiveHierarchy,
                                           recursiveConstraints);
+              semantic::SVSubroutineSymbolOp recursivePreHook;
+              semantic::SVSubroutineSymbolOp recursivePostHook;
               for (semantic::SVClassTypeOp recursiveClass :
                    recursiveHierarchy)
                 for (Operation *member : getChildren(recursiveClass))
@@ -2214,10 +2216,38 @@ void ObeliskSimPreparePass::runOnOperation() {
                       method &&
                       method.getIsPrePostRandomize().value_or(false) &&
                       !method.getIsBuiltin().value_or(false)) {
-                    emitError(getSemanticLocation(method))
-                        << "hooks on recursively nested rand objects require "
-                           "path-aware lifecycle planning";
-                    return failure();
+                    StringRef name = method.getName().value_or("");
+                    std::optional<Type> methodType = method.getSemanticType();
+                    auto subroutineType =
+                        methodType
+                            ? dyn_cast<semantic::SubroutineType>(*methodType)
+                            : semantic::SubroutineType{};
+                    auto signature =
+                        subroutineType
+                            ? dyn_cast<FunctionType>(
+                                  subroutineType.getSignature())
+                            : FunctionType{};
+                    if (method.getIsStatic().value_or(false) ||
+                        method.getSubroutineKind() !=
+                            semantic::SVSubroutineKind::Function ||
+                        !signature || signature.getNumInputs() != 0 ||
+                        signature.getNumResults() != 1 ||
+                        !isa<semantic::VoidType>(signature.getResult(0))) {
+                      emitError(getSemanticLocation(method))
+                          << "recursive randomization hooks must be void "
+                             "instance functions without arguments";
+                      return failure();
+                    }
+                    if (name == "pre_randomize")
+                      recursivePreHook = method;
+                    else if (name == "post_randomize")
+                      recursivePostHook = method;
+                    else {
+                      emitError(getSemanticLocation(method))
+                          << "unknown recursive randomization lifecycle hook "
+                          << name;
+                      return failure();
+                    }
                   }
               Type concreteType = sim::ClassHandleType::get(
                   context,
@@ -2225,7 +2255,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                       context, classSymbols.lookup(concreteClass).getValue()));
               path.push_back({classFieldSymbols.lookup(edgeProperty),
                               concreteType, edgeStorageType, edgeModeIndex});
-              if (!recursiveConstraints.empty()) {
+              if (!recursiveConstraints.empty() || recursivePreHook ||
+                  recursivePostHook) {
                 NestedObjectPlan recursivePlan{
                     edgeProperty,
                     field,
@@ -2235,8 +2266,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                     std::move(recursiveConstraints),
                     {},
                     modeIndex,
-                    {},
-                    {},
+                    recursivePreHook,
+                    recursivePostHook,
                     path};
                 nestedObjectPlans.push_back(std::move(recursivePlan));
               }
@@ -3845,9 +3876,16 @@ void ObeliskSimPreparePass::runOnOperation() {
     call->setAttr(randomNestedConstraintModesAttrName,
                   builder.getArrayAttr(nestedConstraintModeAttrs));
     SmallVector<Attribute> nestedHookAttrs;
-    for (const NestedObjectPlan &plan : nestedObjectPlans) {
-      if (!plan.preHook && !plan.postHook)
-        continue;
+    SmallVector<const NestedObjectPlan *> hookPlans;
+    for (const NestedObjectPlan &plan : nestedObjectPlans)
+      if (plan.preHook || plan.postHook)
+        hookPlans.push_back(&plan);
+    llvm::stable_sort(hookPlans, [](const NestedObjectPlan *left,
+                                    const NestedObjectPlan *right) {
+      return left->nestedObjectPath.size() < right->nestedObjectPath.size();
+    });
+    for (const NestedObjectPlan *planPointer : hookPlans) {
+      const NestedObjectPlan &plan = *planPointer;
       SmallVector<NamedAttribute> attributes{
           builder.getNamedAttr("field", plan.field),
           builder.getNamedAttr("concrete_type",
@@ -3856,6 +3894,22 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder.getNamedAttr("outer_mode_index",
                                builder.getI32IntegerAttr(plan.outerModeIndex)),
       };
+      if (!plan.nestedObjectPath.empty()) {
+        SmallVector<Attribute> path;
+        for (const RandomObjectPathElement &element : plan.nestedObjectPath)
+          path.push_back(builder.getDictionaryAttr({
+              builder.getNamedAttr("field", element.field),
+              builder.getNamedAttr("concrete_type",
+                                   TypeAttr::get(element.concreteType)),
+              builder.getNamedAttr("storage_type",
+                                   TypeAttr::get(element.storageType)),
+              builder.getNamedAttr(
+                  "rand_mode_index",
+                  builder.getI32IntegerAttr(element.modeIndex)),
+          }));
+        attributes.push_back(builder.getNamedAttr(
+            "path", builder.getArrayAttr(path)));
+      }
       auto addHook = [&](semantic::SVSubroutineSymbolOp hook,
                          StringRef prefix) {
         if (!hook)

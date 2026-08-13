@@ -1106,6 +1106,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         hook ? hook.getAs<TypeAttr>("storage_type") : TypeAttr{};
     auto outerModeIndexAttr =
         hook ? hook.getAs<IntegerAttr>("outer_mode_index") : IntegerAttr{};
+    auto pathAttr = hook ? hook.getAs<ArrayAttr>("path") : ArrayAttr{};
     if (!hook || !field || !concreteTypeAttr || !storageTypeAttr ||
         !outerModeIndexAttr || outerModeIndexAttr.getValue().isNegative() ||
         outerModeIndexAttr.getValue().getActiveBits() > 32 ||
@@ -1115,6 +1116,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       emitError(location) << "nested randomization hook plan is malformed";
       return failure();
     }
+    SmallVector<ObjectPathElement> path;
+    if (failed(parseNestedObjectPath(pathAttr, path)))
+      return failure();
     Type objectReferenceType = sim::ManagedRefType::get(
         function.getContext(), storageTypeAttr.getValue(),
         objectType.getClassName());
@@ -1141,6 +1145,96 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (object.getType() != concreteTypeAttr.getValue())
       object = sim::SimClassCastOp::create(
           builder, location, concreteTypeAttr.getValue(), object);
+    if (!path.empty()) {
+      Type targetType = path.back().concreteType;
+      Block *missingBlock = addBlock();
+      Block *rootPresentBlock = addBlock();
+      Block *pathMergeBlock = addBlock();
+      pathMergeBlock->addArgument(targetType, location);
+      pathMergeBlock->addArgument(builder.getI1Type(), location);
+      cf::CondBranchOp::create(builder, location, enabled, rootPresentBlock,
+                               ValueRange{}, missingBlock, ValueRange{});
+
+      setCurrent(missingBlock);
+      Value missingObject = createDefaultValue(builder, location, targetType);
+      if (!missingObject)
+        return failure();
+      Value falseValue = arith::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+      cf::BranchOp::create(builder, location, pathMergeBlock,
+                           ValueRange{missingObject, falseValue});
+
+      setCurrent(rootPresentBlock);
+      auto currentType = cast<sim::ClassHandleType>(concreteTypeAttr.getValue());
+      for (const ObjectPathElement &element : path) {
+        sim::SimClassDeclOp currentDeclaration =
+            SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+                function, currentType.getClassName());
+        while (currentDeclaration &&
+               !currentDeclaration->hasAttr("obelisk_sim.random_mode_field")) {
+          if (!currentDeclaration.getBaseAttr())
+            break;
+          currentDeclaration =
+              SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+                  function, currentDeclaration.getBaseAttr());
+        }
+        auto currentModeField =
+            currentDeclaration
+                ? currentDeclaration->getAttrOfType<FlatSymbolRefAttr>(
+                      "obelisk_sim.random_mode_field")
+                : FlatSymbolRefAttr{};
+        if (!currentModeField) {
+          emitError(location)
+              << "nested hook path has no rand_mode field";
+          return failure();
+        }
+        Type modeReferenceType = sim::ManagedRefType::get(
+            function.getContext(), i64, currentType.getClassName());
+        Value currentModeReference = sim::SimClassFieldRefOp::create(
+            builder, location, modeReferenceType, object, currentModeField);
+        Value currentMode = sim::SimManagedLoadOp::create(
+            builder, location, i64, currentModeReference);
+        Value edgeModeBit = arith::AndIOp::create(
+            builder, location, currentMode,
+            constant64(uint64_t{1} << element.modeIndex));
+        Value edgeEnabled = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq, edgeModeBit,
+            constant64(0));
+        Type edgeReferenceType = sim::ManagedRefType::get(
+            function.getContext(), element.storageType,
+            currentType.getClassName());
+        Value edgeReference = sim::SimClassFieldRefOp::create(
+            builder, location, edgeReferenceType, object, element.field);
+        FailureOr<Value> loadedEdge = loadReference(edgeReference, location);
+        if (failed(loadedEdge))
+          return failure();
+        Value edgeNull = sim::SimManagedIsNullOp::create(
+            builder, location, builder.getI1Type(), *loadedEdge);
+        Value edgeNonNull = arith::XOrIOp::create(
+            builder, location, edgeNull,
+            arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                      builder.getBoolAttr(true)));
+        Value edgeActive = arith::AndIOp::create(
+            builder, location, edgeEnabled, edgeNonNull);
+        Block *edgePresentBlock = addBlock();
+        cf::CondBranchOp::create(builder, location, edgeActive,
+                                 edgePresentBlock, ValueRange{}, missingBlock,
+                                 ValueRange{});
+        setCurrent(edgePresentBlock);
+        object = *loadedEdge;
+        if (object.getType() != element.concreteType)
+          object = sim::SimClassCastOp::create(
+              builder, location, element.concreteType, object);
+        currentType = cast<sim::ClassHandleType>(element.concreteType);
+      }
+      Value trueValue = arith::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+      cf::BranchOp::create(builder, location, pathMergeBlock,
+                           ValueRange{object, trueValue});
+      setCurrent(pathMergeBlock);
+      object = pathMergeBlock->getArgument(0);
+      enabled = pathMergeBlock->getArgument(1);
+    }
     Block *callBlock = addBlock();
     Block *mergeBlock = addBlock();
     cf::CondBranchOp::create(builder, location, enabled, callBlock,
