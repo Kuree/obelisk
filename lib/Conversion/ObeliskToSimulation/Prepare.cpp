@@ -214,13 +214,17 @@ void ObeliskSimPreparePass::runOnOperation() {
         property.getLifetime() == semantic::SVVariableLifetime::Static &&
         !getChildren(property).empty();
     auto variable = dyn_cast<semantic::SVVariableSymbolOp>(op);
-    bool designInitializer = variable && !isNestedInCodeUnit(variable) &&
-                             !isAutomaticLocalSymbol(variable) &&
-                             !getChildren(variable).empty();
+    bool initializedStaticLocal =
+        variable &&
+        variable.getLifetime() == semantic::SVVariableLifetime::Static &&
+        isNestedInCodeUnit(variable) && !getChildren(variable).empty();
+    bool designInitializer =
+        variable && !isNestedInCodeUnit(variable) &&
+        !isAutomaticLocalSymbol(variable) && !getChildren(variable).empty();
     auto net = dyn_cast<semantic::SVNetSymbolOp>(op);
     bool netInitializer = net && !getChildren(net).empty();
-    if (isCodeUnit(op) || staticInitializer || designInitializer ||
-        netInitializer)
+    if (isCodeUnit(op) || staticInitializer || initializedStaticLocal ||
+        designInitializer || netInitializer)
       sourceUnits.push_back(op);
   });
 
