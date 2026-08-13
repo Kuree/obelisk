@@ -2986,6 +2986,75 @@ TEST(Scheduler, AwaitUsesStableNonAddressProcessTokens) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, ProcessAssociativeKeysUseStableTombstoneIdentity) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture first(100);
+  SchedulerFixture second(200);
+  obelisk_rt_process_instance_v1 *firstInstance =
+      makeSchedulerInstance(first);
+  obelisk_rt_process_instance_v1 *secondInstance =
+      makeSchedulerInstance(second);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(context, firstInstance, 0, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(context, secondInstance, 0, 1),
+            OBELISK_RT_OK);
+  uint64_t firstToken =
+      obelisk_rt_v1_scheduler_process_token(context, firstInstance);
+  uint64_t secondToken =
+      obelisk_rt_v1_scheduler_process_token(context, secondInstance);
+  ASSERT_NE(firstToken, 0u);
+  ASSERT_GT(secondToken, firstToken);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+  const obelisk_rt_element_type_v1 wordElement{
+      OBELISK_RT_VERSION, OBELISK_RT_ELEMENT_BITS, 92, 0,      0,
+      sizeof(uint64_t),   alignof(uint64_t),       64, nullptr};
+  obelisk_rt_object_v1 *array = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_assoc_create(lane, &wordElement,
+                                       OBELISK_RT_ASSOC_KEY_PROCESS, 0, &array),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 arrayRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &arrayRoot, &array),
+            OBELISK_RT_OK);
+
+  const uint64_t tokens[] = {0, firstToken, secondToken};
+  for (uint64_t index = 0; index != std::size(tokens); ++index) {
+    obelisk_rt_assoc_key_v1 key{OBELISK_RT_ASSOC_KEY_PROCESS, 0, 0,
+                                tokens[index], 0, 0};
+    uint64_t value = index + 20;
+    ASSERT_EQ(obelisk_rt_v1_assoc_write(lane, array, &key, &value, nullptr),
+              OBELISK_RT_OK);
+  }
+
+  obelisk_rt_assoc_key_v1 invalid{
+      OBELISK_RT_ASSOC_KEY_PROCESS, 0, 0,
+      OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG | UINT64_C(0x123456), 0, 0};
+  uint64_t value = 99;
+  EXPECT_EQ(obelisk_rt_v1_assoc_write(lane, array, &invalid, &value, nullptr),
+            OBELISK_RT_INVALID_HANDLE);
+
+  obelisk_rt_assoc_key_v1 cursor{};
+  uint32_t success = 0;
+  for (uint64_t expected : tokens) {
+    ASSERT_EQ(obelisk_rt_v1_assoc_first(lane, array, &cursor, &success),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    EXPECT_EQ(cursor.kind, OBELISK_RT_ASSOC_KEY_PROCESS);
+    EXPECT_EQ(cursor.value, expected);
+    ASSERT_EQ(obelisk_rt_v1_assoc_delete(array, &cursor), OBELISK_RT_OK);
+  }
+  EXPECT_EQ(obelisk_rt_v1_container_size(array), 0u);
+
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &arrayRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, CompletedProcessStorageStaysCompactAcrossChurn) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);

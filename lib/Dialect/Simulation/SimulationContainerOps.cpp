@@ -900,6 +900,9 @@ LogicalResult SimAssocCreateOp::verify() {
   } else if (isa<ClassHandleType>(key)) {
     if (getKeyKind() != 4 || getKeyWidth() != 0)
       return emitOpError("class key metadata is inconsistent");
+  } else if (isa<ProcessType>(key)) {
+    if (getKeyKind() != 5 || getKeyWidth() != 0)
+      return emitOpError("process key metadata is inconsistent");
   } else {
     std::optional<unsigned> width = getPackedWidth(key);
     if (!width || *width == 0 ||

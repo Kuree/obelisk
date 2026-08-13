@@ -520,17 +520,19 @@ FailureOr<Value> UnitLowering::createAssocArray(sim::AssocArrayType type,
     return failure();
   bool stringKey = isa<sim::StringType>(type.getKeyType());
   bool classKey = isa<sim::ClassHandleType>(type.getKeyType());
-  std::optional<unsigned> width = stringKey || classKey
+  bool processKey = isa<sim::ProcessType>(type.getKeyType());
+  std::optional<unsigned> width = stringKey || classKey || processKey
                                       ? std::optional<unsigned>(0)
                                       : sim::getPackedWidth(type.getKeyType());
-  if (!width || (!stringKey && !classKey && *width == 0)) {
+  if (!width || (!stringKey && !classKey && !processKey && *width == 0)) {
     emitError(location)
-        << "associative array key must be string, class, or integral";
+        << "associative array key must be string, class, process, or integral";
     return failure();
   }
   uint32_t keyKind =
       stringKey ? OBELISK_RT_ASSOC_KEY_STRING
       : classKey ? OBELISK_RT_ASSOC_KEY_CLASS
+      : processKey ? OBELISK_RT_ASSOC_KEY_PROCESS
                  : (type.getSignedKey() ? OBELISK_RT_ASSOC_KEY_SIGNED
                                         : OBELISK_RT_ASSOC_KEY_UNSIGNED);
   return sim::SimAssocCreateOp::create(

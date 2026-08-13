@@ -353,7 +353,8 @@ obelisk_rt_status snapshotHeader(obelisk_rt_object_v1 *container,
             snapshot->header.kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY;
         bool handleKey =
             snapshot->header.keyKind == OBELISK_RT_ASSOC_KEY_STRING ||
-            snapshot->header.keyKind == OBELISK_RT_ASSOC_KEY_CLASS;
+            snapshot->header.keyKind == OBELISK_RT_ASSOC_KEY_CLASS ||
+            snapshot->header.keyKind == OBELISK_RT_ASSOC_KEY_PROCESS;
         bool validAssocKey =
             handleKey
                 ? snapshot->header.keyWidth == 0
@@ -521,10 +522,9 @@ obelisk_rt_status initializeAssoc(obelisk_rt_gc_lane_v1 *lane,
   if (!lane || !outContainer ||
       obelisk_rt_v1_element_type_validate(element) != OBELISK_RT_OK)
     return OBELISK_RT_INVALID_ARGUMENT;
-  if (keyKind == OBELISK_RT_ASSOC_KEY_STRING) {
-    if (keyWidth != 0)
-      return OBELISK_RT_INVALID_ARGUMENT;
-  } else if (keyKind == OBELISK_RT_ASSOC_KEY_CLASS) {
+  if (keyKind == OBELISK_RT_ASSOC_KEY_STRING ||
+      keyKind == OBELISK_RT_ASSOC_KEY_CLASS ||
+      keyKind == OBELISK_RT_ASSOC_KEY_PROCESS) {
     if (keyWidth != 0)
       return OBELISK_RT_INVALID_ARGUMENT;
   } else if ((keyKind != OBELISK_RT_ASSOC_KEY_UNSIGNED &&
@@ -1698,6 +1698,21 @@ obelisk_rt_status normalizeAssocKey(obelisk_rt_context *context,
       return OBELISK_RT_INVALID_HANDLE;
     normalized.object = key->object;
     normalized.integral = obelisk_rt_v1_object_id(key->object);
+    normalized.hash = mixAssocHash(normalized.integral ^
+                                   (uint64_t(header.keyKind) << 56));
+    return OBELISK_RT_OK;
+  }
+  if (key->kind == OBELISK_RT_ASSOC_KEY_PROCESS) {
+    if (key->width != 0 || key->unknown != 0 || key->string != 0)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    if (key->value != 0) {
+      obelisk_rt_process_state state = OBELISK_RT_PROCESS_FINISHED;
+      obelisk_rt_status status =
+          obelisk_rt_v1_process_status(context, key->value, &state);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
+    normalized.integral = key->value;
     normalized.hash = mixAssocHash(normalized.integral ^
                                    (uint64_t(header.keyKind) << 56));
     return OBELISK_RT_OK;
@@ -4305,12 +4320,16 @@ static obelisk_rt_status assocTraverse(obelisk_rt_gc_lane_v1 *lane,
   if (keyRoot.getStatus() != OBELISK_RT_OK)
     return keyRoot.getStatus();
   status = ensureAssocOrdered(lane, array);
+  preflightKey.object = keyObject;
+  preflightKey.string = keyRootValue;
   struct Traverse {
     obelisk_rt_assoc_key_v1 *key;
+    const NormalizedAssocKey *current;
     uint32_t *success;
     int direction;
     bool endpoint;
-  } traverse{inoutKey, outSuccess, direction, endpoint};
+  } traverse{inoutKey, endpoint ? nullptr : &preflightKey, outSuccess,
+             direction, endpoint};
   if (status == OBELISK_RT_OK)
     status = obelisk_rt_managed_object_access(
         array, OBELISK_RT_MANAGED_CONTAINER,
@@ -4324,19 +4343,6 @@ static obelisk_rt_status assocTraverse(obelisk_rt_gc_lane_v1 *lane,
             return OBELISK_RT_INVALID_ARGUMENT;
           if (header->size == 0 || !header->ordered || !header->buffer)
             return OBELISK_RT_OK;
-          NormalizedAssocKey current;
-          if (!traverse->endpoint) {
-            obelisk_rt_status normalized = normalizeAssocKey(
-                obelisk_rt_managed_object_context(
-                    reinterpret_cast<obelisk_rt_object_v1 *>(object)),
-                *header, traverse->key, current);
-            if (normalized != OBELISK_RT_OK)
-              return normalized;
-            if (current.ignored) {
-              warnIgnoredAssocKey();
-              return OBELISK_RT_OK;
-            }
-          }
           uint64_t stride = assocSlotStride(header->element);
           return accessBuffer(header->ordered, [&](uint8_t *orderData,
                                                    uint64_t orderSize) {
@@ -4360,7 +4366,7 @@ static obelisk_rt_status assocTraverse(obelisk_rt_gc_lane_v1 *lane,
                         data + indices[index] * stride);
                     int comparison = 0;
                     obelisk_rt_status compared = compareAssocSlotWithKey(
-                        *header, *slot, current, comparison);
+                        *header, *slot, *traverse->current, comparison);
                     if (compared != OBELISK_RT_OK)
                       return compared;
                     if (comparison > 0) {
@@ -4374,7 +4380,7 @@ static obelisk_rt_status assocTraverse(obelisk_rt_gc_lane_v1 *lane,
                         data + indices[index - 1] * stride);
                     int comparison = 0;
                     obelisk_rt_status compared = compareAssocSlotWithKey(
-                        *header, *slot, current, comparison);
+                        *header, *slot, *traverse->current, comparison);
                     if (compared != OBELISK_RT_OK)
                       return compared;
                     if (comparison < 0) {

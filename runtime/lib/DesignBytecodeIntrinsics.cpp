@@ -246,6 +246,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       std::memcpy(&key.object, frame.data + layout.offset, sizeof(key.object));
       return true;
     }
+    if (key.kind == OBELISK_RT_ASSOC_KEY_PROCESS) {
+      if (layout.kind != OBELISK_RT_DBREG_BITS || layout.size != 8 ||
+          layout.width != 64)
+        return false;
+      std::memcpy(&key.value, frame.data + layout.offset, sizeof(key.value));
+      return true;
+    }
     if ((layout.kind != OBELISK_RT_DBREG_BITS &&
          layout.kind != OBELISK_RT_DBREG_LOGIC) ||
         key.kind == OBELISK_RT_ASSOC_KEY_STRING ||
@@ -293,6 +300,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       if (key.kind != OBELISK_RT_ASSOC_KEY_CLASS || layout.size != 8)
         return false;
       std::memcpy(frame.data + layout.offset, &key.object, sizeof(key.object));
+      return true;
+    }
+    if (key.kind == OBELISK_RT_ASSOC_KEY_PROCESS) {
+      if (layout.kind != OBELISK_RT_DBREG_BITS || layout.size != 8 ||
+          layout.width != 64)
+        return false;
+      std::memcpy(frame.data + layout.offset, &key.value, sizeof(key.value));
       return true;
     }
     if ((layout.kind != OBELISK_RT_DBREG_BITS &&

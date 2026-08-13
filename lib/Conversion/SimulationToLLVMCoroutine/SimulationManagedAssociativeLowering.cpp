@@ -38,12 +38,14 @@ Value makeNativeAssocKey(OpBuilder &builder, Location location,
   };
   bool stringKey = isa<sim::StringType>(array.getKeyType());
   bool classKey = isa<sim::ClassHandleType>(array.getKeyType());
+  bool processKey = isa<sim::ProcessType>(array.getKeyType());
   uint32_t keyKind =
       stringKey ? OBELISK_RT_ASSOC_KEY_STRING
       : classKey ? OBELISK_RT_ASSOC_KEY_CLASS
+      : processKey ? OBELISK_RT_ASSOC_KEY_PROCESS
                 : (array.getSignedKey() ? OBELISK_RT_ASSOC_KEY_SIGNED
                                         : OBELISK_RT_ASSOC_KEY_UNSIGNED);
-  uint64_t keyWidth = stringKey || classKey
+  uint64_t keyWidth = stringKey || classKey || processKey
                           ? 0
                           : *sim::getPackedWidth(array.getKeyType());
   store32(offsetof(obelisk_rt_assoc_key_v1, kind), keyKind);
@@ -59,7 +61,7 @@ Value makeNativeAssocKey(OpBuilder &builder, Location location,
     storePointer(offsetof(obelisk_rt_assoc_key_v1, value), null);
     storePointer(offsetof(obelisk_rt_assoc_key_v1, unknown), null);
     store64(offsetof(obelisk_rt_assoc_key_v1, string), values.front());
-  } else if (classKey) {
+  } else if (classKey || processKey) {
     store64(offsetof(obelisk_rt_assoc_key_v1, value), values.front());
     storePointer(offsetof(obelisk_rt_assoc_key_v1, unknown), null);
     LLVM::StoreOp::create(builder, location,
@@ -444,6 +446,12 @@ public:
           rewriter, op.getLoc(), i64,
           byteGEP(rewriter, op.getLoc(), key,
                   offsetof(obelisk_rt_assoc_key_v1, object)),
+          8));
+    } else if (isa<sim::ProcessType>(array.getKeyType())) {
+      keyValues.push_back(LLVM::LoadOp::create(
+          rewriter, op.getLoc(), i64,
+          byteGEP(rewriter, op.getLoc(), key,
+                  offsetof(obelisk_rt_assoc_key_v1, value)),
           8));
     } else {
       SmallVector<Type> converted;
