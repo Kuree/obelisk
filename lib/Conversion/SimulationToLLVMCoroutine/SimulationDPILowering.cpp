@@ -1,7 +1,7 @@
 //===- SimulationDPILowering.cpp - Native DPI lowering ----------------===//
 
-#include "SimulationToLLVMCoroutinePrivate.h"
 #include "SimulationDPILowering.h"
+#include "SimulationToLLVMCoroutinePrivate.h"
 
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -164,7 +164,10 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
     Value address = byteGEP(rewriter, location, base,
                             index * sizeof(obelisk_rt_import_input_v1));
     uint32_t kind =
-        entry.fourState ? OBELISK_RT_DBREG_LOGIC : OBELISK_RT_DBREG_BITS;
+        entry.category == static_cast<uint32_t>(sim::DPIABIKind::String)
+            ? OBELISK_RT_DBREG_STRING
+        : entry.fourState ? OBELISK_RT_DBREG_LOGIC
+                          : OBELISK_RT_DBREG_BITS;
     storeAt(rewriter, location, address,
             offsetof(obelisk_rt_import_input_v1, kind),
             llvmConstant(rewriter, location, i8, kind), 1);
@@ -201,10 +204,9 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
       context, {i32, i32, i32, i32, i64, pointer, i64, i32, i32, i64});
   Value site = entryAlloca(rewriter, location, siteType, 1,
                            alignof(obelisk_rt_import_site_v1));
-  uint32_t flags =
-      (operation.getIsPure() ? OBELISK_RT_IMPORT_PURE : 0u) |
-      (operation.getIsContext() ? OBELISK_RT_IMPORT_CONTEXT : 0u) |
-      (operation.getIsTask() ? OBELISK_RT_IMPORT_TASK : 0u);
+  uint32_t flags = (operation.getIsPure() ? OBELISK_RT_IMPORT_PURE : 0u) |
+                   (operation.getIsContext() ? OBELISK_RT_IMPORT_CONTEXT : 0u) |
+                   (operation.getIsTask() ? OBELISK_RT_IMPORT_TASK : 0u);
   Value source = null;
   if (!operation.getSourceFile().empty()) {
     uint64_t fileHash = OBELISK_STABLE_HASH_OFFSET_BASIS;
@@ -233,8 +235,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
           offsetof(obelisk_rt_import_site_v1, version),
           llvmConstant(rewriter, location, i32, OBELISK_RT_VERSION),
           alignof(uint32_t));
-  storeAt(rewriter, location, site,
-          offsetof(obelisk_rt_import_site_v1, flags),
+  storeAt(rewriter, location, site, offsetof(obelisk_rt_import_site_v1, flags),
           llvmConstant(rewriter, location, i32, flags), 4);
   storeAt(rewriter, location, site,
           offsetof(obelisk_rt_import_site_v1, import_id),

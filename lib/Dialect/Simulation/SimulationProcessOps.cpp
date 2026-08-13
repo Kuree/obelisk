@@ -1,4 +1,5 @@
-//===- SimulationProcessOps.cpp - Process, call, and reference op verifiers ===//
+//===- SimulationProcessOps.cpp - Process, call, and reference op verifiers
+//===//
 //
 // SimFuncOp parsing/printing/verification, calls and observers, DPI, spawn and
 // control ops, aggregate and union access, and the memory-slot promotion and
@@ -6,8 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "SimulationVerifiers.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -15,12 +16,12 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/InliningUtils.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -288,8 +289,8 @@ LogicalResult SimFuncOp::verify() {
   for (Type input : type.getInputs()) {
     if (!isa<ContextType, RefType, ArgumentRefType, NetType, DriverType,
              EventType, ProcessType, ManagedRefType, IntegerType, LogicType,
-             TimeType, CovergroupHandleType, VirtualInterfaceType,
-             ChandleType>(input) &&
+             TimeType, CovergroupHandleType, VirtualInterfaceType, ChandleType>(
+            input) &&
         !isManagedHandleType(input) && !isa<FloatType>(input) &&
         !isAggregateType(input))
       return emitOpError() << "contains non-normalized argument type " << input;
@@ -331,8 +332,9 @@ LogicalResult SimFuncOp::verify() {
     WalkResult blocking = getBody().walk([&](Operation *op) {
       if (isa<SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
               SimSuspendEdgeIffOp, SimSuspendLevelOp, SimSuspendAnyOp,
-              SimSuspendEventOp, SimSuspendMailboxOp, SimSuspendObserveOp, SimSuspendForeverOp,
-              SimSuspendAwaitOp, SimSuspendJoinOp, SimSuspendChildrenOp>(op)) {
+              SimSuspendEventOp, SimSuspendMailboxOp, SimSuspendObserveOp,
+              SimSuspendForeverOp, SimSuspendAwaitOp, SimSuspendJoinOp,
+              SimSuspendChildrenOp>(op)) {
         op->emitOpError(getEntryKind() == EntryKind::Function
                             ? "is not permitted in a zero-time function entry"
                             : "is not permitted in a zero-time observer entry");
@@ -534,24 +536,23 @@ SimTaskCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 Operation::operand_range SimClassVirtualTaskCallOp::getArguments() {
-  size_t count = getArgumentCountAttr().getValue().isNegative()
-                     ? 0
-                     : std::min<uint64_t>(getArgumentCount(),
-                                          getValues().size());
+  size_t count =
+      getArgumentCountAttr().getValue().isNegative()
+          ? 0
+          : std::min<uint64_t>(getArgumentCount(), getValues().size());
   return getValues().take_front(count);
 }
 
-Operation::operand_range
-SimClassVirtualTaskCallOp::getContinuationOperands() {
+Operation::operand_range SimClassVirtualTaskCallOp::getContinuationOperands() {
   return getValues().drop_front(getArguments().size());
 }
 
 MutableOperandRange
 SimClassVirtualTaskCallOp::getContinuationOperandsMutable() {
-  unsigned count = getArgumentCountAttr().getValue().isNegative()
-                       ? 0
-                       : std::min<uint64_t>(getArgumentCount(),
-                                            getValues().size());
+  unsigned count =
+      getArgumentCountAttr().getValue().isNegative()
+          ? 0
+          : std::min<uint64_t>(getArgumentCount(), getValues().size());
   return MutableOperandRange(getOperation(), 1 + count,
                              getValues().size() - count);
 }
@@ -661,6 +662,15 @@ LogicalResult SimDPICallOp::verify() {
     return emitOpError("DPI signature has excess result entries");
 
   auto verifyLogicalType = [&](Type type, DPIABIAttr abi) -> LogicalResult {
+    if (abi.getKind() == DPIABIKind::String)
+      return isa<StringType>(type)
+                 ? success()
+                 : emitOpError("string DPI ABI entry requires a string value");
+    if (abi.getKind() == DPIABIKind::Chandle)
+      return isa<ChandleType>(type)
+                 ? success()
+                 : emitOpError(
+                       "chandle DPI ABI entry requires a chandle value");
     std::optional<unsigned> width = getPackedWidth(type);
     bool fourState = isa<LogicType>(getPackedScalarType(type));
     if (!width || *width != abi.getWidth() || fourState != abi.getFourState())
@@ -1150,7 +1160,7 @@ SmallVector<DestructurableMemorySlot> SimRefAllocOp::getDestructurableSlots() {
 }
 
 Value materializeDefaultValue(OpBuilder &builder, Location location,
-                                     Type type) {
+                              Type type) {
   if (isAggregateType(type))
     return SimAggregateDefaultOp::create(builder, location, type);
   if (auto integer = dyn_cast<IntegerType>(type))

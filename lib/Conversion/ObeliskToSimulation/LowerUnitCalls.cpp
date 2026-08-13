@@ -67,15 +67,13 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return failure();
       }
       FailureOr<Value> value = lowerExpression(children[1]);
-      value = succeeded(value)
-                  ? convert(*value, mailbox.getElementType(),
-                            isSignedNode(children[1]), location)
-                  : FailureOr<Value>(failure());
+      value = succeeded(value) ? convert(*value, mailbox.getElementType(),
+                                         isSignedNode(children[1]), location)
+                               : FailureOr<Value>(failure());
       if (failed(value))
         return failure();
       Value success = sim::SimMailboxTryPutOp::create(
-          builder, location, *receiver,
-          cloneSequentialValue(*value, location));
+          builder, location, *receiver, cloneSequentialValue(*value, location));
       FailureOr<Type> resultType = getNormalizedSemanticType(op);
       return failed(resultType)
                  ? FailureOr<Value>(failure())
@@ -1586,6 +1584,15 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     bool destinationSigned;
     uint32_t dpiCategory;
   };
+  auto getDPITransportWidth = [](Type type) -> std::optional<unsigned> {
+    if (isa<sim::StringType, sim::ChandleType>(type))
+      return 64;
+    return sim::getPackedWidth(type);
+  };
+  auto isDPIFourState = [](Type type) {
+    Type scalar = sim::getPackedScalarType(type);
+    return scalar && isa<sim::LogicType>(scalar);
+  };
   SmallVector<CopyOut> copyOuts;
   SmallVector<Attribute> dpiOperandABI;
   for (auto [child, formalAttr] : llvm::zip_equal(actuals, formals)) {
@@ -1607,16 +1614,15 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                "marshalling is unsupported";
         return failure();
       }
-      std::optional<unsigned> width = sim::getPackedWidth(formalType);
+      std::optional<unsigned> width = getDPITransportWidth(formalType);
       if (!width) {
-        emitError(location) << "DPI formal has no fixed packed integral width";
+        emitError(location) << "DPI formal has no fixed transport width";
         return failure();
       }
       dpiOperandABI.push_back(sim::DPIABIAttr::get(
           builder.getContext(), static_cast<sim::DPIABIKind>(dpiCategory),
           static_cast<sim::DPIArgumentDirection>(direction), *width,
-          isa<sim::LogicType>(sim::getPackedScalarType(formalType)),
-          formalSigned));
+          isDPIFourState(formalType), formalSigned));
     }
 
     Operation *actual = child;
@@ -1759,10 +1765,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     SmallVector<Attribute> signature(dpiOperandABI);
     if (hasFunctionResult) {
       Type resultType = callResultTypes.front();
-      std::optional<unsigned> width = sim::getPackedWidth(resultType);
+      std::optional<unsigned> width = getDPITransportWidth(resultType);
       if (!width)
         return emitError(location)
-                   << "DPI function result has no fixed packed width",
+                   << "DPI function result has no fixed transport width",
                failure();
       auto semanticResult = op->getAttrOfType<TypeAttr>("semantic_type");
       if (!semanticResult)
@@ -1775,18 +1781,20 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return failure();
       signature.push_back(sim::DPIABIAttr::get(
           builder.getContext(), static_cast<sim::DPIABIKind>(*resultCategory),
-          sim::DPIArgumentDirection::Result, *width,
-          isa<sim::LogicType>(sim::getPackedScalarType(resultType)),
+          sim::DPIArgumentDirection::Result, *width, isDPIFourState(resultType),
           isSignedSemanticType(semanticResult.getValue())));
     }
     for (const CopyOut &copyOut : copyOuts) {
-      std::optional<unsigned> width = sim::getPackedWidth(copyOut.formalType);
+      std::optional<unsigned> width = getDPITransportWidth(copyOut.formalType);
+      if (!width)
+        return emitError(location)
+                   << "DPI copy-out has no fixed transport width",
+               failure();
       signature.push_back(sim::DPIABIAttr::get(
           builder.getContext(),
           static_cast<sim::DPIABIKind>(copyOut.dpiCategory),
           sim::DPIArgumentDirection::Output, *width,
-          isa<sim::LogicType>(sim::getPackedScalarType(copyOut.formalType)),
-          copyOut.formalSigned));
+          isDPIFourState(copyOut.formalType), copyOut.formalSigned));
     }
     FileLineColLoc fileLocation = dyn_cast<FileLineColLoc>(location);
     StringRef sourceFile =

@@ -19,7 +19,7 @@ class OpPassManager;
 
 namespace obelisk {
 
-/// Canonical C ABI categories supported by the initial DPI import slice.
+/// Canonical C ABI categories supported by the DPI import boundary.
 /// Keep these values in sync with sim::DPIABIKind; they are serialized into
 /// bytecode signature metadata and are therefore part of the internal ABI.
 enum class DPIABIKind : uint32_t {
@@ -31,6 +31,8 @@ enum class DPIABIKind : uint32_t {
   LongInt = 5,
   BitVector = 6,
   LogicVector = 7,
+  String = 8,
+  Chandle = 9,
 };
 
 struct DPIABIType {
@@ -44,7 +46,7 @@ struct DPIABIType {
   }
 };
 
-/// Classify a source-semantic type for the initial DPI-C ABI. Diagnostics are
+/// Classify a source-semantic type for the DPI-C ABI. Diagnostics are
 /// emitted at `location` for unsupported categories.
 mlir::FailureOr<DPIABIType> classifyDPIABIType(mlir::Type type,
                                                mlir::Location location);

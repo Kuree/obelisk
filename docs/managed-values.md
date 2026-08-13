@@ -83,13 +83,14 @@ formats, managed file paths and modes, and `$fgets` string destinations.
 Whole-string stores compare byte contents before publishing a change, rather
 than comparing allocation handles.
 
-DPI-C and VPI string marshalling and visibility remain intentionally excluded
-and diagnose their unsupported boundary. String scanning (`$sscanf` and
-`$fscanf`), string-building formatting (`$swrite*`, `$sformat*`, and
-`$psprintf`), escaping string-character `ref` aliases, and nonblocking
-character-path updates also retain explicit diagnostics. These require scanner
-target records or reference paths that preserve partial assignment and exact
-alias semantics across both execution tiers.
+DPI-C input, output, inout, and function-result strings use the standard
+`const char *`/`const char **` ABI and copy C results into simulator-owned
+managed storage. VPI string visibility remains intentionally excluded and
+diagnoses its unsupported boundary. String scanning (`$sscanf` and `$fscanf`),
+escaping string-character `ref` aliases, and nonblocking character-path
+updates also retain explicit diagnostics. These require scanner target records
+or reference paths that preserve partial assignment and exact alias semantics
+across both execution tiers.
 
 Source dynamic arrays execute allocation and resize, value-copy assignment,
 indexing and reference formals, equality, `foreach`, assignment patterns,

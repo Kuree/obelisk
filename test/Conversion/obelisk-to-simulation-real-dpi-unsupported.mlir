@@ -33,4 +33,4 @@ module {
   }
 }
 
-// CHECK: DPI imports support only scalar predefined integers
+// CHECK: DPI imports support only string, chandle, scalar predefined integers

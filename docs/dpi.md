@@ -7,17 +7,25 @@ context functions, errors, and copy-outs are shared.
 
 Supported arguments and function results are `byte`, `shortint`, `int`,
 `longint`, scalar `bit` and `logic`, enums with one of those canonical base
-types, and fixed packed 2-state or 4-state values. Formal directions may be
-`input`, `output`, or `inout`. Renamed C identifiers, `pure`, and `context`
-imports are preserved. Fixed packed aggregates, including packed structs and
-unions, use the standard bit-vector or logic-vector representation.
+types, fixed packed 2-state or 4-state values, `string`, and `chandle`. Formal
+directions may be `input`, `output`, or `inout`. Renamed C identifiers,
+`pure`, and `context` imports are preserved. Fixed packed aggregates,
+including packed structs and unions, use the standard bit-vector or
+logic-vector representation.
 
-Open and unpacked arrays, strings, `real`/`shortreal`, `chandle`, `ref`, DPI
-exports, task suspension, and disable acknowledgement are not supported yet.
-They produce diagnostics instead of falling back to a different ABI. The
-execution bytecode now reserves distinct string, binary32, and binary64
-register categories; this is not yet a promise that DPI marshalling accepts
-`const char *`, `float`, or `double`.
+Following IEEE 1800-2023 H.7.4 and H.8.10, an input string uses `const char *`
+and an output or inout string uses `const char **`; `chandle` uses `void *`
+and the corresponding extra pointer level for copy-out formals. Input string
+storage remains simulator-owned and is valid only for the call. Returned and
+copy-out C strings must be valid initialized null-terminated addresses and
+are copied immediately into simulator-owned managed strings. Neither side
+frees the other side's string storage.
+
+Open and unpacked arrays, `real`/`shortreal`, `ref`, DPI exports, task
+suspension, and disable acknowledgement are not supported yet. They produce
+diagnostics instead of falling back to a different ABI. The execution
+bytecode reserves distinct string, binary32, and binary64 register categories;
+binary32 and binary64 DPI marshalling are not implemented yet.
 
 ## Build an implementation
 

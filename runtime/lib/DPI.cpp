@@ -29,18 +29,21 @@ struct ActiveCallGuard {
   ActiveDpiCall &call;
 };
 
-bool validTimeExponent(int32_t value) {
-  return value >= -15 && value <= 0;
-}
+bool validTimeExponent(int32_t value) { return value >= -15 && value <= 0; }
 
-uint64_t limbCount(uint32_t width) {
-  return (uint64_t{width} + 63) / 64;
-}
+uint64_t limbCount(uint32_t width) { return (uint64_t{width} + 63) / 64; }
 
 bool validKind(obelisk_rt_design_register_kind kind) {
-  return kind == OBELISK_RT_DBREG_BITS ||
-         kind == OBELISK_RT_DBREG_LOGIC ||
-         kind == OBELISK_RT_DBREG_STATUS;
+  return kind == OBELISK_RT_DBREG_BITS || kind == OBELISK_RT_DBREG_LOGIC ||
+         kind == OBELISK_RT_DBREG_STATUS || kind == OBELISK_RT_DBREG_STRING;
+}
+
+bool validStringWord(const uint64_t *value) {
+  char scratch[8];
+  const char *bytes = nullptr;
+  uint64_t size = 0;
+  return value && obelisk_rt_v1_string_view(*value, scratch, &bytes, &size) ==
+                      OBELISK_RT_OK;
 }
 
 bool validInput(const obelisk_rt_import_input_v1 &input) {
@@ -48,13 +51,15 @@ bool validInput(const obelisk_rt_import_input_v1 &input) {
       (input.flags & ~uint8_t{OBELISK_RT_DBREG_SIGNED}) != 0 ||
       input.reserved != 0 || !input.value)
     return false;
-  uint32_t width =
-      input.kind == OBELISK_RT_DBREG_STATUS ? 32 : input.bit_width;
+  uint32_t width = input.kind == OBELISK_RT_DBREG_STATUS ? 32 : input.bit_width;
   if (width == 0 || input.bit_width != width ||
       input.limb_count != limbCount(width))
     return false;
+  if (input.kind == OBELISK_RT_DBREG_STRING)
+    return input.flags == 0 && input.bit_width == 64 &&
+           input.unknown == nullptr && validStringWord(input.value);
   return input.kind == OBELISK_RT_DBREG_LOGIC ? input.unknown != nullptr
-                                               : input.unknown == nullptr;
+                                              : input.unknown == nullptr;
 }
 
 bool validOutput(const obelisk_rt_import_output_v1 &output) {
@@ -67,11 +72,16 @@ bool validOutput(const obelisk_rt_import_output_v1 &output) {
   if (width == 0 || output.bit_width != width ||
       output.limb_count != limbCount(width))
     return false;
+  if (output.kind == OBELISK_RT_DBREG_STRING)
+    return output.flags == 0 && output.bit_width == 64 &&
+           output.unknown == nullptr;
   return output.kind == OBELISK_RT_DBREG_LOGIC ? output.unknown != nullptr
-                                                : output.unknown == nullptr;
+                                               : output.unknown == nullptr;
 }
 
 void normalize(obelisk_rt_import_output_v1 &output) {
+  if (output.kind == OBELISK_RT_DBREG_STRING)
+    return;
   uint32_t width =
       output.kind == OBELISK_RT_DBREG_STATUS ? 32 : output.bit_width;
   unsigned tail = width % 64;
@@ -116,19 +126,17 @@ obelisk_rt_status obelisk_rt_initialize_dpi_scopes(
     const obelisk_rt_execution_descriptor_v1 *execution) {
   if (!context || !execution)
     return OBELISK_RT_INVALID_ARGUMENT;
-  if ((execution->dpi_scopes == nullptr) !=
-          (execution->dpi_scope_count == 0) ||
+  if ((execution->dpi_scopes == nullptr) != (execution->dpi_scope_count == 0) ||
       execution->dpi_reserved != 0)
     return OBELISK_RT_INVALID_DESIGN;
   if (execution->dpi_scope_count == 0)
     return execution->dpi_time_precision == 0 ? OBELISK_RT_OK
-                                               : OBELISK_RT_INVALID_DESIGN;
+                                              : OBELISK_RT_INVALID_DESIGN;
   if (!validTimeExponent(execution->dpi_time_precision) ||
       execution->dpi_scope_count > std::numeric_limits<size_t>::max())
     return OBELISK_RT_INVALID_DESIGN;
 
-  context->dpiScopes.reserve(
-      static_cast<size_t>(execution->dpi_scope_count));
+  context->dpiScopes.reserve(static_cast<size_t>(execution->dpi_scope_count));
   bool sawRoot = false;
   for (uint64_t index = 0; index != execution->dpi_scope_count; ++index) {
     const obelisk_rt_dpi_scope_v1 &record = execution->dpi_scopes[index];
@@ -150,8 +158,7 @@ obelisk_rt_status obelisk_rt_initialize_dpi_scopes(
     scope->context = context;
     scope->id = record.id;
     scope->parentID = record.parent_id;
-    scope->name.assign(record.name,
-                       static_cast<size_t>(record.name_size));
+    scope->name.assign(record.name, static_cast<size_t>(record.name_size));
     scope->timeUnit = record.time_unit;
     scope->timePrecision = record.time_precision;
     if (scope->name.find('\0') != std::string::npos ||
@@ -166,19 +173,17 @@ extern "C" obelisk_rt_status obelisk_rt_v1_import_call(
     obelisk_rt_context *context, const obelisk_rt_import_site_v1 *site,
     const obelisk_rt_import_input_v1 *inputs, uint32_t inputCount,
     obelisk_rt_import_output_v1 *outputs, uint32_t outputCount) {
-  if (!context || !site ||
-      (inputs == nullptr && inputCount != 0) ||
+  if (!context || !site || (inputs == nullptr && inputCount != 0) ||
       (outputs == nullptr && outputCount != 0))
     return OBELISK_RT_INVALID_ARGUMENT;
   constexpr uint32_t validFlags = OBELISK_RT_IMPORT_PURE |
                                   OBELISK_RT_IMPORT_CONTEXT |
                                   OBELISK_RT_IMPORT_TASK;
-  if (site->version != OBELISK_RT_VERSION ||
-      site->import_id == 0 || site->reserved != 0 ||
-      (site->flags & ~validFlags) != 0 ||
+  if (site->version != OBELISK_RT_VERSION || site->import_id == 0 ||
+      site->reserved != 0 || (site->flags & ~validFlags) != 0 ||
       ((site->flags & OBELISK_RT_IMPORT_PURE) != 0 &&
-       (site->flags & (OBELISK_RT_IMPORT_CONTEXT |
-                       OBELISK_RT_IMPORT_TASK)) != 0) ||
+       (site->flags & (OBELISK_RT_IMPORT_CONTEXT | OBELISK_RT_IMPORT_TASK)) !=
+           0) ||
       !validBytes(site->source_file, site->source_file_size))
     return OBELISK_RT_INVALID_ARGUMENT;
   for (uint32_t index = 0; index != inputCount; ++index)
@@ -203,8 +208,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_import_call(
       return OBELISK_RT_TIER_UNAVAILABLE;
     binding = found->second;
   }
-  if (binding.abiSignature != 0 &&
-      binding.abiSignature != site->abi_signature)
+  if (binding.abiSignature != 0 && binding.abiSignature != site->abi_signature)
     return OBELISK_RT_ARGUMENT_MISMATCH;
 
   for (uint32_t index = 0; index != outputCount; ++index) {
@@ -219,19 +223,35 @@ extern "C" obelisk_rt_status obelisk_rt_v1_import_call(
     call.context = context;
     call.scope = scope;
     if (site->source_file_size != 0)
-      call.callerFile.assign(
-          site->source_file, static_cast<size_t>(site->source_file_size));
+      call.callerFile.assign(site->source_file,
+                             static_cast<size_t>(site->source_file_size));
     call.callerLine = site->source_line;
     ActiveCallGuard active(call);
-    obelisk_rt_status status = binding.callback(
-        context, site->import_id, inputs, inputCount, outputs, outputCount,
-        binding.userData);
+    obelisk_rt_status status =
+        binding.callback(context, site->import_id, inputs, inputCount, outputs,
+                         outputCount, binding.userData);
     if (status != OBELISK_RT_OK)
       return status;
-    for (uint32_t index = 0; index != outputCount; ++index)
+    for (uint32_t index = 0; index != outputCount; ++index) {
+      if (outputs[index].kind == OBELISK_RT_DBREG_STRING &&
+          !validStringWord(outputs[index].value))
+        return OBELISK_RT_INVALID_HANDLE;
       normalize(outputs[index]);
+    }
     return OBELISK_RT_OK;
   });
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_dpi_string_copy(obelisk_rt_context *context, const char *string,
+                              obelisk_rt_string_v1 *outString) {
+  if (!context || !string || !outString)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+  if (!lane)
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  return obelisk_rt_v1_string_create(lane, string, std::strlen(string),
+                                     outString);
 }
 
 extern "C" const char *svDpiVersion(void) { return "1800-2023"; }
@@ -260,13 +280,12 @@ extern "C" svScope svGetScopeFromName(const char *scopeName) {
   if (!activeDpiCall || !scopeName)
     return nullptr;
   auto found = activeDpiCall->context->dpiScopesByName.find(scopeName);
-  return found == activeDpiCall->context->dpiScopesByName.end()
-             ? nullptr
-             : found->second;
+  return found == activeDpiCall->context->dpiScopesByName.end() ? nullptr
+                                                                : found->second;
 }
 
 extern "C" int svPutUserData(const svScope scope, void *userKey,
-                              void *userData) {
+                             void *userData) {
   DpiScopeHandle *handle = scopeFromOpaque(activeDpiCall, scope);
   if (!handle || !userKey || !userData)
     return -1;
@@ -352,8 +371,7 @@ extern "C" int svGetTimeUnit(const svScope scope, int32_t *timeUnit) {
   return 0;
 }
 
-extern "C" int svGetTimePrecision(const svScope scope,
-                                   int32_t *timePrecision) {
+extern "C" int svGetTimePrecision(const svScope scope, int32_t *timePrecision) {
   if (!activeDpiCall || !timePrecision)
     return -1;
   if (!scope) {

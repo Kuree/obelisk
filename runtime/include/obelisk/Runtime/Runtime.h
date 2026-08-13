@@ -125,11 +125,10 @@ enum {
   OBELISK_RT_MANAGED_ROOT_KIND_STRING = 1u << 1,
   OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER = 1u << 2,
   OBELISK_RT_MANAGED_ROOT_KIND_REFERENCE_PATH = 1u << 3,
-  OBELISK_RT_MANAGED_ROOT_KIND_ALL =
-      OBELISK_RT_MANAGED_ROOT_KIND_CLASS |
-      OBELISK_RT_MANAGED_ROOT_KIND_STRING |
-      OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER |
-      OBELISK_RT_MANAGED_ROOT_KIND_REFERENCE_PATH
+  OBELISK_RT_MANAGED_ROOT_KIND_ALL = OBELISK_RT_MANAGED_ROOT_KIND_CLASS |
+                                     OBELISK_RT_MANAGED_ROOT_KIND_STRING |
+                                     OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER |
+                                     OBELISK_RT_MANAGED_ROOT_KIND_REFERENCE_PATH
 };
 
 struct obelisk_rt_trace_layout_v1;
@@ -687,10 +686,7 @@ enum {
 };
 
 typedef uint16_t obelisk_rt_design_select_kind;
-enum {
-  OBELISK_RT_DB_SELECT_BINARY = 0,
-  OBELISK_RT_DB_SELECT_FOUR_STATE = 1
-};
+enum { OBELISK_RT_DB_SELECT_BINARY = 0, OBELISK_RT_DB_SELECT_FOUR_STATE = 1 };
 
 typedef uint16_t obelisk_rt_design_reduction_kind;
 enum {
@@ -716,10 +712,7 @@ enum {
 };
 
 typedef uint16_t obelisk_rt_design_override_kind;
-enum {
-  OBELISK_RT_DB_OVERRIDE_FORCE = 0,
-  OBELISK_RT_DB_OVERRIDE_ASSIGN = 1
-};
+enum { OBELISK_RT_DB_OVERRIDE_FORCE = 0, OBELISK_RT_DB_OVERRIDE_ASSIGN = 1 };
 
 // COMPARE flags. Case comparisons return a known two-state result. Wildcard
 // equality masks unknown RHS bits but can return X for a relevant unknown LHS
@@ -920,9 +913,9 @@ enum {
 // bytecode image contains only a deterministic 32-bit symbol ID and typed
 // register metadata; it never contains a host function or data pointer.
 // Generation one imports accept arbitrary-width bits/logic, status values,
-// and opaque four-word stable/reference handles. A callback may copy a handle
-// but must not synthesize its representation. The callback may inspect inputs
-// and fill the zero-initialized output planes.
+// opaque four-word stable/reference handles, and managed string words. A
+// callback may copy a handle but must not synthesize its representation. The
+// callback may inspect inputs and fill the zero-initialized output planes.
 typedef struct obelisk_rt_import_input_v1 {
   obelisk_rt_design_register_kind kind;
   uint8_t flags;
@@ -1866,8 +1859,7 @@ obelisk_rt_status obelisk_rt_v1_container_create_typed(
 obelisk_rt_status obelisk_rt_v1_mailbox_create_typed(
     obelisk_rt_gc_lane_v1 *lane, uint64_t type_id, uint32_t element_kind,
     uint32_t element_flags, uint64_t value_size, uint64_t alignment,
-    uint64_t bit_width,
-    const obelisk_rt_element_trace_slot_v1 *trace_slots,
+    uint64_t bit_width, const obelisk_rt_element_trace_slot_v1 *trace_slots,
     uint64_t trace_slot_count, int64_t bound,
     obelisk_rt_object_v1 **out_mailbox);
 uint64_t obelisk_rt_v1_container_size(obelisk_rt_object_v1 *container);
@@ -1905,24 +1897,28 @@ obelisk_rt_status obelisk_rt_v1_queue_pop(obelisk_rt_object_v1 *queue,
 // Atomic nonblocking mailbox operations. Mailboxes use the managed queue
 // representation internally, but these entry points preserve the distinct
 // success contract required by IEEE 1800 mailbox methods.
-obelisk_rt_status obelisk_rt_v1_mailbox_try_put(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *mailbox,
-    const void *value, const void *unknown, uint32_t *out_success);
+obelisk_rt_status obelisk_rt_v1_mailbox_try_put(obelisk_rt_gc_lane_v1 *lane,
+                                                obelisk_rt_object_v1 *mailbox,
+                                                const void *value,
+                                                const void *unknown,
+                                                uint32_t *out_success);
 obelisk_rt_status obelisk_rt_v1_mailbox_try_put_checked(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *mailbox,
     const void *value, uint64_t value_size, const void *unknown,
     uint64_t unknown_size, uint32_t *out_success);
 obelisk_rt_status obelisk_rt_v1_mailbox_num(obelisk_rt_object_v1 *mailbox,
                                             uint32_t *out_count);
-obelisk_rt_status obelisk_rt_v1_mailbox_try_peek(
-    obelisk_rt_object_v1 *mailbox, void *out_value, void *out_unknown,
-    uint32_t *out_present);
+obelisk_rt_status obelisk_rt_v1_mailbox_try_peek(obelisk_rt_object_v1 *mailbox,
+                                                 void *out_value,
+                                                 void *out_unknown,
+                                                 uint32_t *out_present);
 obelisk_rt_status obelisk_rt_v1_mailbox_try_peek_checked(
     obelisk_rt_object_v1 *mailbox, void *out_value, uint64_t value_size,
     void *out_unknown, uint64_t unknown_size, uint32_t *out_present);
-obelisk_rt_status obelisk_rt_v1_mailbox_try_get(
-    obelisk_rt_object_v1 *mailbox, void *out_value, void *out_unknown,
-    uint32_t *out_present);
+obelisk_rt_status obelisk_rt_v1_mailbox_try_get(obelisk_rt_object_v1 *mailbox,
+                                                void *out_value,
+                                                void *out_unknown,
+                                                uint32_t *out_present);
 obelisk_rt_status obelisk_rt_v1_mailbox_try_get_checked(
     obelisk_rt_object_v1 *mailbox, void *out_value, uint64_t value_size,
     void *out_unknown, uint64_t unknown_size, uint32_t *out_present);
@@ -2423,20 +2419,22 @@ obelisk_rt_status obelisk_rt_v1_scheduler_activate_clock_kernel(
     obelisk_rt_context *context, uint32_t kernel, uint32_t merged_bit);
 // Execute all clock masks accumulated in the current time slot.  A generated
 // coordinator owns the shared-kernel drain and the single NBA/fanout epilogue.
-obelisk_rt_status obelisk_rt_v1_scheduler_run_clock_coordinator(
-    obelisk_rt_context *context);
+obelisk_rt_status
+obelisk_rt_v1_scheduler_run_clock_coordinator(obelisk_rt_context *context);
 // Enter/leave one compiler-proven clean fragment without resuming its
 // coroutine. The actor remains suspended at the same stable continuation so a
 // transactional fallback can use the original frame immediately.
 obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_enter(
     obelisk_rt_context *context, uint32_t actor_slot, uint32_t continuation,
     obelisk_rt_process_instance_v1 **out_instance);
-obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_leave(
-    obelisk_rt_context *context, uint32_t actor_slot);
+obelisk_rt_status
+obelisk_rt_v1_scheduler_direct_fragment_leave(obelisk_rt_context *context,
+                                              uint32_t actor_slot);
 // Experimental eval-mode entry: execute one statically bound actor directly
 // inside the scheduler-owned clean transaction.
-obelisk_rt_status obelisk_rt_v1_scheduler_execute_aot_actor(
-    obelisk_rt_context *context, uint32_t actor_slot);
+obelisk_rt_status
+obelisk_rt_v1_scheduler_execute_aot_actor(obelisk_rt_context *context,
+                                          uint32_t actor_slot);
 // Returns nonzero when a priority signal-resumed process must run before the
 // generated coordinator executes another owner in the current event region.
 uint32_t
@@ -2461,10 +2459,10 @@ obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
 // run_until ownership. `next_edges` has one element per clock.
 obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
     obelisk_rt_context *context, const obelisk_rt_native_schedule_node *nodes,
-    uint32_t node_count,
-    const obelisk_rt_native_periodic_clock_v1 *clocks, uint32_t clock_count,
-    const obelisk_rt_native_periodic_alias_v1 *aliases, uint32_t alias_count,
-    uint64_t *next_edges, obelisk_rt_native_periodic_control_v1 *out_control);
+    uint32_t node_count, const obelisk_rt_native_periodic_clock_v1 *clocks,
+    uint32_t clock_count, const obelisk_rt_native_periodic_alias_v1 *aliases,
+    uint32_t alias_count, uint64_t *next_edges,
+    obelisk_rt_native_periodic_control_v1 *out_control);
 // Restore detached periodic actors before the generated coordinator returns a
 // Tier-2/3 boundary to the runtime.
 obelisk_rt_status obelisk_rt_v1_scheduler_handoff_periodic_aot(
@@ -2496,17 +2494,20 @@ obelisk_rt_v1_scheduler_process_token(obelisk_rt_context *context,
 uint64_t obelisk_rt_v1_process_current(obelisk_rt_context *context);
 // Query one nonnull logical-process identity. Completed identities remain
 // valid through the context-owned tombstone sets.
-obelisk_rt_status obelisk_rt_v1_process_status(
-    obelisk_rt_context *context, uint64_t logical_process,
-    obelisk_rt_process_state *out_state);
+obelisk_rt_status
+obelisk_rt_v1_process_status(obelisk_rt_context *context,
+                             uint64_t logical_process,
+                             obelisk_rt_process_state *out_state);
 // Read or restore a process's independent random stream. Context-owned
 // tombstones retain the two state words after FINISHED or KILLED.
-obelisk_rt_status obelisk_rt_v1_process_random_get(
-    obelisk_rt_context *context, uint64_t logical_process,
-    obelisk_rt_random_state_v1 *out_state);
-obelisk_rt_status obelisk_rt_v1_process_random_set(
-    obelisk_rt_context *context, uint64_t logical_process,
-    const obelisk_rt_random_state_v1 *state);
+obelisk_rt_status
+obelisk_rt_v1_process_random_get(obelisk_rt_context *context,
+                                 uint64_t logical_process,
+                                 obelisk_rt_random_state_v1 *out_state);
+obelisk_rt_status
+obelisk_rt_v1_process_random_set(obelisk_rt_context *context,
+                                 uint64_t logical_process,
+                                 const obelisk_rt_random_state_v1 *state);
 // Apply one IEEE process-object control transaction. External targets are
 // updated before return. A control of the executing logical process returns a
 // disposition which the caller must publish as its fragment action. Returns
@@ -2567,15 +2568,15 @@ uint64_t obelisk_rt_v1_deferred_enqueue_for_assertion(
 // reports; Off leaves already queued reports intact. A locked identity ignores
 // every control action except Unlock (2).
 obelisk_rt_status obelisk_rt_v1_assertion_control(obelisk_rt_context *context,
-                                                 uint32_t action,
-                                                 uint64_t assertion_id);
+                                                  uint32_t action,
+                                                  uint64_t assertion_id);
 // Return one when a new attempt may start for the assertion identity.
 uint32_t obelisk_rt_v1_assertion_enabled(obelisk_rt_context *context,
-                                        uint64_t assertion_id);
+                                         uint64_t assertion_id);
 // Snapshot pass/fail action enablement for a new attempt. Bit 0 is
 // nonvacuous pass, bit 1 is vacuous pass, and bit 2 is fail.
 uint32_t obelisk_rt_v1_assertion_action_state(obelisk_rt_context *context,
-                                             uint64_t assertion_id);
+                                              uint64_t assertion_id);
 // Consume a deferred report ticket and return one iff it is still the latest
 // report for its originating process and assertion site.
 uint32_t obelisk_rt_v1_deferred_mature(obelisk_rt_context *context,
@@ -2675,9 +2676,9 @@ void obelisk_rt_v1_scheduler_static_transition(
 // Activate a compiler-grouped set of exact static-fanout compute nodes. This
 // is an internal clean-transaction leaf; dynamic/VPI handoff continues to use
 // ordinary scalar transition publication.
-void obelisk_rt_v1_scheduler_activate_static_nodes(
-    obelisk_rt_context *context, const uint64_t *node_words,
-    uint32_t word_count);
+void obelisk_rt_v1_scheduler_activate_static_nodes(obelisk_rt_context *context,
+                                                   const uint64_t *node_words,
+                                                   uint32_t word_count);
 void obelisk_rt_v1_scheduler_real_transition(obelisk_rt_context *context,
                                              uint64_t bit_offset,
                                              uint32_t bit_width,
@@ -2784,9 +2785,11 @@ uint64_t obelisk_rt_v1_scheduler_time(obelisk_rt_context *context);
 // Read one packed value from the once-per-time-slot Preponed snapshot. The
 // stable handle and width are compiler-resolved; automatic storage is rejected
 // because its lifetime is not part of the canonical design plane.
-obelisk_rt_status obelisk_rt_v1_sampled_read(
-    obelisk_rt_context *context, uint64_t stable_id, uint64_t bit_width,
-    uint8_t *out_value, uint8_t *out_unknown);
+obelisk_rt_status obelisk_rt_v1_sampled_read(obelisk_rt_context *context,
+                                             uint64_t stable_id,
+                                             uint64_t bit_width,
+                                             uint8_t *out_value,
+                                             uint8_t *out_unknown);
 
 // Return `depth` enabled invocations before `current`, then advance the
 // compiler-assigned ring when gate is true. Missing history has the IEEE
@@ -2804,10 +2807,11 @@ obelisk_rt_status obelisk_rt_v1_clocked_sample_update(
     obelisk_rt_context *context, uint64_t site_id, uint64_t bit_width,
     uint64_t depth, uint32_t four_state, uint32_t gate,
     const uint8_t *current_value, const uint8_t *current_unknown);
-obelisk_rt_status obelisk_rt_v1_clocked_sample_read(
-    obelisk_rt_context *context, uint64_t site_id, uint64_t bit_width,
-    uint64_t depth, uint64_t age, uint32_t four_state, uint8_t *out_value,
-    uint8_t *out_unknown);
+obelisk_rt_status
+obelisk_rt_v1_clocked_sample_read(obelisk_rt_context *context, uint64_t site_id,
+                                  uint64_t bit_width, uint64_t depth,
+                                  uint64_t age, uint32_t four_state,
+                                  uint8_t *out_value, uint8_t *out_unknown);
 obelisk_rt_status obelisk_rt_v1_scheduler_run(obelisk_rt_context *context);
 obelisk_rt_status obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context);
 
@@ -2824,9 +2828,8 @@ obelisk_rt_status obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context);
 obelisk_rt_status obelisk_rt_v1_dump_open(obelisk_rt_context *context,
                                           const uint8_t *path,
                                           uint64_t path_size);
-obelisk_rt_status
-obelisk_rt_v1_dump_open_string(obelisk_rt_context *context,
-                               obelisk_rt_string_v1 path);
+obelisk_rt_status obelisk_rt_v1_dump_open_string(obelisk_rt_context *context,
+                                                 obelisk_rt_string_v1 path);
 // Declare the `$timescale` written into the header, as a decimal exponent in
 // seconds (-15..0). The compiler knows the elaborated design precision and
 // emits this before the first dump call. Without it the dump falls back to the
@@ -3123,9 +3126,11 @@ obelisk_rt_v1_random_distribution(obelisk_rt_context *context,
 // Advance a keyed randc permutation over exactly 2^width values. Widths 1..32
 // are supported. The caller owns key/position storage and explicitly rekeys
 // whenever the returned position wraps to zero.
-obelisk_rt_status obelisk_rt_v1_random_cycle_next(
-    uint64_t key, uint64_t position, uint32_t width,
-    uint64_t *out_next_position, uint64_t *out_value);
+obelisk_rt_status obelisk_rt_v1_random_cycle_next(uint64_t key,
+                                                  uint64_t position,
+                                                  uint32_t width,
+                                                  uint64_t *out_next_position,
+                                                  uint64_t *out_value);
 // Execute a compiler-produced residual constraint program. `start` selects
 // the first aggregate assignment and `max_attempts` is a deterministic work
 // bound. A successful solve writes both outputs. Exhaustion is reported by
@@ -3202,6 +3207,12 @@ obelisk_rt_status obelisk_rt_v1_import_call(
     obelisk_rt_context *context, const obelisk_rt_import_site_v1 *site,
     const obelisk_rt_import_input_v1 *inputs, uint32_t input_count,
     obelisk_rt_import_output_v1 *outputs, uint32_t output_count);
+// Copy one null-terminated DPI C string into simulator-owned managed storage.
+// A null C pointer is invalid: IEEE 1800 requires a valid initialized string
+// address for a string result or copy-out.
+obelisk_rt_status
+obelisk_rt_v1_dpi_string_copy(obelisk_rt_context *context, const char *string,
+                              obelisk_rt_string_v1 *out_string);
 void obelisk_rt_v1_context_destroy(obelisk_rt_context *context);
 const char *obelisk_rt_v1_status_string(obelisk_rt_status status);
 void obelisk_rt_v1_buffer_release(obelisk_rt_buffer_v1 *buffer);
@@ -3222,12 +3233,10 @@ obelisk_rt_v1_format(obelisk_rt_context *context, const char *format,
 // of the unit %t reports in; `fraction_digits` and `width` are its precision
 // and minimum field width, the latter covering the suffix too. The override
 // applies to every later %t in the design.
-obelisk_rt_status obelisk_rt_v1_time_format(obelisk_rt_context *context,
-                                            int32_t units,
-                                            uint32_t fraction_digits,
-                                            const char *suffix,
-                                            uint64_t suffix_size,
-                                            uint32_t width);
+obelisk_rt_status
+obelisk_rt_v1_time_format(obelisk_rt_context *context, int32_t units,
+                          uint32_t fraction_digits, const char *suffix,
+                          uint64_t suffix_size, uint32_t width);
 obelisk_rt_status
 obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
                       uint32_t append_newline, obelisk_rt_radix default_radix,
@@ -3288,8 +3297,8 @@ obelisk_rt_status obelisk_rt_v1_file_getline_string(
 obelisk_rt_status obelisk_rt_v1_file_scan_field(
     obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
     uint32_t descriptor, uint32_t enabled, const char *prefix,
-    uint64_t prefix_size, uint32_t specifier,
-    obelisk_rt_string_v1 *out_field, uint32_t *out_ok, uint32_t *out_eof);
+    uint64_t prefix_size, uint32_t specifier, obelisk_rt_string_v1 *out_field,
+    uint32_t *out_ok, uint32_t *out_eof);
 obelisk_rt_status obelisk_rt_v1_file_eof(obelisk_rt_context *context,
                                          uint32_t descriptor,
                                          uint32_t *out_is_eof);

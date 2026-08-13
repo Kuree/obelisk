@@ -1,7 +1,7 @@
 //===- SimulationDPIThunkLowering.cpp - Native DPI C thunks ------------===//
 
-#include "SimulationToLLVMCoroutinePrivate.h"
 #include "SimulationDPILowering.h"
+#include "SimulationToLLVMCoroutinePrivate.h"
 
 #include "obelisk/Runtime/Runtime.h"
 
@@ -41,6 +41,20 @@ Type dpiScalarType(MLIRContext *context, uint32_t category) {
 }
 
 bool isDPIVector(uint32_t category) { return category == 6 || category == 7; }
+
+bool isDPIString(uint32_t category) {
+  return category == static_cast<uint32_t>(sim::DPIABIKind::String);
+}
+
+bool isDPIChandle(uint32_t category) {
+  return category == static_cast<uint32_t>(sim::DPIABIKind::Chandle);
+}
+
+uint8_t dpiDescriptorKind(const DPIOperandABI &abi) {
+  if (isDPIString(abi.category))
+    return OBELISK_RT_DBREG_STRING;
+  return abi.fourState ? OBELISK_RT_DBREG_LOGIC : OBELISK_RT_DBREG_BITS;
+}
 
 struct DPIWriteback {
   DPIOperandABI abi;
@@ -130,9 +144,9 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
       arith::AndIOp::create(builder, location, inputsMatch, outputsMatch);
   LLVM::CondBrOp::create(builder, location, countsMatch, validate, invalid);
   builder.setInsertionPointToStart(invalid);
-  LLVM::ReturnOp::create(builder, location,
-                         llvmConstant(builder, location, i32,
-                                      OBELISK_RT_INVALID_ARGUMENT));
+  LLVM::ReturnOp::create(
+      builder, location,
+      llvmConstant(builder, location, i32, OBELISK_RT_INVALID_ARGUMENT));
 
   builder.setInsertionPointToStart(validate);
   Value null = LLVM::ZeroOp::create(builder, location, pointer);
@@ -152,45 +166,43 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   };
   auto validateDescriptor = [&](Value base, uint64_t index,
                                 const DPIOperandABI &entryABI) {
-    requireEqual(LLVM::LoadOp::create(builder, location, i8,
-                                      descriptorPointer(
-                                          base, index,
-                                          offsetof(obelisk_rt_import_input_v1,
-                                                   kind)),
-                                      1),
-                 llvmConstant(builder, location, i8,
-                              entryABI.fourState ? OBELISK_RT_DBREG_LOGIC
-                                                 : OBELISK_RT_DBREG_BITS));
-    requireEqual(LLVM::LoadOp::create(builder, location, i8,
-                                      descriptorPointer(
-                                          base, index,
-                                          offsetof(obelisk_rt_import_input_v1,
-                                                   flags)),
-                                      1),
-                 llvmConstant(builder, location, i8,
-                              entryABI.isSigned ? OBELISK_RT_DBREG_SIGNED : 0));
-    requireEqual(LLVM::LoadOp::create(builder, location, builder.getI16Type(),
-                                      descriptorPointer(
-                                          base, index,
-                                          offsetof(obelisk_rt_import_input_v1,
-                                                   reserved)),
-                                      2),
-                 llvmConstant(builder, location, builder.getI16Type(), 0));
-    requireEqual(LLVM::LoadOp::create(builder, location, i32,
-                                      descriptorPointer(
-                                          base, index,
-                                          offsetof(obelisk_rt_import_input_v1,
-                                                   bit_width)),
-                                      4),
-                 llvmConstant(builder, location, i32, entryABI.width));
-    requireEqual(LLVM::LoadOp::create(builder, location, i64,
-                                      descriptorPointer(
-                                          base, index,
-                                          offsetof(obelisk_rt_import_input_v1,
-                                                   limb_count)),
-                                      8),
-                 llvmConstant(builder, location, i64,
-                              (uint64_t{entryABI.width} + 63) / 64));
+    requireEqual(
+        LLVM::LoadOp::create(
+            builder, location, i8,
+            descriptorPointer(base, index,
+                              offsetof(obelisk_rt_import_input_v1, kind)),
+            1),
+        llvmConstant(builder, location, i8, dpiDescriptorKind(entryABI)));
+    requireEqual(
+        LLVM::LoadOp::create(
+            builder, location, i8,
+            descriptorPointer(base, index,
+                              offsetof(obelisk_rt_import_input_v1, flags)),
+            1),
+        llvmConstant(builder, location, i8,
+                     entryABI.isSigned ? OBELISK_RT_DBREG_SIGNED : 0));
+    requireEqual(
+        LLVM::LoadOp::create(
+            builder, location, builder.getI16Type(),
+            descriptorPointer(base, index,
+                              offsetof(obelisk_rt_import_input_v1, reserved)),
+            2),
+        llvmConstant(builder, location, builder.getI16Type(), 0));
+    requireEqual(
+        LLVM::LoadOp::create(
+            builder, location, i32,
+            descriptorPointer(base, index,
+                              offsetof(obelisk_rt_import_input_v1, bit_width)),
+            4),
+        llvmConstant(builder, location, i32, entryABI.width));
+    requireEqual(
+        LLVM::LoadOp::create(
+            builder, location, i64,
+            descriptorPointer(base, index,
+                              offsetof(obelisk_rt_import_input_v1, limb_count)),
+            8),
+        llvmConstant(builder, location, i64,
+                     (uint64_t{entryABI.width} + 63) / 64));
   };
   for (uint64_t index = 0; index != logicalInputs; ++index)
     validateDescriptor(inputs, index, abi[index]);
@@ -202,10 +214,10 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   auto planePointer = [&](Value base, uint64_t index, bool unknown) -> Value {
     return LLVM::LoadOp::create(
         builder, location, pointer,
-        descriptorPointer(
-            base, index,
-            unknown ? offsetof(obelisk_rt_import_input_v1, unknown)
-                    : offsetof(obelisk_rt_import_input_v1, value)),
+        descriptorPointer(base, index,
+                          unknown
+                              ? offsetof(obelisk_rt_import_input_v1, unknown)
+                              : offsetof(obelisk_rt_import_input_v1, value)),
         alignof(const uint64_t *));
   };
   auto readWord = [&](Value plane, uint64_t word) -> Value {
@@ -234,6 +246,24 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
     return arith::OrIOp::create(
         builder, location, shifted,
         arith::AndIOp::create(builder, location, aval, one));
+  };
+  auto readOpaqueWord = [&](uint64_t inputIndex) -> Value {
+    return LLVM::LoadOp::create(builder, location, i64,
+                                planePointer(inputs, inputIndex, false), 8);
+  };
+  auto readString = [&](uint64_t inputIndex) -> Value {
+    Value scratch = entryAlloca(builder, location, i8, 8, 1);
+    Value bytes = entryAlloca(builder, location, pointer, 1, 8);
+    Value size = entryAlloca(builder, location, i64, 1, 8);
+    LLVM::CallOp::create(
+        builder, location, TypeRange{i32},
+        SymbolRefAttr::get(context, "obelisk_rt_v1_string_view"),
+        ValueRange{readOpaqueWord(inputIndex), scratch, bytes, size});
+    return LLVM::LoadOp::create(builder, location, pointer, bytes, 8);
+  };
+  auto readChandle = [&](uint64_t inputIndex) -> Value {
+    return LLVM::IntToPtrOp::create(builder, location, pointer,
+                                    readOpaqueWord(inputIndex));
   };
   auto makeScalarBuffer = [&](uint64_t inputIndex,
                               const DPIOperandABI &entryABI,
@@ -278,6 +308,15 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
     }
     return buffer;
   };
+  auto makePointerBuffer = [&](uint64_t inputIndex,
+                               const DPIOperandABI &entryABI,
+                               bool initialize) -> Value {
+    Value value = null;
+    if (initialize)
+      value = isDPIString(entryABI.category) ? readString(inputIndex)
+                                             : readChandle(inputIndex);
+    return makeDPIPlaneStorage(builder, location, value, 8);
+  };
 
   SmallVector<Value> cArguments;
   SmallVector<DPIWriteback> writebacks;
@@ -298,18 +337,26 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   for (uint64_t index = 0; index != logicalInputs; ++index) {
     const DPIOperandABI &entryABI = abi[index];
     if (entryABI.direction == 0) {
-      cArguments.push_back(isDPIVector(entryABI.category)
-                               ? makeVectorBuffer(index, entryABI, true)
-                               : readScalar(index, entryABI));
+      if (isDPIString(entryABI.category))
+        cArguments.push_back(readString(index));
+      else if (isDPIChandle(entryABI.category))
+        cArguments.push_back(readChandle(index));
+      else
+        cArguments.push_back(isDPIVector(entryABI.category)
+                                 ? makeVectorBuffer(index, entryABI, true)
+                                 : readScalar(index, entryABI));
       continue;
     }
     if (entryABI.direction != 1 && entryABI.direction != 2)
       return spec.operation->emitError(
           "DPI thunk has an unsupported formal direction");
     bool initialize = entryABI.direction == 2;
-    Value buffer = isDPIVector(entryABI.category)
-                       ? makeVectorBuffer(index, entryABI, initialize)
-                       : makeScalarBuffer(index, entryABI, initialize);
+    Value buffer =
+        isDPIString(entryABI.category) || isDPIChandle(entryABI.category)
+            ? makePointerBuffer(index, entryABI, initialize)
+        : isDPIVector(entryABI.category)
+            ? makeVectorBuffer(index, entryABI, initialize)
+            : makeScalarBuffer(index, entryABI, initialize);
     cArguments.push_back(buffer);
     if (outputCursor >= logicalOutputs)
       return spec.operation->emitError(
@@ -322,8 +369,10 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   Type cResultType = voidType;
   if (spec.isTask)
     cResultType = i32;
-  else if (hasFunctionResult &&
-           !isDPIVector(abi[logicalInputs].category)) {
+  else if (hasFunctionResult && (isDPIString(abi[logicalInputs].category) ||
+                                 isDPIChandle(abi[logicalInputs].category)))
+    cResultType = pointer;
+  else if (hasFunctionResult && !isDPIVector(abi[logicalInputs].category)) {
     cResultType = dpiScalarType(context, abi[logicalInputs].category);
     if (!cResultType)
       return spec.operation->emitError(
@@ -343,6 +392,59 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   if (!cFunction)
     cFunction = getOrDeclareLLVMFunction(module, spec.cIdentifier.getValue(),
                                          cResultType, cArgumentTypes);
+  Value callbackStatus = llvmConstant(builder, location, i32, OBELISK_RT_OK);
+  auto mergeStatus = [&](Value next) {
+    Value succeeded = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, callbackStatus,
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    callbackStatus = arith::SelectOp::create(builder, location, succeeded, next,
+                                             callbackStatus);
+  };
+
+  // String copies allocate managed objects. Keep every completed copy-out in
+  // one precise root range until all string results have been materialized.
+  // This matters when a call has multiple output/inout strings: a later copy
+  // may collect after an earlier copy has produced its managed word.
+  SmallVector<Value> stringOutputSlots(logicalOutputs);
+  uint64_t stringOutputCount = 0;
+  for (uint64_t index = 0; index != logicalOutputs; ++index)
+    if (isDPIString(abi[logicalInputs + index].category))
+      ++stringOutputCount;
+  Value stringRootRecord;
+  Value stringRootLane;
+  if (stringOutputCount != 0) {
+    Value slots = entryAlloca(builder, location, i64, stringOutputCount, 8);
+    uint64_t cursor = 0;
+    for (uint64_t index = 0; index != logicalOutputs; ++index) {
+      if (!isDPIString(abi[logicalInputs + index].category))
+        continue;
+      Value slot = byteGEP(builder, location, slots, cursor++ * 8);
+      LLVM::StoreOp::create(builder, location,
+                            llvmConstant(builder, location, i64, 0), slot, 8);
+      stringOutputSlots[index] = slot;
+    }
+    Type rootType =
+        LLVM::LLVMStructType::getLiteral(context, {pointer, i64, pointer, i64});
+    stringRootRecord = entryAlloca(builder, location, rootType, 1, 8);
+    LLVM::StoreOp::create(builder, location,
+                          LLVM::ZeroOp::create(builder, location, rootType),
+                          stringRootRecord, 8);
+    stringRootLane =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{pointer},
+            SymbolRefAttr::get(context, "obelisk_rt_v1_gc_current_lane"),
+            entry->getArgument(0))
+            .getResult();
+    Value pushStatus =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context,
+                               "obelisk_rt_v1_gc_managed_root_range_push"),
+            ValueRange{stringRootLane, stringRootRecord, slots,
+                       llvmConstant(builder, location, i64, stringOutputCount)})
+            .getResult();
+    mergeStatus(pushStatus);
+  }
   SmallVector<Type> callResults;
   if (!isa<LLVM::LLVMVoidType>(cResultType))
     callResults.push_back(cResultType);
@@ -353,7 +455,20 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
     Value result = call.getResult();
     const DPIOperandABI &resultABI = abi[logicalInputs];
     Value outputValue = planePointer(outputs, 0, false);
-    if (resultABI.category == 1) {
+    if (isDPIString(resultABI.category)) {
+      Value status =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(context, "obelisk_rt_v1_dpi_string_copy"),
+              ValueRange{entry->getArgument(0), result, stringOutputSlots[0]})
+              .getResult();
+      mergeStatus(status);
+    } else if (isDPIChandle(resultABI.category)) {
+      LLVM::StoreOp::create(
+          builder, location,
+          LLVM::PtrToIntOp::create(builder, location, i64, result), outputValue,
+          8);
+    } else if (resultABI.category == 1) {
       Value one = llvmConstant(builder, location, i8, 1);
       Value aval = arith::AndIOp::create(builder, location, result, one);
       Value shifted = arith::ShRUIOp::create(builder, location, result, one);
@@ -374,6 +489,28 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
 
   for (const DPIWriteback &writeback : writebacks) {
     Value outputValue = planePointer(outputs, writeback.outputIndex, false);
+    if (isDPIString(writeback.abi.category)) {
+      Value string =
+          LLVM::LoadOp::create(builder, location, pointer, writeback.buffer, 8);
+      Value status =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(context, "obelisk_rt_v1_dpi_string_copy"),
+              ValueRange{entry->getArgument(0), string,
+                         stringOutputSlots[writeback.outputIndex]})
+              .getResult();
+      mergeStatus(status);
+      continue;
+    }
+    if (isDPIChandle(writeback.abi.category)) {
+      Value value =
+          LLVM::LoadOp::create(builder, location, pointer, writeback.buffer, 8);
+      LLVM::StoreOp::create(
+          builder, location,
+          LLVM::PtrToIntOp::create(builder, location, i64, value), outputValue,
+          8);
+      continue;
+    }
     if (!isDPIVector(writeback.abi.category)) {
       Type scalar = dpiScalarType(context, writeback.abi.category);
       Value value = LLVM::LoadOp::create(
@@ -423,19 +560,50 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
     }
   }
 
-  Value callbackStatus =
-      llvmConstant(builder, location, i32, OBELISK_RT_OK);
   if (spec.isTask) {
     Value nonzero = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::ne, call.getResult(),
         llvmConstant(builder, location, i32, 0));
-    callbackStatus = arith::SelectOp::create(
+    Value taskStatus = arith::SelectOp::create(
         builder, location, nonzero,
         llvmConstant(builder, location, i32,
                      OBELISK_RT_DPI_DISABLE_UNSUPPORTED),
-        callbackStatus);
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    mergeStatus(taskStatus);
+  }
+  if (stringOutputCount != 0) {
+    for (uint64_t index = 0; index != logicalOutputs; ++index) {
+      if (!stringOutputSlots[index])
+        continue;
+      Value value = LLVM::LoadOp::create(builder, location, i64,
+                                         stringOutputSlots[index], 8);
+      LLVM::StoreOp::create(builder, location, value,
+                            planePointer(outputs, index, false), 8);
+    }
+    Value popStatus =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context,
+                               "obelisk_rt_v1_gc_managed_root_range_pop"),
+            ValueRange{stringRootLane, stringRootRecord})
+            .getResult();
+    mergeStatus(popStatus);
   }
   LLVM::ReturnOp::create(builder, location, callbackStatus);
+  if (llvm::any_of(abi, [](const DPIOperandABI &entry) {
+        return isDPIString(entry.category);
+      })) {
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_view", i32,
+                             {i64, pointer, pointer, pointer});
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_string_copy", i32,
+                             {pointer, pointer, pointer});
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_current_lane", pointer,
+                             {pointer});
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_managed_root_range_push",
+                             i32, {pointer, pointer, pointer, i64});
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_managed_root_range_pop",
+                             i32, {pointer, pointer});
+  }
   return success();
 }
 

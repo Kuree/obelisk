@@ -103,7 +103,8 @@ std::optional<StringRef> getConstantSpelling(Operation *operation) {
   // Elaboration folded this expression to a constant. A bound or a count
   // written as parameter arithmetic is as constant as a literal is. This comes
   // last so that a spelling any earlier pass established still wins.
-  if (auto folded = operation->getAttrOfType<StringAttr>(foldedConstantAttrName))
+  if (auto folded =
+          operation->getAttrOfType<StringAttr>(foldedConstantAttrName))
     return folded.getValue();
   return std::nullopt;
 }
@@ -601,7 +602,7 @@ static FailureOr<Type> normalizeType(Type type, Location location,
     auto sourceName = [](StringRef symbol) {
       size_t separator = symbol.find('.');
       return separator == StringRef::npos ? symbol
-                                         : symbol.drop_front(separator + 1);
+                                          : symbol.drop_front(separator + 1);
     };
     if (className.getNestedReferences().size() == 1 &&
         sourceName(className.getRootReference().getValue()) == "std" &&
@@ -777,8 +778,7 @@ static FailureOr<Type> normalizeType(Type type, Location location,
     llvm::raw_string_ostream stream(identity);
     stream << interface.getInterfaceName();
     return sim::VirtualInterfaceType::get(
-        context, StringAttr::get(context, identity),
-        interface.getModport());
+        context, StringAttr::get(context, identity), interface.getModport());
   }
   if (isa<semantic::StringType>(type))
     return sim::StringType::get(context);
@@ -787,10 +787,8 @@ static FailureOr<Type> normalizeType(Type type, Location location,
   if (isa<sim::LogicType, sim::TimeType, sim::ContextType, sim::RefType,
           sim::NetType, sim::DriverType, sim::EventType, sim::ProcessType,
           sim::ClassHandleType, sim::VirtualInterfaceType, sim::ChandleType,
-          sim::StringType,
-          sim::DynamicArrayType,
-          sim::QueueType, sim::MailboxType, sim::AssocArrayType,
-          sim::ManagedRefType>(type) ||
+          sim::StringType, sim::DynamicArrayType, sim::QueueType,
+          sim::MailboxType, sim::AssocArrayType, sim::ManagedRefType>(type) ||
       sim::isAggregateType(type))
     return type;
 
@@ -813,7 +811,7 @@ FailureOr<Type> getNormalizedSemanticType(Operation *op) {
     auto sourceName = [](StringRef symbol) {
       size_t separator = symbol.find('.');
       return separator == StringRef::npos ? symbol
-                                         : symbol.drop_front(separator + 1);
+                                          : symbol.drop_front(separator + 1);
     };
     bool mailbox = name.getNestedReferences().size() == 1 &&
                    sourceName(name.getRootReference().getValue()) == "std" &&
@@ -854,10 +852,9 @@ FailureOr<Type> getNormalizedSemanticType(Operation *op) {
       }
       FailureOr<Type> normalized =
           normalizeType(elementType, getSemanticLocation(op));
-      return failed(normalized)
-                 ? FailureOr<Type>(failure())
-                 : FailureOr<Type>(sim::MailboxType::get(
-                       semanticType.getContext(), *normalized));
+      return failed(normalized) ? FailureOr<Type>(failure())
+                                : FailureOr<Type>(sim::MailboxType::get(
+                                      semanticType.getContext(), *normalized));
     }
   }
   return normalizeType(semanticType, getSemanticLocation(op));
@@ -891,6 +888,10 @@ FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
   }
   if (auto enumeration = dyn_cast<semantic::EnumType>(type))
     return classifyDPIABIType(enumeration.getBaseType(), location);
+  if (isa<semantic::StringType, sim::StringType>(type))
+    return DPIABIType{DPIABIKind::String, 64, false, false};
+  if (isa<semantic::ChandleType, sim::ChandleType>(type))
+    return DPIABIType{DPIABIKind::Chandle, 64, false, false};
   auto integral = dyn_cast<semantic::IntegralType>(type);
   if (integral) {
     std::optional<DPIABIKind> kind;
@@ -948,8 +949,9 @@ FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
   if (!packedAggregate || !width || *width == 0 ||
       *width > std::numeric_limits<uint32_t>::max()) {
     emitError(location)
-        << "DPI imports support only scalar predefined integers, scalar "
-           "bit/logic, enums, and fixed packed integral values";
+        << "DPI imports support only string, chandle, scalar predefined "
+           "integers, scalar bit/logic, enums, and fixed packed integral "
+           "values";
     return failure();
   }
   bool fourState = isFourState(type);
@@ -976,6 +978,10 @@ StringRef getDPICTypeSpelling(const DPIABIType &type) {
     return "svBitVecVal";
   case DPIABIKind::LogicVector:
     return "svLogicVecVal";
+  case DPIABIKind::String:
+    return "const char *";
+  case DPIABIKind::Chandle:
+    return "void *";
   }
   llvm_unreachable("unknown DPI ABI kind");
 }
@@ -1266,11 +1272,10 @@ sim::ContinuationSiteAttr getContinuationSite(Operation *operation) {
             sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
             sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
             sim::SimSuspendEventOp, sim::SimSuspendMailboxOp,
-            sim::SimSuspendObserveOp,
-            sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp,
-            sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp,
-            sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp,
-            sim::SimProcessControlOp>(
+            sim::SimSuspendObserveOp, sim::SimSuspendForeverOp,
+            sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
+            sim::SimSuspendChildrenOp, sim::SimTaskCallOp,
+            sim::SimClassVirtualTaskCallOp, sim::SimProcessControlOp>(
           [&](auto op) { site = op.getSiteAttr(); });
   return site;
 }
@@ -1281,11 +1286,10 @@ void setContinuationSite(Operation *operation, sim::ContinuationSiteAttr site) {
             sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
             sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
             sim::SimSuspendEventOp, sim::SimSuspendMailboxOp,
-            sim::SimSuspendObserveOp,
-            sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp,
-            sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp,
-            sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp,
-            sim::SimProcessControlOp>(
+            sim::SimSuspendObserveOp, sim::SimSuspendForeverOp,
+            sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
+            sim::SimSuspendChildrenOp, sim::SimTaskCallOp,
+            sim::SimClassVirtualTaskCallOp, sim::SimProcessControlOp>(
           [&](auto op) { op.setSiteAttr(site); });
 }
 

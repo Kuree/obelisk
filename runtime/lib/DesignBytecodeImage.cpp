@@ -612,11 +612,13 @@ bool validIntrinsic(const Image &image, const Function &function,
       return false;
     for (uint32_t index = 1; index != site.inputCount; ++index)
       if (!input(index) || (input(index)->kind != OBELISK_RT_DBREG_BITS &&
-                            input(index)->kind != OBELISK_RT_DBREG_LOGIC))
+                            input(index)->kind != OBELISK_RT_DBREG_LOGIC &&
+                            input(index)->kind != OBELISK_RT_DBREG_STRING))
         return false;
     for (uint32_t index = 0; index + 1 != site.outputCount; ++index)
       if (!output(index) || (output(index)->kind != OBELISK_RT_DBREG_BITS &&
-                             output(index)->kind != OBELISK_RT_DBREG_LOGIC))
+                             output(index)->kind != OBELISK_RT_DBREG_LOGIC &&
+                             output(index)->kind != OBELISK_RT_DBREG_STRING))
         return false;
     return true;
   case OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC:
@@ -710,8 +712,8 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 0 && managed(input(0)) &&
            twoStateBits(input(1), 64) && managedValue(input(2));
   case OBELISK_RT_INTRINSIC_V1_MAILBOX_CREATE:
-    if (signature.flags != 0 || site.inputCount != 8 ||
-        site.outputCount != 1 || !managed(output(0)))
+    if (signature.flags != 0 || site.inputCount != 8 || site.outputCount != 1 ||
+        !managed(output(0)))
       return false;
     for (uint32_t index = 0; index != 6; ++index)
       if (!twoStateBits(input(index), 64))
@@ -1037,9 +1039,9 @@ bool validIntrinsic(const Image &image, const Function &function,
            bits(output(1), 32) && bits(output(2), 32);
   case OBELISK_RT_INTRINSIC_V1_FILE_SCAN_FIELD:
     return signature.flags == 0 && site.inputCount == 4 &&
-           site.outputCount == 3 && bits(input(0), 32) &&
-           bits(input(1), 32) && bytes(input(2)) && bits(input(3), 64) &&
-           string(output(0)) && bits(output(1), 32) && bits(output(2), 32);
+           site.outputCount == 3 && bits(input(0), 32) && bits(input(1), 32) &&
+           bytes(input(2)) && bits(input(3), 64) && string(output(0)) &&
+           bits(output(1), 32) && bits(output(2), 32);
   case OBELISK_RT_INTRINSIC_V1_PLUSARG_TEST:
     return site.inputCount == 1 && site.outputCount == 1 && string(input(0)) &&
            bits(output(0), 32);
@@ -2118,13 +2120,12 @@ bool validateImage(const Image &image) {
             (function.flags & OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK) >> 1;
         bool candidate = instruction.flags == 1;
         if (instruction.flags > 1 ||
-            (candidate
-                 ? instruction.destination == 0 ||
-                       (instruction.destination &
-                        ~OBELISK_RT_MANAGED_ROOT_KIND_ALL) != 0
-                 : instruction.destination != 0) ||
-            instruction.source0 || instruction.source1 ||
-            instruction.source2 || instruction.auxiliary ||
+            (candidate ? instruction.destination == 0 ||
+                             (instruction.destination &
+                              ~OBELISK_RT_MANAGED_ROOT_KIND_ALL) != 0
+                       : instruction.destination != 0) ||
+            instruction.source0 || instruction.source1 || instruction.source2 ||
+            instruction.auxiliary ||
             (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
             instruction.immediate > canonicalSize ||
             sizeof(obelisk_rt_managed_word_v1) >
@@ -2195,17 +2196,16 @@ bool validateImage(const Image &image) {
                         functionIndex, pc, instruction.opcode);
         break;
       case OBELISK_RT_DB_STORE_STATE:
-        if ((instruction.flags &
-             ~(OBELISK_RT_DB_STORE_STATE_CHANGED |
-               OBELISK_RT_DB_STORE_STATE_CONTINUOUS)) != 0 ||
+        if ((instruction.flags & ~(OBELISK_RT_DB_STORE_STATE_CHANGED |
+                                   OBELISK_RT_DB_STORE_STATE_CONTINUOUS)) !=
+                0 ||
             ((instruction.flags & OBELISK_RT_DB_STORE_STATE_CHANGED) != 0
                  ? (!reg(instruction.destination) ||
                     layoutAt(image, function, instruction.destination).width !=
                         1)
                  : instruction.destination != 0) ||
             ((instruction.flags & OBELISK_RT_DB_STORE_STATE_CONTINUOUS) != 0 &&
-             !numeric(instruction.source1) &&
-             !floating(instruction.source1)) ||
+             !numeric(instruction.source1) && !floating(instruction.source1)) ||
             instruction.source2 || instruction.auxiliary ||
             instruction.immediate || !reg(instruction.source0) ||
             (!numeric(instruction.source1) && !floating(instruction.source1) &&

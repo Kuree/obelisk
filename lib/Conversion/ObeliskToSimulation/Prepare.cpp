@@ -5083,13 +5083,6 @@ void ObeliskSimPreparePass::runOnOperation() {
             invalid = true;
             continue;
           }
-          if (dpiImport && !sim::getPackedWidth(*type)) {
-            emitError(getSemanticLocation(formal))
-                << "DPI import formal type is unsupported by the initial "
-                   "integral ABI";
-            invalid = true;
-            continue;
-          }
           semantic::SVArgumentDirection direction = formal.getDirection();
           if (dpiImport && direction == semantic::SVArgumentDirection::Ref) {
             emitError(getSemanticLocation(formal))
@@ -5230,13 +5223,6 @@ void ObeliskSimPreparePass::runOnOperation() {
               isa_and_nonnull<semantic::VoidType>(semanticResultType);
           isVoidFunction = voidResult;
           if (!voidResult && failed(resultType)) {
-            invalid = true;
-            continue;
-          }
-          if (!voidResult && dpiImport && !sim::getPackedWidth(*resultType)) {
-            emitError(getSemanticLocation(unit.source))
-                << "DPI import return type is unsupported by the initial "
-                   "integral ABI";
             invalid = true;
             continue;
           }

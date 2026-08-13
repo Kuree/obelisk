@@ -453,16 +453,16 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     obelisk_rt_status status = obelisk_rt_v1_mailbox_create_typed(
         lane, *inputs[0], static_cast<uint32_t>(*inputs[1]),
         static_cast<uint32_t>(*inputs[2]), *inputs[3], *inputs[4], *inputs[5],
-        traceSlots.data(), traceSlots.size(),
-        static_cast<int64_t>(*inputs[6]), &result);
+        traceSlots.data(), traceSlots.size(), static_cast<int64_t>(*inputs[6]),
+        &result);
     return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), result)
                ? OBELISK_RT_INVALID_BYTECODE
                : status;
   }
   case OBELISK_RT_INTRINSIC_V1_MAILBOX_NUM: {
     uint32_t count = 0;
-    obelisk_rt_status status = obelisk_rt_v1_mailbox_num(
-        readManaged(inputRegister(0)), &count);
+    obelisk_rt_status status =
+        obelisk_rt_v1_mailbox_num(readManaged(inputRegister(0)), &count);
     return status == OBELISK_RT_OK ? sentinel(0, count) : status;
   }
   case OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_PUT: {
@@ -523,14 +523,14 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       void *unknown = output.kind == OBELISK_RT_DBREG_LOGIC
                           ? frame.data + output.offset + planeSize
                           : nullptr;
-      status = remove ? obelisk_rt_v1_mailbox_try_get_checked(
-                            readManaged(inputRegister(0)),
-                            frame.data + output.offset, planeSize, unknown,
-                            unknown ? planeSize : 0, &present)
-                      : obelisk_rt_v1_mailbox_try_peek_checked(
-                            readManaged(inputRegister(0)),
-                            frame.data + output.offset, planeSize, unknown,
-                            unknown ? planeSize : 0, &present);
+      status =
+          remove
+              ? obelisk_rt_v1_mailbox_try_get_checked(
+                    readManaged(inputRegister(0)), frame.data + output.offset,
+                    planeSize, unknown, unknown ? planeSize : 0, &present)
+              : obelisk_rt_v1_mailbox_try_peek_checked(
+                    readManaged(inputRegister(0)), frame.data + output.offset,
+                    planeSize, unknown, unknown ? planeSize : 0, &present);
     }
     return status == OBELISK_RT_OK ? sentinel(0, present) : status;
   }
@@ -1464,8 +1464,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     obelisk_rt_managed_word_v1 word = 0;
     std::memcpy(&word, frame.data + input.offset + *bitOffset / 8,
                 sizeof(word));
-    word = obelisk_rt_v1_gc_candidate_root(
-        context, word, static_cast<uint32_t>(*kindMask));
+    word = obelisk_rt_v1_gc_candidate_root(context, word,
+                                           static_cast<uint32_t>(*kindMask));
     obelisk_rt_object_v1 *object =
         word != 0 && (word & UINT64_C(3)) == 0
             ? reinterpret_cast<obelisk_rt_object_v1 *>(
@@ -1666,10 +1666,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       if (capture.unknownOffset != UINT64_MAX) {
         // Four-state registers use whole-limb planes, while the canonical
         // activation frame may use a smaller target-ABI plane.
-        uint64_t sourcePlane =
-            source.kind == OBELISK_RT_DBREG_LOGIC
-                ? limbCount(source.width) * sizeof(uint64_t)
-                : capture.planeSize;
+        uint64_t sourcePlane = source.kind == OBELISK_RT_DBREG_LOGIC
+                                   ? limbCount(source.width) * sizeof(uint64_t)
+                                   : capture.planeSize;
         std::memcpy(task.frame.data() + capture.unknownOffset,
                     frame.data + source.offset + sourcePlane,
                     capture.planeSize);
@@ -1706,8 +1705,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             task.phase = process.phase;
             break;
           }
-      if ((signature.flags & OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS) ==
-          0)
+      if ((signature.flags & OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS) == 0)
         task.controls = context->activeControls;
       task.insertionSequence = context->nextProcessInsertionSequence++;
       task.observedEpoch = context->schedulerEpoch;
@@ -1730,8 +1728,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           context->scheduledDesignTaskIndices.erase(scheduledID);
           context->designPollCandidates.erase(scheduledID);
           obelisk_rt_unregister_unstarted_actor(
-              context, context->scheduledDesignTasks.back().phase,
-              scheduledID);
+              context, context->scheduledDesignTasks.back().phase, scheduledID);
           context->scheduledDesignTasks.pop_back();
           throw;
         }
@@ -2258,7 +2255,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_BYTECODE;
     obelisk_rt_random_state_v1 snapshot{*state, *increment};
     return obelisk_rt_v1_process_random_set(context, *logicalProcess,
-                                             &snapshot);
+                                            &snapshot);
   }
   case OBELISK_RT_INTRINSIC_V1_DUMP_OPEN: {
     auto path = bytes(0);
@@ -2363,7 +2360,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                         read32(data + 12)};
       };
       auto validEntry = [](ABIEntry abi) {
-        if (abi.kind > 7 || abi.direction > 3 || abi.width == 0 ||
+        if (abi.kind > 9 || abi.direction > 3 || abi.width == 0 ||
             (abi.flags & ~uint32_t{3}) != 0)
           return false;
         bool fourState = (abi.flags & 1) != 0;
@@ -2384,6 +2381,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           return !fourState;
         case 7:
           return fourState;
+        case 8:
+        case 9:
+          return abi.width == 64 && !fourState && (abi.flags & 2) == 0;
         }
         return false;
       };
@@ -2392,6 +2392,10 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                left.flags == right.flags;
       };
       auto matchesLayout = [](ABIEntry abi, Layout layout) {
+        if (abi.kind == 8)
+          return layout.kind == OBELISK_RT_DBREG_STRING && layout.width == 64;
+        if (abi.kind == 9)
+          return layout.kind == OBELISK_RT_DBREG_BITS && layout.width == 64;
         uint8_t expectedKind = (abi.flags & 1) != 0 ? OBELISK_RT_DBREG_LOGIC
                                                     : OBELISK_RT_DBREG_BITS;
         return layout.kind == expectedKind && layout.width == abi.width;
@@ -2600,9 +2604,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     }
     if (physical != site.inputCount)
       return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_format_env_v1 environment{
-        scope, scopeSize,  library, librarySize, 0, precision, nullptr, 0,
-        multiplier};
+    obelisk_rt_format_env_v1 environment{scope,       scopeSize, library,
+                                         librarySize, 0,         precision,
+                                         nullptr,     0,         multiplier};
     return obelisk_rt_v1_display(context, static_cast<uint32_t>(*descriptor),
                                  newline, static_cast<obelisk_rt_radix>(radix),
                                  arguments.data(), arguments.size(),
@@ -2615,13 +2619,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!verbosity || *verbosity > UINT32_MAX)
       return OBELISK_RT_INVALID_BYTECODE;
     if (signature.id == OBELISK_RT_INTRINSIC_V1_FINISH)
-      return obelisk_rt_v1_scheduler_finish(
-          context, static_cast<uint32_t>(*verbosity));
+      return obelisk_rt_v1_scheduler_finish(context,
+                                            static_cast<uint32_t>(*verbosity));
     if (signature.id == OBELISK_RT_INTRINSIC_V1_STOP)
-      return obelisk_rt_v1_scheduler_stop(
-          context, static_cast<uint32_t>(*verbosity));
-    return obelisk_rt_v1_scheduler_fatal(
-        context, static_cast<uint32_t>(*verbosity));
+      return obelisk_rt_v1_scheduler_stop(context,
+                                          static_cast<uint32_t>(*verbosity));
+    return obelisk_rt_v1_scheduler_fatal(context,
+                                         static_cast<uint32_t>(*verbosity));
   }
   case OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED:
     return sentinel(0, obelisk_rt_v1_scheduler_termination_requested(context));

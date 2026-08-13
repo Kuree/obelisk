@@ -5,8 +5,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "SimulationVerifiers.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -14,12 +14,12 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/InliningUtils.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -90,7 +90,7 @@ LogicalResult ComputeEffectAttr::verify(
 LogicalResult
 DPIABIAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                    DPIABIKind kind, DPIArgumentDirection, uint32_t width,
-                   bool fourState, bool) {
+                   bool fourState, bool isSigned) {
   if (width == 0)
     return emitError() << "DPI ABI width must be nonzero";
   auto require = [&](uint32_t expectedWidth,
@@ -123,6 +123,11 @@ DPIABIAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                ? emitError()
                      << "logic-vector DPI ABI category must be four-state"
                : success();
+  case DPIABIKind::String:
+  case DPIABIKind::Chandle:
+    if (isSigned)
+      return emitError() << "DPI handle category cannot be signed";
+    return require(64, false);
   }
   llvm_unreachable("unknown DPI ABI category");
 }
@@ -934,6 +939,5 @@ std::optional<unsigned> getPackedWidth(Type type) {
   }
   return std::nullopt;
 }
-
 
 } // namespace obelisk::sim

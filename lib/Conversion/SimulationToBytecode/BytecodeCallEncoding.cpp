@@ -155,9 +155,10 @@ LogicalResult Encoder::encodeDPICall(FunctionPlan &plan,
     uint32_t input = reg(plan, operand);
     if (input == kInvalidRegister || (plan.layouts[input].kind != Bits &&
                                       plan.layouts[input].kind != Logic &&
+                                      plan.layouts[input].kind != String &&
                                       plan.layouts[input].kind != Status))
       return call.emitOpError(
-          "DPI imports require fixed packed integral inputs");
+          "DPI imports require supported scalar or packed inputs");
     inputs.push_back(input);
   }
   SmallVector<uint32_t> outputs;
@@ -165,9 +166,10 @@ LogicalResult Encoder::encodeDPICall(FunctionPlan &plan,
     uint32_t output = reg(plan, result);
     if (output == kInvalidRegister || (plan.layouts[output].kind != Bits &&
                                        plan.layouts[output].kind != Logic &&
+                                       plan.layouts[output].kind != String &&
                                        plan.layouts[output].kind != Status))
       return call.emitOpError(
-          "DPI imports require fixed packed integral results");
+          "DPI imports require supported scalar or packed results");
     outputs.push_back(output);
   }
   if (outputs.size() != logicalOutputs + 1 ||

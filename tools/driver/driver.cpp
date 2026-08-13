@@ -184,15 +184,19 @@ static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
         op.emitError("DPI function has no resolved result signature");
         return WalkResult::interrupt();
       }
-      FailureOr<DPIHeaderType> result =
-          getDPIHeaderType(signature.getResult(0), op.getLoc());
-      if (failed(result))
-        return WalkResult::interrupt();
-      if (result->vector) {
+      if (isa<obelisk::ir::VoidType>(signature.getResult(0))) {
         returnType = "void";
-        arguments.insert(arguments.begin(), result->spelling + " *result");
       } else {
-        returnType = result->spelling;
+        FailureOr<DPIHeaderType> result =
+            getDPIHeaderType(signature.getResult(0), op.getLoc());
+        if (failed(result))
+          return WalkResult::interrupt();
+        if (result->vector) {
+          returnType = "void";
+          arguments.insert(arguments.begin(), result->spelling + " *result");
+        } else {
+          returnType = result->spelling;
+        }
       }
     }
     std::string prototype =
