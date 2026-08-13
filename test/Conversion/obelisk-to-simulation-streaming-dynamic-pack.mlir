@@ -5,15 +5,22 @@
 // number of destination elements. This keeps the intermediate stream's length
 // and state domain explicit in executable MLIR.
 // CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[DATA:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<!obelisk_sim.dynamic_array<i8>> -> !obelisk_sim.dynamic_array<i8>
-// CHECK: %[[NESTED:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<!obelisk_sim.dynamic_array<!obelisk_sim.dynamic_array<i8>>> -> !obelisk_sim.dynamic_array<!obelisk_sim.dynamic_array<i8>>
 // CHECK: %[[STREAM:.*]] = obelisk_sim.container.create
 // CHECK-SAME: -> !obelisk_sim.queue<!obelisk_sim.logic<1>, 0>
 // CHECK: obelisk_sim.bits.dyn_extract
 // CHECK: obelisk_sim.container.write %[[STREAM]],
+// CHECK: %[[DATA:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<!obelisk_sim.dynamic_array<i8>> -> !obelisk_sim.dynamic_array<i8>
+// CHECK: %[[SLICE:.*]] = obelisk_sim.container.create
+// CHECK-SAME: -> !obelisk_sim.dynamic_array<i8>
 // CHECK: %[[SIZE:.*]] = obelisk_sim.container.size %[[DATA]]
 // CHECK: obelisk_sim.container.read %[[DATA]]
+// CHECK: obelisk_sim.container.write %[[SLICE]],
+// CHECK: obelisk_sim.container.size %[[SLICE]]
+// CHECK: obelisk_sim.container.read %[[SLICE]]
+// CHECK: %[[NESTED:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<!obelisk_sim.dynamic_array<!obelisk_sim.dynamic_array<i8>>> -> !obelisk_sim.dynamic_array<!obelisk_sim.dynamic_array<i8>>
 // CHECK: obelisk_sim.container.size %[[NESTED]]
+// CHECK: obelisk_sim.bits.dyn_extract
+// CHECK: obelisk_sim.container.write %[[STREAM]],
 // CHECK: %[[INNER:.*]] = obelisk_sim.container.read %[[NESTED]]
 // CHECK: obelisk_sim.container.size %[[INNER]]
 // CHECK: obelisk_sim.bits.dyn_extract
@@ -22,9 +29,11 @@
 // CHECK: obelisk_sim.container.write %[[STREAM]],
 // CHECK: %[[STREAM_WIDTH:.*]] = obelisk_sim.container.size %[[STREAM]]
 // CHECK: %[[REORDERED:.*]] = obelisk_sim.container.create
-// CHECK: arith.divui %[[STREAM_WIDTH]],
+// CHECK: %[[REORDER_WIDTH:.*]] = obelisk_sim.container.size %[[STREAM]]
+// CHECK: arith.divui %[[REORDER_WIDTH]],
 // CHECK: obelisk_sim.container.read %[[STREAM]]
 // CHECK: obelisk_sim.container.write %[[REORDERED]],
+// CHECK: arith.divui %[[STREAM_WIDTH]],
 // CHECK: arith.remui %[[STREAM_WIDTH]],
 // CHECK: arith.cmpi ne
 // CHECK: %[[PACKET:.*]] = obelisk_sim.container.create
@@ -68,10 +77,18 @@ module {
               obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 11 : i64, referenced_path = "dynamic_pack.packet", referenced_symbol = @s1.$root::@s3.dynamic_pack::@s4.dynamic_pack::@s7.packet, semantic_type = !obelisk.queue<!obelisk.integral<8, true, false, 7 : 0, byte>, 0>} {
               }
               obelisk.sv.expression.conversion attributes {is_signed = false, node_id = 12 : i64, semantic_type = !obelisk.queue<!obelisk.integral<8, true, false, 7 : 0, byte>, 0>} {
-                obelisk.sv.expression.streaming attributes {bitstream_width = 36 : i64, is_fixed_size = false, is_signed = false, node_id = 13 : i64, semantic_type = !obelisk.void, slice_size = 8 : i64, stream_count = 4 : i64, stream_with_flags = array<i64: 0, 0, 0, 0>} {
+                obelisk.sv.expression.streaming attributes {bitstream_width = 36 : i64, is_fixed_size = false, is_signed = false, node_id = 13 : i64, semantic_type = !obelisk.void, slice_size = 8 : i64, stream_count = 4 : i64, stream_with_flags = array<i64: 0, 1, 0, 0>} {
                   obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 14 : i64, referenced_path = "dynamic_pack.header", referenced_symbol = @s1.$root::@s3.dynamic_pack::@s4.dynamic_pack::@s5.header, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                   }
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 15 : i64, referenced_path = "dynamic_pack.data", referenced_symbol = @s1.$root::@s3.dynamic_pack::@s4.dynamic_pack::@s6.data, semantic_type = !obelisk.dynarray<!obelisk.integral<8, true, false, 7 : 0, byte>>} {
+                  }
+                  obelisk.sv.expression.range_select attributes {is_signed = false, node_id = 26 : i64, selection_kind = 1 : i32, semantic_type = !obelisk.queue<!obelisk.integral<8, true, false, 7 : 0, byte>, 0>} {
+                    obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 27 : i64, referenced_path = "dynamic_pack.data", referenced_symbol = @s1.$root::@s3.dynamic_pack::@s4.dynamic_pack::@s6.data, semantic_type = !obelisk.dynarray<!obelisk.integral<8, true, false, 7 : 0, byte>>} {
+                    }
+                    obelisk.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 28 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
+                    obelisk.sv.expression.integer_literal attributes {constant_value = "2", is_declared_unsized = true, is_signed = true, node_id = 29 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
                   }
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 17 : i64, referenced_path = "dynamic_pack.nested", referenced_symbol = @s1.$root::@s3.dynamic_pack::@s4.dynamic_pack::@s16.nested, semantic_type = !obelisk.dynarray<!obelisk.dynarray<!obelisk.integral<8, true, false, 7 : 0, byte>>>} {
                   }

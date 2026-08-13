@@ -82,6 +82,21 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   lowerStreaming(semantic::SVStreamingConcatenationExpressionOp op,
                  ::mlir::Type assignmentType = {});
+  bool streamContainsFourState(::mlir::Type type) const;
+  bool streamNodeContainsFourState(::mlir::Operation *node) const;
+  ::mlir::FailureOr<::mlir::Value>
+  createBitStream(bool fourState, ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value>
+  appendToBitStream(::mlir::Value value, ::mlir::Value stream,
+                    ::mlir::Value outputIndex, bool fourState,
+                    ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value>
+  reorderBitStream(::mlir::Value stream, uint64_t slice,
+                   ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value>
+  sliceStreamingContainer(::mlir::Value container,
+                          ::mlir::Operation *withRange,
+                          ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   lowerMember(semantic::SVMemberAccessExpressionOp op, bool lvalue);
   ::mlir::FailureOr<::mlir::Value>
@@ -103,6 +118,12 @@ private:
                                                   bool lvalue);
   ::mlir::FailureOr<::mlir::Value>
   lowerAssignment(semantic::SVAssignmentExpressionOp op);
+  ::mlir::FailureOr<::mlir::Value> lowerStreamingAssignment(
+      semantic::SVStreamingConcatenationExpressionOp destination,
+      ::mlir::Value source);
+  ::mlir::FailureOr<::mlir::Value>
+  readBitStreamValue(::mlir::Value stream, ::mlir::Value start,
+                     ::mlir::Type type, ::mlir::Location location);
   ::mlir::LogicalResult lowerClockingOutputAssignment(
       semantic::SVMemberAccessExpressionOp destination, ::mlir::Value value,
       ::mlir::Location location);
