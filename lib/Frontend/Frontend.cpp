@@ -1678,6 +1678,35 @@ private:
           SET_OP_ATTR(DynamicCastEnumValues, builder.getArrayAttr(values));
         }
       }
+      if (node.isSystemCall() &&
+          (node.getSubroutineName() == "$readmemb" ||
+           node.getSubroutineName() == "$readmemh") &&
+          node.arguments().size() >= 2) {
+        auto enumValues = [&](const slang::ast::Type &type) {
+          SmallVector<Attribute> values;
+          for (const slang::ast::EnumValueSymbol &value :
+               type.getCanonicalType()
+                   .as<slang::ast::EnumType>()
+                   .membersOfType<slang::ast::EnumValueSymbol>())
+            values.push_back(
+                builder.getStringAttr(formatConstant(value.getValue())));
+          return builder.getArrayAttr(values);
+        };
+        const slang::ast::Type *memory =
+            &node.arguments()[1]->type->getCanonicalType();
+        while (memory->isUnpackedArray()) {
+          if (memory->isAssociativeArray()) {
+            const slang::ast::Type *index = memory->getAssociativeIndexType();
+            if (index && index->getCanonicalType().isEnum())
+              SET_OP_ATTR(ReadmemEnumKeyValues,
+                          enumValues(index->getCanonicalType()));
+          }
+          memory = memory->getArrayElementType();
+        }
+        if (memory->getCanonicalType().isEnum())
+          SET_OP_ATTR(ReadmemEnumElementValues,
+                      enumValues(memory->getCanonicalType()));
+      }
       if (const auto *subroutine =
               std::get_if<const slang::ast::SubroutineSymbol *>(
                   &node.subroutine);

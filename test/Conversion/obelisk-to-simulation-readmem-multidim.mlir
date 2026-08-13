@@ -37,9 +37,9 @@ module {
   }
 }
 
-// CHECK: ^{{bb[0-9]+}}(%[[TOP:.*]]: i64, {{.*}}, %[[COUNT:.*]]: i64, %[[SUBWORD:.*]]: i64):
+// CHECK: ^{{bb[0-9]+}}(%[[TOP:.*]]: i64, {{.*}}, %[[COUNT:.*]]: i64, %[[SUBWORD:.*]]: i64, {{.*}}: i1):
 // CHECK: %[[DATA:.*]], %[[KIND:.*]], %[[FILE_ADDRESS:.*]] = obelisk_sim.file.readmem_token {{.*}} {radix = 16 : i32}
-// CHECK: cf.cond_br {{.*}}, ^{{bb[0-9]+}}(%[[FILE_ADDRESS]], {{.*}}, %[[COUNT]], {{.*}} : i64, i1, i64, i64),
+// CHECK: cf.cond_br {{.*}}, ^{{bb[0-9]+}}(%[[FILE_ADDRESS]], {{.*}}, %[[COUNT]], {{.*}} : i64, i1, i64, i64, i1),
 // CHECK: %[[OUTER_REF:.*]] = obelisk_sim.ref.array_element {{.*}}[%[[TOP]]]
 // CHECK: %[[INNER_ORDINAL:.*]] = arith.remui %[[SUBWORD]],
 // CHECK: %[[INNER_INDEX:.*]] = arith.addi %[[INNER_ORDINAL]], {{.*}} : i64

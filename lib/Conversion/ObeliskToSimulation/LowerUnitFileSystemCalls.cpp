@@ -100,24 +100,10 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
           << name << " associative array indices must be integral";
       return failure();
     }
-    if (auto semanticType =
-            actual->getAttrOfType<TypeAttr>("semantic_type")) {
-      if (auto semanticArray =
-              dyn_cast<semantic::AssocArrayType>(semanticType.getValue())) {
-        if (isa<semantic::EnumType>(semanticArray.getKeyType()) ||
-            isa<semantic::EnumType>(semanticArray.getElementType())) {
-          emitError(getSemanticLocation(actual))
-              << name << " enum associative arrays require enumerator "
-                         "validation metadata";
-          return failure();
-        }
-      } else if (isa<semantic::EnumType>(semanticType.getValue())) {
-        emitError(getSemanticLocation(actual))
-            << name << " enum memory elements require enumerator validation "
-                       "metadata";
-        return failure();
-      }
-    }
+    ArrayAttr enumKeyValues =
+        op->getAttrOfType<ArrayAttr>(readMemEnumKeyValuesAttrName);
+    ArrayAttr enumElementValues =
+        op->getAttrOfType<ArrayAttr>(readMemEnumElementValuesAttrName);
     SmallVector<sim::UnpackedArrayType> dimensions;
     Type elementType;
     if (array) {
@@ -136,6 +122,27 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       emitError(getSemanticLocation(actual))
           << name << " memory elements must be packed values";
       return failure();
+    }
+    SmallVector<ParsedConstant> parsedElementEnums;
+    if (enumElementValues) {
+      for (Attribute attribute : enumElementValues) {
+        auto spelling = dyn_cast<StringAttr>(attribute);
+        FailureOr<ParsedConstant> parsed =
+            spelling ? parseSVInteger(spelling.getValue(), *elementWidth,
+                                      getSemanticLocation(actual))
+                     : FailureOr<ParsedConstant>(failure());
+        if (failed(parsed) || !parsed->unknown.isZero()) {
+          emitError(getSemanticLocation(actual))
+              << name << " has malformed enum element metadata";
+          return failure();
+        }
+        parsedElementEnums.push_back(std::move(*parsed));
+      }
+      if (parsedElementEnums.empty()) {
+        emitError(getSemanticLocation(actual))
+            << name << " enum element type has no values";
+        return failure();
+      }
     }
     Value memory;
     SmallVector<Value> sliceReferences;
@@ -229,6 +236,7 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     };
     int64_t associativeLow = 0;
     int64_t associativeHigh = 0;
+    SmallVector<int64_t> parsedKeyEnums;
     if (associative) {
       unsigned keyWidth = *sim::getPackedWidth(associative.getKeyType());
       if (associative.getSignedKey()) {
@@ -243,6 +251,43 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
                               ? static_cast<int64_t>(UINT64_MAX)
                               : static_cast<int64_t>((uint64_t{1} << keyWidth) -
                                                      1);
+      }
+      if (enumKeyValues) {
+        for (Attribute attribute : enumKeyValues) {
+          auto spelling = dyn_cast<StringAttr>(attribute);
+          FailureOr<ParsedConstant> parsed =
+              spelling ? parseSVInteger(spelling.getValue(), keyWidth,
+                                        getSemanticLocation(actual))
+                       : FailureOr<ParsedConstant>(failure());
+          if (failed(parsed) || !parsed->unknown.isZero()) {
+            emitError(getSemanticLocation(actual))
+                << name << " has malformed enum index metadata";
+            return failure();
+          }
+          int64_t value = associative.getSignedKey()
+                              ? parsed->value.getSExtValue()
+                              : static_cast<int64_t>(
+                                    parsed->value.getZExtValue());
+          if (!llvm::is_contained(parsedKeyEnums, value))
+            parsedKeyEnums.push_back(value);
+        }
+        if (parsedKeyEnums.empty()) {
+          emitError(getSemanticLocation(actual))
+              << name << " enum index type has no values";
+          return failure();
+        }
+        if (associative.getSignedKey()) {
+          associativeLow = *llvm::min_element(parsedKeyEnums);
+          associativeHigh = *llvm::max_element(parsedKeyEnums);
+        } else {
+          auto unsignedLess = [](int64_t lhs, int64_t rhs) {
+            return static_cast<uint64_t>(lhs) < static_cast<uint64_t>(rhs);
+          };
+          associativeLow =
+              *llvm::min_element(parsedKeyEnums, unsignedLess);
+          associativeHigh =
+              *llvm::max_element(parsedKeyEnums, unsignedLess);
+        }
       }
     }
     Value low = indexConstant(array ? std::min(dimensions.front().getLeft(),
@@ -318,14 +363,17 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     header->addArgument(builder.getI1Type(), location);
     header->addArgument(i64, location);
     header->addArgument(i64, location);
+    header->addArgument(builder.getI1Type(), location);
     Block *classify = addBlock();
     Block *setAddress = addBlock();
     Block *acceptAddress = addBlock();
     Block *storeData = addBlock();
     Block *acceptData = addBlock();
+    Block *writeData = addBlock();
     Block *checkWordCount = addBlock();
     Block *warnWordCount = addBlock();
     Block *addressError = addBlock();
+    Block *dataError = addBlock();
     Block *exit = addBlock();
 
     auto withinInclusiveRange = [&](Value value) -> Value {
@@ -356,7 +404,7 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     cf::CondBranchOp::create(
         builder, location, validBounds, header,
         ValueRange{*start, constant(builder.getI1Type(), 0), indexConstant(0),
-                   indexConstant(0)},
+                   indexConstant(0), constant(builder.getI1Type(), 0)},
         addressError, ValueRange{});
 
     setCurrent(header);
@@ -364,6 +412,7 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     Value sawFileAddress = header->getArgument(1);
     Value wordCount = header->getArgument(2);
     Value subword = header->getArgument(3);
+    Value rangeExhausted = header->getArgument(4);
     auto token = sim::SimFileReadMemTokenOp::create(
         builder, location,
         TypeRange{sim::LogicType::get(function.getContext(), *elementWidth),
@@ -384,26 +433,100 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
                              ValueRange{}, storeData, ValueRange{});
 
     setCurrent(setAddress);
+    Value fileAddress = token.getAddress();
+    Value fileAddressFits = constant(builder.getI1Type(), 1);
+    if (associative) {
+      unsigned keyWidth = *sim::getPackedWidth(associative.getKeyType());
+      if (keyWidth < 64) {
+        Value keyMaximum = indexConstant(
+            static_cast<int64_t>((uint64_t{1} << keyWidth) - 1));
+        fileAddressFits = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ule, fileAddress,
+            keyMaximum);
+        Type keyBits = IntegerType::get(function.getContext(), keyWidth);
+        Value truncated = arith::TruncIOp::create(builder, location, keyBits,
+                                                  fileAddress);
+        fileAddress = associative.getSignedKey()
+                          ? Value(arith::ExtSIOp::create(builder, location, i64,
+                                                       truncated))
+                          : Value(arith::ExtUIOp::create(builder, location, i64,
+                                                       truncated));
+      }
+    }
     Value validFileAddress = arith::AndIOp::create(
-        builder, location, withinInclusiveRange(token.getAddress()),
-        withinMemory(token.getAddress()));
+        builder, location, withinInclusiveRange(fileAddress),
+        withinMemory(fileAddress));
+    validFileAddress = arith::AndIOp::create(
+        builder, location, validFileAddress, fileAddressFits);
+    if (!parsedKeyEnums.empty()) {
+      Value validEnumAddress = constant(builder.getI1Type(), 0);
+      for (int64_t member : parsedKeyEnums) {
+        Value equal = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq, fileAddress,
+            indexConstant(member));
+        validEnumAddress = arith::OrIOp::create(builder, location,
+                                                validEnumAddress, equal);
+      }
+      validFileAddress = arith::AndIOp::create(
+          builder, location, validFileAddress, validEnumAddress);
+    }
     cf::CondBranchOp::create(builder, location, validFileAddress, acceptAddress,
                              ValueRange{}, addressError, ValueRange{});
 
     setCurrent(acceptAddress);
     cf::BranchOp::create(builder, location, header,
-                         ValueRange{token.getAddress(),
+                         ValueRange{fileAddress,
                                     constant(builder.getI1Type(), 1),
-                                    wordCount, indexConstant(0)});
+                                    wordCount, indexConstant(0),
+                                    constant(builder.getI1Type(), 0)});
 
     setCurrent(storeData);
     Value validDataAddress =
         arith::AndIOp::create(builder, location, withinInclusiveRange(address),
                               withinMemory(address));
+    Value hasCapacity = arith::XOrIOp::create(
+        builder, location, rangeExhausted, constant(builder.getI1Type(), 1));
+    validDataAddress = arith::AndIOp::create(builder, location,
+                                             validDataAddress, hasCapacity);
+    if (!parsedKeyEnums.empty()) {
+      Value validEnumAddress = constant(builder.getI1Type(), 0);
+      for (int64_t member : parsedKeyEnums) {
+        Value equal = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq, address,
+            indexConstant(member));
+        validEnumAddress = arith::OrIOp::create(builder, location,
+                                                validEnumAddress, equal);
+      }
+      validDataAddress = arith::AndIOp::create(
+          builder, location, validDataAddress, validEnumAddress);
+    }
     cf::CondBranchOp::create(builder, location, validDataAddress, acceptData,
                              ValueRange{}, checkWordCount, ValueRange{});
 
     setCurrent(acceptData);
+    Value validEnumData = constant(builder.getI1Type(), 1);
+    if (!parsedElementEnums.empty()) {
+      validEnumData = constant(builder.getI1Type(), 0);
+      Type tokenType = token.getData().getType();
+      Type planeType = IntegerType::get(function.getContext(), *elementWidth);
+      for (const ParsedConstant &member : parsedElementEnums) {
+        Value memberValue = sim::SimLogicConstantOp::create(
+            builder, location, tokenType,
+            builder.getIntegerAttr(planeType, member.value),
+            builder.getIntegerAttr(planeType, member.unknown));
+        FailureOr<Value> equal = conditionalEqual(
+            token.getData(), memberValue, tokenType, location,
+            /*caseEquality=*/true);
+        if (failed(equal))
+          return failure();
+        validEnumData = arith::OrIOp::create(builder, location, validEnumData,
+                                             *equal);
+      }
+    }
+    cf::CondBranchOp::create(builder, location, validEnumData, writeData,
+                             ValueRange{}, dataError, ValueRange{});
+
+    setCurrent(writeData);
     Type scalarType = sim::getPackedScalarType(elementType);
     FailureOr<Value> scalar =
         convert(token.getData(), scalarType, false, location);
@@ -489,11 +612,16 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
         builder, location, rowComplete, steppedAddress, address);
     Value nextSubword = arith::SelectOp::create(
         builder, location, rowComplete, indexConstant(0), incrementedSubword);
+    Value atFinish = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, address, *finish);
+    Value nextRangeExhausted = arith::AndIOp::create(
+        builder, location, rowComplete, atFinish);
     Value nextWordCount =
         arith::AddIOp::create(builder, location, wordCount, indexConstant(1));
     cf::BranchOp::create(
         builder, location, header,
-        ValueRange{nextAddress, sawFileAddress, nextWordCount, nextSubword});
+        ValueRange{nextAddress, sawFileAddress, nextWordCount, nextSubword,
+                   nextRangeExhausted});
 
     setCurrent(checkWordCount);
     Value difference =
@@ -521,6 +649,10 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
 
     setCurrent(addressError);
     emitMessage("ERROR", "address is outside the selected memory range");
+    cf::BranchOp::create(builder, location, exit);
+
+    setCurrent(dataError);
+    emitMessage("ERROR", "data value is outside the enumerated type");
     cf::BranchOp::create(builder, location, exit);
 
     setCurrent(exit);

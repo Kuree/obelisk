@@ -42,15 +42,15 @@ module {
 // CHECK-DAG: obelisk_sim.bytes.constant "WARNING: $readmemh: data word count does not match address range"
 // CHECK-DAG: obelisk_sim.bytes.constant "ERROR: $readmemh: address is outside the selected memory range"
 // CHECK: %[[FD:.*]] = obelisk_sim.file.open
-// CHECK: cf.br ^[[LOOP:bb[0-9]+]]({{.*}} : i64, i1, i64)
-// CHECK: ^[[LOOP]](%[[CURSOR:.*]]: i64, %[[SAW_ADDRESS:.*]]: i1, %[[COUNT:.*]]: i64):
+// CHECK: cf.br ^[[LOOP:bb[0-9]+]]({{.*}} : i64, i1, i64, i1)
+// CHECK: ^[[LOOP]](%[[CURSOR:.*]]: i64, %[[SAW_ADDRESS:.*]]: i1, %[[COUNT:.*]]: i64, %[[EXHAUSTED:.*]]: i1):
 // CHECK: %[[DATA:.*]], %[[KIND:.*]], %[[ADDRESS:.*]] = obelisk_sim.file.readmem_token {{.*}} {radix = 16 : i32}
 // CHECK: cf.cond_br {{.*}}, ^[[COUNT_CHECK:bb[0-9]+]], ^[[CLASSIFY:bb[0-9]+]]
 // CHECK: ^[[CLASSIFY]]:
 // CHECK: cf.cond_br {{.*}}, ^[[SET_ADDRESS:bb[0-9]+]], ^[[STORE_CHECK:bb[0-9]+]]
 // CHECK: ^[[SET_ADDRESS]]:
 // CHECK: arith.cmpi sle, %[[ADDRESS]],
-// CHECK: cf.cond_br {{.*}}, ^[[LOOP]](%[[ADDRESS]], {{.*}}, %[[COUNT]] : i64, i1, i64), ^[[ADDRESS_ERROR:bb[0-9]+]]
+// CHECK: cf.cond_br {{.*}}, ^[[LOOP]](%[[ADDRESS]], {{.*}}, %[[COUNT]], {{.*}} : i64, i1, i64, i1), ^[[ADDRESS_ERROR:bb[0-9]+]]
 // CHECK: ^[[STORE_CHECK]]:
 // CHECK: arith.cmpi sle, %[[CURSOR]],
 // CHECK: cf.cond_br {{.*}}, ^[[STORE:bb[0-9]+]], ^[[COUNT_CHECK]]

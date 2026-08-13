@@ -128,6 +128,10 @@ inline constexpr ::mlir::StringLiteral dynamicCastEnumValuesAttrName =
     "obelisk_sim.dynamic_cast_enum_values";
 inline constexpr ::mlir::StringLiteral dynamicCastTaskAttrName =
     "obelisk_sim.dynamic_cast_task";
+inline constexpr ::mlir::StringLiteral readMemEnumKeyValuesAttrName =
+    "readmem_enum_key_values";
+inline constexpr ::mlir::StringLiteral readMemEnumElementValuesAttrName =
+    "readmem_enum_element_values";
 inline constexpr ::mlir::StringLiteral placeholderAttrName =
     "obelisk_sim.placeholder";
 inline constexpr ::mlir::StringLiteral staticNetConstantAttrName =
