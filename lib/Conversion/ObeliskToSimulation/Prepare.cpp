@@ -241,6 +241,40 @@ void ObeliskSimPreparePass::runOnOperation() {
     sequence->setAttr(sequenceEndpointEventAttrName, UnitAttr::get(context));
   });
 
+  // Freeze the normalized storage type of every assertion local on its
+  // expanded instance. Local declarations remain in the semantic symbol
+  // inventory rather than the executable code unit, while the monitor needs
+  // their exact types to materialize per-attempt state after isolation.
+  semanticRoot->walk([&](semantic::SVAssertionInstanceExpressionOp instance) {
+    SmallVector<Attribute> types;
+    for (Attribute attribute : instance.getLocalVariableSymbols()) {
+      auto reference = dyn_cast<SymbolRefAttr>(attribute);
+      if (!reference) {
+        emitError(getSemanticLocation(instance))
+            << "assertion local variable has an invalid symbol reference";
+        invalid = true;
+        return;
+      }
+      auto symbol = semanticSymbols.find(reference.getLeafReference());
+      auto local =
+          symbol == semanticSymbols.end()
+              ? semantic::SVLocalAssertionVarSymbolOp{}
+              : dyn_cast<semantic::SVLocalAssertionVarSymbolOp>(symbol->second);
+      FailureOr<Type> type =
+          local ? getNormalizedSemanticType(local) : FailureOr<Type>(failure());
+      if (!local || failed(type)) {
+        emitError(getSemanticLocation(instance))
+            << "assertion local variable does not resolve to an executable "
+               "type";
+        invalid = true;
+        return;
+      }
+      types.push_back(TypeAttr::get(*type));
+    }
+    instance->setAttr(assertionLocalTypesAttrName,
+                      ArrayAttr::get(context, types));
+  });
+
   SmallVector<Operation *> sourceUnits;
   semanticRoot->walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isCompileTimeOnlyInstanceMember(op))

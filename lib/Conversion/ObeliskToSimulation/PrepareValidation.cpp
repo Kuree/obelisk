@@ -25,7 +25,7 @@ namespace {
 bool isDeclarativeLeafNode(Operation *op) {
   return isa<
       semantic::SVCoverCrossSymbolOp, semantic::SVCoverCrossBodySymbolOp,
-      semantic::SVLocalAssertionVarSymbolOp, semantic::SVDPIOpenArrayTypeOp>(op);
+      semantic::SVDPIOpenArrayTypeOp>(op);
 }
 
 bool isSupportedRandSequenceNode(Operation *op) {
@@ -70,6 +70,7 @@ bool isSupportedAssertionNode(Operation *op) {
       semantic::SVImmediateAssertionStatementOp,
       semantic::SVConcurrentAssertionStatementOp, semantic::SVPropertySymbolOp,
       semantic::SVSequenceSymbolOp, semantic::SVAssertionPortSymbolOp,
+      semantic::SVLocalAssertionVarSymbolOp,
       semantic::SVAssertionInstanceExpressionOp,
       semantic::SVInvalidAssertionExprOp, semantic::SVSimpleAssertionExprOp,
       semantic::SVSequenceConcatExprOp, semantic::SVSequenceWithMatchExprOp,

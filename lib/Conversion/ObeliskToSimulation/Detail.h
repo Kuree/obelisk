@@ -154,6 +154,8 @@ inline constexpr ::mlir::StringLiteral sequenceEndpointMonitorAttrName =
     "obelisk_sim.sequence_endpoint_monitor";
 inline constexpr ::mlir::StringLiteral sequenceEndpointPathAttrName =
     "obelisk_sim.sequence_endpoint_path";
+inline constexpr ::mlir::StringLiteral assertionLocalTypesAttrName =
+    "obelisk_sim.assertion_local_types";
 inline constexpr ::mlir::StringLiteral randomizeAttrName =
     "obelisk_sim.randomize";
 inline constexpr ::mlir::StringLiteral randomizeDispatchAttrName =

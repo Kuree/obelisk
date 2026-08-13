@@ -26,8 +26,13 @@ namespace {
 
 /// One deterministic bounded sequence. Each clock age contains the boolean
 /// expressions that must all hold at that age. Empty ages represent ## gaps.
+struct FixedSequenceAge {
+  SmallVector<Operation *, 2> predicates;
+  SmallVector<Operation *, 2> matchItems;
+};
+
 struct FixedSequence {
-  SmallVector<SmallVector<Operation *, 2>, 8> ages;
+  SmallVector<FixedSequenceAge, 8> ages;
 };
 
 /// Return the substituted body of a nonrecursive assertion invocation. The
@@ -36,8 +41,7 @@ struct FixedSequence {
 /// evaluated by the monitor compiler.
 static FailureOr<Operation *> getExpandedAssertionBody(
     semantic::SVAssertionInstanceExpressionOp instance) {
-  if (instance.getIsRecursiveProperty() || !instance.getHasExpandedBody() ||
-      instance.getLocalVariableCount() != 0)
+  if (instance.getIsRecursiveProperty() || !instance.getHasExpandedBody())
     return failure();
 
   size_t initializedLocals = llvm::count_if(
@@ -84,7 +88,7 @@ static FailureOr<FixedSequence> compileFixedSequence(Operation *operation) {
       nested = std::move(*compiled);
     } else {
       nested.ages.resize(1);
-      nested.ages.front().push_back(children.front());
+      nested.ages.front().predicates.push_back(children.front());
     }
     if (nested.ages.empty() || repetitions > 63 / nested.ages.size())
       return failure();
@@ -116,15 +120,37 @@ static FailureOr<FixedSequence> compileFixedSequence(Operation *operation) {
       uint64_t offset = minimum.getInt();
       if (result.ages.empty())
         result.ages.resize(1);
+      // A match item at the left endpoint executes before a ##0 successor is
+      // evaluated. This fixed-age representation cannot preserve that
+      // intra-Observed ordering, so do not flatten it into a conjunction.
+      if (offset == 0 && !result.ages.back().matchItems.empty())
+        return failure();
       uint64_t start = result.ages.size() - 1 + offset;
       uint64_t required = start + nested->ages.size();
       if (required > 63)
         return failure();
       result.ages.resize(std::max<uint64_t>(result.ages.size(), required));
-      for (auto [age, predicates] : llvm::enumerate(nested->ages))
-        llvm::append_range(result.ages[start + age], predicates);
+      for (auto [age, nestedAge] : llvm::enumerate(nested->ages)) {
+        llvm::append_range(result.ages[start + age].predicates,
+                           nestedAge.predicates);
+        llvm::append_range(result.ages[start + age].matchItems,
+                           nestedAge.matchItems);
+      }
     }
     return result;
+  }
+
+  if (auto matched = dyn_cast<semantic::SVSequenceWithMatchExprOp>(operation)) {
+    SmallVector<Operation *> children = getChildren(matched);
+    if (matched.getHasRepetition() || children.empty() ||
+        children.size() != 1 + matched.getMatchItemCount())
+      return failure();
+    FailureOr<FixedSequence> nested = compileFixedSequence(children.front());
+    if (failed(nested) || nested->ages.empty())
+      return failure();
+    llvm::append_range(nested->ages.back().matchItems,
+                       ArrayRef<Operation *>(children).drop_front());
+    return nested;
   }
 
   return failure();
@@ -167,6 +193,11 @@ LogicalResult UnitLowering::lowerSequenceEndpointMonitor(
     return emitError(getSemanticLocation(roots.front()))
                << "sequence endpoint monitor has no assertion instance",
            failure();
+  if (instance.getLocalVariableCount() != 0)
+    return emitError(getSemanticLocation(instance))
+               << "sequence endpoint monitor does not support local "
+                  "variables",
+           failure();
   FailureOr<Operation *> expanded = getExpandedAssertionBody(instance);
   if (failed(expanded))
     return emitError(getSemanticLocation(instance))
@@ -189,7 +220,10 @@ LogicalResult UnitLowering::lowerSequenceEndpointMonitor(
            failure();
   FailureOr<FixedSequence> compiled = compileFixedSequence(clocked.back());
   if (failed(compiled) || compiled->ages.empty() ||
-      compiled->ages.size() > 63)
+      compiled->ages.size() > 63 ||
+      llvm::any_of(compiled->ages, [](const FixedSequenceAge &age) {
+        return !age.matchItems.empty();
+      }))
     return emitError(getSemanticLocation(clocked.back()))
                << "sequence endpoint monitor supports boolean terms, fixed "
                   "## delays, and fixed consecutive repetition up to 63 "
@@ -289,7 +323,7 @@ LogicalResult UnitLowering::lowerSequenceEndpointMonitor(
     Value presentBits = arith::AndIOp::create(builder, location, state, mask);
     Value active = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::ne, presentBits, zero);
-    FailureOr<Value> matches = evaluateAge(compiled->ages[age]);
+    FailureOr<Value> matches = evaluateAge(compiled->ages[age].predicates);
     if (failed(matches))
       return failure();
     Value advances = arith::AndIOp::create(builder, location, active, *matches);
@@ -306,7 +340,7 @@ LogicalResult UnitLowering::lowerSequenceEndpointMonitor(
     }
   }
 
-  FailureOr<Value> starts = evaluateAge(compiled->ages.front());
+  FailureOr<Value> starts = evaluateAge(compiled->ages.front().predicates);
   if (failed(starts))
     return failure();
   if (compiled->ages.size() == 1) {
@@ -380,6 +414,23 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   if (children.size() != expected)
     return op.emitError("malformed concurrent assertion inventory"), failure();
 
+  semantic::SVAssertionInstanceExpressionOp localInstance;
+  bool multipleLocalInstances = false;
+  children[prefix]->walk(
+      [&](semantic::SVAssertionInstanceExpressionOp instance) {
+        if (instance.getLocalVariableCount() == 0)
+          return;
+        if (localInstance && localInstance != instance)
+          multipleLocalInstances = true;
+        else
+          localInstance = instance;
+      });
+  if (multipleLocalInstances)
+    return emitError(getSemanticLocation(children[prefix]))
+               << "bounded concurrent monitors support one local-variable "
+                  "assertion instance",
+           failure();
+
   Operation *property = unwrapAssertionInstance(children[prefix]);
   if (!property)
     return op.emitError("recursive, local-variable, or malformed assertion "
@@ -422,6 +473,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   semantic::SVBinaryAssertionExprOp implication;
   FixedSequence sequence;
   Operation *antecedent = nullptr;
+  SmallVector<Operation *> antecedentMatchItems;
   bool nonoverlapped = false;
   if (auto binary =
           dyn_cast_or_null<semantic::SVBinaryAssertionExprOp>(property);
@@ -435,14 +487,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       return binary.emitError("malformed implication"), failure();
     FailureOr<FixedSequence> lhs = compileFixedSequence(operands.front());
     FailureOr<FixedSequence> rhs = compileFixedSequence(operands.back());
-    if (failed(lhs) || lhs->ages.size() != 1 || lhs->ages.front().size() != 1 ||
-        failed(rhs))
+    if (failed(lhs) || lhs->ages.size() != 1 ||
+        lhs->ages.front().predicates.size() != 1 || failed(rhs))
       return binary.emitError(
                  "AOT implication antecedents must be one boolean term and "
                  "consequents must have bounded fixed delays"),
              failure();
     implication = binary;
-    antecedent = lhs->ages.front().front();
+    antecedent = lhs->ages.front().predicates.front();
+    llvm::append_range(antecedentMatchItems, lhs->ages.front().matchItems);
     sequence = std::move(*rhs);
     nonoverlapped =
         binary.getOperatorKind() ==
@@ -459,6 +512,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   }
   if (sequence.ages.empty() || sequence.ages.size() > 63)
     return op.emitError("concurrent monitor horizon must be 1..63 cycles"),
+           failure();
+  if (!localInstance &&
+      llvm::any_of(sequence.ages, [](const FixedSequenceAge &age) {
+        return !age.matchItems.empty();
+      }))
+    return emitError(getSemanticLocation(property))
+               << "assertion match items require a supported local-variable "
+                  "assertion instance",
            failure();
   // IEEE 1800 evaluates sampled predicates and monitor state in Observed.
   function->setAttr("home_region",
@@ -803,24 +864,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                             ArrayAttr{}, ArrayAttr{});
   };
 
-  Block *wait = addBlock();
-  Block *sample = addBlock();
-  emitBranch(wait);
-  setCurrent(wait);
-  if (failed(emitEventSuspend(clock, sample)))
-    return failure();
-  // The clock occurrence samples in Preponed; bounded evaluation and monitor
-  // bookkeeping resume in Observed.
-  wait->getTerminator()->setAttr(
-      "resume_region", sim::EventRegionAttr::get(function.getContext(),
-                                                 sim::EventRegion::Observed));
-  setCurrent(sample);
-  Value state = zero;
-  if (stateStorage)
-    state =
-        sim::SimRefLoadOp::create(builder, location, stateType, stateStorage);
-
-  if (disable) {
+  auto cancelDisabledSample = [&](Block *wait) -> LogicalResult {
+    if (!disable)
+      return success();
     FailureOr<Value> currentDisable = lowerExpression(disable);
     if (failed(currentDisable))
       return failure();
@@ -847,7 +893,374 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                disableEpoch);
     cf::BranchOp::create(builder, getSemanticLocation(disable), wait);
     setCurrent(evaluateSample);
+    return success();
+  };
+
+  if (localInstance) {
+    struct LocalState {
+      std::string path;
+      Type type;
+      Operation *initializer = nullptr;
+      SmallVector<Value> ages;
+    };
+    ArrayAttr typeAttrs =
+        localInstance->getAttrOfType<ArrayAttr>(assertionLocalTypesAttrName);
+    if (!typeAttrs ||
+        typeAttrs.size() != localInstance.getLocalVariableCount() ||
+        localInstance.getLocalVariablePaths().size() != typeAttrs.size() ||
+        localInstance.getLocalVariableHasInitializer().size() !=
+            typeAttrs.size())
+      return emitError(getSemanticLocation(localInstance))
+                 << "assertion local-variable type inventory is malformed",
+             failure();
+    SmallVector<Operation *> instanceChildren = getChildren(localInstance);
+    size_t initializerIndex = 1 + localInstance.getArgumentCount();
+    SmallVector<LocalState> locals;
+    llvm::StringMap<unsigned> localIndices;
+    for (auto [index, pathAttr, typeAttr, hasInitializer] :
+         llvm::enumerate(localInstance.getLocalVariablePaths(), typeAttrs,
+                         localInstance.getLocalVariableHasInitializer())) {
+      auto path = dyn_cast<StringAttr>(pathAttr);
+      auto type = dyn_cast<TypeAttr>(typeAttr);
+      if (!path || !type || !sim::getPackedWidth(type.getValue()))
+        return emitError(getSemanticLocation(localInstance))
+                   << "bounded assertion locals require fixed packed types",
+               failure();
+      Operation *initializer = nullptr;
+      if (hasInitializer != 0) {
+        if (initializerIndex >= instanceChildren.size())
+          return localInstance.emitError("missing assertion local initializer"),
+                 failure();
+        initializer = instanceChildren[initializerIndex++];
+      }
+      localIndices[path.getValue()] = locals.size();
+      locals.push_back(
+          {path.getValue().str(), type.getValue(), initializer, {}});
+    }
+    if (initializerIndex != instanceChildren.size())
+      return localInstance.emitError(
+                 "unexpected assertion instance operands after locals"),
+             failure();
+
+    // A deterministic fixed sequence has at most one live attempt at each
+    // age. Keep one typed cell per (local, age); processing ages from oldest
+    // to youngest below prevents a newly advanced value from overwriting the
+    // value consumed by an older attempt in the same Observed region.
+    for (LocalState &local : locals) {
+      Value initial = createDefaultValue(builder, location, local.type);
+      if (!initial)
+        return emitError(location)
+                   << "cannot materialize assertion local type " << local.type,
+               failure();
+      for (size_t age = 0; age < sequence.ages.size(); ++age)
+        local.ages.push_back(sim::SimRefAllocOp::create(
+            builder, location,
+            sim::RefType::get(function.getContext(), local.type), initial));
+    }
+
+    llvm::StringMap<Value> enclosingValues = values;
+    llvm::StringMap<Value> enclosingLValues = lvalues;
+    llvm::scope_exit restoreBindings([&] {
+      values = std::move(enclosingValues);
+      lvalues = std::move(enclosingLValues);
+    });
+    auto bindLocals = [&](ArrayRef<Value> localValues) {
+      for (auto [local, value] : llvm::zip_equal(locals, localValues)) {
+        values[local.path] = value;
+        lvalues.erase(local.path);
+      }
+    };
+    auto initializeLocals = [&]() -> FailureOr<SmallVector<Value>> {
+      SmallVector<Value> result;
+      result.reserve(locals.size());
+      for (LocalState &local : locals) {
+        Value value = createDefaultValue(builder, location, local.type);
+        if (!value)
+          return failure();
+        result.push_back(value);
+      }
+      for (auto [index, local] : llvm::enumerate(locals)) {
+        if (!local.initializer)
+          continue;
+        bindLocals(result);
+        FailureOr<Value> initialized = lowerExpression(local.initializer);
+        if (failed(initialized))
+          return failure();
+        FailureOr<Value> converted =
+            convert(*initialized, local.type, isSignedNode(local.initializer),
+                    getSemanticLocation(local.initializer));
+        if (failed(converted))
+          return failure();
+        result[index] = *converted;
+      }
+      return result;
+    };
+    auto loadLocals = [&](uint64_t age) {
+      SmallVector<Value> result;
+      for (LocalState &local : locals)
+        result.push_back(sim::SimRefLoadOp::create(
+            builder, location, local.type, local.ages[age]));
+      return result;
+    };
+    auto storeLocals = [&](uint64_t age, ArrayRef<Value> localValues) {
+      for (auto [local, value] : llvm::zip_equal(locals, localValues))
+        sim::SimRefStoreOp::create(builder, location, value, local.ages[age]);
+    };
+    auto evaluatePredicates =
+        [&](ArrayRef<Operation *> predicates,
+            ArrayRef<Value> localValues) -> FailureOr<Value> {
+      bindLocals(localValues);
+      Value result = arith::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+      for (Operation *predicate : predicates) {
+        FailureOr<Value> value = lowerExpression(predicate);
+        if (failed(value))
+          return failure();
+        FailureOr<Value> truth =
+            truthValue(*value, getSemanticLocation(predicate));
+        if (failed(truth))
+          return failure();
+        result = arith::AndIOp::create(builder, location, result, *truth);
+      }
+      return result;
+    };
+    auto applyMatchItems =
+        [&](ArrayRef<Operation *> items,
+            SmallVector<Value> localValues) -> FailureOr<SmallVector<Value>> {
+      for (Operation *item : items) {
+        auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(item);
+        SmallVector<Operation *> operands = getChildren(item);
+        if (!assignment || assignment.getHasTimingControl() ||
+            assignment.getOperatorKind() ||
+            assignment.getAssignmentKind() !=
+                semantic::SVAssignmentKind::Blocking ||
+            operands.size() != 2)
+          return emitError(getSemanticLocation(item))
+                     << "bounded assertion local flow currently requires "
+                        "simple blocking match assignments",
+                 failure();
+        auto destination =
+            dyn_cast<semantic::SVNamedValueExpressionOp>(operands.front());
+        auto found = destination
+                         ? localIndices.find(destination.getReferencedPath())
+                         : localIndices.end();
+        if (found == localIndices.end())
+          return emitError(getSemanticLocation(item))
+                     << "assertion match assignment does not target a local "
+                        "variable",
+                 failure();
+        bindLocals(localValues);
+        FailureOr<Value> rhs = lowerExpression(operands.back());
+        if (failed(rhs))
+          return failure();
+        unsigned index = found->second;
+        FailureOr<Value> converted =
+            convert(*rhs, locals[index].type, isSignedNode(operands.back()),
+                    getSemanticLocation(item), isSignedNode(operands.front()));
+        if (failed(converted))
+          return failure();
+        localValues[index] = *converted;
+      }
+      return localValues;
+    };
+    auto reportFailure = [&](Value enabled, Value matches) -> LogicalResult {
+      Value fails = arith::AndIOp::create(
+          builder, location, enabled,
+          arith::XOrIOp::create(
+              builder, location, matches,
+              arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                        builder.getBoolAttr(true))));
+      if (!observable)
+        return success();
+      Block *report = addBlock();
+      Block *continuation = addBlock();
+      cf::CondBranchOp::create(builder, location, fails, report, ValueRange{},
+                               continuation, ValueRange{});
+      setCurrent(report);
+      scheduleResult(false);
+      emitBranch(continuation);
+      setCurrent(continuation);
+      return success();
+    };
+    auto reportSuccess = [&] { scheduleResult(true); };
+
+    Block *wait = addBlock();
+    Block *sample = addBlock();
+    emitBranch(wait);
+    setCurrent(wait);
+    if (failed(emitEventSuspend(clock, sample)))
+      return failure();
+    wait->getTerminator()->setAttr(
+        "resume_region", sim::EventRegionAttr::get(function.getContext(),
+                                                   sim::EventRegion::Observed));
+    setCurrent(sample);
+    Value state = stateStorage ? sim::SimRefLoadOp::create(
+                                     builder, location, stateType, stateStorage)
+                               : zero;
+
+    if (failed(cancelDisabledSample(wait)))
+      return failure();
+
+    bool savedSampleAssertionValues = sampleAssertionValues;
+    sampleAssertionValues = true;
+    Operation *savedSampledClock = activeSampledClock;
+    activeSampledClock = clock;
+    llvm::scope_exit restoreSampling([&] {
+      sampleAssertionValues = savedSampleAssertionValues;
+      activeSampledClock = savedSampledClock;
+    });
+
+    Value nextState = zero;
+    uint64_t firstActiveAge = implication && nonoverlapped ? 0 : 1;
+    for (uint64_t cursor = sequence.ages.size(); cursor-- > firstActiveAge;) {
+      uint64_t age = cursor;
+      Value mask = arith::ConstantOp::create(
+          builder, location, stateType,
+          builder.getI64IntegerAttr(uint64_t{1} << age));
+      Value presentBits = arith::AndIOp::create(builder, location, state, mask);
+      Value active = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, presentBits, zero);
+      SmallVector<Value> ageLocals = loadLocals(age);
+      FailureOr<Value> matches =
+          evaluatePredicates(sequence.ages[age].predicates, ageLocals);
+      if (failed(matches) || failed(reportFailure(active, *matches)))
+        return failure();
+      Value advances =
+          arith::AndIOp::create(builder, location, active, *matches);
+      Block *matched = addBlock();
+      Block *continued = addBlock();
+      cf::CondBranchOp::create(builder, location, advances, matched,
+                               ValueRange{}, continued, ValueRange{});
+      setCurrent(matched);
+      FailureOr<SmallVector<Value>> updated =
+          applyMatchItems(sequence.ages[age].matchItems, ageLocals);
+      if (failed(updated))
+        return failure();
+      if (age + 1 == sequence.ages.size())
+        reportSuccess();
+      else
+        storeLocals(age + 1, *updated);
+      emitBranch(continued);
+      setCurrent(continued);
+      if (age + 1 != sequence.ages.size()) {
+        Value nextMask = arith::ConstantOp::create(
+            builder, location, stateType,
+            builder.getI64IntegerAttr(uint64_t{1} << (age + 1)));
+        Value advancedBit = arith::SelectOp::create(builder, location, advances,
+                                                    nextMask, zero);
+        nextState =
+            arith::OrIOp::create(builder, location, nextState, advancedBit);
+      }
+    }
+
+    FailureOr<SmallVector<Value>> initialLocals = initializeLocals();
+    if (failed(initialLocals))
+      return failure();
+    FailureOr<Value> starts =
+        implication ? evaluatePredicates({antecedent}, *initialLocals)
+                    : evaluatePredicates(sequence.ages.front().predicates,
+                                         *initialLocals);
+    if (failed(starts))
+      return failure();
+    Value one = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    if (!implication && failed(reportFailure(one, *starts)))
+      return failure();
+    if (implication && !cover) {
+      Value vacuous = arith::XOrIOp::create(builder, location, *starts, one);
+      Block *report = addBlock();
+      Block *continued = addBlock();
+      cf::CondBranchOp::create(builder, location, vacuous, report, ValueRange{},
+                               continued, ValueRange{});
+      setCurrent(report);
+      reportSuccess();
+      emitBranch(continued);
+      setCurrent(continued);
+    }
+
+    Block *startMatched = addBlock();
+    Block *afterStart = addBlock();
+    afterStart->addArgument(stateType, location);
+    cf::CondBranchOp::create(builder, location, *starts, startMatched,
+                             ValueRange{}, afterStart, ValueRange{nextState});
+    setCurrent(startMatched);
+    SmallVector<Value> startLocals = *initialLocals;
+    if (implication) {
+      FailureOr<SmallVector<Value>> updated =
+          applyMatchItems(antecedentMatchItems, startLocals);
+      if (failed(updated))
+        return failure();
+      startLocals = std::move(*updated);
+    }
+    if (implication && nonoverlapped) {
+      storeLocals(0, startLocals);
+      Value startMask = arith::ConstantOp::create(builder, location, stateType,
+                                                  builder.getI64IntegerAttr(1));
+      Value updatedState =
+          arith::OrIOp::create(builder, location, nextState, startMask);
+      cf::BranchOp::create(builder, location, afterStart,
+                           ValueRange{updatedState});
+    } else {
+      FailureOr<Value> first =
+          implication ? evaluatePredicates(sequence.ages.front().predicates,
+                                           startLocals)
+                      : FailureOr<Value>(*starts);
+      if (failed(first) || (implication && failed(reportFailure(one, *first))))
+        return failure();
+      Block *firstMatched = addBlock();
+      Block *afterFirst = addBlock();
+      cf::CondBranchOp::create(builder, location, *first, firstMatched,
+                               ValueRange{}, afterFirst, ValueRange{});
+      setCurrent(firstMatched);
+      FailureOr<SmallVector<Value>> updated =
+          applyMatchItems(sequence.ages.front().matchItems, startLocals);
+      if (failed(updated))
+        return failure();
+      if (sequence.ages.size() == 1)
+        reportSuccess();
+      else
+        storeLocals(1, *updated);
+      emitBranch(afterFirst);
+      setCurrent(afterFirst);
+      Value updatedState = nextState;
+      if (sequence.ages.size() > 1) {
+        Value nextMask = arith::ConstantOp::create(
+            builder, location, stateType, builder.getI64IntegerAttr(2));
+        Value started =
+            arith::SelectOp::create(builder, location, *first, nextMask, zero);
+        updatedState =
+            arith::OrIOp::create(builder, location, nextState, started);
+      }
+      cf::BranchOp::create(builder, location, afterStart,
+                           ValueRange{updatedState});
+    }
+    setCurrent(afterStart);
+    nextState = afterStart->getArgument(0);
+    if (stateStorage)
+      sim::SimRefStoreOp::create(builder, location, nextState, stateStorage);
+    cf::BranchOp::create(builder, location, wait);
+    return success();
   }
+
+  Block *wait = addBlock();
+  Block *sample = addBlock();
+  emitBranch(wait);
+  setCurrent(wait);
+  if (failed(emitEventSuspend(clock, sample)))
+    return failure();
+  // The clock occurrence samples in Preponed; bounded evaluation and monitor
+  // bookkeeping resume in Observed.
+  wait->getTerminator()->setAttr(
+      "resume_region", sim::EventRegionAttr::get(function.getContext(),
+                                                 sim::EventRegion::Observed));
+  setCurrent(sample);
+  Value state = zero;
+  if (stateStorage)
+    state =
+        sim::SimRefLoadOp::create(builder, location, stateType, stateStorage);
+
+  if (failed(cancelDisabledSample(wait)))
+    return failure();
 
   bool savedSampleAssertionValues = sampleAssertionValues;
   sampleAssertionValues = true;
@@ -905,7 +1318,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Value presentBits = arith::AndIOp::create(builder, location, state, mask);
     Value active = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::ne, presentBits, zero);
-    FailureOr<Value> matches = evaluateAge(sequence.ages[age]);
+    FailureOr<Value> matches = evaluateAge(sequence.ages[age].predicates);
     if (failed(matches))
       return failure();
     Value fails = arith::AndIOp::create(
@@ -937,7 +1350,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       return failure();
     return truthValue(*value, getSemanticLocation(antecedent));
   }()
-      : evaluateAge(sequence.ages.front());
+      : evaluateAge(sequence.ages.front().predicates);
   if (failed(starts))
     return failure();
 
@@ -957,7 +1370,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           arith::SelectOp::create(builder, location, *starts, firstMask, zero);
       nextState = arith::OrIOp::create(builder, location, nextState, started);
     } else {
-      FailureOr<Value> first = evaluateAge(sequence.ages.front());
+      FailureOr<Value> first = evaluateAge(sequence.ages.front().predicates);
       if (failed(first))
         return failure();
       Value matched = arith::AndIOp::create(builder, location, *starts, *first);
