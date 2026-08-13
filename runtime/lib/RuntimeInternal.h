@@ -1006,6 +1006,12 @@ struct obelisk_rt_context {
       managedElementTypes;
   std::unordered_map<uint64_t, std::unique_ptr<OwnedElementTypeDescriptor>>
       managedOwnedElementTypes;
+  // Object identities are monotonic for the lifetime of a managed heap.
+  // Each observed field/size selector therefore receives one stable scheduler
+  // token without retaining the object itself.
+  std::unordered_map<uint64_t, std::unordered_map<uint64_t, uint64_t>>
+      managedWatchTokens;
+  uint64_t nextManagedWatchToken = 1;
   uint64_t nextCoverageInstance = 1;
   std::unordered_map<uint64_t, CoverageTypeState> coverageTypes;
   std::unordered_map<uint64_t, CoverageInstanceState> coverageInstances;
@@ -1498,6 +1504,11 @@ bool obelisk_rt_notify_observer_event_unlocked(obelisk_rt_context *context,
 bool obelisk_rt_notify_observer_signal_unlocked(obelisk_rt_context *context,
                                                 uint64_t stableID,
                                                 uint64_t width);
+bool obelisk_rt_notify_observer_managed_unlocked(obelisk_rt_context *context,
+                                                 uint64_t token);
+void obelisk_rt_notify_managed_watch(obelisk_rt_object_v1 *object,
+                                     obelisk_rt_managed_watch_kind kind,
+                                     uint64_t selector);
 bool obelisk_rt_evaluate_design_observers_unlocked(obelisk_rt_context *context,
                                                    uint32_t dependencyKind,
                                                    uint64_t publishedHandle,

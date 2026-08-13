@@ -136,6 +136,8 @@ constexpr uint32_t kIntrinsicClassIsInstance =
 constexpr uint32_t kIntrinsicClassCast = OBELISK_RT_INTRINSIC_V1_CLASS_CAST;
 constexpr uint32_t kIntrinsicClassFieldRef =
     OBELISK_RT_INTRINSIC_V1_CLASS_FIELD_REF;
+constexpr uint32_t kIntrinsicManagedWatch =
+    OBELISK_RT_INTRINSIC_V1_MANAGED_WATCH;
 constexpr uint32_t kIntrinsicManagedLoad = OBELISK_RT_INTRINSIC_V1_MANAGED_LOAD;
 constexpr uint32_t kIntrinsicManagedStore =
     OBELISK_RT_INTRINSIC_V1_MANAGED_STORE;

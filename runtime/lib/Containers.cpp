@@ -390,6 +390,17 @@ obelisk_rt_status snapshotHeader(obelisk_rt_object_v1 *container,
   return status;
 }
 
+obelisk_rt_status finishContainerSizeMutation(
+    obelisk_rt_object_v1 *container, uint64_t oldSize,
+    obelisk_rt_status status) {
+  ContainerHeader snapshot;
+  if (snapshotHeader(container, snapshot) == OBELISK_RT_OK &&
+      snapshot.size != oldSize)
+    obelisk_rt_notify_managed_watch(
+        container, OBELISK_RT_MANAGED_WATCH_CONTAINER_SIZE, 0);
+  return status;
+}
+
 template <typename Access>
 obelisk_rt_status accessBuffer(obelisk_rt_object_v1 *buffer, Access &&access) {
   if (!buffer)
@@ -3034,7 +3045,7 @@ obelisk_rt_v1_dynamic_array_resize(obelisk_rt_gc_lane_v1 *lane,
   struct Resize {
     uint64_t size;
   } resize{newSize};
-  return obelisk_rt_managed_object_access(
+  status = obelisk_rt_managed_object_access(
       array, OBELISK_RT_MANAGED_CONTAINER,
       [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
         auto *resize = static_cast<Resize *>(opaque);
@@ -3067,6 +3078,7 @@ obelisk_rt_v1_dynamic_array_resize(obelisk_rt_gc_lane_v1 *lane,
         return OBELISK_RT_OK;
       },
       &resize);
+  return finishContainerSizeMutation(array, snapshot.size, status);
 }
 
 extern "C" obelisk_rt_status
@@ -3111,7 +3123,7 @@ obelisk_rt_v1_container_write(obelisk_rt_gc_lane_v1 *lane,
     const std::vector<uint8_t> *value;
     bool append;
   } write{index, &prepared, append};
-  return obelisk_rt_managed_object_access(
+  status = obelisk_rt_managed_object_access(
       container, OBELISK_RT_MANAGED_CONTAINER,
       [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
         auto *write = static_cast<Write *>(opaque);
@@ -3144,6 +3156,7 @@ obelisk_rt_v1_container_write(obelisk_rt_gc_lane_v1 *lane,
         return status;
       },
       &write);
+  return finishContainerSizeMutation(container, snapshot.size, status);
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_container_write_checked(
@@ -3177,7 +3190,11 @@ extern "C" obelisk_rt_status
 obelisk_rt_v1_container_delete(obelisk_rt_object_v1 *container) {
   if (!container)
     return OBELISK_RT_OK;
-  return obelisk_rt_managed_object_access(
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(container, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  status = obelisk_rt_managed_object_access(
       container, OBELISK_RT_MANAGED_CONTAINER,
       [](void *, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
         if (extent != sizeof(ContainerHeader))
@@ -3194,6 +3211,7 @@ obelisk_rt_v1_container_delete(obelisk_rt_object_v1 *container) {
         return OBELISK_RT_OK;
       },
       nullptr);
+  return finishContainerSizeMutation(container, snapshot.size, status);
 }
 
 static obelisk_rt_status queuePushImpl(obelisk_rt_gc_lane_v1 *lane,
@@ -3230,7 +3248,7 @@ static obelisk_rt_status queuePushImpl(obelisk_rt_gc_lane_v1 *lane,
     const std::vector<uint8_t> *value;
     uint32_t *inserted;
   } push{front, &prepared, outInserted};
-  return obelisk_rt_managed_object_access(
+  status = obelisk_rt_managed_object_access(
       queue, OBELISK_RT_MANAGED_CONTAINER,
       [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
         auto *push = static_cast<Push *>(opaque);
@@ -3269,6 +3287,7 @@ static obelisk_rt_status queuePushImpl(obelisk_rt_gc_lane_v1 *lane,
         return status;
       },
       &push);
+  return finishContainerSizeMutation(queue, snapshot.size, status);
 }
 
 extern "C" obelisk_rt_status
@@ -3359,7 +3378,7 @@ obelisk_rt_v1_queue_pop(obelisk_rt_object_v1 *queue, uint32_t front,
     void *unknown;
     uint32_t *present;
   } pop{front, outValue, outUnknown, outPresent};
-  return obelisk_rt_managed_object_access(
+  status = obelisk_rt_managed_object_access(
       queue, OBELISK_RT_MANAGED_CONTAINER,
       [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
         auto *pop = static_cast<Pop *>(opaque);
@@ -3396,6 +3415,7 @@ obelisk_rt_v1_queue_pop(obelisk_rt_object_v1 *queue, uint32_t front,
         return status;
       },
       &pop);
+  return finishContainerSizeMutation(queue, snapshot.size, status);
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_try_peek(
@@ -3526,7 +3546,7 @@ obelisk_rt_v1_queue_insert(obelisk_rt_gc_lane_v1 *lane,
     uint64_t index;
     const std::vector<uint8_t> *value;
   } insert{static_cast<uint64_t>(index), &prepared};
-  return obelisk_rt_managed_object_access(
+  status = obelisk_rt_managed_object_access(
       queue, OBELISK_RT_MANAGED_CONTAINER,
       [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
         auto *insert = static_cast<Insert *>(opaque);
@@ -3557,16 +3577,21 @@ obelisk_rt_v1_queue_insert(obelisk_rt_gc_lane_v1 *lane,
         return status;
       },
       &insert);
+  return finishContainerSizeMutation(queue, snapshot.size, status);
 }
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_queue_delete_index(obelisk_rt_object_v1 *queue, int64_t index) {
   if (index < 0)
     return OBELISK_RT_OK;
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(queue, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
   struct Delete {
     uint64_t index;
   } remove{static_cast<uint64_t>(index)};
-  return obelisk_rt_managed_object_access(
+  status = obelisk_rt_managed_object_access(
       queue, OBELISK_RT_MANAGED_CONTAINER,
       [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
         auto *remove = static_cast<Delete *>(opaque);
@@ -3599,6 +3624,7 @@ obelisk_rt_v1_queue_delete_index(obelisk_rt_object_v1 *queue, int64_t index) {
         return status;
       },
       &remove);
+  return finishContainerSizeMutation(queue, snapshot.size, status);
 }
 
 extern "C" obelisk_rt_status
@@ -3858,7 +3884,7 @@ obelisk_rt_v1_assoc_write(obelisk_rt_gc_lane_v1 *lane,
     NormalizedAssocKey key;
     std::vector<uint8_t> *candidate;
   } write{normalized, &candidate};
-  return obelisk_rt_managed_object_access(
+  status = obelisk_rt_managed_object_access(
       array, OBELISK_RT_MANAGED_CONTAINER,
       [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
         auto *write = static_cast<Write *>(opaque);
@@ -3900,6 +3926,7 @@ obelisk_rt_v1_assoc_write(obelisk_rt_gc_lane_v1 *lane,
         return status;
       },
       &write);
+  return finishContainerSizeMutation(array, snapshot.size, status);
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_assoc_write_checked(
@@ -4027,7 +4054,7 @@ obelisk_rt_v1_assoc_delete(obelisk_rt_object_v1 *array,
   struct Delete {
     NormalizedAssocKey key;
   } remove{normalized};
-  return obelisk_rt_managed_object_access(
+  status = obelisk_rt_managed_object_access(
       array, OBELISK_RT_MANAGED_CONTAINER,
       [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
         auto *remove = static_cast<Delete *>(opaque);
@@ -4074,6 +4101,7 @@ obelisk_rt_v1_assoc_delete(obelisk_rt_object_v1 *array,
         return status;
       },
       &remove);
+  return finishContainerSizeMutation(array, snapshot.size, status);
 }
 
 static int64_t signedAssocValue(uint64_t value, uint64_t width) {

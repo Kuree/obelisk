@@ -81,6 +81,7 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
         function.getContext(), storageType, parentType.getClassName());
     Value objectReference = sim::SimClassFieldRefOp::create(
         builder, location, objectReferenceType, thisObject, objectField);
+    recordManagedRead(objectReference, location);
     Value object = sim::SimManagedLoadOp::create(
         builder, location, storageType, objectReference);
     Value isNull = sim::SimManagedIsNullOp::create(
@@ -137,6 +138,7 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
             concreteType.getClassName());
         Value pathReference = sim::SimClassFieldRefOp::create(
             builder, location, pathReferenceType, object, pathField);
+        recordManagedRead(pathReference, location);
         Value nextObject = sim::SimManagedLoadOp::create(
             builder, location, pathStorageType, pathReference);
         Value pathNull = sim::SimManagedIsNullOp::create(
@@ -156,6 +158,7 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
         function.getContext(), *elementType, concreteType.getClassName());
     Value childReference = sim::SimClassFieldRefOp::create(
         builder, location, childReferenceType, object, childField);
+    recordManagedRead(childReference, location);
     Value value = sim::SimManagedLoadOp::create(
         builder, location, *elementType, childReference);
     cf::BranchOp::create(builder, location, resume, ValueRange{value});
@@ -179,6 +182,7 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
         builder, getSemanticLocation(op), referenceType, thisObject, field);
     if (lvalue)
       return reference;
+    recordManagedRead(reference, getSemanticLocation(op));
     return sim::SimManagedLoadOp::create(builder, getSemanticLocation(op),
                                          *elementType, reference)
         .getResult();

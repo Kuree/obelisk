@@ -85,6 +85,24 @@ Encoder::encodeManagedReferenceOperation(FunctionPlan &plan,
          emitU64Constant(plan, *width), emitU64Constant(plan, flags)},
         {});
   }
+  if (auto op = dyn_cast<sim::SimManagedWatchOp>(operation)) {
+    uint64_t runtimeKind;
+    switch (op.getKind()) {
+    case sim::ManagedWatchKind::Field:
+      runtimeKind = OBELISK_RT_MANAGED_WATCH_FIELD;
+      break;
+    case sim::ManagedWatchKind::ContainerSize:
+      runtimeKind = OBELISK_RT_MANAGED_WATCH_CONTAINER_SIZE;
+      break;
+    default:
+      op.emitOpError("has an unknown managed-watch kind");
+      return failure();
+    }
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicManagedWatch,
+        {reg(plan, op.getInput()), emitU64Constant(plan, runtimeKind)},
+        {reg(plan, op.getResult())});
+  }
   if (auto op = dyn_cast<sim::SimManagedLoadOp>(operation)) {
     FailureOr<ManagedValueStorage> storage =
         getManagedValueStorage(op.getResult().getType(), dataLayout);

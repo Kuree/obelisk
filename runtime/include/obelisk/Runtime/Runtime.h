@@ -432,7 +432,8 @@ enum {
   OBELISK_RT_OBSERVER_CAPTURE_STORAGE = 1,
   OBELISK_RT_OBSERVER_CAPTURE_NET = 2,
   OBELISK_RT_OBSERVER_CAPTURE_EVENT = 3,
-  OBELISK_RT_OBSERVER_CAPTURE_DRIVER = 4
+  OBELISK_RT_OBSERVER_CAPTURE_DRIVER = 4,
+  OBELISK_RT_OBSERVER_CAPTURE_MANAGED = 5
 };
 
 typedef struct obelisk_rt_observer_capture_abi_v1 {
@@ -847,6 +848,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_INDEX = UINT32_C(0x00010412),
   OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_PATH = UINT32_C(0x00010413),
   OBELISK_RT_INTRINSIC_V1_MANAGED_CANDIDATE_ROOT = UINT32_C(0x00010414),
+  OBELISK_RT_INTRINSIC_V1_MANAGED_WATCH = UINT32_C(0x00010415),
   OBELISK_RT_INTRINSIC_V1_STRING_LITERAL = UINT32_C(0x00010420),
   OBELISK_RT_INTRINSIC_V1_STRING_FROM_PACKED = UINT32_C(0x00010421),
   OBELISK_RT_INTRINSIC_V1_STRING_TO_PACKED = UINT32_C(0x00010422),
@@ -1429,7 +1431,8 @@ typedef struct obelisk_rt_computed_capture_v1 {
 typedef uint32_t obelisk_rt_observer_dependency_kind;
 enum {
   OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL = 1,
-  OBELISK_RT_OBSERVER_DEPENDENCY_EVENT = 2
+  OBELISK_RT_OBSERVER_DEPENDENCY_EVENT = 2,
+  OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED = 3
 };
 
 typedef struct obelisk_rt_computed_dependency_v1 {
@@ -1738,6 +1741,19 @@ obelisk_rt_v1_object_cast(obelisk_rt_object_v1 *object,
                           const obelisk_rt_class_descriptor_v1 *target,
                           obelisk_rt_object_v1 **out_object);
 uint64_t obelisk_rt_v1_object_id(const obelisk_rt_object_v1 *object);
+
+typedef uint32_t obelisk_rt_managed_watch_kind;
+enum {
+  OBELISK_RT_MANAGED_WATCH_FIELD = 1,
+  OBELISK_RT_MANAGED_WATCH_CONTAINER_SIZE = 2
+};
+
+// Return a scheduler-stable dependency token for one exact managed value.
+// `selector` is the byte offset for a field watch and is ignored for a
+// container-size watch. Null inputs produce token zero.
+uint64_t obelisk_rt_v1_managed_watch(obelisk_rt_object_v1 *object,
+                                     obelisk_rt_managed_watch_kind kind,
+                                     uint64_t selector);
 
 // Immutable, non-interned managed strings. Zero is the canonical empty string.
 // The view API uses caller scratch for SSO values; heap views remain valid

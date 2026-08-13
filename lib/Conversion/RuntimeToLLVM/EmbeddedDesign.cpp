@@ -267,6 +267,8 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
       uint32_t kind = 0;
       uint32_t captureWidth = 0;
       auto widthOf = [](Type element) -> uint32_t {
+        if (sim::isManagedHandleType(element))
+          return 64;
         if (auto floating = dyn_cast<FloatType>(element))
           return floating.getWidth();
         return sim::getPackedWidth(element).value_or(0);
@@ -282,6 +284,8 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
       else if (isa<sim::DriverType>(type))
         kind = 4,
         captureWidth = widthOf(cast<sim::DriverType>(type).getElementType());
+      else if (sim::isManagedHandleType(type))
+        kind = OBELISK_RT_OBSERVER_CAPTURE_MANAGED, captureWidth = 64;
       if (kind == 0 || captureWidth == 0) {
         function.emitError()
             << "observer capture #" << index - 1

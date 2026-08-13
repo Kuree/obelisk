@@ -1578,6 +1578,33 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                ? OBELISK_RT_OK
                : OBELISK_RT_INVALID_BYTECODE;
   }
+  case OBELISK_RT_INTRINSIC_V1_MANAGED_WATCH: {
+    std::optional<uint64_t> encodedKind = scalar(1);
+    if (!encodedKind)
+      return OBELISK_RT_INVALID_BYTECODE;
+    auto kind = static_cast<obelisk_rt_managed_watch_kind>(*encodedKind);
+    obelisk_rt_object_v1 *object = nullptr;
+    uint64_t selector = 0;
+    switch (kind) {
+    case OBELISK_RT_MANAGED_WATCH_FIELD:
+      if (!readManagedRef(inputRegister(0), object, selector))
+        return OBELISK_RT_INVALID_BYTECODE;
+      break;
+    case OBELISK_RT_MANAGED_WATCH_CONTAINER_SIZE: {
+      Layout input = layoutAt(image, frame.function, inputRegister(0));
+      if (input.kind != OBELISK_RT_DBREG_MANAGED || input.size != 8)
+        return OBELISK_RT_INVALID_BYTECODE;
+      std::memcpy(&object, frame.data + input.offset, sizeof(object));
+      break;
+    }
+    default:
+      return OBELISK_RT_INVALID_BYTECODE;
+    }
+    uint64_t token = obelisk_rt_v1_managed_watch(object, kind, selector);
+    return writeScalar(image, frame, outputRegister(0), token)
+               ? OBELISK_RT_OK
+               : OBELISK_RT_INVALID_BYTECODE;
+  }
   case OBELISK_RT_INTRINSIC_V1_MANAGED_LOAD: {
     obelisk_rt_object_v1 *object = nullptr;
     uint64_t offset = 0;

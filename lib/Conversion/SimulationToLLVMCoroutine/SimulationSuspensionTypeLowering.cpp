@@ -116,6 +116,11 @@ public:
     SmallVector<int32_t> dependencyKinds;
     SmallVector<int32_t> dependencyWidths;
     for (Value dependency : operation.getDependencies()) {
+      if (isa<sim::ManagedWatchType>(dependency.getType())) {
+        dependencyKinds.push_back(OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED);
+        dependencyWidths.push_back(1);
+        continue;
+      }
       if (isa<sim::EventType>(dependency.getType())) {
         dependencyKinds.push_back(OBELISK_RT_OBSERVER_DEPENDENCY_EVENT);
         dependencyWidths.push_back(1);

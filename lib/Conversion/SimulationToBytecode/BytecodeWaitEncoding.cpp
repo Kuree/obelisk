@@ -129,7 +129,11 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
       uint64_t entryOffset =
           dependenciesOffset + uint64_t{dependencyCursor} *
                                    sizeof(obelisk_rt_computed_dependency_v1);
-      if (auto event = dyn_cast<sim::EventType>(dependency.getType())) {
+      if (isa<sim::ManagedWatchType>(dependency.getType())) {
+        write32(bytes, entryOffset + 8,
+                OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED);
+        write32(bytes, entryOffset + 12, 1);
+      } else if (auto event = dyn_cast<sim::EventType>(dependency.getType())) {
         (void)event;
         write32(bytes, entryOffset + 8, OBELISK_RT_OBSERVER_DEPENDENCY_EVENT);
         write32(bytes, entryOffset + 12, 1);
@@ -189,13 +193,27 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
   dependencyCursor = 0;
   for (sim::SimObserverBindOp binding : bindings) {
     for (Value capture : binding.getCaptures()) {
+      uint32_t transferSize =
+          sim::isManagedHandleType(capture.getType())
+              ? static_cast<uint32_t>(sizeof(uint64_t))
+              : static_cast<uint32_t>(
+                    sizeof(obelisk_rt_computed_capture_v1));
       emitFrameTransfer(plan, StoreFrame, capture,
                         suspension->waitOffset + capturesOffset +
                             uint64_t{captureCursor++} *
                                 sizeof(obelisk_rt_computed_capture_v1),
-                        sizeof(obelisk_rt_computed_capture_v1));
+                        transferSize);
     }
     for (Value dependency : binding.getDependencies()) {
+      if (isa<sim::ManagedWatchType>(dependency.getType())) {
+        emitFrameTransfer(
+            plan, StoreFrame, dependency,
+            suspension->waitOffset + dependenciesOffset +
+                uint64_t{dependencyCursor++} *
+                    sizeof(obelisk_rt_computed_dependency_v1),
+            sizeof(uint64_t));
+        continue;
+      }
       uint32_t stableID =
           temporary(plan, IntegerType::get(operation.getContext(), 64));
       if (stableID == kInvalidRegister)

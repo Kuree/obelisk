@@ -1256,6 +1256,9 @@ ABI_FUNCTION(obelisk_rt_v1_object_cast,
                                    obelisk_rt_object_v1 **));
 ABI_FUNCTION(obelisk_rt_v1_object_id,
              uint64_t (*)(const obelisk_rt_object_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_managed_watch,
+             uint64_t (*)(obelisk_rt_object_v1 *,
+                          obelisk_rt_managed_watch_kind, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_string_create,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *, const char *,
                                    uint64_t, obelisk_rt_string_v1 *));

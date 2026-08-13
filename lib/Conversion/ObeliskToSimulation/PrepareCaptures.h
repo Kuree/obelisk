@@ -35,6 +35,8 @@ struct PreparedCaptures {
       constants;
   llvm::DenseMap<mlir::Operation *, mlir::SmallVector<PreparedLocal>>
       observerLocals;
+  llvm::DenseMap<mlir::Operation *, mlir::SmallVector<PreparedLocal>>
+      observerValues;
   llvm::DenseMap<mlir::Operation *, llvm::StringSet<>> observerReadLocals;
   llvm::DenseSet<mlir::Operation *> indirectRefTasks;
 };

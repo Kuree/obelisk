@@ -405,6 +405,8 @@ void declareNativeRuntimeABI(ModuleOp module) {
                            managedI32, {managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_id", managedI64,
                            {managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_managed_watch", managedI64,
+                           {managedPointer, managedI32, managedI64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_cast", managedI32,
                            {managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_method_invoke", managedI32,

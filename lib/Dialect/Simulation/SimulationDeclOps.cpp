@@ -473,6 +473,23 @@ LogicalResult SimClassFieldRefOp::verify() {
   return success();
 }
 
+LogicalResult SimManagedWatchOp::verify() {
+  Type input = getInput().getType();
+  switch (getKind()) {
+  case ManagedWatchKind::Field:
+    if (!isa<ManagedRefType>(input))
+      return emitOpError("field watches require a managed reference");
+    break;
+  case ManagedWatchKind::ContainerSize:
+    if (!isa<DynamicArrayType, QueueType, AssocArrayType>(input))
+      return emitOpError(
+          "container-size watches require a dynamic, queue, or associative "
+          "array handle");
+    break;
+  }
+  return success();
+}
+
 LogicalResult SimManagedLoadOp::verify() {
   if (getReference().getType().getElementType() != getResult().getType())
     return emitOpError("result type must match the referenced element");

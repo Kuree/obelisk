@@ -113,6 +113,14 @@ static semantic::SVClassTypeOp getOwningClass(Operation *member) {
   return {};
 }
 
+static semantic::SVSubroutineSymbolOp getOwningSubroutine(Operation *nested) {
+  for (Operation *parent = nested ? nested->getParentOp() : nullptr; parent;
+       parent = parent->getParentOp())
+    if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(parent))
+      return subroutine;
+  return {};
+}
+
 static bool isRandSequenceFormal(Operation *operation) {
   return isa_and_nonnull<semantic::SVFormalArgumentSymbolOp>(operation) &&
          operation
@@ -172,6 +180,25 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
     llvm::StringSet<> seenPaths;
     llvm::StringSet<> seenLocals;
     llvm::StringSet<> seenConstants;
+    if (unit.entryKind == sim::EntryKind::Observer) {
+      semantic::SVSubroutineSymbolOp subroutine =
+          getOwningSubroutine(unit.source);
+      semantic::SVClassTypeOp owner = getOwningClass(subroutine);
+      if (subroutine && owner &&
+          !subroutine.getIsStatic().value_or(false)) {
+        FailureOr<Type> type = getNormalizedSemanticType(owner);
+        std::optional<StringRef> path = subroutine.getThisVariablePath();
+        if (failed(type) || !path) {
+          emitError(getSemanticLocation(unit.source))
+              << "observer in an instance method has no resolved this "
+                 "binding";
+          invalid = true;
+        } else {
+          result.observerValues[unit.source].push_back(
+              {path->str(), *type, false, false});
+        }
+      }
+    }
     auto qualifiedAutomaticPath =
         [&](StringRef path, SymbolRefAttr reference,
             Operation *referencedSymbol) -> std::optional<std::string> {
@@ -672,6 +699,9 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
         [](const auto &lhs, const auto &rhs) { return lhs.path < rhs.path; });
     llvm::sort(
         result.observerLocals[unit.source],
+        [](const auto &lhs, const auto &rhs) { return lhs.path < rhs.path; });
+    llvm::sort(
+        result.observerValues[unit.source],
         [](const auto &lhs, const auto &rhs) { return lhs.path < rhs.path; });
   }
   return result;

@@ -184,6 +184,56 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @bad_field_watch {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "C.f"
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    obelisk_sim.func @f(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %this: !obelisk_sim.class_handle<@C>
+          {obelisk_sim.capture_kind = 1 : i32})
+        attributes {code_unit_id = 1 : i64, entry_kind = 8 : i32} {
+      // expected-error @below {{field watches require a managed reference}}
+      %watch = obelisk_sim.managed.watch field %this :
+        !obelisk_sim.class_handle<@C>
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @bad_container_size_watch {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "C.f"
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    obelisk_sim.class.field @C_value of @C at 0 offset 8 : i64 {
+      is_static = false, is_weak = false
+    }
+    obelisk_sim.func @f(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %this: !obelisk_sim.class_handle<@C>
+          {obelisk_sim.capture_kind = 1 : i32})
+        attributes {code_unit_id = 1 : i64, entry_kind = 8 : i32} {
+      %field = obelisk_sim.class.field_ref %this[@C_value] :
+        !obelisk_sim.class_handle<@C> ->
+        !obelisk_sim.managed_ref<i64, @C>
+      // expected-error @below {{container-size watches require a dynamic, queue, or associative array handle}}
+      %watch = obelisk_sim.managed.watch container_size %field :
+        !obelisk_sim.managed_ref<i64, @C>
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @bad_virtual_signature {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 function hierarchy "C.f"

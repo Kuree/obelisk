@@ -645,6 +645,11 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && managed(input(0)) &&
            twoStateBits(input(1), 64) && managedRef(output(0));
+  case OBELISK_RT_INTRINSIC_V1_MANAGED_WATCH:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 1 &&
+           (managedRef(input(0)) || managed(input(0))) &&
+           twoStateBits(input(1), 64) && twoStateBits(output(0), 64);
   case OBELISK_RT_INTRINSIC_V1_MANAGED_LOAD:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && managedRef(input(0)) &&

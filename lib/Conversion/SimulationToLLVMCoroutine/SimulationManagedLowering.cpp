@@ -302,6 +302,50 @@ public:
   }
 };
 
+class ManagedWatchConversion final
+    : public OpConversionPattern<sim::SimManagedWatchOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimManagedWatchOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    ValueRange input = adaptor.getInput();
+    Value object;
+    Value selector;
+    uint32_t runtimeKind;
+    switch (op.getKind()) {
+    case sim::ManagedWatchKind::Field:
+      if (input.size() != 2)
+        return failure();
+      object = input[0];
+      selector = input[1];
+      runtimeKind = OBELISK_RT_MANAGED_WATCH_FIELD;
+      break;
+    case sim::ManagedWatchKind::ContainerSize:
+      if (input.size() != 1)
+        return failure();
+      object = input[0];
+      selector = llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(), 0);
+      runtimeKind = OBELISK_RT_MANAGED_WATCH_CONTAINER_SIZE;
+      break;
+    default:
+      return rewriter.notifyMatchFailure(op, "unknown managed-watch kind");
+    }
+    Value kind = llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
+                              runtimeKind);
+    rewriter.replaceOp(
+        op,
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI64Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_managed_watch"),
+            ValueRange{managedObjectPointer(rewriter, op.getLoc(), object),
+                       kind, selector})
+            .getResults());
+    return success();
+  }
+};
+
 class ClassRootBindConversion final
     : public OpConversionPattern<sim::SimClassRootBindOp> {
 public:
@@ -840,7 +884,7 @@ void populateManagedToLLVMConversionPatterns(RewritePatternSet &patterns,
       EventNullConversion,
       ClassAllocConversion, ClassCopyConversion,
       ClassIsInstanceConversion, ClassIdConversion, ClassCastConversion,
-      ClassFieldRefConversion, ClassRootBindConversion,
+      ClassFieldRefConversion, ManagedWatchConversion, ClassRootBindConversion,
       ManagedObjectOutputConversion<sim::SimWeakCreateOp>,
       ManagedObjectOutputConversion<sim::SimWeakGetOp>, WeakClearConversion,
       GCSafepointConversion>(converter, context);

@@ -195,7 +195,8 @@ bool obelisk_rt_evaluate_design_observers_unlocked(obelisk_rt_context *context,
             dependencies[primary.dependency_begin + dependencyIndex];
         if (dependency.kind != dependencyKind)
           continue;
-        if (dependencyKind == OBELISK_RT_OBSERVER_DEPENDENCY_EVENT
+        if (dependencyKind == OBELISK_RT_OBSERVER_DEPENDENCY_EVENT ||
+            dependencyKind == OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED
                 ? dependency.stable_id == publishedHandle
                 : rangesOverlap(dependency.stable_id, dependency.width,
                                 publishedHandle, publishedWidth))

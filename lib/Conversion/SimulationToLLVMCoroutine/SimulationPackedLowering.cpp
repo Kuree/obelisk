@@ -191,6 +191,7 @@ LogicalResult lowerPackedSimulationOperations(
   packedConverter.addConversion([context](Type type) -> std::optional<Type> {
     if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
             sim::ProcessType, sim::ControlType, sim::ObserverType,
+            sim::ManagedWatchType,
             sim::CovergroupHandleType, sim::VirtualInterfaceType,
             sim::ChandleType>(type))
       return IntegerType::get(context, 64);
@@ -390,7 +391,8 @@ LogicalResult lowerPackedSimulationOperations(
       sim::SimFileErrorStringOp, sim::SimTimeFormatOp, sim::SimPlusargTestOp,
       sim::SimPlusargValueOp, sim::SimClassAllocOp, sim::SimClassCopyOp,
       sim::SimClassIsInstanceOp, sim::SimClassIdOp, sim::SimClassCastOp,
-      sim::SimClassFieldRefOp, sim::SimClassRootBindOp, sim::SimManagedLoadOp,
+      sim::SimClassFieldRefOp, sim::SimManagedWatchOp,
+      sim::SimClassRootBindOp, sim::SimManagedLoadOp,
       sim::SimManagedStoreOp, sim::SimManagedNBAEnqueueOp,
       sim::SimReferencePathNBAEnqueueOp, sim::SimArgumentRefFromRefOp,
       sim::SimArgumentRefFromManagedOp, sim::SimReferencePathIndexOp,

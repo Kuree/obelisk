@@ -172,10 +172,52 @@ void obelisk_rt_enumerate_design_managed_roots(
           entries[0].stable_id);
       visit(visitorEnvironment, &semaphore);
     };
+    auto visitComputedWait = [&](uint32_t suspendKind,
+                                 const obelisk_rt_wait_record_v1 *record,
+                                 uint64_t available) {
+      if (suspendKind != OBELISK_RT_SUSPEND_OBSERVER || !record ||
+          !context->execution)
+        return;
+      const auto *wait =
+          reinterpret_cast<const obelisk_rt_computed_wait_record_v1 *>(record);
+      if (!obelisk_rt_validate_computed_wait_record(context->execution, wait,
+                                                    available))
+        return;
+      const auto *observers =
+          obelisk::process::computedWaitSpan<obelisk_rt_computed_observer_v1>(
+              wait, wait->observers_offset, wait->observer_count);
+      const auto *captures =
+          obelisk::process::computedWaitSpan<obelisk_rt_computed_capture_v1>(
+              wait, wait->captures_offset, wait->capture_count);
+      if (!observers || !captures)
+        return;
+      for (uint32_t observerIndex = 0;
+           observerIndex != wait->observer_count; ++observerIndex) {
+        const obelisk_rt_computed_observer_v1 &observer =
+            observers[observerIndex];
+        const obelisk_rt_observer_descriptor_v1 *descriptor =
+            obelisk::process::findObserverDescriptor(
+                context->execution, observer.code_unit_id);
+        if (!descriptor)
+          continue;
+        for (uint32_t captureIndex = 0;
+             captureIndex != observer.capture_count; ++captureIndex) {
+          if (descriptor->capture_abi[captureIndex].kind !=
+              OBELISK_RT_OBSERVER_CAPTURE_MANAGED)
+            continue;
+          auto *object = reinterpret_cast<obelisk_rt_object_v1 *>(
+              captures[observer.capture_begin + captureIndex].stable_id);
+          visit(visitorEnvironment, &object);
+        }
+      }
+    };
     for (const ScheduledProcess &process : context->scheduledProcesses)
-      if (process.instance)
-        visitSemaphoreWait(process.suspendKind,
-                           obelisk::process::currentWait(process));
+      if (process.instance) {
+        const obelisk_rt_wait_record_v1 *wait =
+            obelisk::process::currentWait(process);
+        visitSemaphoreWait(process.suspendKind, wait);
+        visitComputedWait(process.suspendKind, wait, process.waitSize);
+      }
     for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
       if (task.terminated ||
           task.waitSize < sizeof(obelisk_rt_wait_record_v1) ||
@@ -185,6 +227,7 @@ void obelisk_rt_enumerate_design_managed_roots(
       const auto *wait = reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
           task.frame.data() + task.waitOffset);
       visitSemaphoreWait(task.suspendKind, wait);
+      visitComputedWait(task.suspendKind, wait, task.waitSize);
     }
     for (ScheduledNBA &update : context->scheduledNBAs)
       if (update.managedValue)

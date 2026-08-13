@@ -189,6 +189,8 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
       return emitError(location) << "size does not accept arguments or a "
                                     "with clause",
              failure();
+    if (!fixedArray)
+      recordContainerSizeRead(*receiver, location);
     Value size = fixedArray
                      ? Value(arith::ConstantOp::create(
                            builder, location, builder.getI64Type(),
@@ -1328,6 +1330,7 @@ UnitLowering::lowerAssociativeArrayMethod(semantic::SVCallExpressionOp op) {
     FailureOr<Value> receiver = receiverValue();
     if (failed(receiver))
       return failure();
+    recordContainerSizeRead(*receiver, location);
     Value size = sim::SimContainerSizeOp::create(
         builder, location, builder.getI64Type(), *receiver);
     return result(size);

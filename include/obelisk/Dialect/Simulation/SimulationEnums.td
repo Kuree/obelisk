@@ -47,6 +47,17 @@ def SimNativeSchedulerMode
   let cppNamespace = "::obelisk::sim";
 }
 
+def SimManagedWatchField
+    : I32EnumAttrCase<"Field", 1, "field">;
+def SimManagedWatchContainerSize
+    : I32EnumAttrCase<"ContainerSize", 2, "container_size">;
+def SimManagedWatchKind
+    : I32EnumAttr<"ManagedWatchKind", "managed mutation dependency", [
+        SimManagedWatchField, SimManagedWatchContainerSize
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 // IEEE 1800-2023 event regions in their normative scheduling order. These
 // remain distinct from ComputeRegionKind: the latter is a coarse graph
 // partition and is not an executable scheduler queue.

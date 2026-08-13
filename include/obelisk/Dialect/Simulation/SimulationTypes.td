@@ -139,6 +139,11 @@ def SimEventType : SimType<"Event"> {
   let summary = "opaque scheduler event handle";
 }
 
+def SimManagedWatchType : SimType<"ManagedWatch"> {
+  let mnemonic = "managed_watch";
+  let summary = "stable runtime token for one managed mutation dependency";
+}
+
 def SimProcessType : SimType<"Process"> {
   let mnemonic = "process";
   let summary = "opaque scheduler process handle";

@@ -437,6 +437,8 @@ LogicalResult SimObserverBindOp::verify() {
   for (Value capture : getCaptures()) {
     Type type = capture.getType();
     Type element;
+    if (isManagedHandleType(type))
+      continue;
     if (auto reference = dyn_cast<RefType>(type))
       element = reference.getElementType();
     else if (auto net = dyn_cast<NetType>(type))
@@ -447,15 +449,20 @@ LogicalResult SimObserverBindOp::verify() {
       continue;
     else
       return emitOpError(
-          "captures must use storage, net, driver, or named-event handles");
-    if (!isa<FloatType>(element) && !getPackedWidth(element))
+          "captures must use storage, net, driver, named-event, or managed "
+          "handles");
+    if (!isManagedHandleType(element) && !isa<FloatType>(element) &&
+        !getPackedWidth(element))
       return emitOpError(
-          "captured handles must refer to packed or floating values");
+          "captured handles must refer to packed, floating, or managed "
+          "values");
   }
   for (Value dependency : getDependencies())
-    if (!isa<RefType, NetType, EventType>(dependency.getType()))
+    if (!isa<RefType, NetType, EventType, ManagedWatchType>(
+            dependency.getType()))
       return emitOpError(
-          "dependencies must be storage, net, or named-event handles");
+          "dependencies must be storage, net, named-event, or managed-watch "
+          "handles");
   if ((*this)->hasAttr("obelisk_sim.event_primary")) {
     auto observer = cast<ObserverType>(getResult().getType());
     auto integer = dyn_cast<IntegerType>(observer.getResultType());

@@ -1881,7 +1881,7 @@ module {
     }
     obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
       %value = arith.constant 0 : i8
-      // expected-error @+1 {{dependencies must be storage, net, or named-event handles}}
+      // expected-error @+1 {{dependencies must be storage, net, named-event, or managed-watch handles}}
       %bound = obelisk_sim.observer.bind @evaluator values(%value : i8) captures 0 : !obelisk_sim.observer<i1>
       obelisk_sim.return
     }
@@ -1999,7 +1999,7 @@ module {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
       %scalar = arith.constant 0 : i8
-      // expected-error @+1 {{captures must use storage, net, driver, or named-event handles}}
+      // expected-error @+1 {{captures must use storage, net, driver, named-event, or managed handles}}
       %bound = obelisk_sim.observer.bind @evaluator values(%scalar : i8) captures 1 : !obelisk_sim.observer<i1>
       obelisk_sim.return
     }

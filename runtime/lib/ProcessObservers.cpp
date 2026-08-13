@@ -215,7 +215,8 @@ bool evaluateNativeComputedWaiters(obelisk_rt_context *context,
             dependencies[primary.dependency_begin + dependencyIndex];
         if (dependency.kind != dependencyKind)
           continue;
-        if (dependencyKind == OBELISK_RT_OBSERVER_DEPENDENCY_EVENT
+        if (dependencyKind == OBELISK_RT_OBSERVER_DEPENDENCY_EVENT ||
+            dependencyKind == OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED
                 ? dependency.stable_id == publishedHandle
                 : rangesOverlap(dependency.stable_id, dependency.width,
                                 publishedHandle, publishedWidth))
@@ -372,4 +373,12 @@ bool obelisk_rt_notify_observer_signal_unlocked(obelisk_rt_context *context,
              context, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, stableID, width) &&
          obelisk_rt_evaluate_design_observers_unlocked(
              context, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, stableID, width);
+}
+
+bool obelisk_rt_notify_observer_managed_unlocked(obelisk_rt_context *context,
+                                                 uint64_t token) {
+  return evaluateNativeComputedWaiters(
+             context, OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED, token, 1) &&
+         obelisk_rt_evaluate_design_observers_unlocked(
+             context, OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED, token, 1);
 }

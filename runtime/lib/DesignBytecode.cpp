@@ -2560,12 +2560,18 @@ obelisk_rt_status obelisk_rt_execute_design_observer(
       std::lock_guard<std::recursive_mutex> captureLock(context->mutex);
       for (uint32_t index = 0; index != captureCount; ++index) {
         Layout layout = layoutAt(image, function, index + 1);
-        if (layout.kind != OBELISK_RT_DBREG_HANDLE || layout.size != 32)
-          return OBELISK_RT_INVALID_BYTECODE;
         uint8_t *address = frame.data + layout.offset;
         uint64_t stable = captures[index].stable_id;
         const obelisk_rt_observer_capture_abi_v1 &abi =
             descriptor->capture_abi[index];
+        if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_MANAGED) {
+          if (layout.kind != OBELISK_RT_DBREG_MANAGED || layout.size != 8)
+            return OBELISK_RT_INVALID_BYTECODE;
+          std::memcpy(address, &stable, sizeof(stable));
+          continue;
+        }
+        if (layout.kind != OBELISK_RT_DBREG_HANDLE || layout.size != 32)
+          return OBELISK_RT_INVALID_BYTECODE;
         uint32_t kind = abi.kind == OBELISK_RT_OBSERVER_CAPTURE_STORAGE
                             ? OBELISK_RT_DESCRIPTOR_STORAGE
                         : abi.kind == OBELISK_RT_OBSERVER_CAPTURE_NET

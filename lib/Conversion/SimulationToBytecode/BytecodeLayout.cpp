@@ -42,7 +42,7 @@ FailureOr<Layout> getLayout(Type type) {
   } else if (auto logic = dyn_cast<sim::LogicType>(type)) {
     layout.kind = Logic;
     layout.width = logic.getWidth();
-  } else if (isa<sim::TimeType, sim::ProcessType,
+  } else if (isa<sim::TimeType, sim::ProcessType, sim::ManagedWatchType,
                  sim::CovergroupHandleType, sim::VirtualInterfaceType,
                  sim::ChandleType>(type)) {
     layout.kind = Bits;

@@ -322,8 +322,13 @@ private:
   ::mlir::LogicalResult lowerWait(semantic::SVWaitStatementOp op);
   ::mlir::LogicalResult
   lowerEventTrigger(semantic::SVEventTriggerStatementOp op);
-  ::mlir::FailureOr<::mlir::Value> bindObserver(::mlir::Operation *expression);
+  ::mlir::FailureOr<::mlir::Value>
+  bindObserver(::mlir::Operation *expression,
+               ::mlir::ValueRange dynamicDependencies = {});
   void recordSensitivity(::mlir::Value value);
+  void recordManagedRead(::mlir::Value reference, ::mlir::Location location);
+  void recordContainerSizeRead(::mlir::Value container,
+                               ::mlir::Location location);
 
   ::mlir::FailureOr<::mlir::Value>
   convert(::mlir::Value value, ::mlir::Type targetType, bool sourceSigned,

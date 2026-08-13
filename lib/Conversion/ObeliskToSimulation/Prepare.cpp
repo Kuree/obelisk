@@ -4898,6 +4898,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   auto &unitLocals = preparedCaptures->locals;
   auto &unitConstants = preparedCaptures->constants;
   auto &observerLocalCaptures = preparedCaptures->observerLocals;
+  auto &observerValueCaptures = preparedCaptures->observerValues;
   auto &observerReadLocals = preparedCaptures->observerReadLocals;
   auto &indirectRefTasks = preparedCaptures->indirectRefTasks;
 
@@ -4916,6 +4917,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (observerReadLocals[unit.source].contains(local.path))
         dependencies.push_back(builder.getStringAttr(local.path));
     }
+    for (const PreparedLocal &value : observerValueCaptures[unit.source])
+      captures.push_back(builder.getStringAttr(value.path));
     unit.source->setAttr("obelisk_sim.observer_captures",
                          builder.getArrayAttr(captures));
     unit.source->setAttr("obelisk_sim.observer_dependencies",
@@ -5242,10 +5245,12 @@ void ObeliskSimPreparePass::runOnOperation() {
     auto locals = unitLocals.lookup(unit.source);
     auto constants = unitConstants.lookup(unit.source);
     auto observerLocals = observerLocalCaptures.lookup(unit.source);
+    auto observerValues = observerValueCaptures.lookup(unit.source);
     SmallVector<Type> copyOutResultTypes;
     bool instanceClassMethod = false;
     Type classThisType;
     StringRef classThisPath;
+    std::optional<unsigned> observerThisArgument;
     if (auto subroutine =
             dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source)) {
       auto owner = getOwningClass(subroutine);
@@ -5372,6 +5377,15 @@ void ObeliskSimPreparePass::runOnOperation() {
       bindings.push_back(sim::ArgumentBindingAttr::get(
           context, builder.getStringAttr(local.path), argument,
           sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{}));
+    }
+    for (const PreparedLocal &value : observerValues) {
+      unsigned argument = inputs.size();
+      inputs.push_back(value.type);
+      argAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Value));
+      bindings.push_back(sim::ArgumentBindingAttr::get(
+          context, builder.getStringAttr(value.path), argument,
+          sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{}));
+      observerThisArgument = argument;
     }
 
     // Subroutine formals precede non-local captures in the public contract.
@@ -5650,6 +5664,10 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (instanceClassMethod)
       functionAttrs.push_back(builder.getNamedAttr(
           "obelisk_sim.this_argument", builder.getI32IntegerAttr(1)));
+    else if (observerThisArgument)
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.this_argument",
+          builder.getI32IntegerAttr(*observerThisArgument)));
     if (isVoidFunction)
       functionAttrs.push_back(builder.getNamedAttr("obelisk_sim.void_function",
                                                    builder.getUnitAttr()));

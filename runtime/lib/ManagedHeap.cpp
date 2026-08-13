@@ -2318,8 +2318,16 @@ obelisk_rt_v1_object_write(obelisk_rt_object_v1 *object, uint64_t offset,
                                  static_cast<const uint8_t *>(data),
                                  metadata->heap))
     return OBELISK_RT_INVALID_ARGUMENT;
-  ObjectLock lock(metadata);
-  std::memcpy(reinterpret_cast<uint8_t *>(object) + offset, data, size);
+  bool changed = false;
+  {
+    ObjectLock lock(metadata);
+    uint8_t *destination = reinterpret_cast<uint8_t *>(object) + offset;
+    changed = size != 0 && std::memcmp(destination, data, size) != 0;
+    std::memcpy(destination, data, size);
+  }
+  if (changed)
+    obelisk_rt_notify_managed_watch(object, OBELISK_RT_MANAGED_WATCH_FIELD,
+                                    offset);
   return OBELISK_RT_OK;
 }
 
@@ -2356,10 +2364,18 @@ obelisk_rt_v1_object_write_planes(obelisk_rt_object_v1 *object, uint64_t offset,
           metadata->descriptor->layout, 0, offset + planeSize, planeSize,
           static_cast<const uint8_t *>(unknown), metadata->heap))
     return OBELISK_RT_INVALID_ARGUMENT;
-  ObjectLock lock(metadata);
-  uint8_t *destination = reinterpret_cast<uint8_t *>(object) + offset;
-  std::memcpy(destination, value, planeSize);
-  std::memcpy(destination + planeSize, unknown, planeSize);
+  bool changed = false;
+  {
+    ObjectLock lock(metadata);
+    uint8_t *destination = reinterpret_cast<uint8_t *>(object) + offset;
+    changed = std::memcmp(destination, value, planeSize) != 0 ||
+              std::memcmp(destination + planeSize, unknown, planeSize) != 0;
+    std::memcpy(destination, value, planeSize);
+    std::memcpy(destination + planeSize, unknown, planeSize);
+  }
+  if (changed)
+    obelisk_rt_notify_managed_watch(object, OBELISK_RT_MANAGED_WATCH_FIELD,
+                                    offset);
   return OBELISK_RT_OK;
 }
 
@@ -2395,9 +2411,16 @@ obelisk_rt_v1_object_field_store(obelisk_rt_object_v1 *object, uint64_t offset,
     if (!valueMetadata || valueMetadata->heap != metadata->heap)
       return OBELISK_RT_INVALID_HANDLE;
   }
-  ObjectLock lock(metadata);
-  std::memcpy(reinterpret_cast<uint8_t *>(object) + offset, &value,
-              sizeof(value));
+  bool changed = false;
+  {
+    ObjectLock lock(metadata);
+    uint8_t *destination = reinterpret_cast<uint8_t *>(object) + offset;
+    changed = std::memcmp(destination, &value, sizeof(value)) != 0;
+    std::memcpy(destination, &value, sizeof(value));
+  }
+  if (changed)
+    obelisk_rt_notify_managed_watch(object, OBELISK_RT_MANAGED_WATCH_FIELD,
+                                    offset);
   return OBELISK_RT_OK;
 }
 
@@ -2559,13 +2582,27 @@ obelisk_rt_apply_managed_nba(obelisk_rt_context *context,
                        update.unknown.empty() ? nullptr : update.unknown.data())
                  : OBELISK_RT_INVALID_LIFECYCLE;
   } else {
-    ObjectLock lock(destination);
-    uint8_t *base = reinterpret_cast<uint8_t *>(update.destination);
-    std::memcpy(base + update.offset, update.value.data(),
-                static_cast<size_t>(update.planeSize));
-    if (!update.unknown.empty())
-      std::memcpy(base + update.offset + update.planeSize,
-                  update.unknown.data(), static_cast<size_t>(update.planeSize));
+    bool changed = false;
+    {
+      ObjectLock lock(destination);
+      uint8_t *base = reinterpret_cast<uint8_t *>(update.destination);
+      changed = std::memcmp(base + update.offset, update.value.data(),
+                            static_cast<size_t>(update.planeSize)) != 0;
+      if (!update.unknown.empty())
+        changed |=
+            std::memcmp(base + update.offset + update.planeSize,
+                        update.unknown.data(),
+                        static_cast<size_t>(update.planeSize)) != 0;
+      std::memcpy(base + update.offset, update.value.data(),
+                  static_cast<size_t>(update.planeSize));
+      if (!update.unknown.empty())
+        std::memcpy(base + update.offset + update.planeSize,
+                    update.unknown.data(),
+                    static_cast<size_t>(update.planeSize));
+    }
+    if (changed)
+      obelisk_rt_notify_managed_watch(
+          update.destination, OBELISK_RT_MANAGED_WATCH_FIELD, update.offset);
   }
 
   for (obelisk_rt_object_v1 *managedValue : update.managedValues) {
@@ -2622,6 +2659,63 @@ extern "C" uint64_t
 obelisk_rt_v1_object_id(const obelisk_rt_object_v1 *object) {
   ObjectMetadata *metadata = metadataFor(object);
   return metadata ? metadata->identity : 0;
+}
+
+namespace {
+
+std::optional<uint64_t>
+managedWatchSelector(obelisk_rt_managed_watch_kind kind, uint64_t selector) {
+  if (kind == OBELISK_RT_MANAGED_WATCH_FIELD)
+    return selector;
+  if (kind == OBELISK_RT_MANAGED_WATCH_CONTAINER_SIZE)
+    return UINT64_MAX;
+  return std::nullopt;
+}
+
+} // namespace
+
+extern "C" uint64_t
+obelisk_rt_v1_managed_watch(obelisk_rt_object_v1 *object,
+                            obelisk_rt_managed_watch_kind kind,
+                            uint64_t selector) {
+  ObjectMetadata *metadata = metadataFor(object);
+  std::optional<uint64_t> key = managedWatchSelector(kind, selector);
+  if (!metadata || !metadata->heap || !key)
+    return 0;
+  obelisk_rt_context *context = metadata->heap->ownerContext();
+  if (!context || metadata->identity == 0)
+    return 0;
+  std::lock_guard<std::recursive_mutex> lock(context->mutex);
+  auto &token = context->managedWatchTokens[metadata->identity][*key];
+  if (token != 0)
+    return token;
+  if (context->nextManagedWatchToken == 0)
+    return 0;
+  token = context->nextManagedWatchToken++;
+  return token;
+}
+
+void obelisk_rt_notify_managed_watch(obelisk_rt_object_v1 *object,
+                                     obelisk_rt_managed_watch_kind kind,
+                                     uint64_t selector) {
+  ObjectMetadata *metadata = metadataFor(object);
+  std::optional<uint64_t> key = managedWatchSelector(kind, selector);
+  if (!metadata || !metadata->heap || !key || metadata->identity == 0)
+    return;
+  obelisk_rt_context *context = metadata->heap->ownerContext();
+  if (!context)
+    return;
+  std::lock_guard<std::recursive_mutex> transaction(context->transactionMutex);
+  std::lock_guard<std::recursive_mutex> lock(context->mutex);
+  auto objectWatch = context->managedWatchTokens.find(metadata->identity);
+  if (objectWatch == context->managedWatchTokens.end())
+    return;
+  auto watched = objectWatch->second.find(*key);
+  if (watched == objectWatch->second.end() || watched->second == 0)
+    return;
+  if (!obelisk_rt_notify_observer_managed_unlocked(context, watched->second) &&
+      context->schedulerStatus == OBELISK_RT_OK)
+    context->schedulerStatus = OBELISK_RT_INVALID_ARGUMENT;
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_method_resolve(

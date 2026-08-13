@@ -4,10 +4,12 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/Dominance.h"
 
 #include "llvm/ADT/SetVector.h"
 
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <optional>
 
@@ -582,6 +584,79 @@ LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
   FailureOr<Value> condition = truthValue(*conditionValue, location);
   if (failed(condition))
     return failure();
+
+  // Short-circuit operators can place a managed read in a block which does
+  // not dominate the suspension block.  Materialize each managed dependency
+  // from the post-evaluation state at the condition merge.  Besides producing
+  // valid SSA, this is required for expressions whose evaluation changes a
+  // container-valued field: the waiter must observe the container which is
+  // current when it actually suspends.
+  DominanceInfo dominance(function);
+  auto dominatesCurrent = [&](Value value) {
+    Block *definition = value.getParentBlock();
+    return definition == current || dominance.dominates(definition, current);
+  };
+  std::function<FailureOr<Value>(Value)> rematerializeManagedInput =
+      [&](Value value) -> FailureOr<Value> {
+    if (auto field = value.getDefiningOp<sim::SimClassFieldRefOp>()) {
+      FailureOr<Value> object = rematerializeManagedInput(field.getObject());
+      if (failed(object))
+        return failure();
+      return sim::SimClassFieldRefOp::create(
+                 builder, field.getLoc(), field.getResult().getType(), *object,
+                 field.getFieldAttr())
+          .getResult();
+    }
+    if (auto load = value.getDefiningOp<sim::SimManagedLoadOp>()) {
+      FailureOr<Value> reference =
+          rematerializeManagedInput(load.getReference());
+      if (failed(reference))
+        return failure();
+      return sim::SimManagedLoadOp::create(builder, load.getLoc(),
+                                           load.getResult().getType(),
+                                           *reference)
+          .getResult();
+    }
+    if (auto load = value.getDefiningOp<sim::SimRefLoadOp>()) {
+      FailureOr<Value> input =
+          rematerializeManagedInput(load.getReference());
+      if (failed(input))
+        return failure();
+      return sim::SimRefLoadOp::create(builder, load.getLoc(),
+                                       load.getResult().getType(), *input)
+          .getResult();
+    }
+    if (auto cast = value.getDefiningOp<sim::SimClassCastOp>()) {
+      FailureOr<Value> object = rematerializeManagedInput(cast.getObject());
+      if (failed(object))
+        return failure();
+      return sim::SimClassCastOp::create(builder, cast.getLoc(),
+                                         cast.getResult().getType(), *object)
+          .getResult();
+    }
+    if (dominatesCurrent(value))
+      return value;
+    emitError(location)
+        << "managed wait dependency cannot be materialized at the stable "
+           "condition point from "
+        << value.getType();
+    return failure();
+  };
+  SmallVector<Value> stableDependencies;
+  stableDependencies.reserve(dependencies.size());
+  for (Value dependency : dependencies) {
+    auto watch = dependency.getDefiningOp<sim::SimManagedWatchOp>();
+    if (!watch) {
+      stableDependencies.push_back(dependency);
+      continue;
+    }
+    FailureOr<Value> input = rematerializeManagedInput(watch.getInput());
+    if (failed(input))
+      return failure();
+    stableDependencies.push_back(sim::SimManagedWatchOp::create(
+        builder, watch.getLoc(), watch.getResult().getType(), *input,
+        watch.getKind()));
+  }
   if (dependencies.empty()) {
     std::optional<bool> truth = foldConstantTruth(*condition);
     if (!truth) {
@@ -600,7 +675,9 @@ LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
     setCurrent(bodyBlock);
     return lowerStatement(children[1]);
   }
-  if (dependencies.size() != 1 || !isAddressableExpression(children[0])) {
+  if (stableDependencies.size() != 1 ||
+      isa<sim::ManagedWatchType>(stableDependencies.front().getType()) ||
+      !isAddressableExpression(children[0])) {
     if (!children[0]->hasAttr("obelisk_sim.observer")) {
       unsupported(op) << " (computed wait condition requires an observer)";
       return failure();
@@ -608,7 +685,12 @@ LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
     cf::CondBranchOp::create(builder, location, *condition, bodyBlock,
                              ValueRange{}, suspendBlock, ValueRange{});
     setCurrent(suspendBlock);
-    FailureOr<Value> observer = bindObserver(children[0]);
+    SmallVector<Value> managedDependencies;
+    for (Value dependency : stableDependencies)
+      if (isa<sim::ManagedWatchType>(dependency.getType()))
+        managedDependencies.push_back(dependency);
+    FailureOr<Value> observer =
+        bindObserver(children[0], managedDependencies);
     if (failed(observer))
       return failure();
     SmallVector<Value> values{*observer, *condition};

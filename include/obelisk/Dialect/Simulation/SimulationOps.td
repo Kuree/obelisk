@@ -1064,6 +1064,23 @@ def SimManagedStoreOp : SimOp<"managed.store", [
   let hasVerifier = 1;
 }
 
+def SimManagedWatchOp : SimOp<"managed.watch", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemRead<SimSchedulerResource>]>
+  ]> {
+  let summary = "materialize a precise managed mutation dependency";
+  let description = [{
+    A field watch is formed from a managed reference and changes only when the
+    selected field value changes. A container-size watch is formed from a
+    dynamic array, queue, or associative array and changes only when its size
+    changes. The stable token is scheduler-owned and contains no managed
+    pointer.
+  }];
+  let arguments = (ins AnyType:$input, SimManagedWatchKind:$kind);
+  let results = (outs SimManagedWatchType:$result);
+  let assemblyFormat = [{$kind $input attr-dict `:` type($input)}];
+  let hasVerifier = 1;
+}
+
 def SimManagedNBAEnqueueOp : SimOp<"managed.nba.enqueue", [
     MemoryEffects<[
       MemWrite<SimHeapResource>, MemWrite<SimSchedulerResource>

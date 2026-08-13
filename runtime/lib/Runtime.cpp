@@ -98,8 +98,10 @@ bool validObserverInventory(
       const obelisk_rt_observer_capture_abi_v1 &abi =
           observer.capture_abi[capture];
       if (abi.kind < OBELISK_RT_OBSERVER_CAPTURE_STORAGE ||
-          abi.kind > OBELISK_RT_OBSERVER_CAPTURE_DRIVER || abi.width == 0 ||
-          (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_EVENT && abi.width != 1))
+          abi.kind > OBELISK_RT_OBSERVER_CAPTURE_MANAGED || abi.width == 0 ||
+          (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_EVENT && abi.width != 1) ||
+          (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_MANAGED &&
+           abi.width != 64))
         return false;
     }
     bool hasBytecode =

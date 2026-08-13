@@ -610,10 +610,12 @@ FailureOr<Value> UnitLowering::loadReference(Value reference,
                                      reference)
         .getResult();
   }
-  if (auto type = dyn_cast<sim::ManagedRefType>(reference.getType()))
+  if (auto type = dyn_cast<sim::ManagedRefType>(reference.getType())) {
+    recordManagedRead(reference, location);
     return sim::SimManagedLoadOp::create(builder, location,
                                          type.getElementType(), reference)
         .getResult();
+  }
   if (auto type = dyn_cast<sim::ArgumentRefType>(reference.getType()))
     return sim::SimArgumentRefLoadOp::create(builder, location,
                                              type.getElementType(), reference)
@@ -694,7 +696,7 @@ InFlightDiagnostic UnitLowering::unsupported(Operation *op) {
 }
 
 void UnitLowering::recordSensitivity(Value value) {
-  if (isa<sim::EventType>(value.getType())) {
+  if (isa<sim::EventType, sim::ManagedWatchType>(value.getType())) {
     if (observedDependencies)
       observedDependencies->insert(value);
     return;
@@ -706,6 +708,28 @@ void UnitLowering::recordSensitivity(Value value) {
   if (auto argument = dyn_cast<BlockArgument>(value);
       argument && argument.getOwner() == &function.getBody().front())
     sensitivity.insert(value);
+}
+
+void UnitLowering::recordManagedRead(Value reference, Location location) {
+  if (!observedDependencies ||
+      !isa<sim::ManagedRefType>(reference.getType()))
+    return;
+  Value watch = sim::SimManagedWatchOp::create(
+      builder, location, sim::ManagedWatchType::get(function.getContext()),
+      reference, sim::ManagedWatchKind::Field);
+  recordSensitivity(watch);
+}
+
+void UnitLowering::recordContainerSizeRead(Value container,
+                                           Location location) {
+  if (!observedDependencies ||
+      !isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
+          container.getType()))
+    return;
+  Value watch = sim::SimManagedWatchOp::create(
+      builder, location, sim::ManagedWatchType::get(function.getContext()),
+      container, sim::ManagedWatchKind::ContainerSize);
+  recordSensitivity(watch);
 }
 
 void UnitLowering::recordImplicitWrite(Value value) {
@@ -736,7 +760,9 @@ void UnitLowering::recordImplicitWrite(Value value) {
     observedWrites->insert(value);
 }
 
-FailureOr<Value> UnitLowering::bindObserver(Operation *expression) {
+FailureOr<Value>
+UnitLowering::bindObserver(Operation *expression,
+                          ValueRange dynamicDependencies) {
   Location location = getSemanticLocation(expression);
   auto evaluator =
       expression->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.observer");
@@ -788,6 +814,16 @@ FailureOr<Value> UnitLowering::bindObserver(Operation *expression) {
       return failure();
     }
     dependencies.push_back(*value);
+  }
+  for (Value dependency : dynamicDependencies) {
+    if (!isa<sim::ManagedWatchType>(dependency.getType())) {
+      emitError(location)
+          << "dynamic observer dependency is not a managed-watch handle: "
+          << dependency.getType();
+      return failure();
+    }
+    if (!llvm::is_contained(dependencies, dependency))
+      dependencies.push_back(dependency);
   }
   Type resultType;
   if (*parsedResult == ObserverResult::Truth ||
