@@ -11,6 +11,10 @@ module attributes {
     obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.assoc"
     obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "top.logic_assoc"
     obelisk_sim.code_unit.decl 3 in 0 initial hierarchy "top.wide_assoc"
+    obelisk_sim.code_unit.decl 4 in 0 initial hierarchy "top.class_assoc"
+    obelisk_sim.class.decl @Key id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
 
     obelisk_sim.func @assoc(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
@@ -138,6 +142,43 @@ module attributes {
       obelisk_sim.assoc.delete %array, %first :
         (!obelisk_sim.assoc_array<!obelisk_sim.logic<129>, i32, true, false>,
          !obelisk_sim.logic<129>) -> ()
+      obelisk_sim.return
+    }
+
+    obelisk_sim.func @class_assoc(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %key: !obelisk_sim.class_handle<@Key> {obelisk_sim.capture_kind = 1 : i32},
+        %owner: !obelisk_sim.argument_ref<!obelisk_sim.assoc_array<!obelisk_sim.class_handle<@Key>, i32, false, false>> {obelisk_sim.capture_kind = 1 : i32})
+        attributes {code_unit_id = 4 : i64, entry_kind = 1 : i32} {
+      %value = arith.constant 7 : i32
+      %array = obelisk_sim.assoc.create {
+        alignment = 1 : i64,
+        bit_width = 32 : i64,
+        element_flags = 0 : i32,
+        element_kind = 1 : i32,
+        key_kind = 4 : i32,
+        key_width = 0 : i64,
+        trace_kinds = array<i32>,
+        trace_offsets = array<i64>,
+        type_id = 4 : i64,
+        value_size = 4 : i64
+      } : () -> !obelisk_sim.assoc_array<!obelisk_sim.class_handle<@Key>, i32, false, false>
+      obelisk_sim.assoc.write %array, %key, %value :
+        (!obelisk_sim.assoc_array<!obelisk_sim.class_handle<@Key>, i32, false, false>,
+         !obelisk_sim.class_handle<@Key>, i32) -> ()
+      %first, %valid = obelisk_sim.assoc.traverse %array, %key {
+        direction = 1 : i32, endpoint = true
+      } : (!obelisk_sim.assoc_array<!obelisk_sim.class_handle<@Key>, i32, false, false>,
+           !obelisk_sim.class_handle<@Key>) -> (!obelisk_sim.class_handle<@Key>, i1)
+      %path = obelisk_sim.reference_path.assoc %ctx, %array[%key] watching %owner :
+        (!obelisk_sim.context,
+         !obelisk_sim.assoc_array<!obelisk_sim.class_handle<@Key>, i32, false, false>,
+         !obelisk_sim.class_handle<@Key>,
+         !obelisk_sim.argument_ref<!obelisk_sim.assoc_array<!obelisk_sim.class_handle<@Key>, i32, false, false>>) ->
+        !obelisk_sim.reference_path<i32>
+      obelisk_sim.assoc.delete %array, %first :
+        (!obelisk_sim.assoc_array<!obelisk_sim.class_handle<@Key>, i32, false, false>,
+         !obelisk_sim.class_handle<@Key>) -> ()
       obelisk_sim.return
     }
   }

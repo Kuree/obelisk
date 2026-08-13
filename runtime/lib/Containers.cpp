@@ -66,7 +66,10 @@ struct AssocSlot {
   uint64_t hash;
   uint64_t distance;
   uint64_t integral;
-  obelisk_rt_string_v1 string;
+  union {
+    obelisk_rt_string_v1 string;
+    obelisk_rt_object_v1 *object;
+  };
 };
 
 enum class ReferenceSelector : uint32_t { Index = 1, Associative = 2 };
@@ -348,10 +351,14 @@ obelisk_rt_status snapshotHeader(obelisk_rt_object_v1 *container,
             snapshot->header.kind == OBELISK_RT_CONTAINER_QUEUE;
         bool associative =
             snapshot->header.kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY;
+        bool handleKey =
+            snapshot->header.keyKind == OBELISK_RT_ASSOC_KEY_STRING ||
+            snapshot->header.keyKind == OBELISK_RT_ASSOC_KEY_CLASS;
         bool validAssocKey =
-            snapshot->header.keyKind == OBELISK_RT_ASSOC_KEY_STRING
+            handleKey
                 ? snapshot->header.keyWidth == 0
-                : ((snapshot->header.keyKind == OBELISK_RT_ASSOC_KEY_UNSIGNED ||
+                : ((snapshot->header.keyKind ==
+                         OBELISK_RT_ASSOC_KEY_UNSIGNED ||
                     snapshot->header.keyKind == OBELISK_RT_ASSOC_KEY_SIGNED) &&
                    snapshot->header.keyWidth >= 1 &&
                    snapshot->header.keyWidth <= UINT64_MAX - 7);
@@ -515,6 +522,9 @@ obelisk_rt_status initializeAssoc(obelisk_rt_gc_lane_v1 *lane,
       obelisk_rt_v1_element_type_validate(element) != OBELISK_RT_OK)
     return OBELISK_RT_INVALID_ARGUMENT;
   if (keyKind == OBELISK_RT_ASSOC_KEY_STRING) {
+    if (keyWidth != 0)
+      return OBELISK_RT_INVALID_ARGUMENT;
+  } else if (keyKind == OBELISK_RT_ASSOC_KEY_CLASS) {
     if (keyWidth != 0)
       return OBELISK_RT_INVALID_ARGUMENT;
   } else if ((keyKind != OBELISK_RT_ASSOC_KEY_UNSIGNED &&
@@ -927,9 +937,12 @@ void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
         auto *slot = reinterpret_cast<AssocSlot *>(data + index * stride);
         if (slot->hash == emptyAssocHash)
           continue;
-        if (slot->string != 0 &&
-            (slot->string & stringTagMask) == 0)
+        if (header->keyKind == OBELISK_RT_ASSOC_KEY_CLASS) {
+          visit(environment, slot->object);
+        } else if (slot->string != 0 &&
+                   (slot->string & stringTagMask) == 0) {
           visit(environment, heapStringObject(slot->string));
+        }
         enumerateTraceSlots(
             context, reinterpret_cast<uint8_t *>(slot) + valueOffset,
             header->element->trace,
@@ -975,6 +988,9 @@ void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
         path->keyUnknown != 0 &&
         (path->keyUnknown & stringTagMask) == 0)
       visit(environment, heapStringObject(path->keyUnknown));
+    if (path->selector == ReferenceSelector::Associative &&
+        path->key.kind == OBELISK_RT_ASSOC_KEY_CLASS)
+      visit(environment, path->key.object);
     return;
   }
   default:
@@ -1640,6 +1656,7 @@ struct NormalizedAssocKey {
   uint64_t integral = 0;
   std::vector<uint8_t> wideIntegral;
   obelisk_rt_string_v1 string = 0;
+  obelisk_rt_object_v1 *object = nullptr;
   bool ignored = false;
 };
 
@@ -1669,6 +1686,20 @@ obelisk_rt_status normalizeAssocKey(obelisk_rt_context *context,
       return status;
     normalized.hash = mixAssocHash(view.hash);
     normalized.string = key->string;
+    return OBELISK_RT_OK;
+  }
+  if (key->kind == OBELISK_RT_ASSOC_KEY_CLASS) {
+    if (key->width != 0 || key->unknown != 0 || key->string != 0)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    if (key->object &&
+        (!obelisk_rt_managed_object_belongs_to(context, key->object) ||
+         obelisk_rt_managed_object_kind(key->object) !=
+             OBELISK_RT_MANAGED_CLASS))
+      return OBELISK_RT_INVALID_HANDLE;
+    normalized.object = key->object;
+    normalized.integral = obelisk_rt_v1_object_id(key->object);
+    normalized.hash = mixAssocHash(normalized.integral ^
+                                   (uint64_t(header.keyKind) << 56));
     return OBELISK_RT_OK;
   }
   if (key->string != 0)
@@ -1786,6 +1817,8 @@ obelisk_rt_status readIntegralSlot(const ContainerHeader &header,
 
 bool assocKeysEqual(const ContainerHeader &header, const AssocSlot &slot,
                     const NormalizedAssocKey &key) {
+  if (header.keyKind == OBELISK_RT_ASSOC_KEY_CLASS)
+    return slot.object == key.object;
   if (header.keyKind != OBELISK_RT_ASSOC_KEY_STRING && header.keyWidth <= 64)
     return slot.integral == key.integral;
   if (header.keyKind != OBELISK_RT_ASSOC_KEY_STRING) {
@@ -2023,7 +2056,9 @@ void enumerateAssocCloneRoots(void *opaque, ManagedRootVisit visit,
   for (uint64_t index = 0; index != roots->count; ++index) {
     auto *slot =
         reinterpret_cast<AssocSlot *>(roots->entries + index * roots->stride);
-    if (slot->string != 0 && (slot->string & stringTagMask) == 0)
+    if (roots->keyKind == OBELISK_RT_ASSOC_KEY_CLASS)
+      visit(environment, &slot->object);
+    else if (slot->string != 0 && (slot->string & stringTagMask) == 0)
       visit(environment,
             reinterpret_cast<obelisk_rt_object_v1 **>(&slot->string));
     enumerateTraceSlots(roots->context,
@@ -2147,6 +2182,8 @@ obelisk_rt_status cloneAssocContainer(obelisk_rt_gc_lane_v1 *lane,
     StringView integralKey;
     if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_STRING) {
       key.string = slot->string;
+    } else if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_CLASS) {
+      key.object = slot->object;
     } else if (snapshot.keyWidth <= 64) {
       key.value = slot->integral;
     } else {
@@ -2385,6 +2422,8 @@ obelisk_rt_status obelisk_rt_container_pattern(obelisk_rt_object_v1 *container,
                       return leftIndex < rightIndex;
                     return compareViews(leftView, rightView, false) < 0;
                   }
+                  if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_CLASS)
+                    return left->integral < right->integral;
                   if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_SIGNED &&
                       snapshot.keyWidth <= 64)
                     return signedAssocValue(left->integral,
@@ -2433,6 +2472,8 @@ obelisk_rt_status obelisk_rt_container_pattern(obelisk_rt_object_v1 *container,
           obelisk_rt_status keyStatus = appendString(slot->string);
           if (keyStatus != OBELISK_RT_OK)
             return keyStatus;
+        } else if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_CLASS) {
+          output += std::to_string(slot->integral);
         } else if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_SIGNED &&
                    snapshot.keyWidth <= 64) {
           output += std::to_string(
@@ -3754,6 +3795,9 @@ obelisk_rt_v1_assoc_write(obelisk_rt_gc_lane_v1 *lane,
     warnIgnoredAssocKey();
     return OBELISK_RT_OK;
   }
+  ScopedManagedRoot keyObjectRoot(lane, &normalized.object);
+  if (keyObjectRoot.getStatus() != OBELISK_RT_OK)
+    return keyObjectRoot.getStatus();
   obelisk_rt_string_v1 keyRootValue = normalized.string;
   ScopedManagedWordRoot keyRoot(lane, &keyRootValue);
   if (keyRoot.getStatus() != OBELISK_RT_OK)
@@ -3789,7 +3833,10 @@ obelisk_rt_v1_assoc_write(obelisk_rt_gc_lane_v1 *lane,
   auto *candidateSlot = reinterpret_cast<AssocSlot *>(candidate.data());
   candidateSlot->hash = normalized.hash;
   candidateSlot->integral = normalized.integral;
-  candidateSlot->string = storedKey;
+  if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_CLASS)
+    candidateSlot->object = normalized.object;
+  else
+    candidateSlot->string = storedKey;
   std::memcpy(candidate.data() + assocValueOffset(snapshot.element),
               prepared.data(), prepared.size());
   struct Write {
@@ -4039,6 +4086,12 @@ static obelisk_rt_status compareAssocSlotWithKey(const ContainerHeader &header,
     comparison = compareViews(slotView, keyView, false);
     return OBELISK_RT_OK;
   }
+  if (header.keyKind == OBELISK_RT_ASSOC_KEY_CLASS) {
+    comparison = slot.integral < key.integral   ? -1
+                 : slot.integral > key.integral ? 1
+                                                : 0;
+    return OBELISK_RT_OK;
+  }
   if (header.keyKind == OBELISK_RT_ASSOC_KEY_SIGNED) {
     if (header.keyWidth <= 64) {
       int64_t left = signedAssocValue(slot.integral, header.keyWidth);
@@ -4132,6 +4185,8 @@ static obelisk_rt_status ensureAssocOrdered(obelisk_rt_gc_lane_v1 *lane,
                       return leftIndex < rightIndex;
                     return compareViews(leftView, rightView, false) < 0;
                   }
+                  if (header->keyKind == OBELISK_RT_ASSOC_KEY_CLASS)
+                    return left->integral < right->integral;
                   if (header->keyKind == OBELISK_RT_ASSOC_KEY_SIGNED &&
                       header->keyWidth <= 64)
                     return signedAssocValue(left->integral, header->keyWidth) <
@@ -4239,6 +4294,11 @@ static obelisk_rt_status assocTraverse(obelisk_rt_gc_lane_v1 *lane,
   ScopedManagedRoot ownerRoot(lane, &array);
   if (ownerRoot.getStatus() != OBELISK_RT_OK)
     return ownerRoot.getStatus();
+  obelisk_rt_object_v1 *keyObject =
+      endpoint ? nullptr : preflightKey.object;
+  ScopedManagedRoot keyObjectRoot(lane, &keyObject);
+  if (keyObjectRoot.getStatus() != OBELISK_RT_OK)
+    return keyObjectRoot.getStatus();
   obelisk_rt_string_v1 keyRootValue =
       endpoint ? 0 : preflightKey.string;
   ScopedManagedWordRoot keyRoot(lane, &keyRootValue);
@@ -4338,6 +4398,10 @@ static obelisk_rt_status assocTraverse(obelisk_rt_gc_lane_v1 *lane,
               traverse->key->width = header->keyWidth;
               if (header->keyKind == OBELISK_RT_ASSOC_KEY_STRING) {
                 traverse->key->string = slot->string;
+              } else if (header->keyKind == OBELISK_RT_ASSOC_KEY_CLASS) {
+                traverse->key->object = slot->object;
+                traverse->key->unknown = 0;
+                traverse->key->string = 0;
               } else {
                 if (header->keyWidth > 64 && !traverse->key->value_data)
                   return OBELISK_RT_INVALID_ARGUMENT;
@@ -4558,6 +4622,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_reference_path_assoc_create(
   ScopedManagedRoot watchRoot(lane, &watchOwner);
   if (watchRoot.getStatus() != OBELISK_RT_OK)
     return watchRoot.getStatus();
+  ScopedManagedRoot keyObjectRoot(lane, &normalized.object);
+  if (keyObjectRoot.getStatus() != OBELISK_RT_OK)
+    return keyObjectRoot.getStatus();
   obelisk_rt_string_v1 keyRootValue = normalized.string;
   if (owner.keyKind != OBELISK_RT_ASSOC_KEY_STRING && owner.keyWidth > 64) {
     status = createString(
@@ -4614,6 +4681,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_reference_path_assoc_create(
       initialize.key.value = 0;
       initialize.key.unknown = 0;
       initialize.key.string = keyRootValue;
+    } else if (owner.keyKind == OBELISK_RT_ASSOC_KEY_CLASS) {
+      initialize.key.object = normalized.object;
+      initialize.key.unknown = 0;
+      initialize.key.string = 0;
     } else if (owner.keyWidth <= 64) {
       initialize.key.value = normalized.integral;
       initialize.key.string = 0;

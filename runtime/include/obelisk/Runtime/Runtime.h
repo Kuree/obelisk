@@ -1818,16 +1818,18 @@ typedef uint32_t obelisk_rt_assoc_key_kind_v1;
 enum {
   OBELISK_RT_ASSOC_KEY_UNSIGNED = 1,
   OBELISK_RT_ASSOC_KEY_SIGNED = 2,
-  OBELISK_RT_ASSOC_KEY_STRING = 3
+  OBELISK_RT_ASSOC_KEY_STRING = 3,
+  OBELISK_RT_ASSOC_KEY_CLASS = 4
 };
 
 // Canonical typed associative key. Integral keys up to 64 bits use the inline
 // value and unknown fields. Wider integral keys use little-endian value_data
 // and optional unknown_data spans of ceil(width / 8) bytes. String keys use
-// string and require width/value/unknown to be zero. Any nonzero unknown bit
-// within width makes that operation a no-op. Wide spans only need to remain
-// valid for the duration of the call; traversal writes through value_data and
-// clears unknown_data when it is non-null.
+// string and require width/value/unknown to be zero. Class keys use object and
+// require width/unknown/string to be zero; null is a valid class key. Any
+// nonzero unknown bit within width makes an integral-key operation a no-op.
+// Wide spans only need to remain valid for the duration of the call; traversal
+// writes through value_data and clears unknown_data when it is non-null.
 typedef struct obelisk_rt_assoc_key_v1 {
   obelisk_rt_assoc_key_kind_v1 kind;
   uint32_t reserved;
@@ -1835,6 +1837,7 @@ typedef struct obelisk_rt_assoc_key_v1 {
   union {
     uint64_t value;
     void *value_data;
+    obelisk_rt_object_v1 *object;
   };
   union {
     uint64_t unknown;

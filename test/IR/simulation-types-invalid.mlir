@@ -30,6 +30,12 @@ func.func private @wildcard_assoc(
 
 // -----
 
-// expected-error @+2 {{string key cannot be signed}}
+// expected-error @+2 {{string or class key cannot be signed}}
 func.func private @signed_string_assoc(
     %arg: !obelisk_sim.assoc_array<!obelisk_sim.string, i32, true, false>)
+
+// -----
+
+// expected-error @+2 {{string or class key cannot be signed}}
+func.func private @signed_class_assoc(
+    %arg: !obelisk_sim.assoc_array<!obelisk_sim.class_handle<@Key>, i32, true, false>)

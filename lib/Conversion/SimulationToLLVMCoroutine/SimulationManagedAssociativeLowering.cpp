@@ -37,11 +37,15 @@ Value makeNativeAssocKey(OpBuilder &builder, Location location,
                           byteGEP(builder, location, storage, offset), 8);
   };
   bool stringKey = isa<sim::StringType>(array.getKeyType());
+  bool classKey = isa<sim::ClassHandleType>(array.getKeyType());
   uint32_t keyKind =
       stringKey ? OBELISK_RT_ASSOC_KEY_STRING
+      : classKey ? OBELISK_RT_ASSOC_KEY_CLASS
                 : (array.getSignedKey() ? OBELISK_RT_ASSOC_KEY_SIGNED
                                         : OBELISK_RT_ASSOC_KEY_UNSIGNED);
-  uint64_t keyWidth = stringKey ? 0 : *sim::getPackedWidth(array.getKeyType());
+  uint64_t keyWidth = stringKey || classKey
+                          ? 0
+                          : *sim::getPackedWidth(array.getKeyType());
   store32(offsetof(obelisk_rt_assoc_key_v1, kind), keyKind);
   store32(offsetof(obelisk_rt_assoc_key_v1, reserved), 0);
   LLVM::StoreOp::create(builder, location,
@@ -55,6 +59,14 @@ Value makeNativeAssocKey(OpBuilder &builder, Location location,
     storePointer(offsetof(obelisk_rt_assoc_key_v1, value), null);
     storePointer(offsetof(obelisk_rt_assoc_key_v1, unknown), null);
     store64(offsetof(obelisk_rt_assoc_key_v1, string), values.front());
+  } else if (classKey) {
+    store64(offsetof(obelisk_rt_assoc_key_v1, value), values.front());
+    storePointer(offsetof(obelisk_rt_assoc_key_v1, unknown), null);
+    LLVM::StoreOp::create(builder, location,
+                          llvmConstant(builder, location, i64, 0),
+                          byteGEP(builder, location, storage,
+                                  offsetof(obelisk_rt_assoc_key_v1, string)),
+                          8);
   } else {
     if (keyWidth <= 64) {
       store64(offsetof(obelisk_rt_assoc_key_v1, value), values.front());
@@ -427,6 +439,12 @@ public:
                   offsetof(obelisk_rt_assoc_key_v1, string)),
           8);
       keyValues.push_back(loaded);
+    } else if (isa<sim::ClassHandleType>(array.getKeyType())) {
+      keyValues.push_back(LLVM::LoadOp::create(
+          rewriter, op.getLoc(), i64,
+          byteGEP(rewriter, op.getLoc(), key,
+                  offsetof(obelisk_rt_assoc_key_v1, object)),
+          8));
     } else {
       SmallVector<Type> converted;
       if (failed(

@@ -897,6 +897,9 @@ LogicalResult SimAssocCreateOp::verify() {
   if (isa<StringType>(key)) {
     if (getKeyKind() != 3 || getKeyWidth() != 0)
       return emitOpError("string key metadata is inconsistent");
+  } else if (isa<ClassHandleType>(key)) {
+    if (getKeyKind() != 4 || getKeyWidth() != 0)
+      return emitOpError("class key metadata is inconsistent");
   } else {
     std::optional<unsigned> width = getPackedWidth(key);
     if (!width || *width == 0 ||

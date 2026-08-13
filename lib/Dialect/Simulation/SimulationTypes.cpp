@@ -80,15 +80,17 @@ AssocArrayType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
   if (wildcardIndex)
     return emitError()
            << "wildcard associative-array indices are not executable";
-  bool supportedKey = isa<StringType>(keyType);
+  bool supportedKey = isa<StringType, ClassHandleType>(keyType);
   if (auto integer = dyn_cast<IntegerType>(keyType))
     supportedKey = integer.isSignless() && integer.getWidth() != 0;
   if (auto logic = dyn_cast<LogicType>(keyType))
     supportedKey = logic.getWidth() != 0;
   if (!supportedKey)
-    return emitError() << "key must be a string or normalized integral type";
-  if (isa<StringType>(keyType) && signedKey)
-    return emitError() << "string key cannot be signed";
+    return emitError()
+           << "key must be a string, class handle, or normalized integral "
+              "type";
+  if (isa<StringType, ClassHandleType>(keyType) && signedKey)
+    return emitError() << "string or class key cannot be signed";
   return success();
 }
 

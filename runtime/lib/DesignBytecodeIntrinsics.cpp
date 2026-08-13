@@ -240,9 +240,16 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       std::memcpy(&key.string, frame.data + layout.offset, sizeof(key.string));
       return true;
     }
+    if (layout.kind == OBELISK_RT_DBREG_MANAGED) {
+      if (key.kind != OBELISK_RT_ASSOC_KEY_CLASS || layout.size != 8)
+        return false;
+      std::memcpy(&key.object, frame.data + layout.offset, sizeof(key.object));
+      return true;
+    }
     if ((layout.kind != OBELISK_RT_DBREG_BITS &&
          layout.kind != OBELISK_RT_DBREG_LOGIC) ||
-        key.kind == OBELISK_RT_ASSOC_KEY_STRING || layout.width != key.width ||
+        key.kind == OBELISK_RT_ASSOC_KEY_STRING ||
+        key.kind == OBELISK_RT_ASSOC_KEY_CLASS || layout.width != key.width ||
         layout.width == 0)
       return false;
     uint64_t planeSize =
@@ -282,9 +289,16 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       std::memcpy(frame.data + layout.offset, &key.string, sizeof(key.string));
       return true;
     }
+    if (layout.kind == OBELISK_RT_DBREG_MANAGED) {
+      if (key.kind != OBELISK_RT_ASSOC_KEY_CLASS || layout.size != 8)
+        return false;
+      std::memcpy(frame.data + layout.offset, &key.object, sizeof(key.object));
+      return true;
+    }
     if ((layout.kind != OBELISK_RT_DBREG_BITS &&
          layout.kind != OBELISK_RT_DBREG_LOGIC) ||
-        key.kind == OBELISK_RT_ASSOC_KEY_STRING || layout.width != key.width)
+        key.kind == OBELISK_RT_ASSOC_KEY_STRING ||
+        key.kind == OBELISK_RT_ASSOC_KEY_CLASS || layout.width != key.width)
       return false;
     uint64_t planeSize =
         layout.kind == OBELISK_RT_DBREG_LOGIC ? layout.size / 2 : layout.size;

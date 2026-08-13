@@ -3338,6 +3338,117 @@ TEST_F(ManagedHeapTest, CollectsCyclesAndClearsWeakReferences) {
   ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &firstRoot), OBELISK_RT_OK);
 }
 
+TEST_F(ManagedHeapTest,
+       ClassAssociativeKeysPreserveIdentityNullAndDerivedObjects) {
+  const obelisk_rt_element_type_v1 wordElement{
+      OBELISK_RT_VERSION, OBELISK_RT_ELEMENT_BITS, 91, 0,      0,
+      sizeof(uint64_t),   alignof(uint64_t),       64, nullptr};
+  obelisk_rt_object_v1 *objects[2] = {};
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &objects[0]),
+            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_object_allocate(lane, &derivedDescriptor, &objects[1]),
+      OBELISK_RT_OK);
+  obelisk_rt_gc_root_range_v1 objectRoots{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_range_push(lane, &objectRoots, objects, 2),
+            OBELISK_RT_OK);
+
+  obelisk_rt_object_v1 *array = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_assoc_create(lane, &wordElement,
+                                       OBELISK_RT_ASSOC_KEY_CLASS, 0, &array),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 arrayRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &arrayRoot, &array),
+            OBELISK_RT_OK);
+
+  obelisk_rt_object_v1 *expectedKeys[] = {nullptr, objects[0], objects[1]};
+  for (uint64_t index = 0; index != std::size(expectedKeys); ++index) {
+    obelisk_rt_assoc_key_v1 key{OBELISK_RT_ASSOC_KEY_CLASS, 0, 0};
+    key.object = expectedKeys[index];
+    uint64_t value = index + 10;
+    ASSERT_EQ(obelisk_rt_v1_assoc_write(lane, array, &key, &value, nullptr),
+              OBELISK_RT_OK);
+  }
+
+  ASSERT_EQ(obelisk_rt_v1_gc_root_range_pop(lane, &objectRoots),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  for (uint64_t index = 0; index != std::size(expectedKeys); ++index) {
+    obelisk_rt_assoc_key_v1 key{OBELISK_RT_ASSOC_KEY_CLASS, 0, 0};
+    key.object = expectedKeys[index];
+    uint64_t value = 0;
+    uint32_t present = 0;
+    ASSERT_EQ(obelisk_rt_v1_assoc_read(array, &key, &value, nullptr, &present),
+              OBELISK_RT_OK);
+    EXPECT_EQ(present, 1u);
+    EXPECT_EQ(value, index + 10);
+  }
+
+  ASSERT_EQ(obelisk_rt_v1_gc_set_threshold(context, 1), OBELISK_RT_OK);
+  obelisk_rt_object_v1 *cursorOnly = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &cursorOnly),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 cursorRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &cursorRoot, &cursorOnly),
+            OBELISK_RT_OK);
+  obelisk_rt_assoc_key_v1 absentCursor{OBELISK_RT_ASSOC_KEY_CLASS, 0, 0};
+  absentCursor.object = cursorOnly;
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &cursorRoot), OBELISK_RT_OK);
+  uint32_t cursorSuccess = 1;
+  ASSERT_EQ(obelisk_rt_v1_assoc_next(lane, array, &absentCursor,
+                                     &cursorSuccess),
+            OBELISK_RT_OK);
+  EXPECT_EQ(cursorSuccess, 0u);
+
+  obelisk_rt_object_v1 *copy = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_container_clone(lane, array, &copy), OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 copyRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &copyRoot, &copy), OBELISK_RT_OK);
+  obelisk_rt_assoc_key_v1 derivedKey{OBELISK_RT_ASSOC_KEY_CLASS, 0, 0};
+  derivedKey.object = expectedKeys[2];
+  uint64_t value = 0;
+  uint32_t present = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_assoc_read(copy, &derivedKey, &value, nullptr, &present),
+      OBELISK_RT_OK);
+  EXPECT_EQ(present, 1u);
+  EXPECT_EQ(value, 12u);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &copyRoot), OBELISK_RT_OK);
+
+  obelisk_rt_object_v1 *path = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_reference_path_assoc_create(
+                lane, array, &derivedKey, nullptr, 0, 0, &path),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 pathRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &pathRoot, &path), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_assoc_delete(array, &derivedKey), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  uint64_t replacement = 42;
+  ASSERT_EQ(
+      obelisk_rt_v1_reference_path_store(lane, path, &replacement, nullptr),
+      OBELISK_RT_OK);
+  value = 0;
+  present = 0;
+  ASSERT_EQ(obelisk_rt_v1_reference_path_load(path, &value, nullptr, &present),
+            OBELISK_RT_OK);
+  EXPECT_EQ(present, 1u);
+  EXPECT_EQ(value, replacement);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &pathRoot), OBELISK_RT_OK);
+
+  obelisk_rt_assoc_key_v1 cursor{};
+  uint32_t success = 0;
+  for (obelisk_rt_object_v1 *expected : expectedKeys) {
+    ASSERT_EQ(obelisk_rt_v1_assoc_first(lane, array, &cursor, &success),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    EXPECT_EQ(cursor.kind, OBELISK_RT_ASSOC_KEY_CLASS);
+    EXPECT_EQ(cursor.object, expected);
+    ASSERT_EQ(obelisk_rt_v1_assoc_delete(array, &cursor), OBELISK_RT_OK);
+  }
+  EXPECT_EQ(obelisk_rt_v1_container_size(array), 0u);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &arrayRoot), OBELISK_RT_OK);
+}
+
 TEST_F(ManagedHeapTest, TracesContiguousActivationRootRanges) {
   obelisk_rt_object_v1 *slots[2] = {};
   ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &slots[0]),
