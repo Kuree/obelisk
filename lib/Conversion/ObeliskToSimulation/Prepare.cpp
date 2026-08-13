@@ -1933,7 +1933,6 @@ void ObeliskSimPreparePass::runOnOperation() {
               continue;
             }
             bool unsupportedNestedSemantics = false;
-            bool hasRecursiveObjectPath = false;
             SmallVector<EffectiveConstraintGroup> nestedEffectiveConstraints;
             collectEffectiveConstraints(nestedHierarchy,
                                         nestedEffectiveConstraints);
@@ -2046,6 +2045,27 @@ void ObeliskSimPreparePass::runOnOperation() {
                           candidate, candidateHierarchy,
                           "recursive nested object dispatch")))
                     return failure();
+                  SmallVector<EffectiveConstraintGroup> candidateConstraints;
+                  collectEffectiveConstraints(candidateHierarchy,
+                                              candidateConstraints);
+                  if (!candidateConstraints.empty()) {
+                    emitError(getSemanticLocation(edgeProperty))
+                        << "constraints on recursively nested rand objects "
+                           "require path-aware constraint composition";
+                    return failure();
+                  }
+                  for (semantic::SVClassTypeOp candidateClass :
+                       candidateHierarchy)
+                    for (Operation *member : getChildren(candidateClass))
+                      if (auto method = getClassMethod(member);
+                          method &&
+                          method.getIsPrePostRandomize().value_or(false) &&
+                          !method.getIsBuiltin().value_or(false)) {
+                        emitError(getSemanticLocation(method))
+                            << "hooks on recursively nested rand objects "
+                               "require path-aware lifecycle planning";
+                        return failure();
+                      }
                   dynamicPlans.push_back(
                       {candidate,
                        static_cast<unsigned>(candidateHierarchy.size())});
@@ -2219,7 +2239,6 @@ void ObeliskSimPreparePass::runOnOperation() {
                       context, classSymbols.lookup(concreteClass).getValue()));
               path.push_back({classFieldSymbols.lookup(edgeProperty),
                               concreteType, edgeStorageType, edgeModeIndex});
-              hasRecursiveObjectPath = true;
               unsigned recursiveModeIndex = 0;
               for (semantic::SVClassTypeOp recursiveClass :
                    recursiveHierarchy) {
@@ -2442,12 +2461,6 @@ void ObeliskSimPreparePass::runOnOperation() {
                         << "recursive rand object handles must be non-static "
                            "rand values";
                     unsupportedNestedSemantics = true;
-                  } else if (!nestedEffectiveConstraints.empty()) {
-                    emitError(getSemanticLocation(nestedProperty))
-                        << "constraints on rand objects containing recursive "
-                           "rand handles require path-aware constraint "
-                           "composition";
-                    unsupportedNestedSemantics = true;
                   } else if (failed(collectRecursiveObject(
                                  nestedProperty, *nestedType, childModeIndex,
                                  {}, nestedAncestors))) {
@@ -2529,13 +2542,6 @@ void ObeliskSimPreparePass::runOnOperation() {
                 nestedPostHook};
             nestedPlan.constraintGroups =
                 std::move(nestedEffectiveConstraints);
-            if (hasRecursiveObjectPath &&
-                !nestedPlan.constraintGroups.empty()) {
-              emitError(getSemanticLocation(property))
-                  << "constraints on rand objects containing recursive rand "
-                     "handles require path-aware constraint composition";
-              unsupportedNestedSemantics = true;
-            }
             nestedObjectPlans.push_back(std::move(nestedPlan));
             if (unsupportedNestedSemantics)
               invalid = true;
