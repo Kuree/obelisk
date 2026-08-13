@@ -1613,6 +1613,8 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     Operation *weight = nullptr;
     SmallVector<Operation *> items;
     Operation *weightCodeBlock = nullptr;
+    bool randJoin = false;
+    Operation *randJoinBias = nullptr;
   };
   SmallVector<Rule> rules;
   rules.reserve(ruleCount);
@@ -1627,12 +1629,8 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
       emitError(location) << "invalid randsequence rule metadata";
       return failure();
     }
-    if (isRandJoin[index]) {
-      emitError(location)
-          << "rand join requires depth-one interleaving lowering";
-      return failure();
-    }
     Rule rule;
+    rule.randJoin = isRandJoin[index];
     if (hasWeights[index]) {
       if (nextChild == children.size())
         return emitError(location) << "missing randsequence rule weight";
@@ -1641,7 +1639,7 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     if (hasRandJoinExpressions[index]) {
       if (nextChild == children.size())
         return emitError(location) << "missing rand join expression";
-      ++nextChild;
+      rule.randJoinBias = children[nextChild++];
     }
     if (nextChild + itemCounts[index] > children.size()) {
       emitError(location) << "truncated randsequence production list";
@@ -1669,10 +1667,198 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
       {productionReturn, controlScopes.size()});
   llvm::scope_exit popReturn(
       [&] { randSequenceProductionReturns.pop_back(); });
-  auto lowerRule = [&](const Rule &rule) -> LogicalResult {
-    for (Operation *item : rule.items)
-      if (failed(lowerRandSequenceNode(item)))
+  auto lowerRandJoin = [&](const Rule &rule) -> LogicalResult {
+    if (rule.items.size() < 2)
+      return emitError(location)
+             << "rand join requires at least two production items";
+
+    SmallVector<Operation *> streams;
+    streams.reserve(rule.items.size());
+    for (Operation *operand : rule.items) {
+      auto item = dyn_cast<semantic::SVProdItemOp>(operand);
+      auto targetRef = item
+                           ? item->getAttrOfType<SymbolRefAttr>("target")
+                           : SymbolRefAttr{};
+      auto target = targetRef
+                        ? randSequenceContexts.back().productions.find(
+                              targetRef.getLeafReference())
+                        : randSequenceContexts.back().productions.end();
+      auto argumentCount =
+          item ? item->getAttrOfType<IntegerAttr>("argument_count")
+               : IntegerAttr{};
+      if (!item || !targetRef ||
+          target == randSequenceContexts.back().productions.end() ||
+          !argumentCount || argumentCount.getInt() != 0 ||
+          !getChildren(item).empty() ||
+          target->second.getArgumentCount() != 0 ||
+          target->second.getRuleCount() != 1 ||
+          target->second.getRuleItemCounts().size() != 1 ||
+          target->second.getRuleItemCounts()[0] != 1 ||
+          target->second.getRuleHasWeights().size() != 1 ||
+          target->second.getRuleHasWeights()[0] ||
+          target->second.getRuleHasWeightCodeBlocks().size() != 1 ||
+          target->second.getRuleHasWeightCodeBlocks()[0] ||
+          target->second.getRuleIsRandJoin().size() != 1 ||
+          target->second.getRuleIsRandJoin()[0] ||
+          target->second.getRuleHasRandJoinExpressions().size() != 1 ||
+          target->second.getRuleHasRandJoinExpressions()[0] ||
+          !target->second.getFormalArguments().empty()) {
+        return emitError(getSemanticLocation(operand))
+               << "rand join currently requires deterministic single-item "
+                  "operand productions of equal depth-one length";
+      }
+      auto targetType =
+          target->second->getAttrOfType<TypeAttr>("semantic_type");
+      SmallVector<Operation *> targetChildren = getChildren(target->second);
+      if (!targetType || !isa<semantic::VoidType>(targetType.getValue()) ||
+          targetChildren.size() != 1) {
+        return emitError(getSemanticLocation(operand))
+               << "rand join currently requires void single-item operand "
+                  "productions";
+      }
+      streams.push_back(targetChildren.front());
+    }
+
+    // The bias is observable even when every active stream has the same
+    // length, although equal lengths make it irrelevant to selection. Check
+    // its required real [0.0, 1.0] domain before consuming any RNG state.
+    if (rule.randJoinBias) {
+      FailureOr<Value> lowered = lowerExpression(rule.randJoinBias);
+      if (failed(lowered))
         return failure();
+      FailureOr<Value> bias =
+          convert(*lowered, builder.getF64Type(),
+                  isSignedNode(rule.randJoinBias),
+                  getSemanticLocation(rule.randJoinBias));
+      if (failed(bias))
+        return failure();
+      Value zero = arith::ConstantOp::create(
+          builder, getSemanticLocation(rule.randJoinBias),
+          builder.getF64FloatAttr(0.0));
+      Value one = arith::ConstantOp::create(
+          builder, getSemanticLocation(rule.randJoinBias),
+          builder.getF64FloatAttr(1.0));
+      Value atLeastZero = arith::CmpFOp::create(
+          builder, getSemanticLocation(rule.randJoinBias),
+          arith::CmpFPredicate::OGE, *bias, zero);
+      Value atMostOne = arith::CmpFOp::create(
+          builder, getSemanticLocation(rule.randJoinBias),
+          arith::CmpFPredicate::OLE, *bias, one);
+      Value valid = arith::AndIOp::create(
+          builder, getSemanticLocation(rule.randJoinBias), atLeastZero,
+          atMostOne);
+      Block *accepted = addBlock();
+      Block *invalid = addBlock();
+      cf::CondBranchOp::create(builder,
+                               getSemanticLocation(rule.randJoinBias), valid,
+                               accepted, invalid);
+      setCurrent(invalid);
+      if (failed(emitRuntimeFatal(
+              getSemanticLocation(rule.randJoinBias),
+              "rand join bias is outside the real range [0.0, 1.0]")))
+        return failure();
+      setCurrent(accepted);
+    }
+
+    Type i64 = builder.getI64Type();
+    Type i1 = builder.getI1Type();
+    Block *header = addBlock();
+    for (size_t index = 0; index < streams.size(); ++index)
+      header->addArgument(i1, location);
+    header->addArgument(i64, location);
+    Block *dispatch = addBlock();
+    Block *exit = addBlock();
+    SmallVector<Value> initial(streams.size(),
+                               arith::ConstantOp::create(
+                                   builder, location, i1,
+                                   builder.getBoolAttr(true)));
+    initial.push_back(arith::ConstantOp::create(
+        builder, location, i64,
+        builder.getI64IntegerAttr(streams.size())));
+    cf::BranchOp::create(builder, location, header, initial);
+
+    setCurrent(header);
+    Value remaining = header->getArgument(streams.size());
+    Value zero = arith::ConstantOp::create(builder, location, i64,
+                                           builder.getI64IntegerAttr(0));
+    Value more = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne, remaining, zero);
+    cf::CondBranchOp::create(builder, location, more, dispatch, exit);
+
+    setCurrent(dispatch);
+    Value one = arith::ConstantOp::create(builder, location, i64,
+                                          builder.getI64IntegerAttr(1));
+    Value last = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, remaining, one);
+    Block *randomize = addBlock();
+    Block *choose = addBlock();
+    choose->addArgument(i64, location);
+    cf::CondBranchOp::create(builder, location, last, choose,
+                             ValueRange{zero}, randomize, ValueRange{});
+
+    setCurrent(randomize);
+    Value context = function.getBody().front().getArgument(0);
+    Value draw = sim::SimRandomBoundedOp::create(builder, location, i64,
+                                                 context, remaining);
+    cf::BranchOp::create(builder, location, choose, ValueRange{draw});
+
+    setCurrent(choose);
+    draw = choose->getArgument(0);
+    Value rank = zero;
+    Value nextRemaining =
+        arith::SubIOp::create(builder, location, remaining, one);
+    for (size_t index = 0; index < streams.size(); ++index) {
+      Value active = header->getArgument(index);
+      Value rankMatches = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, draw, rank);
+      Value selected =
+          arith::AndIOp::create(builder, location, active, rankMatches);
+      Block *selectedBlock = addBlock();
+      Block *nextStream = addBlock();
+      cf::CondBranchOp::create(builder, location, selected, selectedBlock,
+                               nextStream);
+      setCurrent(selectedBlock);
+
+      Block *streamReturn = addBlock();
+      randSequenceProductionReturns.push_back(
+          {streamReturn, controlScopes.size()});
+      if (failed(lowerRandSequenceNode(streams[index]))) {
+        randSequenceProductionReturns.pop_back();
+        return failure();
+      }
+      emitBranch(streamReturn);
+      setCurrent(streamReturn);
+      randSequenceProductionReturns.pop_back();
+      SmallVector<Value> nextActive;
+      nextActive.reserve(streams.size() + 1);
+      for (size_t operand = 0; operand < streams.size(); ++operand)
+        nextActive.push_back(
+            operand == index
+                ? Value(arith::ConstantOp::create(
+                      builder, location, i1, builder.getBoolAttr(false)))
+                : header->getArgument(operand));
+      nextActive.push_back(nextRemaining);
+      cf::BranchOp::create(builder, location, header, nextActive);
+
+      setCurrent(nextStream);
+      Value nextRank = arith::AddIOp::create(builder, location, rank, one);
+      rank = arith::SelectOp::create(builder, location, active, nextRank, rank);
+    }
+    // The bounded draw and active-count invariant make this block
+    // unreachable, but keep the CFG structurally total.
+    cf::BranchOp::create(builder, location, exit);
+    setCurrent(exit);
+    return success();
+  };
+  auto lowerRule = [&](const Rule &rule) -> LogicalResult {
+    if (rule.randJoin) {
+      if (failed(lowerRandJoin(rule)))
+        return failure();
+    } else {
+      for (Operation *item : rule.items)
+        if (failed(lowerRandSequenceNode(item)))
+          return failure();
+    }
     if (rule.weightCodeBlock &&
         failed(lowerRandSequenceNode(rule.weightCodeBlock)))
       return failure();

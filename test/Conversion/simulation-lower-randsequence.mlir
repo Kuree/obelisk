@@ -12,6 +12,7 @@ module {
     obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "test.randsequence"
     obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "test.controls"
     obelisk_sim.code_unit.decl 3 in 0 initial hierarchy "test.single_weight"
+    obelisk_sim.code_unit.decl 4 in 0 initial hierarchy "test.rand_join"
     obelisk_sim.scope.decl 0
 
     // CHECK-LABEL: obelisk_sim.func @weighted
@@ -222,6 +223,83 @@ module {
       }
       obelisk_sim.return
     }
+
+    obelisk_sim.func @rand_join(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {
+          entry_kind = 1 : i32,
+          obelisk_sim.bindings = [],
+          code_unit_id = 4 : i64
+        } {
+      obelisk.sv.statement.rand_sequence attributes {
+          first_production = @join_main, node_id = 50 : i64,
+          production_count = 3 : i64} {
+        obelisk.sv.rand_seq.frozen_production attributes {
+            argument_count = 0 : i64, formal_arguments = [], node_id = 51 : i64,
+            referenced_path = "join_main", referenced_symbol = @join_main,
+            rule_count = 1 : i64,
+            rule_has_rand_join_expressions = array<i64: 1>,
+            rule_has_weight_code_blocks = array<i64: 0>,
+            rule_has_weights = array<i64: 0>,
+            rule_is_rand_join = array<i64: 1>,
+            rule_item_counts = array<i64: 2>, rule_variables = [[]],
+            semantic_type = !obelisk.void} {
+          obelisk.sv.expression.real_literal attributes {
+              constant_value = "0.5", node_id = 52 : i64,
+              semantic_type = !obelisk.real} {
+          }
+          obelisk.sv.rand_seq.item attributes {
+              argument_count = 0 : i64, node_id = 53 : i64,
+              target = @left} {
+          }
+          obelisk.sv.rand_seq.item attributes {
+              argument_count = 0 : i64, node_id = 54 : i64,
+              target = @right} {
+          }
+        }
+        obelisk.sv.rand_seq.frozen_production attributes {
+            argument_count = 0 : i64, formal_arguments = [], node_id = 55 : i64,
+            referenced_path = "left", referenced_symbol = @left,
+            rule_count = 1 : i64,
+            rule_has_rand_join_expressions = array<i64: 0>,
+            rule_has_weight_code_blocks = array<i64: 0>,
+            rule_has_weights = array<i64: 0>,
+            rule_is_rand_join = array<i64: 0>,
+            rule_item_counts = array<i64: 1>, rule_variables = [[]],
+            semantic_type = !obelisk.void} {
+          obelisk.sv.rand_seq.code_block attributes {node_id = 56 : i64} {
+            obelisk.sv.statement.expression_statement attributes {
+                node_id = 57 : i64} {
+              obelisk.sv.expression.integer_literal attributes {
+                  constant_value = "1", is_signed = true, node_id = 58 : i64,
+                  semantic_type = !int} {
+              }
+            }
+          }
+        }
+        obelisk.sv.rand_seq.frozen_production attributes {
+            argument_count = 0 : i64, formal_arguments = [], node_id = 59 : i64,
+            referenced_path = "right", referenced_symbol = @right,
+            rule_count = 1 : i64,
+            rule_has_rand_join_expressions = array<i64: 0>,
+            rule_has_weight_code_blocks = array<i64: 0>,
+            rule_has_weights = array<i64: 0>,
+            rule_is_rand_join = array<i64: 0>,
+            rule_item_counts = array<i64: 1>, rule_variables = [[]],
+            semantic_type = !obelisk.void} {
+          obelisk.sv.rand_seq.code_block attributes {node_id = 60 : i64} {
+            obelisk.sv.statement.expression_statement attributes {
+                node_id = 61 : i64} {
+              obelisk.sv.expression.integer_literal attributes {
+                  constant_value = "2", is_signed = true, node_id = 62 : i64,
+                  semantic_type = !int} {
+              }
+            }
+          }
+        }
+      }
+      obelisk_sim.return
+    }
   }
 }
 
@@ -270,3 +348,16 @@ module {
 // CHECK: arith.cmpi slt
 // CHECK-NOT: arith.addi
 // CHECK-NOT: obelisk_sim.random.bounded
+
+// Equal depth-one streams are randomly interleaved while preserving each
+// stream's internal order. The bias is evaluated and range-checked first; it
+// cannot favor either stream while their remaining lengths are equal.
+// CHECK-LABEL: obelisk_sim.func @rand_join
+// CHECK: arith.cmpf oge
+// CHECK: arith.cmpf ole
+// CHECK: cf.cond_br
+// CHECK: ^{{.*}}(%{{.*}}: i1, %{{.*}}: i1, %[[REMAINING:.*]]: i64):
+// CHECK: arith.cmpi ne, %[[REMAINING]],
+// CHECK: obelisk_sim.random.bounded %arg0, %[[REMAINING]]
+// CHECK: arith.cmpi eq
+// CHECK: arith.select

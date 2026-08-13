@@ -39,8 +39,7 @@ module {
 
 // -----
 
-// IEEE 1800-2017 18.17.6 defines rand join as depth-one random interleaving,
-// not an arbitrary shuffle of the fully expanded production stream.
+// IEEE 1800-2017 18.17.5 requires two or more production items in a rand join.
 
 module {
   obelisk_sim.design @rand_join {
@@ -70,7 +69,7 @@ module {
   }
 }
 
-// CHECK: rand join requires depth-one interleaving lowering
+// CHECK: rand join requires at least two production items
 
 // -----
 
