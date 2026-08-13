@@ -2080,6 +2080,8 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     return lowerPatternCase(patternCase);
   if (auto randCase = dyn_cast<semantic::SVRandCaseStatementOp>(op))
     return lowerRandCase(randCase);
+  if (auto randSequence = dyn_cast<semantic::SVRandSequenceStatementOp>(op))
+    return lowerRandSequence(randSequence);
   if (isa<semantic::SVWhileLoopStatementOp>(op))
     return lowerWhile(op);
   if (isa<semantic::SVDoWhileLoopStatementOp>(op))
@@ -2094,8 +2096,15 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     return lowerRepeat(op);
   if (isa<semantic::SVBreakStatementOp>(op)) {
     if (loopTargets.empty()) {
-      emitError(location) << "break is not nested in a loop";
-      return failure();
+      if (randSequenceContexts.empty()) {
+        emitError(location) << "break is not nested in a loop or randsequence";
+        return failure();
+      }
+      emitControlLeaves(randSequenceContexts.back().controlDepth, location);
+      cf::BranchOp::create(builder, location,
+                           randSequenceContexts.back().breakTarget);
+      setCurrent(addBlock());
+      return success();
     }
     emitControlLeaves(loopTargets.back().controlDepth, location);
     cf::BranchOp::create(builder, location, loopTargets.back().breakTarget);
@@ -2114,6 +2123,20 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     return success();
   }
   if (isa<semantic::SVReturnStatementOp>(op)) {
+    if (!randSequenceProductionReturns.empty()) {
+      if (!children.empty()) {
+        emitError(location)
+            << "value-returning randsequence productions are outside the "
+               "current executable boundary";
+        return failure();
+      }
+      emitControlLeaves(randSequenceProductionReturns.back().controlDepth,
+                        location);
+      cf::BranchOp::create(builder, location,
+                           randSequenceProductionReturns.back().target);
+      setCurrent(addBlock());
+      return success();
+    }
     std::optional<Value> result;
     bool resultSigned = false;
     if (!children.empty()) {

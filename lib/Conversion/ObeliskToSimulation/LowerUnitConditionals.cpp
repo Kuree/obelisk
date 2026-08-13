@@ -6,6 +6,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringMap.h"
 
 #include <limits>
@@ -1371,6 +1372,611 @@ LogicalResult UnitLowering::lowerRandCase(semantic::SVRandCaseStatementOp op) {
   emitBranch(mergeBlock);
   setCurrent(mergeBlock);
   return success();
+}
+
+LogicalResult
+UnitLowering::lowerRandSequence(semantic::SVRandSequenceStatementOp op) {
+  Location location = getSemanticLocation(op);
+  SmallVector<Operation *> children = getChildren(op);
+  RandSequenceContext context;
+  context.breakTarget = addBlock();
+  context.controlDepth = controlScopes.size();
+  for (Operation *child : children) {
+    auto production =
+        dyn_cast<semantic::SVFrozenRandSeqProductionOp>(child);
+    if (!production) {
+      emitError(getSemanticLocation(child))
+          << "randsequence contains a non-production child";
+      return failure();
+    }
+    StringRef identity = production.getReferencedSymbol().getLeafReference();
+    if (!context.productions.try_emplace(identity, production).second) {
+      emitError(getSemanticLocation(production))
+          << "duplicate frozen randsequence production " << identity;
+      return failure();
+    }
+  }
+  auto productionCount = op->getAttrOfType<IntegerAttr>("production_count");
+  if (!productionCount || productionCount.getInt() < 0 ||
+      context.productions.size() !=
+          static_cast<uint64_t>(productionCount.getInt())) {
+    emitError(location) << "malformed frozen randsequence production inventory";
+    return failure();
+  }
+
+  // Recursive productions are legal in 18.17 and require activation-owned
+  // frames. Do not approximate them by a depth cutoff or static unrolling;
+  // reject the currently unoutlined boundary before emitting any CFG.
+  llvm::StringMap<int> visitState;
+  std::function<LogicalResult(StringRef)> visit = [&](StringRef identity) {
+    int &state = visitState[identity];
+    if (state == 1) {
+      emitError(location)
+          << "recursive randsequence production requires activation-frame "
+             "lowering";
+      return failure();
+    }
+    if (state == 2)
+      return success();
+    auto found = context.productions.find(identity);
+    if (found == context.productions.end()) {
+      emitError(location) << "randsequence references unknown production "
+                          << identity;
+      return failure();
+    }
+    state = 1;
+    WalkResult result = found->second->walk([&](semantic::SVProdItemOp item) {
+      auto reference = item->getAttrOfType<SymbolRefAttr>("target");
+      if (!reference) {
+        emitError(getSemanticLocation(item))
+            << "randsequence production item has no target";
+        return WalkResult::interrupt();
+      }
+      auto target =
+          context.productions.find(reference.getLeafReference().getValue());
+      if (target == context.productions.end()) {
+        emitError(getSemanticLocation(item))
+            << "randsequence references unknown production "
+            << reference;
+        return WalkResult::interrupt();
+      }
+      if (failed(visit(target->getKey())))
+        return WalkResult::interrupt();
+      return WalkResult::advance();
+    });
+    if (result.wasInterrupted())
+      return failure();
+    state = 2;
+    return success();
+  };
+  auto first = op->getAttrOfType<SymbolRefAttr>("first_production");
+  if (!first) {
+    emitError(location) << "randsequence has no first production";
+    return failure();
+  }
+  if (!context.productions.count(first.getLeafReference())) {
+    emitError(location) << "randsequence cannot resolve its first production";
+    return failure();
+  }
+  if (failed(visit(first.getLeafReference())))
+    return failure();
+
+  randSequenceContexts.push_back(std::move(context));
+  auto initial =
+      randSequenceContexts.back().productions.find(first.getLeafReference());
+  if (failed(lowerRandSequenceProduction(initial->second, {}))) {
+    randSequenceContexts.pop_back();
+    return failure();
+  }
+  Block *exit = randSequenceContexts.back().breakTarget;
+  emitBranch(exit);
+  setCurrent(exit);
+  randSequenceContexts.pop_back();
+  return success();
+}
+
+LogicalResult UnitLowering::lowerRandSequenceProduction(
+    semantic::SVFrozenRandSeqProductionOp production,
+    ArrayRef<Operation *> actuals) {
+  Location location = getSemanticLocation(production);
+  auto productionType = production->getAttrOfType<TypeAttr>("semantic_type");
+  if (!productionType) {
+    emitError(location) << "randsequence production has no semantic type";
+    return failure();
+  }
+  if (!isa<semantic::VoidType>(productionType.getValue())) {
+    emitError(location)
+        << "value-returning randsequence productions are outside the current "
+           "executable boundary";
+    return failure();
+  }
+
+  ArrayAttr formals = production.getFormalArguments();
+  if (formals.size() != production.getArgumentCount() ||
+      actuals.size() > formals.size()) {
+    emitError(location) << "malformed randsequence formal inventory";
+    return failure();
+  }
+  SmallVector<Operation *> children = getChildren(production);
+  SmallVector<Operation *> defaultExpressions(formals.size(), nullptr);
+  size_t nextChild = 0;
+  for (auto [index, attribute] : llvm::enumerate(formals)) {
+    auto formal = dyn_cast<DictionaryAttr>(attribute);
+    auto defaultCount =
+        formal ? formal.getAs<IntegerAttr>("default_operand_count")
+               : IntegerAttr{};
+    if (!formal || !defaultCount || defaultCount.getInt() < 0 ||
+        defaultCount.getInt() > 1 ||
+        nextChild + defaultCount.getInt() > children.size()) {
+      emitError(location) << "malformed randsequence formal default inventory";
+      return failure();
+    }
+    if (defaultCount.getInt() == 1)
+      defaultExpressions[index] = children[nextChild++];
+  }
+
+  struct SavedBinding {
+    std::string path;
+    Value value;
+    Value lvalue;
+    bool hadValue;
+    bool hadLValue;
+  };
+  SmallVector<SavedBinding> savedBindings;
+  llvm::scope_exit restoreBindings([&] {
+    for (const SavedBinding &saved : llvm::reverse(savedBindings)) {
+      if (saved.hadValue)
+        values[saved.path] = saved.value;
+      else
+        values.erase(saved.path);
+      if (saved.hadLValue)
+        lvalues[saved.path] = saved.lvalue;
+      else
+        lvalues.erase(saved.path);
+    }
+  });
+
+  SmallVector<Value> explicitValues;
+  explicitValues.reserve(actuals.size());
+  for (Operation *actual : actuals) {
+    FailureOr<Value> value = lowerExpression(actual);
+    if (failed(value))
+      return failure();
+    explicitValues.push_back(*value);
+  }
+  for (auto [index, attribute] : llvm::enumerate(formals)) {
+    auto formal = cast<DictionaryAttr>(attribute);
+    auto direction = formal.getAs<IntegerAttr>("direction");
+    auto path = formal.getAs<StringAttr>("referenced_path");
+    auto semanticType = formal.getAs<TypeAttr>("semantic_type");
+    if (!direction ||
+        direction.getInt() != static_cast<int64_t>(
+                                  semantic::SVArgumentDirection::In) ||
+        !path || !semanticType) {
+      emitError(location)
+          << "randsequence currently requires typed input formals";
+      return failure();
+    }
+    FailureOr<Type> type =
+        normalizeSemanticType(semanticType.getValue(), location);
+    if (failed(type))
+      return failure();
+    Value initial;
+    bool sourceSigned = false;
+    if (index < explicitValues.size()) {
+      initial = explicitValues[index];
+      sourceSigned = isSignedNode(actuals[index]);
+    } else if (defaultExpressions[index]) {
+      FailureOr<Value> value = lowerExpression(defaultExpressions[index]);
+      if (failed(value))
+        return failure();
+      initial = *value;
+      sourceSigned = isSignedNode(defaultExpressions[index]);
+    } else {
+      emitError(location) << "randsequence production argument " << index
+                          << " has no actual or default value";
+      return failure();
+    }
+    FailureOr<Value> converted =
+        convert(initial, *type, sourceSigned, location);
+    if (failed(converted))
+      return failure();
+    std::string bindingPath = path.getValue().str();
+    savedBindings.push_back({bindingPath, values.lookup(bindingPath),
+                             lvalues.lookup(bindingPath),
+                             values.count(bindingPath) != 0,
+                             lvalues.count(bindingPath) != 0});
+    Value reference = sim::SimRefAllocOp::create(
+        builder, location,
+        sim::RefType::get(function.getContext(), *type), *converted);
+    values[bindingPath] = reference;
+    lvalues[bindingPath] = reference;
+  }
+
+  ArrayRef<int64_t> itemCounts = production.getRuleItemCounts();
+  ArrayRef<int64_t> hasWeights = production.getRuleHasWeights();
+  ArrayRef<int64_t> hasWeightCodeBlocks =
+      production.getRuleHasWeightCodeBlocks();
+  ArrayRef<int64_t> isRandJoin = production.getRuleIsRandJoin();
+  ArrayRef<int64_t> hasRandJoinExpressions =
+      production.getRuleHasRandJoinExpressions();
+  size_t ruleCount = production.getRuleCount();
+  if (itemCounts.size() != ruleCount || hasWeights.size() != ruleCount ||
+      hasWeightCodeBlocks.size() != ruleCount ||
+      isRandJoin.size() != ruleCount ||
+      hasRandJoinExpressions.size() != ruleCount) {
+    emitError(location) << "malformed randsequence rule metadata";
+    return failure();
+  }
+
+  struct Rule {
+    Operation *weight = nullptr;
+    SmallVector<Operation *> items;
+    Operation *weightCodeBlock = nullptr;
+  };
+  SmallVector<Rule> rules;
+  rules.reserve(ruleCount);
+  for (size_t index = 0; index < ruleCount; ++index) {
+    if (itemCounts[index] < 0 ||
+        (hasWeights[index] != 0 && hasWeights[index] != 1) ||
+        (hasWeightCodeBlocks[index] != 0 &&
+         hasWeightCodeBlocks[index] != 1) ||
+        (isRandJoin[index] != 0 && isRandJoin[index] != 1) ||
+        (hasRandJoinExpressions[index] != 0 &&
+         hasRandJoinExpressions[index] != 1)) {
+      emitError(location) << "invalid randsequence rule metadata";
+      return failure();
+    }
+    if (isRandJoin[index]) {
+      emitError(location)
+          << "rand join requires depth-one interleaving lowering";
+      return failure();
+    }
+    Rule rule;
+    if (hasWeights[index]) {
+      if (nextChild == children.size())
+        return emitError(location) << "missing randsequence rule weight";
+      rule.weight = children[nextChild++];
+    }
+    if (hasRandJoinExpressions[index]) {
+      if (nextChild == children.size())
+        return emitError(location) << "missing rand join expression";
+      ++nextChild;
+    }
+    if (nextChild + itemCounts[index] > children.size()) {
+      emitError(location) << "truncated randsequence production list";
+      return failure();
+    }
+    llvm::append_range(
+        rule.items,
+        ArrayRef<Operation *>(children).slice(nextChild, itemCounts[index]));
+    nextChild += itemCounts[index];
+    if (hasWeightCodeBlocks[index]) {
+      if (nextChild == children.size())
+        return emitError(location)
+               << "missing randsequence weight code block";
+      rule.weightCodeBlock = children[nextChild++];
+    }
+    rules.push_back(std::move(rule));
+  }
+  if (nextChild != children.size()) {
+    emitError(location) << "excess randsequence production operands";
+    return failure();
+  }
+
+  Block *productionReturn = addBlock();
+  randSequenceProductionReturns.push_back(
+      {productionReturn, controlScopes.size()});
+  llvm::scope_exit popReturn(
+      [&] { randSequenceProductionReturns.pop_back(); });
+  auto lowerRule = [&](const Rule &rule) -> LogicalResult {
+    for (Operation *item : rule.items)
+      if (failed(lowerRandSequenceNode(item)))
+        return failure();
+    if (rule.weightCodeBlock &&
+        failed(lowerRandSequenceNode(rule.weightCodeBlock)))
+      return failure();
+    emitBranch(productionReturn);
+    return success();
+  };
+  auto lowerExplicitWeight = [&](Operation *node, Type i64,
+                                 Value zero) -> FailureOr<Value> {
+    FailureOr<Type> sourceType = getNormalizedSemanticType(node);
+    std::optional<unsigned> width =
+        succeeded(sourceType) ? sim::getPackedWidth(*sourceType) : std::nullopt;
+    if (!width || *width > 64) {
+      emitError(getSemanticLocation(node))
+          << "randsequence weights wider than 64 bits are outside the "
+             "runtime RNG boundary";
+      return failure();
+    }
+    FailureOr<Value> lowered = lowerExpression(node);
+    if (failed(lowered))
+      return failure();
+    FailureOr<Value> converted =
+        convert(*lowered, i64, isSignedNode(node), getSemanticLocation(node));
+    if (failed(converted))
+      return failure();
+    if (isSignedNode(node)) {
+      Value negative = arith::CmpIOp::create(
+          builder, getSemanticLocation(node), arith::CmpIPredicate::slt,
+          *converted, zero);
+      Block *invalid = addBlock();
+      Block *valid = addBlock();
+      cf::CondBranchOp::create(builder, getSemanticLocation(node), negative,
+                               invalid, valid);
+      setCurrent(invalid);
+      if (failed(emitRuntimeFatal(
+              getSemanticLocation(node),
+              "randsequence weight evaluated to a negative value")))
+        return failure();
+      setCurrent(valid);
+    }
+    return *converted;
+  };
+
+  if (rules.empty()) {
+    emitBranch(productionReturn);
+  } else if (rules.size() == 1) {
+    if (rules.front().weight) {
+      Type i64 = builder.getI64Type();
+      Value zero = arith::ConstantOp::create(builder, location, i64,
+                                             builder.getI64IntegerAttr(0));
+      if (failed(lowerExplicitWeight(rules.front().weight, i64, zero)))
+        return failure();
+    }
+    if (failed(lowerRule(rules.front())))
+      return failure();
+  } else {
+    Type i64 = builder.getI64Type();
+    Value zero = arith::ConstantOp::create(builder, location, i64,
+                                           builder.getI64IntegerAttr(0));
+    Value one = arith::ConstantOp::create(builder, location, i64,
+                                          builder.getI64IntegerAttr(1));
+    SmallVector<Value> bounds;
+    Value total = zero;
+    for (const Rule &rule : rules) {
+      Value weight = one;
+      if (rule.weight) {
+        FailureOr<Value> loweredWeight =
+            lowerExplicitWeight(rule.weight, i64, zero);
+        if (failed(loweredWeight))
+          return failure();
+        weight = *loweredWeight;
+      }
+      Value next = arith::AddIOp::create(builder, location, total, weight);
+      Value overflow = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ult, next, total);
+      Block *invalid = addBlock();
+      Block *valid = addBlock();
+      cf::CondBranchOp::create(builder, location, overflow, invalid, valid);
+      setCurrent(invalid);
+      if (failed(emitRuntimeFatal(location,
+                                  "randsequence weight sum overflowed 64 bits")))
+        return failure();
+      setCurrent(valid);
+      total = next;
+      bounds.push_back(total);
+    }
+    Block *select = addBlock();
+    Value any = arith::CmpIOp::create(builder, location,
+                                      arith::CmpIPredicate::ne, total, zero);
+    cf::CondBranchOp::create(builder, location, any, select,
+                             productionReturn);
+    setCurrent(select);
+    Value context = function.getBody().front().getArgument(0);
+    Value draw = sim::SimRandomBoundedOp::create(builder, location, i64,
+                                                 context, total);
+    for (size_t index = 0; index + 1 < rules.size(); ++index) {
+      Block *selected = addBlock();
+      Block *nextRule = addBlock();
+      Value choose = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ult, draw, bounds[index]);
+      cf::CondBranchOp::create(builder, location, choose, selected, nextRule);
+      setCurrent(selected);
+      if (failed(lowerRule(rules[index])))
+        return failure();
+      setCurrent(nextRule);
+    }
+    if (failed(lowerRule(rules.back())))
+      return failure();
+  }
+  setCurrent(productionReturn);
+  return success();
+}
+
+LogicalResult UnitLowering::lowerRandSequenceProductionItem(
+    semantic::SVProdItemOp item) {
+  if (randSequenceContexts.empty())
+    return emitError(getSemanticLocation(item))
+           << "randsequence production item has no active grammar";
+  auto target = item->getAttrOfType<SymbolRefAttr>("target");
+  if (!target)
+    return emitError(getSemanticLocation(item))
+           << "randsequence production item has no target";
+  auto found = randSequenceContexts.back().productions.find(
+      target.getLeafReference());
+  if (found == randSequenceContexts.back().productions.end())
+    return emitError(getSemanticLocation(item))
+           << "randsequence cannot resolve production " << target;
+  SmallVector<Operation *> actuals = getChildren(item);
+  auto argumentCount = item->getAttrOfType<IntegerAttr>("argument_count");
+  if (!argumentCount || argumentCount.getInt() < 0 ||
+      actuals.size() != static_cast<uint64_t>(argumentCount.getInt()))
+    return emitError(getSemanticLocation(item))
+           << "malformed randsequence actual argument inventory";
+  return lowerRandSequenceProduction(found->second, actuals);
+}
+
+LogicalResult UnitLowering::lowerRandSequenceNode(Operation *node) {
+  Location location = getSemanticLocation(node);
+  if (auto item = dyn_cast<semantic::SVProdItemOp>(node))
+    return lowerRandSequenceProductionItem(item);
+  if (auto code = dyn_cast<semantic::SVCodeBlockProdOp>(node)) {
+    SmallVector<Operation *> children = getChildren(code);
+    if (children.size() != 1)
+      return emitError(location) << "malformed randsequence code block";
+    return lowerStatement(children.front());
+  }
+  if (auto conditional = dyn_cast<semantic::SVIfElseProdOp>(node)) {
+    SmallVector<Operation *> children = getChildren(conditional);
+    auto hasElse = conditional->getAttrOfType<BoolAttr>("has_else");
+    if (!hasElse || children.size() != 2u + unsigned(hasElse.getValue()))
+      return emitError(location) << "malformed randsequence if production";
+    if (!isa<semantic::SVProdItemOp>(children[1]) ||
+        (hasElse.getValue() &&
+         !isa<semantic::SVProdItemOp>(children[2])))
+      return emitError(location) << "malformed randsequence if production";
+    FailureOr<Value> condition = lowerExpression(children.front());
+    if (failed(condition))
+      return failure();
+    FailureOr<Value> predicate = truthValue(*condition, location);
+    if (failed(predicate))
+      return failure();
+    Block *ifBlock = addBlock();
+    Block *elseBlock = addBlock();
+    Block *merge = addBlock();
+    cf::CondBranchOp::create(builder, location, *predicate, ifBlock, elseBlock);
+    setCurrent(ifBlock);
+    if (failed(lowerRandSequenceProductionItem(
+            cast<semantic::SVProdItemOp>(children[1]))))
+      return failure();
+    emitBranch(merge);
+    setCurrent(elseBlock);
+    if (hasElse.getValue() &&
+        failed(lowerRandSequenceProductionItem(
+            cast<semantic::SVProdItemOp>(children[2]))))
+      return failure();
+    emitBranch(merge);
+    setCurrent(merge);
+    return success();
+  }
+  if (auto repeat = dyn_cast<semantic::SVRepeatProdOp>(node)) {
+    SmallVector<Operation *> children = getChildren(repeat);
+    if (children.size() != 2 || !isa<semantic::SVProdItemOp>(children[1]))
+      return emitError(location) << "malformed randsequence repeat production";
+    FailureOr<Type> sourceType = getNormalizedSemanticType(children.front());
+    std::optional<unsigned> width =
+        succeeded(sourceType) ? sim::getPackedWidth(*sourceType) : std::nullopt;
+    if (!width || *width > 64)
+      return emitError(location)
+             << "randsequence repeat counts wider than 64 bits are outside "
+                "the executable boundary";
+    FailureOr<Value> lowered = lowerExpression(children.front());
+    if (failed(lowered))
+      return failure();
+    Type i64 = builder.getI64Type();
+    FailureOr<Value> count = convert(*lowered, i64,
+                                     isSignedNode(children.front()), location);
+    if (failed(count))
+      return failure();
+    Value zero = arith::ConstantOp::create(builder, location, i64,
+                                           builder.getI64IntegerAttr(0));
+    if (isSignedNode(children.front())) {
+      Value negative = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::slt, *count, zero);
+      Block *invalid = addBlock();
+      Block *valid = addBlock();
+      cf::CondBranchOp::create(builder, location, negative, invalid, valid);
+      setCurrent(invalid);
+      if (failed(emitRuntimeFatal(
+              location,
+              "randsequence repeat count evaluated to a negative value")))
+        return failure();
+      setCurrent(valid);
+    }
+    Block *header = addBlock();
+    header->addArgument(i64, location);
+    Block *body = addBlock();
+    Block *exit = addBlock();
+    cf::BranchOp::create(builder, location, header, ValueRange{zero});
+    setCurrent(header);
+    Value index = header->getArgument(0);
+    Value more = arith::CmpIOp::create(builder, location,
+                                       arith::CmpIPredicate::ult, index, *count);
+    cf::CondBranchOp::create(builder, location, more, body, exit);
+    setCurrent(body);
+    if (failed(lowerRandSequenceProductionItem(
+            cast<semantic::SVProdItemOp>(children[1]))))
+      return failure();
+    Value one = arith::ConstantOp::create(builder, location, i64,
+                                          builder.getI64IntegerAttr(1));
+    Value next = arith::AddIOp::create(builder, location, index, one);
+    cf::BranchOp::create(builder, location, header, ValueRange{next});
+    setCurrent(exit);
+    return success();
+  }
+  if (auto caseProduction = dyn_cast<semantic::SVCaseProdOp>(node)) {
+    SmallVector<Operation *> children = getChildren(caseProduction);
+    auto expressionCountsAttr =
+        caseProduction->getAttrOfType<DenseI64ArrayAttr>(
+            "item_expression_counts");
+    auto itemCount = caseProduction->getAttrOfType<IntegerAttr>("item_count");
+    auto hasDefault = caseProduction->getAttrOfType<BoolAttr>("has_default");
+    ArrayRef<int64_t> expressionCounts =
+        expressionCountsAttr ? expressionCountsAttr.asArrayRef()
+                             : ArrayRef<int64_t>{};
+    if (!expressionCountsAttr || !itemCount || itemCount.getInt() < 0 ||
+        !hasDefault ||
+        expressionCounts.size() != static_cast<uint64_t>(itemCount.getInt()) ||
+        children.empty())
+      return emitError(location) << "malformed randsequence case production";
+    FailureOr<Value> selector = lowerExpression(children.front());
+    if (failed(selector))
+      return failure();
+    FailureOr<Type> selectorType = getNormalizedSemanticType(children.front());
+    if (failed(selectorType))
+      return failure();
+    Operation *selectorNode = children.front();
+    size_t next = 1;
+    Block *merge = addBlock();
+    for (int64_t expressionCount : expressionCounts) {
+      if (expressionCount <= 0 ||
+          next + expressionCount >= children.size())
+        return emitError(location)
+               << "malformed randsequence case item inventory";
+      SmallVector<Operation *> labels;
+      for (int64_t index = 0; index < expressionCount; ++index)
+        labels.push_back(children[next++]);
+      auto item = dyn_cast<semantic::SVProdItemOp>(children[next++]);
+      if (!item)
+        return emitError(location)
+               << "randsequence case item has no production";
+      for (Operation *label : labels) {
+        FailureOr<Value> matches = lowerCaseLabel(
+            *selector, *selectorType, selectorNode, label,
+            semantic::SVCaseCondition::Normal);
+        if (failed(matches))
+          return failure();
+        Block *selected = addBlock();
+        Block *nextLabel = addBlock();
+        cf::CondBranchOp::create(builder, getSemanticLocation(label), *matches,
+                                 selected, nextLabel);
+        setCurrent(selected);
+        if (failed(lowerRandSequenceProductionItem(item)))
+          return failure();
+        emitBranch(merge);
+        setCurrent(nextLabel);
+      }
+    }
+    if (hasDefault.getValue()) {
+      if (next == children.size() ||
+          !isa<semantic::SVProdItemOp>(children[next]))
+        return emitError(location)
+               << "randsequence case default has no production";
+      if (failed(lowerRandSequenceProductionItem(
+              cast<semantic::SVProdItemOp>(children[next++]))))
+        return failure();
+    }
+    if (next != children.size())
+      return emitError(location)
+             << "excess randsequence case production operands";
+    emitBranch(merge);
+    setCurrent(merge);
+    return success();
+  }
+  return emitError(location) << "unsupported randsequence production node "
+                             << node->getName();
 }
 
 LogicalResult

@@ -255,6 +255,14 @@ private:
   ::mlir::LogicalResult lowerCase(semantic::SVCaseStatementOp op);
   ::mlir::LogicalResult lowerPatternCase(semantic::SVPatternCaseStatementOp op);
   ::mlir::LogicalResult lowerRandCase(semantic::SVRandCaseStatementOp op);
+  ::mlir::LogicalResult
+  lowerRandSequence(semantic::SVRandSequenceStatementOp op);
+  ::mlir::LogicalResult lowerRandSequenceProduction(
+      semantic::SVFrozenRandSeqProductionOp production,
+      ::mlir::ArrayRef<::mlir::Operation *> actuals);
+  ::mlir::LogicalResult lowerRandSequenceProductionItem(
+      semantic::SVProdItemOp item);
+  ::mlir::LogicalResult lowerRandSequenceNode(::mlir::Operation *node);
   ::mlir::FailureOr<::mlir::Value>
   lowerPattern(::mlir::Value input, ::mlir::Operation *pattern,
                semantic::SVCaseCondition condition,
@@ -406,6 +414,18 @@ private:
     size_t controlDepth;
   };
   ::mlir::SmallVector<LoopTargets> loopTargets;
+  struct RandSequenceContext {
+    ::llvm::StringMap<semantic::SVFrozenRandSeqProductionOp> productions;
+    ::mlir::Block *breakTarget;
+    size_t controlDepth;
+  };
+  ::mlir::SmallVector<RandSequenceContext> randSequenceContexts;
+  struct RandSequenceProductionReturn {
+    ::mlir::Block *target;
+    size_t controlDepth;
+  };
+  ::mlir::SmallVector<RandSequenceProductionReturn>
+      randSequenceProductionReturns;
   struct ControlScope {
     std::string path;
     uint64_t targetID;
