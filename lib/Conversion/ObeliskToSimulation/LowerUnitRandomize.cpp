@@ -362,6 +362,13 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     SmallVector<DomainPattern> patterns;
     uint64_t cardinality;
   };
+  struct ObjectPathElement {
+    FlatSymbolRefAttr field;
+    Type concreteType;
+    Type storageType;
+    unsigned modeIndex;
+    FlatSymbolRefAttr modeField;
+  };
   struct Property {
     Type type;
     unsigned width;
@@ -384,10 +391,65 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value nextRandcPosition;
     std::optional<uint64_t> randomModeStorage;
     SmallVector<PropertyDomain> domains;
+    SmallVector<ObjectPathElement> nestedObjectPath;
   };
-  SmallVector<Property> planned;
+  SmallVector<Property, 0> planned;
   uint64_t plannedWidth = 0;
   Type i64 = builder.getI64Type();
+  auto parseNestedObjectPath =
+      [&](ArrayAttr pathAttr,
+          SmallVectorImpl<ObjectPathElement> &path) -> LogicalResult {
+    if (!pathAttr)
+      return success();
+    for (Attribute elementAttr : pathAttr) {
+      auto element = dyn_cast<DictionaryAttr>(elementAttr);
+      auto field = element ? element.getAs<FlatSymbolRefAttr>("field")
+                           : FlatSymbolRefAttr{};
+      auto concreteTypeAttr =
+          element ? element.getAs<TypeAttr>("concrete_type") : TypeAttr{};
+      auto storageTypeAttr =
+          element ? element.getAs<TypeAttr>("storage_type") : TypeAttr{};
+      auto modeIndexAttr =
+          element ? element.getAs<IntegerAttr>("rand_mode_index")
+                  : IntegerAttr{};
+      if (!field || !concreteTypeAttr || !storageTypeAttr || !modeIndexAttr ||
+          !isa<sim::ClassHandleType>(concreteTypeAttr.getValue()) ||
+          !isa<sim::ClassHandleType>(storageTypeAttr.getValue()) ||
+          modeIndexAttr.getValue().isNegative() ||
+          modeIndexAttr.getValue().getActiveBits() > 32 ||
+          modeIndexAttr.getValue().getZExtValue() >= 64) {
+        emitError(location) << "nested random-object path is malformed";
+        return failure();
+      }
+      auto concreteType =
+          cast<sim::ClassHandleType>(concreteTypeAttr.getValue());
+      auto declaration =
+          SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+              function, concreteType.getClassName());
+      while (declaration &&
+             !declaration->hasAttr("obelisk_sim.random_mode_field")) {
+        if (!declaration.getBaseAttr())
+          break;
+        declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+            function, declaration.getBaseAttr());
+      }
+      auto modeField =
+          declaration
+              ? declaration->getAttrOfType<FlatSymbolRefAttr>(
+                    "obelisk_sim.random_mode_field")
+              : FlatSymbolRefAttr{};
+      if (!modeField) {
+        emitError(location)
+            << "nested random-object path has no rand_mode field";
+        return failure();
+      }
+      path.push_back(
+          {field, concreteTypeAttr.getValue(), storageTypeAttr.getValue(),
+           static_cast<unsigned>(modeIndexAttr.getValue().getZExtValue()),
+           modeField});
+    }
+    return success();
+  };
   for (Attribute propertyAttr : properties) {
     auto property = dyn_cast<DictionaryAttr>(propertyAttr);
     auto field = property ? property.getAs<FlatSymbolRefAttr>("field")
@@ -435,6 +497,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     auto nestedModeIndexAttr =
         property ? property.getAs<IntegerAttr>(randomNestedModeIndexAttrName)
                  : IntegerAttr{};
+    auto nestedObjectPathAttr =
+        property ? property.getAs<ArrayAttr>(randomNestedObjectPathAttrName)
+                 : ArrayAttr{};
     bool isNestedObject = static_cast<bool>(nestedObjectField);
     if (static_cast<bool>(field) == static_cast<bool>(referencePath) ||
         !typeAttr || !widthAttr || !modeIndexAttr || !signedAttr ||
@@ -453,7 +518,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           !nestedObjectStorageTypeAttr || !nestedModeIndexAttr ||
           nestedModeIndexAttr.getValue().isNegative() ||
           nestedModeIndexAttr.getValue().getActiveBits() > 32 ||
-          nestedModeIndexAttr.getValue().getZExtValue() >= 64))) {
+          nestedModeIndexAttr.getValue().getZExtValue() >= 64)) ||
+        (!isNestedObject && nestedObjectPathAttr)) {
       emitError(location) << "randomize property plan is malformed";
       return failure();
     }
@@ -676,6 +742,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         propertyDomains.push_back(std::move(propertyDomain));
       }
     }
+    SmallVector<ObjectPathElement> nestedObjectPath;
+    if (failed(parseNestedObjectPath(nestedObjectPathAttr,
+                                     nestedObjectPath)))
+      return failure();
     planned.push_back({type,
                        static_cast<unsigned>(width),
                        static_cast<unsigned>(
@@ -704,7 +774,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                        {},
                        {},
                        randomModeStorage,
-                       std::move(propertyDomains)});
+                       std::move(propertyDomains),
+                       std::move(nestedObjectPath)});
     plannedWidth += width;
   }
   if (plannedWidth != totalWidth) {
@@ -722,6 +793,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     FlatSymbolRefAttr nestedField;
     unsigned nestedModeIndex;
     FlatSymbolRefAttr nestedModeField;
+    SmallVector<ObjectPathElement> nestedObjectPath;
   };
   SmallVector<ContainerProperty> plannedContainers;
   for (Attribute propertyAttr : containerProperties) {
@@ -752,6 +824,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     auto nestedModeIndexAttr =
         property ? property.getAs<IntegerAttr>(randomNestedModeIndexAttrName)
                  : IntegerAttr{};
+    auto nestedObjectPathAttr =
+        property ? property.getAs<ArrayAttr>(randomNestedObjectPathAttrName)
+                 : ArrayAttr{};
     bool isNestedObject = static_cast<bool>(nestedObjectField);
     bool hasCompleteNestedObject =
         nestedObjectField && nestedObjectTypeAttr &&
@@ -827,6 +902,11 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       reference = sim::SimClassFieldRefOp::create(
           builder, location, referenceType, receiver, field);
     }
+    SmallVector<ObjectPathElement> nestedObjectPath;
+    if ((!isNestedObject && nestedObjectPathAttr) ||
+        failed(parseNestedObjectPath(nestedObjectPathAttr,
+                                     nestedObjectPath)))
+      return failure();
     plannedContainers.push_back(
         {typeAttr.getValue(), elementTypeAttr.getValue(),
          static_cast<unsigned>(elementWidth),
@@ -839,7 +919,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
              ? static_cast<unsigned>(
                    nestedModeIndexAttr.getValue().getZExtValue())
              : 0,
-         nestedModeField});
+         nestedModeField,
+         std::move(nestedObjectPath)});
   }
   bool hasRandC = llvm::any_of(
       planned, [](const Property &property) { return property.isRandC; });
@@ -1438,6 +1519,48 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           object = sim::SimClassCastOp::create(
               builder, location, property.nestedObjectType, object);
         auto concreteType = cast<sim::ClassHandleType>(property.nestedObjectType);
+        FlatSymbolRefAttr objectModeField = property.nestedModeField;
+        for (const ObjectPathElement &element : property.nestedObjectPath) {
+          Type modeReferenceType = sim::ManagedRefType::get(
+              function.getContext(), i64, concreteType.getClassName());
+          Value modeReference = sim::SimClassFieldRefOp::create(
+              builder, location, modeReferenceType, object, objectModeField);
+          Value objectMode = sim::SimManagedLoadOp::create(
+              builder, location, i64, modeReference);
+          Value edgeModeBit = arith::AndIOp::create(
+              builder, location, objectMode,
+              constant64(uint64_t{1} << element.modeIndex));
+          Value edgeEnabled = arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::eq, edgeModeBit,
+              constant64(0));
+          Type edgeReferenceType = sim::ManagedRefType::get(
+              function.getContext(), element.storageType,
+              concreteType.getClassName());
+          Value edgeReference = sim::SimClassFieldRefOp::create(
+              builder, location, edgeReferenceType, object, element.field);
+          FailureOr<Value> loadedEdge = loadReference(edgeReference, location);
+          if (failed(loadedEdge))
+            return failure();
+          Value edgeNull = sim::SimManagedIsNullOp::create(
+              builder, location, builder.getI1Type(), *loadedEdge);
+          Value edgeNonNull = arith::XOrIOp::create(
+              builder, location, edgeNull,
+              arith::ConstantOp::create(builder, location,
+                                        builder.getI1Type(),
+                                        builder.getBoolAttr(true)));
+          Value edgeActive = arith::AndIOp::create(
+              builder, location, edgeEnabled, edgeNonNull);
+          Block *edgeBlock = addBlock();
+          cf::CondBranchOp::create(builder, location, edgeActive, edgeBlock,
+                                   ValueRange{}, nullBlock, ValueRange{});
+          setCurrent(edgeBlock);
+          object = *loadedEdge;
+          if (object.getType() != element.concreteType)
+            object = sim::SimClassCastOp::create(
+                builder, location, element.concreteType, object);
+          concreteType = cast<sim::ClassHandleType>(element.concreteType);
+          objectModeField = element.modeField;
+        }
         Type nestedFieldType = property.isContainerSize
                                    ? property.containerType
                                    : property.type;
@@ -1452,7 +1575,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             function.getContext(), i64, concreteType.getClassName());
         Value childModeReference = sim::SimClassFieldRefOp::create(
             builder, location, modeReferenceType, object,
-            property.nestedModeField);
+            objectModeField);
         Value childMode = sim::SimManagedLoadOp::create(
             builder, location, i64, childModeReference);
         Value childModeBit = arith::AndIOp::create(
@@ -5690,6 +5813,21 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         object = sim::SimClassCastOp::create(
             builder, location, property.nestedObjectType, object);
       auto concreteType = cast<sim::ClassHandleType>(property.nestedObjectType);
+      for (const ObjectPathElement &element : property.nestedObjectPath) {
+        Type edgeReferenceType = sim::ManagedRefType::get(
+            function.getContext(), element.storageType,
+            concreteType.getClassName());
+        Value edgeReference = sim::SimClassFieldRefOp::create(
+            builder, location, edgeReferenceType, object, element.field);
+        FailureOr<Value> loadedEdge = loadReference(edgeReference, location);
+        if (failed(loadedEdge))
+          return failure();
+        object = *loadedEdge;
+        if (object.getType() != element.concreteType)
+          object = sim::SimClassCastOp::create(
+              builder, location, element.concreteType, object);
+        concreteType = cast<sim::ClassHandleType>(element.concreteType);
+      }
       Type nestedFieldType = property.isContainerSize ? property.containerType
                                                       : property.type;
       Type fieldReferenceType = sim::ManagedRefType::get(
@@ -5781,11 +5919,53 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         object = sim::SimClassCastOp::create(
             builder, location, property.nestedObjectType, object);
       auto concreteType = cast<sim::ClassHandleType>(property.nestedObjectType);
+      FlatSymbolRefAttr objectModeField = property.nestedModeField;
+      for (const ObjectPathElement &element : property.nestedObjectPath) {
+        Type modeReferenceType = sim::ManagedRefType::get(
+            function.getContext(), i64, concreteType.getClassName());
+        Value modeReference = sim::SimClassFieldRefOp::create(
+            builder, location, modeReferenceType, object, objectModeField);
+        Value objectMode = sim::SimManagedLoadOp::create(
+            builder, location, i64, modeReference);
+        Value edgeModeBit = arith::AndIOp::create(
+            builder, location, objectMode,
+            constant64(uint64_t{1} << element.modeIndex));
+        Value edgeEnabled = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq, edgeModeBit,
+            constant64(0));
+        Type edgeReferenceType = sim::ManagedRefType::get(
+            function.getContext(), element.storageType,
+            concreteType.getClassName());
+        Value edgeReference = sim::SimClassFieldRefOp::create(
+            builder, location, edgeReferenceType, object, element.field);
+        FailureOr<Value> loadedEdge = loadReference(edgeReference, location);
+        if (failed(loadedEdge))
+          return failure();
+        Value edgeNull = sim::SimManagedIsNullOp::create(
+            builder, location, builder.getI1Type(), *loadedEdge);
+        Value edgeNonNull = arith::XOrIOp::create(
+            builder, location, edgeNull,
+            arith::ConstantOp::create(builder, location,
+                                      builder.getI1Type(),
+                                      builder.getBoolAttr(true)));
+        Value edgeActive = arith::AndIOp::create(
+            builder, location, edgeEnabled, edgeNonNull);
+        Block *edgeBlock = addBlock();
+        cf::CondBranchOp::create(builder, location, edgeActive, edgeBlock,
+                                 ValueRange{}, nextProperty, ValueRange{});
+        setCurrent(edgeBlock);
+        object = *loadedEdge;
+        if (object.getType() != element.concreteType)
+          object = sim::SimClassCastOp::create(
+              builder, location, element.concreteType, object);
+        concreteType = cast<sim::ClassHandleType>(element.concreteType);
+        objectModeField = element.modeField;
+      }
       Type modeReferenceType = sim::ManagedRefType::get(
           function.getContext(), i64, concreteType.getClassName());
       Value childModeReference = sim::SimClassFieldRefOp::create(
           builder, location, modeReferenceType, object,
-          property.nestedModeField);
+          objectModeField);
       Value childMode = sim::SimManagedLoadOp::create(
           builder, location, i64, childModeReference);
       Value childModeBit = arith::AndIOp::create(

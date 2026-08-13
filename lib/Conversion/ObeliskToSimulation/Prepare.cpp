@@ -1576,6 +1576,12 @@ void ObeliskSimPreparePass::runOnOperation() {
       return true;
     }
 
+    struct RandomObjectPathElement {
+      FlatSymbolRefAttr field;
+      Type concreteType;
+      Type storageType;
+      unsigned modeIndex;
+    };
     struct RandomProperty {
       Operation *source;
       FlatSymbolRefAttr field;
@@ -1599,6 +1605,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       StringAttr randcPositionPath;
       IntegerAttr randomModeStorage;
       SmallVector<RandomSubdomain> domains;
+      SmallVector<RandomObjectPathElement> nestedObjectPath;
     };
     struct RandomContainerProperty {
       Operation *source;
@@ -1611,6 +1618,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       Type nestedObjectType;
       Type nestedObjectStorageType;
       unsigned nestedModeIndex;
+      SmallVector<RandomObjectPathElement> nestedObjectPath;
     };
     struct NestedObjectPlan {
       Operation *source;
@@ -1624,7 +1632,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       semantic::SVSubroutineSymbolOp preHook;
       semantic::SVSubroutineSymbolOp postHook;
     };
-    SmallVector<RandomProperty> properties;
+    SmallVector<RandomProperty, 0> properties;
     SmallVector<RandomContainerProperty> containerProperties;
     SmallVector<NestedObjectPlan> nestedObjectPlans;
     SmallVector<Operation *> constraintRoots;
@@ -1924,9 +1932,241 @@ void ObeliskSimPreparePass::runOnOperation() {
               continue;
             }
             bool unsupportedNestedSemantics = false;
+            bool hasRecursiveObjectPath = false;
             unsigned nestedModeIndex = 0;
             semantic::SVSubroutineSymbolOp nestedPreHook;
             semantic::SVSubroutineSymbolOp nestedPostHook;
+            Type rootNestedConcreteType = sim::ClassHandleType::get(
+                context,
+                FlatSymbolRefAttr::get(
+                    context,
+                    classSymbols.lookup(concreteClasses.front()).getValue()));
+            llvm::SmallPtrSet<Operation *, 8> recursiveConcreteClasses;
+            // IEEE 1800 active random objects are solved as one object graph;
+            // recursively flatten eligible descendant leaves into this plan
+            // instead of emitting sequential child randomize calls. Dynamic
+            // dispatch, aliases, cycles, local constraints, and local hooks
+            // need path-aware plans of their own and remain explicit errors.
+            std::function<LogicalResult(
+                semantic::SVClassPropertySymbolOp, Type, unsigned,
+                SmallVector<RandomObjectPathElement>,
+                llvm::SmallPtrSet<Operation *, 8>)>
+                collectRecursiveObject;
+            collectRecursiveObject =
+                [&](semantic::SVClassPropertySymbolOp edgeProperty,
+                    Type edgeStorageType, unsigned edgeModeIndex,
+                    SmallVector<RandomObjectPathElement> path,
+                    llvm::SmallPtrSet<Operation *, 8> ancestors)
+                -> LogicalResult {
+              auto semanticObjectType = dyn_cast<semantic::ClassHandleType>(
+                  edgeProperty.getSemanticType().value_or(Type{}));
+              auto declaredClass =
+                  semanticObjectType
+                      ? semanticClasses.find(semanticObjectType.getClassName()
+                                                 .getLeafReference())
+                      : semanticClasses.end();
+              SmallVector<semantic::SVClassTypeOp> candidates;
+              if (declaredClass != semanticClasses.end())
+                for (semantic::SVClassTypeOp candidate : classSources) {
+                  if (candidate.getIsAbstract() || candidate.getIsInterface())
+                    continue;
+                  SmallVector<semantic::SVClassTypeOp> candidateHierarchy;
+                  if (failed(collectClassHierarchy(
+                          candidate, candidateHierarchy,
+                          "recursive nested object randomization")))
+                    return failure();
+                  bool compatible = llvm::is_contained(candidateHierarchy,
+                                                       declaredClass->second);
+                  if (!compatible && declaredClass->second.getIsInterface()) {
+                    StringRef target = semanticObjectType.getClassName()
+                                           .getLeafReference();
+                    for (semantic::SVClassTypeOp hierarchyClass :
+                         candidateHierarchy) {
+                      for (Attribute attribute :
+                           hierarchyClass.getImplementedInterfaces()) {
+                        auto type = dyn_cast<TypeAttr>(attribute);
+                        auto interface =
+                            type ? dyn_cast<semantic::ClassHandleType>(
+                                       type.getValue())
+                                 : semantic::ClassHandleType{};
+                        if (interface &&
+                            interface.getClassName().getLeafReference() ==
+                                target) {
+                          compatible = true;
+                          break;
+                        }
+                      }
+                      if (compatible)
+                        break;
+                    }
+                  }
+                  if (compatible)
+                    candidates.push_back(candidate);
+                }
+              if (candidates.size() != 1) {
+                emitError(getSemanticLocation(edgeProperty))
+                    << "recursive rand object handles require one concrete "
+                       "closed-world dynamic class";
+                return failure();
+              }
+              semantic::SVClassTypeOp concreteClass = candidates.front();
+              if (!ancestors.insert(concreteClass).second) {
+                emitError(getSemanticLocation(edgeProperty))
+                    << "cyclic rand object graphs require identity-aware "
+                       "recursive planning";
+                return failure();
+              }
+              if (!recursiveConcreteClasses.insert(concreteClass).second) {
+                emitError(getSemanticLocation(edgeProperty))
+                    << "potentially aliased recursive rand object paths "
+                       "require identity-aware planning";
+                return failure();
+              }
+              SmallVector<semantic::SVClassTypeOp> recursiveHierarchy;
+              if (failed(collectClassHierarchy(
+                      concreteClass, recursiveHierarchy,
+                      "recursive nested object randomization")))
+                return failure();
+              SmallVector<EffectiveConstraintGroup> recursiveConstraints;
+              collectEffectiveConstraints(recursiveHierarchy,
+                                          recursiveConstraints);
+              if (!recursiveConstraints.empty()) {
+                emitError(getSemanticLocation(edgeProperty))
+                    << "constraints on recursively nested rand objects "
+                       "require path-aware constraint composition";
+                return failure();
+              }
+              for (semantic::SVClassTypeOp recursiveClass :
+                   recursiveHierarchy)
+                for (Operation *member : getChildren(recursiveClass))
+                  if (auto method = getClassMethod(member);
+                      method &&
+                      method.getIsPrePostRandomize().value_or(false) &&
+                      !method.getIsBuiltin().value_or(false)) {
+                    emitError(getSemanticLocation(method))
+                        << "hooks on recursively nested rand objects require "
+                           "path-aware lifecycle planning";
+                    return failure();
+                  }
+              Type concreteType = sim::ClassHandleType::get(
+                  context,
+                  FlatSymbolRefAttr::get(
+                      context, classSymbols.lookup(concreteClass).getValue()));
+              path.push_back({classFieldSymbols.lookup(edgeProperty),
+                              concreteType, edgeStorageType, edgeModeIndex});
+              hasRecursiveObjectPath = true;
+              unsigned recursiveModeIndex = 0;
+              for (semantic::SVClassTypeOp recursiveClass :
+                   recursiveHierarchy) {
+                for (Operation *member : getChildren(recursiveClass)) {
+                  auto recursiveProperty =
+                      dyn_cast<semantic::SVClassPropertySymbolOp>(member);
+                  if (!recursiveProperty ||
+                      recursiveProperty.getRandMode() ==
+                          semantic::SVRandMode::None)
+                    continue;
+                  unsigned leafModeIndex = recursiveModeIndex++;
+                  if (leafModeIndex >= 64) {
+                    emitError(getSemanticLocation(recursiveProperty))
+                        << "recursive rand object exceeds the 64-property "
+                           "rand_mode boundary";
+                    return failure();
+                  }
+                  FailureOr<Type> recursiveType =
+                      getNormalizedSemanticType(recursiveProperty);
+                  std::optional<Type> semanticRecursiveType =
+                      recursiveProperty.getSemanticType();
+                  if (failed(recursiveType) || !semanticRecursiveType ||
+                      recursiveProperty.getRandMode() ==
+                          semantic::SVRandMode::RandC ||
+                      recursiveProperty.getLifetime() ==
+                          semantic::SVVariableLifetime::Static) {
+                    emitError(getSemanticLocation(recursiveProperty))
+                        << "recursive rand object properties must be "
+                           "non-static rand values";
+                    return failure();
+                  }
+                  if (isa<sim::DynamicArrayType, sim::QueueType>(
+                          *recursiveType)) {
+                    Type elementType =
+                        isa<sim::DynamicArrayType>(*recursiveType)
+                            ? cast<sim::DynamicArrayType>(*recursiveType)
+                                  .getElementType()
+                            : cast<sim::QueueType>(*recursiveType)
+                                  .getElementType();
+                    std::optional<unsigned> elementWidth =
+                        sim::getPackedWidth(elementType);
+                    if (!elementWidth || *elementWidth == 0 ||
+                        *elementWidth > 64) {
+                      emitError(getSemanticLocation(recursiveProperty))
+                          << "recursive random dynamic containers require "
+                             "packed integral elements no wider than 64 bits";
+                      return failure();
+                    }
+                    containerProperties.push_back(
+                        {recursiveProperty,
+                         classFieldSymbols.lookup(recursiveProperty),
+                         *recursiveType,
+                         elementType,
+                         *elementWidth,
+                         modeIndex,
+                         field,
+                         rootNestedConcreteType,
+                         objectType,
+                         leafModeIndex,
+                         path});
+                    continue;
+                  }
+                  if (isa<sim::ClassHandleType>(*recursiveType)) {
+                    if (failed(collectRecursiveObject(
+                            recursiveProperty, *recursiveType, leafModeIndex,
+                            path, ancestors)))
+                      return failure();
+                    continue;
+                  }
+                  std::optional<unsigned> width =
+                      sim::getPackedWidth(*recursiveType);
+                  if (!width || *width == 0) {
+                    emitError(getSemanticLocation(recursiveProperty))
+                        << "recursive rand object leaves must be packed "
+                           "integral values";
+                    return failure();
+                  }
+                  SmallVector<RandomSubdomain> domains;
+                  if (failed(collectRandomSubdomains(
+                          *semanticRecursiveType, 0, domains,
+                          getSemanticLocation(recursiveProperty))))
+                    return failure();
+                  properties.push_back(
+                      {recursiveProperty,
+                       classFieldSymbols.lookup(recursiveProperty),
+                       {},
+                       *recursiveType,
+                       *width,
+                       modeIndex,
+                       false,
+                       {},
+                       0,
+                       false,
+                       field,
+                       rootNestedConcreteType,
+                       objectType,
+                       leafModeIndex,
+                       isSignedSemanticType(*semanticRecursiveType),
+                       false,
+                       {},
+                       {},
+                       {},
+                       {},
+                       {},
+                       std::move(domains),
+                       path});
+                }
+              }
+              return success();
+            };
+            llvm::SmallPtrSet<Operation *, 8> nestedAncestors;
+            nestedAncestors.insert(concreteClasses.front());
             for (semantic::SVClassTypeOp nestedClass : nestedHierarchy) {
               for (Operation *nestedMember : getChildren(nestedClass)) {
                 if (isa<semantic::SVConstraintBlockSymbolOp>(nestedMember)) {
@@ -2027,6 +2267,23 @@ void ObeliskSimPreparePass::runOnOperation() {
                        childModeIndex});
                   continue;
                 }
+                if (succeeded(nestedType) && semanticNestedType &&
+                    isa<sim::ClassHandleType>(*nestedType)) {
+                  if (nestedProperty.getRandMode() ==
+                          semantic::SVRandMode::RandC ||
+                      nestedProperty.getLifetime() ==
+                          semantic::SVVariableLifetime::Static) {
+                    emitError(getSemanticLocation(nestedProperty))
+                        << "recursive rand object handles must be non-static "
+                           "rand values";
+                    unsupportedNestedSemantics = true;
+                  } else if (failed(collectRecursiveObject(
+                                 nestedProperty, *nestedType, childModeIndex,
+                                 {}, nestedAncestors))) {
+                    unsupportedNestedSemantics = true;
+                  }
+                  continue;
+                }
                 std::optional<unsigned> nestedWidth =
                     succeeded(nestedType) ? sim::getPackedWidth(*nestedType)
                                           : std::nullopt;
@@ -2099,6 +2356,13 @@ void ObeliskSimPreparePass::runOnOperation() {
                 nestedPostHook};
             collectEffectiveConstraints(nestedHierarchy,
                                         nestedPlan.constraintGroups);
+            if (hasRecursiveObjectPath &&
+                !nestedPlan.constraintGroups.empty()) {
+              emitError(getSemanticLocation(property))
+                  << "constraints on rand objects containing recursive rand "
+                     "handles require path-aware constraint composition";
+              unsupportedNestedSemantics = true;
+            }
             nestedObjectPlans.push_back(std::move(nestedPlan));
             if (unsupportedNestedSemantics)
               invalid = true;
@@ -2342,7 +2606,8 @@ void ObeliskSimPreparePass::runOnOperation() {
              {},
              {},
              {},
-             {std::move(nonnegative)}});
+             {std::move(nonnegative)},
+             property.nestedObjectPath});
       }
     }
     for (const RandomProperty &property : properties) {
@@ -3230,6 +3495,23 @@ void ObeliskSimPreparePass::runOnOperation() {
         attributes.push_back(builder.getNamedAttr(
             randomNestedModeIndexAttrName,
             builder.getI32IntegerAttr(property.nestedModeIndex)));
+        if (!property.nestedObjectPath.empty()) {
+          SmallVector<Attribute> path;
+          for (const RandomObjectPathElement &element :
+               property.nestedObjectPath)
+            path.push_back(builder.getDictionaryAttr({
+                builder.getNamedAttr("field", element.field),
+                builder.getNamedAttr("concrete_type",
+                                     TypeAttr::get(element.concreteType)),
+                builder.getNamedAttr("storage_type",
+                                     TypeAttr::get(element.storageType)),
+                builder.getNamedAttr(
+                    "rand_mode_index",
+                    builder.getI32IntegerAttr(element.modeIndex)),
+            }));
+          attributes.push_back(builder.getNamedAttr(
+              randomNestedObjectPathAttrName, builder.getArrayAttr(path)));
+        }
       }
       if (property.field)
         attributes.push_back(builder.getNamedAttr("field", property.field));
@@ -3308,6 +3590,23 @@ void ObeliskSimPreparePass::runOnOperation() {
         attributes.push_back(builder.getNamedAttr(
             randomNestedModeIndexAttrName,
             builder.getI32IntegerAttr(property.nestedModeIndex)));
+        if (!property.nestedObjectPath.empty()) {
+          SmallVector<Attribute> path;
+          for (const RandomObjectPathElement &element :
+               property.nestedObjectPath)
+            path.push_back(builder.getDictionaryAttr({
+                builder.getNamedAttr("field", element.field),
+                builder.getNamedAttr("concrete_type",
+                                     TypeAttr::get(element.concreteType)),
+                builder.getNamedAttr("storage_type",
+                                     TypeAttr::get(element.storageType)),
+                builder.getNamedAttr(
+                    "rand_mode_index",
+                    builder.getI32IntegerAttr(element.modeIndex)),
+            }));
+          attributes.push_back(builder.getNamedAttr(
+              randomNestedObjectPathAttrName, builder.getArrayAttr(path)));
+        }
       }
       containerPropertyAttrs.push_back(builder.getDictionaryAttr(attributes));
     }
