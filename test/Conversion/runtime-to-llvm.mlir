@@ -8,6 +8,7 @@
 // CHECK-DAG: llvm.func @obelisk_rt_v1_scheduler_finish(!llvm.ptr, i32) -> i32
 // CHECK-DAG: llvm.func @obelisk_rt_v1_scheduler_stop(!llvm.ptr, i32) -> i32
 // CHECK-DAG: llvm.func @obelisk_rt_v1_scheduler_fatal(!llvm.ptr, i32) -> i32
+// CHECK-DAG: llvm.func @obelisk_rt_v1_scheduler_error(!llvm.ptr) -> i32
 // CHECK-DAG: llvm.func @obelisk_rt_v1_scheduler_termination_requested(!llvm.ptr) -> i32
 // CHECK-DAG: llvm.func @obelisk_rt_v1_format(!llvm.ptr, !llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr) -> i32
 // CHECK-DAG: llvm.func @obelisk_rt_v1_string_output_format(!llvm.ptr, i32, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr) -> i32
@@ -55,6 +56,7 @@
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_finish
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_stop
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_fatal
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_error
 // CHECK: %[[TERMINATION_REQUESTED_I32:.*]] = llvm.call @obelisk_rt_v1_scheduler_termination_requested
 // CHECK: llvm.trunc %[[TERMINATION_REQUESTED_I32]] : i32 to i1
 // CHECK: llvm.mlir.constant(8 : i32) : i32

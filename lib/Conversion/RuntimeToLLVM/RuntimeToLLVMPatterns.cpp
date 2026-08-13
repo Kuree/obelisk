@@ -46,6 +46,9 @@ LLVM::LLVMFunctionType getFunctionType(runtime::RuntimeCall call,
   case runtime::RuntimeSignature::Finish:
     arguments = {abi.pointer, abi.i32};
     break;
+  case runtime::RuntimeSignature::Error:
+    arguments = {abi.pointer};
+    break;
   case runtime::RuntimeSignature::TerminationRequested:
     arguments = {abi.pointer};
     break;
@@ -764,6 +767,7 @@ public:
     case runtime::RuntimeCall::Finish:
     case runtime::RuntimeCall::Stop:
     case runtime::RuntimeCall::Fatal:
+    case runtime::RuntimeCall::Error:
       return replaceStatus(operands);
     case runtime::RuntimeCall::TerminationRequested: {
       Value requested = emitCall(operands).getResult();

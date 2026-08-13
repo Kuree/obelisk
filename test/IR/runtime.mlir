@@ -95,6 +95,8 @@ func.func @runtime_calls(
       (!obelisk_rt.context, i32) -> !obelisk_rt.status
   %fatal_status = obelisk_rt.fatal %ctx, %verbosity :
       (!obelisk_rt.context, i32) -> !obelisk_rt.status
+  %runtime_error_status = obelisk_rt.error %ctx :
+      (!obelisk_rt.context) -> !obelisk_rt.status
   %termination_requested = obelisk_rt.termination.requested %ctx :
       (!obelisk_rt.context) -> i1
 

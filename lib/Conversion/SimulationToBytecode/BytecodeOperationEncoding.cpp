@@ -96,6 +96,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return emitIntrinsic(plan, kIntrinsicStop, {op.getVerbosity()}, {});
   if (auto op = dyn_cast<sim::SimFatalOp>(operation))
     return emitIntrinsic(plan, kIntrinsicFatal, {op.getVerbosity()}, {});
+  if (isa<sim::SimErrorOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicError, {}, {});
   if (auto op = dyn_cast<sim::SimTerminationRequestedOp>(operation))
     return emitIntrinsic(plan, kIntrinsicTerminationRequested, {},
                          {op.getResult()});

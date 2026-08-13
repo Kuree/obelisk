@@ -186,6 +186,13 @@ def RTFatalOp : RTOp<"fatal", [
   let results = (outs RTStatusType:$status);
 }
 
+def RTErrorOp : RTOp<"error", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context);
+  let results = (outs RTStatusType:$status);
+}
+
 def RTTerminationRequestedOp : RTOp<"termination.requested", [
   MemoryEffects<[MemRead<RTRuntimeResource>]>
 ]> {

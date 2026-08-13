@@ -2731,6 +2731,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     return obelisk_rt_v1_scheduler_fatal(context,
                                          static_cast<uint32_t>(*verbosity));
   }
+  case OBELISK_RT_INTRINSIC_V1_ERROR:
+    return obelisk_rt_v1_scheduler_error(context);
   case OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED:
     return sentinel(0, obelisk_rt_v1_scheduler_termination_requested(context));
   case OBELISK_RT_INTRINSIC_V1_TIME_NOW:

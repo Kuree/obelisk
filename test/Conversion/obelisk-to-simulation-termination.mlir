@@ -114,6 +114,8 @@ module {
 // CHECK-DAG: obelisk_sim.bytes.constant "INFO:
 // CHECK-DAG: obelisk_sim.bytes.constant "WARNING:
 // CHECK-DAG: obelisk_sim.bytes.constant "ERROR:
+// CHECK: obelisk_sim.error
+// CHECK-NEXT: obelisk_sim.display
 // CHECK: obelisk_sim.bytes.constant "FATAL:
 // CHECK: obelisk_sim.fatal
 // CHECK-NEXT: obelisk_sim.display

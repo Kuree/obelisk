@@ -634,6 +634,8 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
         return failure();
       return dummyTaskResult();
     }
+    if (name == "$error")
+      sim::SimErrorOp::create(builder, location, context);
     if (display->fatal)
       sim::SimFatalOp::create(builder, location, context, verbosity);
     sim::SimDisplayOp::create(builder, location, context, descriptor, items,

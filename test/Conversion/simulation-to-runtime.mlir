@@ -55,6 +55,7 @@ module {
     obelisk_sim.finish %ctx, %verbosity
     obelisk_sim.stop %ctx, %verbosity
     obelisk_sim.fatal %ctx, %verbosity
+    obelisk_sim.error %ctx
     %termination_requested = obelisk_sim.termination.requested %ctx
     return %line, %line_count, %data, %read_count : i13, i32, i13, i32
   }
@@ -173,6 +174,8 @@ module {
 // CHECK-NEXT: obelisk_sim.status.check %[[STOP_STATUS]]
 // CHECK: %[[FATAL_STATUS:.*]] = obelisk_rt.fatal
 // CHECK-NEXT: obelisk_sim.status.check %[[FATAL_STATUS]]
+// CHECK: %[[ERROR_STATUS:.*]] = obelisk_rt.error
+// CHECK-NEXT: obelisk_sim.status.check %[[ERROR_STATUS]]
 // CHECK: %[[TERMINATION_REQUESTED:.*]] = obelisk_rt.termination.requested
 
 // CHECK-LABEL: func.func @aggregate_io(

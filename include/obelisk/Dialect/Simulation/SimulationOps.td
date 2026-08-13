@@ -1565,6 +1565,19 @@ def SimFatalOp : SimOp<"fatal", [
   let assemblyFormat = "$context `,` $verbosity attr-dict";
 }
 
+def SimErrorOp : SimOp<"error", [
+  MemoryEffects<[MemWrite<SimSchedulerResource>]>
+]> {
+  let summary = "record a nonterminating simulation error";
+  let description = [{
+    Records an unsuccessful final simulation status without requesting
+    termination. Ordinary scheduling continues until the design otherwise
+    completes or explicitly terminates.
+  }];
+  let arguments = (ins SimContextType:$context);
+  let assemblyFormat = "$context attr-dict";
+}
+
 def SimTerminationRequestedOp : SimOp<"termination.requested", [
   MemoryEffects<[MemRead<SimSchedulerResource>]>
 ]> {

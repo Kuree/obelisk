@@ -818,6 +818,7 @@ enum {
   // Automatic-state allocation with typed root triples following the initial
   // value: bit offset, allowed managed-kind mask, and root-slot flags.
   OBELISK_RT_INTRINSIC_V1_STATE_ALLOC_TYPED = UINT32_C(0x00010230),
+  OBELISK_RT_INTRINSIC_V1_ERROR = UINT32_C(0x00010231),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -2797,6 +2798,9 @@ obelisk_rt_status obelisk_rt_v1_scheduler_stop(obelisk_rt_context *context,
                                                uint32_t verbosity);
 obelisk_rt_status obelisk_rt_v1_scheduler_fatal(obelisk_rt_context *context,
                                                 uint32_t verbosity);
+// Record a run-time error without requesting simulation termination. The
+// scheduler continues normally and reports an unsuccessful final status.
+obelisk_rt_status obelisk_rt_v1_scheduler_error(obelisk_rt_context *context);
 uint32_t
 obelisk_rt_v1_scheduler_termination_requested(obelisk_rt_context *context);
 uint64_t obelisk_rt_v1_scheduler_time(obelisk_rt_context *context);

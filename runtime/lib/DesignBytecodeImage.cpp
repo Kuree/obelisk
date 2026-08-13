@@ -998,6 +998,9 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_FATAL:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && bits(input(0), 32);
+  case OBELISK_RT_INTRINSIC_V1_ERROR:
+    return signature.flags == 0 && site.inputCount == 0 &&
+           site.outputCount == 0;
   case OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && bits(output(0), 1);

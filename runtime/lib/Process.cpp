@@ -1855,6 +1855,22 @@ obelisk_rt_v1_scheduler_fatal(obelisk_rt_context *context, uint32_t verbosity) {
   }
 }
 
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_error(obelisk_rt_context *context) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
+  try {
+    ContextMutexLock lock(context);
+    context->schedulerFinishStatus = OBELISK_RT_FATAL;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
+
 extern "C" uint32_t
 obelisk_rt_v1_scheduler_termination_requested(obelisk_rt_context *context) {
   if (!context)

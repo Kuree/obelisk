@@ -291,6 +291,23 @@ public:
   }
 };
 
+class ErrorConversion final : public SimIOConversion<sim::SimErrorOp> {
+public:
+  using SimIOConversion::SimIOConversion;
+
+  LogicalResult
+  matchAndRewrite(sim::SimErrorOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value status = runtime::RTErrorOp::create(
+        rewriter, loc, runtime::StatusType::get(rewriter.getContext()),
+        runtimeContext(rewriter, loc, adaptor.getContext().front()));
+    sim::SimStatusCheckOp::create(rewriter, loc, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 class SchedulerTimeConversion final
     : public SimIOConversion<sim::SimTimeNowOp> {
 public:
@@ -643,17 +660,15 @@ public:
     ConversionTarget target(context);
     target.addIllegalOp<
         sim::SimBytesConstantOp, sim::SimTimeFormatOp, sim::SimFinishOp,
-        sim::SimStopOp,
-        sim::SimFatalOp, sim::SimTerminationRequestedOp, sim::SimTimeNowOp,
-        sim::SimDisplayOp, sim::SimStringOutputFormatOp,
-        sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
+        sim::SimStopOp, sim::SimFatalOp, sim::SimErrorOp,
+        sim::SimTerminationRequestedOp, sim::SimTimeNowOp, sim::SimDisplayOp,
+        sim::SimStringOutputFormatOp, sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
         sim::SimFileCloseOp, sim::SimFileFlushOp, sim::SimFileGetcOp,
         sim::SimFileUngetcOp, sim::SimFileGetlineOp, sim::SimFileReadPackedOp,
-        sim::SimFileReadMemTokenOp,
-        sim::SimFileEofOp, sim::SimFileSeekOp, sim::SimFileTellOp,
-        sim::SimFileRewindOp, sim::SimDumpOpenOp, sim::SimDumpTimescaleOp,
-        sim::SimDumpVarsOp, sim::SimDumpAllOp, sim::SimDumpControlOp,
-        sim::SimDumpLimitOp, sim::SimDumpFlushOp>();
+        sim::SimFileReadMemTokenOp, sim::SimFileEofOp, sim::SimFileSeekOp,
+        sim::SimFileTellOp, sim::SimFileRewindOp, sim::SimDumpOpenOp,
+        sim::SimDumpTimescaleOp, sim::SimDumpVarsOp, sim::SimDumpAllOp,
+        sim::SimDumpControlOp, sim::SimDumpLimitOp, sim::SimDumpFlushOp>();
     target.addLegalDialect<runtime::ObeliskRuntimeDialect,
                            arith::ArithDialect>();
     target.addLegalOp<ModuleOp, sim::SimContextRuntimeOp,
@@ -685,8 +700,8 @@ void populateSimulationToRuntimePatterns(const TypeConverter &converter,
                TerminationConversion<sim::SimStopOp, runtime::RTStopOp>,
                TerminationConversion<sim::SimFatalOp, runtime::RTFatalOp>>(
       converter, context);
-  patterns.add<TerminationRequestedConversion, SchedulerTimeConversion>(
-      converter, context);
+  patterns.add<ErrorConversion, TerminationRequestedConversion,
+               SchedulerTimeConversion>(converter, context);
   patterns.add<OpenConversion<sim::SimFileOpenMCDOp,
                               runtime::RTFileOpenMCDOp>,
                OpenConversion<sim::SimFileOpenOp, runtime::RTFileOpenOp>,

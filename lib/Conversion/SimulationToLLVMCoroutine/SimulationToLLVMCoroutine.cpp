@@ -272,8 +272,8 @@ LogicalResult materializeEvalTwoStateVariants(
       llvm::SmallPtrSet<Block *, 4> coldCheckpointBlocks;
       source.walk([&](Operation *operation) {
         if (isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
-                sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
-                sim::SimDisplayOp>(operation))
+                sim::SimErrorOp, sim::SimTerminationRequestedOp,
+                sim::SimStatusCheckOp, sim::SimDisplayOp>(operation))
           coldCheckpointBlocks.insert(operation->getBlock());
       });
       source.walk([&](Operation *operation) {
@@ -284,8 +284,8 @@ LogicalResult materializeEvalTwoStateVariants(
           return;
         }
         if (isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
-                sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
-                sim::SimDisplayOp>(operation)) {
+                sim::SimErrorOp, sim::SimTerminationRequestedOp,
+                sim::SimStatusCheckOp, sim::SimDisplayOp>(operation)) {
           // These operations are cold checkpoint exits.  They do not create
           // or consume persistent four-state data in the generated body, so
           // the surrounding module-instance logic can still have a two-state
@@ -656,8 +656,9 @@ LogicalResult materializeEvalTwoStateVariants(
       }
       if (isa<sim::SimRefLoadOp, sim::SimNetReadOp, sim::SimReturnOp,
               sim::SimNBAEnqueueOp, sim::SimDisplayOp, sim::SimFinishOp,
-              sim::SimStopOp, sim::SimFatalOp, sim::SimTerminationRequestedOp,
-              sim::SimStatusCheckOp, cf::BranchOp, cf::CondBranchOp>(operation))
+              sim::SimStopOp, sim::SimFatalOp, sim::SimErrorOp,
+              sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
+              cf::BranchOp, cf::CondBranchOp>(operation))
         return;
       if (isa<sim::SimCallOp>(operation) || !isMemoryEffectFree(operation)) {
         supported = false;
@@ -707,7 +708,7 @@ LogicalResult materializeEvalTwoStateVariants(
     llvm::MapVector<Block *, Location> checkpoints;
     probe.walk([&](Operation *operation) {
       if (isa<sim::SimDisplayOp, sim::SimFinishOp, sim::SimStopOp,
-              sim::SimFatalOp, sim::SimTerminationRequestedOp,
+              sim::SimFatalOp, sim::SimErrorOp, sim::SimTerminationRequestedOp,
               sim::SimStatusCheckOp>(operation)) {
         Block *block = operation->getBlock();
         checkpoints.try_emplace(block, operation->getLoc());

@@ -264,17 +264,15 @@ LogicalResult makeDirectFragmentWrapper(
           operation->getName().getDialectNamespace() == "obelisk_rt";
       mayTerminate |=
           isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
-              sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
-              sim::SimDisplayOp, sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
-              sim::SimFileCloseOp, sim::SimFileFlushOp, sim::SimFileGetcOp,
-              sim::SimFileUngetcOp, sim::SimFileGetlineOp,
-              sim::SimFileReadPackedOp, sim::SimFileEofOp,
-              sim::SimFileSeekOp, sim::SimFileTellOp,
-              sim::SimFileRewindOp, sim::SimDumpOpenOp,
-              sim::SimDumpOpenStringOp,
-              sim::SimDumpTimescaleOp, sim::SimDumpVarsOp, sim::SimDumpAllOp,
-              sim::SimDumpControlOp, sim::SimDumpLimitOp,
-              sim::SimDumpFlushOp>(operation);
+              sim::SimErrorOp, sim::SimTerminationRequestedOp,
+              sim::SimStatusCheckOp, sim::SimDisplayOp, sim::SimFileOpenMCDOp,
+              sim::SimFileOpenOp, sim::SimFileCloseOp, sim::SimFileFlushOp,
+              sim::SimFileGetcOp, sim::SimFileUngetcOp, sim::SimFileGetlineOp,
+              sim::SimFileReadPackedOp, sim::SimFileEofOp, sim::SimFileSeekOp,
+              sim::SimFileTellOp, sim::SimFileRewindOp, sim::SimDumpOpenOp,
+              sim::SimDumpOpenStringOp, sim::SimDumpTimescaleOp,
+              sim::SimDumpVarsOp, sim::SimDumpAllOp, sim::SimDumpControlOp,
+              sim::SimDumpLimitOp, sim::SimDumpFlushOp>(operation);
       if (auto call = dyn_cast<sim::SimCallOp>(operation))
         inspect(design.lookupSymbol<sim::SimFuncOp>(call.getCallee()));
     });

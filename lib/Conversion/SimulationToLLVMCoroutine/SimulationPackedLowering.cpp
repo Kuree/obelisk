@@ -334,15 +334,14 @@ LogicalResult lowerPackedSimulationOperations(
   ConversionTarget packedTarget(*context);
   packedTarget.addIllegalOp<
       sim::SimBytesConstantOp, sim::SimFinishOp, sim::SimStopOp,
-      sim::SimFatalOp, sim::SimTerminationRequestedOp, sim::SimTimeNowOp,
-      sim::SimDisplayOp, sim::SimStringOutputFormatOp,
-      sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
-      sim::SimFileCloseOp, sim::SimFileFlushOp, sim::SimFileGetcOp,
-      sim::SimFileUngetcOp, sim::SimFileGetlineOp, sim::SimFileReadPackedOp,
-      sim::SimFileEofOp, sim::SimFileSeekOp, sim::SimFileTellOp,
-      sim::SimFileRewindOp, sim::SimDumpOpenOp, sim::SimDumpOpenStringOp,
-      sim::SimDumpTimescaleOp, sim::SimDumpVarsOp, sim::SimDumpAllOp,
-      sim::SimDumpControlOp,
+      sim::SimFatalOp, sim::SimErrorOp, sim::SimTerminationRequestedOp,
+      sim::SimTimeNowOp, sim::SimDisplayOp, sim::SimStringOutputFormatOp,
+      sim::SimFileOpenMCDOp, sim::SimFileOpenOp, sim::SimFileCloseOp,
+      sim::SimFileFlushOp, sim::SimFileGetcOp, sim::SimFileUngetcOp,
+      sim::SimFileGetlineOp, sim::SimFileReadPackedOp, sim::SimFileEofOp,
+      sim::SimFileSeekOp, sim::SimFileTellOp, sim::SimFileRewindOp,
+      sim::SimDumpOpenOp, sim::SimDumpOpenStringOp, sim::SimDumpTimescaleOp,
+      sim::SimDumpVarsOp, sim::SimDumpAllOp, sim::SimDumpControlOp,
       sim::SimDumpLimitOp, sim::SimDumpFlushOp>();
   packedTarget.addIllegalOp<
       sim::SimContextStorageOp, sim::SimContextNetOp, sim::SimContextDriverOp,

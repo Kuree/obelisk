@@ -26,6 +26,7 @@ enum class RuntimeSignature {
   BufferRelease,
   LastError,
   Finish,
+  Error,
   TerminationRequested,
   SchedulerTime,
   Format,
