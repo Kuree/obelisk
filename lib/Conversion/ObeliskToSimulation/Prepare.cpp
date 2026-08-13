@@ -1607,6 +1607,10 @@ void ObeliskSimPreparePass::runOnOperation() {
       Type elementType;
       unsigned elementWidth;
       unsigned modeIndex;
+      FlatSymbolRefAttr nestedObjectField;
+      Type nestedObjectType;
+      Type nestedObjectStorageType;
+      unsigned nestedModeIndex;
     };
     struct NestedObjectPlan {
       Operation *source;
@@ -1982,6 +1986,47 @@ void ObeliskSimPreparePass::runOnOperation() {
                     getNormalizedSemanticType(nestedProperty);
                 std::optional<Type> semanticNestedType =
                     nestedProperty.getSemanticType();
+                if (succeeded(nestedType) && semanticNestedType &&
+                    isa<sim::DynamicArrayType, sim::QueueType>(*nestedType)) {
+                  Type elementType = isa<sim::DynamicArrayType>(*nestedType)
+                                         ? cast<sim::DynamicArrayType>(
+                                               *nestedType)
+                                               .getElementType()
+                                         : cast<sim::QueueType>(*nestedType)
+                                               .getElementType();
+                  std::optional<unsigned> elementWidth =
+                      sim::getPackedWidth(elementType);
+                  if (nestedProperty.getRandMode() ==
+                          semantic::SVRandMode::RandC ||
+                      nestedProperty.getLifetime() ==
+                          semantic::SVVariableLifetime::Static ||
+                      !elementWidth || *elementWidth == 0 ||
+                      *elementWidth > 64) {
+                    emitError(getSemanticLocation(nestedProperty))
+                        << "nested random dynamic containers must be "
+                           "non-static rand containers of packed integral "
+                           "values no wider than 64 bits";
+                    unsupportedNestedSemantics = true;
+                    continue;
+                  }
+                  containerProperties.push_back(
+                      {nestedProperty,
+                       classFieldSymbols.lookup(nestedProperty),
+                       *nestedType,
+                       elementType,
+                       *elementWidth,
+                       modeIndex,
+                       field,
+                       sim::ClassHandleType::get(
+                           context,
+                           FlatSymbolRefAttr::get(
+                               context,
+                               classSymbols.lookup(concreteClasses.front())
+                                   .getValue())),
+                       objectType,
+                       childModeIndex});
+                  continue;
+                }
                 std::optional<unsigned> nestedWidth =
                     succeeded(nestedType) ? sim::getPackedWidth(*nestedType)
                                           : std::nullopt;
@@ -2286,10 +2331,10 @@ void ObeliskSimPreparePass::runOnOperation() {
              property.type,
              constraintMask,
              unconditionalConstraint,
-             {},
-             {},
-             {},
-             0,
+             property.nestedObjectField,
+             property.nestedObjectType,
+             property.nestedObjectStorageType,
+             property.nestedModeIndex,
              true,
              false,
              {},
@@ -3240,8 +3285,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     call->setAttr(randomPropertiesAttrName,
                   builder.getArrayAttr(propertyAttrs));
     SmallVector<Attribute> containerPropertyAttrs;
-    for (const RandomContainerProperty &property : containerProperties)
-      containerPropertyAttrs.push_back(builder.getDictionaryAttr({
+    for (const RandomContainerProperty &property : containerProperties) {
+      SmallVector<NamedAttribute> attributes{
           builder.getNamedAttr("field", property.field),
           builder.getNamedAttr("type", TypeAttr::get(property.type)),
           builder.getNamedAttr("element_type",
@@ -3250,7 +3295,22 @@ void ObeliskSimPreparePass::runOnOperation() {
                                builder.getI64IntegerAttr(property.elementWidth)),
           builder.getNamedAttr(randomPropertyModeIndexAttrName,
                                builder.getI32IntegerAttr(property.modeIndex)),
-      }));
+      };
+      if (property.nestedObjectField) {
+        attributes.push_back(builder.getNamedAttr(
+            randomNestedObjectFieldAttrName, property.nestedObjectField));
+        attributes.push_back(builder.getNamedAttr(
+            randomNestedObjectTypeAttrName,
+            TypeAttr::get(property.nestedObjectType)));
+        attributes.push_back(builder.getNamedAttr(
+            randomNestedObjectStorageTypeAttrName,
+            TypeAttr::get(property.nestedObjectStorageType)));
+        attributes.push_back(builder.getNamedAttr(
+            randomNestedModeIndexAttrName,
+            builder.getI32IntegerAttr(property.nestedModeIndex)));
+      }
+      containerPropertyAttrs.push_back(builder.getDictionaryAttr(attributes));
+    }
     call->setAttr(randomContainerPropertiesAttrName,
                   builder.getArrayAttr(containerPropertyAttrs));
     SmallVector<Attribute> nestedConstraintModeAttrs;
