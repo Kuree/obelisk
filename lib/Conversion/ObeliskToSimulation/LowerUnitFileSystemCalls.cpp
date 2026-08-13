@@ -85,17 +85,24 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
                             : sim::DynamicArrayType{};
     auto queue = succeeded(memoryType) ? dyn_cast<sim::QueueType>(*memoryType)
                                        : sim::QueueType{};
-    if ((!array && !dynamicArray && !queue) ||
-        (array && isa<sim::UnpackedArrayType>(array.getElementType()))) {
+    if (!array && !dynamicArray && !queue) {
       emitError(getSemanticLocation(actual))
           << name
-          << " currently requires a one-dimensional unpacked array, dynamic "
-             "array, or queue";
+          << " currently requires an unpacked array, dynamic array, or queue";
       return failure();
     }
-    Type elementType = array          ? array.getElementType()
-                       : dynamicArray ? dynamicArray.getElementType()
-                                      : queue.getElementType();
+    SmallVector<sim::UnpackedArrayType> dimensions;
+    Type elementType;
+    if (array) {
+      elementType = array;
+      while (auto dimension = dyn_cast<sim::UnpackedArrayType>(elementType)) {
+        dimensions.push_back(dimension);
+        elementType = dimension.getElementType();
+      }
+    } else {
+      elementType = dynamicArray ? dynamicArray.getElementType()
+                                 : queue.getElementType();
+    }
     std::optional<unsigned> elementWidth = sim::getPackedWidth(elementType);
     if (!elementWidth || *elementWidth == 0) {
       emitError(getSemanticLocation(actual))
@@ -166,16 +173,36 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       return arith::ConstantOp::create(builder, location, i64,
                                        builder.getI64IntegerAttr(value));
     };
-    Value low = indexConstant(array ? std::min(array.getLeft(), array.getRight())
-                                    : 0);
+    Value low = indexConstant(
+        array ? std::min(dimensions.front().getLeft(),
+                         dimensions.front().getRight())
+              : 0);
     Value high;
     if (array)
-      high = indexConstant(std::max(array.getLeft(), array.getRight()));
+      high = indexConstant(std::max(dimensions.front().getLeft(),
+                                    dimensions.front().getRight()));
     else {
       Value size = sim::SimContainerSizeOp::create(builder, location, i64,
                                                    memory);
       high = arith::SubIOp::create(builder, location, size, indexConstant(1));
     }
+    uint64_t rowSizeValue = 1;
+    for (sim::UnpackedArrayType dimension :
+         array ? ArrayRef<sim::UnpackedArrayType>(dimensions).drop_front()
+               : ArrayRef<sim::UnpackedArrayType>{}) {
+      uint64_t extent = static_cast<uint64_t>(
+          std::max(dimension.getLeft(), dimension.getRight()) -
+          std::min(dimension.getLeft(), dimension.getRight())) +
+                        1;
+      if (extent != 0 &&
+          rowSizeValue > static_cast<uint64_t>(INT64_MAX) / extent) {
+        emitError(getSemanticLocation(actual))
+            << name << " multidimensional row size exceeds 64 bits";
+        return failure();
+      }
+      rowSizeValue *= extent;
+    }
+    Value rowSize = indexConstant(static_cast<int64_t>(rowSizeValue));
     auto addressArgument = [&](size_t index,
                                Value fallback) -> FailureOr<Value> {
       if (index >= children.size() ||
@@ -207,6 +234,7 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     Block *header = addBlock();
     header->addArgument(i64, location);
     header->addArgument(builder.getI1Type(), location);
+    header->addArgument(i64, location);
     header->addArgument(i64, location);
     Block *classify = addBlock();
     Block *setAddress = addBlock();
@@ -247,13 +275,15 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
         builder, location, withinMemory(*start), withinMemory(*finish));
     cf::CondBranchOp::create(
         builder, location, validBounds, header,
-        ValueRange{*start, constant(builder.getI1Type(), 0), indexConstant(0)},
+        ValueRange{*start, constant(builder.getI1Type(), 0), indexConstant(0),
+                   indexConstant(0)},
         addressError, ValueRange{});
 
     setCurrent(header);
     Value address = header->getArgument(0);
     Value sawFileAddress = header->getArgument(1);
     Value wordCount = header->getArgument(2);
+    Value subword = header->getArgument(3);
     auto token = sim::SimFileReadMemTokenOp::create(
         builder, location,
         TypeRange{sim::LogicType::get(function.getContext(), *elementWidth),
@@ -284,7 +314,7 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     cf::BranchOp::create(builder, location, header,
                          ValueRange{token.getAddress(),
                                     constant(builder.getI1Type(), 1),
-                                    wordCount});
+                                    wordCount, indexConstant(0)});
 
     setCurrent(storeData);
     Value validDataAddress =
@@ -304,10 +334,36 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       element = sim::SimPackedUnflattenOp::create(builder, location,
                                                   elementType, element);
     if (array) {
-      Value elementReference = sim::SimRefArrayElementOp::create(
-          builder, location,
-          sim::RefType::get(function.getContext(), elementType), memory,
-          address);
+      Value elementReference = memory;
+      uint64_t stride = rowSizeValue;
+      for (auto [position, dimension] : llvm::enumerate(dimensions)) {
+        Value index = address;
+        if (position != 0) {
+          uint64_t extent = static_cast<uint64_t>(
+              std::max(dimension.getLeft(), dimension.getRight()) -
+              std::min(dimension.getLeft(), dimension.getRight())) +
+                            1;
+          stride /= extent;
+          Value ordinal = subword;
+          if (stride != 1)
+            ordinal = arith::DivUIOp::create(
+                builder, location, ordinal,
+                indexConstant(static_cast<int64_t>(stride)));
+          ordinal = arith::RemUIOp::create(
+              builder, location, ordinal,
+              indexConstant(static_cast<int64_t>(extent)));
+          index = arith::AddIOp::create(
+              builder, location,
+              indexConstant(
+                  std::min(dimension.getLeft(), dimension.getRight())),
+              ordinal);
+        }
+        Type selectedType = dimension.getElementType();
+        elementReference = sim::SimRefArrayElementOp::create(
+            builder, location,
+            sim::RefType::get(function.getContext(), selectedType),
+            elementReference, index);
+      }
       if (failed(storeReference(elementReference, element, location)))
         return failure();
     } else {
@@ -316,12 +372,22 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     }
     Value step = arith::SelectOp::create(builder, location, descending,
                                          indexConstant(-1), indexConstant(1));
-    Value nextAddress = arith::AddIOp::create(builder, location, address, step);
+    Value incrementedSubword =
+        arith::AddIOp::create(builder, location, subword, indexConstant(1));
+    Value rowComplete = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, incrementedSubword,
+        rowSize);
+    Value steppedAddress =
+        arith::AddIOp::create(builder, location, address, step);
+    Value nextAddress = arith::SelectOp::create(
+        builder, location, rowComplete, steppedAddress, address);
+    Value nextSubword = arith::SelectOp::create(
+        builder, location, rowComplete, indexConstant(0), incrementedSubword);
     Value nextWordCount =
         arith::AddIOp::create(builder, location, wordCount, indexConstant(1));
     cf::BranchOp::create(
         builder, location, header,
-        ValueRange{nextAddress, sawFileAddress, nextWordCount});
+        ValueRange{nextAddress, sawFileAddress, nextWordCount, nextSubword});
 
     setCurrent(checkWordCount);
     Value difference =
@@ -332,6 +398,8 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
         builder, location, descending, negativeDifference, difference);
     Value expectedWords = arith::AddIOp::create(
         builder, location, absoluteDifference, indexConstant(1));
+    expectedWords =
+        arith::MulIOp::create(builder, location, expectedWords, rowSize);
     Value countMatches = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, wordCount, expectedWords);
     Value suppressWarning =
