@@ -19,7 +19,13 @@ namespace {
 enum class ArrayMethod {
   Unknown,
   Size,
+  Num,
+  Exists,
   Delete,
+  First,
+  Last,
+  Next,
+  Prev,
   Insert,
   PopBack,
   PopFront,
@@ -50,7 +56,13 @@ enum class ArrayMethod {
 ArrayMethod classifyArrayMethod(StringRef name) {
   return llvm::StringSwitch<ArrayMethod>(name)
       .Case("size", ArrayMethod::Size)
+      .Case("num", ArrayMethod::Num)
+      .Case("exists", ArrayMethod::Exists)
       .Case("delete", ArrayMethod::Delete)
+      .Case("first", ArrayMethod::First)
+      .Case("last", ArrayMethod::Last)
+      .Case("next", ArrayMethod::Next)
+      .Case("prev", ArrayMethod::Prev)
       .Case("insert", ArrayMethod::Insert)
       .Case("pop_back", ArrayMethod::PopBack)
       .Case("pop_front", ArrayMethod::PopFront)
@@ -1286,7 +1298,8 @@ UnitLowering::lowerAssociativeArrayMethod(semantic::SVCallExpressionOp op) {
   auto arrayType = dyn_cast<sim::AssocArrayType>(*semanticReceiverType);
   if (!arrayType)
     return failure();
-  StringRef name = op.getCalleeName();
+  StringRef methodName = op.getCalleeName();
+  ArrayMethod method = classifyArrayMethod(methodName);
 
   auto result = [&](Value value) -> FailureOr<Value> {
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
@@ -1308,9 +1321,10 @@ UnitLowering::lowerAssociativeArrayMethod(semantic::SVCallExpressionOp op) {
     return ensureAssocArray(*value, location);
   };
 
-  if (name == "size" || name == "num") {
+  if (method == ArrayMethod::Size || method == ArrayMethod::Num) {
     if (children.size() != 1)
-      return emitError(location) << name << " takes no arguments", failure();
+      return emitError(location) << methodName << " takes no arguments",
+             failure();
     FailureOr<Value> receiver = receiverValue();
     if (failed(receiver))
       return failure();
@@ -1318,7 +1332,7 @@ UnitLowering::lowerAssociativeArrayMethod(semantic::SVCallExpressionOp op) {
         builder, location, builder.getI64Type(), *receiver);
     return result(size);
   }
-  if (name == "exists") {
+  if (method == ArrayMethod::Exists) {
     if (children.size() != 2)
       return emitError(location) << "exists takes one key argument", failure();
     FailureOr<Value> receiver = receiverValue();
@@ -1329,7 +1343,7 @@ UnitLowering::lowerAssociativeArrayMethod(semantic::SVCallExpressionOp op) {
         builder, location, builder.getI1Type(), *receiver, *key);
     return result(exists);
   }
-  if (name == "delete") {
+  if (method == ArrayMethod::Delete) {
     if (children.size() > 2)
       return emitError(location) << "delete takes at most one key argument",
              failure();
@@ -1358,16 +1372,20 @@ UnitLowering::lowerAssociativeArrayMethod(semantic::SVCallExpressionOp op) {
                                      builder.getBoolAttr(false))
         .getResult();
   }
-  if (name == "first" || name == "last" || name == "next" || name == "prev") {
+  bool traversalMethod =
+      method == ArrayMethod::First || method == ArrayMethod::Last ||
+      method == ArrayMethod::Next || method == ArrayMethod::Prev;
+  if (traversalMethod) {
     if (children.size() != 2)
-      return emitError(location) << name << " takes one key output argument",
+      return emitError(location)
+                 << methodName << " takes one key output argument",
              failure();
     FailureOr<Value> receiver = receiverValue();
     FailureOr<Value> destination = lowerExpression(children[1], true);
     if (failed(receiver) || failed(destination))
       return failure();
     Value inputKey;
-    bool endpoint = name == "first" || name == "last";
+    bool endpoint = method == ArrayMethod::First || method == ArrayMethod::Last;
     if (endpoint)
       inputKey = createDefaultValue(builder, location, arrayType.getKeyType());
     else {
@@ -1381,7 +1399,8 @@ UnitLowering::lowerAssociativeArrayMethod(semantic::SVCallExpressionOp op) {
         return failure();
       inputKey = *converted;
     }
-    int32_t direction = name == "first" || name == "next" ? 1 : -1;
+    int32_t direction =
+        method == ArrayMethod::First || method == ArrayMethod::Next ? 1 : -1;
     FailureOr<std::pair<Value, Value>> traversed =
         traverseAssoc(*receiver, inputKey, direction, endpoint, location);
     if (failed(traversed))
@@ -1405,13 +1424,16 @@ UnitLowering::lowerAssociativeArrayMethod(semantic::SVCallExpressionOp op) {
     return result(traversed->second);
   }
 
-  bool expressionMethod = name == "sum" || name == "product" || name == "and" ||
-                          name == "or" || name == "xor" || name == "find" ||
-                          name == "find_index" || name == "find_first" ||
-                          name == "find_first_index" || name == "find_last" ||
-                          name == "find_last_index" || name == "min" ||
-                          name == "max" || name == "unique" ||
-                          name == "unique_index" || name == "map";
+  bool expressionMethod =
+      method == ArrayMethod::Sum || method == ArrayMethod::Product ||
+      method == ArrayMethod::And || method == ArrayMethod::Or ||
+      method == ArrayMethod::Xor || method == ArrayMethod::Find ||
+      method == ArrayMethod::FindIndex || method == ArrayMethod::FindFirst ||
+      method == ArrayMethod::FindFirstIndex ||
+      method == ArrayMethod::FindLast || method == ArrayMethod::FindLastIndex ||
+      method == ArrayMethod::Min || method == ArrayMethod::Max ||
+      method == ArrayMethod::Unique || method == ArrayMethod::UniqueIndex ||
+      method == ArrayMethod::Map;
   if (expressionMethod) {
     if (children.size() != (withClause ? 2u : 1u)) {
       emitError(location)
@@ -1482,7 +1504,7 @@ UnitLowering::lowerAssociativeArrayMethod(semantic::SVCallExpressionOp op) {
                          ValueRange{next->first, next->second});
     setCurrent(exit);
 
-    if (name == "map") {
+    if (method == ArrayMethod::Map) {
       if (!withClause)
         return emitError(location) << "map requires a with clause", failure();
       FailureOr<Type> resultType = getNormalizedSemanticType(op);
@@ -1552,7 +1574,8 @@ UnitLowering::lowerAssociativeArrayMethod(semantic::SVCallExpressionOp op) {
     return lowerArrayMethod(op, orderedValues, orderedKeys);
   }
 
-  return emitError(location) << "unsupported associative-array method " << name,
+  return emitError(location)
+             << "unsupported associative-array method " << methodName,
          failure();
 }
 
