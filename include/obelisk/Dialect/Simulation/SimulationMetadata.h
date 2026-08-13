@@ -39,6 +39,8 @@ inline constexpr llvm::StringLiteral descriptorPackedLow =
     "obelisk_sim.descriptor_packed_low";
 inline constexpr llvm::StringLiteral hierarchicalName =
     "obelisk_sim.hierarchical_name";
+inline constexpr llvm::StringLiteral thisArgument =
+    "obelisk_sim.this_argument";
 inline constexpr llvm::StringLiteral lowered = "obelisk_sim.lowered";
 inline constexpr llvm::StringLiteral staticBodyFusion =
     "obelisk_sim.static_body_fusion";

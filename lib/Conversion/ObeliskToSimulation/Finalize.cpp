@@ -185,7 +185,7 @@ void ObeliskSimFinalizePass::runOnOperation() {
     function->removeAttr(delayScaleAttrName);
     function->removeAttr(delayQuantumAttrName);
     function->removeAttr(sim::metadata::lowered);
-    function->removeAttr("obelisk_sim.this_argument");
+    function->removeAttr(sim::metadata::thisArgument);
     function->removeAttr("obelisk_sim.constructor");
   });
 

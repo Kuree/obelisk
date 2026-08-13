@@ -276,7 +276,7 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
     }
   }
   if (auto argument =
-          function->getAttrOfType<IntegerAttr>("obelisk_sim.this_argument")) {
+          function->getAttrOfType<IntegerAttr>(sim::metadata::thisArgument)) {
     uint64_t index = argument.getValue().getZExtValue();
     if (index < function.getNumArguments())
       thisObject = function.getBody().front().getArgument(index);

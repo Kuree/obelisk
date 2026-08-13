@@ -5663,10 +5663,10 @@ void ObeliskSimPreparePass::runOnOperation() {
                              builder.getI64IntegerAttr(unit.id))};
     if (instanceClassMethod)
       functionAttrs.push_back(builder.getNamedAttr(
-          "obelisk_sim.this_argument", builder.getI32IntegerAttr(1)));
+          sim::metadata::thisArgument, builder.getI32IntegerAttr(1)));
     else if (observerThisArgument)
       functionAttrs.push_back(builder.getNamedAttr(
-          "obelisk_sim.this_argument",
+          sim::metadata::thisArgument,
           builder.getI32IntegerAttr(*observerThisArgument)));
     if (isVoidFunction)
       functionAttrs.push_back(builder.getNamedAttr("obelisk_sim.void_function",
@@ -6365,7 +6365,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVector<NamedAttribute> attrs{
         builder.getNamedAttr("code_unit_id",
                              builder.getI64IntegerAttr(codeUnitID)),
-        builder.getNamedAttr("obelisk_sim.this_argument",
+        builder.getNamedAttr(sim::metadata::thisArgument,
                              builder.getI32IntegerAttr(1)),
         builder.getNamedAttr("obelisk_sim.constructor", builder.getUnitAttr()),
         builder.getNamedAttr(bindingsAttrName,

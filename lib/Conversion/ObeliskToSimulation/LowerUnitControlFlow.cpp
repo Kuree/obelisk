@@ -831,6 +831,7 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
   argumentAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Context));
 
   llvm::StringSet<> capturedPaths;
+  llvm::StringSet<> branchDeclarations;
   auto addCapture = [&](StringRef path) {
     if (!capturedPaths.insert(path).second)
       return;
@@ -859,12 +860,20 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
   ArrayAttr parentBindings =
       function->getAttrOfType<ArrayAttr>(bindingsAttrName);
   llvm::StringSet<> referencedPaths;
+  bool branchUsesThis = false;
   branch->walk([&](Operation *nested) {
     StringRef path;
-    if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(nested))
+    if (auto declaration =
+            dyn_cast<semantic::SVVariableDeclStatementOp>(nested)) {
+      path = declaration.getReferencedPath();
+      if (!path.empty())
+        branchDeclarations.insert(path);
+    } else if (auto named =
+                   dyn_cast<semantic::SVNamedValueExpressionOp>(nested)) {
       path = named.getReferencedPath();
-    else if (auto hierarchical =
-                 dyn_cast<semantic::SVHierarchicalValueExpressionOp>(nested))
+      branchUsesThis |= named->hasAttr("obelisk_sim.class_field");
+    } else if (auto hierarchical =
+                   dyn_cast<semantic::SVHierarchicalValueExpressionOp>(nested))
       path = hierarchical.getReferencedPath();
     else if (auto instance =
                  dyn_cast<semantic::SVAssertionInstanceExpressionOp>(nested)) {
@@ -874,11 +883,37 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
     }
     if (!path.empty())
       referencedPaths.insert(path);
+    if (auto call = dyn_cast<semantic::SVCallExpressionOp>(nested);
+        call && call->hasAttr("obelisk_sim.class_instance")) {
+      auto formals = call->getAttrOfType<ArrayAttr>(calleeFormalsAttrName);
+      bool superCall = call->hasAttr("obelisk_sim.class_super");
+      branchUsesThis |=
+          superCall || (formals && getChildren(call).size() == formals.size());
+    }
     if (auto callCaptures =
             nested->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
       for (Attribute capture : callCaptures)
         referencedPaths.insert(cast<StringAttr>(capture).getValue());
   });
+  std::optional<unsigned> outlinedThisArgument;
+  if (branchUsesThis && thisObject) {
+    outlinedThisArgument = inputs.size();
+    inputs.push_back(thisObject.getType());
+    captures.push_back(thisObject);
+    argumentAttrs.push_back(
+        captureMetadata(builder, sim::CaptureKind::Formal));
+    // Direct `this` references resolve through the child's distinguished
+    // receiver as well. Suppress a duplicate ordinary capture for the same
+    // parent argument binding.
+    if (parentBindings)
+      for (Attribute attribute : parentBindings) {
+        auto argument = dyn_cast<sim::ArgumentBindingAttr>(attribute);
+        if (!argument || argument.getArgument() >= function.getNumArguments())
+          continue;
+        if (function.getArgument(argument.getArgument()) == thisObject)
+          capturedPaths.insert(argument.getPath().getValue());
+      }
+  }
   if (parentBindings)
     for (Attribute attribute : parentBindings) {
       StringRef path = sim::getUnitBindingPath(attribute);
@@ -888,6 +923,16 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
       // callee. This also excludes pattern variables from unrelated matches.
       if (!referencedPaths.contains(path))
         continue;
+      // An automatic declaration nested in this branch belongs to the child
+      // process activation. Preserve its frozen type and lifetime contract so
+      // the child allocates it at the declaration. Capturing a parent
+      // reference here would incorrectly share storage between activations.
+      if (auto local = dyn_cast<sim::LocalBindingAttr>(attribute);
+          local && local.getAutomatic() && branchDeclarations.contains(path)) {
+        if (capturedPaths.insert(path).second)
+          bindings.push_back(attribute);
+        continue;
+      }
       // Elaborated constants are immutable compile-time facts, not runtime
       // ABI captures. Preserve their typed binding on the outlined child.
       if (isa<sim::ConstantBindingAttr>(attribute)) {
@@ -949,6 +994,10 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
                                   outlineBuilder.getI64IntegerAttr(codeUnitID)),
       outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
   };
+  if (outlinedThisArgument)
+    attributes.push_back(outlineBuilder.getNamedAttr(
+        sim::metadata::thisArgument,
+        outlineBuilder.getI32IntegerAttr(*outlinedThisArgument)));
   SmallVector<Attribute> inheritedControls;
   llvm::StringMap<uint64_t> inherited = inheritedControlIDs;
   for (const ControlScope &scope : controlScopes)
