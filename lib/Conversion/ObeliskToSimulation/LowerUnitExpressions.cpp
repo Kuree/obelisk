@@ -809,13 +809,16 @@ FailureOr<Value>
 UnitLowering::sliceStreamingContainer(Value container, Operation *withRange,
                                       Location location) {
   Type elementType;
+  sim::UnpackedArrayType fixedArray;
   if (auto array = dyn_cast<sim::DynamicArrayType>(container.getType()))
     elementType = array.getElementType();
   else if (auto queue = dyn_cast<sim::QueueType>(container.getType()))
     elementType = queue.getElementType();
+  else if ((fixedArray = dyn_cast<sim::UnpackedArrayType>(container.getType())))
+    elementType = fixedArray.getElementType();
   if (!elementType)
     return emitError(location)
-               << "streaming with currently requires a dynamic array or queue",
+               << "streaming with requires a one-dimensional unpacked array",
            failure();
   SmallVector<Operation *> children = getChildren(withRange);
   bool elementRange = isa<semantic::SVElementSelectExpressionOp>(withRange);
@@ -852,11 +855,14 @@ UnitLowering::sliceStreamingContainer(Value container, Operation *withRange,
     setCurrent(accepted);
     return success();
   };
-  Value firstNonnegative = arith::CmpIOp::create(
-      builder, location, arith::CmpIPredicate::sge, *first, zero);
-  if (failed(requireRuntime(firstNonnegative,
-                            "streaming with range has a negative first index")))
-    return failure();
+  if (!fixedArray) {
+    Value firstNonnegative = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::sge, *first, zero);
+    if (failed(requireRuntime(
+            firstNonnegative,
+            "streaming with range has a negative first index")))
+      return failure();
+  }
 
   Value count = one;
   Value ascends;
@@ -868,12 +874,14 @@ UnitLowering::sliceStreamingContainer(Value container, Operation *withRange,
     if (failed(second))
       return failure();
     if (kind == semantic::SVRangeSelectionKind::Simple) {
-      Value secondNonnegative = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::sge, *second, zero);
-      if (failed(requireRuntime(
-              secondNonnegative,
-              "streaming with range has a negative second index")))
-        return failure();
+      if (!fixedArray) {
+        Value secondNonnegative = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::sge, *second, zero);
+        if (failed(requireRuntime(
+                secondNonnegative,
+                "streaming with range has a negative second index")))
+          return failure();
+      }
       ascends = arith::CmpIOp::create(builder, location,
                                       arith::CmpIPredicate::slt, *first,
                                       *second);
@@ -908,8 +916,10 @@ UnitLowering::sliceStreamingContainer(Value container, Operation *withRange,
       builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
       builder.getDenseI32ArrayAttr(descriptor->traceKinds),
       OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 0);
-  Value sourceSize = sim::SimContainerSizeOp::create(
-      builder, location, builder.getI64Type(), container);
+  Value sourceSize;
+  if (!fixedArray)
+    sourceSize = sim::SimContainerSizeOp::create(
+        builder, location, builder.getI64Type(), container);
   Value defaultElement = createDefaultValue(builder, location, elementType);
   if (!defaultElement)
     return emitError(location)
@@ -919,8 +929,8 @@ UnitLowering::sliceStreamingContainer(Value container, Operation *withRange,
   Block *header = addBlock();
   header->addArgument(builder.getI64Type(), location);
   Block *body = addBlock();
-  Block *present = addBlock();
-  Block *missing = addBlock();
+  Block *present = fixedArray ? nullptr : addBlock();
+  Block *missing = fixedArray ? nullptr : addBlock();
   Block *resume = addBlock();
   resume->addArgument(elementType, location);
   Block *exit = addBlock();
@@ -947,19 +957,51 @@ UnitLowering::sliceStreamingContainer(Value container, Operation *withRange,
     sourceIndex = below;
     break;
   }
-  Value nonnegative = arith::CmpIOp::create(
-      builder, location, arith::CmpIPredicate::sge, sourceIndex, zero);
-  Value inBounds = arith::CmpIOp::create(
-      builder, location, arith::CmpIPredicate::ult, sourceIndex, sourceSize);
-  Value valid = arith::AndIOp::create(builder, location, nonnegative, inBounds);
-  cf::CondBranchOp::create(builder, location, valid, present, ValueRange{},
-                           missing, ValueRange{});
-  setCurrent(present);
-  Value selected = sim::SimContainerReadOp::create(
-      builder, location, elementType, container, sourceIndex);
-  cf::BranchOp::create(builder, location, resume, ValueRange{selected});
-  setCurrent(missing);
-  cf::BranchOp::create(builder, location, resume, ValueRange{defaultElement});
+  if (fixedArray) {
+    Value selected = defaultElement;
+    unsigned sourceCount = sim::getAggregateNumElements(fixedArray);
+    int64_t declaredIndex = fixedArray.getLeft();
+    int64_t step = fixedArray.getLeft() <= fixedArray.getRight() ? 1 : -1;
+    for (unsigned sourceOrdinal = 0; sourceOrdinal < sourceCount;
+         ++sourceOrdinal) {
+      Value index = arith::ConstantOp::create(
+          builder, location, builder.getI64Type(),
+          builder.getI64IntegerAttr(declaredIndex));
+      Value matches = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, sourceIndex, index);
+      Block *matched = addBlock();
+      Block *nextCandidate = addBlock();
+      nextCandidate->addArgument(elementType, location);
+      cf::CondBranchOp::create(builder, location, matches, matched,
+                               ValueRange{}, nextCandidate,
+                               ValueRange{selected});
+      setCurrent(matched);
+      Value element = sim::SimAggregateExtractOp::create(
+          builder, location, elementType, container, sourceOrdinal);
+      cf::BranchOp::create(builder, location, nextCandidate,
+                           ValueRange{element});
+      setCurrent(nextCandidate);
+      selected = nextCandidate->getArgument(0);
+      if (sourceOrdinal + 1 < sourceCount)
+        declaredIndex += step;
+    }
+    cf::BranchOp::create(builder, location, resume, ValueRange{selected});
+  } else {
+    Value nonnegative = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::sge, sourceIndex, zero);
+    Value inBounds = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ult, sourceIndex, sourceSize);
+    Value valid =
+        arith::AndIOp::create(builder, location, nonnegative, inBounds);
+    cf::CondBranchOp::create(builder, location, valid, present, ValueRange{},
+                             missing, ValueRange{});
+    setCurrent(present);
+    Value selected = sim::SimContainerReadOp::create(
+        builder, location, elementType, container, sourceIndex);
+    cf::BranchOp::create(builder, location, resume, ValueRange{selected});
+    setCurrent(missing);
+    cf::BranchOp::create(builder, location, resume, ValueRange{defaultElement});
+  }
   setCurrent(resume);
   sim::SimContainerWriteOp::create(builder, location, result, ordinal,
                                    resume->getArgument(0));
