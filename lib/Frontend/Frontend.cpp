@@ -1658,8 +1658,12 @@ private:
       }
       SET_OP_ATTR(DefaultedArguments,
                   builder.getDenseI64ArrayAttr(defaultedArguments));
-      if (node.isSystemCall() && node.getSubroutineName() == "name" &&
-          node.arguments().size() == 1) {
+      bool enumMethod =
+          node.isSystemCall() &&
+          llvm::StringSwitch<bool>(node.getSubroutineName())
+              .Cases({"first", "last", "next", "prev", "num", "name"}, true)
+              .Default(false);
+      if (enumMethod && !node.arguments().empty()) {
         const slang::ast::Type &receiverType =
             node.arguments().front()->type->getCanonicalType();
         if (receiverType.isEnum()) {

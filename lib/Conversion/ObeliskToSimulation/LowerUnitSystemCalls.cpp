@@ -1071,6 +1071,123 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return convertResult(result);
   }
 
+  bool enumIterationMethod =
+      llvm::StringSwitch<bool>(name)
+          .Cases({"first", "last", "next", "prev", "num"}, true)
+          .Default(false);
+  if (enumIterationMethod) {
+    bool takesCount = name == "next" || name == "prev";
+    if ((takesCount && (children.empty() || children.size() > 2)) ||
+        (!takesCount && children.size() != 1)) {
+      emitError(location) << "enum " << name << "() has invalid arguments";
+      return failure();
+    }
+    auto semanticType =
+        children.front()->getAttrOfType<TypeAttr>("semantic_type");
+    ArrayAttr values = op->getAttrOfType<ArrayAttr>(enumMethodValuesAttrName);
+    if (!semanticType || !isa<semantic::EnumType>(semanticType.getValue()) ||
+        !values || values.empty()) {
+      emitError(location) << "enum " << name
+                          << "() has no valid frozen inventory";
+      return failure();
+    }
+    FailureOr<Value> receiver = lowerExpression(children.front());
+    if (failed(receiver) || !sim::getPackedScalarType((*receiver).getType())) {
+      emitError(location) << "enum " << name
+                          << "() requires a packed enum receiver";
+      return failure();
+    }
+    SmallVector<sim::FrozenConstantAttr> frozenMembers;
+    frozenMembers.reserve(values.size());
+    for (Attribute attribute : values) {
+      auto frozen = dyn_cast<sim::FrozenConstantAttr>(attribute);
+      if (!frozen || frozen.getType() != (*receiver).getType()) {
+        emitError(location)
+            << "enum " << name << "() has malformed frozen inventory";
+        return failure();
+      }
+      frozenMembers.push_back(frozen);
+    }
+    auto materializeMember = [&](sim::FrozenConstantAttr frozen) {
+      return sim::materializeFrozenConstant(builder, location, frozen);
+    };
+    if (name == "first" || name == "last") {
+      FailureOr<Value> result = materializeMember(
+          name == "first" ? frozenMembers.front() : frozenMembers.back());
+      if (failed(result))
+        return failure();
+      return convertResult(*result);
+    }
+    if (name == "num")
+      return convertResult(
+          constant(i64, static_cast<int64_t>(frozenMembers.size())));
+
+    SmallVector<Value> members;
+    members.reserve(frozenMembers.size());
+    for (sim::FrozenConstantAttr frozen : frozenMembers) {
+      FailureOr<Value> member = materializeMember(frozen);
+      if (failed(member))
+        return failure();
+      members.push_back(*member);
+    }
+
+    Value count = constant(i64, static_cast<int64_t>(members.size()));
+    Value ordinal = count;
+    Value valid = constant(builder.getI1Type(), 0);
+    for (auto [index, member] : llvm::enumerate(members)) {
+      FailureOr<Value> equal =
+          conditionalEqual(*receiver, member, (*receiver).getType(), location,
+                           /*caseEquality=*/true);
+      if (failed(equal))
+        return failure();
+      valid = arith::OrIOp::create(builder, location, valid, *equal);
+      ordinal = arith::SelectOp::create(
+          builder, location, *equal, constant(i64, static_cast<int64_t>(index)),
+          ordinal);
+    }
+
+    Value amount = constant(i64, 1);
+    if (children.size() == 2) {
+      FailureOr<Value> amount32 = lowerInteger(children[1], i32);
+      if (failed(amount32))
+        return failure();
+      amount = arith::ExtUIOp::create(builder, location, i64, *amount32);
+    }
+    amount = arith::RemUIOp::create(builder, location, amount, count);
+    Value target;
+    if (name == "next") {
+      target = arith::RemUIOp::create(
+          builder, location,
+          arith::AddIOp::create(builder, location, ordinal, amount), count);
+    } else {
+      target = arith::RemUIOp::create(
+          builder, location,
+          arith::SubIOp::create(
+              builder, location,
+              arith::AddIOp::create(builder, location, ordinal, count), amount),
+          count);
+    }
+
+    Value defaultResult =
+        createDefaultValue(builder, location, (*receiver).getType());
+    if (!defaultResult) {
+      emitError(location) << "enum " << name
+                          << "() cannot materialize its default value";
+      return failure();
+    }
+    Value result = defaultResult;
+    for (auto [index, member] : llvm::enumerate(members)) {
+      Value selected = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, target,
+          constant(i64, static_cast<int64_t>(index)));
+      result =
+          arith::SelectOp::create(builder, location, selected, member, result);
+    }
+    result = arith::SelectOp::create(builder, location, valid, result,
+                                     defaultResult);
+    return convertResult(result);
+  }
+
   bool realMath = llvm::StringSwitch<bool>(name)
                       .Cases({"$ceil", "$floor", "$sqrt", "$exp", "$ln",
                               "$log10", "$pow", "$atan2", "$hypot"},

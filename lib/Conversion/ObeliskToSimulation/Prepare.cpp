@@ -356,25 +356,43 @@ void ObeliskSimPreparePass::runOnOperation() {
   };
 
   semanticRoot->walk([&](semantic::SVCallExpressionOp call) {
-    if (call.getIsSystemCall() && call.getCalleeName() == "name") {
+    ArrayAttr spellings = call.getEnumMethodValuesAttr();
+    bool enumMethod =
+        call.getIsSystemCall() && spellings &&
+        llvm::StringSwitch<bool>(call.getCalleeName())
+            .Cases({"first", "last", "next", "prev", "num", "name"}, true)
+            .Default(false);
+    if (enumMethod) {
       SmallVector<Operation *> arguments = getChildren(call);
-      ArrayAttr names = call.getEnumMethodNamesAttr();
-      ArrayAttr spellings = call.getEnumMethodValuesAttr();
-      if (arguments.size() != 1 || !names || names.empty() || !spellings ||
-          names.size() != spellings.size()) {
+      bool arityValid =
+          (call.getCalleeName() == "next" || call.getCalleeName() == "prev")
+              ? arguments.size() == 1 || arguments.size() == 2
+              : arguments.size() == 1;
+      if (!arityValid || !spellings || spellings.empty()) {
         emitError(getSemanticLocation(call))
-            << "enum name() has no valid enumerator inventory";
+            << "enum " << call.getCalleeName()
+            << "() has no valid enumerator inventory";
         invalid = true;
         return;
       }
-      FailureOr<ArrayAttr> values = freezeEnumValues(
-          call, arguments.front(), spellings, "enum name()");
+      FailureOr<ArrayAttr> values =
+          freezeEnumValues(call, arguments.front(), spellings,
+                           ("enum " + call.getCalleeName() + "()").str());
       if (failed(values)) {
         invalid = true;
         return;
       }
       call->setAttr(enumMethodValuesAttrName, *values);
-      call->setAttr(enumMethodNamesAttrName, names);
+      if (call.getCalleeName() == "name") {
+        ArrayAttr names = call.getEnumMethodNamesAttr();
+        if (!names || names.empty() || names.size() != spellings.size()) {
+          emitError(getSemanticLocation(call))
+              << "enum name() has no valid enumerator names";
+          invalid = true;
+          return;
+        }
+        call->setAttr(enumMethodNamesAttrName, names);
+      }
       return;
     }
     if (call.getCalleeName() != "$cast")
