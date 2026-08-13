@@ -2383,6 +2383,76 @@ private:
       SET_OP_ATTR(HasDefault, builder.getBoolAttr(node.defaultCase != nullptr));
     } else if constexpr (std::same_as<T, slang::ast::RandCaseStatement>) {
       SET_OP_ATTR(ItemCount, builder.getI64IntegerAttr(node.items.size()));
+    } else if constexpr (std::same_as<T,
+                                      slang::ast::RandSequenceStatement>) {
+      attrs.set("production_count",
+                builder.getI64IntegerAttr(node.productions.size()));
+      attrs.set("has_first_production",
+                builder.getBoolAttr(node.firstProduction != nullptr));
+      if (node.firstProduction) {
+        attrs.set("first_production_path",
+                  builder.getStringAttr(getSymbolPath(*node.firstProduction)));
+        currentPendingReferences.push_back(
+            {node.firstProduction, builder.getStringAttr("first_production")});
+      }
+    } else if constexpr (std::same_as<
+                             T, slang::ast::RandSeqProductionSymbol>) {
+      SmallVector<int64_t> itemCounts;
+      SmallVector<int64_t> hasWeights;
+      SmallVector<int64_t> hasWeightCodeBlocks;
+      SmallVector<int64_t> isRandJoin;
+      SmallVector<int64_t> hasRandJoinExpressions;
+      SmallVector<const slang::ast::Symbol *> ruleBlocks;
+      for (const auto &rule : node.getRules()) {
+        itemCounts.push_back(rule.prods.size());
+        hasWeights.push_back(rule.weightExpr != nullptr);
+        hasWeightCodeBlocks.push_back(rule.codeBlock.has_value());
+        isRandJoin.push_back(rule.isRandJoin);
+        hasRandJoinExpressions.push_back(rule.randJoinExpr != nullptr);
+        ruleBlocks.push_back(rule.ruleBlock);
+      }
+      attrs.set("argument_count",
+                builder.getI64IntegerAttr(node.arguments.size()));
+      attrs.set("rule_count",
+                builder.getI64IntegerAttr(node.getRules().size()));
+      attrs.set("rule_item_counts",
+                builder.getDenseI64ArrayAttr(itemCounts));
+      attrs.set("rule_has_weights",
+                builder.getDenseI64ArrayAttr(hasWeights));
+      attrs.set("rule_has_weight_code_blocks",
+                builder.getDenseI64ArrayAttr(hasWeightCodeBlocks));
+      attrs.set("rule_is_rand_join",
+                builder.getDenseI64ArrayAttr(isRandJoin));
+      attrs.set("rule_has_rand_join_expressions",
+                builder.getDenseI64ArrayAttr(hasRandJoinExpressions));
+      currentPendingReferenceArrays.push_back(
+          {std::move(ruleBlocks), builder.getStringAttr("rule_blocks")});
+    } else if constexpr (std::same_as<T, slang::ast::ProdItem>) {
+      attrs.set("argument_count",
+                builder.getI64IntegerAttr(node.args.size()));
+      attrs.set("has_target", builder.getBoolAttr(node.target != nullptr));
+      if (node.target) {
+        attrs.set("target_path",
+                  builder.getStringAttr(getSymbolPath(*node.target)));
+        currentPendingReferences.push_back(
+            {node.target, builder.getStringAttr("target")});
+      }
+    } else if constexpr (std::same_as<T, slang::ast::CodeBlockProd>) {
+      attrs.set("block_path", builder.getStringAttr(getSymbolPath(*node.block)));
+      currentPendingReferences.push_back(
+          {node.block, builder.getStringAttr("block")});
+    } else if constexpr (std::same_as<T, slang::ast::IfElseProd>) {
+      attrs.set("has_else", builder.getBoolAttr(node.elseItem.has_value()));
+    } else if constexpr (std::same_as<T, slang::ast::CaseProd>) {
+      SmallVector<int64_t> expressionCounts;
+      expressionCounts.reserve(node.items.size());
+      for (const auto &item : node.items)
+        expressionCounts.push_back(item.expressions.size());
+      attrs.set("item_count", builder.getI64IntegerAttr(node.items.size()));
+      attrs.set("item_expression_counts",
+                builder.getDenseI64ArrayAttr(expressionCounts));
+      attrs.set("has_default",
+                builder.getBoolAttr(node.defaultItem.has_value()));
     } else if constexpr (std::same_as<T, slang::ast::InsideExpression>) {
       SET_OP_ATTR(ItemCount,
                   builder.getI64IntegerAttr(node.rangeList().size()));
@@ -2799,6 +2869,26 @@ private:
       } else {
         this->visitDefault(node);
       }
+    } else if constexpr (std::same_as<
+                             T, slang::ast::RandSeqProductionSymbol>) {
+      // Rule blocks and formal arguments are ordinary owned symbols. The
+      // production graph itself is lazily elaborated data, so ASTVisitor's
+      // default ownership walk cannot see it. Preserve a deterministic flat
+      // stream for each rule: optional weight, optional rand-join expression,
+      // production items, and optional weight code block. The rule metadata
+      // above provides the exact boundaries needed by semantic lowering.
+      for (const slang::ast::Symbol &member : node.members())
+        member.visit(*this);
+      for (const auto &rule : node.getRules()) {
+        if (rule.weightExpr)
+          rule.weightExpr->visit(*this);
+        if (rule.randJoinExpr)
+          rule.randJoinExpr->visit(*this);
+        for (const auto *production : rule.prods)
+          production->visit(*this);
+        if (rule.codeBlock)
+          rule.codeBlock->visit(*this);
+      }
     } else if constexpr (std::same_as<T, slang::ast::BlockEventListControl>) {
       for (const auto &event : node.events)
         if (event.target)
@@ -2806,7 +2896,8 @@ private:
     } else if constexpr (std::same_as<T, slang::ast::ProdItem>) {
       node.visitExprs(*this);
     } else if constexpr (std::same_as<T, slang::ast::CodeBlockProd>) {
-      node.block->visit(*this);
+      if (const slang::ast::Statement *statement = node.block->tryGetStatement())
+        statement->visit(*this);
     } else if constexpr (std::same_as<T, slang::ast::IfElseProd>) {
       node.expr->visit(*this);
       node.ifItem.visit(*this);

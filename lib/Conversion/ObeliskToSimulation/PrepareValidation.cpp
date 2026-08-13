@@ -24,10 +24,16 @@ namespace {
 /// generic base, so they cannot carry the SemanticDeclarativeNode trait.
 bool isDeclarativeLeafNode(Operation *op) {
   return isa<
-      semantic::SVRandSequenceStatementOp, semantic::SVCoverCrossSymbolOp,
-      semantic::SVCoverCrossBodySymbolOp, semantic::SVLocalAssertionVarSymbolOp,
-      semantic::SVRandSeqProductionSymbolOp, semantic::SVDPIOpenArrayTypeOp>(
-      op);
+      semantic::SVCoverCrossSymbolOp, semantic::SVCoverCrossBodySymbolOp,
+      semantic::SVLocalAssertionVarSymbolOp, semantic::SVDPIOpenArrayTypeOp>(op);
+}
+
+bool isSupportedRandSequenceNode(Operation *op) {
+  return isa<semantic::SVRandSequenceStatementOp,
+             semantic::SVRandSeqProductionSymbolOp,
+             semantic::SVProdItemOp, semantic::SVCodeBlockProdOp,
+             semantic::SVIfElseProdOp, semantic::SVRepeatProdOp,
+             semantic::SVCaseProdOp>(op);
 }
 
 bool isCoverageNode(Operation *op) {
@@ -173,7 +179,7 @@ FailureOr<ValidatedSemanticDesign> validateSemanticDesign(ModuleOp module) {
     if ((op->hasTrait<OpTrait::SemanticDeclarativeNode>() &&
          !isSupportedClassDeclaration(op) && !isSupportedAssertionNode(op) &&
          !isSupportedConstraintNode(op) && !isCoverageNode(op) &&
-         !isInsideCovergroup(op)) ||
+         !isInsideCovergroup(op) && !isSupportedRandSequenceNode(op)) ||
         isDeclarativeLeafNode(op)) {
       emitError(getSemanticLocation(op))
           << "unsupported semantic construct in the first simulation slice: "

@@ -244,6 +244,12 @@ bool isStaticFormal(Operation *op) {
   auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(op);
   if (!formal || formal.getDirection() == semantic::SVArgumentDirection::Ref)
     return false;
+  // A randsequence creates an automatic scope irrespective of the lifetime
+  // of the function or task that contains it (IEEE 1800-2017 18.17). Its
+  // production formals are activation-owned locals, never static subroutine
+  // formals.
+  if (op->getParentOfType<semantic::SVRandSeqProductionSymbolOp>())
+    return false;
   auto subroutine = op->getParentOfType<semantic::SVSubroutineSymbolOp>();
   return subroutine && subroutine.getDefaultLifetime() ==
                            semantic::SVVariableLifetime::Static;

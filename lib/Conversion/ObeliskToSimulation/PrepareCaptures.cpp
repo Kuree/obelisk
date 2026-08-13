@@ -113,6 +113,12 @@ static semantic::SVClassTypeOp getOwningClass(Operation *member) {
   return {};
 }
 
+static bool isRandSequenceFormal(Operation *operation) {
+  return isa_and_nonnull<semantic::SVFormalArgumentSymbolOp>(operation) &&
+         operation
+             ->getParentOfType<semantic::SVRandSeqProductionSymbolOp>();
+}
+
 FailureOr<PreparedCaptures>
 analyzeCodeUnitCaptures(const PreparedUnits &units,
                         const llvm::StringMap<DescriptorInfo> &descriptors,
@@ -214,9 +220,12 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       }
       // Function formals are already represented by public argument bindings.
       // Static tasks retain their descriptor capture because overlapping
-      // activations copy each formal into shared task storage.
+      // activations copy each formal into shared task storage. Production
+      // formals are different: 18.17 places them in the randsequence's
+      // automatic scope, so they require activation-local bindings.
       if (unit.entryKind == sim::EntryKind::Function &&
-          isa_and_nonnull<semantic::SVFormalArgumentSymbolOp>(referencedSymbol))
+          isa_and_nonnull<semantic::SVFormalArgumentSymbolOp>(referencedSymbol) &&
+          !isRandSequenceFormal(referencedSymbol))
         return;
       // Unnamed statement scopes are not part of Slang's hierarchical name,
       // so an automatic local can have the same path string as design
@@ -271,6 +280,7 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       }
       if (!isa<semantic::SVVariableSymbolOp, semantic::SVPatternVarSymbolOp>(
               referencedSymbol) &&
+          !isRandSequenceFormal(referencedSymbol) &&
           !(unit.entryKind == sim::EntryKind::Observer &&
             isa<semantic::SVFormalArgumentSymbolOp>(referencedSymbol)))
         return;

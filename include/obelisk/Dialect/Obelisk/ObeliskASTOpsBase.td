@@ -826,4 +826,24 @@ class ObeliskBinsASTNodeOp<string mnemonic>
 class ObeliskRandSeqASTNodeOp<string mnemonic>
     : ObeliskASTNodeOp<mnemonic, [ObeliskSemanticDeclarativeNode]>;
 
+// Preparation materializes one of these non-symbol nodes beneath a
+// randsequence statement for every production in that statement's grammar.
+// Production declarations are MLIR symbols and must stay in the frozen
+// semantic symbol table; this executable snapshot can instead be cloned into
+// an isolated simulation function without violating symbol-table nesting.
+def SVFrozenRandSeqProductionOp
+    : ObeliskASTNodeOp<"sv.rand_seq.frozen_production", [], (ins
+        SymbolRefAttr:$referenced_symbol,
+        StrAttr:$referenced_path,
+        I64Attr:$argument_count,
+        I64Attr:$rule_count,
+        DenseI64ArrayAttr:$rule_item_counts,
+        DenseI64ArrayAttr:$rule_has_weights,
+        DenseI64ArrayAttr:$rule_has_weight_code_blocks,
+        DenseI64ArrayAttr:$rule_is_rand_join,
+        DenseI64ArrayAttr:$rule_has_rand_join_expressions,
+        ArrayAttr:$formal_arguments,
+        ArrayAttr:$rule_variables
+      )>;
+
 #endif // OBELISK_DIALECT_OBELISK_OBELISKASTOPSBASE_TD

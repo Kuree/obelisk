@@ -4605,6 +4605,156 @@ void ObeliskSimPreparePass::runOnOperation() {
       member->setAttr(staticClassPropertyAttrName, builder.getUnitAttr());
   });
 
+  // A randsequence's production declarations are symbols owned by the
+  // statement's automatic grammar scope. Symbols must remain in the semantic
+  // symbol table, but their executable production graph must participate in
+  // capture analysis and must later be cloned into an isolated simulation
+  // function. Freeze that graph into non-symbol semantic nodes beneath the
+  // statement. References retain the source symbols' globally unique leaf
+  // names, which is the same stable identity used by the preparation symbol
+  // index and by production-item references.
+  SmallVector<semantic::SVRandSequenceStatementOp> randSequences;
+  semanticRoot->walk([&](semantic::SVRandSequenceStatementOp statement) {
+    randSequences.push_back(statement);
+  });
+  auto getSemanticSymbolReference = [&](Operation *symbol) {
+    SmallVector<StringAttr> path;
+    for (Operation *current = symbol; current; current = current->getParentOp())
+      if (isa<SymbolOpInterface>(current))
+        path.push_back(SymbolTable::getSymbolName(current));
+    std::reverse(path.begin(), path.end());
+    SmallVector<FlatSymbolRefAttr> nested;
+    for (StringAttr name : ArrayRef(path).drop_front())
+      nested.push_back(FlatSymbolRefAttr::get(name));
+    return SymbolRefAttr::get(path.front(), nested);
+  };
+  for (semantic::SVRandSequenceStatementOp statement : randSequences) {
+    auto firstReference =
+        statement->getAttrOfType<SymbolRefAttr>("first_production");
+    auto first = firstReference
+                     ? semanticSymbols.find(firstReference.getLeafReference())
+                     : semanticSymbols.end();
+    auto firstProduction =
+        first != semanticSymbols.end()
+            ? dyn_cast<semantic::SVRandSeqProductionSymbolOp>(first->second)
+            : semantic::SVRandSeqProductionSymbolOp{};
+    if (!firstProduction) {
+      emitError(getSemanticLocation(statement))
+          << "randsequence cannot resolve its first production";
+      invalid = true;
+      continue;
+    }
+
+    SmallVector<semantic::SVRandSeqProductionSymbolOp> productions;
+    for (Operation *child : getChildren(firstProduction->getParentOp()))
+      if (auto production =
+              dyn_cast<semantic::SVRandSeqProductionSymbolOp>(child))
+        productions.push_back(production);
+    auto expectedCount =
+        getUnsigned64(statement->getAttrOfType<IntegerAttr>("production_count"));
+    if (!expectedCount || *expectedCount != productions.size()) {
+      emitError(getSemanticLocation(statement))
+          << "randsequence production inventory does not match its frozen "
+             "production_count";
+      invalid = true;
+      continue;
+    }
+
+    Region &statementRegion = statement.getBody();
+    if (statementRegion.empty())
+      statementRegion.emplaceBlock();
+    OpBuilder productionBuilder(&statementRegion.front(),
+                                statementRegion.front().end());
+    for (semantic::SVRandSeqProductionSymbolOp production : productions) {
+      SmallVector<Attribute> formalArguments;
+      SmallVector<Operation *> formalDefaultOperands;
+      for (Operation *child : getChildren(production)) {
+        auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child);
+        if (!formal)
+          continue;
+        NamedAttrList attributes(formal->getAttrs());
+        attributes.set("referenced_symbol",
+                       getSemanticSymbolReference(formal));
+        attributes.set("referenced_path",
+                       builder.getStringAttr(getHierarchyName(formal)));
+        SmallVector<Operation *> defaults = getChildren(formal);
+        attributes.set("default_operand_count",
+                       builder.getI64IntegerAttr(defaults.size()));
+        formalArguments.push_back(
+            DictionaryAttr::get(context, attributes.getAttrs()));
+        llvm::append_range(formalDefaultOperands, defaults);
+      }
+
+      SmallVector<Attribute> ruleVariables;
+      auto ruleBlocks = production->getAttrOfType<ArrayAttr>("rule_blocks");
+      if (!ruleBlocks) {
+        emitError(getSemanticLocation(production))
+            << "randsequence production has no frozen rule-block inventory";
+        invalid = true;
+        break;
+      }
+      for (Attribute attribute : ruleBlocks) {
+        auto reference = dyn_cast<SymbolRefAttr>(attribute);
+        auto found = reference
+                         ? semanticSymbols.find(reference.getLeafReference())
+                         : semanticSymbols.end();
+        Operation *ruleBlock =
+            found != semanticSymbols.end() ? found->second : nullptr;
+        if (!ruleBlock) {
+          emitError(getSemanticLocation(production))
+              << "randsequence production cannot resolve a rule block";
+          invalid = true;
+          break;
+        }
+        SmallVector<Attribute> variables;
+        for (Operation *child : getChildren(ruleBlock)) {
+          auto variable = dyn_cast<semantic::SVVariableSymbolOp>(child);
+          if (!variable)
+            continue;
+          NamedAttrList attributes(variable->getAttrs());
+          attributes.set("referenced_symbol",
+                         getSemanticSymbolReference(variable));
+          attributes.set("referenced_path",
+                         builder.getStringAttr(getHierarchyName(variable)));
+          variables.push_back(
+              DictionaryAttr::get(context, attributes.getAttrs()));
+        }
+        ruleVariables.push_back(builder.getArrayAttr(variables));
+      }
+      if (invalid)
+        break;
+
+      NamedAttrList attributes(production->getAttrs());
+      attributes.erase(SymbolTable::getSymbolAttrName());
+      attributes.erase("name");
+      attributes.erase("hierarchical_name");
+      attributes.set("referenced_symbol",
+                     getSemanticSymbolReference(production));
+      attributes.set("referenced_path",
+                     builder.getStringAttr(getHierarchyName(production)));
+      attributes.set("formal_arguments", builder.getArrayAttr(formalArguments));
+      attributes.set("rule_variables", builder.getArrayAttr(ruleVariables));
+
+      OperationState state(
+          getSemanticLocation(production),
+          semantic::SVFrozenRandSeqProductionOp::getOperationName());
+      state.addAttributes(attributes);
+      state.addRegion();
+      Operation *frozen = productionBuilder.create(state);
+      Block *body = new Block;
+      frozen->getRegion(0).push_back(body);
+      OpBuilder bodyBuilder(body, body->end());
+      for (Operation *operand : formalDefaultOperands)
+        bodyBuilder.clone(*operand);
+      for (Operation *child : getChildren(production)) {
+        if (!isa<SymbolOpInterface>(child))
+          bodyBuilder.clone(*child);
+      }
+    }
+  }
+  if (invalid)
+    return abort();
+
   FailureOr<PreparedCaptures> preparedCaptures = analyzeCodeUnitCaptures(
       *preparedUnits, descriptors, semanticSymbols, classSources);
   if (failed(preparedCaptures))
