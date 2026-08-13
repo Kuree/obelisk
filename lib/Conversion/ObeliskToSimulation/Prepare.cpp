@@ -1812,6 +1812,7 @@ void ObeliskSimPreparePass::runOnOperation() {
               for (Attribute selectedAttr : selectedPlans)
                 if (auto selected = dyn_cast<DictionaryAttr>(selectedAttr);
                     selected &&
+                    !selected.get("path") &&
                     selected.getAs<FlatSymbolRefAttr>("field") == field) {
                   selectedPlan = selected;
                   break;
@@ -1933,6 +1934,9 @@ void ObeliskSimPreparePass::runOnOperation() {
             }
             bool unsupportedNestedSemantics = false;
             bool hasRecursiveObjectPath = false;
+            SmallVector<EffectiveConstraintGroup> nestedEffectiveConstraints;
+            collectEffectiveConstraints(nestedHierarchy,
+                                        nestedEffectiveConstraints);
             unsigned nestedModeIndex = 0;
             semantic::SVSubroutineSymbolOp nestedPreHook;
             semantic::SVSubroutineSymbolOp nestedPostHook;
@@ -1942,6 +1946,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                     context,
                     classSymbols.lookup(concreteClasses.front()).getValue()));
             llvm::SmallPtrSet<Operation *, 8> recursiveConcreteClasses;
+            bool recursiveDispatchCreated = false;
             // IEEE 1800 active random objects are solved as one object graph;
             // recursively flatten eligible descendant leaves into this plan
             // instead of emitting sequential child randomize calls. Dynamic
@@ -2003,9 +2008,169 @@ void ObeliskSimPreparePass::runOnOperation() {
                   if (compatible)
                     candidates.push_back(candidate);
                 }
-              if (candidates.size() != 1) {
+              SmallVector<Attribute> selectionPath{
+                  Attribute(field)};
+              for (const RandomObjectPathElement &element : path)
+                selectionPath.push_back(element.field);
+              FlatSymbolRefAttr edgeField =
+                  classFieldSymbols.lookup(edgeProperty);
+              selectionPath.push_back(edgeField);
+              ArrayAttr selectionPathAttr =
+                  builder.getArrayAttr(selectionPath);
+              DictionaryAttr selectedPlan;
+              if (auto selectedPlans = call->getAttrOfType<ArrayAttr>(
+                      randomizeNestedPlansAttrName))
+                for (Attribute selectedAttr : selectedPlans)
+                  if (auto selected = dyn_cast<DictionaryAttr>(selectedAttr);
+                      selected &&
+                      selected.getAs<ArrayAttr>("path") ==
+                          selectionPathAttr) {
+                    selectedPlan = selected;
+                    break;
+                  }
+              if (candidates.empty() && !selectedPlan) {
                 emitError(getSemanticLocation(edgeProperty))
-                    << "recursive rand object handles require one concrete "
+                    << "recursive rand object handle has no concrete "
+                       "closed-world dynamic class";
+                return failure();
+              }
+              if (candidates.size() != 1 && !selectedPlan) {
+                struct RecursiveDynamicPlan {
+                  semantic::SVClassTypeOp classType;
+                  unsigned depth;
+                };
+                SmallVector<RecursiveDynamicPlan> dynamicPlans;
+                for (semantic::SVClassTypeOp candidate : candidates) {
+                  SmallVector<semantic::SVClassTypeOp> candidateHierarchy;
+                  if (failed(collectClassHierarchy(
+                          candidate, candidateHierarchy,
+                          "recursive nested object dispatch")))
+                    return failure();
+                  dynamicPlans.push_back(
+                      {candidate,
+                       static_cast<unsigned>(candidateHierarchy.size())});
+                }
+                llvm::sort(dynamicPlans,
+                           [&](const RecursiveDynamicPlan &lhs,
+                               const RecursiveDynamicPlan &rhs) {
+                             if (lhs.depth != rhs.depth)
+                               return lhs.depth > rhs.depth;
+                             return classSymbols.lookup(lhs.classType)
+                                        .getValue() <
+                                    classSymbols.lookup(rhs.classType)
+                                        .getValue();
+                           });
+                SmallVector<semantic::SVCallExpressionOp> alternatives;
+                auto addSelection =
+                    [&](semantic::SVCallExpressionOp alternative,
+                        Attribute dynamicClass) {
+                      SmallVector<Attribute> selections;
+                      if (auto existing =
+                              alternative->getAttrOfType<ArrayAttr>(
+                                  randomizeNestedPlansAttrName))
+                        llvm::append_range(selections, existing);
+                      SmallVector<NamedAttribute> attributes{
+                          builder.getNamedAttr("field", field),
+                          builder.getNamedAttr("path", selectionPathAttr),
+                      };
+                      if (dynamicClass)
+                        attributes.push_back(builder.getNamedAttr(
+                            "class", dynamicClass));
+                      else
+                        attributes.push_back(builder.getNamedAttr(
+                            "null", builder.getUnitAttr()));
+                      selections.push_back(
+                          builder.getDictionaryAttr(attributes));
+                      alternative->setAttr(randomizeNestedPlansAttrName,
+                                           builder.getArrayAttr(selections));
+                    };
+                for (const RecursiveDynamicPlan &plan : dynamicPlans) {
+                  auto alternative =
+                      cast<semantic::SVCallExpressionOp>(call->clone());
+                  addSelection(
+                      alternative,
+                      FlatSymbolRefAttr::get(
+                          context,
+                          classSymbols.lookup(plan.classType).getValue()));
+                  alternatives.push_back(alternative);
+                }
+                auto nullAlternative =
+                    cast<semantic::SVCallExpressionOp>(call->clone());
+                addSelection(nullAlternative, {});
+                alternatives.push_back(nullAlternative);
+                OpBuilder alternativeBuilder =
+                    OpBuilder::atBlockEnd(&call->getRegion(0).front());
+                for (semantic::SVCallExpressionOp alternative : alternatives) {
+                  alternativeBuilder.insert(alternative);
+                  freezeRandomizeContract(alternative);
+                }
+                SmallVector<Attribute> dispatchPath;
+                dispatchPath.push_back(builder.getDictionaryAttr({
+                    builder.getNamedAttr("field", field),
+                    builder.getNamedAttr("concrete_type",
+                                         TypeAttr::get(rootNestedConcreteType)),
+                    builder.getNamedAttr("storage_type",
+                                         TypeAttr::get(objectType)),
+                }));
+                for (const RandomObjectPathElement &element : path)
+                  dispatchPath.push_back(builder.getDictionaryAttr({
+                      builder.getNamedAttr("field", element.field),
+                      builder.getNamedAttr(
+                          "concrete_type", TypeAttr::get(element.concreteType)),
+                      builder.getNamedAttr(
+                          "storage_type", TypeAttr::get(element.storageType)),
+                  }));
+                dispatchPath.push_back(builder.getDictionaryAttr({
+                    builder.getNamedAttr("field", edgeField),
+                    builder.getNamedAttr("storage_type",
+                                         TypeAttr::get(edgeStorageType)),
+                }));
+                call->setAttr(randomizeNestedDispatchAttrName,
+                              builder.getUnitAttr());
+                call->setAttr(randomizeNestedDispatchFieldAttrName, field);
+                call->setAttr(randomizeNestedDispatchStorageAttrName,
+                              TypeAttr::get(objectType));
+                call->setAttr(randomizeNestedDispatchPathAttrName,
+                              builder.getArrayAttr(dispatchPath));
+                call->setAttr(
+                    randomizeNestedDispatchSelectionPathAttrName,
+                    selectionPathAttr);
+                call->setAttr(randomReceiverIndexAttrName,
+                              builder.getI32IntegerAttr(receiverIndex));
+                if (explicitPropertyList) {
+                  for (Operation *argument : explicitPropertyArguments)
+                    argument->erase();
+                  call->setAttr("argument_count",
+                                builder.getI64IntegerAttr(1));
+                  call->setAttr("defaulted_arguments",
+                                builder.getDenseI64ArrayAttr({0}));
+                }
+                recursiveDispatchCreated = true;
+                return failure();
+              }
+              if (selectedPlan && selectedPlan.get("null"))
+                return success();
+              if (selectedPlan) {
+                auto selectedClass =
+                    selectedPlan.getAs<FlatSymbolRefAttr>("class");
+                auto selected = llvm::find_if(
+                    candidates,
+                    [&](semantic::SVClassTypeOp candidate) {
+                      return selectedClass &&
+                             classSymbols.lookup(candidate).getValue() ==
+                                 selectedClass.getValue();
+                    });
+                if (selected == candidates.end()) {
+                  emitError(getSemanticLocation(edgeProperty))
+                      << "recursive nested randomization alternative has an "
+                         "invalid dynamic class";
+                  return failure();
+                }
+                candidates.assign(1, *selected);
+              }
+              if (candidates.empty()) {
+                emitError(getSemanticLocation(edgeProperty))
+                    << "recursive rand object handle has no concrete "
                        "closed-world dynamic class";
                 return failure();
               }
@@ -2277,9 +2442,17 @@ void ObeliskSimPreparePass::runOnOperation() {
                         << "recursive rand object handles must be non-static "
                            "rand values";
                     unsupportedNestedSemantics = true;
+                  } else if (!nestedEffectiveConstraints.empty()) {
+                    emitError(getSemanticLocation(nestedProperty))
+                        << "constraints on rand objects containing recursive "
+                           "rand handles require path-aware constraint "
+                           "composition";
+                    unsupportedNestedSemantics = true;
                   } else if (failed(collectRecursiveObject(
                                  nestedProperty, *nestedType, childModeIndex,
                                  {}, nestedAncestors))) {
+                    if (recursiveDispatchCreated)
+                      return true;
                     unsupportedNestedSemantics = true;
                   }
                   continue;
@@ -2354,8 +2527,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                 modeIndex,
                 nestedPreHook,
                 nestedPostHook};
-            collectEffectiveConstraints(nestedHierarchy,
-                                        nestedPlan.constraintGroups);
+            nestedPlan.constraintGroups =
+                std::move(nestedEffectiveConstraints);
             if (hasRecursiveObjectPath &&
                 !nestedPlan.constraintGroups.empty()) {
               emitError(getSemanticLocation(property))

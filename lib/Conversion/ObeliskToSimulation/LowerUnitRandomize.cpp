@@ -39,12 +39,20 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         randomizeNestedDispatchFieldAttrName);
     auto storageTypeAttr = op->getAttrOfType<TypeAttr>(
         randomizeNestedDispatchStorageAttrName);
+    auto dispatchPath = op->getAttrOfType<ArrayAttr>(
+        randomizeNestedDispatchPathAttrName);
+    auto dispatchSelectionPath = op->getAttrOfType<ArrayAttr>(
+        randomizeNestedDispatchSelectionPathAttrName);
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
     if (!receiverIndexAttr || !field || !storageTypeAttr ||
         failed(resultType) || receiverIndexAttr.getValue().isNegative() ||
         receiverIndexAttr.getValue().getActiveBits() > 64 ||
         receiverIndexAttr.getValue().getZExtValue() >= children.size() ||
-        !isa<sim::ClassHandleType>(storageTypeAttr.getValue())) {
+        !isa<sim::ClassHandleType>(storageTypeAttr.getValue()) ||
+        (static_cast<bool>(dispatchPath) !=
+         static_cast<bool>(dispatchSelectionPath)) ||
+        (dispatchPath &&
+         (dispatchPath.empty() || dispatchSelectionPath.empty()))) {
       emitError(location)
           << "nested randomize dispatch has malformed metadata";
       return failure();
@@ -73,34 +81,32 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         dyn_cast<sim::ClassHandleType>((*loweredReceiver).getType());
     if (!receiverType)
       return failure();
-    Type referenceType = sim::ManagedRefType::get(
-        function.getContext(), storageTypeAttr.getValue(),
-        receiverType.getClassName());
-    Value reference = sim::SimClassFieldRefOp::create(
-        builder, location, referenceType, *loweredReceiver, field);
-    FailureOr<Value> object = loadReference(reference, location);
-    if (failed(object))
-      return failure();
-    Value isNull = sim::SimManagedIsNullOp::create(
-        builder, location, builder.getI1Type(), *object);
 
     SmallVector<semantic::SVCallExpressionOp> alternatives;
     semantic::SVCallExpressionOp nullAlternative;
+    auto getSelectedPlan = [&](semantic::SVCallExpressionOp alternative) {
+      if (auto selectedPlans = alternative->getAttrOfType<ArrayAttr>(
+              randomizeNestedPlansAttrName))
+        for (Attribute selectedAttr : selectedPlans)
+          if (auto selected = dyn_cast<DictionaryAttr>(selectedAttr)) {
+            if (dispatchSelectionPath) {
+              if (selected.getAs<ArrayAttr>("path") ==
+                  dispatchSelectionPath)
+                return selected;
+            } else if (!selected.get("path") &&
+                       selected.getAs<FlatSymbolRefAttr>("field") == field) {
+              return selected;
+            }
+          }
+      return DictionaryAttr{};
+    };
     for (Operation *child : children) {
       auto alternative = dyn_cast<semantic::SVCallExpressionOp>(child);
       if (!alternative ||
           (!alternative->hasAttr(randomizeAttrName) &&
            !alternative->hasAttr(randomizeNestedDispatchAttrName)))
         continue;
-      DictionaryAttr selectedPlan;
-      if (auto selectedPlans = alternative->getAttrOfType<ArrayAttr>(
-              randomizeNestedPlansAttrName))
-        for (Attribute selectedAttr : selectedPlans)
-          if (auto selected = dyn_cast<DictionaryAttr>(selectedAttr);
-              selected && selected.getAs<FlatSymbolRefAttr>("field") == field) {
-            selectedPlan = selected;
-            break;
-          }
+      DictionaryAttr selectedPlan = getSelectedPlan(alternative);
       if (!selectedPlan)
         continue;
       if (selectedPlan.get("null"))
@@ -117,6 +123,74 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value doneResult = done->addArgument(*resultType, location);
     Block *nullBlock = addBlock();
     Block *nonNullBlock = addBlock();
+    Value object;
+    if (dispatchPath) {
+      Value owner = *loweredReceiver;
+      auto ownerType = receiverType;
+      for (auto [index, elementAttr] : llvm::enumerate(dispatchPath)) {
+        auto element = dyn_cast<DictionaryAttr>(elementAttr);
+        auto pathField =
+            element ? element.getAs<FlatSymbolRefAttr>("field")
+                    : FlatSymbolRefAttr{};
+        auto pathStorageType =
+            element ? element.getAs<TypeAttr>("storage_type") : TypeAttr{};
+        auto pathConcreteType =
+            element ? element.getAs<TypeAttr>("concrete_type") : TypeAttr{};
+        bool isTarget = index + 1 == dispatchPath.size();
+        if (!pathField || !pathStorageType ||
+            !isa<sim::ClassHandleType>(pathStorageType.getValue()) ||
+            (!isTarget &&
+             (!pathConcreteType ||
+              !isa<sim::ClassHandleType>(pathConcreteType.getValue()))) ||
+            (isTarget && pathConcreteType) ||
+            (index == 0 &&
+             (pathField != field ||
+              pathStorageType.getValue() != storageTypeAttr.getValue()))) {
+          emitError(location)
+              << "nested randomize dispatch path is malformed";
+          return failure();
+        }
+        Type referenceType = sim::ManagedRefType::get(
+            function.getContext(), pathStorageType.getValue(),
+            ownerType.getClassName());
+        Value reference = sim::SimClassFieldRefOp::create(
+            builder, location, referenceType, owner, pathField);
+        FailureOr<Value> loaded = loadReference(reference, location);
+        if (failed(loaded))
+          return failure();
+        if (isTarget) {
+          object = *loaded;
+          break;
+        }
+        Value ancestorNull = sim::SimManagedIsNullOp::create(
+            builder, location, builder.getI1Type(), *loaded);
+        Block *pathBlock = addBlock();
+        cf::CondBranchOp::create(builder, location, ancestorNull, nullBlock,
+                                 ValueRange{}, pathBlock, ValueRange{});
+        setCurrent(pathBlock);
+        owner = *loaded;
+        if (owner.getType() != pathConcreteType.getValue())
+          owner = sim::SimClassCastOp::create(
+              builder, location, pathConcreteType.getValue(), owner);
+        ownerType = cast<sim::ClassHandleType>(pathConcreteType.getValue());
+      }
+    } else {
+      Type referenceType = sim::ManagedRefType::get(
+          function.getContext(), storageTypeAttr.getValue(),
+          receiverType.getClassName());
+      Value reference = sim::SimClassFieldRefOp::create(
+          builder, location, referenceType, *loweredReceiver, field);
+      FailureOr<Value> loaded = loadReference(reference, location);
+      if (failed(loaded))
+        return failure();
+      object = *loaded;
+    }
+    if (!object) {
+      emitError(location) << "nested randomize dispatch path has no target";
+      return failure();
+    }
+    Value isNull = sim::SimManagedIsNullOp::create(
+        builder, location, builder.getI1Type(), object);
     cf::CondBranchOp::create(builder, location, isNull, nullBlock,
                              ValueRange{}, nonNullBlock, ValueRange{});
     setCurrent(nullBlock);
@@ -127,23 +201,17 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     cf::BranchOp::create(builder, location, done, ValueRange{*nullResult});
     setCurrent(nonNullBlock);
     for (semantic::SVCallExpressionOp alternative : alternatives) {
-      FlatSymbolRefAttr planClass;
-      if (auto selectedPlans = alternative->getAttrOfType<ArrayAttr>(
-              randomizeNestedPlansAttrName))
-        for (Attribute selectedAttr : selectedPlans)
-          if (auto selected = dyn_cast<DictionaryAttr>(selectedAttr);
-              selected &&
-              selected.getAs<FlatSymbolRefAttr>("field") == field) {
-            planClass = selected.getAs<FlatSymbolRefAttr>("class");
-            break;
-          }
+      DictionaryAttr selectedPlan = getSelectedPlan(alternative);
+      FlatSymbolRefAttr planClass =
+          selectedPlan ? selectedPlan.getAs<FlatSymbolRefAttr>("class")
+                       : FlatSymbolRefAttr{};
       if (!planClass) {
         emitError(location)
             << "nested randomize alternative has no target class";
         return failure();
       }
       Value matches = sim::SimClassIsInstanceOp::create(
-          builder, location, *object, planClass);
+          builder, location, object, planClass);
       Block *selected = addBlock();
       Block *next = addBlock();
       cf::CondBranchOp::create(builder, location, matches, selected,
