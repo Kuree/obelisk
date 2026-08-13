@@ -225,6 +225,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     managed = static_cast<uint32_t>(tag);
     return true;
   };
+  std::vector<uint8_t> assocValueScratch;
+  std::vector<uint8_t> assocUnknownScratch;
   auto readAssocKey = [&](obelisk_rt_object_v1 *array, uint32_t reg,
                           obelisk_rt_assoc_key_v1 &key) {
     Layout layout = layoutAt(image, frame.function, reg);
@@ -241,17 +243,34 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if ((layout.kind != OBELISK_RT_DBREG_BITS &&
          layout.kind != OBELISK_RT_DBREG_LOGIC) ||
         key.kind == OBELISK_RT_ASSOC_KEY_STRING || layout.width != key.width ||
-        layout.width == 0 || layout.width > 64)
+        layout.width == 0)
       return false;
     uint64_t planeSize =
         layout.kind == OBELISK_RT_DBREG_LOGIC ? layout.size / 2 : layout.size;
-    if (planeSize == 0 || planeSize > sizeof(uint64_t))
+    if (planeSize == 0)
       return false;
-    std::memcpy(&key.value, frame.data + layout.offset,
-                static_cast<size_t>(planeSize));
-    if (layout.kind == OBELISK_RT_DBREG_LOGIC)
-      std::memcpy(&key.unknown, frame.data + layout.offset + planeSize,
+    if (key.width <= 64) {
+      std::memcpy(&key.value, frame.data + layout.offset,
                   static_cast<size_t>(planeSize));
+      if (layout.kind == OBELISK_RT_DBREG_LOGIC)
+        std::memcpy(&key.unknown, frame.data + layout.offset + planeSize,
+                    static_cast<size_t>(planeSize));
+    } else {
+      try {
+        assocValueScratch.assign(frame.data + layout.offset,
+                                 frame.data + layout.offset + planeSize);
+        assocUnknownScratch.clear();
+        if (layout.kind == OBELISK_RT_DBREG_LOGIC)
+          assocUnknownScratch.assign(
+              frame.data + layout.offset + planeSize,
+              frame.data + layout.offset + 2 * planeSize);
+      } catch (const std::bad_alloc &) {
+        return false;
+      }
+      key.value_data = assocValueScratch.data();
+      if (!assocUnknownScratch.empty())
+        key.unknown_data = assocUnknownScratch.data();
+    }
     return true;
   };
   auto writeAssocKey = [&](uint32_t reg, const obelisk_rt_assoc_key_v1 &key) {
@@ -269,13 +288,21 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return false;
     uint64_t planeSize =
         layout.kind == OBELISK_RT_DBREG_LOGIC ? layout.size / 2 : layout.size;
-    if (planeSize == 0 || planeSize > sizeof(uint64_t))
+    if (planeSize == 0 || (key.width > 64 && !key.value_data))
       return false;
-    std::memcpy(frame.data + layout.offset, &key.value,
-                static_cast<size_t>(planeSize));
-    if (layout.kind == OBELISK_RT_DBREG_LOGIC)
-      std::memcpy(frame.data + layout.offset + planeSize, &key.unknown,
+    if (key.width <= 64) {
+      std::memcpy(frame.data + layout.offset, &key.value,
                   static_cast<size_t>(planeSize));
+      if (layout.kind == OBELISK_RT_DBREG_LOGIC)
+        std::memcpy(frame.data + layout.offset + planeSize, &key.unknown,
+                    static_cast<size_t>(planeSize));
+    } else {
+      std::memcpy(frame.data + layout.offset, key.value_data,
+                  static_cast<size_t>(planeSize));
+      if (layout.kind == OBELISK_RT_DBREG_LOGIC && key.unknown_data)
+        std::memcpy(frame.data + layout.offset + planeSize, key.unknown_data,
+                    static_cast<size_t>(planeSize));
+    }
     return true;
   };
   switch (signature.id) {

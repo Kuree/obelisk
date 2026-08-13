@@ -32,6 +32,10 @@ Value makeNativeAssocKey(OpBuilder &builder, Location location,
                           castIntegerWidth(builder, location, value, i64),
                           byteGEP(builder, location, storage, offset), 8);
   };
+  auto storePointer = [&](uint64_t offset, Value value) {
+    LLVM::StoreOp::create(builder, location, value,
+                          byteGEP(builder, location, storage, offset), 8);
+  };
   bool stringKey = isa<sim::StringType>(array.getKeyType());
   uint32_t keyKind =
       stringKey ? OBELISK_RT_ASSOC_KEY_STRING
@@ -45,27 +49,39 @@ Value makeNativeAssocKey(OpBuilder &builder, Location location,
                         byteGEP(builder, location, storage,
                                 offsetof(obelisk_rt_assoc_key_v1, width)),
                         8);
-  Value zero = llvmConstant(builder, location, i64, 0);
+  Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
+  Value null = LLVM::ZeroOp::create(builder, location, pointer);
   if (stringKey) {
-    LLVM::StoreOp::create(builder, location, zero,
-                          byteGEP(builder, location, storage,
-                                  offsetof(obelisk_rt_assoc_key_v1, value)),
-                          8);
-    LLVM::StoreOp::create(builder, location, zero,
-                          byteGEP(builder, location, storage,
-                                  offsetof(obelisk_rt_assoc_key_v1, unknown)),
-                          8);
+    storePointer(offsetof(obelisk_rt_assoc_key_v1, value), null);
+    storePointer(offsetof(obelisk_rt_assoc_key_v1, unknown), null);
     store64(offsetof(obelisk_rt_assoc_key_v1, string), values.front());
   } else {
-    store64(offsetof(obelisk_rt_assoc_key_v1, value), values.front());
-    if (values.size() == 2)
-      store64(offsetof(obelisk_rt_assoc_key_v1, unknown), values[1]);
-    else
-      LLVM::StoreOp::create(builder, location, zero,
-                            byteGEP(builder, location, storage,
-                                    offsetof(obelisk_rt_assoc_key_v1, unknown)),
-                            8);
-    LLVM::StoreOp::create(builder, location, zero,
+    if (keyWidth <= 64) {
+      store64(offsetof(obelisk_rt_assoc_key_v1, value), values.front());
+      if (values.size() == 2)
+        store64(offsetof(obelisk_rt_assoc_key_v1, unknown), values[1]);
+      else
+        LLVM::StoreOp::create(
+            builder, location, llvmConstant(builder, location, i64, 0),
+            byteGEP(builder, location, storage,
+                    offsetof(obelisk_rt_assoc_key_v1, unknown)),
+            8);
+    } else {
+      Value valueSlot = entryAlloca(builder, location, values.front().getType(),
+                                    1, 8);
+      LLVM::StoreOp::create(builder, location, values.front(), valueSlot, 8);
+      storePointer(offsetof(obelisk_rt_assoc_key_v1, value), valueSlot);
+      if (values.size() == 2) {
+        Value unknownSlot = entryAlloca(
+            builder, location, values[1].getType(), 1, 8);
+        LLVM::StoreOp::create(builder, location, values[1], unknownSlot, 8);
+        storePointer(offsetof(obelisk_rt_assoc_key_v1, unknown), unknownSlot);
+      } else {
+        storePointer(offsetof(obelisk_rt_assoc_key_v1, unknown), null);
+      }
+    }
+    LLVM::StoreOp::create(builder, location,
+                          llvmConstant(builder, location, i64, 0),
                           byteGEP(builder, location, storage,
                                   offsetof(obelisk_rt_assoc_key_v1, string)),
                           8);
@@ -421,11 +437,20 @@ public:
         uint64_t offset = index == 0
                               ? offsetof(obelisk_rt_assoc_key_v1, value)
                               : offsetof(obelisk_rt_assoc_key_v1, unknown);
-        Value loaded = LLVM::LoadOp::create(
-            rewriter, op.getLoc(), i64,
-            byteGEP(rewriter, op.getLoc(), key, offset), 8);
-        keyValues.push_back(
-            castIntegerWidth(rewriter, op.getLoc(), loaded, type));
+        if (*sim::getPackedWidth(array.getKeyType()) <= 64) {
+          Value loaded = LLVM::LoadOp::create(
+              rewriter, op.getLoc(), i64,
+              byteGEP(rewriter, op.getLoc(), key, offset), 8);
+          keyValues.push_back(
+              castIntegerWidth(rewriter, op.getLoc(), loaded, type));
+        } else {
+          Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+          Value plane = LLVM::LoadOp::create(
+              rewriter, op.getLoc(), pointer,
+              byteGEP(rewriter, op.getLoc(), key, offset), 8);
+          keyValues.push_back(
+              LLVM::LoadOp::create(rewriter, op.getLoc(), type, plane, 8));
+        }
       }
     }
     Value success32 = LLVM::LoadOp::create(

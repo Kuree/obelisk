@@ -522,9 +522,8 @@ FailureOr<Value> UnitLowering::createAssocArray(sim::AssocArrayType type,
   std::optional<unsigned> width = stringKey
                                       ? std::optional<unsigned>(0)
                                       : sim::getPackedWidth(type.getKeyType());
-  if (!width || *width > 64 || (!stringKey && *width == 0)) {
-    emitError(location)
-        << "associative array key must be string or integral up to 64 bits";
+  if (!width || (!stringKey && *width == 0)) {
+    emitError(location) << "associative array key must be string or integral";
     return failure();
   }
   uint32_t keyKind =

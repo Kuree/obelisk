@@ -899,7 +899,7 @@ LogicalResult SimAssocCreateOp::verify() {
       return emitOpError("string key metadata is inconsistent");
   } else {
     std::optional<unsigned> width = getPackedWidth(key);
-    if (!width || *width == 0 || *width > 64 ||
+    if (!width || *width == 0 ||
         (getKeyKind() != 1 && getKeyKind() != 2) || getKeyWidth() != *width)
       return emitOpError("integral key metadata is inconsistent");
   }

@@ -10,6 +10,7 @@ module attributes {
     obelisk_sim.scope.decl 0 hierarchy "top"
     obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.assoc"
     obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "top.logic_assoc"
+    obelisk_sim.code_unit.decl 3 in 0 initial hierarchy "top.wide_assoc"
 
     obelisk_sim.func @assoc(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
@@ -90,6 +91,53 @@ module attributes {
       obelisk_sim.assoc.delete %array, %next :
         (!obelisk_sim.assoc_array<i32, !obelisk_sim.logic<4>, true, false>,
          i32) -> ()
+      obelisk_sim.return
+    }
+
+    // Integral associative indices are not limited to a host word. Exercise
+    // lowering of a key whose distinguishing bit lies above bit 64, including
+    // traversal output and an escaping element reference.
+    obelisk_sim.func @wide_assoc(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %owner: !obelisk_sim.argument_ref<!obelisk_sim.assoc_array<!obelisk_sim.logic<129>, i32, true, false>> {obelisk_sim.capture_kind = 1 : i32})
+        attributes {code_unit_id = 3 : i64, entry_kind = 1 : i32} {
+      %key = obelisk_sim.logic.constant 18446744073709551616 : i129, 0 : i129 :
+        !obelisk_sim.logic<129>
+      %value = arith.constant 42 : i32
+      %array = obelisk_sim.assoc.create {
+        alignment = 1 : i64,
+        bit_width = 32 : i64,
+        element_flags = 0 : i32,
+        element_kind = 1 : i32,
+        key_kind = 2 : i32,
+        key_width = 129 : i64,
+        trace_kinds = array<i32>,
+        trace_offsets = array<i64>,
+        type_id = 3 : i64,
+        value_size = 4 : i64
+      } : () -> !obelisk_sim.assoc_array<!obelisk_sim.logic<129>, i32, true, false>
+      obelisk_sim.assoc.write %array, %key, %value :
+        (!obelisk_sim.assoc_array<!obelisk_sim.logic<129>, i32, true, false>,
+         !obelisk_sim.logic<129>, i32) -> ()
+      %read = obelisk_sim.assoc.read %array, %key :
+        (!obelisk_sim.assoc_array<!obelisk_sim.logic<129>, i32, true, false>,
+         !obelisk_sim.logic<129>) -> i32
+      %exists = obelisk_sim.assoc.exists %array, %key :
+        (!obelisk_sim.assoc_array<!obelisk_sim.logic<129>, i32, true, false>,
+         !obelisk_sim.logic<129>) -> i1
+      %first, %valid = obelisk_sim.assoc.traverse %array, %key {
+        direction = 1 : i32, endpoint = true
+      } : (!obelisk_sim.assoc_array<!obelisk_sim.logic<129>, i32, true, false>,
+           !obelisk_sim.logic<129>) -> (!obelisk_sim.logic<129>, i1)
+      %path = obelisk_sim.reference_path.assoc %ctx, %array[%key] watching %owner :
+        (!obelisk_sim.context,
+         !obelisk_sim.assoc_array<!obelisk_sim.logic<129>, i32, true, false>,
+         !obelisk_sim.logic<129>,
+         !obelisk_sim.argument_ref<!obelisk_sim.assoc_array<!obelisk_sim.logic<129>, i32, true, false>>) ->
+        !obelisk_sim.reference_path<i32>
+      obelisk_sim.assoc.delete %array, %first :
+        (!obelisk_sim.assoc_array<!obelisk_sim.logic<129>, i32, true, false>,
+         !obelisk_sim.logic<129>) -> ()
       obelisk_sim.return
     }
   }

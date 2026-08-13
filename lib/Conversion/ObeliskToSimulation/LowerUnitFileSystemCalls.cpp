@@ -240,14 +240,14 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     if (associative) {
       unsigned keyWidth = *sim::getPackedWidth(associative.getKeyType());
       if (associative.getSignedKey()) {
-        associativeLow = keyWidth == 64
+        associativeLow = keyWidth >= 64
                              ? INT64_MIN
                              : -(int64_t{1} << (keyWidth - 1));
-        associativeHigh = keyWidth == 64
+        associativeHigh = keyWidth >= 64
                               ? INT64_MAX
                               : (int64_t{1} << (keyWidth - 1)) - 1;
       } else {
-        associativeHigh = keyWidth == 64
+        associativeHigh = keyWidth >= 64
                               ? static_cast<int64_t>(UINT64_MAX)
                               : static_cast<int64_t>((uint64_t{1} << keyWidth) -
                                                      1);

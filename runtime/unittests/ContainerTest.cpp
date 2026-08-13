@@ -1155,6 +1155,102 @@ TEST_F(ManagedValueTest,
 }
 
 TEST_F(ManagedValueTest,
+       WideIntegralAssociativeKeysPreserveBitsAndSignedOrder) {
+  constexpr uint64_t width = 129;
+  constexpr size_t bytes = 17;
+  obelisk_rt_object_v1 *array = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_assoc_create(lane, &wordElement,
+                                       OBELISK_RT_ASSOC_KEY_SIGNED, width,
+                                       &array),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 root{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &array), OBELISK_RT_OK);
+
+  std::array<std::array<uint8_t, bytes>, 5> keys{};
+  keys[0][16] = 1; // -2**128
+  keys[1].fill(0xff);
+  keys[1][16] = 1; // -1
+  keys[3][8] = 1;  // 2**64
+  keys[4].fill(0xff);
+  keys[4][16] = 0; // 2**128 - 1
+  for (size_t index = 0; index != keys.size(); ++index) {
+    SCOPED_TRACE(index);
+    obelisk_rt_assoc_key_v1 key{OBELISK_RT_ASSOC_KEY_SIGNED, 0, width};
+    key.value_data = keys[index].data();
+    uint64_t value = index + 100;
+    ASSERT_EQ(obelisk_rt_v1_assoc_write(lane, array, &key, &value, nullptr),
+              OBELISK_RT_OK);
+  }
+
+  std::array<uint8_t, bytes> highKey{};
+  highKey[8] = 1;
+  obelisk_rt_assoc_key_v1 lookup{OBELISK_RT_ASSOC_KEY_SIGNED, 0, width};
+  lookup.value_data = highKey.data();
+  uint64_t value = 0;
+  uint32_t present = 0;
+  ASSERT_EQ(obelisk_rt_v1_assoc_read(array, &lookup, &value, nullptr, &present),
+            OBELISK_RT_OK);
+  EXPECT_EQ(present, 1u);
+  EXPECT_EQ(value, 103u);
+
+  obelisk_rt_object_v1 *copy = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_container_clone(lane, array, &copy), OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 copyRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &copyRoot, &copy), OBELISK_RT_OK);
+  value = 0;
+  ASSERT_EQ(obelisk_rt_v1_assoc_read(copy, &lookup, &value, nullptr, &present),
+            OBELISK_RT_OK);
+  EXPECT_EQ(present, 1u);
+  EXPECT_EQ(value, 103u);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &copyRoot), OBELISK_RT_OK);
+
+  obelisk_rt_object_v1 *path = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_reference_path_assoc_create(
+                lane, array, &lookup, nullptr, 0, 0, &path),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 pathRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &pathRoot, &path), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  uint64_t replacement = 909;
+  ASSERT_EQ(obelisk_rt_v1_reference_path_store(lane, path, &replacement,
+                                               nullptr),
+            OBELISK_RT_OK);
+  value = 0;
+  ASSERT_EQ(obelisk_rt_v1_reference_path_load(path, &value, nullptr, &present),
+            OBELISK_RT_OK);
+  EXPECT_EQ(present, 1u);
+  EXPECT_EQ(value, replacement);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &pathRoot), OBELISK_RT_OK);
+
+  std::array<uint8_t, bytes> cursorBytes{};
+  obelisk_rt_assoc_key_v1 cursor{OBELISK_RT_ASSOC_KEY_SIGNED, 0, width};
+  cursor.value_data = cursorBytes.data();
+  uint32_t success = 0;
+  for (const auto &expected : keys) {
+    ASSERT_EQ(obelisk_rt_v1_assoc_first(lane, array, &cursor, &success),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    EXPECT_EQ(cursorBytes, expected);
+    ASSERT_EQ(obelisk_rt_v1_assoc_delete(array, &cursor), OBELISK_RT_OK);
+  }
+  EXPECT_EQ(obelisk_rt_v1_container_size(array), 0u);
+
+  std::array<uint8_t, bytes> unknown{};
+  unknown[16] = 0x80; // Padding above bit 128 is not part of the index.
+  lookup.unknown_data = unknown.data();
+  value = 77;
+  ASSERT_EQ(obelisk_rt_v1_assoc_write(lane, array, &lookup, &value, nullptr),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_container_size(array), 1u);
+  unknown[16] = 1; // Bit 128 is X/Z and therefore invalid.
+  ASSERT_EQ(obelisk_rt_v1_assoc_write(lane, array, &lookup, &value, nullptr),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_container_size(array), 1u);
+
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
+}
+
+TEST_F(ManagedValueTest,
        AssociativeDefaultsTypedCreationCloneDeleteAndPatternFormatting) {
   obelisk_rt_object_v1 *array = nullptr;
   ASSERT_EQ(obelisk_rt_v1_assoc_create_typed(
