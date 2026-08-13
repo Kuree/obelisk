@@ -148,6 +148,12 @@ inline constexpr ::mlir::StringLiteral observerResultAttrName =
     "obelisk_sim.observer_result";
 inline constexpr ::mlir::StringLiteral observerEventPrimaryAttrName =
     "obelisk_sim.event_primary";
+inline constexpr ::mlir::StringLiteral sequenceEndpointEventAttrName =
+    "obelisk_sim.sequence_endpoint_event";
+inline constexpr ::mlir::StringLiteral sequenceEndpointMonitorAttrName =
+    "obelisk_sim.sequence_endpoint_monitor";
+inline constexpr ::mlir::StringLiteral sequenceEndpointPathAttrName =
+    "obelisk_sim.sequence_endpoint_path";
 inline constexpr ::mlir::StringLiteral randomizeAttrName =
     "obelisk_sim.randomize";
 inline constexpr ::mlir::StringLiteral randomizeDispatchAttrName =

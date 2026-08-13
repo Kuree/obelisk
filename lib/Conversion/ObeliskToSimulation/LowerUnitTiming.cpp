@@ -265,6 +265,29 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       unsupported(event) << " (event expression inventory)";
       return failure();
     }
+    if (auto instance = dyn_cast<semantic::SVAssertionInstanceExpressionOp>(
+            children.front())) {
+      auto type = instance->getAttrOfType<TypeAttr>("semantic_type");
+      if (type && isa<semantic::SequenceType>(type.getValue())) {
+        if (event.getHasIff()) {
+          emitError(location) << "sequence event controls cannot use iff";
+          return failure();
+        }
+        Value endpoint = values.lookup(instance.getReferencedPath());
+        if (!endpoint || !isa<sim::EventType>(endpoint.getType())) {
+          emitError(location)
+              << "sequence event control has no prepared endpoint event for '"
+              << instance.getReferencedPath() << "' in "
+              << function.getSymName();
+          return failure();
+        }
+        emitDirect(endpoint, sim::EdgeKind::Change, continuation,
+                   continuationOperands,
+                   sim::EventRegionAttr::get(function.getContext(),
+                                             sim::EventRegion::Reactive));
+        return success();
+      }
+    }
     bool clockingBlockEvent = children.front()->hasAttr(
         "virtual_interface_clocking_block_event");
     if (clockingBlockEvent &&

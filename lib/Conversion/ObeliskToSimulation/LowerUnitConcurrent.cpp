@@ -155,6 +155,175 @@ static Operation *unwrapAssertionInstance(Operation *operation) {
 
 } // namespace
 
+LogicalResult UnitLowering::lowerSequenceEndpointMonitor(
+    ArrayRef<Operation *> roots) {
+  if (roots.size() != 1)
+    return function.emitError(
+               "sequence endpoint monitor requires one assertion instance"),
+           failure();
+  auto instance =
+      dyn_cast<semantic::SVAssertionInstanceExpressionOp>(roots.front());
+  if (!instance)
+    return emitError(getSemanticLocation(roots.front()))
+               << "sequence endpoint monitor has no assertion instance",
+           failure();
+  FailureOr<Operation *> expanded = getExpandedAssertionBody(instance);
+  if (failed(expanded))
+    return emitError(getSemanticLocation(instance))
+               << "sequence endpoint monitor requires a nonrecursive "
+                  "expanded instance without local variables",
+           failure();
+  auto clocking = dyn_cast<semantic::SVClockingAssertionExprOp>(*expanded);
+  SmallVector<Operation *> clocked = clocking ? getChildren(clocking)
+                                              : SmallVector<Operation *>{};
+  if (!clocking || clocked.size() != 2)
+    return emitError(getSemanticLocation(*expanded))
+               << "sequence endpoint monitor requires an explicit clock",
+           failure();
+  auto clock = dyn_cast<semantic::SVSignalEventControlOp>(clocked.front());
+  if (!clock || clock.getHasIff() || getChildren(clock).size() != 1 ||
+      !isAddressableExpression(getChildren(clock).front()))
+    return emitError(getSemanticLocation(clocked.front()))
+               << "sequence endpoint monitor requires one direct signal "
+                  "edge clock without iff",
+           failure();
+  FailureOr<FixedSequence> compiled = compileFixedSequence(clocked.back());
+  if (failed(compiled) || compiled->ages.empty() ||
+      compiled->ages.size() > 63)
+    return emitError(getSemanticLocation(clocked.back()))
+               << "sequence endpoint monitor supports boolean terms, fixed "
+                  "## delays, and fixed consecutive repetition up to 63 "
+                  "cycles",
+           failure();
+
+  auto endpointPath =
+      function->getAttrOfType<StringAttr>(sequenceEndpointPathAttrName);
+  Value endpoint = endpointPath ? values.lookup(endpointPath.getValue())
+                                : Value{};
+  if (!endpoint || !isa<sim::EventType>(endpoint.getType()))
+    return function.emitError(
+               "sequence endpoint monitor has no endpoint event capture"),
+           failure();
+  function->removeAttr(sequenceEndpointMonitorAttrName);
+  function->removeAttr(sequenceEndpointPathAttrName);
+
+  Location location = getSemanticLocation(instance);
+  function->setAttr("home_region",
+                    sim::EventRegionAttr::get(function.getContext(),
+                                              sim::EventRegion::Observed));
+  Type stateType = builder.getI64Type();
+  Value zero = arith::ConstantOp::create(builder, location, stateType,
+                                         builder.getI64IntegerAttr(0));
+  Value stateStorage;
+  if (compiled->ages.size() > 1)
+    stateStorage = sim::SimRefAllocOp::create(
+        builder, location, sim::RefType::get(function.getContext(), stateType),
+        zero);
+
+  Block *wait = addBlock();
+  Block *sample = addBlock();
+  emitBranch(wait);
+  setCurrent(wait);
+  if (failed(emitEventSuspend(clock, sample)))
+    return failure();
+  wait->getTerminator()->setAttr(
+      "resume_region", sim::EventRegionAttr::get(function.getContext(),
+                                                 sim::EventRegion::Observed));
+  setCurrent(sample);
+
+  bool savedSampleAssertionValues = sampleAssertionValues;
+  sampleAssertionValues = true;
+  Operation *savedSampledClock = activeSampledClock;
+  activeSampledClock = clock;
+  llvm::scope_exit restoreSampling([&] {
+    sampleAssertionValues = savedSampleAssertionValues;
+    activeSampledClock = savedSampledClock;
+  });
+
+  llvm::DenseMap<Operation *, Value> predicateCache;
+  auto evaluateAge = [&](ArrayRef<Operation *> predicates) -> FailureOr<Value> {
+    Value result = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    for (Operation *predicate : predicates) {
+      Value truth;
+      if (auto found = predicateCache.find(predicate);
+          found != predicateCache.end()) {
+        truth = found->second;
+      } else {
+        FailureOr<Value> value = lowerExpression(predicate);
+        if (failed(value))
+          return failure();
+        FailureOr<Value> converted =
+            truthValue(*value, getSemanticLocation(predicate));
+        if (failed(converted))
+          return failure();
+        truth = *converted;
+        predicateCache[predicate] = truth;
+      }
+      result = arith::AndIOp::create(builder, location, result, truth);
+    }
+    return result;
+  };
+  auto triggerIf = [&](Value condition) {
+    Block *trigger = addBlock();
+    Block *continuation = addBlock();
+    cf::CondBranchOp::create(builder, location, condition, trigger,
+                             ValueRange{}, continuation, ValueRange{});
+    setCurrent(trigger);
+    sim::SimEventTriggerOp::create(builder, location, endpoint, Value{},
+                                   builder.getBoolAttr(false),
+                                   sim::EventSiteAttr{});
+    emitBranch(continuation);
+    setCurrent(continuation);
+  };
+
+  Value state = stateStorage
+                    ? sim::SimRefLoadOp::create(builder, location, stateType,
+                                                stateStorage)
+                    : zero;
+  Value nextState = zero;
+  for (uint64_t age = 1; age < compiled->ages.size(); ++age) {
+    Value mask = arith::ConstantOp::create(
+        builder, location, stateType,
+        builder.getI64IntegerAttr(uint64_t{1} << age));
+    Value presentBits = arith::AndIOp::create(builder, location, state, mask);
+    Value active = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne, presentBits, zero);
+    FailureOr<Value> matches = evaluateAge(compiled->ages[age]);
+    if (failed(matches))
+      return failure();
+    Value advances = arith::AndIOp::create(builder, location, active, *matches);
+    if (age + 1 == compiled->ages.size()) {
+      triggerIf(advances);
+    } else {
+      Value nextMask = arith::ConstantOp::create(
+          builder, location, stateType,
+          builder.getI64IntegerAttr(uint64_t{1} << (age + 1)));
+      Value advancedBit =
+          arith::SelectOp::create(builder, location, advances, nextMask, zero);
+      nextState =
+          arith::OrIOp::create(builder, location, nextState, advancedBit);
+    }
+  }
+
+  FailureOr<Value> starts = evaluateAge(compiled->ages.front());
+  if (failed(starts))
+    return failure();
+  if (compiled->ages.size() == 1) {
+    triggerIf(*starts);
+  } else {
+    Value nextMask = arith::ConstantOp::create(
+        builder, location, stateType, builder.getI64IntegerAttr(2));
+    Value started =
+        arith::SelectOp::create(builder, location, *starts, nextMask, zero);
+    nextState = arith::OrIOp::create(builder, location, nextState, started);
+  }
+  if (stateStorage)
+    sim::SimRefStoreOp::create(builder, location, nextState, stateStorage);
+  cf::BranchOp::create(builder, location, wait);
+  return success();
+}
+
 LogicalResult UnitLowering::lowerConcurrentAssertion(
     semantic::SVConcurrentAssertionStatementOp op) {
   Location location = getSemanticLocation(op);

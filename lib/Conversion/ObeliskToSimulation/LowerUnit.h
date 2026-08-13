@@ -244,6 +244,8 @@ private:
   lowerImmediateAssertion(semantic::SVImmediateAssertionStatementOp op);
   ::mlir::LogicalResult
   lowerConcurrentAssertion(semantic::SVConcurrentAssertionStatementOp op);
+  ::mlir::LogicalResult
+  lowerSequenceEndpointMonitor(::mlir::ArrayRef<::mlir::Operation *> roots);
   void emitDefaultAssertionFailure(
       ::mlir::Location location,
       ::llvm::StringRef description = "immediate assertion");

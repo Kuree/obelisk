@@ -288,7 +288,8 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     bool storage = (isa<semantic::SVVariableSymbolOp>(op) &&
                     !isAutomaticLocalSymbol(op)) ||
                    isStaticFormal(op) || staticClassProperty;
-    if (storage || isa<semantic::SVNetSymbolOp>(op))
+    if (storage || isa<semantic::SVNetSymbolOp>(op) ||
+        op->hasAttr(sequenceEndpointEventAttrName))
       designObjects.push_back(op);
   });
 
@@ -305,6 +306,14 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     }
     if (descriptors.count(path))
       return;
+    if (op->hasAttr(sequenceEndpointEventAttrName)) {
+      Type type = sim::EventType::get(builder.getContext());
+      uint64_t id = nextEventId++;
+      descriptors[path] = {DescriptorInfo::Kind::Event, id, scopes.lookup(op),
+                           type, sim::NetResolutionKind::Wire};
+      descriptors[path].rootType = type;
+      return;
+    }
     FailureOr<Type> type = getNormalizedSemanticType(op);
     if (failed(type)) {
       invalid = true;

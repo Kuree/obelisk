@@ -201,6 +201,46 @@ void ObeliskSimPreparePass::runOnOperation() {
   llvm::StringMap<Operation *> &semanticSymbols = validated->symbols;
   bool invalid = false;
 
+  // A sequence used as a procedural event is a static assertion instance
+  // (IEEE 1800-2017 9.4.2.4). Mark the referenced declaration so preparation
+  // can materialize one time-zero endpoint monitor and one shared event
+  // descriptor. The bounded monitor currently has no formal/local-variable
+  // execution ABI, so reject those forms instead of starting an inexact
+  // process-local monitor when the waiter is reached.
+  semanticRoot->walk([&](semantic::SVSignalEventControlOp event) {
+    SmallVector<Operation *> children = getChildren(event);
+    if (children.empty())
+      return;
+    auto instance =
+        dyn_cast<semantic::SVAssertionInstanceExpressionOp>(children.front());
+    auto type = instance
+                    ? instance->getAttrOfType<TypeAttr>("semantic_type")
+                    : TypeAttr{};
+    if (!type || !isa<semantic::SequenceType>(type.getValue()))
+      return;
+    if (event.getHasIff() || instance.getArgumentCount() != 0 ||
+        instance.getLocalVariableCount() != 0) {
+      emitError(getSemanticLocation(instance))
+          << "sequence event controls with iff, formal arguments, or local "
+             "variables are not executable by the bounded endpoint monitor";
+      invalid = true;
+      return;
+    }
+    auto symbol = semanticSymbols.find(
+        instance.getReferencedSymbol().getLeafReference());
+    auto sequence =
+        symbol == semanticSymbols.end()
+            ? semantic::SVSequenceSymbolOp{}
+            : dyn_cast<semantic::SVSequenceSymbolOp>(symbol->second);
+    if (!sequence) {
+      emitError(getSemanticLocation(instance))
+          << "sequence event control does not resolve to a named sequence";
+      invalid = true;
+      return;
+    }
+    sequence->setAttr(sequenceEndpointEventAttrName, UnitAttr::get(context));
+  });
+
   SmallVector<Operation *> sourceUnits;
   semanticRoot->walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isCompileTimeOnlyInstanceMember(op))
@@ -224,7 +264,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     auto net = dyn_cast<semantic::SVNetSymbolOp>(op);
     bool netInitializer = net && !getChildren(net).empty();
     if (isCodeUnit(op) || staticInitializer || initializedStaticLocal ||
-        designInitializer || netInitializer)
+        designInitializer || netInitializer ||
+        op->hasAttr(sequenceEndpointEventAttrName))
       sourceUnits.push_back(op);
   });
 
@@ -5666,6 +5707,13 @@ void ObeliskSimPreparePass::runOnOperation() {
             unit.source->getAttrOfType<StringAttr>("primitive_name"))
       functionAttrs.push_back(
           builder.getNamedAttr("obelisk_sim.primitive_name", primitive));
+    if (unit.source->hasAttr(sequenceEndpointEventAttrName)) {
+      functionAttrs.push_back(builder.getNamedAttr(
+          sequenceEndpointMonitorAttrName, builder.getUnitAttr()));
+      functionAttrs.push_back(builder.getNamedAttr(
+          sequenceEndpointPathAttrName,
+          builder.getStringAttr(getHierarchyName(unit.source))));
+    }
     StringRef hierarchy = isa<semantic::SVPortConnectionOp>(unit.source)
                               ? getHierarchyName(unit.source->getParentOp())
                               : getHierarchyName(unit.source);

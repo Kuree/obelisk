@@ -866,6 +866,12 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
     else if (auto hierarchical =
                  dyn_cast<semantic::SVHierarchicalValueExpressionOp>(nested))
       path = hierarchical.getReferencedPath();
+    else if (auto instance =
+                 dyn_cast<semantic::SVAssertionInstanceExpressionOp>(nested)) {
+      auto type = instance->getAttrOfType<TypeAttr>("semantic_type");
+      if (type && isa<semantic::SequenceType>(type.getValue()))
+        path = instance.getReferencedPath();
+    }
     if (!path.empty())
       referencedPaths.insert(path);
     if (auto callCaptures =

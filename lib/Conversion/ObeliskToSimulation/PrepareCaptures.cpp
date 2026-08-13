@@ -206,6 +206,14 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
           return;
         reference = member.getReferencedSymbol();
         path = member.getReferencedPath();
+      } else if (auto instance =
+                     dyn_cast<semantic::SVAssertionInstanceExpressionOp>(
+                         nested)) {
+        auto type = instance->getAttrOfType<TypeAttr>("semantic_type");
+        if (!type || !isa<semantic::SequenceType>(type.getValue()))
+          return;
+        reference = instance.getReferencedSymbol();
+        path = instance.getReferencedPath();
       } else {
         return;
       }

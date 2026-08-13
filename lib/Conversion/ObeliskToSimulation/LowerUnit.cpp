@@ -2186,6 +2186,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
             targetID.getValue().getZExtValue();
     });
   setCurrent(&function.getBody().front());
+  if (function->hasAttr(sequenceEndpointMonitorAttrName))
+    return lowerSequenceEndpointMonitor(roots);
   sim::EntryKind entryKind = function.getEntryKind();
   continuousStore = entryKind == sim::EntryKind::Continuous ||
                     entryKind == sim::EntryKind::AlwaysComb ||
