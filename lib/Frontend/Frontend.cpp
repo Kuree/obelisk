@@ -20,6 +20,7 @@
 #include "slang/ast/EvalContext.h"
 #include "slang/ast/expressions/Operator.h"
 #include "slang/ast/symbols/VariableSymbols.h"
+#include "slang/ast/types/TypePrinter.h"
 #include "slang/driver/Driver.h"
 #include "slang/numeric/Time.h"
 #include "slang/syntax/AllSyntax.h"
@@ -1658,6 +1659,12 @@ private:
       }
       SET_OP_ATTR(DefaultedArguments,
                   builder.getDenseI64ArrayAttr(defaultedArguments));
+      if (node.isSystemCall() && node.getSubroutineName() == "$typename" &&
+          node.arguments().size() == 1) {
+        slang::ast::TypePrinter printer;
+        printer.append(*node.arguments().front()->type);
+        SET_OP_ATTR(TypenameSpelling, builder.getStringAttr(printer.toString()));
+      }
       bool enumMethod =
           node.isSystemCall() &&
           llvm::StringSwitch<bool>(node.getSubroutineName())

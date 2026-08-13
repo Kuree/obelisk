@@ -73,11 +73,12 @@ module {
                 is_system_call = true,
                 node_id = 8 : i64,
                 semantic_type = !obelisk.string,
-                subroutine_kind = 0 : i32
+                subroutine_kind = 0 : i32,
+                typename_spelling = "logic[4095:0]"
               } {
                 obelisk.sv.expression.data_type attributes {
                   node_id = 9 : i64,
-                  semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+                  semantic_type = !obelisk.ranged_packed_array<4095 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>
                 } {
                 }
               }
@@ -90,6 +91,8 @@ module {
 }
 
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: %[[TYPE:.*]] = obelisk_sim.string.literal "logic"
+// IEEE 1800-2017 20.6.1 requires the fully resolved elaborated spelling,
+// including exact array ranges, and does not evaluate the operand.
+// CHECK: %[[TYPE:.*]] = obelisk_sim.string.literal "logic[4095:0]"
 // CHECK: obelisk_sim.display {{.*}}(%[[TYPE]])
 // CHECK-NOT: obelisk.sv.expression.data_type
