@@ -109,36 +109,56 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
           << name << " memory elements must be packed values";
       return failure();
     }
-    FailureOr<Value> memoryReference = lowerExpression(actual, true);
-    if (failed(memoryReference) ||
-        !isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType>(
-            (*memoryReference).getType())) {
-      emitError(getSemanticLocation(actual))
-          << name << " memory must be writable";
-      return failure();
-    }
     Value memory;
-    if (array) {
-      auto reference = dyn_cast<sim::RefType>((*memoryReference).getType());
-      if (!reference || reference.getElementType() != *memoryType) {
+    SmallVector<Value> sliceReferences;
+    if (isa<semantic::SVRangeSelectExpressionOp>(actual)) {
+      FailureOr<CapturedLValue> slice = captureLValue(actual, location);
+      if (failed(slice) || slice->kind != CapturedLValue::Kind::AggregateSlice ||
+          slice->children.empty()) {
         emitError(getSemanticLocation(actual))
-            << name << " fixed memory must be a writable unpacked array";
+            << name << " memory slice must be writable";
         return failure();
       }
-      memory = *memoryReference;
+      for (const CapturedLValue &element : slice->children) {
+        if (!isa<sim::RefType>(element.reference.getType())) {
+          emitError(getSemanticLocation(actual))
+              << name << " memory slice must contain writable elements";
+          return failure();
+        }
+        sliceReferences.push_back(element.reference);
+      }
     } else {
-      FailureOr<Value> loaded = loadReference(*memoryReference, location);
-      if (failed(loaded))
+      FailureOr<Value> memoryReference = lowerExpression(actual, true);
+      if (failed(memoryReference) ||
+          !isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType>(
+              (*memoryReference).getType())) {
+        emitError(getSemanticLocation(actual))
+            << name << " memory must be writable";
         return failure();
-      memory = cloneSequentialValue(*loaded, location);
-      if (isa<sim::RefType>((*memoryReference).getType()))
-        sim::SimRefStoreOp::create(builder, location, memory, *memoryReference);
-      else if (isa<sim::ManagedRefType>((*memoryReference).getType()))
-        sim::SimManagedStoreOp::create(builder, location, memory,
-                                       *memoryReference);
-      else
-        sim::SimArgumentRefStoreOp::create(builder, location, memory,
-                                           *memoryReference);
+      }
+      if (array) {
+        auto reference = dyn_cast<sim::RefType>((*memoryReference).getType());
+        if (!reference || reference.getElementType() != *memoryType) {
+          emitError(getSemanticLocation(actual))
+              << name << " fixed memory must be a writable unpacked array";
+          return failure();
+        }
+        memory = *memoryReference;
+      } else {
+        FailureOr<Value> loaded = loadReference(*memoryReference, location);
+        if (failed(loaded))
+          return failure();
+        memory = cloneSequentialValue(*loaded, location);
+        if (isa<sim::RefType>((*memoryReference).getType()))
+          sim::SimRefStoreOp::create(builder, location, memory,
+                                     *memoryReference);
+        else if (isa<sim::ManagedRefType>((*memoryReference).getType()))
+          sim::SimManagedStoreOp::create(builder, location, memory,
+                                         *memoryReference);
+        else
+          sim::SimArgumentRefStoreOp::create(builder, location, memory,
+                                             *memoryReference);
+      }
     }
 
     Value descriptor;
@@ -335,8 +355,27 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
                                                   elementType, element);
     if (array) {
       Value elementReference = memory;
+      size_t firstDimension = 0;
+      if (!sliceReferences.empty()) {
+        elementReference = sliceReferences.front();
+        int64_t sliceLeft = dimensions.front().getLeft();
+        int64_t sliceStep =
+            sliceLeft <= dimensions.front().getRight() ? 1 : -1;
+        for (auto [ordinal, reference] : llvm::enumerate(sliceReferences)) {
+          Value sliceIndex = indexConstant(
+              sliceLeft + sliceStep * static_cast<int64_t>(ordinal));
+          Value matches = arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::eq, address,
+              sliceIndex);
+          elementReference = arith::SelectOp::create(
+              builder, location, matches, reference, elementReference);
+        }
+        firstDimension = 1;
+      }
       uint64_t stride = rowSizeValue;
       for (auto [position, dimension] : llvm::enumerate(dimensions)) {
+        if (position < firstDimension)
+          continue;
         Value index = address;
         if (position != 0) {
           uint64_t extent = static_cast<uint64_t>(
