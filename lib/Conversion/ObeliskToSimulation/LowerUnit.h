@@ -45,6 +45,11 @@ public:
   ::mlir::LogicalResult lower(::mlir::ArrayRef<::mlir::Operation *> roots);
 
 private:
+  struct LoweredOutputList {
+    ::mlir::SmallVector<::mlir::Value> items;
+    ::mlir::SmallVector<int32_t> flags;
+  };
+
   struct CapturedLValue {
     enum class Kind {
       Reference,
@@ -207,6 +212,10 @@ private:
   lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
   lowerDisplaySystemCall(semantic::SVCallExpressionOp op);
+  ::mlir::FailureOr<LoweredOutputList>
+  lowerOutputListItems(::mlir::ArrayRef<::mlir::Operation *> operations,
+                       bool interpretLiteralsAsFormats,
+                       std::optional<unsigned> designatedFormat = std::nullopt);
   ::mlir::FailureOr<::mlir::Value>
   lowerStringFormatSystemCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>

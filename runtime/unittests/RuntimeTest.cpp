@@ -3264,6 +3264,39 @@ protected:
   obelisk_rt_gc_lane_v1 *lane = nullptr;
 };
 
+TEST_F(RuntimeTest, DesignatedFormatWarnsAndContinuesOnArgumentMismatch) {
+  TempDirectory temporary;
+  uint32_t descriptor = open(temporary.file("designated-format.bin"), "w+b");
+  uint32_t designated =
+      OBELISK_RT_ARG_FORMAT_STRING | OBELISK_RT_ARG_DESIGNATED_FORMAT;
+  testing::internal::CaptureStderr();
+  obelisk_rt_arg_v1 missing = stringArg("%s", designated);
+  EXPECT_EQ(obelisk_rt_v1_display(context, descriptor, 0,
+                                  OBELISK_RT_RADIX_DECIMAL, &missing, 1,
+                                  nullptr),
+            OBELISK_RT_OK);
+  LogicValue surplus("10");
+  std::vector<obelisk_rt_arg_v1> extra = {stringArg("%s", designated),
+                                          stringArg("kept"), surplus.arg()};
+  EXPECT_EQ(obelisk_rt_v1_display(context, descriptor, 0,
+                                  OBELISK_RT_RADIX_DECIMAL, extra.data(),
+                                  extra.size(), nullptr),
+            OBELISK_RT_OK);
+  std::string warnings = testing::internal::GetCapturedStderr();
+  EXPECT_NE(warnings.find("not enough arguments"), std::string::npos);
+  EXPECT_NE(warnings.find("1 extra argument"), std::string::npos);
+
+  ASSERT_EQ(obelisk_rt_v1_file_flush(context, descriptor), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_file_rewind(context, descriptor), OBELISK_RT_OK);
+  char bytes[32]{};
+  uint64_t read = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_file_read(context, descriptor, bytes, sizeof(bytes), &read),
+      OBELISK_RT_OK);
+  EXPECT_EQ(std::string(bytes, static_cast<size_t>(read)), "<%s>kept");
+  EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
+}
+
 TEST_F(ManagedHeapTest, CollectsCyclesAndClearsWeakReferences) {
   obelisk_rt_object_v1 *first = nullptr;
   obelisk_rt_object_v1 *second = nullptr;

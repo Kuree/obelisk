@@ -666,7 +666,8 @@ obelisk_rt_status formatSequence(std::string &output, std::string_view format,
                                  uint64_t &argumentIndex,
                                  const obelisk_rt_format_env_v1 *environment,
                                  const TimeOverride &timeFormat,
-                                 std::string &error) {
+                                 std::string &error,
+                                 std::vector<std::string> *warnings = nullptr) {
   for (size_t position = 0; position < format.size();) {
     if (format[position] != '%') {
       output.push_back(format[position++]);
@@ -771,8 +772,15 @@ obelisk_rt_status formatSequence(std::string &output, std::string_view format,
     }
 
     if (argumentIndex >= argumentCount) {
-      error = "not enough arguments for format string";
-      return OBELISK_RT_ARGUMENT_MISMATCH;
+      if (!warnings) {
+        error = "not enough arguments for format string";
+        return OBELISK_RT_ARGUMENT_MISMATCH;
+      }
+      warnings->push_back("not enough arguments for format string");
+      output.push_back('<');
+      output.append(format.substr(formatOffset, position - formatOffset));
+      output.push_back('>');
+      continue;
     }
     obelisk_rt_status status =
         formatArgument(output, arguments[argumentIndex++], specifier, options,
@@ -813,7 +821,8 @@ obelisk_rt_status buildDisplay(std::string &output, obelisk_rt_radix radix,
                                uint64_t itemCount,
                                const obelisk_rt_format_env_v1 *environment,
                                const TimeOverride &timeFormat,
-                               std::string &error) {
+                               std::string &error,
+                               std::vector<std::string> &warnings) {
   if (radix != OBELISK_RT_RADIX_BINARY && radix != OBELISK_RT_RADIX_OCTAL &&
       radix != OBELISK_RT_RADIX_DECIMAL && radix != OBELISK_RT_RADIX_HEX) {
     error = "invalid default display radix";
@@ -822,6 +831,15 @@ obelisk_rt_status buildDisplay(std::string &output, obelisk_rt_radix radix,
   uint64_t index = 0;
   while (index < itemCount) {
     const obelisk_rt_arg_v1 &item = items[index++];
+    constexpr uint32_t validFlags = OBELISK_RT_ARG_SIGNED |
+                                    OBELISK_RT_ARG_FORMAT_STRING |
+                                    OBELISK_RT_ARG_DESIGNATED_FORMAT;
+    if ((item.flags & ~validFlags) != 0 ||
+        ((item.flags & OBELISK_RT_ARG_DESIGNATED_FORMAT) != 0 &&
+         ((item.flags & OBELISK_RT_ARG_FORMAT_STRING) == 0 || index != 1))) {
+      error = "invalid display item flags";
+      return OBELISK_RT_INVALID_ARGUMENT;
+    }
     if (item.kind == OBELISK_RT_ARG_EMPTY) {
       output.push_back(' ');
       continue;
@@ -838,10 +856,16 @@ obelisk_rt_status buildDisplay(std::string &output, obelisk_rt_radix radix,
         return OBELISK_RT_INVALID_ARGUMENT;
       }
       obelisk_rt_status status = formatSequence(
-          output, std::string_view(bytes, static_cast<size_t>(size)),
-          items, itemCount, index, environment, timeFormat, error);
+          output, std::string_view(bytes, static_cast<size_t>(size)), items,
+          itemCount, index, environment, timeFormat, error, &warnings);
       if (status != OBELISK_RT_OK)
         return status;
+      if ((item.flags & OBELISK_RT_ARG_DESIGNATED_FORMAT) != 0) {
+        if (index != itemCount)
+          warnings.push_back(std::to_string(itemCount - index) +
+                             " extra argument(s) for format string");
+        index = itemCount;
+      }
       continue;
     }
     char specifier = defaultSpecifier(item, radix);
@@ -857,6 +881,15 @@ obelisk_rt_status buildDisplay(std::string &output, obelisk_rt_radix radix,
     }
   }
   return OBELISK_RT_OK;
+}
+
+void reportFormatWarnings(obelisk_rt_context *context,
+                          const std::vector<std::string> &warnings) {
+  if (warnings.empty())
+    return;
+  std::lock_guard<std::recursive_mutex> lock(context->mutex);
+  for (const std::string &warning : warnings)
+    std::fprintf(stderr, "warning: %s\n", warning.c_str());
 }
 
 } // namespace
@@ -925,13 +958,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_string_output_format(
   return guarded(context, [&] {
     std::string output;
     std::string error;
+    std::vector<std::string> warnings;
     TimeOverride timeFormat = snapshotTimeFormat(context);
-    obelisk_rt_status status = buildDisplay(
-        output, defaultRadix, items, itemCount, environment, timeFormat, error);
+    obelisk_rt_status status =
+        buildDisplay(output, defaultRadix, items, itemCount, environment,
+                     timeFormat, error, warnings);
     if (status != OBELISK_RT_OK) {
       setLastError(context, std::move(error));
       return status;
     }
+    reportFormatWarnings(context, warnings);
     obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
     if (!lane)
       return OBELISK_RT_INVALID_LIFECYCLE;
@@ -961,13 +997,16 @@ obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
     }
     std::string output;
     std::string error;
+    std::vector<std::string> warnings;
     TimeOverride timeFormat = snapshotTimeFormat(context);
-    obelisk_rt_status status = buildDisplay(
-        output, defaultRadix, items, itemCount, environment, timeFormat, error);
+    obelisk_rt_status status =
+        buildDisplay(output, defaultRadix, items, itemCount, environment,
+                     timeFormat, error, warnings);
     if (status != OBELISK_RT_OK) {
       setLastError(context, std::move(error));
       return status;
     }
+    reportFormatWarnings(context, warnings);
     if (appendNewline)
       output.push_back('\n');
     std::lock_guard<std::recursive_mutex> lock(context->mutex);

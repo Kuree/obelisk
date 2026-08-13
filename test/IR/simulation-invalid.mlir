@@ -1587,6 +1587,38 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @designated_literal_display {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.designated_literal_display.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %fd = arith.constant 1 : i32
+      %text = obelisk_sim.bytes.constant "text"
+      // expected-error @+1 {{designated format must be the first string output-format item}}
+      obelisk_sim.display %ctx to %fd(%text) newline = false radix = 10 flags = [32] : !obelisk_sim.bytes
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @late_designated_string_format {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.late_designated_string_format.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = arith.constant 0 : i8
+      %text = obelisk_sim.bytes.constant "%d"
+      // expected-error @+1 {{designated format must be the first string output-format item}}
+      %result = obelisk_sim.string.output_format %ctx(%value, %text) radix = 10 flags = [0, 32] : i8, !obelisk_sim.bytes
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @unsupported_display_item {
     obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.unsupported_display_item.bad.9000001"
     obelisk_sim.scope.decl 0

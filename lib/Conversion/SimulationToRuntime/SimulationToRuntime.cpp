@@ -114,7 +114,7 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
             op, "literal byte item did not convert 1:1");
       arguments.push_back(runtime::RTArgumentBytesOp::create(
           rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
-          converted.front(), true));
+          converted.front(), true, (flags & 32) != 0));
       continue;
     }
     if (isa<sim::StringType>(sourceType)) {
@@ -123,7 +123,7 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
             op, "managed string output item did not convert 1:1");
       arguments.push_back(runtime::RTArgumentManagedStringOp::create(
           rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
-          converted.front(), false));
+          converted.front(), (flags & 32) != 0, (flags & 32) != 0));
       continue;
     }
     if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(

@@ -82,6 +82,36 @@ module attributes {
                   }
                 }
               }
+              obelisk.sv.statement.expression_statement attributes {node_id = 41 : i64} {
+                obelisk.sv.expression.call attributes {argument_count = 4 : i64, callee_name = "$sformat", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0, 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = true, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 42 : i64, semantic_type = !obelisk.void, subroutine_kind = 1 : i32, system_library_cell = "work.swrite_test", system_scope_path = "swrite_test", system_scope_symbol = @s1.$root::@s3.swrite_test::@s4.swrite_test} {
+                  obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 43 : i64, semantic_type = !obelisk.string} {
+                    obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 44 : i64, referenced_path = "swrite_test.text", referenced_symbol = @s1.$root::@s3.swrite_test::@s4.swrite_test::@s5.text, semantic_type = !obelisk.string} {
+                    }
+                    obelisk.sv.expression.empty_argument attributes {is_signed = false, node_id = 45 : i64, semantic_type = !obelisk.string} {
+                    }
+                  }
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 46 : i64, referenced_path = "swrite_test.text", referenced_symbol = @s1.$root::@s3.swrite_test::@s4.swrite_test::@s5.text, semantic_type = !obelisk.string} {
+                  }
+                  obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 47 : i64, referenced_path = "swrite_test.value", referenced_symbol = @s1.$root::@s3.swrite_test::@s4.swrite_test::@s8.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  }
+                  obelisk.sv.expression.string_literal attributes {constant_value = "%d", is_signed = false, node_id = 48 : i64, semantic_type = !obelisk.ranged_packed_array<15 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  }
+                }
+              }
+              obelisk.sv.statement.expression_statement attributes {node_id = 49 : i64} {
+                obelisk.sv.expression.call attributes {argument_count = 3 : i64, callee_name = "$sformat", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = true, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 50 : i64, semantic_type = !obelisk.void, subroutine_kind = 1 : i32, system_library_cell = "work.swrite_test", system_scope_path = "swrite_test", system_scope_symbol = @s1.$root::@s3.swrite_test::@s4.swrite_test} {
+                  obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 51 : i64, semantic_type = !obelisk.string} {
+                    obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 52 : i64, referenced_path = "swrite_test.text", referenced_symbol = @s1.$root::@s3.swrite_test::@s4.swrite_test::@s5.text, semantic_type = !obelisk.string} {
+                    }
+                    obelisk.sv.expression.empty_argument attributes {is_signed = false, node_id = 53 : i64, semantic_type = !obelisk.string} {
+                    }
+                  }
+                  obelisk.sv.expression.string_literal attributes {constant_value = "%d", is_signed = false, node_id = 54 : i64, semantic_type = !obelisk.ranged_packed_array<15 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  }
+                  obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 55 : i64, referenced_path = "swrite_test.value", referenced_symbol = @s1.$root::@s3.swrite_test::@s4.swrite_test::@s8.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  }
+                }
+              }
             }
           }
         }
@@ -104,3 +134,9 @@ module attributes {
 // CHECK: %[[ARRAY_PACKED:.*]] = obelisk_sim.logic.concat %[[ARRAY_LOGIC0]], {{.*}} -> !obelisk_sim.logic<128>
 // CHECK: %[[ARRAY_STRING:.*]] = obelisk_sim.string.from_packed %[[ARRAY_PACKED]] : (!obelisk_sim.logic<128>) -> !obelisk_sim.string
 // CHECK: obelisk_sim.string.output_format {{.*}}(%{{.*}}, %[[ARRAY_STRING]]) radix = 10 flags = [0, 8]
+// CHECK: %[[DYNAMIC_FORMAT:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<!obelisk_sim.string> -> !obelisk_sim.string
+// CHECK: %[[FORMAT_LITERAL_VALUE:.*]] = obelisk_sim.string.literal "%d"
+// CHECK: %[[SFORMAT:.*]] = obelisk_sim.string.output_format {{.*}}(%[[DYNAMIC_FORMAT]], %{{.*}}, %[[FORMAT_LITERAL_VALUE]]) radix = 10 flags = [40, 1, 8] {library_cell = "work.swrite_test", scope = "swrite_test"
+// CHECK-NEXT: obelisk_sim.ref.store %[[SFORMAT]]
+// CHECK: %[[LITERAL_SFORMAT:.*]] = obelisk_sim.string.output_format {{.*}}(%{{.*}}, %{{.*}}) radix = 10 flags = [32, 1] {library_cell = "work.swrite_test", scope = "swrite_test"
+// CHECK-NEXT: obelisk_sim.ref.store %[[LITERAL_SFORMAT]]

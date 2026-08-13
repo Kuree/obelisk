@@ -108,8 +108,8 @@ bool validArgumentOperand(const obelisk_rt_bytecode_operand_v1 &operand,
                           const obelisk_rt_bytecode_v1 &program) {
   if (operand.reserved != 0 ||
       operand.direction != OBELISK_RT_BC_OPERAND_INPUT ||
-      (operand.flags &
-       ~(OBELISK_RT_ARG_SIGNED | OBELISK_RT_ARG_FORMAT_STRING)) != 0)
+      (operand.flags & ~(OBELISK_RT_ARG_SIGNED | OBELISK_RT_ARG_FORMAT_STRING |
+                         OBELISK_RT_ARG_DESIGNATED_FORMAT)) != 0)
     return false;
   switch (operand.value_kind) {
   case OBELISK_RT_BC_VALUE_ARGUMENT_EMPTY:
@@ -128,7 +128,8 @@ bool validArgumentOperand(const obelisk_rt_bytecode_operand_v1 &operand,
            validOperandRange(operand, program, sizeof(uint64_t));
   case OBELISK_RT_BC_VALUE_ARGUMENT_LOGIC: {
     if (operand.size == 0 ||
-        (operand.flags & OBELISK_RT_ARG_FORMAT_STRING) != 0 ||
+        (operand.flags & (OBELISK_RT_ARG_FORMAT_STRING |
+                          OBELISK_RT_ARG_DESIGNATED_FORMAT)) != 0 ||
         (operand.kind != OBELISK_RT_BC_OPERAND_FRAME &&
          operand.kind != OBELISK_RT_BC_OPERAND_CONSTANT))
       return false;

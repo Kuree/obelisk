@@ -349,8 +349,17 @@ LogicalResult RTArgumentRealOp::verify() {
 }
 
 LogicalResult RTArgumentBytesOp::verify() {
+  if (getDesignatedFormat() && !getIsFormatString())
+    return emitOpError("designated format must also be a format string");
   return verifyConsumers<RTArgumentArrayOp>(
       *this, getResult(), "format argument");
+}
+
+LogicalResult RTArgumentManagedStringOp::verify() {
+  if (getDesignatedFormat() && !getIsFormatString())
+    return emitOpError("designated format must also be a format string");
+  return verifyLocalConsumers<RTArgumentArrayOp>(
+      *this, getResult(), "stack-backed managed string format argument");
 }
 
 LogicalResult RTArgumentArrayOp::verify() {

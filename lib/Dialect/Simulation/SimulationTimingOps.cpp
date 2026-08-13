@@ -460,13 +460,18 @@ MutableOperandRange SimSuspendJoinOp::getContinuationOperandsMutable() {
 static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
                                        ArrayRef<int32_t> itemFlags,
                                        int64_t radix,
-                                       IntegerAttr timeMultiplier) {
+                                       IntegerAttr timeMultiplier,
+                                       bool allowDesignatedFormat) {
   if (radix != 2 && radix != 8 && radix != 10 && radix != 16)
     return operation->emitOpError("default radix must be 2, 8, 10, or 16");
   if (timeMultiplier && !timeMultiplier.getValue().isStrictlyPositive())
     return operation->emitOpError("time multiplier must be positive");
   unsigned itemIndex = 0;
-  for (int32_t flags : itemFlags) {
+  for (auto [logicalIndex, flags] : llvm::enumerate(itemFlags)) {
+    if ((flags & 32) != 0 &&
+        (!allowDesignatedFormat || logicalIndex != 0))
+      return operation->emitOpError(
+          "designated format must be the first string output-format item");
     if ((flags & 2) != 0) {
       if (flags != 2)
         return operation->emitOpError(
@@ -482,7 +487,7 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
       return operation->emitOpError(
           "items must be literal bytes, packed integers, or f64 reals; "
           "managed strings and containers are also accepted");
-    if ((flags & ~31) != 0)
+    if ((flags & ~63) != 0)
       return operation->emitOpError(
           "display item flags contain an unknown bit");
     if ((flags & 16) != 0 &&
@@ -497,15 +502,30 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
     if ((flags & 5) == 5)
       return operation->emitOpError(
           "real display items cannot be marked signed");
-    if (isa<BytesType>(item.getType()) && flags != 0)
+    if (isa<BytesType>(item.getType()) && flags == 1)
       return operation->emitOpError("literal byte items cannot be signed");
-    if (isa<StringType>(item.getType()) && flags != 8)
+    if (isa<BytesType>(item.getType()) && flags != 0 &&
+        (!allowDesignatedFormat || flags != 32))
       return operation->emitOpError(
-          "managed string display items require the string flag");
-    if (isa<DynamicArrayType, QueueType, AssocArrayType>(item.getType()) &&
-        flags != 16)
+          "only a string output-format literal may carry the designated "
+          "format flag");
+    if (isa<StringType>(item.getType())) {
+      if (flags != 8 && (!allowDesignatedFormat || flags != 40))
+        return operation->emitOpError(
+            "managed string items require the string flag; only a string "
+            "output-format item may also carry the format flag");
+    } else if (isa<DynamicArrayType, QueueType, AssocArrayType>(
+                   item.getType())) {
+      if (flags != 16)
+        return operation->emitOpError(
+            "managed container items require only the container flag");
+    } else if (item.getType().isF64()) {
+      if (flags != 4)
+        return operation->emitOpError("f64 items require only the real flag");
+    } else if (!isa<BytesType>(item.getType()) && flags != 0 && flags != 1) {
       return operation->emitOpError(
-          "managed container display items require the container flag");
+          "packed integer items may only carry the signed flag");
+    }
   }
   if (itemIndex != items.size())
     return operation->emitOpError("requires one flag entry per display item");
@@ -514,12 +534,12 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
 
 LogicalResult SimDisplayOp::verify() {
   return verifyOutputItems(*this, getItems(), getItemFlags(), getDefaultRadix(),
-                           getTimeMultiplierAttr());
+                           getTimeMultiplierAttr(), false);
 }
 
 LogicalResult SimStringOutputFormatOp::verify() {
   return verifyOutputItems(*this, getItems(), getItemFlags(), getDefaultRadix(),
-                           getTimeMultiplierAttr());
+                           getTimeMultiplierAttr(), true);
 }
 
 static LogicalResult verifyPackedFileResult(Operation *operation, Type type) {

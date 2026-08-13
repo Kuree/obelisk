@@ -65,15 +65,18 @@ def RTArgumentRealOp : RTOp<"argument.real", [MemoryEffects<[MemAlloc]>]> {
 
 def RTArgumentBytesOp : RTOp<"argument.bytes", [Pure]> {
   let arguments = (ins RTByteSpanType:$value,
-                       BoolAttr:$is_format_string);
+                       BoolAttr:$is_format_string,
+                       DefaultValuedAttr<BoolAttr, "false">:$designated_format);
   let results = (outs RTArgumentType:$result);
   let hasVerifier = 1;
 }
 
 def RTArgumentManagedStringOp
     : RTOp<"argument.managed_string", [MemoryEffects<[MemAlloc]>]> {
-  let arguments = (ins I64:$value, BoolAttr:$is_format_string);
+  let arguments = (ins I64:$value, BoolAttr:$is_format_string,
+                       DefaultValuedAttr<BoolAttr, "false">:$designated_format);
   let results = (outs RTArgumentType:$result);
+  let hasVerifier = 1;
 }
 
 def RTArgumentManagedContainerOp

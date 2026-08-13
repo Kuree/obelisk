@@ -2921,7 +2921,11 @@ enum {
 typedef uint32_t obelisk_rt_arg_flags;
 enum {
   OBELISK_RT_ARG_SIGNED = 1u << 0,
-  OBELISK_RT_ARG_FORMAT_STRING = 1u << 1
+  OBELISK_RT_ARG_FORMAT_STRING = 1u << 1,
+  // Marks the sole format expression of $sformat/$sformatf. Unlike an
+  // output-list format item, it owns all following arguments; surplus values
+  // are diagnosed and ignored rather than formatted as subsequent items.
+  OBELISK_RT_ARG_DESIGNATED_FORMAT = 1u << 2
 };
 
 // LOGIC: size is the bit width, data points to little-endian uint64_t value
@@ -3242,6 +3246,9 @@ obelisk_rt_status obelisk_rt_v1_last_error(obelisk_rt_context *context,
 // mutated until the call returns. format() consumes every supplied argument.
 // display() treats STRING arguments carrying FORMAT_STRING as format strings
 // that consume following items; other items use the requested default radix.
+// DESIGNATED_FORMAT additionally gives that format ownership of every
+// remaining item, as required for $sformat/$sformatf; surplus items are
+// diagnosed and ignored.
 obelisk_rt_status
 obelisk_rt_v1_format(obelisk_rt_context *context, const char *format,
                      uint64_t format_size, const obelisk_rt_arg_v1 *arguments,

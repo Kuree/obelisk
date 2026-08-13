@@ -952,7 +952,8 @@ def SimStringOutputFormatOp : SimOp<"string.output_format", [
     This is the result-producing counterpart of `display`: it applies the
     `$write` output-list rules without writing a descriptor. `item_flags` and
     the call-site formatting environment have the same representation and
-    semantics as `display`.
+    semantics as `display`. Bit 5 marks a literal or managed string as the
+    designated format expression used by `$sformat` and `$sformatf`.
   }];
   let arguments = (ins SimContextType:$context, Variadic<AnyType>:$items,
                        I32Attr:$default_radix,
@@ -1580,11 +1581,13 @@ def SimDisplayOp : SimOp<"display", [
   let description = [{
     `item_flags` describes the logical argument sequence. Bit 0 marks a
     nonempty packed operand signed; bit 1 represents an omitted argument and
-    consumes no entry from `items`; bit 2 marks an f64 real operand. `scope`
-    and `library_cell` carry the elaborated call-site information used by `%m`
-    and `%l`. `time_multiplier` converts a numeric `%t` argument from the
-    invoking scope's time unit to the design precision used by the runtime
-    clock.
+    consumes no entry from `items`; bit 2 marks an f64 real operand; bit 3
+    marks a managed string; bit 4 marks a managed container. Bit 5 is reserved
+    for the designated literal or managed-string format operand of
+    `string.output_format` and is invalid on `display`. `scope` and
+    `library_cell` carry the elaborated call-site information used by `%m` and
+    `%l`. `time_multiplier` converts a numeric `%t` argument from the invoking
+    scope's time unit to the design precision used by the runtime clock.
   }];
   let arguments = (ins SimContextType:$context, I32:$descriptor,
                        Variadic<AnyType>:$items, BoolAttr:$append_newline,

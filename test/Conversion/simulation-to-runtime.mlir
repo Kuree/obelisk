@@ -19,6 +19,11 @@ module {
         {library_cell = "work.io", scope = "top.io.named",
          time_multiplier = 1000 : i64} : !obelisk_sim.bytes,
         !obelisk_sim.logic<13>
+    %designated = obelisk_sim.string.output_format %ctx(%text, %value)
+        radix = 8 flags = [32, 1]
+        {library_cell = "work.io", scope = "top.io.named",
+         time_multiplier = 1000 : i64} : !obelisk_sim.bytes,
+        !obelisk_sim.logic<13>
     %mcd = obelisk_sim.file.open_mcd %ctx, %text :
         (!obelisk_sim.context, !obelisk_sim.bytes) -> i32
     %file = obelisk_sim.file.open %ctx, %path, %mode :
@@ -95,6 +100,9 @@ module {
 // CHECK: obelisk_rt.format.environment {library_cell = "work.io", scope = "top.io.named", time_multiplier = 1000 : i64}
 // CHECK: %[[FORMAT_STATUS:.*]], %[[FORMATTED:.*]] = obelisk_rt.string_output_format
 // CHECK-NEXT: obelisk_sim.status.check %[[FORMAT_STATUS]]
+// CHECK: obelisk_rt.argument.bytes %[[TEXT]] {{.*}}designated_format = true
+// CHECK: %[[DESIGNATED_STATUS:.*]], %[[DESIGNATED:.*]] = obelisk_rt.string_output_format
+// CHECK-NEXT: obelisk_sim.status.check %[[DESIGNATED_STATUS]]
 // CHECK: %[[MCD_STATUS:.*]], %[[MCD_FD:.*]] = obelisk_rt.file.open_mcd
 // CHECK: %[[MCD_BITS:.*]] = obelisk_rt.file_descriptor.to_bits %[[MCD_FD]]
 // CHECK: %[[OPEN_ZERO:.*]] = arith.constant 0 : i32

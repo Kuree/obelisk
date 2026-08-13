@@ -6,7 +6,6 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
-#include <cctype>
 #include <optional>
 #include <string>
 #include <utility>
@@ -14,6 +13,147 @@
 using namespace mlir;
 
 namespace obelisk::simlowering {
+
+FailureOr<UnitLowering::LoweredOutputList>
+UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
+                                   bool interpretLiteralsAsFormats,
+                                   std::optional<unsigned> designatedFormat) {
+  LoweredOutputList output;
+  Type stringType = sim::StringType::get(function.getContext());
+  auto getStringLiteral = [&](Operation *child) {
+    Operation *spelling = child;
+    while (isa<semantic::SVConversionExpressionOp>(spelling)) {
+      SmallVector<Operation *> convertedChildren = getChildren(spelling);
+      if (convertedChildren.size() != 1)
+        break;
+      spelling = convertedChildren.front();
+    }
+    return dyn_cast<semantic::SVStringLiteralOp>(spelling);
+  };
+  auto lowerByteArray = [&](Operation *child, Value value) -> FailureOr<Value> {
+    auto array = dyn_cast<sim::UnpackedArrayType>(value.getType());
+    if (!array || !isa<IntegerType>(array.getElementType()) ||
+        cast<IntegerType>(array.getElementType()).getWidth() != 8)
+      return failure();
+    SmallVector<Value> characters;
+    unsigned count = sim::getAggregateNumElements(array);
+    Type logicType = sim::LogicType::get(function.getContext(), 8);
+    characters.reserve(count);
+    for (unsigned index = 0; index != count; ++index) {
+      Value character = sim::SimAggregateExtractOp::create(
+          builder, getSemanticLocation(child), array.getElementType(), value,
+          index);
+      FailureOr<Value> converted =
+          convert(character, logicType, false, getSemanticLocation(child));
+      if (failed(converted))
+        return failure();
+      characters.push_back(*converted);
+    }
+    Value packed = sim::SimLogicConcatOp::create(
+        builder, getSemanticLocation(child),
+        sim::LogicType::get(function.getContext(), count * 8), characters);
+    // IEEE 1800-2017 21.2.1 and 21.3.3 define unpacked byte-array text in
+    // left-bound-to-right-bound order. Aggregate operands use that logical
+    // order, and string.from_packed reads its most-significant byte first.
+    return sim::SimStringFromPackedOp::create(
+               builder, getSemanticLocation(child), stringType, packed)
+        .getResult();
+  };
+
+  for (auto [index, child] : llvm::enumerate(operations)) {
+    bool isFormat = designatedFormat && index == *designatedFormat;
+    if (isa<semantic::SVEmptyArgumentExpressionOp>(child)) {
+      if (isFormat) {
+        emitError(getSemanticLocation(child))
+            << "format string cannot be omitted";
+        return failure();
+      }
+      output.flags.push_back(2);
+      continue;
+    }
+    if (auto literal = getStringLiteral(child)) {
+      if (isFormat || interpretLiteralsAsFormats) {
+        output.items.push_back(sim::SimBytesConstantOp::create(
+            builder, getSemanticLocation(literal), literal.getConstantValue()));
+        output.flags.push_back(isFormat ? 32 : 0);
+      } else {
+        output.items.push_back(sim::SimStringLiteralOp::create(
+            builder, getSemanticLocation(literal), stringType,
+            literal.getConstantValue()));
+        output.flags.push_back(8);
+      }
+      continue;
+    }
+
+    FailureOr<Value> value = lowerExpression(child);
+    if (failed(value))
+      return failure();
+    if (isFormat) {
+      Value format = *value;
+      if (!isa<sim::StringType>(format.getType())) {
+        FailureOr<Value> bytes = lowerByteArray(child, format);
+        if (succeeded(bytes))
+          format = *bytes;
+        else {
+          FailureOr<Value> packed =
+              toPackedScalar(format, getSemanticLocation(child));
+          if (failed(packed)) {
+            emitError(getSemanticLocation(child))
+                << "format string must have integral, unpacked byte array, "
+                   "or string type";
+            return failure();
+          }
+          format = sim::SimStringFromPackedOp::create(
+              builder, getSemanticLocation(child), stringType, *packed);
+        }
+      }
+      output.items.push_back(format);
+      output.flags.push_back(40);
+      continue;
+    }
+    if (isa<FloatType>((*value).getType())) {
+      FailureOr<Value> real = convert(*value, builder.getF64Type(), false,
+                                      getSemanticLocation(child));
+      if (failed(real))
+        return failure();
+      output.items.push_back(*real);
+      output.flags.push_back(4);
+    } else if (isa<sim::StringType>((*value).getType())) {
+      output.items.push_back(*value);
+      output.flags.push_back(8);
+    } else if (auto bytes = lowerByteArray(child, *value); succeeded(bytes)) {
+      output.items.push_back(*bytes);
+      output.flags.push_back(8);
+    } else if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
+                   (*value).getType())) {
+      output.items.push_back(*value);
+      output.flags.push_back(16);
+    } else if (auto unionType =
+                   dyn_cast<sim::UnpackedUnionType>((*value).getType());
+               unionType && unionType.getIsTagged()) {
+      auto semanticType = child->getAttrOfType<TypeAttr>("semantic_type");
+      if (!semanticType) {
+        emitError(getSemanticLocation(child))
+            << "tagged-union output operand has no semantic type";
+        return failure();
+      }
+      FailureOr<Value> pattern = formatTaggedUnionPattern(
+          *value, semanticType.getValue(), getSemanticLocation(child));
+      if (failed(pattern))
+        return failure();
+      output.items.push_back(*pattern);
+      output.flags.push_back(8);
+    } else {
+      FailureOr<Value> scalar =
+          toPackedScalar(*value, getSemanticLocation(child));
+      if (failed(scalar))
+        return failure();
+      output.items.push_back(*scalar);
+      output.flags.push_back(isSignedNode(child) ? 1 : 0);
+    }
+  }
+  return output;
+}
 
 FailureOr<Value>
 UnitLowering::lowerStringFormatSystemCall(semantic::SVCallExpressionOp op) {
@@ -29,129 +169,39 @@ UnitLowering::lowerStringFormatSystemCall(semantic::SVCallExpressionOp op) {
     return failure();
   }
 
-  Operation *literalNode = children[formatIndex];
-  while (isa<semantic::SVConversionExpressionOp>(literalNode)) {
-    SmallVector<Operation *> converted = getChildren(literalNode);
-    if (converted.size() != 1)
-      break;
-    literalNode = converted.front();
-  }
-  auto literal = dyn_cast<semantic::SVStringLiteralOp>(literalNode);
-  if (!literal) {
-    emitError(getSemanticLocation(children[formatIndex]))
-        << name << " currently requires a literal format string";
+  FailureOr<LoweredOutputList> output = lowerOutputListItems(
+      ArrayRef(children).drop_front(formatIndex), false, 0);
+  if (failed(output))
+    return failure();
+  auto timeMultiplier =
+      function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+  if (!timeMultiplier) {
+    function.emitError("code unit has no frozen time scale");
     return failure();
   }
-
+  StringAttr lexicalScope = op.getSystemScopePathAttr();
+  if (!lexicalScope)
+    lexicalScope =
+        function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+  if (!lexicalScope) {
+    op.emitError("string formatting call has no elaborated lexical scope");
+    return failure();
+  }
+  IntegerAttr timePrecision;
+  if (auto design = function->getParentOfType<sim::SimDesignOp>()) {
+    if (IntegerAttr precisionFs = design.getTimePrecisionFsAttr()) {
+      int32_t exponent = -15;
+      for (uint64_t scale = precisionFs.getValue().getZExtValue(); scale > 1;
+           scale /= 10)
+        ++exponent;
+      timePrecision = builder.getI32IntegerAttr(exponent);
+    }
+  }
   Type stringType = sim::StringType::get(function.getContext());
-  auto stringLiteral = [&](StringRef text) -> Value {
-    return sim::SimStringLiteralOp::create(builder, location, stringType, text);
-  };
-  SmallVector<Value> parts;
-  StringRef format = literal.getConstantValue();
-  size_t argumentIndex = formatIndex + 1;
-  size_t textStart = 0;
-  for (size_t cursor = 0; cursor < format.size();) {
-    if (format[cursor] != '%') {
-      ++cursor;
-      continue;
-    }
-    if (cursor > textStart)
-      parts.push_back(stringLiteral(format.slice(textStart, cursor)));
-    if (cursor + 1 < format.size() && format[cursor + 1] == '%') {
-      parts.push_back(stringLiteral("%"));
-      cursor += 2;
-      textStart = cursor;
-      continue;
-    }
-
-    size_t specifier = cursor + 1;
-    while (specifier < format.size() &&
-           !std::isalpha(static_cast<unsigned char>(format[specifier])))
-      ++specifier;
-    if (specifier == format.size()) {
-      emitError(location) << name << " has an unterminated format specifier";
-      return failure();
-    }
-    StringRef modifiers = format.slice(cursor + 1, specifier);
-    if (!modifiers.empty() && modifiers != "0") {
-      emitError(location) << name << " does not yet support format modifier '"
-                          << modifiers << "'";
-      return failure();
-    }
-    if (std::isupper(static_cast<unsigned char>(format[specifier]))) {
-      emitError(location)
-          << name << " does not yet support uppercase format conversion %"
-          << format[specifier];
-      return failure();
-    }
-    if (argumentIndex >= children.size()) {
-      emitError(location) << name << " has too few formatting arguments";
-      return failure();
-    }
-    Operation *argument = children[argumentIndex++];
-    FailureOr<Value> lowered = lowerExpression(argument);
-    if (failed(lowered))
-      return failure();
-    char conversion =
-        static_cast<char>(std::tolower(static_cast<unsigned char>(format[specifier])));
-    if (conversion == 's') {
-      if (isa<sim::StringType>((*lowered).getType()))
-        parts.push_back(*lowered);
-      else {
-        FailureOr<Value> scalar =
-            toPackedScalar(*lowered, getSemanticLocation(argument));
-        if (failed(scalar))
-          return failure();
-        parts.push_back(sim::SimStringFromPackedOp::create(
-            builder, getSemanticLocation(argument), stringType, *scalar));
-      }
-    } else {
-      int32_t radix = conversion == 'b'   ? 2
-                      : conversion == 'o' ? 8
-                      : conversion == 'h' || conversion == 'x' ? 16
-                                                               : 10;
-      if (conversion != 'd' && conversion != 'i' && conversion != 'u' &&
-          conversion != 'b' && conversion != 'o' && conversion != 'h' &&
-          conversion != 'x') {
-        emitError(location) << name << " does not support format conversion %"
-                            << format[specifier];
-        return failure();
-      }
-      FailureOr<Value> scalar =
-          toPackedScalar(*lowered, getSemanticLocation(argument));
-      std::optional<unsigned> width =
-          succeeded(scalar) ? sim::getPackedWidth((*scalar).getType())
-                            : std::nullopt;
-      if (failed(scalar) || !width || *width > 64) {
-        emitError(getSemanticLocation(argument))
-            << name << " currently requires integer arguments of at most 64 bits";
-        return failure();
-      }
-      bool isSigned = (conversion == 'd' || conversion == 'i') &&
-                      isSignedNode(argument);
-      FailureOr<Value> integer =
-          convert(*scalar, builder.getI64Type(), isSigned,
-                  getSemanticLocation(argument));
-      if (failed(integer))
-        return failure();
-      parts.push_back(sim::SimStringFormatIntegerOp::create(
-          builder, getSemanticLocation(argument), stringType, *integer,
-          builder.getI32IntegerAttr(radix), builder.getBoolAttr(isSigned)));
-    }
-    cursor = specifier + 1;
-    textStart = cursor;
-  }
-  if (textStart < format.size())
-    parts.push_back(stringLiteral(format.drop_front(textStart)));
-  if (argumentIndex != children.size()) {
-    emitError(location) << name << " has too many formatting arguments";
-    return failure();
-  }
-  Value result = parts.empty()
-                     ? stringLiteral("")
-                     : Value(sim::SimStringConcatOp::create(
-                           builder, location, stringType, parts));
+  Value result = sim::SimStringOutputFormatOp::create(
+      builder, location, stringType, function.getBody().front().getArgument(0),
+      output->items, 10, output->flags, lexicalScope,
+      op.getSystemLibraryCellAttr(), timeMultiplier, timePrecision);
   if (!task)
     return result;
 
@@ -164,13 +214,50 @@ UnitLowering::lowerStringFormatSystemCall(semantic::SVCallExpressionOp op) {
     destinationNode = assignmentChildren.front();
   }
   FailureOr<Value> destination = lowerExpression(destinationNode, true);
-  if (failed(destination) ||
-      getReferenceElementType(*destination) != stringType) {
+  if (failed(destination)) {
     emitError(getSemanticLocation(destinationNode))
-        << "$sformat destination must be a string variable";
+        << "$sformat destination must be a writable variable";
     return failure();
   }
-  if (failed(storeReference(*destination, result, location)))
+  Type destinationType = getReferenceElementType(*destination);
+  bool integral =
+      isa<IntegerType, sim::LogicType, sim::PackedArrayType,
+          sim::PackedStructType, sim::PackedUnionType>(destinationType);
+  bool byteArray = false;
+  if (auto array = dyn_cast<sim::UnpackedArrayType>(destinationType))
+    if (auto element = dyn_cast<IntegerType>(array.getElementType()))
+      byteArray = element.getWidth() == 8;
+  if (!isa<sim::StringType>(destinationType) && !integral && !byteArray) {
+    emitError(getSemanticLocation(destinationNode))
+        << "$sformat destination must have integral, unpacked byte array, or "
+           "string type";
+    return failure();
+  }
+  FailureOr<Value> converted = failure();
+  if (byteArray) {
+    // IEEE 1800-2017 5.9 and 21.3.3: string assignment to an unpacked
+    // byte array is left-justified, in left-bound-to-right-bound order.
+    // getc returns zero beyond the string, providing the required fill.
+    SmallVector<Value> bytes;
+    unsigned count = sim::getAggregateNumElements(destinationType);
+    Type elementType =
+        cast<sim::UnpackedArrayType>(destinationType).getElementType();
+    bytes.reserve(count);
+    for (unsigned index = 0; index != count; ++index) {
+      Value position =
+          arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                    builder.getI64IntegerAttr(index));
+      bytes.push_back(sim::SimStringGetcOp::create(
+          builder, location, elementType, result, position));
+    }
+    converted = sim::SimAggregateConstructOp::create(builder, location,
+                                                     destinationType, bytes)
+                    .getResult();
+  } else {
+    converted = convert(result, destinationType, false, location);
+  }
+  if (failed(converted) ||
+      failed(storeReference(*destination, *converted, location)))
     return failure();
   return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                    builder.getBoolAttr(false))
@@ -195,28 +282,6 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
     if (failed(value))
       return failure();
     return convert(*value, type, isSignedNode(child), location);
-  };
-  auto getStringLiteral = [&](Operation *child) {
-    Operation *spelling = child;
-    while (isa<semantic::SVConversionExpressionOp>(spelling)) {
-      SmallVector<Operation *> convertedChildren = getChildren(spelling);
-      if (convertedChildren.size() != 1)
-        break;
-      spelling = convertedChildren.front();
-    }
-    return dyn_cast<semantic::SVStringLiteralOp>(spelling);
-  };
-  auto lowerBytes = [&](Operation *child) -> FailureOr<Value> {
-    auto literal = getStringLiteral(child);
-    if (!literal) {
-      emitError(getSemanticLocation(child))
-          << "only literal strings are supported by this system call";
-      return failure();
-    }
-    return sim::SimBytesConstantOp::create(builder,
-                                           getSemanticLocation(literal),
-                                           literal.getConstantValue())
-        .getResult();
   };
   auto dummyTaskResult = [&]() -> Value {
     return constant(builder.getI1Type(), 0);
@@ -475,88 +540,12 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
               .getResult());
       flags.push_back(0);
     }
-    for (Operation *child : ArrayRef(children).drop_front(firstItem)) {
-      if (isa<semantic::SVEmptyArgumentExpressionOp>(child)) {
-        flags.push_back(2);
-      } else if (getStringLiteral(child)) {
-        FailureOr<Value> value = lowerBytes(child);
-        if (failed(value))
-          return failure();
-        items.push_back(*value);
-        flags.push_back(0);
-      } else {
-        FailureOr<Value> value = lowerExpression(child);
-        if (failed(value))
-          return failure();
-        if (isa<FloatType>((*value).getType())) {
-          FailureOr<Value> real = convert(*value, builder.getF64Type(), false,
-                                          getSemanticLocation(child));
-          if (failed(real))
-            return failure();
-          items.push_back(*real);
-          flags.push_back(4);
-        } else if (isa<sim::StringType>((*value).getType())) {
-          items.push_back(*value);
-          flags.push_back(8);
-        } else if (auto array =
-                       dyn_cast<sim::UnpackedArrayType>((*value).getType());
-                   array && isa<IntegerType>(array.getElementType()) &&
-                   cast<IntegerType>(array.getElementType()).getWidth() == 8) {
-          SmallVector<Value> characters;
-          unsigned count = sim::getAggregateNumElements(array);
-          Type logicType = sim::LogicType::get(function.getContext(), 8);
-          characters.reserve(count);
-          for (unsigned index = 0; index != count; ++index) {
-            Value character = sim::SimAggregateExtractOp::create(
-                builder, getSemanticLocation(child), array.getElementType(),
-                *value, index);
-            FailureOr<Value> converted = convert(character, logicType, false,
-                                                 getSemanticLocation(child));
-            if (failed(converted))
-              return failure();
-            characters.push_back(*converted);
-          }
-          Value packed = sim::SimLogicConcatOp::create(
-              builder, getSemanticLocation(child),
-              sim::LogicType::get(function.getContext(), count * 8),
-              characters);
-          // IEEE 1800-2017 21.2.1: an unpacked byte-array expression with no
-          // corresponding conversion is formatted as a character string.
-          // Preserve left-bound-to-right-bound ordering in the packed value;
-          // string.from_packed reads its most-significant byte first.
-          items.push_back(sim::SimStringFromPackedOp::create(
-              builder, getSemanticLocation(child),
-              sim::StringType::get(function.getContext()), packed));
-          flags.push_back(8);
-        } else if (isa<sim::DynamicArrayType, sim::QueueType,
-                       sim::AssocArrayType>((*value).getType())) {
-          items.push_back(*value);
-          flags.push_back(16);
-        } else if (auto unionType =
-                       dyn_cast<sim::UnpackedUnionType>((*value).getType());
-                   unionType && unionType.getIsTagged()) {
-          auto semanticType = child->getAttrOfType<TypeAttr>("semantic_type");
-          if (!semanticType) {
-            emitError(getSemanticLocation(child))
-                << "tagged-union display operand has no semantic type";
-            return failure();
-          }
-          FailureOr<Value> pattern = formatTaggedUnionPattern(
-              *value, semanticType.getValue(), getSemanticLocation(child));
-          if (failed(pattern))
-            return failure();
-          items.push_back(*pattern);
-          flags.push_back(8);
-        } else {
-          FailureOr<Value> scalar =
-              toPackedScalar(*value, getSemanticLocation(child));
-          if (failed(scalar))
-            return failure();
-          items.push_back(*scalar);
-          flags.push_back(isSignedNode(child) ? 1 : 0);
-        }
-      }
-    }
+    FailureOr<LoweredOutputList> output =
+        lowerOutputListItems(ArrayRef(children).drop_front(firstItem), true);
+    if (failed(output))
+      return failure();
+    llvm::append_range(items, output->items);
+    llvm::append_range(flags, output->flags);
     auto timeMultiplier =
         function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
     if (!timeMultiplier) {

@@ -513,11 +513,12 @@ public:
       argument = insertStructValue(
           rewriter, location, argument,
           llvmIntegerConstant(rewriter, location, abi.i32, 2), 0);
-      argument =
-          insertStructValue(rewriter, location, argument,
-                            llvmIntegerConstant(rewriter, location, abi.i32,
-                                                op.getIsFormatString() ? 2 : 0),
-                            1);
+      argument = insertStructValue(
+          rewriter, location, argument,
+          llvmIntegerConstant(rewriter, location, abi.i32,
+                              (op.getIsFormatString() ? 2 : 0) |
+                                  (op.getDesignatedFormat() ? 4 : 0)),
+          1);
       argument = insertStructValue(rewriter, location, argument,
                                    extract(operands[0], 1), 2);
       argument = insertStructValue(rewriter, location, argument,
@@ -538,11 +539,12 @@ public:
       argument = insertStructValue(
           rewriter, location, argument,
           llvmIntegerConstant(rewriter, location, abi.i32, 5), 0);
-      argument =
-          insertStructValue(rewriter, location, argument,
-                            llvmIntegerConstant(rewriter, location, abi.i32,
-                                                op.getIsFormatString() ? 2 : 0),
-                            1);
+      argument = insertStructValue(
+          rewriter, location, argument,
+          llvmIntegerConstant(rewriter, location, abi.i32,
+                              (op.getIsFormatString() ? 2 : 0) |
+                                  (op.getDesignatedFormat() ? 4 : 0)),
+          1);
       argument = insertStructValue(rewriter, location, argument, *data, 3);
       rewriter.replaceOp(operation, argument);
       return success();

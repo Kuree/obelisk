@@ -88,6 +88,26 @@ func.func @bad_unknown_plane(%value: i8, %unknown: i16) {
 
 // -----
 
+func.func @bad_designated_bytes(%value: !obelisk_rt.bytes) {
+  // expected-error @+1 {{designated format must also be a format string}}
+  %argument = obelisk_rt.argument.bytes %value
+      {designated_format = true, is_format_string = false} :
+      (!obelisk_rt.bytes) -> !obelisk_rt.arg
+  return
+}
+
+// -----
+
+func.func @bad_designated_managed_string(%value: i64) {
+  // expected-error @+1 {{designated format must also be a format string}}
+  %argument = obelisk_rt.argument.managed_string %value
+      {designated_format = true, is_format_string = false} :
+      (i64) -> !obelisk_rt.arg
+  return
+}
+
+// -----
+
 func.func @double_size(%ctx: !obelisk_rt.context, %fd: !obelisk_rt.fd,
     %limit: i64) {
   // expected-error @+1 {{owned buffer requires one release and at most one size and one packed read}}
