@@ -1619,6 +1619,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       Type nestedObjectStorageType;
       unsigned nestedModeIndex;
       SmallVector<RandomObjectPathElement> nestedObjectPath;
+      bool inertClassHandles;
     };
     struct NestedObjectPlan {
       Operation *source;
@@ -1640,6 +1641,69 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVector<EffectiveConstraintGroup> constraintGroups;
     semantic::SVSubroutineSymbolOp preRandomizeHook;
     semantic::SVSubroutineSymbolOp postRandomizeHook;
+    auto hasConcreteClassCandidate =
+        [&](semantic::ClassHandleType handleType)
+        -> FailureOr<bool> {
+      auto declaredClass = semanticClasses.find(
+          handleType.getClassName().getLeafReference());
+      if (declaredClass == semanticClasses.end())
+        return failure();
+      for (semantic::SVClassTypeOp candidate : classSources) {
+        if (candidate.getIsAbstract() || candidate.getIsInterface())
+          continue;
+        SmallVector<semantic::SVClassTypeOp> candidateHierarchy;
+        if (failed(collectClassHierarchy(candidate, candidateHierarchy,
+                                         "class-handle container analysis")))
+          return failure();
+        bool compatible =
+            llvm::is_contained(candidateHierarchy, declaredClass->second);
+        if (!compatible && declaredClass->second.getIsInterface()) {
+          StringRef target =
+              handleType.getClassName().getLeafReference();
+          for (semantic::SVClassTypeOp hierarchyClass : candidateHierarchy) {
+            for (Attribute attribute :
+                 hierarchyClass.getImplementedInterfaces()) {
+              auto type = dyn_cast<TypeAttr>(attribute);
+              auto interface =
+                  type ? dyn_cast<semantic::ClassHandleType>(type.getValue())
+                       : semantic::ClassHandleType{};
+              if (interface &&
+                  interface.getClassName().getLeafReference() == target) {
+                compatible = true;
+                break;
+              }
+            }
+            if (compatible)
+              break;
+          }
+        }
+        if (compatible)
+          return true;
+      }
+      return false;
+    };
+    auto isInertClassHandleContainer =
+        [&](Type semanticContainerType,
+            Type loweredElementType) -> FailureOr<bool> {
+      if (!isa<sim::ClassHandleType>(loweredElementType))
+        return false;
+      Type semanticElementType;
+      if (auto array =
+              dyn_cast<semantic::DynArrayType>(semanticContainerType))
+        semanticElementType = array.getElementType();
+      else if (auto queue =
+                   dyn_cast<semantic::QueueType>(semanticContainerType))
+        semanticElementType = queue.getElementType();
+      auto elementHandle =
+          dyn_cast<semantic::ClassHandleType>(semanticElementType);
+      if (!elementHandle)
+        return failure();
+      FailureOr<bool> hasCandidate =
+          hasConcreteClassCandidate(elementHandle);
+      if (failed(hasCandidate))
+        return failure();
+      return !*hasCandidate;
+    };
     if (hasInlineConstraints)
       for (auto [index, child] : llvm::enumerate(callChildren))
         if (index != receiverIndex && isa<semantic::SVConstraintListOp>(child))
@@ -1731,6 +1795,23 @@ void ObeliskSimPreparePass::runOnOperation() {
                      "state";
               invalid = true;
               continue;
+            }
+            if (isa<sim::ClassHandleType>(elementType)) {
+              FailureOr<bool> inert = isInertClassHandleContainer(
+                  property.getSemanticType().value_or(Type{}), elementType);
+              if (failed(inert)) {
+                emitError(getSemanticLocation(property))
+                    << "random class-handle container has no analyzable "
+                       "element class";
+                invalid = true;
+                continue;
+              }
+              if (*inert) {
+                containerProperties.push_back(
+                    {property, field, *type, elementType, 0, modeIndex,
+                     {}, {}, {}, 0, {}, true});
+                continue;
+              }
             }
             std::optional<unsigned> elementWidth =
                 sim::getPackedWidth(elementType);
@@ -2310,6 +2391,30 @@ void ObeliskSimPreparePass::runOnOperation() {
                                   .getElementType()
                             : cast<sim::QueueType>(*recursiveType)
                                   .getElementType();
+                    FailureOr<bool> inert = isInertClassHandleContainer(
+                        *semanticRecursiveType, elementType);
+                    if (failed(inert)) {
+                      emitError(getSemanticLocation(recursiveProperty))
+                          << "recursive random class-handle container has no "
+                             "analyzable element class";
+                      return failure();
+                    }
+                    if (*inert) {
+                      containerProperties.push_back(
+                          {recursiveProperty,
+                           classFieldSymbols.lookup(recursiveProperty),
+                           *recursiveType,
+                           elementType,
+                           0,
+                           modeIndex,
+                           field,
+                           rootNestedConcreteType,
+                           objectType,
+                           leafModeIndex,
+                           path,
+                           true});
+                      continue;
+                    }
                     std::optional<unsigned> elementWidth =
                         sim::getPackedWidth(elementType);
                     if (!elementWidth || *elementWidth == 0 ||
@@ -2450,6 +2555,40 @@ void ObeliskSimPreparePass::runOnOperation() {
                                                .getElementType()
                                          : cast<sim::QueueType>(*nestedType)
                                                .getElementType();
+                  FailureOr<bool> inert = isInertClassHandleContainer(
+                      *semanticNestedType, elementType);
+                  if (failed(inert)) {
+                    emitError(getSemanticLocation(nestedProperty))
+                        << "nested random class-handle container has no "
+                           "analyzable element class";
+                    unsupportedNestedSemantics = true;
+                    continue;
+                  }
+                  if (*inert &&
+                      nestedProperty.getRandMode() !=
+                          semantic::SVRandMode::RandC &&
+                      nestedProperty.getLifetime() !=
+                          semantic::SVVariableLifetime::Static) {
+                    containerProperties.push_back(
+                        {nestedProperty,
+                         classFieldSymbols.lookup(nestedProperty),
+                         *nestedType,
+                         elementType,
+                         0,
+                         modeIndex,
+                         field,
+                         sim::ClassHandleType::get(
+                             context,
+                             FlatSymbolRefAttr::get(
+                                 context,
+                                 classSymbols.lookup(concreteClasses.front())
+                                     .getValue())),
+                         objectType,
+                         childModeIndex,
+                         {},
+                         true});
+                    continue;
+                  }
                   std::optional<unsigned> elementWidth =
                       sim::getPackedWidth(elementType);
                   if (nestedProperty.getRandMode() ==
@@ -3802,6 +3941,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder.getNamedAttr(randomPropertyModeIndexAttrName,
                                builder.getI32IntegerAttr(property.modeIndex)),
       };
+      if (property.inertClassHandles)
+        attributes.push_back(builder.getNamedAttr(
+            "inert_class_handles", builder.getUnitAttr()));
       if (property.nestedObjectField) {
         attributes.push_back(builder.getNamedAttr(
             randomNestedObjectFieldAttrName, property.nestedObjectField));

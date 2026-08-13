@@ -862,6 +862,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     unsigned nestedModeIndex;
     FlatSymbolRefAttr nestedModeField;
     SmallVector<ObjectPathElement> nestedObjectPath;
+    bool inertClassHandles;
   };
   SmallVector<ContainerProperty> plannedContainers;
   for (Attribute propertyAttr : containerProperties) {
@@ -895,6 +896,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     auto nestedObjectPathAttr =
         property ? property.getAs<ArrayAttr>(randomNestedObjectPathAttrName)
                  : ArrayAttr{};
+    bool inertClassHandles =
+        property && property.contains("inert_class_handles");
     bool isNestedObject = static_cast<bool>(nestedObjectField);
     bool hasCompleteNestedObject =
         nestedObjectField && nestedObjectTypeAttr &&
@@ -904,7 +907,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         nestedObjectStorageTypeAttr || nestedModeIndexAttr;
     if (!field || !typeAttr || !elementTypeAttr || !elementWidthAttr ||
         !modeIndexAttr || elementWidthAttr.getValue().isNegative() ||
-        elementWidthAttr.getValue().isZero() ||
+        (!inertClassHandles && elementWidthAttr.getValue().isZero()) ||
         elementWidthAttr.getValue().getActiveBits() > 32 ||
         elementWidthAttr.getValue().getZExtValue() > 64 ||
         modeIndexAttr.getValue().isNegative() ||
@@ -928,7 +931,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     uint64_t elementWidth = elementWidthAttr.getValue().getZExtValue();
     if (!containerElementType ||
         containerElementType != elementTypeAttr.getValue() ||
-        sim::getPackedWidth(elementTypeAttr.getValue()) != elementWidth) {
+        ((!inertClassHandles &&
+          sim::getPackedWidth(elementTypeAttr.getValue()) != elementWidth) ||
+         (inertClassHandles &&
+          !isa<sim::ClassHandleType>(elementTypeAttr.getValue())))) {
       emitError(location) << "random dynamic-container type is inconsistent";
       return failure();
     }
@@ -988,7 +994,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                    nestedModeIndexAttr.getValue().getZExtValue())
              : 0,
          nestedModeField,
-         std::move(nestedObjectPath)});
+         std::move(nestedObjectPath),
+         inertClassHandles});
   }
   bool hasRandC = llvm::any_of(
       planned, [](const Property &property) { return property.isRandC; });
@@ -1486,7 +1493,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   for (const Property &property : planned)
     propertyModeMask |= uint64_t{1} << property.modeIndex;
   for (const ContainerProperty &property : plannedContainers)
-    propertyModeMask |= uint64_t{1} << property.modeIndex;
+    if (!property.inertClassHandles)
+      propertyModeMask |= uint64_t{1} << property.modeIndex;
   Value relevantMode;
   if (checkerOnly)
     relevantMode = constant64(propertyModeMask);
@@ -6128,6 +6136,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   cf::BranchOp::create(builder, location, commitDone);
   setCurrent(commitDone);
   for (const ContainerProperty &property : plannedContainers) {
+    if (property.inertClassHandles)
+      continue;
     Block *enabledBlock = addBlock();
     Block *header = addBlock();
     Block *body = addBlock();
