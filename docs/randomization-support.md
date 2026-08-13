@@ -5,6 +5,16 @@ foundation from the remaining constrained-randomization work. A row is
 “executable” only when it follows the same typed Simulation IR through native
 and whole-design bytecode execution.
 
+Constraint execution includes IEEE 1800-2023 18.5.7.1 universal `foreach`
+predicates over one-dimensional dynamic arrays and queues. The live container
+size is sampled for each candidate, the declared iterator type is respected,
+and an empty container contributes the identity value `true`. Multidimensional,
+fixed-array, associative-array, and string forms remain explicit boundaries.
+The current dynamic-`foreach` solver path accepts ordinary packed random
+domains without `solve before`; finite semantic domains require a future
+domain-index traversal. It checks a complete aggregate domain through 2^20
+assignments and otherwise retains the global bounded-solver limit.
+
 | Feature | Current boundary |
 | --- | --- |
 | Generator | Executable PCG-XSH-RR with explicit `{state, increment}` state and the existing `--seed=<u64>` option. The bounded draw uses rejection debiasing. |

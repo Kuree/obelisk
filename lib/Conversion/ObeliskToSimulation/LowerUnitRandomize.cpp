@@ -8,6 +8,7 @@
 
 #include "LowerUnit.h"
 
+#include "obelisk/Dialect/ForeachLoopMetadata.h"
 #include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Solver/ConstraintSolver.h"
 
@@ -2034,11 +2035,15 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       arith::XOrIOp::create(builder, location, mutableMask, mask));
 
   bool hasSoftConstraint = false;
+  bool hasRuntimeForeachConstraint = false;
   for (auto [index, child] : llvm::enumerate(children)) {
     if (index == receiverIndex)
       continue;
     child->walk([&](semantic::SVExpressionConstraintOp expression) {
       hasSoftConstraint |= expression.getIsSoft();
+    });
+    child->walk([&](semantic::SVForeachConstraintOp) {
+      hasRuntimeForeachConstraint = true;
     });
   }
 
@@ -2223,6 +2228,12 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       llvm::erase_if(nodes,
                      [&](uint64_t node) { return (node & layer) != 0; });
     }
+  }
+  if (hasRuntimeForeachConstraint && hasSolveBefore) {
+    emitError(location)
+        << "foreach constraints combined with solve before require dynamic "
+           "ordered residual solving";
+    return failure();
   }
 
   struct EncodedInstruction {
@@ -3281,6 +3292,14 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         emitLiteral(true);
       return success();
     }
+    if (isa<semantic::SVForeachConstraintOp>(constraint)) {
+      // Runtime-sized foreach predicates are evaluated by the generated
+      // candidate checker below.  The scalar residual program deliberately
+      // contributes the identity here; its fixed capture ABI cannot encode a
+      // runtime-varying number of array elements.
+      emitLiteral(true);
+      return success();
+    }
     emitError(getSemanticLocation(constraint))
         << "constraint is not encoded by the runtime random solver: "
         << constraint->getName();
@@ -3428,6 +3447,12 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   bool hasFiniteDomains = llvm::any_of(planned, [](const Property &property) {
     return !property.domains.empty();
   });
+  if (hasRuntimeForeachConstraint && hasFiniteDomains) {
+    emitError(location)
+        << "foreach constraints over finite semantic random domains require "
+           "dynamic domain-index traversal";
+    return failure();
+  }
   if (hasFiniteDomains)
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS;
   bool wideProgram = totalWidth > 64 || llvm::any_of(
@@ -4691,7 +4716,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                 materializedCaptureBounds == analysis.captureBounds.size() &&
                 proposalAliases.size() == analysis.aliases.size() &&
                 proposalDefinitions.size() == analysis.definitions.size();
-  bool exactProposal = analysis.proposalExact && softProposalExact &&
+  bool exactProposal = !hasRuntimeForeachConstraint &&
+                       analysis.proposalExact && softProposalExact &&
                        !hasRandC && distPlans.empty() &&
                        !overwritesProposalDomain &&
                        materializesCompleteProposal;
@@ -5595,6 +5621,111 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           }
         return result;
       }
+      if (auto foreach =
+              dyn_cast<semantic::SVForeachConstraintOp>(constraint)) {
+        if (nested.size() != 2) {
+          emitError(getSemanticLocation(constraint))
+              << "foreach constraint does not contain an array and body";
+          return failure();
+        }
+        ArrayAttr metadata = foreach.getLoopDimensions();
+        if (metadata.size() != 1) {
+          emitError(getSemanticLocation(constraint))
+              << "executable foreach constraints currently require one "
+                 "array dimension";
+          return failure();
+        }
+        auto dimension = dyn_cast<DictionaryAttr>(metadata[0]);
+        auto hasIterator =
+            dimension ? dimension.getAs<BoolAttr>(
+                            foreach_metadata::hasIterator)
+                      : BoolAttr{};
+        auto hasStaticRange =
+            dimension ? dimension.getAs<BoolAttr>(
+                            foreach_metadata::hasStaticRange)
+                      : BoolAttr{};
+        auto iteratorPath =
+            dimension ? dimension.getAs<StringAttr>(
+                            foreach_metadata::iteratorPath)
+                      : StringAttr{};
+        auto semanticIteratorType =
+            dimension ? dimension.getAs<TypeAttr>(
+                            foreach_metadata::iteratorType)
+                      : TypeAttr{};
+        if (!dimension || !hasIterator || !hasIterator.getValue() ||
+            !hasStaticRange || hasStaticRange.getValue() || !iteratorPath ||
+            !semanticIteratorType) {
+          emitError(getSemanticLocation(constraint))
+              << "runtime foreach constraint metadata is malformed";
+          return failure();
+        }
+        FailureOr<Type> iteratorType = normalizeSemanticType(
+            semanticIteratorType.getValue(), getSemanticLocation(constraint));
+        FailureOr<Value> collection = lowerExpression(nested.front());
+        if (failed(iteratorType) || failed(collection))
+          return failure();
+        if (!isa<sim::DynamicArrayType, sim::QueueType>(
+                collection->getType())) {
+          emitError(getSemanticLocation(nested.front()))
+              << "runtime foreach constraint requires a dynamic array or "
+                 "queue";
+          return failure();
+        }
+
+        Location foreachLocation = getSemanticLocation(constraint);
+        Type indexType = builder.getI64Type();
+        auto indexConstant = [&](uint64_t value) -> Value {
+          return arith::ConstantOp::create(
+              builder, foreachLocation, indexType,
+              builder.getI64IntegerAttr(value));
+        };
+        Value trueValue = arith::ConstantOp::create(
+            builder, foreachLocation, builder.getI1Type(),
+            builder.getBoolAttr(true));
+        Value count = sim::SimContainerSizeOp::create(
+            builder, foreachLocation, indexType, *collection);
+        Block *header = addBlock();
+        Value ordinal = header->addArgument(indexType, foreachLocation);
+        Value accumulated =
+            header->addArgument(builder.getI1Type(), foreachLocation);
+        Block *body = addBlock();
+        Block *exit = addBlock();
+        Value result = exit->addArgument(builder.getI1Type(), foreachLocation);
+        cf::BranchOp::create(builder, foreachLocation, header,
+                             ValueRange{indexConstant(0), trueValue});
+        setCurrent(header);
+        Value more = arith::CmpIOp::create(
+            builder, foreachLocation, arith::CmpIPredicate::ult, ordinal,
+            count);
+        cf::CondBranchOp::create(builder, foreachLocation, more, body,
+                                 ValueRange{}, exit,
+                                 ValueRange{accumulated});
+
+        setCurrent(body);
+        auto previous = values.find(iteratorPath.getValue());
+        bool hadPrevious = previous != values.end();
+        Value saved = hadPrevious ? previous->second : Value{};
+        FailureOr<Value> iterator =
+            convert(ordinal, *iteratorType, true, foreachLocation, true);
+        if (failed(iterator))
+          return failure();
+        values[iteratorPath.getValue()] = *iterator;
+        FailureOr<Value> item = lowerConstraint(nested.back(), softTarget);
+        if (hadPrevious)
+          values[iteratorPath.getValue()] = saved;
+        else
+          values.erase(iteratorPath.getValue());
+        if (failed(item))
+          return failure();
+        Value nextResult = arith::AndIOp::create(
+            builder, foreachLocation, accumulated, *item);
+        Value nextOrdinal = arith::AddIOp::create(
+            builder, foreachLocation, ordinal, indexConstant(1));
+        cf::BranchOp::create(builder, foreachLocation, header,
+                             ValueRange{nextOrdinal, nextResult});
+        setCurrent(exit);
+        return result;
+      }
       emitError(getSemanticLocation(constraint))
           << "unsupported executable constraint node " << constraint->getName();
       return failure();
@@ -5888,13 +6019,24 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   // sampled domain indices for every retry.  Rejection sampling from the
   // uniform object stream preserves the required uniform distribution over
   // accepted legal assignments.
-  Value retryState = sim::SimManagedLoadOp::create(
-      builder, location, i64, stateReference);
-  Value next = nextAssignment(retryState);
-  SmallVector<Value> nextSampledDomainIndices =
-      sampleProposalDomainIndices(retryState);
-  sim::SimManagedStoreOp::create(builder, location, retryState,
-                                 stateReference);
+  Value next;
+  SmallVector<Value> nextSampledDomainIndices;
+  if (hasRuntimeForeachConstraint) {
+    // The dynamic predicate is absent from the fixed-arity residual program.
+    // Traverse the bounded aggregate domain cyclically from the initial
+    // object-stream draw so a complete domain (at most 2^20 assignments) is
+    // proved rather than probabilistically sampled with replacement.
+    next = arith::AddIOp::create(builder, location, counter, constant64(1));
+    nextSampledDomainIndices.assign(loopSampledDomainIndices.begin(),
+                                    loopSampledDomainIndices.end());
+  } else {
+    Value retryState = sim::SimManagedLoadOp::create(
+        builder, location, i64, stateReference);
+    next = nextAssignment(retryState);
+    nextSampledDomainIndices = sampleProposalDomainIndices(retryState);
+    sim::SimManagedStoreOp::create(builder, location, retryState,
+                                   stateReference);
+  }
   next = arith::OrIOp::create(
       builder, location,
       arith::AndIOp::create(builder, location, next, mutableMask),
@@ -5903,11 +6045,18 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       arith::AddIOp::create(builder, location, attempt, constant64(1));
   Value exhausted =
       arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
-                            nextAttempt, constant64(64));
+                            nextAttempt,
+                            constant64(hasRuntimeForeachConstraint
+                                           ? fallbackAttempts
+                                           : 64));
   SmallVector<Value> retryArguments{next, nextAttempt};
   llvm::append_range(retryArguments, nextSampledDomainIndices);
-  cf::CondBranchOp::create(builder, location, exhausted, fallbackBlock,
-                           ValueRange{next}, loop, retryArguments);
+  if (hasRuntimeForeachConstraint)
+    cf::CondBranchOp::create(builder, location, exhausted, failedBlock,
+                             ValueRange{}, loop, retryArguments);
+  else
+    cf::CondBranchOp::create(builder, location, exhausted, fallbackBlock,
+                             ValueRange{next}, loop, retryArguments);
 
   setCurrent(fallbackBlock);
   if (analysis.satisfiability == solver::Satisfiability::Unsatisfiable) {
@@ -5949,7 +6098,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 
   setCurrent(modeSamplingDispatchBlock);
   sim::SimManagedStoreOp::create(builder, location, modeState, stateReference);
-  if (hasSolveBefore || hasFiniteDomains)
+  if (!hasRuntimeForeachConstraint && (hasSolveBefore || hasFiniteDomains))
     cf::BranchOp::create(builder, location, modeFallbackBlock,
                          ValueRange{modeStart});
   else
@@ -5965,11 +6114,17 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                            ValueRange{modeCounter}, modeAdvance, ValueRange{});
 
   setCurrent(modeAdvance);
-  Value modeRetryState = sim::SimManagedLoadOp::create(
-      builder, location, i64, stateReference);
-  Value modeNext = nextAssignment(modeRetryState);
-  sim::SimManagedStoreOp::create(builder, location, modeRetryState,
-                                 stateReference);
+  Value modeNext;
+  if (hasRuntimeForeachConstraint) {
+    modeNext = arith::AddIOp::create(builder, location, modeCounter,
+                                     constant64(1));
+  } else {
+    Value modeRetryState = sim::SimManagedLoadOp::create(
+        builder, location, i64, stateReference);
+    modeNext = nextAssignment(modeRetryState);
+    sim::SimManagedStoreOp::create(builder, location, modeRetryState,
+                                   stateReference);
+  }
   modeNext = arith::OrIOp::create(
       builder, location,
       arith::AndIOp::create(builder, location, modeNext, mutableMask),
@@ -5978,10 +6133,18 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       arith::AddIOp::create(builder, location, modeAttempt, constant64(1));
   Value modeExhausted =
       arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
-                            modeNextAttempt, constant64(64));
-  cf::CondBranchOp::create(builder, location, modeExhausted, modeFallbackBlock,
-                           ValueRange{modeNext}, modeLoop,
-                           ValueRange{modeNext, modeNextAttempt});
+                            modeNextAttempt,
+                            constant64(hasRuntimeForeachConstraint
+                                           ? fallbackAttempts
+                                           : 64));
+  if (hasRuntimeForeachConstraint)
+    cf::CondBranchOp::create(builder, location, modeExhausted, failedBlock,
+                             ValueRange{}, modeLoop,
+                             ValueRange{modeNext, modeNextAttempt});
+  else
+    cf::CondBranchOp::create(builder, location, modeExhausted,
+                             modeFallbackBlock, ValueRange{modeNext}, modeLoop,
+                             ValueRange{modeNext, modeNextAttempt});
 
   setCurrent(modeFallbackBlock);
   if (wideProgram) {

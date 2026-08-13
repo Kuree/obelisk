@@ -3791,7 +3791,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         if (isa<semantic::SVConstraintListOp,
                 semantic::SVImplicationConstraintOp,
                 semantic::SVConditionalConstraintOp,
-                semantic::SVUniquenessConstraintOp>(nested))
+                semantic::SVUniquenessConstraintOp,
+                semantic::SVForeachConstraintOp>(nested))
           return;
         if (nested->hasTrait<OpTrait::SemanticDeclarativeNode>() &&
             !isa<semantic::SVExpressionConstraintOp>(nested)) {
