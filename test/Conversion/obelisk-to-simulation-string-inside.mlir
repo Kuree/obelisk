@@ -122,6 +122,62 @@ module attributes {
               }
             }
           }
+          obelisk.sv.statement.expression_statement attributes {
+            node_id = 23 : i64
+          } {
+            obelisk.sv.expression.assignment attributes {
+              assignment_kind = 0 : i32, is_signed = false,
+              node_id = 24 : i64,
+              semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>
+            } {
+              obelisk.sv.expression.named_value attributes {
+                is_signed = false, node_id = 25 : i64,
+                referenced_path = "top.found",
+                referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.found,
+                semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>
+              } {}
+              obelisk.sv.expression.conversion attributes {
+                is_signed = false, node_id = 26 : i64,
+                semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>
+              } {
+                obelisk.sv.expression.inside attributes {
+                  is_signed = false, item_count = 2 : i64, node_id = 27 : i64,
+                  semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+                } {
+                  obelisk.sv.expression.conversion attributes {
+                    is_signed = false, node_id = 28 : i64,
+                    semantic_type = !obelisk.string
+                  } {
+                    obelisk.sv.expression.string_literal attributes {
+                      constant_value = "RC", is_signed = false,
+                      node_id = 29 : i64,
+                      semantic_type = !obelisk.ranged_packed_array<15 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>
+                    } {}
+                  }
+                  obelisk.sv.expression.conversion attributes {
+                    is_signed = false, node_id = 30 : i64,
+                    semantic_type = !obelisk.string
+                  } {
+                    obelisk.sv.expression.string_literal attributes {
+                      constant_value = "RO", is_signed = false,
+                      node_id = 31 : i64,
+                      semantic_type = !obelisk.ranged_packed_array<15 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>
+                    } {}
+                  }
+                  obelisk.sv.expression.conversion attributes {
+                    is_signed = false, node_id = 32 : i64,
+                    semantic_type = !obelisk.string
+                  } {
+                    obelisk.sv.expression.string_literal attributes {
+                      constant_value = "RC", is_signed = false,
+                      node_id = 33 : i64,
+                      semantic_type = !obelisk.ranged_packed_array<15 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>
+                    } {}
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -129,7 +185,8 @@ module attributes {
 }
 
 // CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[ZERO:.*]] = arith.constant 0 : i32
+// CHECK-DAG: %[[TRUE:.*]] = arith.constant true
+// CHECK-DAG: %[[ZERO:.*]] = arith.constant 0 : i32
 // CHECK: %[[VALUE:.*]] = obelisk_sim.ref.load %{{.*}} : !obelisk_sim.ref<!obelisk_sim.string> -> !obelisk_sim.string
 // CHECK: %[[RO:.*]] = obelisk_sim.string.literal "RO"
 // CHECK: %[[RO_CMP:.*]] = obelisk_sim.string.compare %[[VALUE]], %[[RO]] case_insensitive = false
@@ -144,4 +201,10 @@ module attributes {
 // CHECK: %[[UPPER_CMP:.*]] = obelisk_sim.string.compare %[[VALUE]], %[[Z]] case_insensitive = false
 // CHECK: %[[BELOW:.*]] = arith.cmpi sle, %[[UPPER_CMP]], %[[ZERO]] : i32
 // CHECK: arith.andi %[[ABOVE]], %[[BELOW]] : i1
+// CHECK: obelisk_sim.ref.store %{{.*}} to %{{.*}} : i1, !obelisk_sim.ref<i1>
+// CHECK: obelisk_sim.string.literal "RC"
+// CHECK: obelisk_sim.string.literal "RO"
+// CHECK: obelisk_sim.string.literal "RC"
+// CHECK-NOT: obelisk_sim.string.compare
+// CHECK: obelisk_sim.ref.store %[[TRUE]] to %{{.*}} : i1, !obelisk_sim.ref<i1>
 // CHECK-NOT: obelisk.sv.
