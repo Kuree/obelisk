@@ -181,6 +181,34 @@ module attributes {
             sym_name = "s16.this"
           } {}
         }
+        obelisk.sv.symbol.subroutine attributes {
+          hierarchical_name = "C::wait_event", name = "wait_event",
+          node_id = 37 : i64, semantic_type = !obelisk.subroutine<() -> (), true>,
+          subroutine_kind = 1 : i32, sym_name = "s17.wait_event",
+          this_variable_path = "C::wait_event.this",
+          this_variable_symbol = @s1.$root::@s2::@s3.C::@s17.wait_event::@s18.this,
+          time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
+        } {
+          obelisk.sv.statement.timed attributes {node_id = 38 : i64} {
+            obelisk.sv.timing.signal_event attributes {
+              edge_kind = 0 : i32, has_iff = false, node_id = 39 : i64
+            } {
+              obelisk.sv.expression.named_value attributes {
+                is_signed = true, node_id = 40 : i64,
+                referenced_path = "C::flag",
+                referenced_symbol = @s1.$root::@s2::@s3.C::@s4.flag,
+                semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
+              } {}
+            }
+            obelisk.sv.statement.empty attributes {node_id = 41 : i64} {}
+          }
+          obelisk.sv.symbol.variable attributes {
+            hierarchical_name = "C::wait_event.this", is_compiler_generated,
+            is_const, name = "this", node_id = 42 : i64,
+            semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>,
+            sym_name = "s18.this"
+          } {}
+        }
         obelisk.sv.symbol.variable attributes {
           hierarchical_name = "C::this", is_compiler_generated, is_const,
           name = "this", node_id = 21 : i64,
@@ -227,6 +255,14 @@ module attributes {
 // CHECK-SAME: obelisk_sim.hierarchical_name = "C::wait_both"
 // CHECK: obelisk_sim.observer.bind
 // CHECK-SAME: !obelisk_sim.managed_watch, !obelisk_sim.managed_watch
+// CHECK: obelisk_sim.func private @unit_
+// CHECK-SAME: obelisk_sim.hierarchical_name = "C::wait_event"
+// CHECK: %[[EVENT_FIELD:.*]] = obelisk_sim.class.field_ref
+// CHECK: %[[EVENT_WATCH:.*]] = obelisk_sim.managed.watch field %[[EVENT_FIELD]]
+// CHECK: %[[EVENT_OBSERVER:.*]] = obelisk_sim.observer.bind
+// CHECK-SAME: values({{.*}}, %[[EVENT_WATCH]]
+// CHECK: obelisk_sim.suspend.observe %[[EVENT_OBSERVER]],
+// CHECK-NOT: obelisk_sim.suspend.change {{.*}}!obelisk_sim.managed_ref
 // CHECK: obelisk_sim.func private @observer_
 // CHECK-SAME: %{{.*}}: !obelisk_sim.class_handle
 // CHECK: obelisk_sim.class.field_ref %{{.*}}

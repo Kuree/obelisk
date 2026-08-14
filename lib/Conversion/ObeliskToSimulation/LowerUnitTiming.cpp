@@ -318,6 +318,35 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
     if (auto clockingEdge = children.front()->getAttrOfType<semantic::EdgeKindAttr>(
             "virtual_interface_clock_event_edge"))
       edge = static_cast<sim::EdgeKind>(clockingEdge.getValue());
+    if (!event.getHasIff() &&
+        isa<sim::ManagedRefType>((*handle).getType())) {
+      // IEEE 1800-2017 9.4.2 permits event controls on object members. A
+      // managed reference cannot survive a suspension as an interior pointer,
+      // so bind the already outlined value observer to the field's stable
+      // mutation token. The observer compares the post-write value with this
+      // initial value and therefore ignores equal-value writes as required.
+      FailureOr<Value> initial = loadReference(*handle, location);
+      if (failed(initial))
+        return failure();
+      FailureOr<Value> scalar =
+          toPackedScalar(*initial, getSemanticLocation(children.front()));
+      if (failed(scalar))
+        return failure();
+      Value watch = sim::SimManagedWatchOp::create(
+          builder, location, sim::ManagedWatchType::get(function.getContext()),
+          *handle, sim::ManagedWatchKind::Field);
+      FailureOr<Value> observer = bindObserver(children.front(), watch);
+      if (failed(observer))
+        return failure();
+      SmallVector<Value> values{*observer, *scalar};
+      llvm::append_range(values, continuationOperands);
+      sim::SimSuspendObserveOp::create(
+          builder, location, values, 0,
+          ArrayRef<int32_t>{static_cast<int32_t>(edge)},
+          ArrayRef<int32_t>{-1}, sim::ContinuationSiteAttr{},
+          sim::EventRegionAttr{}, continuation);
+      return success();
+    }
     if (!event.getHasIff()) {
       sim::EventRegionAttr resume =
           clockingBlockEvent
