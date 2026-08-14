@@ -6,6 +6,8 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
+#include "llvm/ADT/StringSwitch.h"
+
 #include <algorithm>
 #include <limits>
 #include <optional>
@@ -14,23 +16,39 @@ using namespace mlir;
 
 namespace obelisk::simlowering {
 
+namespace {
+
+enum class ArrayQueryKind {
+  Dimensions,
+  UnpackedDimensions,
+  Left,
+  Right,
+  Low,
+  High,
+  Increment,
+  Size,
+};
+
+} // namespace
+
 FailureOr<Value>
 UnitLowering::lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
   StringRef name = op.getCalleeName();
+  std::optional<ArrayQueryKind> query =
+      llvm::StringSwitch<std::optional<ArrayQueryKind>>(name)
+          .Case("$dimensions", ArrayQueryKind::Dimensions)
+          .Case("$unpacked_dimensions", ArrayQueryKind::UnpackedDimensions)
+          .Case("$left", ArrayQueryKind::Left)
+          .Case("$right", ArrayQueryKind::Right)
+          .Case("$low", ArrayQueryKind::Low)
+          .Case("$high", ArrayQueryKind::High)
+          .Case("$increment", ArrayQueryKind::Increment)
+          .Case("$size", ArrayQueryKind::Size)
+          .Default(std::nullopt);
   auto i32 = builder.getI32Type();
 
-  auto getStringLiteral = [&](Operation *child) {
-    Operation *spelling = child;
-    while (isa<semantic::SVConversionExpressionOp>(spelling)) {
-      SmallVector<Operation *> convertedChildren = getChildren(spelling);
-      if (convertedChildren.size() != 1)
-        break;
-      spelling = convertedChildren.front();
-    }
-    return dyn_cast<semantic::SVStringLiteralOp>(spelling);
-  };
   auto convertResult = [&](Value value) -> FailureOr<Value> {
     FailureOr<Type> type = getNormalizedSemanticType(op);
     if (failed(type))
@@ -39,10 +57,9 @@ UnitLowering::lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op) {
   };
 
   bool isDimensionCount =
-      name == "$dimensions" || name == "$unpacked_dimensions";
-  bool isRangeQuery = name == "$left" || name == "$right" || name == "$low" ||
-                      name == "$high" || name == "$increment" ||
-                      name == "$size";
+      query == ArrayQueryKind::Dimensions ||
+      query == ArrayQueryKind::UnpackedDimensions;
+  bool isRangeQuery = query && !isDimensionCount;
   if (isDimensionCount || isRangeQuery) {
     size_t maximumArguments = isDimensionCount ? 1 : 2;
     if (children.empty() || children.size() > maximumArguments) {
@@ -63,7 +80,7 @@ UnitLowering::lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op) {
         getSemanticDimensions(semanticType.getValue());
     if (isDimensionCount) {
       uint64_t count = dimensions.size();
-      if (name == "$unpacked_dimensions") {
+      if (query == ArrayQueryKind::UnpackedDimensions) {
         count = 0;
         for (const SemanticDimension &dimension : dimensions) {
           if (!dimension.unpacked)
@@ -99,15 +116,15 @@ UnitLowering::lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op) {
       if (!dimension.isFixed())
         return std::nullopt;
       int64_t value;
-      if (name == "$left")
+      if (query == ArrayQueryKind::Left)
         value = dimension.left;
-      else if (name == "$right")
+      else if (query == ArrayQueryKind::Right)
         value = dimension.right;
-      else if (name == "$low")
+      else if (query == ArrayQueryKind::Low)
         value = std::min(dimension.left, dimension.right);
-      else if (name == "$high")
+      else if (query == ArrayQueryKind::High)
         value = std::max(dimension.left, dimension.right);
-      else if (name == "$increment")
+      else if (query == ArrayQueryKind::Increment)
         value = dimension.left >= dimension.right ? 1 : -1;
       else {
         std::optional<uint64_t> extent =
@@ -119,29 +136,13 @@ UnitLowering::lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op) {
       return APInt(32, static_cast<uint64_t>(value), true);
     };
 
-    // A string has one packed, runtime-sized dimension. A literal string is
-    // nevertheless a known object value and can be answered here without
-    // introducing a runtime string representation.
-    auto stringLiteral = getStringLiteral(children.front());
-    auto queryValue =
-        [&](const SemanticDimension &dimension) -> std::optional<APInt> {
-      if (std::optional<APInt> value = fixedQueryValue(dimension))
-        return value;
-      if (dimension.kind != SemanticDimensionKind::String || !stringLiteral)
-        return std::nullopt;
-      uint64_t size = stringLiteral.getConstantValue().size();
-      if (name == "$left" || name == "$low")
-        return APInt(32, 0);
-      if (name == "$right" || name == "$high")
-        return APInt(32, size - 1);
-      if (name == "$increment")
-        return APInt(32, static_cast<uint64_t>(-1), true);
-      return APInt(32, size);
-    };
-
     SmallVector<Value> values;
-    values.reserve(dimensions.size());
-    for (auto [dimensionIndex, dimension] : llvm::enumerate(dimensions)) {
+    ArrayRef<SemanticDimension> queriedDimensions = dimensions;
+    if (children.size() == 1)
+      queriedDimensions = queriedDimensions.take_front(1);
+    values.reserve(queriedDimensions.size());
+    for (auto [dimensionIndex, dimension] :
+         llvm::enumerate(queriedDimensions)) {
       if (dimension.kind == SemanticDimensionKind::AssociativeArray &&
           dimensionIndex == 0) {
         FailureOr<Type> normalizedIndex =
@@ -167,24 +168,24 @@ UnitLowering::lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op) {
                  "array queries";
           return failure();
         }
-        if (name == "$size") {
+        if (query == ArrayQueryKind::Size) {
           Value size = sim::SimContainerSizeOp::create(
               builder, location, builder.getI64Type(), *container);
           return convertResult(size);
         }
-        if (name == "$left")
+        if (query == ArrayQueryKind::Left)
           return convertResult(arith::ConstantOp::create(
               builder, location, i32, builder.getI32IntegerAttr(0)));
-        if (name == "$right")
+        if (query == ArrayQueryKind::Right)
           return convertResult(arith::ConstantOp::create(
               builder, location, i32, builder.getI32IntegerAttr(-1)));
-        if (name == "$increment")
+        if (query == ArrayQueryKind::Increment)
           return convertResult(arith::ConstantOp::create(
               builder, location, i32, builder.getI32IntegerAttr(-1)));
 
         Value defaultKey =
             createDefaultValue(builder, location, associative.getKeyType());
-        bool first = name == "$low";
+        bool first = query == ArrayQueryKind::Low;
         FailureOr<std::pair<Value, Value>> traversed = traverseAssoc(
             *container, defaultKey, first ? 1 : -1, true, location);
         if (failed(traversed))
@@ -213,26 +214,40 @@ UnitLowering::lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op) {
             .getResult();
       }
       if ((dimension.kind == SemanticDimensionKind::DynamicArray ||
-           dimension.kind == SemanticDimensionKind::Queue) &&
+           dimension.kind == SemanticDimensionKind::Queue ||
+           dimension.kind == SemanticDimensionKind::String) &&
           dimensionIndex == 0) {
-        FailureOr<Value> container = lowerExpression(children.front());
-        if (failed(container) || !isa<sim::DynamicArrayType, sim::QueueType>(
-                                     (*container).getType())) {
-          emitError(getSemanticLocation(children.front()))
-              << name << " requires a sequential container value";
+        FailureOr<Value> object = lowerExpression(children.front());
+        if (failed(object))
           return failure();
+        Value runtimeSize;
+        if (dimension.kind == SemanticDimensionKind::String) {
+          if (!isa<sim::StringType>((*object).getType())) {
+            emitError(getSemanticLocation(children.front()))
+                << name << " requires a string value";
+            return failure();
+          }
+          runtimeSize = sim::SimStringLengthOp::create(
+              builder, location, builder.getI64Type(), *object);
+        } else {
+          if (!isa<sim::DynamicArrayType, sim::QueueType>(
+                  (*object).getType())) {
+            emitError(getSemanticLocation(children.front()))
+                << name << " requires a sequential container value";
+            return failure();
+          }
+          runtimeSize = sim::SimContainerSizeOp::create(
+              builder, location, builder.getI64Type(), *object);
         }
-        Value runtimeSize = sim::SimContainerSizeOp::create(
-            builder, location, builder.getI64Type(), *container);
         Value queried;
-        if (name == "$left" || name == "$low")
+        if (query == ArrayQueryKind::Left || query == ArrayQueryKind::Low)
           queried = arith::ConstantOp::create(builder, location, i32,
                                               builder.getI32IntegerAttr(0));
-        else if (name == "$increment")
+        else if (query == ArrayQueryKind::Increment)
           queried = arith::ConstantOp::create(builder, location, i32,
                                               builder.getI32IntegerAttr(-1));
         else {
-          if (name != "$size") {
+          if (query != ArrayQueryKind::Size) {
             Value one = arith::ConstantOp::create(builder, location,
                                                   builder.getI64Type(),
                                                   builder.getI64IntegerAttr(1));
@@ -245,7 +260,7 @@ UnitLowering::lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op) {
         values.push_back(queried);
         continue;
       }
-      std::optional<APInt> value = queryValue(dimension);
+      std::optional<APInt> value = fixedQueryValue(dimension);
       if (!value) {
         emitError(getSemanticLocation(children.front()))
             << name

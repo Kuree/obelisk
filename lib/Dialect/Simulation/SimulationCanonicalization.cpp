@@ -1698,6 +1698,22 @@ struct FoldStringCompare final : OpRewritePattern<SimStringCompareOp> {
   }
 };
 
+struct FoldStringLength final : OpRewritePattern<SimStringLengthOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimStringLengthOp op,
+                                PatternRewriter &rewriter) const override {
+    auto literal = op.getInput().getDefiningOp<SimStringLiteralOp>();
+    if (!literal)
+      return failure();
+
+    rewriter.replaceOpWithNewOp<arith::ConstantOp>(
+        op, rewriter.getI64Type(),
+        rewriter.getI64IntegerAttr(literal.getValue().size()));
+    return success();
+  }
+};
+
 } // namespace
 
 void SimPackedFlattenOp::getCanonicalizationPatterns(RewritePatternSet &results,
@@ -1770,6 +1786,11 @@ void SimLogicBinaryOp::getCanonicalizationPatterns(RewritePatternSet &results,
 void SimStringCompareOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
   results.add<FoldStringCompare>(context);
+}
+
+void SimStringLengthOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results.add<FoldStringLength>(context);
 }
 
 void SimLogicCompareOp::getCanonicalizationPatterns(RewritePatternSet &results,

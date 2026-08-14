@@ -858,6 +858,7 @@ def SimStringLengthOp : SimOp<"string.length", [Pure]> {
   let summary = "return the byte length of a managed string";
   let arguments = (ins SimStringType:$input);
   let results = (outs I64:$result);
+  let hasCanonicalizer = 1;
 }
 
 def SimStringGetcOp : SimOp<"string.getc", [Pure]> {

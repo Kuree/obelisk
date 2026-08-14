@@ -18,6 +18,10 @@ module {
         }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_array_query_system_functions.result", lifetime = 1 : i32, name = "result", node_id = 7 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s7.result"} {
         }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_array_query_system_functions.text", lifetime = 1 : i32, name = "text", node_id = 64 : i64, semantic_type = !obelisk.string, sym_name = "s64.text"} {
+        }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_array_query_system_functions.texts", lifetime = 1 : i32, name = "texts", node_id = 71 : i64, semantic_type = !obelisk.queue<!obelisk.string, 0>, sym_name = "s71.texts"} {
+        }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "simulation_array_query_system_functions", node_id = 8 : i64, procedure_kind = 0 : i32, sym_name = "s8", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 9 : i64} {
             obelisk.sv.statement.list attributes {node_id = 10 : i64} {
@@ -127,6 +131,30 @@ module {
                   }
                 }
               }
+              obelisk.sv.statement.expression_statement attributes {node_id = 65 : i64} {
+                obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 66 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  obelisk.sv.expression.named_value attributes {node_id = 67 : i64, referenced_path = "simulation_array_query_system_functions.result", referenced_symbol = @s1.$root::@s3.simulation_array_query_system_functions::@s4.simulation_array_query_system_functions::@s7.result, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  }
+                  obelisk.sv.expression.conversion attributes {node_id = 68 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "$right", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 69 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>, subroutine_kind = 0 : i32, system_library_cell = "work.simulation_array_query_system_functions", system_scope_path = "simulation_array_query_system_functions", system_scope_symbol = @s1.$root::@s3.simulation_array_query_system_functions::@s4.simulation_array_query_system_functions} {
+                      obelisk.sv.expression.named_value attributes {node_id = 70 : i64, referenced_path = "simulation_array_query_system_functions.text", referenced_symbol = @s1.$root::@s3.simulation_array_query_system_functions::@s4.simulation_array_query_system_functions::@s64.text, semantic_type = !obelisk.string} {
+                      }
+                    }
+                  }
+                }
+              }
+              obelisk.sv.statement.expression_statement attributes {node_id = 72 : i64} {
+                obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 73 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  obelisk.sv.expression.named_value attributes {node_id = 74 : i64, referenced_path = "simulation_array_query_system_functions.result", referenced_symbol = @s1.$root::@s3.simulation_array_query_system_functions::@s4.simulation_array_query_system_functions::@s7.result, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  }
+                  obelisk.sv.expression.conversion attributes {node_id = 75 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "$right", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 76 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>, subroutine_kind = 0 : i32, system_library_cell = "work.simulation_array_query_system_functions", system_scope_path = "simulation_array_query_system_functions", system_scope_symbol = @s1.$root::@s3.simulation_array_query_system_functions::@s4.simulation_array_query_system_functions} {
+                      obelisk.sv.expression.named_value attributes {node_id = 77 : i64, referenced_path = "simulation_array_query_system_functions.texts", referenced_symbol = @s1.$root::@s3.simulation_array_query_system_functions::@s4.simulation_array_query_system_functions::@s71.texts, semantic_type = !obelisk.queue<!obelisk.string, 0>} {
+                      }
+                    }
+                  }
+                }
+              }
             }
           }
         }
@@ -142,8 +170,17 @@ module {
 // CHECK: obelisk_sim.ref.store %[[DIMENSIONS]]
 // CHECK-NEXT: obelisk_sim.ref.store %[[UNPACKED]]
 // CHECK-NEXT: obelisk_sim.ref.store %[[LEFT]]
+// A runtime string uses its current byte length, and an empty string naturally
+// produces the required right bound of -1.
+// CHECK: %[[STRING_LENGTH:.*]] = obelisk_sim.string.length
+// CHECK: %[[STRING_RIGHT:.*]] = arith.subi %[[STRING_LENGTH]], {{.*}} : i64
+// CHECK: arith.trunci %[[STRING_RIGHT]] : i64 to i32
+// The omitted dimension argument queries only dimension 1; a queue of strings
+// therefore does not inspect its variable-sized element dimension.
+// CHECK: %[[QUEUE_SIZE:.*]] = obelisk_sim.container.size
+// CHECK: arith.subi %[[QUEUE_SIZE]], {{.*}} : i64
 // CHECK-NOT: obelisk.sv.
-// LOADS-COUNT-5: obelisk_sim.ref.load
+// LOADS-COUNT-7: obelisk_sim.ref.load
 // COMPARES-COUNT-15: obelisk_sim.logic.compare case_eq
 // SELECTS-COUNT-15: arith.select
 // TO-BITS-COUNT-5: obelisk_sim.logic.to_bits
