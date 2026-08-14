@@ -66,6 +66,12 @@ ABI_OFFSET(obelisk_rt_random_variable_v1, randc_key_offset, 24);
 ABI_OFFSET(obelisk_rt_random_variable_v1, randc_position_offset, 32);
 ABI_OFFSET(obelisk_rt_random_variable_v1, bit_width, 40);
 ABI_OFFSET(obelisk_rt_random_variable_v1, flags, 44);
+ABI_SIZE_ALIGN(obelisk_rt_random_variable_reference_v1, 32, 8);
+ABI_OFFSET(obelisk_rt_random_variable_reference_v1, handle_offsets, 0);
+ABI_OFFSET(obelisk_rt_random_variable_reference_v1, handle_count, 8);
+ABI_OFFSET(obelisk_rt_random_variable_reference_v1, value_offset, 16);
+ABI_OFFSET(obelisk_rt_random_variable_reference_v1, bit_width, 24);
+ABI_OFFSET(obelisk_rt_random_variable_reference_v1, flags, 28);
 ABI_SIZE_ALIGN(obelisk_rt_random_layout_v1, 40, 8);
 ABI_OFFSET(obelisk_rt_random_layout_v1, version, 0);
 ABI_OFFSET(obelisk_rt_random_layout_v1, reserved, 4);
@@ -1252,6 +1258,12 @@ ABI_FUNCTION(obelisk_rt_v1_random_graph_variable,
                  const obelisk_rt_random_graph_v1 *, uint64_t,
                  obelisk_rt_object_v1 **,
                  const obelisk_rt_random_variable_v1 **));
+ABI_FUNCTION(obelisk_rt_v1_random_graph_resolve_variable,
+             obelisk_rt_status (*)(
+                 const obelisk_rt_random_graph_v1 *, uint64_t,
+                 const obelisk_rt_random_variable_reference_v1 *,
+                 obelisk_rt_object_v1 **,
+                 const obelisk_rt_random_variable_v1 **, uint64_t *));
 ABI_FUNCTION(obelisk_rt_v1_element_type_validate,
              obelisk_rt_status (*)(const obelisk_rt_element_type_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_element_type_register,

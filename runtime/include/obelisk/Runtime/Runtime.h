@@ -213,6 +213,19 @@ typedef struct obelisk_rt_random_variable_v1 {
   uint32_t flags;
 } obelisk_rt_random_variable_v1;
 
+// One object-relative reference used by a relocatable random-constraint
+// template. Starting from a graph object, handle_offsets follows strong class
+// fields to the object that owns the referenced random variable. An empty path
+// denotes the starting object. The remaining fields identify that variable
+// exactly in its declaring class layout.
+typedef struct obelisk_rt_random_variable_reference_v1 {
+  const uint64_t *handle_offsets;
+  uint64_t handle_count;
+  uint64_t value_offset;
+  uint32_t bit_width;
+  uint32_t flags;
+} obelisk_rt_random_variable_reference_v1;
+
 typedef struct obelisk_rt_random_layout_v1 {
   uint32_t version;
   uint32_t reserved;
@@ -1717,6 +1730,17 @@ obelisk_rt_status obelisk_rt_v1_random_graph_variable(
     const obelisk_rt_random_graph_v1 *graph, uint64_t index,
     obelisk_rt_object_v1 **out_object,
     const obelisk_rt_random_variable_v1 **out_variable);
+// Resolve a template reference from one graph object. `out_graph_index` is the
+// flattened active-variable index, or UINT64_MAX when the referenced variable
+// is currently a state variable because its rand_mode is disabled. Every path
+// target must belong to the active graph; null or inactive handles are invalid
+// here and are represented by separate state-capture template operands.
+obelisk_rt_status obelisk_rt_v1_random_graph_resolve_variable(
+    const obelisk_rt_random_graph_v1 *graph, uint64_t origin_index,
+    const obelisk_rt_random_variable_reference_v1 *reference,
+    obelisk_rt_object_v1 **out_object,
+    const obelisk_rt_random_variable_v1 **out_variable,
+    uint64_t *out_graph_index);
 
 // Validate and register immutable compiler-emitted element metadata. Repeated
 // registration of an equivalent descriptor is accepted; conflicting use of a

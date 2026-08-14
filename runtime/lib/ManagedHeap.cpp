@@ -42,6 +42,9 @@ constexpr uint64_t kMinimumCollectionBytes = 32 * 1024 * 1024;
 constexpr uint64_t kMaximumSmallSlot = 32 * 1024;
 constexpr unsigned kSizeClassCount = 11; // 32 bytes through 32 KiB.
 constexpr size_t kEmptyChunkCache = 2;
+constexpr uint32_t kRandomVariableFlags =
+    OBELISK_RT_RANDOM_VARIABLE_FOUR_STATE |
+    OBELISK_RT_RANDOM_VARIABLE_SIGNED | OBELISK_RT_RANDOM_VARIABLE_RANDC;
 
 static_assert(kSpansPerChunk == 32);
 
@@ -1841,9 +1844,6 @@ obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor) {
       OBELISK_RT_CLASS_FINAL | OBELISK_RT_CLASS_WEAK_WRAPPER;
   constexpr uint32_t validMethodFlags =
       OBELISK_RT_METHOD_TASK | OBELISK_RT_METHOD_PURE;
-  constexpr uint32_t validRandomVariableFlags =
-      OBELISK_RT_RANDOM_VARIABLE_FOUR_STATE |
-      OBELISK_RT_RANDOM_VARIABLE_SIGNED | OBELISK_RT_RANDOM_VARIABLE_RANDC;
   if (!descriptor)
     return OBELISK_RT_INVALID_DESIGN;
 
@@ -1965,7 +1965,7 @@ obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor) {
                 ? valueSize * 2
                 : valueSize;
         if (variable.bit_width == 0 ||
-            (variable.flags & ~validRandomVariableFlags) != 0 ||
+            (variable.flags & ~kRandomVariableFlags) != 0 ||
             variable.value_offset < sizeof(void *) ||
             variable.mode_offset < sizeof(void *) ||
             variable.mode_offset % alignof(uint64_t) != 0 ||
@@ -2448,6 +2448,95 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_graph_variable(
       graph->variables[index];
   *outObject = binding.object;
   *outVariable = binding.variable;
+  return OBELISK_RT_OK;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_random_graph_resolve_variable(
+    const obelisk_rt_random_graph_v1 *graph, uint64_t originIndex,
+    const obelisk_rt_random_variable_reference_v1 *reference,
+    obelisk_rt_object_v1 **outObject,
+    const obelisk_rt_random_variable_v1 **outVariable,
+    uint64_t *outGraphIndex) {
+  if (!outObject || !outVariable || !outGraphIndex)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outObject = nullptr;
+  *outVariable = nullptr;
+  *outGraphIndex = UINT64_MAX;
+  if (!graph || originIndex >= graph->objects.size() || !reference ||
+      (reference->handle_count == 0) !=
+          (reference->handle_offsets == nullptr) ||
+      reference->bit_width == 0 ||
+      (reference->flags & ~kRandomVariableFlags) != 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+
+  obelisk_rt_object_v1 *object = graph->objects[originIndex].object;
+  for (uint64_t index = 0; index != reference->handle_count; ++index) {
+    ObjectMetadata *metadata = metadataFor(object);
+    uint64_t offset = reference->handle_offsets[index];
+    if (!metadata || !metadata->heap ||
+        metadata->heap->ownerContext() != graph->context ||
+        metadata->kind != OBELISK_RT_MANAGED_CLASS || !metadata->descriptor ||
+        !layoutHasStrongHandleAt(metadata->descriptor->layout, 0, offset,
+                                 OBELISK_RT_MANAGED_SLOT_CLASS))
+      return OBELISK_RT_INVALID_ARGUMENT;
+    obelisk_rt_object_v1 *next = nullptr;
+    {
+      ObjectLock lock(metadata);
+      const uint8_t *bytes = reinterpret_cast<const uint8_t *>(object);
+      std::memcpy(&next, bytes + offset, sizeof(next));
+    }
+    if (!next)
+      return OBELISK_RT_INVALID_HANDLE;
+    ObjectMetadata *nextMetadata = metadataFor(next);
+    if (!nextMetadata || !nextMetadata->heap ||
+        nextMetadata->heap->ownerContext() != graph->context ||
+        nextMetadata->kind != OBELISK_RT_MANAGED_CLASS)
+      return OBELISK_RT_INVALID_HANDLE;
+    object = next;
+  }
+
+  ObjectMetadata *metadata = metadataFor(object);
+  if (!metadata || !metadata->heap ||
+      metadata->heap->ownerContext() != graph->context ||
+      metadata->kind != OBELISK_RT_MANAGED_CLASS || !metadata->descriptor)
+    return OBELISK_RT_INVALID_HANDLE;
+  bool activeObject = false;
+  for (const auto &binding : graph->objects)
+    if (binding.object == object) {
+      activeObject = true;
+      break;
+    }
+  if (!activeObject)
+    return OBELISK_RT_INVALID_HANDLE;
+  const obelisk_rt_random_variable_v1 *resolved = nullptr;
+  for (const obelisk_rt_class_descriptor_v1 *descriptor = metadata->descriptor;
+       descriptor && !resolved; descriptor = descriptor->base) {
+    const obelisk_rt_random_layout_v1 *random = descriptor->random_layout;
+    if (!random)
+      continue;
+    for (uint64_t index = 0; index != random->variable_count; ++index) {
+      const obelisk_rt_random_variable_v1 &candidate =
+          random->variables[index];
+      if (candidate.value_offset == reference->value_offset &&
+          candidate.bit_width == reference->bit_width &&
+          candidate.flags == reference->flags) {
+        resolved = &candidate;
+        break;
+      }
+    }
+  }
+  if (!resolved)
+    return OBELISK_RT_INVALID_ARGUMENT;
+
+  for (uint64_t index = 0; index != graph->variables.size(); ++index) {
+    const auto &binding = graph->variables[index];
+    if (binding.object == object && binding.variable == resolved) {
+      *outGraphIndex = index;
+      break;
+    }
+  }
+  *outObject = object;
+  *outVariable = resolved;
   return OBELISK_RT_OK;
 }
 

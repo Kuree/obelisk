@@ -3512,6 +3512,75 @@ TEST_F(ManagedHeapTest, DiscoversActiveRandomObjectGraphByIdentity) {
   EXPECT_EQ(variableObject, nullptr);
   EXPECT_EQ(variable, nullptr);
 
+  obelisk_rt_object_v1 *referencedObject = nullptr;
+  const obelisk_rt_random_variable_v1 *referencedVariable = nullptr;
+  uint64_t graphVariableIndex = UINT64_MAX;
+  const obelisk_rt_random_variable_reference_v1 rootValueReference{
+      nullptr,
+      0,
+      kRandomNodeValueOffset,
+      64,
+      OBELISK_RT_RANDOM_VARIABLE_SIGNED};
+  ASSERT_EQ(obelisk_rt_v1_random_graph_resolve_variable(
+                graph, 0, &rootValueReference, &referencedObject,
+                &referencedVariable, &graphVariableIndex),
+            OBELISK_RT_OK);
+  EXPECT_EQ(referencedObject, root);
+  EXPECT_EQ(referencedVariable, &randomNodeVariable);
+  EXPECT_EQ(graphVariableIndex, 0u);
+
+  const uint64_t childPath[]{kNodeLinkOffset};
+  const obelisk_rt_random_variable_reference_v1 childValueReference{
+      childPath,
+      std::size(childPath),
+      kRandomNodeValueOffset,
+      64,
+      OBELISK_RT_RANDOM_VARIABLE_SIGNED};
+  ASSERT_EQ(obelisk_rt_v1_random_graph_resolve_variable(
+                graph, 0, &childValueReference, &referencedObject,
+                &referencedVariable, &graphVariableIndex),
+            OBELISK_RT_OK);
+  EXPECT_EQ(referencedObject, child);
+  EXPECT_EQ(referencedVariable, &randomNodeVariable);
+  EXPECT_EQ(graphVariableIndex, 2u);
+  EXPECT_EQ(obelisk_rt_v1_random_graph_resolve_variable(
+                graph, 2, &childValueReference, &referencedObject,
+                &referencedVariable, &graphVariableIndex),
+            OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(referencedObject, nullptr);
+  EXPECT_EQ(referencedVariable, nullptr);
+  EXPECT_EQ(graphVariableIndex, UINT64_MAX);
+
+  const uint64_t aliasPath[]{kNodeLinkOffset, kNodeLinkOffset};
+  const obelisk_rt_random_variable_reference_v1 aliasValueReference{
+      aliasPath,
+      std::size(aliasPath),
+      kRandomNodeValueOffset,
+      64,
+      OBELISK_RT_RANDOM_VARIABLE_SIGNED};
+  ASSERT_EQ(obelisk_rt_v1_random_graph_resolve_variable(
+                graph, 0, &aliasValueReference, &referencedObject,
+                &referencedVariable, &graphVariableIndex),
+            OBELISK_RT_OK);
+  EXPECT_EQ(referencedObject, root);
+  EXPECT_EQ(referencedVariable, &randomNodeVariable);
+  EXPECT_EQ(graphVariableIndex, 0u);
+
+  const uint64_t invalidPath[]{kRandomNodeValueOffset};
+  const obelisk_rt_random_variable_reference_v1 invalidReference{
+      invalidPath,
+      std::size(invalidPath),
+      kRandomNodeValueOffset,
+      64,
+      OBELISK_RT_RANDOM_VARIABLE_SIGNED};
+  EXPECT_EQ(obelisk_rt_v1_random_graph_resolve_variable(
+                graph, 0, &invalidReference, &referencedObject,
+                &referencedVariable, &graphVariableIndex),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(referencedObject, nullptr);
+  EXPECT_EQ(referencedVariable, nullptr);
+  EXPECT_EQ(graphVariableIndex, UINT64_MAX);
+
   // The graph owns exact roots while callers compose a solver plan.
   ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
   EXPECT_NE(obelisk_rt_v1_object_id(root), 0u);
@@ -3537,6 +3606,20 @@ TEST_F(ManagedHeapTest, DiscoversActiveRandomObjectGraphByIdentity) {
             OBELISK_RT_OK);
   EXPECT_EQ(variableObject, root);
   EXPECT_EQ(variable, &randomDerivedVariable);
+  ASSERT_EQ(obelisk_rt_v1_random_graph_resolve_variable(
+                graph, 0, &rootValueReference, &referencedObject,
+                &referencedVariable, &graphVariableIndex),
+            OBELISK_RT_OK);
+  EXPECT_EQ(referencedObject, root);
+  EXPECT_EQ(referencedVariable, &randomNodeVariable);
+  EXPECT_EQ(graphVariableIndex, UINT64_MAX);
+  EXPECT_EQ(obelisk_rt_v1_random_graph_resolve_variable(
+                graph, 0, &childValueReference, &referencedObject,
+                &referencedVariable, &graphVariableIndex),
+            OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(referencedObject, nullptr);
+  EXPECT_EQ(referencedVariable, nullptr);
+  EXPECT_EQ(graphVariableIndex, UINT64_MAX);
   obelisk_rt_v1_random_graph_destroy(graph);
 }
 
