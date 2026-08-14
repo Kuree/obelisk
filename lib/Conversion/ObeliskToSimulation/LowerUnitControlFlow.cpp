@@ -249,15 +249,21 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
                                        builder.getI64IntegerAttr(value));
     };
 
-    std::function<LogicalResult(unsigned, Value, Block *)> emitDimension =
+    std::function<LogicalResult(unsigned, Value, Block *, ValueRange)>
+        emitDimension =
         [&](unsigned dimensionIndex, Value currentCollection,
-            Block *parentStep) -> LogicalResult {
+            Block *parentStep,
+            ValueRange parentStepOperands) -> LogicalResult {
       if (dimensionIndex == dimensions.size()) {
         if (!parentStep) {
           emitError(location) << "runtime foreach has no iterated dimension";
           return failure();
         }
-        loopTargets.push_back({exit, parentStep, {}, controlScopes.size()});
+        loopTargets.push_back(
+            {exit, parentStep,
+             SmallVector<Value>(parentStepOperands.begin(),
+                                parentStepOperands.end()),
+             controlScopes.size()});
         LogicalResult status = lowerStatement(children[1]);
         loopTargets.pop_back();
         return status;
@@ -275,7 +281,7 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
         // binding.
         if (!traverseOmitted)
           return emitDimension(dimensionIndex + 1, currentCollection,
-                               parentStep);
+                               parentStep, parentStepOperands);
       }
 
       if (dimension.runtime &&
@@ -323,7 +329,8 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
           nestedCollection = sim::SimAssocReadOp::create(
               builder, location, associative.getElementType(),
               currentCollection, key);
-        if (failed(emitDimension(dimensionIndex + 1, nestedCollection, step)))
+        if (failed(emitDimension(dimensionIndex + 1, nestedCollection, step,
+                                 ValueRange{key})))
           return failure();
         if (dimension.hasIterator) {
           if (hadPrevious)
@@ -434,7 +441,8 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
               builder, location, fixed.getElementType(), currentCollection,
               sourceIndex);
       }
-      if (failed(emitDimension(dimensionIndex + 1, nestedCollection, step)))
+      if (failed(emitDimension(dimensionIndex + 1, nestedCollection, step,
+                               ValueRange{})))
         return failure();
       if (dimension.hasIterator) {
         if (hadPrevious)
@@ -454,7 +462,7 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
       return success();
     };
 
-    if (failed(emitDimension(0, *collection, nullptr)))
+    if (failed(emitDimension(0, *collection, nullptr, ValueRange{})))
       return failure();
     setCurrent(exit);
     return success();
