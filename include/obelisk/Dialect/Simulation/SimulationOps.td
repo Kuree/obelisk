@@ -368,6 +368,8 @@ def SimClassDeclOp : SimOp<"class.decl", [
     OptionalAttr<FlatSymbolRefAttr>:$base,
     OptionalAttr<ArrayAttr>:$interfaces,
     OptionalAttr<FlatSymbolRefAttr>:$weak_referent,
+    OptionalAttr<SimRandomVariableReferenceArrayAttr>:
+        $random_variable_references,
     BoolAttr:$is_abstract,
     BoolAttr:$is_interface,
     BoolAttr:$is_final,

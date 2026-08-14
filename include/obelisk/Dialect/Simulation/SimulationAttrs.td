@@ -90,6 +90,35 @@ def SimFieldAttr : SimAttr<"Field", "field"> {
   let genVerifyDecl = 1;
 }
 
+// A constraint template is defined relative to one active object.  Keep its
+// object traversal symbolic until a target-specific class layout is available:
+// every path component and the terminal variable name a class-field
+// declaration, never a byte offset.  An empty path denotes a variable on the
+// origin object itself.
+def SimRandomVariableReferenceAttr
+    : SimAttr<"RandomVariableReference", "random_variable_reference"> {
+  let summary = "object-relative symbolic random-variable reference";
+  let description = [{
+    Identifies one packed rand or randc field relative to the object owning a
+    randomization constraint template. `path` follows strong rand class-handle
+    fields in source order; `target` names the terminal packed random field.
+    The owning class operation verifies the complete static type chain.
+  }];
+  let parameters = (ins
+    OptionalArrayRefParameter<"::mlir::FlatSymbolRefAttr">:$path,
+    "::mlir::FlatSymbolRefAttr":$target
+  );
+  let assemblyFormat =
+      "`<` (`path` `=` `[` $path^ `]` `,`)? `target` `=` $target `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimRandomVariableReferenceArrayAttr
+    : TypedArrayAttrBase<SimRandomVariableReferenceAttr,
+                         "random-variable reference array"> {
+  let constBuilderCall = "$_builder.getArrayAttr($0)";
+}
+
 def SimComputeEffectAttr : SimAttr<"ComputeEffect", "effect"> {
   let parameters = (ins
     EnumParameter<SimComputeEffectKind>:$effect,

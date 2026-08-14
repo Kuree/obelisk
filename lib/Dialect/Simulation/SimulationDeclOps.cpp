@@ -267,6 +267,13 @@ static SimClassDeclOp lookupClass(Operation *operation, SymbolRefAttr symbol) {
                 : SimClassDeclOp{};
 }
 
+static SimClassFieldDeclOp lookupClassField(Operation *operation,
+                                            SymbolRefAttr symbol) {
+  return symbol ? SymbolTable::lookupNearestSymbolFrom<SimClassFieldDeclOp>(
+                      operation, symbol)
+                : SimClassFieldDeclOp{};
+}
+
 static bool classDerivesFrom(SimClassDeclOp derived, SimClassDeclOp base) {
   llvm::SmallPtrSet<Operation *, 8> visited;
   for (SimClassDeclOp current = derived;
@@ -314,6 +321,55 @@ LogicalResult SimClassDeclOp::verify() {
       return emitOpError(
           "random mode field must name an instance i64 field owned by the "
           "root class");
+  }
+  if (ArrayAttr references = getRandomVariableReferencesAttr()) {
+    if (references.empty())
+      return emitOpError(
+          "random-variable reference inventory must be absent when empty");
+    llvm::SmallDenseSet<Attribute> unique;
+    for (Attribute attribute : references) {
+      auto reference = cast<RandomVariableReferenceAttr>(attribute);
+      if (!unique.insert(reference).second)
+        return emitOpError(
+            "random-variable reference inventory contains a duplicate");
+
+      SimClassDeclOp current = *this;
+      for (FlatSymbolRefAttr pathComponent : reference.getPath()) {
+        SimClassFieldDeclOp field = lookupClassField(*this, pathComponent);
+        SimClassDeclOp fieldOwner =
+            field ? lookupClass(field, field.getOwnerAttr()) : SimClassDeclOp{};
+        if (!field || !fieldOwner || !classDerivesFrom(current, fieldOwner))
+          return emitOpError()
+                 << "random-variable reference path field " << pathComponent
+                 << " is not visible from class " << current.getSymName();
+        auto handle = dyn_cast<ClassHandleType>(field.getType());
+        if (field.getIsStatic() || field.getIsWeak() || !handle ||
+            !field->hasAttr(metadata::randomObjectEdge))
+          return emitOpError()
+                 << "random-variable reference path field " << pathComponent
+                 << " must be a strong rand object edge";
+        current = lookupClass(field, handle.getClassName());
+        if (!current)
+          return emitOpError()
+                 << "random-variable reference path field " << pathComponent
+                 << " has an unknown class type";
+      }
+
+      SimClassFieldDeclOp target =
+          lookupClassField(*this, reference.getTarget());
+      SimClassDeclOp targetOwner =
+          target ? lookupClass(target, target.getOwnerAttr()) : SimClassDeclOp{};
+      if (!target || !targetOwner || !classDerivesFrom(current, targetOwner))
+        return emitOpError()
+               << "random-variable reference target " << reference.getTarget()
+               << " is not visible from class " << current.getSymName();
+      if (target.getIsStatic() ||
+          !target->getAttrOfType<RandomVariableKindAttr>(
+              metadata::randomVariableKind))
+        return emitOpError()
+               << "random-variable reference target " << reference.getTarget()
+               << " must be a packed instance rand or randc field";
+    }
   }
   return success();
 }

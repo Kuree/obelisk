@@ -38,6 +38,17 @@ using namespace mlir;
 
 namespace obelisk::sim {
 
+LogicalResult RandomVariableReferenceAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError,
+    ArrayRef<FlatSymbolRefAttr> path, FlatSymbolRefAttr target) {
+  if (!target)
+    return emitError() << "random-variable reference requires a target field";
+  if (llvm::any_of(path, [](FlatSymbolRefAttr field) { return !field; }))
+    return emitError()
+           << "random-variable reference path contains a null field";
+  return success();
+}
+
 static LogicalResult
 verifyEffectArray(llvm::function_ref<InFlightDiagnostic()> emitError,
                   ArrayAttr effects, StringRef owner) {

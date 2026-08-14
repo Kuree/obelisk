@@ -1,6 +1,123 @@
 // RUN: obelisk-opt --split-input-file --verify-diagnostics %s
 
 module {
+  obelisk_sim.design @empty_random_reference_inventory {
+    obelisk_sim.scope.decl 0
+    // expected-error @below {{random-variable reference inventory must be absent when empty}}
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false,
+      random_variable_references = []
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @duplicate_random_reference {
+    obelisk_sim.scope.decl 0
+    // expected-error @below {{random-variable reference inventory contains a duplicate}}
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false,
+      random_variable_references = [
+        #obelisk_sim.random_variable_reference<target = @C_value>,
+        #obelisk_sim.random_variable_reference<target = @C_value>
+      ]
+    }
+    obelisk_sim.class.field @C_value of @C at 0 : i8 {
+      is_static = false, is_weak = false,
+      obelisk_sim.random_mode_index = 0 : i64,
+      obelisk_sim.random_variable_kind = 1 : i32,
+      obelisk_sim.random_variable_signed = false
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @random_reference_non_edge_path {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.class.decl @Leaf id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    obelisk_sim.class.field @Leaf_value of @Leaf at 0 : i8 {
+      is_static = false, is_weak = false,
+      obelisk_sim.random_mode_index = 0 : i64,
+      obelisk_sim.random_variable_kind = 1 : i32,
+      obelisk_sim.random_variable_signed = false
+    }
+    // expected-error @below {{random-variable reference path field @Root_child must be a strong rand object edge}}
+    obelisk_sim.class.decl @Root id 2 {
+      is_abstract = false, is_final = false, is_interface = false,
+      random_variable_references = [
+        #obelisk_sim.random_variable_reference<
+          path = [@Root_child], target = @Leaf_value>
+      ]
+    }
+    obelisk_sim.class.field @Root_child of @Root at 0 :
+        !obelisk_sim.class_handle<@Leaf> {
+      is_static = false, is_weak = false,
+      obelisk_sim.random_mode_index = 0 : i64
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @random_reference_incompatible_target {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.class.decl @Leaf id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    obelisk_sim.class.decl @Other id 2 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    obelisk_sim.class.field @Other_value of @Other at 0 : i8 {
+      is_static = false, is_weak = false,
+      obelisk_sim.random_mode_index = 0 : i64,
+      obelisk_sim.random_variable_kind = 1 : i32,
+      obelisk_sim.random_variable_signed = false
+    }
+    // expected-error @below {{random-variable reference target @Other_value is not visible from class Leaf}}
+    obelisk_sim.class.decl @Root id 3 {
+      is_abstract = false, is_final = false, is_interface = false,
+      random_variable_references = [
+        #obelisk_sim.random_variable_reference<
+          path = [@Root_child], target = @Other_value>
+      ]
+    }
+    obelisk_sim.class.field @Root_child of @Root at 0 :
+        !obelisk_sim.class_handle<@Leaf> {
+      is_static = false, is_weak = false,
+      obelisk_sim.random_mode_index = 0 : i64,
+      obelisk_sim.random_object_edge
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @random_reference_non_random_target {
+    obelisk_sim.scope.decl 0
+    // expected-error @below {{random-variable reference target @C_value must be a packed instance rand or randc field}}
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false,
+      random_variable_references = [
+        #obelisk_sim.random_variable_reference<target = @C_value>
+      ]
+    }
+    obelisk_sim.class.field @C_value of @C at 0 : i8 {
+      is_static = false, is_weak = false
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @cycle {
     obelisk_sim.scope.decl 0
     // expected-error @below {{class inheritance contains a cycle}}

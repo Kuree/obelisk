@@ -17,6 +17,39 @@ module {
     obelisk_sim.class.decl @Derived id 3 extends @Base implements [@I] {
       is_abstract = false, is_final = true, is_interface = false
     }
+    obelisk_sim.class.decl @RandomLeaf id 4 {
+      is_abstract = false, is_final = false, is_interface = false,
+      random_variable_references = [
+        #obelisk_sim.random_variable_reference<target = @RandomLeaf_value>,
+        #obelisk_sim.random_variable_reference<
+          path = [@RandomLeaf_next], target = @RandomLeaf_value>
+      ]
+    }
+    obelisk_sim.class.field @RandomLeaf_value of @RandomLeaf at 0 : i8 {
+      is_static = false, is_weak = false,
+      obelisk_sim.random_mode_index = 0 : i64,
+      obelisk_sim.random_variable_kind = 1 : i32,
+      obelisk_sim.random_variable_signed = false
+    }
+    obelisk_sim.class.field @RandomLeaf_next of @RandomLeaf at 1 :
+        !obelisk_sim.class_handle<@RandomLeaf> {
+      is_static = false, is_weak = false,
+      obelisk_sim.random_mode_index = 1 : i64,
+      obelisk_sim.random_object_edge
+    }
+    obelisk_sim.class.decl @RandomRoot id 5 {
+      is_abstract = false, is_final = false, is_interface = false,
+      random_variable_references = [
+        #obelisk_sim.random_variable_reference<
+          path = [@RandomRoot_child], target = @RandomLeaf_value>
+      ]
+    }
+    obelisk_sim.class.field @RandomRoot_child of @RandomRoot at 0 :
+        !obelisk_sim.class_handle<@RandomLeaf> {
+      is_static = false, is_weak = false,
+      obelisk_sim.random_mode_index = 0 : i64,
+      obelisk_sim.random_object_edge
+    }
     obelisk_sim.class.method @I_first of @I slot 4294967295
         signature_id 15 interface_ordinal 0 :
       (!obelisk_sim.context, !obelisk_sim.class_handle<@I>) -> i64 {
@@ -136,6 +169,10 @@ module {
 }
 
 // CHECK: obelisk_sim.class.decl @Derived id 3 extends @Base implements [@I]
+// CHECK: obelisk_sim.class.decl @RandomLeaf id 4
+// CHECK-SAME: random_variable_references = [#obelisk_sim.random_variable_reference<target = @RandomLeaf_value>, #obelisk_sim.random_variable_reference<path = [@RandomLeaf_next],target = @RandomLeaf_value>]
+// CHECK: obelisk_sim.class.decl @RandomRoot id 5
+// CHECK-SAME: #obelisk_sim.random_variable_reference<path = [@RandomRoot_child],target = @RandomLeaf_value>
 // CHECK: obelisk_sim.class.method @I_first of @I slot 4294967295
 // CHECK-SAME: interface_ordinal 0
 // CHECK: obelisk_sim.class.method @I_second of @I slot 4294967295

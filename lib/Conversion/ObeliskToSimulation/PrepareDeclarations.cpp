@@ -241,7 +241,8 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
         builder, getSemanticLocation(classType), classSymbol,
         classIDs.lookup(classType), base,
         interfaces.empty() ? ArrayAttr{} : builder.getArrayAttr(interfaces),
-        weakReferent, classType.getIsAbstract() || classType.getIsInterface(),
+        weakReferent, ArrayAttr{},
+        classType.getIsAbstract() || classType.getIsInterface(),
         classType.getIsInterface(), classType.getIsFinal(),
         builder.getStringAttr(getDebugName(classType)));
     // Class inventory is part of the executable ABI. Keep descriptors even
