@@ -138,6 +138,11 @@ inline constexpr ::mlir::StringLiteral readMemEnumElementValuesAttrName =
     "readmem_enum_element_values";
 inline constexpr ::mlir::StringLiteral placeholderAttrName =
     "obelisk_sim.placeholder";
+/// Marks a Simulation-dialect property-initializer fragment deliberately
+/// nested in semantic constructor syntax so unit lowering preserves its
+/// position immediately after an explicit super.new call.
+inline constexpr ::mlir::StringLiteral preparedInitializerAttrName =
+    "obelisk_sim.prepared_initializer";
 inline constexpr ::mlir::StringLiteral staticNetConstantAttrName =
     "obelisk_sim.static_net_constant";
 /// Value elaboration folded an expression to, carried over by the frontend.

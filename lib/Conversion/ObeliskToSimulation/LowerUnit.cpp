@@ -1841,6 +1841,37 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
   Location location = getSemanticLocation(op);
   builder.setInsertionPointToEnd(current);
 
+  // IEEE 1800-2017 8.7 places derived property initialization after an
+  // explicit super.new and before the remaining constructor statements.
+  // Prepare therefore leaves default named-event initialization at that exact
+  // point in the semantic statement sequence. Clone this deliberately mixed
+  // Simulation fragment into the CFG while remapping its event and field-ref
+  // SSA values, then let erasure of the semantic root discard the originals.
+  if (op->hasAttr(preparedInitializerAttrName)) {
+    if (!isa<sim::SimEventCreateOp, sim::SimClassFieldRefOp,
+             sim::SimManagedStoreOp>(op)) {
+      emitError(location) << "unsupported prepared property initializer op: "
+                          << op->getName();
+      return failure();
+    }
+    for (Value operand : op->getOperands()) {
+      if (operand.getParentBlock() == current ||
+          preparedInitializerMapping.contains(operand))
+        continue;
+      emitError(location)
+          << "prepared property initializer has an unmapped nested operand";
+      return failure();
+    }
+    Operation *cloned = builder.clone(*op, preparedInitializerMapping);
+    // No operation in this straight-line fragment refers to another operation
+    // symbolically; only SSA result mappings must survive to the next item.
+    preparedInitializerMapping.erase(op);
+    cloned->removeAttr(preparedInitializerAttrName);
+    if (isa<sim::SimManagedStoreOp>(op))
+      preparedInitializerMapping.clear();
+    return success();
+  }
+
   if (auto path =
           op->getAttrOfType<StringAttr>("obelisk_sim.initialize_static")) {
     Value destination = lvalues.lookup(path.getValue());

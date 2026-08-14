@@ -5914,7 +5914,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                         builder.getStringAttr(getHierarchyName(unit.source)));
       }
     } else {
-      auto clonePropertyInitializers = [&](OpBuilder &initializerBuilder) {
+      auto clonePropertyInitializers = [&](OpBuilder &initializerBuilder,
+                                           bool nestedAfterSuper = false) {
         auto owner = dyn_cast_or_null<semantic::SVClassTypeOp>(
             unit.source->getParentOp());
         if (!owner)
@@ -5930,17 +5931,23 @@ void ObeliskSimPreparePass::runOnOperation() {
             FailureOr<Type> type = getNormalizedSemanticType(property);
             FlatSymbolRefAttr field = classFieldSymbols.lookup(property);
             if (succeeded(type) && isa<sim::EventType>(*type) && field) {
-              Value event = sim::SimEventCreateOp::create(
+              auto event = sim::SimEventCreateOp::create(
                   initializerBuilder, getSemanticLocation(property), *type);
               auto receiverType = cast<sim::ClassHandleType>(receiver.getType());
               Type referenceType = sim::ManagedRefType::get(
                   context, *type, receiverType.getClassName());
-              Value reference = sim::SimClassFieldRefOp::create(
+              auto reference = sim::SimClassFieldRefOp::create(
                   initializerBuilder, getSemanticLocation(property),
                   referenceType, receiver, field);
-              sim::SimManagedStoreOp::create(initializerBuilder,
-                                             getSemanticLocation(property),
-                                             event, reference);
+              auto store = sim::SimManagedStoreOp::create(
+                  initializerBuilder, getSemanticLocation(property), event,
+                  reference);
+              if (nestedAfterSuper) {
+                UnitAttr marker = builder.getUnitAttr();
+                event->setAttr(preparedInitializerAttrName, marker);
+                reference->setAttr(preparedInitializerAttrName, marker);
+                store->setAttr(preparedInitializerAttrName, marker);
+              }
             }
             continue;
           }
@@ -6124,7 +6131,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           if (superStatement) {
             OpBuilder initializerBuilder(superStatement);
             initializerBuilder.setInsertionPointAfter(superStatement);
-            clonePropertyInitializers(initializerBuilder);
+            clonePropertyInitializers(initializerBuilder,
+                                      /*nestedAfterSuper=*/true);
             initialized = true;
           }
         }

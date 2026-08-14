@@ -48,6 +48,8 @@ module {
           obelisk.sv.expression.integer_literal attributes {constant_value = "17", is_declared_unsized = true, is_signed = true, node_id = 24 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
           }
         }
+        obelisk.sv.symbol.class_property attributes {hierarchical_name = "ExplicitSuperDerived::ready", name = "ready", node_id = 37 : i64, semantic_type = !obelisk.event, sym_name = "s21.ready"} {
+        }
         obelisk.sv.symbol.subroutine attributes {hierarchical_name = "ExplicitSuperDerived::new", is_constructor, name = "new", node_id = 25 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s18.new", this_variable_path = "ExplicitSuperDerived::new.this", this_variable_symbol = @s0.$root::@s1::@s16.ExplicitSuperDerived::@s18.new::@s19.this, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.list attributes {node_id = 26 : i64} {
             obelisk.sv.statement.expression_statement attributes {node_id = 27 : i64} {
@@ -98,6 +100,10 @@ module {
 // CHECK-DAG: %[[NINETEEN:.*]] = arith.constant 19 : i32
 // CHECK: %[[EXPLICIT_BASE_THIS:.*]] = obelisk_sim.class.cast %[[EXPLICIT_THIS]] : !obelisk_sim.class_handle<@[[EXPLICIT_DERIVED]]> to !obelisk_sim.class_handle<@[[BASE]]>
 // CHECK-NEXT: obelisk_sim.class.direct_call @[[BASE_NEW]] %[[EXPLICIT_BASE_THIS]](%[[SEVEN]])
-// CHECK: %[[EXPLICIT_FIELD:.*]] = obelisk_sim.class.field_ref %[[EXPLICIT_THIS]]
+// CHECK-NEXT: %[[EXPLICIT_FIELD:.*]] = obelisk_sim.class.field_ref %[[EXPLICIT_THIS]]
 // CHECK-NEXT: obelisk_sim.managed.store %[[SEVENTEEN]] to %[[EXPLICIT_FIELD]]
+// CHECK-NEXT: %[[READY:.*]] = obelisk_sim.event.create
+// CHECK-NEXT: %[[READY_REF:.*]] = obelisk_sim.class.field_ref %[[EXPLICIT_THIS]][{{.*}}] : !obelisk_sim.class_handle<@[[EXPLICIT_DERIVED]]> -> !obelisk_sim.managed_ref<!obelisk_sim.event, @[[EXPLICIT_DERIVED]]>
+// CHECK-NEXT: obelisk_sim.managed.store %[[READY]] to %[[READY_REF]] : !obelisk_sim.event, !obelisk_sim.managed_ref<!obelisk_sim.event, @[[EXPLICIT_DERIVED]]>
 // CHECK-NEXT: obelisk_sim.managed.store %[[NINETEEN]] to %[[EXPLICIT_FIELD]]
+// CHECK-NOT: obelisk_sim.prepared_initializer

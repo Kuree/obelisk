@@ -10,6 +10,8 @@
 
 #include "Detail.h"
 
+#include "mlir/IR/IRMapping.h"
+
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
@@ -384,6 +386,9 @@ private:
   sim::SimFuncOp function;
   ::mlir::OpBuilder builder;
   ::mlir::Block *current;
+  /// SSA remapping for the short prepared initializer fragment encountered
+  /// between semantic constructor statements.
+  ::mlir::IRMapping preparedInitializerMapping;
   ::llvm::StringMap<::mlir::Value> values;
   ::llvm::StringMap<::mlir::Value> lvalues;
   ::llvm::DenseMap<uint64_t, ::mlir::Value> nodeLvalues;
