@@ -49,6 +49,41 @@ LogicalResult RandomVariableReferenceAttr::verify(
   return success();
 }
 
+LogicalResult RandomValueReferenceAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError,
+    RandomValueReferenceKind kind, ArrayRef<FlatSymbolRefAttr> path,
+    FlatSymbolRefAttr target, IntegerAttr storage, uint64_t low,
+    uint64_t width) {
+  if (width == 0)
+    return emitError() << "random-value reference requires a nonzero width";
+  if (low > std::numeric_limits<uint64_t>::max() - width)
+    return emitError() << "random-value reference bit range overflows";
+  if (llvm::any_of(path, [](FlatSymbolRefAttr field) { return !field; }))
+    return emitError() << "random-value reference path contains a null field";
+
+  switch (kind) {
+  case RandomValueReferenceKind::ObjectField:
+    if (!target)
+      return emitError()
+             << "object-field random-value reference requires a target";
+    if (storage)
+      return emitError()
+             << "object-field random-value reference cannot name storage";
+    return success();
+  case RandomValueReferenceKind::Storage:
+    if (!path.empty() || target)
+      return emitError()
+             << "storage random-value reference cannot name an object field";
+    if (!storage || storage.getValue().isNegative() ||
+        storage.getValue().getActiveBits() > 64)
+      return emitError()
+             << "storage random-value reference requires a nonnegative "
+                "64-bit descriptor ID";
+    return success();
+  }
+  llvm_unreachable("unknown random-value reference kind");
+}
+
 static LogicalResult
 verifyEffectArray(llvm::function_ref<InFlightDiagnostic()> emitError,
                   ArrayAttr effects, StringRef owner) {

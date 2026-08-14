@@ -119,6 +119,47 @@ def SimRandomVariableReferenceArrayAttr
   let constBuilderCall = "$_builder.getArrayAttr($0)";
 }
 
+// Unlike RandomVariableReferenceAttr, this is an operand of a constraint
+// template.  A field that is an active random variable for one invocation may
+// be state for another invocation after rand_mode is applied.  Preserve one
+// neutral symbolic reference and let active-object composition choose whether
+// it becomes a solver variable or a captured value.
+def SimRandomValueReferenceAttr
+    : SimAttr<"RandomValueReference", "random_value_reference"> {
+  let summary = "symbolic packed value consumed by a constraint template";
+  let description = [{
+    Identifies a packed bit slice without embedding a target layout offset.
+    `object_field` starts at the object owning the template, follows the
+    optional strong class-handle `path`, and names a terminal instance field.
+    `storage` names an immutable design-storage descriptor ID.  Runtime graph
+    composition classifies an object field as an active random variable or as
+    current state according to the invocation's active-object set and
+    rand_mode state.
+  }];
+  let parameters = (ins
+    EnumParameter<SimRandomValueReferenceKind>:$kind,
+    OptionalArrayRefParameter<"::mlir::FlatSymbolRefAttr">:$path,
+    OptionalParameter<"::mlir::FlatSymbolRefAttr">:$target,
+    OptionalParameter<"::mlir::IntegerAttr">:$storage,
+    "uint64_t":$low,
+    "uint64_t":$width
+  );
+  let assemblyFormat = [{
+    `<` `kind` `=` $kind `,`
+    (`path` `=` `[` $path^ `]` `,`)?
+    (`target` `=` $target^ `,`)?
+    (`storage` `=` $storage^ `,`)?
+    `low` `=` $low `,` `width` `=` $width `>`
+  }];
+  let genVerifyDecl = 1;
+}
+
+def SimRandomValueReferenceArrayAttr
+    : TypedArrayAttrBase<SimRandomValueReferenceAttr,
+                         "random-value reference array"> {
+  let constBuilderCall = "$_builder.getArrayAttr($0)";
+}
+
 def SimComputeEffectAttr : SimAttr<"ComputeEffect", "effect"> {
   let parameters = (ins
     EnumParameter<SimComputeEffectKind>:$effect,

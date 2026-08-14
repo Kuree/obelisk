@@ -73,6 +73,22 @@ def SimRandomVariableKind
   let cppNamespace = "::obelisk::sim";
 }
 
+// A reusable constraint template evaluates references relative either to the
+// active object that owns the template or to immutable design-storage
+// identity.  Keep the root classification typed: runtime composition must not
+// infer object-vs-design semantics from symbol spelling.
+def SimRandomValueObjectField
+    : I32EnumAttrCase<"ObjectField", 0, "object_field">;
+def SimRandomValueStorage
+    : I32EnumAttrCase<"Storage", 1, "storage">;
+def SimRandomValueReferenceKind
+    : I32EnumAttr<"RandomValueReferenceKind",
+                  "symbolic random-constraint value root", [
+        SimRandomValueObjectField, SimRandomValueStorage
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 // IEEE 1800-2023 event regions in their normative scheduling order. These
 // remain distinct from ComputeRegionKind: the latter is a coarse graph
 // partition and is not an executable scheduler queue.

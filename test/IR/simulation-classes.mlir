@@ -42,6 +42,13 @@ module {
       random_variable_references = [
         #obelisk_sim.random_variable_reference<
           path = [@RandomRoot_child], target = @RandomLeaf_value>
+      ],
+      test_random_value_references = [
+        #obelisk_sim.random_value_reference<
+          kind = object_field, path = [@RandomRoot_child],
+          target = @RandomLeaf_value, low = 0, width = 8>,
+        #obelisk_sim.random_value_reference<
+          kind = storage, storage = 7 : i64, low = 4, width = 8>
       ]
     }
     obelisk_sim.class.field @RandomRoot_child of @RandomRoot at 0 :
@@ -173,6 +180,7 @@ module {
 // CHECK-SAME: random_variable_references = [#obelisk_sim.random_variable_reference<target = @RandomLeaf_value>, #obelisk_sim.random_variable_reference<path = [@RandomLeaf_next],target = @RandomLeaf_value>]
 // CHECK: obelisk_sim.class.decl @RandomRoot id 5
 // CHECK-SAME: #obelisk_sim.random_variable_reference<path = [@RandomRoot_child],target = @RandomLeaf_value>
+// CHECK-SAME: test_random_value_references = [#obelisk_sim.random_value_reference<kind = object_field, path = [@RandomRoot_child], target = @RandomLeaf_value, low = 0, width = 8>, #obelisk_sim.random_value_reference<kind = storage, storage = 7 : i64, low = 4, width = 8>]
 // CHECK: obelisk_sim.class.method @I_first of @I slot 4294967295
 // CHECK-SAME: interface_ordinal 0
 // CHECK: obelisk_sim.class.method @I_second of @I slot 4294967295
