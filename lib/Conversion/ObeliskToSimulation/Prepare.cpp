@@ -12,6 +12,7 @@
 #include "PrepareCaptures.h"
 #include "PrepareDeclarations.h"
 #include "PrepareNetTopology.h"
+#include "PrepareRandomTemplates.h"
 #include "PrepareTopology.h"
 #include "PrepareUnits.h"
 #include "PrepareValidation.h"
@@ -977,6 +978,10 @@ void ObeliskSimPreparePass::runOnOperation() {
   if (failed(preparedDescriptors))
     return abort();
   llvm::StringMap<DescriptorInfo> &descriptors = *preparedDescriptors;
+
+  if (failed(materializeRandomConstraintTemplates(
+          design, *classes, semanticSymbols, descriptors)))
+    return abort();
 
   // A static randc property shares one cycle across every object. Its source
   // value already has class-wide storage; materialize the two compiler-owned

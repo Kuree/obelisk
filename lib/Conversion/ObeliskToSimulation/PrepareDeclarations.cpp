@@ -183,7 +183,6 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
                   : FlatSymbolRefAttr{};
   };
   bool invalid = false;
-  llvm::DenseMap<Operation *, sim::SimClassDeclOp> classDeclarations;
   llvm::DenseMap<Operation *, sim::SimClassFieldDeclOp> fieldDeclarations;
   for (semantic::SVClassTypeOp classType : result.sources) {
     uint64_t randomPropertyIndex = 0;
@@ -243,11 +242,11 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
         builder, getSemanticLocation(classType), classSymbol,
         classIDs.lookup(classType), base,
         interfaces.empty() ? ArrayAttr{} : builder.getArrayAttr(interfaces),
-        weakReferent, ArrayAttr{},
+        weakReferent, ArrayAttr{}, FlatSymbolRefAttr{},
         classType.getIsAbstract() || classType.getIsInterface(),
         classType.getIsInterface(), classType.getIsFinal(),
         builder.getStringAttr(getDebugName(classType)));
-    classDeclarations[classType] = declaration;
+    result.declarations[classType] = declaration;
     // Class inventory is part of the executable ABI. Keep descriptors even
     // when the only current reference is embedded in a type.
     SymbolTable::setSymbolVisibility(declaration,
@@ -425,7 +424,7 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
           references, [](sim::RandomVariableReferenceAttr reference) {
             return Attribute(reference);
           });
-      classDeclarations.lookup(classType).setRandomVariableReferencesAttr(
+      result.declarations.lookup(classType).setRandomVariableReferencesAttr(
           builder.getArrayAttr(attributes));
     }
   }

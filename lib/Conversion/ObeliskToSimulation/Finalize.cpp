@@ -107,7 +107,7 @@ void ObeliskSimFinalizePass::runOnOperation() {
   module.walk([&](Operation *op) {
     if (!isa<sim::SimCovergroupDeclOp, sim::SimClassDeclOp,
              sim::SimClassFieldDeclOp, sim::SimClassMethodDeclOp,
-             sim::SimFuncOp>(op))
+             sim::SimRandomConstraintTemplateOp, sim::SimFuncOp>(op))
       return;
     if (auto name =
             op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()))

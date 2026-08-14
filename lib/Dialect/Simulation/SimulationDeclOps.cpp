@@ -371,6 +371,17 @@ LogicalResult SimClassDeclOp::verify() {
                << " must be a packed instance rand or randc field";
     }
   }
+  if (FlatSymbolRefAttr reference = getRandomConstraintTemplateAttr()) {
+    auto templateOp =
+        SymbolTable::lookupNearestSymbolFrom<SimRandomConstraintTemplateOp>(
+            *this, reference);
+    if (!templateOp)
+      return emitOpError(
+          "random constraint template references an unknown template");
+    if (templateOp.getOwner() != getSymName())
+      return emitOpError(
+          "random constraint template must be owned by this class");
+  }
   return success();
 }
 

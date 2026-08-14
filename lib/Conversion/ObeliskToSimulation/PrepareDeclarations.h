@@ -22,6 +22,7 @@ namespace obelisk::simlowering {
 
 struct PreparedClassDeclarations {
   mlir::SmallVector<ir::SVClassTypeOp> sources;
+  llvm::DenseMap<mlir::Operation *, sim::SimClassDeclOp> declarations;
   llvm::DenseMap<mlir::Operation *, mlir::StringAttr> symbols;
   llvm::DenseMap<mlir::Operation *, mlir::FlatSymbolRefAttr> fieldSymbols;
   llvm::DenseMap<mlir::Operation *, mlir::FlatSymbolRefAttr>

@@ -1,5 +1,9 @@
 // RUN: %split-file %s %t
 // RUN: obelisk-opt %t/success.mlir '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: obelisk-opt %t/success.mlir '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines -o /dev/null
+// RUN: obelisk-opt %t/success.mlir '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
 // RUN: not obelisk-opt %t/unsupported.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=UNSUPPORTED
 // RUN: not obelisk-opt %t/replication-invalid.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=REPLICATION-INVALID
 // RUN: %if z3 %{ \
@@ -148,7 +152,10 @@
 
 //--- success.mlir
 
-module {
+module attributes {
+  llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
+  llvm.target_triple = "x86_64-unknown-linux-gnu"
+} {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "unsupported_constraint", name = "unsupported_constraint", node_id = 0 : i64, sym_name = "s0.unsupported_constraint"} {
   }
   obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
@@ -512,12 +519,21 @@ module {
 // The object stream chooses the first assignment for a bounded generated
 // sampler. Exhaustion invokes the compiler-serialized runtime program, and the
 // rand property is stored only on a successful commit edge.
-// CHECK: obelisk_sim.class.decl
+// CHECK: obelisk_sim.class.decl @[[CLASS:[A-Za-z0-9_.$]+]]
+// CHECK-SAME: random_constraint_template = @[[TEMPLATE:[A-Za-z0-9_.$]+]]
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "value"
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rng_state"
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rng_increment"
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rand_mode"
 // CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_constraint_mode"
+// CHECK: obelisk_sim.random.constraint_template @[[TEMPLATE]] of @[[CLASS]]
+// CHECK-SAME: constraint_blocks = [#obelisk_sim.random_constraint_block_reference<kind = object_block, index = 0 : i32>]
+// CHECK-SAME: references = [#obelisk_sim.random_value_reference<kind = object_field, target = @{{[^,]+}}, low = 0, width = 32>, #obelisk_sim.random_value_reference<kind = storage, storage = 0 : i64, low = 0, width = 32>]
+// CHECK: %[[TEMPLATE_VALUE:.*]] = obelisk_sim.random.constraint_value 0 : i32
+// CHECK: %[[TEMPLATE_LIMIT:.*]] = obelisk_sim.random.constraint_value 1 : i32
+// CHECK: %[[TEMPLATE_GT:.*]] = arith.cmpi sgt, %[[TEMPLATE_VALUE]], %[[TEMPLATE_LIMIT]] : i32
+// CHECK: obelisk_sim.random.soft_constraint %[[TEMPLATE_GT]] block 0 priority 0
+// CHECK: obelisk_sim.random.soft_constraint %{{.*}} block 0 priority 1
 // CHECK: obelisk_sim.func private @unit_1({{.*}}%[[LIMIT_ARG:arg[0-9]+]]: !obelisk_sim.ref<i32>
 // CHECK: obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_rand_mode]
 // CHECK: %[[OLD_MODE:.*]] = obelisk_sim.managed.load

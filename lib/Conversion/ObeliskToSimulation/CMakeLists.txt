@@ -37,6 +37,7 @@ add_mlir_library(ObeliskToSimulation
   Prepare.cpp
   PrepareDeclarations.cpp
   PrepareNetTopology.cpp
+  PrepareRandomTemplates.cpp
   PrepareTopology.cpp
   PrepareUnits.cpp
   PrepareValidation.cpp

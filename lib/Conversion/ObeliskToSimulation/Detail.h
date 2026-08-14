@@ -365,6 +365,12 @@ bool isStaticallyAllocatedOverrideTarget(::mlir::Value value);
 /// Whether a packed semantic type is signed.
 bool isSignedSemanticType(::mlir::Type type);
 
+/// Packed width and four-state domain of a source semantic type.  These
+/// queries are non-diagnostic so speculative lowering can decline a construct
+/// without poisoning an otherwise supported fallback path.
+std::optional<uint64_t> getSemanticPackedWidth(::mlir::Type type);
+bool isFourStateSemanticType(::mlir::Type type);
+
 /// Fixed SystemVerilog bitstream width of a semantic type.
 ///
 /// Unlike the packed-width query used for SSA normalization, this includes

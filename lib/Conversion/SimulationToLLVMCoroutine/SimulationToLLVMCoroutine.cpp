@@ -2872,7 +2872,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
               sim::SimStorageDeclOp, sim::SimNetDeclOp, sim::SimDriverDeclOp,
               sim::SimNetConnectDeclOp, sim::SimClassDeclOp,
               sim::SimCovergroupDeclOp, sim::SimClassFieldDeclOp,
-              sim::SimClassMethodDeclOp>(operation)) {
+              sim::SimClassMethodDeclOp,
+              sim::SimRandomConstraintTemplateOp>(operation)) {
         operation->erase();
         continue;
       }

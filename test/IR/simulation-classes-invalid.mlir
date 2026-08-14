@@ -14,6 +14,44 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @unknown_random_constraint_template {
+    obelisk_sim.scope.decl 0
+    // expected-error @below {{random constraint template references an unknown template}}
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false,
+      random_constraint_template = @missing
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @wrong_random_constraint_template_owner {
+    obelisk_sim.scope.decl 0
+    // expected-error @below {{random constraint template must be owned by this class}}
+    obelisk_sim.class.decl @A id 1 {
+      is_abstract = false, is_final = false, is_interface = false,
+      random_constraint_template = @constraints
+    }
+    obelisk_sim.class.decl @B id 2 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    obelisk_sim.random.constraint_template @constraints of @B attributes {
+      constraint_blocks = [
+        #obelisk_sim.random_constraint_block_reference<
+          kind = object_block, index = 0 : i32>
+      ]
+    } {
+      %true = arith.constant true
+      obelisk_sim.random.hard_constraint %true block 0
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @duplicate_random_reference {
     obelisk_sim.scope.decl 0
     // expected-error @below {{random-variable reference inventory contains a duplicate}}

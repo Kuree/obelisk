@@ -40,6 +40,7 @@ module {
     }
     obelisk_sim.class.decl @RandomRoot id 5 {
       is_abstract = false, is_final = false, is_interface = false,
+      random_constraint_template = @RandomRoot_constraints,
       random_variable_references = [
         #obelisk_sim.random_variable_reference<
           path = [@RandomRoot_child], target = @RandomLeaf_value>
@@ -203,6 +204,7 @@ module {
 // CHECK: obelisk_sim.class.decl @RandomLeaf id 4
 // CHECK-SAME: random_variable_references = [#obelisk_sim.random_variable_reference<target = @RandomLeaf_value>, #obelisk_sim.random_variable_reference<path = [@RandomLeaf_next],target = @RandomLeaf_value>]
 // CHECK: obelisk_sim.class.decl @RandomRoot id 5
+// CHECK-SAME: random_constraint_template = @RandomRoot_constraints
 // CHECK-SAME: #obelisk_sim.random_variable_reference<path = [@RandomRoot_child],target = @RandomLeaf_value>
 // CHECK-SAME: test_random_value_references = [#obelisk_sim.random_value_reference<kind = object_field, path = [@RandomRoot_child], target = @RandomLeaf_value, low = 0, width = 8>, #obelisk_sim.random_value_reference<kind = storage, storage = 7 : i64, low = 4, width = 8>]
 // CHECK: obelisk_sim.random.constraint_template @RandomRoot_constraints of @RandomRoot

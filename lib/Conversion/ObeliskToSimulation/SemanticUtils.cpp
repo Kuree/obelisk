@@ -433,7 +433,7 @@ SmallVector<SemanticDimension> getSemanticDimensions(Type type) {
   return dimensions;
 }
 
-static std::optional<uint64_t> getSemanticPackedWidth(Type type) {
+std::optional<uint64_t> getSemanticPackedWidth(Type type) {
   if (auto integral = dyn_cast<semantic::IntegralType>(type))
     return integral.getWidth();
   if (auto integer = dyn_cast<IntegerType>(type))
@@ -483,23 +483,23 @@ static std::optional<uint64_t> getSemanticPackedWidth(Type type) {
   return std::nullopt;
 }
 
-static bool isFourState(Type type) {
+bool isFourStateSemanticType(Type type) {
   if (auto integral = dyn_cast<semantic::IntegralType>(type))
     return integral.getIsFourState();
   if (isa<semantic::LogicType, semantic::TimeType>(type))
     return true;
   if (auto array = dyn_cast<semantic::RangedPackedArrayType>(type))
-    return isFourState(array.getElementType());
+    return isFourStateSemanticType(array.getElementType());
   if (auto array = dyn_cast<semantic::PackedArrayType>(type))
-    return isFourState(array.getElementType());
+    return isFourStateSemanticType(array.getElementType());
   if (auto enumeration = dyn_cast<semantic::EnumType>(type))
-    return isFourState(enumeration.getBaseType());
+    return isFourStateSemanticType(enumeration.getBaseType());
   if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type))
     return aggregate.getIsPacked() && aggregate.getIsFourState();
   auto dictionaryIsFourState = [&](DictionaryAttr fields) {
     return llvm::any_of(fields, [&](NamedAttribute field) {
       auto fieldType = dyn_cast<TypeAttr>(field.getValue());
-      return fieldType && isFourState(fieldType.getValue());
+      return fieldType && isFourStateSemanticType(fieldType.getValue());
     });
   };
   if (auto structure = dyn_cast<semantic::PackedStructType>(type))
@@ -742,7 +742,7 @@ static FailureOr<Type> normalizeType(Type type, Location location,
       emitError(location) << "packed type has unsupported width " << *width;
       return failure();
     }
-    if (isFourState(type))
+    if (isFourStateSemanticType(type))
       return sim::LogicType::get(context, static_cast<unsigned>(*width));
     return IntegerType::get(context, static_cast<unsigned>(*width));
   }
@@ -959,7 +959,7 @@ FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
            "values";
     return failure();
   }
-  bool fourState = isFourState(type);
+  bool fourState = isFourStateSemanticType(type);
   return DPIABIType{fourState ? DPIABIKind::LogicVector : DPIABIKind::BitVector,
                     static_cast<uint32_t>(*width), fourState,
                     simlowering::isSignedSemanticType(type)};
