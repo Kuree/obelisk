@@ -351,14 +351,18 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
 
       Value count;
       if (dimension.runtime) {
-        if (!isa<sim::DynamicArrayType, sim::QueueType>(
+        if (isa<sim::DynamicArrayType, sim::QueueType>(
                 currentCollection.getType())) {
+          count = sim::SimContainerSizeOp::create(builder, location, indexType,
+                                                  currentCollection);
+        } else if (isa<sim::StringType>(currentCollection.getType())) {
+          count = sim::SimStringLengthOp::create(builder, location, indexType,
+                                                 currentCollection);
+        } else {
           emitError(location)
               << "runtime foreach dimension is not a sequential container";
           return failure();
         }
-        count = sim::SimContainerSizeOp::create(builder, location, indexType,
-                                                currentCollection);
       } else {
         APInt left(65, static_cast<uint64_t>(dimension.left), true);
         APInt right(65, static_cast<uint64_t>(dimension.right), true);
