@@ -86,6 +86,48 @@ module attributes {
             sym_name = "s6.this"
           } {}
         }
+        obelisk.sv.symbol.subroutine attributes {
+          hierarchical_name = "C::wait_value", name = "wait_value",
+          node_id = 100 : i64,
+          semantic_type = !obelisk.subroutine<() -> (), true>,
+          subroutine_kind = 1 : i32, sym_name = "s10.wait_value",
+          this_variable_path = "C::wait_value.this",
+          this_variable_symbol = @s1.$root::@s2::@s3.C::@s10.wait_value::@s11.this,
+          time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
+        } {
+          obelisk.sv.statement.block attributes {
+            block_kind = 3 : i32, node_id = 101 : i64
+          } {
+            obelisk.sv.statement.block attributes {node_id = 102 : i64} {
+              obelisk.sv.statement.wait attributes {node_id = 103 : i64} {
+                obelisk.sv.expression.binary_op attributes {
+                  is_signed = false, node_id = 104 : i64,
+                  operator_kind = 9 : i32,
+                  semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>
+                } {
+                  obelisk.sv.expression.named_value attributes {
+                    is_signed = true, node_id = 105 : i64,
+                    referenced_path = "C::value",
+                    referenced_symbol = @s1.$root::@s2::@s3.C::@s4.value,
+                    semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
+                  } {}
+                  obelisk.sv.expression.integer_literal attributes {
+                    constant_value = "7", is_declared_unsized = true,
+                    is_signed = true, node_id = 106 : i64,
+                    semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
+                  } {}
+                }
+                obelisk.sv.statement.empty attributes {node_id = 107 : i64} {}
+              }
+            }
+          }
+          obelisk.sv.symbol.variable attributes {
+            hierarchical_name = "C::wait_value.this", is_compiler_generated,
+            is_const, name = "this", node_id = 108 : i64,
+            semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>,
+            sym_name = "s11.this"
+          } {}
+        }
         obelisk.sv.symbol.variable attributes {
           hierarchical_name = "C::this", is_compiler_generated, is_const,
           name = "this", node_id = 16 : i64,
@@ -113,4 +155,7 @@ module attributes {
 // CHECK-SAME: %[[THIS:arg[0-9]+]]: !obelisk_sim.class_handle<@__obelisk_class_s3_C>
 // CHECK: obelisk_sim.suspend.delay
 // CHECK: obelisk_sim.class.field_ref %[[THIS]][@{{.*}}]
+// CHECK: obelisk_sim.hierarchical_name = "C::wait_value.$fork.101.0"
+// CHECK: obelisk_sim.observer.bind
+// CHECK: obelisk_sim.suspend.observe
 // CHECK-NOT: obelisk.sv.

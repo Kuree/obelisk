@@ -767,9 +767,9 @@ UnitLowering::bindObserver(Operation *expression,
   auto evaluator =
       expression->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.observer");
   auto capturePaths =
-      expression->getAttrOfType<ArrayAttr>("obelisk_sim.observer_captures");
+      expression->getAttrOfType<ArrayAttr>(observerCapturesAttrName);
   auto dependencyPaths =
-      expression->getAttrOfType<ArrayAttr>("obelisk_sim.observer_dependencies");
+      expression->getAttrOfType<ArrayAttr>(observerDependenciesAttrName);
   auto resultKind =
       expression->getAttrOfType<IntegerAttr>(observerResultAttrName);
   if (!evaluator || !capturePaths || !dependencyPaths || !resultKind) {

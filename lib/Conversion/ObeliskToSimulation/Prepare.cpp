@@ -4919,9 +4919,9 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     for (const PreparedLocal &value : observerValueCaptures[unit.source])
       captures.push_back(builder.getStringAttr(value.path));
-    unit.source->setAttr("obelisk_sim.observer_captures",
+    unit.source->setAttr(observerCapturesAttrName,
                          builder.getArrayAttr(captures));
-    unit.source->setAttr("obelisk_sim.observer_dependencies",
+    unit.source->setAttr(observerDependenciesAttrName,
                          builder.getArrayAttr(dependencies));
   }
 

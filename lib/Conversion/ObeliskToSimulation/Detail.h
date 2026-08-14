@@ -297,6 +297,11 @@ enum class ObserverResult : uint32_t {
   Event,
 };
 
+inline constexpr ::mlir::StringLiteral observerCapturesAttrName =
+    "obelisk_sim.observer_captures";
+inline constexpr ::mlir::StringLiteral observerDependenciesAttrName =
+    "obelisk_sim.observer_dependencies";
+
 inline std::optional<ObserverResult>
 parseObserverResult(::mlir::IntegerAttr attribute) {
   if (!attribute)

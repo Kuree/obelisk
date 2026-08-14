@@ -54,21 +54,27 @@ module attributes {
           this_variable_symbol = @s1.$root::@s2::@s3.C::@s6.wait_flag::@s7.this,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
         } {
-          obelisk.sv.statement.wait attributes {node_id = 7 : i64} {
-            obelisk.sv.expression.member_access attributes {
-              field_ordinal = 0 : i64, is_signed = true, node_id = 8 : i64,
-              packed_offset = 0 : i64, referenced_path = "C::flag",
-              referenced_symbol = @s1.$root::@s2::@s3.C::@s4.flag,
-              semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
-            } {
-              obelisk.sv.expression.named_value attributes {
-                is_signed = false, node_id = 9 : i64,
-                referenced_path = "C::wait_flag.phase",
-                referenced_symbol = @s1.$root::@s2::@s3.C::@s6.wait_flag::@s19.phase,
-                semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>
-              } {}
+          obelisk.sv.statement.block attributes {
+            block_kind = 3 : i32, node_id = 44 : i64
+          } {
+            obelisk.sv.statement.block attributes {node_id = 45 : i64} {
+              obelisk.sv.statement.wait attributes {node_id = 7 : i64} {
+                obelisk.sv.expression.member_access attributes {
+                  field_ordinal = 0 : i64, is_signed = true, node_id = 8 : i64,
+                  packed_offset = 0 : i64, referenced_path = "C::flag",
+                  referenced_symbol = @s1.$root::@s2::@s3.C::@s4.flag,
+                  semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
+                } {
+                  obelisk.sv.expression.named_value attributes {
+                    is_signed = false, node_id = 9 : i64,
+                    referenced_path = "C::wait_flag.phase",
+                    referenced_symbol = @s1.$root::@s2::@s3.C::@s6.wait_flag::@s19.phase,
+                    semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>
+                  } {}
+                }
+                obelisk.sv.statement.empty attributes {node_id = 11 : i64} {}
+              }
             }
-            obelisk.sv.statement.empty attributes {node_id = 11 : i64} {}
           }
           obelisk.sv.symbol.formal_argument attributes {
             direction = 0 : i32, hierarchical_name = "C::wait_flag.phase",
@@ -242,28 +248,25 @@ module attributes {
   }
 }
 
-// CHECK: obelisk_sim.func private @unit_
-// CHECK-SAME: obelisk_sim.hierarchical_name = "C::wait_flag"
+// CHECK-LABEL: obelisk_sim.func private @{{.*}}.fork.44.0.0(
+// CHECK-SAME: obelisk_sim.hierarchical_name = "C::wait_flag.$fork.44.0"
 // CHECK: %[[PHASE:.*]] = obelisk_sim.ref.load
 // CHECK: %[[FIELD:.*]] = obelisk_sim.class.field_ref %[[PHASE]]
 // CHECK: %[[FIELD_WATCH:.*]] = obelisk_sim.managed.watch field %[[FIELD]]
 // CHECK: obelisk_sim.observer.bind
 // CHECK-SAME: %[[FIELD_WATCH]]
 // CHECK: obelisk_sim.suspend.observe
-// CHECK: obelisk_sim.func private @unit_
-// CHECK-SAME: obelisk_sim.hierarchical_name = "C::wait_q"
+// CHECK: obelisk_sim.hierarchical_name = "C::wait_q"
 // CHECK: %[[QUEUE_FIELD:.*]] = obelisk_sim.class.field_ref
 // CHECK: %[[QUEUE_WATCH:.*]] = obelisk_sim.managed.watch field %[[QUEUE_FIELD]]
 // CHECK: %[[SIZE_WATCH:.*]] = obelisk_sim.managed.watch container_size
 // CHECK: obelisk_sim.observer.bind
 // CHECK-SAME: %[[QUEUE_WATCH]], %[[SIZE_WATCH]]
 // CHECK-SAME: captures 1 : <i1>
-// CHECK: obelisk_sim.func private @unit_
-// CHECK-SAME: obelisk_sim.hierarchical_name = "C::wait_both"
+// CHECK: obelisk_sim.hierarchical_name = "C::wait_both"
 // CHECK: obelisk_sim.observer.bind
 // CHECK-SAME: !obelisk_sim.managed_watch, !obelisk_sim.managed_watch
-// CHECK: obelisk_sim.func private @unit_
-// CHECK-SAME: obelisk_sim.hierarchical_name = "C::wait_event"
+// CHECK: obelisk_sim.hierarchical_name = "C::wait_event"
 // CHECK: %[[EVENT_FIELD:.*]] = obelisk_sim.class.field_ref
 // CHECK: %[[EVENT_WATCH:.*]] = obelisk_sim.managed.watch field %[[EVENT_FIELD]]
 // CHECK: %[[EVENT_OBSERVER:.*]] = obelisk_sim.observer.bind

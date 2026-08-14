@@ -871,6 +871,14 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
   };
   ArrayAttr parentBindings =
       function->getAttrOfType<ArrayAttr>(bindingsAttrName);
+  llvm::StringSet<> thisBindingPaths;
+  if (parentBindings && thisObject)
+    for (Attribute attribute : parentBindings) {
+      auto argument = dyn_cast<sim::ArgumentBindingAttr>(attribute);
+      if (argument && argument.getArgument() < function.getNumArguments() &&
+          function.getArgument(argument.getArgument()) == thisObject)
+        thisBindingPaths.insert(argument.getPath().getValue());
+    }
   llvm::StringSet<> referencedPaths;
   bool branchUsesThis = false;
   branch->walk([&](Operation *nested) {
@@ -906,6 +914,13 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
             nested->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
       for (Attribute capture : callCaptures)
         referencedPaths.insert(cast<StringAttr>(capture).getValue());
+    if (auto observerCaptures =
+            nested->getAttrOfType<ArrayAttr>(observerCapturesAttrName))
+      for (Attribute capture : observerCaptures) {
+        StringRef path = cast<StringAttr>(capture).getValue();
+        referencedPaths.insert(path);
+        branchUsesThis |= thisBindingPaths.contains(path);
+      }
   });
   std::optional<unsigned> outlinedThisArgument;
   if (branchUsesThis && thisObject) {
@@ -914,17 +929,15 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
     captures.push_back(thisObject);
     argumentAttrs.push_back(
         captureMetadata(builder, sim::CaptureKind::Formal));
-    // Direct `this` references resolve through the child's distinguished
-    // receiver as well. Suppress a duplicate ordinary capture for the same
-    // parent argument binding.
-    if (parentBindings)
-      for (Attribute attribute : parentBindings) {
-        auto argument = dyn_cast<sim::ArgumentBindingAttr>(attribute);
-        if (!argument || argument.getArgument() >= function.getNumArguments())
-          continue;
-        if (function.getArgument(argument.getArgument()) == thisObject)
-          capturedPaths.insert(argument.getPath().getValue());
-      }
+    // Preserve the receiver's frozen path as an alias of the distinguished
+    // `this` argument. Observer and callee capture inventories resolve by
+    // path, while ordinary implicit member accesses use thisArgument.
+    for (const auto &entry : thisBindingPaths)
+      if (capturedPaths.insert(entry.getKey()).second)
+        bindings.push_back(sim::ArgumentBindingAttr::get(
+            context, builder.getStringAttr(entry.getKey()),
+            *outlinedThisArgument, sim::UnitArgumentKind::Direct,
+            /*copyOut=*/false, IntegerAttr{}));
   }
   if (parentBindings)
     for (Attribute attribute : parentBindings) {
