@@ -816,9 +816,10 @@ UnitLowering::bindObserver(Operation *expression,
     dependencies.push_back(*value);
   }
   for (Value dependency : dynamicDependencies) {
-    if (!isa<sim::ManagedWatchType>(dependency.getType())) {
+    if (!isa<sim::EventType, sim::ManagedWatchType>(dependency.getType())) {
       emitError(location)
-          << "dynamic observer dependency is not a managed-watch handle: "
+          << "dynamic observer dependency is not a named-event or "
+             "managed-watch handle: "
           << dependency.getType();
       return failure();
     }

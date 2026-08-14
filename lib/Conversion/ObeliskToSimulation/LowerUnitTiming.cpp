@@ -204,14 +204,18 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
                                     sim::ContinuationSiteAttr{},
                                     resume, successor);
   };
-  auto evaluateInitial = [&](Operation *expression) -> FailureOr<Value> {
+  auto evaluateInitial = [&](Operation *expression,
+                             SmallVectorImpl<Value> &dynamicDependencies)
+      -> FailureOr<Value> {
     FailureOr<Value> value = lowerExpression(expression);
     if (failed(value))
       return failure();
-    if (isa<sim::EventType>((*value).getType()))
+    if (isa<sim::EventType>((*value).getType())) {
+      dynamicDependencies.push_back(*value);
       return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                        builder.getBoolAttr(false))
           .getResult();
+    }
     return toPackedScalar(*value, getSemanticLocation(expression));
   };
   auto emitObserved =
@@ -228,8 +232,11 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
         unsupported(event) << " (event expression inventory)";
         return failure();
       }
-      FailureOr<Value> initial = evaluateInitial(children.front());
-      FailureOr<Value> primary = bindObserver(children.front());
+      SmallVector<Value> dynamicDependencies;
+      FailureOr<Value> initial =
+          evaluateInitial(children.front(), dynamicDependencies);
+      FailureOr<Value> primary =
+          bindObserver(children.front(), dynamicDependencies);
       if (failed(initial) || failed(primary))
         return failure();
       primaries.push_back(*primary);
