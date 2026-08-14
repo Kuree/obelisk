@@ -148,11 +148,24 @@ DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function) {
   if (function.isExternal() || function.getBody().empty())
     return provenanceMap;
 
-  DenseMap<uint64_t, uint64_t> driverNets;
-  if (auto design = function->getParentOfType<sim::SimDesignOp>())
-    for (sim::SimDriverDeclOp driver :
-         design.getBody().front().getOps<sim::SimDriverDeclOp>())
-      driverNets[driver.getId()] = driver.getNetId();
+  // Driver handles are normalized to their net through the design's driver
+  // declarations. Finding those means scanning the design's top-level block,
+  // which also holds every code unit, so building the map unconditionally
+  // costs one design-sized scan per function and makes every caller that
+  // derives provenance for all functions quadratic. Only functions that
+  // actually carry a driver handle need the map, and most carry none, so
+  // build it on first use.
+  std::optional<DenseMap<uint64_t, uint64_t>> driverNetsStorage;
+  auto driverNets = [&]() -> const DenseMap<uint64_t, uint64_t> & {
+    if (!driverNetsStorage) {
+      driverNetsStorage.emplace();
+      if (auto design = function->getParentOfType<sim::SimDesignOp>())
+        for (sim::SimDriverDeclOp driver :
+             design.getBody().front().getOps<sim::SimDriverDeclOp>())
+          (*driverNetsStorage)[driver.getId()] = driver.getNetId();
+    }
+    return *driverNetsStorage;
+  };
 
   Block &entry = function.getBody().front();
   for (BlockArgument argument : entry.getArguments()) {
@@ -204,9 +217,9 @@ DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function) {
         provenance = {};
       if (isa<sim::DriverType>(argument.getType())) {
         auto net = provenance.descriptor
-                       ? driverNets.find(*provenance.descriptor)
-                       : driverNets.end();
-        if (net == driverNets.end()) {
+                       ? driverNets().find(*provenance.descriptor)
+                       : driverNets().end();
+        if (net == driverNets().end()) {
           provenance.resource = sim::ComputeResourceKind::Unknown;
           provenance.descriptor.reset();
         } else {
@@ -321,12 +334,12 @@ DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function) {
                       op.getId());
             })
             .Case<sim::SimContextDriverOp>([&](auto op) {
-              auto net = driverNets.find(op.getId());
+              auto net = driverNets().find(op.getId());
               declare(op.getResult(),
-                      net == driverNets.end()
+                      net == driverNets().end()
                           ? sim::ComputeResourceKind::Unknown
                           : sim::ComputeResourceKind::Net,
-                      net == driverNets.end()
+                      net == driverNets().end()
                           ? std::optional<uint64_t>{}
                           : std::optional<uint64_t>{net->second});
             })

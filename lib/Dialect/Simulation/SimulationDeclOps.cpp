@@ -255,33 +255,42 @@ LogicalResult SimCovergroupInstanceQueryOp::verify() {
   return verifyCovergroupHandle(*this, getHandle().getType());
 }
 
-LogicalResult SimCovergroupTypeQueryOp::verify() {
-  if (!lookupCovergroup(*this, getDeclarationAttr()))
+LogicalResult SimCovergroupTypeQueryOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  if (!symbolTable.lookupNearestSymbolFrom<SimCovergroupDeclOp>(
+          *this, getDeclarationAttr()))
     return emitOpError("references an unknown covergroup declaration");
   return success();
 }
 
-static SimClassDeclOp lookupClass(Operation *operation, SymbolRefAttr symbol) {
-  return symbol ? SymbolTable::lookupNearestSymbolFrom<SimClassDeclOp>(
-                      operation, symbol)
+// Cached variants for verifiers that run once per operation. The uncached
+// SymbolTable lookups scan the enclosing design's block on every call, so an
+// op-count-proportional number of calls costs design-size each and makes
+// verification quadratic in the number of declarations.
+static SimClassDeclOp lookupClass(SymbolTableCollection &symbolTable,
+                                  Operation *operation, SymbolRefAttr symbol) {
+  return symbol ? symbolTable.lookupNearestSymbolFrom<SimClassDeclOp>(operation,
+                                                                      symbol)
                 : SimClassDeclOp{};
 }
 
-static SimClassFieldDeclOp lookupClassField(Operation *operation,
+static SimClassFieldDeclOp lookupClassField(SymbolTableCollection &symbolTable,
+                                            Operation *operation,
                                             SymbolRefAttr symbol) {
-  return symbol ? SymbolTable::lookupNearestSymbolFrom<SimClassFieldDeclOp>(
+  return symbol ? symbolTable.lookupNearestSymbolFrom<SimClassFieldDeclOp>(
                       operation, symbol)
                 : SimClassFieldDeclOp{};
 }
 
-static bool classDerivesFrom(SimClassDeclOp derived, SimClassDeclOp base) {
+static bool classDerivesFrom(SymbolTableCollection &symbolTable,
+                             SimClassDeclOp derived, SimClassDeclOp base) {
   llvm::SmallPtrSet<Operation *, 8> visited;
   for (SimClassDeclOp current = derived;
        current && visited.insert(current).second;) {
     if (current == base)
       return true;
     current = current.getBaseAttr()
-                  ? lookupClass(current, current.getBaseAttr())
+                  ? lookupClass(symbolTable, current, current.getBaseAttr())
                   : SimClassDeclOp{};
   }
   return false;
@@ -296,8 +305,6 @@ LogicalResult SimClassDeclOp::verify() {
     return emitOpError("interface classes cannot have a base class");
   if (getBaseAttr() && getBase() == getSymName())
     return emitOpError("class cannot extend itself");
-  if (getWeakReferentAttr() && !lookupClass(*this, getWeakReferentAttr()))
-    return emitOpError("weak wrapper references an unknown referent class");
   if (ArrayAttr interfaces = getInterfacesAttr()) {
     SmallVector<StringRef> unique;
     for (Attribute attribute : interfaces) {
@@ -310,12 +317,18 @@ LogicalResult SimClassDeclOp::verify() {
       unique.push_back(interface.getValue());
     }
   }
+  return success();
+}
+
+LogicalResult
+SimClassDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (getWeakReferentAttr() &&
+      !lookupClass(symbolTable, *this, getWeakReferentAttr()))
+    return emitOpError("weak wrapper references an unknown referent class");
   if (Attribute attribute = (*this)->getAttr(metadata::randomModeField)) {
     auto reference = dyn_cast<FlatSymbolRefAttr>(attribute);
-    auto field =
-        reference ? SymbolTable::lookupNearestSymbolFrom<SimClassFieldDeclOp>(
-                        *this, reference)
-                  : SimClassFieldDeclOp{};
+    SimClassFieldDeclOp field =
+        lookupClassField(symbolTable, *this, reference);
     if (getBaseAttr() || !field || field.getOwner() != getSymName() ||
         field.getIsStatic() || !field.getType().isInteger(64))
       return emitOpError(
@@ -335,10 +348,13 @@ LogicalResult SimClassDeclOp::verify() {
 
       SimClassDeclOp current = *this;
       for (FlatSymbolRefAttr pathComponent : reference.getPath()) {
-        SimClassFieldDeclOp field = lookupClassField(*this, pathComponent);
+        SimClassFieldDeclOp field =
+            lookupClassField(symbolTable, *this, pathComponent);
         SimClassDeclOp fieldOwner =
-            field ? lookupClass(field, field.getOwnerAttr()) : SimClassDeclOp{};
-        if (!field || !fieldOwner || !classDerivesFrom(current, fieldOwner))
+            field ? lookupClass(symbolTable, field, field.getOwnerAttr())
+                  : SimClassDeclOp{};
+        if (!field || !fieldOwner ||
+            !classDerivesFrom(symbolTable, current, fieldOwner))
           return emitOpError()
                  << "random-variable reference path field " << pathComponent
                  << " is not visible from class " << current.getSymName();
@@ -348,7 +364,7 @@ LogicalResult SimClassDeclOp::verify() {
           return emitOpError()
                  << "random-variable reference path field " << pathComponent
                  << " must be a strong rand object edge";
-        current = lookupClass(field, handle.getClassName());
+        current = lookupClass(symbolTable, field, handle.getClassName());
         if (!current)
           return emitOpError()
                  << "random-variable reference path field " << pathComponent
@@ -356,10 +372,12 @@ LogicalResult SimClassDeclOp::verify() {
       }
 
       SimClassFieldDeclOp target =
-          lookupClassField(*this, reference.getTarget());
+          lookupClassField(symbolTable, *this, reference.getTarget());
       SimClassDeclOp targetOwner =
-          target ? lookupClass(target, target.getOwnerAttr()) : SimClassDeclOp{};
-      if (!target || !targetOwner || !classDerivesFrom(current, targetOwner))
+          target ? lookupClass(symbolTable, target, target.getOwnerAttr())
+                 : SimClassDeclOp{};
+      if (!target || !targetOwner ||
+          !classDerivesFrom(symbolTable, current, targetOwner))
         return emitOpError()
                << "random-variable reference target " << reference.getTarget()
                << " is not visible from class " << current.getSymName();
@@ -373,7 +391,7 @@ LogicalResult SimClassDeclOp::verify() {
   }
   if (FlatSymbolRefAttr reference = getRandomConstraintTemplateAttr()) {
     auto templateOp =
-        SymbolTable::lookupNearestSymbolFrom<SimRandomConstraintTemplateOp>(
+        symbolTable.lookupNearestSymbolFrom<SimRandomConstraintTemplateOp>(
             *this, reference);
     if (!templateOp)
       return emitOpError(
@@ -386,8 +404,6 @@ LogicalResult SimClassDeclOp::verify() {
 }
 
 LogicalResult SimClassFieldDeclOp::verify() {
-  if (!lookupClass(*this, getOwnerAttr()))
-    return emitOpError("references an unknown owner class");
   if (getOffsetAttr() &&
       failed(verifyNonnegative(*this, getOffsetAttr(), "field offset")))
     return failure();
@@ -446,23 +462,7 @@ LogicalResult SimClassFieldDeclOp::verify() {
       return emitOpError(
           "randc variables require key and position fields; rand variables "
           "forbid them");
-    if (isRandC) {
-      SimClassFieldDeclOp keyField =
-          SymbolTable::lookupNearestSymbolFrom<SimClassFieldDeclOp>(*this,
-                                                                    key);
-      SimClassFieldDeclOp positionField =
-          SymbolTable::lookupNearestSymbolFrom<SimClassFieldDeclOp>(*this,
-                                                                    position);
-      auto validStateField = [&](SimClassFieldDeclOp state) {
-        return state && state.getOwner() == getOwner() &&
-               !state.getIsStatic() && state.getType().isInteger(64);
-      };
-      if (!validStateField(keyField) || !validStateField(positionField) ||
-          keyField == positionField || keyField == *this ||
-          positionField == *this)
-        return emitOpError(
-            "randc state must name distinct owned instance i64 fields");
-    }
+    // The randc state fields themselves are resolved in verifySymbolUses.
   } else if (signedAttribute || keyAttribute || positionAttribute) {
     return emitOpError(
         "random variable auxiliary metadata requires a variable kind");
@@ -472,10 +472,33 @@ LogicalResult SimClassFieldDeclOp::verify() {
   return success();
 }
 
-LogicalResult SimClassMethodDeclOp::verify() {
-  SimClassDeclOp owner = lookupClass(*this, getOwnerAttr());
-  if (!owner)
+LogicalResult
+SimClassFieldDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (!lookupClass(symbolTable, *this, getOwnerAttr()))
     return emitOpError("references an unknown owner class");
+  // Structural verification already rejected a randc field that is missing
+  // either state reference, so only a complete pair reaches a lookup here.
+  auto key = dyn_cast_or_null<FlatSymbolRefAttr>(
+      (*this)->getAttr(metadata::randomCycleKeyField));
+  auto position = dyn_cast_or_null<FlatSymbolRefAttr>(
+      (*this)->getAttr(metadata::randomCyclePositionField));
+  if (!key || !position)
+    return success();
+  SimClassFieldDeclOp keyField = lookupClassField(symbolTable, *this, key);
+  SimClassFieldDeclOp positionField =
+      lookupClassField(symbolTable, *this, position);
+  auto validStateField = [&](SimClassFieldDeclOp state) {
+    return state && state.getOwner() == getOwner() && !state.getIsStatic() &&
+           state.getType().isInteger(64);
+  };
+  if (!validStateField(keyField) || !validStateField(positionField) ||
+      keyField == positionField || keyField == *this || positionField == *this)
+    return emitOpError(
+        "randc state must name distinct owned instance i64 fields");
+  return success();
+}
+
+LogicalResult SimClassMethodDeclOp::verify() {
   auto functionType = dyn_cast<FunctionType>(getFunctionType());
   if (!functionType)
     return emitOpError("method signature must be a function type");
@@ -486,8 +509,9 @@ LogicalResult SimClassMethodDeclOp::verify() {
     if (functionType.getNumInputs() < 2)
       return emitOpError("instance method signature requires explicit this");
     auto thisType = dyn_cast<ClassHandleType>(functionType.getInput(1));
+    // The owner attribute is the class's name, so this check needs no lookup.
     if (!thisType ||
-        thisType.getClassName().getRootReference() != owner.getSymName())
+        thisType.getClassName().getRootReference() != getOwnerAttr().getValue())
       return emitOpError("instance method this type must name its owner class");
   }
   if (getIsTask() && functionType.getNumResults() != 0)
@@ -505,6 +529,25 @@ LogicalResult SimClassMethodDeclOp::verify() {
     if (getSlotAttr().getValue().isNegative() ||
         getSlot() > interfaceDispatchSlot)
       return emitOpError("virtual-method slot exceeds the 32-bit dispatch ABI");
+  }
+  if (getIsVirtual() != static_cast<bool>(getSignatureIdAttr()) ||
+      (getSignatureIdAttr() && getSignatureId() == 0))
+    return emitOpError(
+        "virtual methods require a nonzero signature ID and nonvirtual "
+        "methods forbid one");
+  if (getIsPure() == static_cast<bool>(getImplementationAttr()))
+    return emitOpError(
+        "pure methods forbid an implementation and concrete methods require "
+        "one");
+  return success();
+}
+
+LogicalResult
+SimClassMethodDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  SimClassDeclOp owner = lookupClass(symbolTable, *this, getOwnerAttr());
+  if (!owner)
+    return emitOpError("references an unknown owner class");
+  if (getSlotAttr()) {
     if (owner.getIsInterface() && getSlot() != interfaceDispatchSlot)
       return emitOpError(
           "interface virtual methods require the interface dispatch slot");
@@ -523,15 +566,6 @@ LogicalResult SimClassMethodDeclOp::verify() {
     return emitOpError(
         "only interface virtual methods may have an interface ordinal");
   }
-  if (getIsVirtual() != static_cast<bool>(getSignatureIdAttr()) ||
-      (getSignatureIdAttr() && getSignatureId() == 0))
-    return emitOpError(
-        "virtual methods require a nonzero signature ID and nonvirtual "
-        "methods forbid one");
-  if (getIsPure() == static_cast<bool>(getImplementationAttr()))
-    return emitOpError(
-        "pure methods forbid an implementation and concrete methods require "
-        "one");
   return success();
 }
 
@@ -547,6 +581,7 @@ static SimStorageDeclOp lookupStorage(Operation *operation, uint64_t id) {
 }
 
 static LogicalResult verifyRandomValueReference(
+    SymbolTableCollection &symbolTable,
     SimRandomConstraintTemplateOp templateOp, SimClassDeclOp owner,
     RandomValueReferenceAttr reference) {
   auto verifyRange = [&](Type type, StringRef source) -> LogicalResult {
@@ -564,10 +599,13 @@ static LogicalResult verifyRandomValueReference(
   case RandomValueReferenceKind::ObjectField: {
     SimClassDeclOp current = owner;
     for (FlatSymbolRefAttr pathComponent : reference.getPath()) {
-      SimClassFieldDeclOp field = lookupClassField(templateOp, pathComponent);
+      SimClassFieldDeclOp field =
+          lookupClassField(symbolTable, templateOp, pathComponent);
       SimClassDeclOp fieldOwner =
-          field ? lookupClass(field, field.getOwnerAttr()) : SimClassDeclOp{};
-      if (!field || !fieldOwner || !classDerivesFrom(current, fieldOwner))
+          field ? lookupClass(symbolTable, field, field.getOwnerAttr())
+                : SimClassDeclOp{};
+      if (!field || !fieldOwner ||
+          !classDerivesFrom(symbolTable, current, fieldOwner))
         return templateOp.emitOpError()
                << "random-value path field " << pathComponent
                << " is not visible from class " << current.getSymName();
@@ -576,7 +614,7 @@ static LogicalResult verifyRandomValueReference(
         return templateOp.emitOpError()
                << "random-value path field " << pathComponent
                << " must be a strong instance class handle";
-      current = lookupClass(field, handle.getClassName());
+      current = lookupClass(symbolTable, field, handle.getClassName());
       if (!current)
         return templateOp.emitOpError()
                << "random-value path field " << pathComponent
@@ -584,10 +622,12 @@ static LogicalResult verifyRandomValueReference(
     }
 
     SimClassFieldDeclOp target =
-        lookupClassField(templateOp, reference.getTarget());
+        lookupClassField(symbolTable, templateOp, reference.getTarget());
     SimClassDeclOp targetOwner =
-        target ? lookupClass(target, target.getOwnerAttr()) : SimClassDeclOp{};
-    if (!target || !targetOwner || !classDerivesFrom(current, targetOwner))
+        target ? lookupClass(symbolTable, target, target.getOwnerAttr())
+               : SimClassDeclOp{};
+    if (!target || !targetOwner ||
+        !classDerivesFrom(symbolTable, current, targetOwner))
       return templateOp.emitOpError()
              << "random-value target " << reference.getTarget()
              << " is not visible from class " << current.getSymName();
@@ -609,8 +649,9 @@ static LogicalResult verifyRandomValueReference(
   llvm_unreachable("unknown random-value reference kind");
 }
 
-LogicalResult SimRandomConstraintTemplateOp::verify() {
-  SimClassDeclOp owner = lookupClass(*this, getOwnerAttr());
+LogicalResult SimRandomConstraintTemplateOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  SimClassDeclOp owner = lookupClass(symbolTable, *this, getOwnerAttr());
   if (!owner)
     return emitOpError("references an unknown owner class");
 
@@ -624,7 +665,8 @@ LogicalResult SimRandomConstraintTemplateOp::verify() {
       auto reference = cast<RandomValueReferenceAttr>(attribute);
       if (!uniqueReferences.insert(reference).second)
         return emitOpError("random-value references contain a duplicate");
-      if (failed(verifyRandomValueReference(*this, owner, reference)))
+      if (failed(verifyRandomValueReference(symbolTable, *this, owner,
+                                           reference)))
         return failure();
     }
 
@@ -737,9 +779,11 @@ LogicalResult SimRandomSoftConstraintOp::verify() {
   return verifyRandomConstraintSink(*this, getBlockAttr());
 }
 
-LogicalResult SimClassAllocOp::verify() {
+LogicalResult
+SimClassAllocOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto type = getResult().getType();
-  SimClassDeclOp descriptor = lookupClass(*this, type.getClassName());
+  SimClassDeclOp descriptor =
+      lookupClass(symbolTable, *this, type.getClassName());
   if (!descriptor)
     return emitOpError("result type references an unknown class");
   if (descriptor.getIsAbstract() || descriptor.getIsInterface())
@@ -754,9 +798,10 @@ LogicalResult SimClassCopyOp::verify() {
   return success();
 }
 
-LogicalResult SimWeakCreateOp::verify() {
+LogicalResult
+SimWeakCreateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   SimClassDeclOp wrapper =
-      lookupClass(*this, getResult().getType().getClassName());
+      lookupClass(symbolTable, *this, getResult().getType().getClassName());
   if (!wrapper || !wrapper.getWeakReferentAttr())
     return emitOpError("result must be a declared weak_reference wrapper");
   if (wrapper.getWeakReferentAttr() != getReferent().getType().getClassName())
@@ -765,9 +810,10 @@ LogicalResult SimWeakCreateOp::verify() {
   return success();
 }
 
-LogicalResult SimWeakGetOp::verify() {
+LogicalResult
+SimWeakGetOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   SimClassDeclOp wrapper =
-      lookupClass(*this, getWeak().getType().getClassName());
+      lookupClass(symbolTable, *this, getWeak().getType().getClassName());
   if (!wrapper || !wrapper.getWeakReferentAttr())
     return emitOpError("operand must be a declared weak_reference wrapper");
   if (wrapper.getWeakReferentAttr() != getResult().getType().getClassName())
@@ -776,48 +822,57 @@ LogicalResult SimWeakGetOp::verify() {
   return success();
 }
 
-LogicalResult SimWeakClearOp::verify() {
+LogicalResult
+SimWeakClearOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   SimClassDeclOp wrapper =
-      lookupClass(*this, getWeak().getType().getClassName());
+      lookupClass(symbolTable, *this, getWeak().getType().getClassName());
   if (!wrapper || !wrapper.getWeakReferentAttr())
     return emitOpError("operand must be a declared weak_reference wrapper");
   return success();
 }
 
-LogicalResult SimClassIsInstanceOp::verify() {
-  if (!lookupClass(*this, getTargetAttr()))
+LogicalResult
+SimClassIsInstanceOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (!lookupClass(symbolTable, *this, getTargetAttr()))
     return emitOpError("references an unknown target class");
   return success();
 }
 
-LogicalResult SimClassCastOp::verify() {
+LogicalResult
+SimClassCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto source = getObject().getType();
   auto target = getResult().getType();
-  SimClassDeclOp sourceClass = lookupClass(*this, source.getClassName());
-  SimClassDeclOp targetClass = lookupClass(*this, target.getClassName());
+  SimClassDeclOp sourceClass =
+      lookupClass(symbolTable, *this, source.getClassName());
+  SimClassDeclOp targetClass =
+      lookupClass(symbolTable, *this, target.getClassName());
   if (!sourceClass || !targetClass)
     return emitOpError("cast references an unknown class");
   bool targetInterface = targetClass.getIsInterface();
   bool sourceInterface = sourceClass.getIsInterface();
   if (!targetInterface && !sourceInterface &&
-      !classDerivesFrom(sourceClass, targetClass) &&
-      !classDerivesFrom(targetClass, sourceClass))
+      !classDerivesFrom(symbolTable, sourceClass, targetClass) &&
+      !classDerivesFrom(symbolTable, targetClass, sourceClass))
     return emitOpError("cast classes are unrelated");
   return success();
 }
 
-LogicalResult SimClassFieldRefOp::verify() {
-  auto field = SymbolTable::lookupNearestSymbolFrom<SimClassFieldDeclOp>(
-      *this, getFieldAttr());
+LogicalResult
+SimClassFieldRefOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  SimClassFieldDeclOp field =
+      lookupClassField(symbolTable, *this, getFieldAttr());
   if (!field)
     return emitOpError("references an unknown class property");
   if (field.getIsStatic())
     return emitOpError(
         "cannot form an instance reference to a static property");
   auto objectType = getObject().getType();
-  SimClassDeclOp objectClass = lookupClass(*this, objectType.getClassName());
-  SimClassDeclOp fieldOwner = lookupClass(*this, field.getOwnerAttr());
-  if (!objectClass || !fieldOwner || !classDerivesFrom(objectClass, fieldOwner))
+  SimClassDeclOp objectClass =
+      lookupClass(symbolTable, *this, objectType.getClassName());
+  SimClassDeclOp fieldOwner =
+      lookupClass(symbolTable, *this, field.getOwnerAttr());
+  if (!objectClass || !fieldOwner ||
+      !classDerivesFrom(symbolTable, objectClass, fieldOwner))
     return emitOpError("property is not a member of the receiver class");
   auto resultType = getResult().getType();
   if (resultType.getElementType() != field.getType() ||
@@ -954,9 +1009,10 @@ LogicalResult SimClassRootBindOp::verify() {
   return success();
 }
 
-LogicalResult SimClassDirectCallOp::verify() {
+LogicalResult
+SimClassDirectCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto callee =
-      SymbolTable::lookupNearestSymbolFrom<SimFuncOp>(*this, getCalleeAttr());
+      symbolTable.lookupNearestSymbolFrom<SimFuncOp>(*this, getCalleeAttr());
   if (!callee)
     return emitOpError("references an unknown method implementation");
   if (callee.getEntryKind() != EntryKind::Function)
@@ -975,8 +1031,9 @@ LogicalResult SimClassDirectCallOp::verify() {
   return success();
 }
 
-LogicalResult SimClassVirtualCallOp::verify() {
-  auto method = SymbolTable::lookupNearestSymbolFrom<SimClassMethodDeclOp>(
+LogicalResult
+SimClassVirtualCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto method = symbolTable.lookupNearestSymbolFrom<SimClassMethodDeclOp>(
       *this, getMethodAttr());
   if (!method || !method.getIsVirtual() || !method.getSlot() ||
       *method.getSlot() != getSlot())
@@ -999,6 +1056,9 @@ LogicalResult SimClassVirtualCallOp::verify() {
 }
 
 LogicalResult SimDesignOp::verifyRegions() {
+  // One cached table for the whole design walk below. The uncached lookups
+  // rescan this design's block per call, which is quadratic across classes.
+  SymbolTableCollection symbolTable;
   if (auto precision = getTimePrecisionFsAttr();
       precision &&
       (precision.getValue().isNegative() || precision.getValue().isZero()))
@@ -1192,7 +1252,8 @@ LogicalResult SimDesignOp::verifyRegions() {
       llvm::SmallPtrSet<Operation *, 8> path;
       for (SimClassDeclOp current = classDecl; current;
            current = current.getBaseAttr()
-                         ? lookupClass(current, current.getBaseAttr())
+                         ? lookupClass(symbolTable, current,
+                                       current.getBaseAttr())
                          : SimClassDeclOp{})
         if (!path.insert(current).second)
           return classDecl.emitOpError("class inheritance contains a cycle");

@@ -444,29 +444,35 @@ void ObeliskSimSCCPPass::runOnOperation() {
                        info.callers.end());
   }
 
+  // Build the symbol user map once. Asking for one function's uses at a time
+  // rescans the whole design per function, which is quadratic in the number of
+  // code units and dominates this pass on class-heavy designs. The user map
+  // collects every symbol's users in a single walk instead.
+  SymbolTableCollection symbolTables;
+  SymbolUserMap symbolUsers(symbolTables, design);
+
   SmallVector<char> hasNonCallUse(functions.size(), false);
   for (auto [index, info] : llvm::enumerate(functions)) {
-    std::optional<SymbolTable::UseRange> uses =
-        SymbolTable::getSymbolUses(info.function, design);
-    if (!uses) {
-      hasNonCallUse[index] = true;
-      continue;
-    }
-    for (const SymbolTable::SymbolUse &use : *uses) {
-      Operation *user = use.getUser();
-      SymbolRefAttr reference = use.getSymbolRef();
+    // The user map keys on the symbol, not on the individual reference, so a
+    // call-shaped user counts as a call only when the reference that names
+    // this function is the callee itself.
+    StringRef name = info.function.getSymName();
+    auto namesThis = [&](FlatSymbolRefAttr reference) {
+      return reference && reference.getValue() == name;
+    };
+    for (Operation *user : symbolUsers.getUsers(info.function)) {
       if (auto call = dyn_cast<sim::SimCallOp>(user);
-          call && call.getCalleeAttr() == reference)
+          call && namesThis(call.getCalleeAttr()))
         continue;
       if (auto task = dyn_cast<sim::SimTaskCallOp>(user);
-          task && task.getCalleeAttr() == reference)
+          task && namesThis(task.getCalleeAttr()))
         continue;
       if (auto spawn = dyn_cast<sim::SimSpawnOp>(user);
-          spawn && spawn.getCalleeAttr() == reference)
+          spawn && namesThis(spawn.getCalleeAttr()))
         continue;
       if (auto method = dyn_cast<sim::SimClassMethodDeclOp>(user);
-          method && method.getIsTask() && method.getImplementationAttr() &&
-          method.getImplementationAttr() == reference)
+          method && method.getIsTask() &&
+          namesThis(method.getImplementationAttr()))
         continue;
       hasNonCallUse[index] = true;
       break;

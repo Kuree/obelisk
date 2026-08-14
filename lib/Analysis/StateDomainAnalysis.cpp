@@ -913,8 +913,11 @@ computeValueFacts(sim::SimDesignOp design, const RootSet &assumedKnownRoots) {
       // attribute attached to the symbol operation itself can skip that
       // operation's sibling symbols and incorrectly classify opaque uses as
       // absent.
-      sim::SimFuncOp function =
-          design.lookupSymbol<sim::SimFuncOp>(reference.getRootReference());
+      // Resolve through the cached table. A bare lookupSymbol rebuilds nothing
+      // but scans the design's symbols linearly on every use, which turns this
+      // otherwise linear scan quadratic in the number of code units.
+      auto function = symbolTables.lookupSymbolIn<sim::SimFuncOp>(
+          design, reference.getRootReference());
       if (!function)
         continue;
       auto found = functionIndex.find(function.getOperation());

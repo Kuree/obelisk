@@ -340,6 +340,7 @@ def SimCovergroupInstanceQueryOp : SimOp<"covergroup.instance_query", [
 }
 
 def SimCovergroupTypeQueryOp : SimOp<"covergroup.type_query", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemRead<SimCoverageResource>]>
   ]> {
   let summary = "query average coverage of all constructed instances";
@@ -351,7 +352,6 @@ def SimCovergroupTypeQueryOp : SimOp<"covergroup.type_query", [
     type($context) `->` `(` type($percentage) `,`
     type($covered) `,` type($total) `)`
   }];
-  let hasVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -359,7 +359,8 @@ def SimCovergroupTypeQueryOp : SimOp<"covergroup.type_query", [
 //===----------------------------------------------------------------------===//
 
 def SimClassDeclOp : SimOp<"class.decl", [
-    Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
   ]> {
   let summary = "immutable managed class and hierarchy descriptor";
   let arguments = (ins
@@ -384,7 +385,8 @@ def SimClassDeclOp : SimOp<"class.decl", [
 }
 
 def SimClassFieldDeclOp : SimOp<"class.field", [
-    Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
   ]> {
   let summary = "declaration-order class property and trace descriptor";
   let arguments = (ins
@@ -405,7 +407,8 @@ def SimClassFieldDeclOp : SimOp<"class.field", [
 }
 
 def SimClassMethodDeclOp : SimOp<"class.method", [
-    Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
   ]> {
   let summary = "class method signature and deterministic dispatch slot";
   let arguments = (ins
@@ -439,6 +442,7 @@ def SimClassMethodDeclOp : SimOp<"class.method", [
 // object graph before translating the combined graph to the solver.
 def SimRandomConstraintTemplateOp
     : SimOp<"random.constraint_template", [
+        DeclareOpInterfaceMethods<SymbolUserOpInterface>,
         Symbol, IsolatedFromAbove, NoTerminator, SingleBlock,
         RecursiveMemoryEffects
       ]> {
@@ -451,7 +455,6 @@ def SimRandomConstraintTemplateOp
   );
   let regions = (region AnyRegion:$body);
   let assemblyFormat = "$sym_name `of` $owner attr-dict-with-keyword $body";
-  let hasVerifier = 1;
 }
 
 def SimRandomConstraintValueOp : SimOp<"random.constraint_value", [Pure]> {
@@ -1024,6 +1027,7 @@ def SimStringOutputFormatOp : SimOp<"string.output_format", [
 }
 
 def SimClassAllocOp : SimOp<"class.alloc", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "allocate zero-initialized storage for a concrete class";
@@ -1031,7 +1035,6 @@ def SimClassAllocOp : SimOp<"class.alloc", [
   let results = (outs SimClassHandleType:$result);
   let assemblyFormat =
       "$context attr-dict `:` type($context) `->` qualified(type($result))";
-  let hasVerifier = 1;
 }
 
 def SimClassCopyOp : SimOp<"class.copy", [
@@ -1047,14 +1050,15 @@ def SimClassCopyOp : SimOp<"class.copy", [
   let hasVerifier = 1;
 }
 
-def SimClassIsInstanceOp : SimOp<"class.is_instance", [Pure]> {
+def SimClassIsInstanceOp : SimOp<"class.is_instance", [
+    Pure, DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  ]> {
   let summary = "test a dynamic class against a class or interface";
   let arguments = (ins SimClassHandleType:$object,
                        FlatSymbolRefAttr:$target);
   let results = (outs I1:$result);
   let assemblyFormat =
       "$object `is` $target attr-dict `:` qualified(type($object))";
-  let hasVerifier = 1;
 }
 
 def SimClassIdOp : SimOp<"class.id", [Pure]> {
@@ -1070,7 +1074,9 @@ def SimClassIdOp : SimOp<"class.id", [Pure]> {
       "$object attr-dict `:` qualified(type($object))";
 }
 
-def SimClassCastOp : SimOp<"class.cast", [Pure]> {
+def SimClassCastOp : SimOp<"class.cast", [
+    Pure, DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  ]> {
   let summary = "checked class or interface cast";
   let arguments = (ins SimClassHandleType:$object);
   let results = (outs SimClassHandleType:$result);
@@ -1078,10 +1084,11 @@ def SimClassCastOp : SimOp<"class.cast", [Pure]> {
     $object attr-dict `:` qualified(type($object))
     `to` qualified(type($result))
   }];
-  let hasVerifier = 1;
 }
 
-def SimClassFieldRefOp : SimOp<"class.field_ref", [Pure]> {
+def SimClassFieldRefOp : SimOp<"class.field_ref", [
+    Pure, DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  ]> {
   let summary = "managed reference to one instance property";
   let arguments = (ins SimClassHandleType:$object,
                        FlatSymbolRefAttr:$field);
@@ -1090,7 +1097,6 @@ def SimClassFieldRefOp : SimOp<"class.field_ref", [Pure]> {
     $object `[` $field `]` attr-dict `:` qualified(type($object))
     `->` qualified(type($result))
   }];
-  let hasVerifier = 1;
 }
 
 def SimManagedLoadOp : SimOp<"managed.load", [
@@ -1252,6 +1258,7 @@ def SimArgumentRefStoreOp : SimOp<"argument_ref.store", [
 }
 
 def SimClassDirectCallOp : SimOp<"class.direct_call", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[
       MemRead<SimStorageResource>, MemWrite<SimStorageResource>,
       MemRead<SimNetResource>, MemWrite<SimNetResource>,
@@ -1272,10 +1279,10 @@ def SimClassDirectCallOp : SimOp<"class.direct_call", [
     $callee $receiver `(` $arguments `)` attr-dict `:`
     functional-type(operands, results)
   }];
-  let hasVerifier = 1;
 }
 
 def SimClassVirtualCallOp : SimOp<"class.virtual_call", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[
       MemRead<SimStorageResource>, MemWrite<SimStorageResource>,
       MemRead<SimNetResource>, MemWrite<SimNetResource>,
@@ -1298,10 +1305,10 @@ def SimClassVirtualCallOp : SimOp<"class.virtual_call", [
     $receiver `[` $method `]` `slot` $slot `signature_id` $signature_id
     `(` $arguments `)` attr-dict `:` functional-type(operands, results)
   }];
-  let hasVerifier = 1;
 }
 
 def SimWeakCreateOp : SimOp<"weak.create", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "create a managed weak_reference wrapper";
@@ -1313,10 +1320,10 @@ def SimWeakCreateOp : SimOp<"weak.create", [
     type($context) `,` qualified(type($referent))
     `->` qualified(type($result))
   }];
-  let hasVerifier = 1;
 }
 
 def SimWeakGetOp : SimOp<"weak.get", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemRead<SimHeapResource>]>
   ]> {
   let summary = "promote a reachable weak referent to a strong handle";
@@ -1326,16 +1333,15 @@ def SimWeakGetOp : SimOp<"weak.get", [
     $weak attr-dict `:` qualified(type($weak))
     `->` qualified(type($result))
   }];
-  let hasVerifier = 1;
 }
 
 def SimWeakClearOp : SimOp<"weak.clear", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemWrite<SimHeapResource>]>
   ]> {
   let summary = "clear a weak_reference referent";
   let arguments = (ins SimClassHandleType:$weak);
   let assemblyFormat = "$weak attr-dict `:` qualified(type($weak))";
-  let hasVerifier = 1;
 }
 
 def SimGCSafepointOp : SimOp<"gc.safepoint", [
