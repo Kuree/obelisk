@@ -165,7 +165,16 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
       sim::SimArgumentRefStoreOp::create(builder, location, updated,
                                          *reference);
     else
-      return failure();
+      // The receiver is stored by key rather than by address - it is an
+      // element of an associative array, a dynamic array, or a queue. Writing
+      // the mutated container back needs a store that runs *after* the method
+      // body, because those elements hold values rather than references, so
+      // the reference-store shape above cannot express it.
+      return emitError(location)
+                 << "mutating method '" << methodName
+                 << "' on a container nested inside a dynamic container is "
+                    "not executable yet",
+             failure();
     receiver = updated;
   } else {
     receiver = lowerExpression(receiverNode);
