@@ -47,31 +47,35 @@ module attributes {
         } {}
         obelisk.sv.symbol.subroutine attributes {
           hierarchical_name = "C::wait_flag", name = "wait_flag",
-          node_id = 6 : i64, semantic_type = !obelisk.subroutine<() -> (), true>,
+          node_id = 6 : i64,
+          semantic_type = !obelisk.subroutine<(!obelisk.class_handle<@s1.$root::@s2::@s3.C>) -> (), true>,
           subroutine_kind = 1 : i32, sym_name = "s6.wait_flag",
           this_variable_path = "C::wait_flag.this",
           this_variable_symbol = @s1.$root::@s2::@s3.C::@s6.wait_flag::@s7.this,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
         } {
           obelisk.sv.statement.wait attributes {node_id = 7 : i64} {
-            obelisk.sv.expression.binary_op attributes {
-              is_signed = false, node_id = 8 : i64, operator_kind = 9 : i32,
-              semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>
+            obelisk.sv.expression.member_access attributes {
+              field_ordinal = 0 : i64, is_signed = true, node_id = 8 : i64,
+              packed_offset = 0 : i64, referenced_path = "C::flag",
+              referenced_symbol = @s1.$root::@s2::@s3.C::@s4.flag,
+              semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
             } {
               obelisk.sv.expression.named_value attributes {
-                is_signed = true, node_id = 9 : i64,
-                referenced_path = "C::flag",
-                referenced_symbol = @s1.$root::@s2::@s3.C::@s4.flag,
-                semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
-              } {}
-              obelisk.sv.expression.integer_literal attributes {
-                constant_value = "1", is_declared_unsized = true,
-                is_signed = true, node_id = 10 : i64,
-                semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
+                is_signed = false, node_id = 9 : i64,
+                referenced_path = "C::wait_flag.phase",
+                referenced_symbol = @s1.$root::@s2::@s3.C::@s6.wait_flag::@s19.phase,
+                semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>
               } {}
             }
             obelisk.sv.statement.empty attributes {node_id = 11 : i64} {}
           }
+          obelisk.sv.symbol.formal_argument attributes {
+            direction = 0 : i32, hierarchical_name = "C::wait_flag.phase",
+            name = "phase", node_id = 43 : i64,
+            semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>,
+            sym_name = "s19.phase"
+          } {}
           obelisk.sv.symbol.variable attributes {
             hierarchical_name = "C::wait_flag.this", is_compiler_generated,
             is_const, name = "this", node_id = 12 : i64,
@@ -239,12 +243,15 @@ module attributes {
 }
 
 // CHECK: obelisk_sim.func private @unit_
-// CHECK-SAME: %[[THIS:arg[0-9]+]]: !obelisk_sim.class_handle
-// CHECK: %[[FIELD:.*]] = obelisk_sim.class.field_ref %[[THIS]]
+// CHECK-SAME: obelisk_sim.hierarchical_name = "C::wait_flag"
+// CHECK: %[[PHASE:.*]] = obelisk_sim.ref.load
+// CHECK: %[[FIELD:.*]] = obelisk_sim.class.field_ref %[[PHASE]]
 // CHECK: %[[FIELD_WATCH:.*]] = obelisk_sim.managed.watch field %[[FIELD]]
 // CHECK: obelisk_sim.observer.bind
-// CHECK-SAME: values(%[[THIS]], %[[FIELD_WATCH]]
-// CHECK-SAME: captures 1 : <i1>
+// CHECK-SAME: %[[FIELD_WATCH]]
+// CHECK: obelisk_sim.suspend.observe
+// CHECK: obelisk_sim.func private @unit_
+// CHECK-SAME: obelisk_sim.hierarchical_name = "C::wait_q"
 // CHECK: %[[QUEUE_FIELD:.*]] = obelisk_sim.class.field_ref
 // CHECK: %[[QUEUE_WATCH:.*]] = obelisk_sim.managed.watch field %[[QUEUE_FIELD]]
 // CHECK: %[[SIZE_WATCH:.*]] = obelisk_sim.managed.watch container_size

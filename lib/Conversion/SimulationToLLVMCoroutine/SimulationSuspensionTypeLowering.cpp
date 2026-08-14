@@ -133,10 +133,11 @@ public:
       std::optional<unsigned> width =
           isa<FloatType>(type)
               ? std::optional<unsigned>(cast<FloatType>(type).getWidth())
-              : sim::getPackedWidth(type);
+              : nativeStateWidth(type);
       if (!width)
         return operation.emitOpError(
-            "observer signal dependency must have a packed width");
+            "observer signal dependency must have a simulation storage "
+            "width");
       dependencyKinds.push_back(OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL);
       dependencyWidths.push_back(static_cast<int32_t>(*width));
     }

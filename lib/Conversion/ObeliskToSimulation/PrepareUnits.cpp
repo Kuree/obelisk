@@ -341,6 +341,15 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
     std::string parentHierarchy;
   };
   SmallVector<ObserverCandidate> observerCandidates;
+  auto isManagedMemberExpression = [&](Operation *expression) {
+    auto member = dyn_cast<semantic::SVMemberAccessExpressionOp>(expression);
+    SmallVector<Operation *> children =
+        member ? getChildren(member) : SmallVector<Operation *>{};
+    if (!member || children.size() != 1)
+      return false;
+    FailureOr<Type> receiver = getNormalizedSemanticType(children.front());
+    return succeeded(receiver) && isa<sim::ClassHandleType>(*receiver);
+  };
   const size_t ordinaryUnitCount = result.units.size();
   for (size_t unitIndex = 0; unitIndex != ordinaryUnitCount; ++unitIndex) {
     PreparedUnit &unit = result.units[unitIndex];
@@ -364,7 +373,8 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
       if (auto wait = dyn_cast<semantic::SVWaitStatementOp>(nested)) {
         SmallVector<Operation *> children = getChildren(wait);
         if (children.size() == 2 &&
-            !isAddressableTimingExpression(children.front()))
+            (!isAddressableTimingExpression(children.front()) ||
+             isManagedMemberExpression(children.front())))
           observerCandidates.push_back({children.front(), ObserverResult::Truth,
                                         "wait", unit.id, unit.hierarchy});
         return;

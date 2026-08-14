@@ -145,7 +145,7 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
         std::optional<uint32_t> width = simulationWidth(element);
         if (!width)
           return operation.emitOpError(
-              "observer dependency has no packed width");
+              "observer dependency has no simulation storage width");
         write32(bytes, entryOffset + 8, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL);
         write32(bytes, entryOffset + 12, *width);
       }

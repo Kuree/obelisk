@@ -2025,9 +2025,7 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
         builder, location, referenceType, *object, field);
     if (lvalue)
       return reference;
-    return sim::SimManagedLoadOp::create(builder, location, *resultType,
-                                         reference)
-        .getResult();
+    return loadReference(reference, location);
   }
   FailureOr<Type> receiverType = getNormalizedSemanticType(children.front());
   if (succeeded(receiverType) &&

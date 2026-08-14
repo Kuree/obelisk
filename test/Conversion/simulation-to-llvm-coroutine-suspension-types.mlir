@@ -1,4 +1,5 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: obelisk-opt %s '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
@@ -11,7 +12,9 @@ module attributes {
 
     obelisk_sim.func private @evaluate(
         %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32}) -> i1
+            {obelisk_sim.capture_kind = 0 : i32},
+        %process_ref: !obelisk_sim.ref<!obelisk_sim.process>
+            {obelisk_sim.capture_kind = 2 : i32}) -> i1
         attributes {
           code_unit_id = 1 : i64, entry_kind = 14 : i32,
           obelisk_sim.observer_four_state = false,
@@ -31,12 +34,16 @@ module attributes {
         %event: !obelisk_sim.event
             {obelisk_sim.capture_kind = 1 : i32},
         %child: !obelisk_sim.process
+            {obelisk_sim.capture_kind = 1 : i32},
+        %process_ref: !obelisk_sim.ref<!obelisk_sim.process>
             {obelisk_sim.capture_kind = 1 : i32})
         attributes {code_unit_id = 2 : i64, entry_kind = 1 : i32} {
       %observer = obelisk_sim.observer.bind @evaluate values(
-          %ref, %net, %event :
+          %process_ref, %process_ref, %ref, %net, %event :
+          !obelisk_sim.ref<!obelisk_sim.process>,
+          !obelisk_sim.ref<!obelisk_sim.process>,
           !obelisk_sim.ref<!obelisk_sim.logic<17>>,
-          !obelisk_sim.net<i9>, !obelisk_sim.event) captures 0 :
+          !obelisk_sim.net<i9>, !obelisk_sim.event) captures 1 :
           !obelisk_sim.observer<i1>
       %false = arith.constant false
       obelisk_sim.suspend.observe %observer, %false conditions 0
@@ -69,12 +76,13 @@ module attributes {
 // CHECK-SAME: %[[CONTEXT:.*]]: !llvm.ptr, %{{.*}}: !llvm.ptr, %{{.*}}: i32,
 // CHECK-SAME: %[[VALUE:.*]]: !llvm.ptr, %[[UNKNOWN:.*]]: !llvm.ptr,
 // CHECK-SAME: %{{.*}}: i32) -> i32
-// CHECK: %[[RESULT:.*]] = llvm.call @evaluate(%[[CONTEXT]])
+// CHECK: %[[RESULT:.*]] = llvm.call @evaluate(%[[CONTEXT]], %{{.*}})
 // CHECK: llvm.store %[[RESULT]], %[[VALUE]]
 // CHECK: llvm.return
 // CHECK-LABEL: llvm.func @process.__obelisk_coro_ramp
 // CHECK-SAME: obelisk.frame.continuations = array<i32: 0, 1, 2, 3, 4, 5, 6, 7, 8>
 // CHECK: llvm.mlir.constant(1 : i64)
+// CHECK: llvm.mlir.constant(64 : i32)
 // CHECK: llvm.mlir.constant(17 : i32)
 // CHECK: llvm.mlir.constant(9 : i32)
 // CHECK: llvm.mlir.constant(2 : i32)

@@ -74,24 +74,9 @@ inline bool containsLogic(mlir::Type type) {
 }
 
 inline std::optional<uint32_t> simulationWidth(mlir::Type type) {
-  if (mlir::isa<sim::CovergroupHandleType, sim::VirtualInterfaceType,
-                sim::ChandleType>(type) ||
-      sim::isManagedHandleType(type))
-    return 64;
-  if (std::optional<unsigned> packed = sim::getPackedWidth(type))
-    return *packed;
-  std::optional<uint64_t> span = sim::getProvenanceSpan(type);
-  if (auto unionType = mlir::dyn_cast<sim::UnpackedUnionType>(type);
-      unionType && unionType.getIsTagged() && span) {
-    uint64_t tagBits = llvm::Log2_64_Ceil(
-        static_cast<uint64_t>(sim::getAggregateNumElements(type)) + 1);
-    if (tagBits > UINT64_MAX - *span)
-      return std::nullopt;
-    *span += tagBits;
-  }
-  if (!span || *span == 0 || *span > UINT32_MAX)
-    return std::nullopt;
-  return static_cast<uint32_t>(*span);
+  std::optional<unsigned> width =
+      analysis::getSimulationStorageBitWidth(type);
+  return width ? std::optional<uint32_t>(*width) : std::nullopt;
 }
 
 llvm::SmallVector<uint8_t> serializeDesignDatabase(

@@ -451,11 +451,12 @@ LogicalResult SimObserverBindOp::verify() {
       return emitOpError(
           "captures must use storage, net, driver, named-event, or managed "
           "handles");
-    if (!isManagedHandleType(element) && !isa<FloatType>(element) &&
+    if (!isManagedHandleType(element) &&
+        !isa<FloatType, ProcessType>(element) &&
         !getPackedWidth(element))
       return emitOpError(
-          "captured handles must refer to packed, floating, or managed "
-          "values");
+          "captured handles must refer to packed, floating, process, or "
+          "managed values");
   }
   for (Value dependency : getDependencies())
     if (!isa<RefType, NetType, EventType, ManagedWatchType>(

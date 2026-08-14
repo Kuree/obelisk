@@ -1,5 +1,6 @@
 //===- EmbeddedDesign.cpp - Materialize embedded simulation design --------===//
 
+#include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -267,11 +268,9 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
       uint32_t kind = 0;
       uint32_t captureWidth = 0;
       auto widthOf = [](Type element) -> uint32_t {
-        if (sim::isManagedHandleType(element))
-          return 64;
         if (auto floating = dyn_cast<FloatType>(element))
           return floating.getWidth();
-        return sim::getPackedWidth(element).value_or(0);
+        return analysis::getSimulationStorageBitWidth(element).value_or(0);
       };
       if (isa<sim::RefType>(type))
         kind = 1,
