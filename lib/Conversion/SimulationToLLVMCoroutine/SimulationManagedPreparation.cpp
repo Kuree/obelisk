@@ -3,6 +3,7 @@
 #include "SimulationToLLVMCoroutinePrivate.h"
 
 #include "obelisk/Analysis/ManagedClassLayoutAnalysis.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
 
@@ -36,6 +37,12 @@ struct ManagedTraceLayout {
   uint32_t slotKind = OBELISK_RT_MANAGED_SLOT_CLASS;
 };
 
+struct ManagedRandomEdge {
+  uint64_t handleOffset = 0;
+  uint64_t modeOffset = 0;
+  uint64_t modeMask = 0;
+};
+
 struct ManagedClassLayout {
   struct Interface {
     sim::SimClassDeclOp declaration;
@@ -46,6 +53,7 @@ struct ManagedClassLayout {
   uint64_t size = sizeof(void *);
   uint32_t alignment = alignof(void *);
   SmallVector<ManagedTraceLayout> tracedFields;
+  SmallVector<ManagedRandomEdge> randomEdges;
   SmallVector<sim::SimClassMethodDeclOp> methods;
   SmallVector<Interface> interfaces;
 };
@@ -110,6 +118,14 @@ prepareManagedClassInventory(ModuleOp module,
   if (failed(analyzed) ||
       failed(analysis::materializeManagedClassFieldOffsets(*analyzed)))
     return failure();
+  llvm::StringMap<uint64_t> fieldOffsets;
+  for (const analysis::ManagedClassLayoutAnalysis::Class &shared :
+       analyzed->classes)
+    for (const analysis::ManagedClassLayoutAnalysis::Field &field :
+         shared.fields) {
+      sim::SimClassFieldDeclOp declaration = field.declaration;
+      fieldOffsets[declaration.getSymName()] = field.offset;
+    }
   for (const analysis::ManagedClassLayoutAnalysis::Class &shared :
        analyzed->classes) {
     sim::SimClassDeclOp declaration = shared.declaration;
@@ -138,6 +154,30 @@ prepareManagedClassInventory(ModuleOp module,
             {sharedField.offset + rootOffset,
              isa<sim::ClassHandleType>(field.getType()) && field.getIsWeak(),
              slotKind});
+      if (field->hasAttr(sim::metadata::randomObjectEdge)) {
+        auto modeIndex =
+            field->getAttrOfType<IntegerAttr>(sim::metadata::randomModeIndex);
+        if (!modeIndex || modeIndex.getValue().getActiveBits() > 6)
+          return field.emitError(
+              "rand-object edge exceeds the 64-property rand_mode boundary");
+        sim::SimClassDeclOp root = declaration;
+        while (root.getBaseAttr()) {
+          auto base = classesByName.find(*root.getBase());
+          if (base == classesByName.end())
+            return root.emitError("managed base descriptor is missing");
+          root = base->second;
+        }
+        auto modeField = root->getAttrOfType<FlatSymbolRefAttr>(
+            sim::metadata::randomModeField);
+        auto modeOffset = modeField ? fieldOffsets.find(modeField.getValue())
+                                    : fieldOffsets.end();
+        if (!modeField || modeOffset == fieldOffsets.end())
+          return field.emitError(
+              "rand-object edge has no executable rand_mode field");
+        uint64_t index = modeIndex.getValue().getZExtValue();
+        layout.randomEdges.push_back(
+            {sharedField.offset, modeOffset->second, UINT64_C(1) << index});
+      }
     }
 
     for (sim::SimClassMethodDeclOp method :
@@ -262,13 +302,17 @@ prepareManagedClassInventory(ModuleOp module,
       context, {i64, i64, i64, i32, i32, pointer});
   Type traceLayoutType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i64, i64, pointer, i64});
+  Type randomEdgeType =
+      LLVM::LLVMStructType::getLiteral(context, {i64, i64, i64});
+  Type randomLayoutType =
+      LLVM::LLVMStructType::getLiteral(context, {i32, i32, pointer, i64});
   Type methodType = LLVM::LLVMStructType::getLiteral(
       context, {i64, i32, i32, pointer, pointer});
   Type interfaceType =
       LLVM::LLVMStructType::getLiteral(context, {i64, pointer, i64});
   Type classType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i64, i64, i64, pointer, pointer, i64, pointer,
-                pointer, i64, pointer, i64});
+                pointer, i64, pointer, i64, pointer});
 
   // Base descriptors must exist before derived initializers take their
   // addresses. Repeatedly materialize classes whose base is ready.
@@ -285,6 +329,8 @@ prepareManagedClassInventory(ModuleOp module,
       std::string prefix = declaration.getSymName().str();
       std::string entriesName = prefix + ".__obelisk_trace_entries";
       std::string traceName = prefix + ".__obelisk_trace_layout";
+      std::string randomEdgesName = prefix + ".__obelisk_random_edges";
+      std::string randomLayoutName = prefix + ".__obelisk_random_layout";
       std::string methodsName = prefix + ".__obelisk_methods";
       std::string interfacesName = prefix + ".__obelisk_interfaces";
       std::string debugName = prefix + ".__obelisk_debug_name";
@@ -348,6 +394,53 @@ prepareManagedClassInventory(ModuleOp module,
                                 5);
             return trace;
           });
+
+      Type randomEdgesType =
+          LLVM::LLVMArrayType::get(randomEdgeType, layout.randomEdges.size());
+      if (!layout.randomEdges.empty()) {
+        makeConstantGlobal(
+            module, location, randomEdgesType, randomEdgesName,
+            LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
+              Value array =
+                  LLVM::ZeroOp::create(builder, location, randomEdgesType);
+              for (auto [index, edge] : llvm::enumerate(layout.randomEdges)) {
+                Value record =
+                    LLVM::ZeroOp::create(builder, location, randomEdgeType);
+                record = insertValue(
+                    builder, location, record,
+                    llvmConstant(builder, location, i64, edge.handleOffset), 0);
+                record = insertValue(
+                    builder, location, record,
+                    llvmConstant(builder, location, i64, edge.modeOffset), 1);
+                record = insertValue(
+                    builder, location, record,
+                    llvmConstant(builder, location, i64, edge.modeMask), 2);
+                array = LLVM::InsertValueOp::create(
+                    builder, location, array, record,
+                    ArrayRef<int64_t>{static_cast<int64_t>(index)});
+              }
+              return array;
+            });
+        makeConstantGlobal(
+            module, location, randomLayoutType, randomLayoutName,
+            LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
+              Value random =
+                  LLVM::ZeroOp::create(builder, location, randomLayoutType);
+              random = insertValue(
+                  builder, location, random,
+                  llvmConstant(builder, location, i32, OBELISK_RT_VERSION), 0);
+              random =
+                  insertValue(builder, location, random,
+                              LLVM::AddressOfOp::create(
+                                  builder, location, pointer, randomEdgesName),
+                              2);
+              random = insertValue(builder, location, random,
+                                   llvmConstant(builder, location, i64,
+                                                layout.randomEdges.size()),
+                                   3);
+              return random;
+            });
+      }
 
       Type methodsType =
           LLVM::LLVMArrayType::get(methodType, layout.methods.size());
@@ -536,6 +629,12 @@ prepareManagedClassInventory(ModuleOp module,
             descriptor = insertValue(
                 builder, location, descriptor,
                 llvmConstant(builder, location, i64, debug.size()), 12);
+            if (!layout.randomEdges.empty())
+              descriptor =
+                  insertValue(builder, location, descriptor,
+                              LLVM::AddressOfOp::create(
+                                  builder, location, pointer, randomLayoutName),
+                              13);
             return descriptor;
           });
       materialized.insert(declaration.getSymName());

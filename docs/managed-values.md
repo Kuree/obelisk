@@ -54,6 +54,14 @@ container word. Publication checks that category before exposing a new value.
 Managed-root records scan tagged words: inline strings have no outgoing edge,
 while heap strings are context-validated and marked.
 
+Class descriptors also carry an optional random-object layout. Each record
+identifies one direct strong `rand` class-handle field and the exact
+`rand_mode` word and bit that control it. The runtime follows base descriptors
+before derived descriptors, skips null and disabled edges, and discovers the
+recursive object set in deterministic breadth-first order. Discovery
+deduplicates stable heap identities and pins the resulting objects while the
+compiler/runtime randomization bridge composes one simultaneous solver plan.
+
 Simulation IR has one-word managed types for strings, dynamic arrays, queues,
 and associative arrays. Bytecode metadata distinguishes strings from native
 managed-object pointers so an SSO word is never interpreted as a host pointer.

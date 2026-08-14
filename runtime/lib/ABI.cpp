@@ -54,7 +54,16 @@ ABI_SIZE_ALIGN(obelisk_rt_interface_descriptor_v1, 24, 8);
 ABI_OFFSET(obelisk_rt_interface_descriptor_v1, interface_id, 0);
 ABI_OFFSET(obelisk_rt_interface_descriptor_v1, method_slots, 8);
 ABI_OFFSET(obelisk_rt_interface_descriptor_v1, method_count, 16);
-ABI_SIZE_ALIGN(obelisk_rt_class_descriptor_v1, 96, 8);
+ABI_SIZE_ALIGN(obelisk_rt_random_edge_v1, 24, 8);
+ABI_OFFSET(obelisk_rt_random_edge_v1, handle_offset, 0);
+ABI_OFFSET(obelisk_rt_random_edge_v1, mode_offset, 8);
+ABI_OFFSET(obelisk_rt_random_edge_v1, mode_mask, 16);
+ABI_SIZE_ALIGN(obelisk_rt_random_layout_v1, 24, 8);
+ABI_OFFSET(obelisk_rt_random_layout_v1, version, 0);
+ABI_OFFSET(obelisk_rt_random_layout_v1, reserved, 4);
+ABI_OFFSET(obelisk_rt_random_layout_v1, edges, 8);
+ABI_OFFSET(obelisk_rt_random_layout_v1, edge_count, 16);
+ABI_SIZE_ALIGN(obelisk_rt_class_descriptor_v1, 104, 8);
 ABI_OFFSET(obelisk_rt_class_descriptor_v1, version, 0);
 ABI_OFFSET(obelisk_rt_class_descriptor_v1, flags, 4);
 ABI_OFFSET(obelisk_rt_class_descriptor_v1, class_id, 8);
@@ -68,6 +77,7 @@ ABI_OFFSET(obelisk_rt_class_descriptor_v1, methods, 64);
 ABI_OFFSET(obelisk_rt_class_descriptor_v1, method_count, 72);
 ABI_OFFSET(obelisk_rt_class_descriptor_v1, debug_name, 80);
 ABI_OFFSET(obelisk_rt_class_descriptor_v1, debug_name_size, 88);
+ABI_OFFSET(obelisk_rt_class_descriptor_v1, random_layout, 96);
 ABI_SIZE_ALIGN(obelisk_rt_element_type_v1, 56, 8);
 ABI_OFFSET(obelisk_rt_element_type_v1, version, 0);
 ABI_OFFSET(obelisk_rt_element_type_v1, kind, 4);
@@ -1211,6 +1221,17 @@ ABI_FUNCTION(obelisk_rt_v1_class_validate,
 ABI_FUNCTION(obelisk_rt_v1_class_register,
              obelisk_rt_status (*)(obelisk_rt_context *,
                                    const obelisk_rt_class_descriptor_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_random_graph_discover,
+             obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
+                                   obelisk_rt_object_v1 *,
+                                   obelisk_rt_random_graph_v1 **));
+ABI_FUNCTION(obelisk_rt_v1_random_graph_destroy,
+             void (*)(obelisk_rt_random_graph_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_random_graph_size,
+             uint64_t (*)(const obelisk_rt_random_graph_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_random_graph_object,
+             obelisk_rt_object_v1 *(*)(const obelisk_rt_random_graph_v1 *,
+                                       uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_element_type_validate,
              obelisk_rt_status (*)(const obelisk_rt_element_type_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_element_type_register,

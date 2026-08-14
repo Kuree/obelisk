@@ -29,12 +29,18 @@ _Static_assert(sizeof(obelisk_rt_trace_layout_v1) == 40,
                "managed trace layout size changed");
 _Static_assert(sizeof(obelisk_rt_method_descriptor_v1) == 32,
                "managed method descriptor size changed");
-_Static_assert(sizeof(obelisk_rt_class_descriptor_v1) == 96,
+_Static_assert(sizeof(obelisk_rt_random_edge_v1) == 24,
+               "managed random edge size changed");
+_Static_assert(sizeof(obelisk_rt_random_layout_v1) == 24,
+               "managed random layout size changed");
+_Static_assert(sizeof(obelisk_rt_class_descriptor_v1) == 104,
                "managed class descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_class_descriptor_v1, base) == 32,
                "managed class base offset changed");
 _Static_assert(offsetof(obelisk_rt_class_descriptor_v1, methods) == 64,
                "managed class method table offset changed");
+_Static_assert(offsetof(obelisk_rt_class_descriptor_v1, random_layout) == 96,
+               "managed class random layout offset changed");
 _Static_assert(sizeof(obelisk_rt_gc_root_v1) == 24,
                "managed root size changed");
 _Static_assert(sizeof(obelisk_rt_gc_statistics_v1) == 72,

@@ -9,8 +9,14 @@
 #include <limits>
 #include <optional>
 #include <shared_mutex>
+#include <unordered_set>
 
 struct obelisk_rt_object_v1 {};
+
+struct obelisk_rt_random_graph_v1 {
+  obelisk_rt_context *context = nullptr;
+  std::vector<obelisk_rt_object_v1 *> objects;
+};
 
 namespace {
 
@@ -1904,6 +1910,29 @@ obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor) {
           layoutOverlapsHandle(current->layout, 0, 0, sizeof(void *)))
         return OBELISK_RT_INVALID_DESIGN;
     }
+    if (const obelisk_rt_random_layout_v1 *random = current->random_layout) {
+      if (random->version != OBELISK_RT_VERSION || random->reserved != 0 ||
+          random->edge_count == 0 || !random->edges)
+        return OBELISK_RT_INVALID_DESIGN;
+      for (uint64_t index = 0; index != random->edge_count; ++index) {
+        const obelisk_rt_random_edge_v1 &edge = random->edges[index];
+        if (edge.handle_offset % alignof(obelisk_rt_object_v1 *) != 0 ||
+            edge.mode_offset % alignof(uint64_t) != 0 ||
+            !checkedRange(edge.handle_offset, sizeof(obelisk_rt_object_v1 *),
+                          current->instance_size) ||
+            !checkedRange(edge.mode_offset, sizeof(uint64_t),
+                          current->instance_size) ||
+            !validPowerOfTwo(edge.mode_mask) ||
+            !layoutHasStrongHandleAt(current->layout, 0, edge.handle_offset,
+                                     OBELISK_RT_MANAGED_SLOT_CLASS))
+          return OBELISK_RT_INVALID_DESIGN;
+        for (uint64_t previous = 0; previous != index; ++previous)
+          if (random->edges[previous].handle_offset == edge.handle_offset ||
+              (random->edges[previous].mode_offset == edge.mode_offset &&
+               random->edges[previous].mode_mask == edge.mode_mask))
+            return OBELISK_RT_INVALID_DESIGN;
+      }
+    }
     if (derived && !layoutContainsHandles(derived->layout, current->layout))
       return OBELISK_RT_INVALID_DESIGN;
     if ((current->flags & OBELISK_RT_CLASS_WEAK_WRAPPER) != 0 &&
@@ -2125,6 +2154,132 @@ obelisk_rt_v1_class_register(obelisk_rt_context *context,
     return inserted || found->second == descriptor ? OBELISK_RT_OK
                                                    : OBELISK_RT_INVALID_DESIGN;
   });
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_random_graph_discover(obelisk_rt_gc_lane_v1 *lane,
+                                    obelisk_rt_object_v1 *root,
+                                    obelisk_rt_random_graph_v1 **outGraph) {
+  if (!outGraph)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outGraph = nullptr;
+  if (!lane || !lane->heap || !lane->heap->activeOwner(lane) || !root)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ObjectMetadata *rootMetadata = metadataFor(root);
+  if (!rootMetadata || rootMetadata->heap != lane->heap ||
+      rootMetadata->kind != OBELISK_RT_MANAGED_CLASS)
+    return OBELISK_RT_INVALID_HANDLE;
+
+  std::unique_ptr<obelisk_rt_random_graph_v1> graph;
+  try {
+    graph = std::make_unique<obelisk_rt_random_graph_v1>();
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+  graph->context = lane->context;
+  std::unordered_set<uint64_t> seen;
+  auto rollback = [&] {
+    for (obelisk_rt_object_v1 *object : graph->objects)
+      (void)lane->heap->unpin(object, /*activeCaller=*/true);
+    graph->objects.clear();
+  };
+  auto append = [&](obelisk_rt_object_v1 *object) -> obelisk_rt_status {
+    obelisk_rt_status status = lane->heap->pin(object, /*activeCaller=*/true);
+    if (status != OBELISK_RT_OK)
+      return status;
+    try {
+      graph->objects.push_back(object);
+    } catch (...) {
+      (void)lane->heap->unpin(object, /*activeCaller=*/true);
+      throw;
+    }
+    return OBELISK_RT_OK;
+  };
+
+  try {
+    seen.insert(rootMetadata->identity);
+    obelisk_rt_status status = append(root);
+    if (status != OBELISK_RT_OK)
+      return status;
+    for (size_t cursor = 0; cursor != graph->objects.size(); ++cursor) {
+      obelisk_rt_object_v1 *object = graph->objects[cursor];
+      ObjectMetadata *metadata = metadataFor(object);
+      if (!metadata || metadata->heap != lane->heap ||
+          metadata->kind != OBELISK_RT_MANAGED_CLASS) {
+        rollback();
+        return OBELISK_RT_INVALID_HANDLE;
+      }
+      std::vector<const obelisk_rt_class_descriptor_v1 *> hierarchy;
+      for (const obelisk_rt_class_descriptor_v1 *descriptor =
+               metadata->descriptor;
+           descriptor; descriptor = descriptor->base)
+        hierarchy.push_back(descriptor);
+      for (auto descriptorIt = hierarchy.rbegin();
+           descriptorIt != hierarchy.rend(); ++descriptorIt) {
+        const obelisk_rt_class_descriptor_v1 *descriptor = *descriptorIt;
+        const obelisk_rt_random_layout_v1 *random = descriptor->random_layout;
+        if (!random)
+          continue;
+        for (uint64_t index = 0; index != random->edge_count; ++index) {
+          const obelisk_rt_random_edge_v1 &edge = random->edges[index];
+          uint64_t mode = 0;
+          obelisk_rt_object_v1 *child = nullptr;
+          {
+            ObjectLock lock(metadata);
+            const uint8_t *bytes = reinterpret_cast<const uint8_t *>(object);
+            std::memcpy(&mode, bytes + edge.mode_offset, sizeof(mode));
+            std::memcpy(&child, bytes + edge.handle_offset, sizeof(child));
+          }
+          if ((mode & edge.mode_mask) != 0 || !child)
+            continue;
+          ObjectMetadata *childMetadata = metadataFor(child);
+          if (!childMetadata || childMetadata->heap != lane->heap ||
+              childMetadata->kind != OBELISK_RT_MANAGED_CLASS) {
+            rollback();
+            return OBELISK_RT_INVALID_HANDLE;
+          }
+          if (!seen.insert(childMetadata->identity).second)
+            continue;
+          status = append(child);
+          if (status != OBELISK_RT_OK) {
+            rollback();
+            return status;
+          }
+        }
+      }
+    }
+    *outGraph = graph.release();
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    rollback();
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    rollback();
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
+
+extern "C" void
+obelisk_rt_v1_random_graph_destroy(obelisk_rt_random_graph_v1 *graph) {
+  if (!graph)
+    return;
+  for (obelisk_rt_object_v1 *object : graph->objects)
+    (void)obelisk_rt_v1_gc_unpin(graph->context, object);
+  delete graph;
+}
+
+extern "C" uint64_t
+obelisk_rt_v1_random_graph_size(const obelisk_rt_random_graph_v1 *graph) {
+  return graph ? graph->objects.size() : 0;
+}
+
+extern "C" obelisk_rt_object_v1 *
+obelisk_rt_v1_random_graph_object(const obelisk_rt_random_graph_v1 *graph,
+                                  uint64_t index) {
+  return graph && index < graph->objects.size() ? graph->objects[index]
+                                                : nullptr;
 }
 
 namespace {

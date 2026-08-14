@@ -20,6 +20,7 @@ typedef struct obelisk_rt_context obelisk_rt_context;
 typedef struct obelisk_rt_gc_lane_v1 obelisk_rt_gc_lane_v1;
 typedef struct obelisk_rt_object_v1 obelisk_rt_object_v1;
 typedef struct obelisk_rt_random_state_v1 obelisk_rt_random_state_v1;
+typedef struct obelisk_rt_random_graph_v1 obelisk_rt_random_graph_v1;
 
 // Functional-coverage handles are context-local monotonically allocated IDs.
 // Zero is the language null value and never names a live instance.
@@ -186,6 +187,23 @@ typedef struct obelisk_rt_interface_descriptor_v1 {
   uint64_t method_count;
 } obelisk_rt_interface_descriptor_v1;
 
+// One direct rand class-handle edge declared by a class. The mode word and
+// handle are read from the same object; a set mode bit disables traversal.
+// Inherited edges remain in the base descriptor and are visited through the
+// descriptor chain rather than duplicated in every derived descriptor.
+typedef struct obelisk_rt_random_edge_v1 {
+  uint64_t handle_offset;
+  uint64_t mode_offset;
+  uint64_t mode_mask;
+} obelisk_rt_random_edge_v1;
+
+typedef struct obelisk_rt_random_layout_v1 {
+  uint32_t version;
+  uint32_t reserved;
+  const obelisk_rt_random_edge_v1 *edges;
+  uint64_t edge_count;
+} obelisk_rt_random_layout_v1;
+
 #define OBELISK_RT_CLASS_ABSTRACT (UINT32_C(1) << 0)
 #define OBELISK_RT_CLASS_INTERFACE (UINT32_C(1) << 1)
 #define OBELISK_RT_CLASS_FINAL (UINT32_C(1) << 2)
@@ -205,6 +223,7 @@ typedef struct obelisk_rt_class_descriptor_v1 {
   uint64_t method_count;
   const char *debug_name;
   uint64_t debug_name_size;
+  const obelisk_rt_random_layout_v1 *random_layout;
 } obelisk_rt_class_descriptor_v1;
 
 // Compiler-emitted erased element metadata. Four-state storage places an
@@ -1652,6 +1671,21 @@ obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor);
 obelisk_rt_status
 obelisk_rt_v1_class_register(obelisk_rt_context *context,
                              const obelisk_rt_class_descriptor_v1 *descriptor);
+
+// Discover the active recursive rand-object set required by IEEE 1800-2017
+// 18.5.9. Each object identity occurs once in deterministic breadth-first
+// order. Null and rand_mode-disabled edges are omitted. The graph pins its
+// objects until destroy and therefore must not outlive its context.
+obelisk_rt_status
+obelisk_rt_v1_random_graph_discover(obelisk_rt_gc_lane_v1 *lane,
+                                    obelisk_rt_object_v1 *root,
+                                    obelisk_rt_random_graph_v1 **out_graph);
+void obelisk_rt_v1_random_graph_destroy(obelisk_rt_random_graph_v1 *graph);
+uint64_t
+obelisk_rt_v1_random_graph_size(const obelisk_rt_random_graph_v1 *graph);
+obelisk_rt_object_v1 *
+obelisk_rt_v1_random_graph_object(const obelisk_rt_random_graph_v1 *graph,
+                                  uint64_t index);
 
 // Validate and register immutable compiler-emitted element metadata. Repeated
 // registration of an equivalent descriptor is accepted; conflicting use of a

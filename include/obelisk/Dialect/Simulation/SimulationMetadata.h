@@ -39,6 +39,15 @@ inline constexpr llvm::StringLiteral descriptorPackedLow =
     "obelisk_sim.descriptor_packed_low";
 inline constexpr llvm::StringLiteral hierarchicalName =
     "obelisk_sim.hierarchical_name";
+/// Stable base-to-derived index of an effective rand/randc class property.
+inline constexpr llvm::StringLiteral randomModeIndex =
+    "obelisk_sim.random_mode_index";
+/// Marks a non-static rand class-handle field as a recursive object edge.
+inline constexpr llvm::StringLiteral randomObjectEdge =
+    "obelisk_sim.random_object_edge";
+/// Root-class field containing the 64-bit disabled-property mask.
+inline constexpr llvm::StringLiteral randomModeField =
+    "obelisk_sim.random_mode_field";
 inline constexpr llvm::StringLiteral thisArgument =
     "obelisk_sim.this_argument";
 inline constexpr llvm::StringLiteral lowered = "obelisk_sim.lowered";

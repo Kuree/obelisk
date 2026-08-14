@@ -8,6 +8,7 @@
 #include "PrepareDeclarations.h"
 
 #include "Detail.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
 #include "mlir/IR/SymbolTable.h"
 
@@ -139,6 +140,42 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
         classType;
   }
 
+  // rand_mode property indices are defined over the effective base-to-derived
+  // property sequence. Freeze the same stable index on each instance field so
+  // later ABI preparation can describe direct rand-object edges without
+  // retaining the semantic class tree.
+  llvm::DenseMap<Operation *, uint64_t> randomPropertyCounts;
+  llvm::SmallPtrSet<Operation *, 8> countingRandomProperties;
+  std::function<FailureOr<uint64_t>(semantic::SVClassTypeOp)>
+      countRandomProperties =
+          [&](semantic::SVClassTypeOp classType) -> FailureOr<uint64_t> {
+    if (auto found = randomPropertyCounts.find(classType);
+        found != randomPropertyCounts.end())
+      return found->second;
+    if (!countingRandomProperties.insert(classType).second)
+      return failure();
+    uint64_t count = 0;
+    if (std::optional<Type> baseType = classType.getBaseClass()) {
+      auto baseHandle = dyn_cast<semantic::ClassHandleType>(*baseType);
+      auto base = baseHandle ? result.semanticClasses.find(
+                                   baseHandle.getClassName().getLeafReference())
+                             : result.semanticClasses.end();
+      if (base == result.semanticClasses.end())
+        return failure();
+      FailureOr<uint64_t> baseCount = countRandomProperties(base->second);
+      if (failed(baseCount))
+        return failure();
+      count = *baseCount;
+    }
+    for (Operation *child : getChildren(classType))
+      if (auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(child))
+        if (property.getRandMode() != semantic::SVRandMode::None)
+          ++count;
+    countingRandomProperties.erase(classType);
+    randomPropertyCounts[classType] = count;
+    return count;
+  };
+
   auto classReference = [&](Type type) -> FlatSymbolRefAttr {
     auto handle = dyn_cast<semantic::ClassHandleType>(type);
     return handle ? FlatSymbolRefAttr::get(
@@ -147,6 +184,23 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
   };
   bool invalid = false;
   for (semantic::SVClassTypeOp classType : result.sources) {
+    uint64_t randomPropertyIndex = 0;
+    if (std::optional<Type> baseType = classType.getBaseClass()) {
+      auto baseHandle = dyn_cast<semantic::ClassHandleType>(*baseType);
+      auto base = baseHandle ? result.semanticClasses.find(
+                                   baseHandle.getClassName().getLeafReference())
+                             : result.semanticClasses.end();
+      FailureOr<uint64_t> baseCount = base == result.semanticClasses.end()
+                                          ? FailureOr<uint64_t>(failure())
+                                          : countRandomProperties(base->second);
+      if (failed(baseCount)) {
+        emitError(getSemanticLocation(classType))
+            << "cannot determine inherited rand_mode property indices";
+        invalid = true;
+      } else {
+        randomPropertyIndex = *baseCount;
+      }
+    }
     FlatSymbolRefAttr base;
     if (std::optional<Type> baseType = classType.getBaseClass()) {
       base = classReference(*baseType);
@@ -224,10 +278,17 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
       FlatSymbolRefAttr fieldSymbol =
           FlatSymbolRefAttr::get(context, fieldName);
       result.fieldSymbols[property] = fieldSymbol;
-      sim::SimClassFieldDeclOp::create(
+      auto field = sim::SimClassFieldDeclOp::create(
           builder, getSemanticLocation(property), fieldName, classSymbol, *type,
           ordinal++, IntegerAttr{}, isStatic,
           /*isWeak=*/false, builder.getStringAttr(getDebugName(property)));
+      if (property.getRandMode() != semantic::SVRandMode::None) {
+        field->setAttr(sim::metadata::randomModeIndex,
+                       builder.getI64IntegerAttr(randomPropertyIndex++));
+        if (!isStatic && isa<sim::ClassHandleType>(*type))
+          field->setAttr(sim::metadata::randomObjectEdge,
+                         builder.getUnitAttr());
+      }
       if (!isStatic && property.getRandMode() == semantic::SVRandMode::RandC) {
         auto addRandCField = [&](StringRef suffix, StringRef debugName) {
           std::string name = (fieldName + suffix).str();
@@ -264,7 +325,7 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
           "obelisk_sim.random_increment_field",
           addRandomField("__obelisk_rng_increment", "__obelisk_rng_increment"));
       declaration->setAttr(
-          "obelisk_sim.random_mode_field",
+          sim::metadata::randomModeField,
           addRandomField("__obelisk_rand_mode", "__obelisk_rand_mode"));
       declaration->setAttr(
           "obelisk_sim.constraint_mode_field",

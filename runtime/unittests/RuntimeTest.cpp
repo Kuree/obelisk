@@ -3176,7 +3176,56 @@ const obelisk_rt_class_descriptor_v1 nodeDescriptor{OBELISK_RT_VERSION,
                                                     nodeMethods,
                                                     std::size(nodeMethods),
                                                     nodeName,
-                                                    sizeof(nodeName) - 1};
+                                                    sizeof(nodeName) - 1,
+                                                    nullptr};
+const obelisk_rt_random_edge_v1 randomNodeEdge{kNodeLinkOffset,
+                                               kNodeValueOffset, UINT64_C(1)};
+const obelisk_rt_random_layout_v1 randomNodeLayout{OBELISK_RT_VERSION, 0,
+                                                   &randomNodeEdge, 1};
+const char randomNodeName[] = "random_node";
+const obelisk_rt_class_descriptor_v1 randomNodeDescriptor{
+    OBELISK_RT_VERSION,
+    0,
+    6,
+    sizeof(void *) * 3,
+    alignof(void *),
+    nullptr,
+    nullptr,
+    0,
+    &nodeTraceLayout,
+    nodeMethods,
+    std::size(nodeMethods),
+    randomNodeName,
+    sizeof(randomNodeName) - 1,
+    &randomNodeLayout};
+const obelisk_rt_trace_entry_v1 randomDerivedTraceEntries[]{
+    nodeTraceEntry,
+    {kDerivedExtraOffset, 0, 1, OBELISK_RT_TRACE_STRONG,
+     OBELISK_RT_MANAGED_SLOT_CLASS, nullptr}};
+const obelisk_rt_trace_layout_v1 randomDerivedTraceLayout{
+    OBELISK_RT_VERSION,        0,
+    sizeof(void *) * 4,        alignof(void *),
+    randomDerivedTraceEntries, std::size(randomDerivedTraceEntries)};
+const obelisk_rt_random_edge_v1 randomDerivedEdge{
+    kDerivedExtraOffset, kNodeValueOffset, UINT64_C(2)};
+const obelisk_rt_random_layout_v1 randomDerivedLayout{OBELISK_RT_VERSION, 0,
+                                                      &randomDerivedEdge, 1};
+const char randomDerivedName[] = "random_derived_node";
+const obelisk_rt_class_descriptor_v1 randomDerivedDescriptor{
+    OBELISK_RT_VERSION,
+    OBELISK_RT_CLASS_FINAL,
+    7,
+    sizeof(void *) * 4,
+    alignof(void *),
+    &randomNodeDescriptor,
+    nullptr,
+    0,
+    &randomDerivedTraceLayout,
+    nodeMethods,
+    std::size(nodeMethods),
+    randomDerivedName,
+    sizeof(randomDerivedName) - 1,
+    &randomDerivedLayout};
 const obelisk_rt_class_descriptor_v1 derivedDescriptor{
     OBELISK_RT_VERSION,
     OBELISK_RT_CLASS_FINAL,
@@ -3190,7 +3239,8 @@ const obelisk_rt_class_descriptor_v1 derivedDescriptor{
     derivedMethods,
     std::size(derivedMethods),
     derivedName,
-    sizeof(derivedName) - 1};
+    sizeof(derivedName) - 1,
+    nullptr};
 const obelisk_rt_class_descriptor_v1 throwingDescriptor{
     OBELISK_RT_VERSION,
     OBELISK_RT_CLASS_FINAL,
@@ -3204,7 +3254,8 @@ const obelisk_rt_class_descriptor_v1 throwingDescriptor{
     throwingMethods,
     std::size(throwingMethods),
     throwingName,
-    sizeof(throwingName) - 1};
+    sizeof(throwingName) - 1,
+    nullptr};
 const obelisk_rt_trace_layout_v1 planeTraceLayout{
     OBELISK_RT_VERSION, 0, sizeof(void *) * 3, alignof(void *), nullptr, 0};
 const char planeName[] = "plane_object";
@@ -3220,7 +3271,8 @@ const obelisk_rt_class_descriptor_v1 planeDescriptor{OBELISK_RT_VERSION,
                                                      nullptr,
                                                      0,
                                                      planeName,
-                                                     sizeof(planeName) - 1};
+                                                     sizeof(planeName) - 1,
+                                                     nullptr};
 const obelisk_rt_trace_entry_v1 weakTraceEntry{
     sizeof(void *), 0, 1, OBELISK_RT_TRACE_WEAK,
     OBELISK_RT_MANAGED_SLOT_CLASS, nullptr};
@@ -3241,7 +3293,8 @@ const obelisk_rt_class_descriptor_v1 weakDescriptor{
     nullptr,
     0,
     weakName,
-    sizeof(weakName) - 1};
+    sizeof(weakName) - 1,
+    nullptr};
 
 class ManagedHeapTest : public ::testing::Test {
 protected:
@@ -3369,6 +3422,56 @@ TEST_F(ManagedHeapTest, CollectsCyclesAndClearsWeakReferences) {
 
   ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &weakRoot), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &firstRoot), OBELISK_RT_OK);
+}
+
+TEST_F(ManagedHeapTest, DiscoversActiveRandomObjectGraphByIdentity) {
+  obelisk_rt_object_v1 *root = nullptr;
+  obelisk_rt_object_v1 *child = nullptr;
+  obelisk_rt_object_v1 *derivedChild = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_object_allocate(lane, &randomDerivedDescriptor, &root),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &randomNodeDescriptor, &child),
+            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_object_allocate(lane, &randomNodeDescriptor, &derivedChild),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_field_store(root, kNodeLinkOffset, child),
+            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_object_field_store(root, kDerivedExtraOffset, derivedChild),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_field_store(child, kNodeLinkOffset, root),
+            OBELISK_RT_OK);
+
+  obelisk_rt_random_graph_v1 *graph = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_random_graph_discover(lane, root, &graph),
+            OBELISK_RT_OK);
+  ASSERT_NE(graph, nullptr);
+  EXPECT_EQ(obelisk_rt_v1_random_graph_size(graph), 3u);
+  EXPECT_EQ(obelisk_rt_v1_random_graph_object(graph, 0), root);
+  EXPECT_EQ(obelisk_rt_v1_random_graph_object(graph, 1), child);
+  EXPECT_EQ(obelisk_rt_v1_random_graph_object(graph, 2), derivedChild);
+  EXPECT_EQ(obelisk_rt_v1_random_graph_object(graph, 3), nullptr);
+
+  // The graph owns exact roots while callers compose a solver plan.
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  EXPECT_NE(obelisk_rt_v1_object_id(root), 0u);
+  EXPECT_NE(obelisk_rt_v1_object_id(child), 0u);
+  EXPECT_NE(obelisk_rt_v1_object_id(derivedChild), 0u);
+  obelisk_rt_v1_random_graph_destroy(graph);
+
+  uint64_t disabled = 3;
+  ASSERT_EQ(obelisk_rt_v1_object_write(root, kNodeValueOffset, &disabled,
+                                       sizeof(disabled)),
+            OBELISK_RT_OK);
+  graph = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_random_graph_discover(lane, root, &graph),
+            OBELISK_RT_OK);
+  ASSERT_NE(graph, nullptr);
+  EXPECT_EQ(obelisk_rt_v1_random_graph_size(graph), 1u);
+  EXPECT_EQ(obelisk_rt_v1_random_graph_object(graph, 0), root);
+  obelisk_rt_v1_random_graph_destroy(graph);
 }
 
 TEST_F(ManagedHeapTest,
@@ -3970,6 +4073,19 @@ TEST(ManagedHeap, RejectsMalformedClassLayouts) {
   obelisk_rt_trace_layout_v1 badLayout = nodeTraceLayout;
   badLayout.entries = &badEntry;
   malformed.layout = &badLayout;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed),
+            OBELISK_RT_INVALID_DESIGN);
+
+  obelisk_rt_random_edge_v1 badRandomEdge = randomNodeEdge;
+  badRandomEdge.handle_offset = kNodeValueOffset;
+  obelisk_rt_random_layout_v1 badRandomLayout = randomNodeLayout;
+  badRandomLayout.edges = &badRandomEdge;
+  malformed = randomNodeDescriptor;
+  malformed.random_layout = &badRandomLayout;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed),
+            OBELISK_RT_INVALID_DESIGN);
+  badRandomEdge = randomNodeEdge;
+  badRandomEdge.mode_mask = 3;
   EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed),
             OBELISK_RT_INVALID_DESIGN);
   malformed = nodeDescriptor;

@@ -16,6 +16,39 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @random_object_edge_without_mode {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    // expected-error @below {{random object edge requires an indexed, strong instance class-handle field}}
+    obelisk_sim.class.field @C_child of @C at 0 :
+        !obelisk_sim.class_handle<@C> {
+      is_static = false, is_weak = false,
+      obelisk_sim.random_object_edge
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @invalid_random_mode_field {
+    obelisk_sim.scope.decl 0
+    // expected-error @below {{random mode field must name an instance i64 field owned by the root class}}
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false,
+      obelisk_sim.random_mode_field = @C_mode
+    }
+    obelisk_sim.class.field @C_mode of @C at 0 : i32 {
+      is_static = false, is_weak = false
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @self_interface_cycle {
     obelisk_sim.scope.decl 0
     // expected-error @below {{interface inheritance contains a cycle}}

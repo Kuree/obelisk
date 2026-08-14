@@ -4,6 +4,8 @@
 // IEEE 1800-2017 18.6.2 and 18.11.1 require randomize(null) to invoke
 // pre_randomize(), check the current values, and invoke post_randomize() only
 // when that check succeeds. It remains a checker: no RNG or property stores.
+// CHECK-DAG: obelisk_sim.class.field @__obelisk_class_s3_Base_field_0 {{.*}}obelisk_sim.random_mode_index = 0 : i64
+// CHECK-DAG: obelisk_sim.class.field @__obelisk_class_s11_Derived_field_0 {{.*}}obelisk_sim.random_mode_index = 1 : i64
 // CHECK-DAG: obelisk_sim.func private @[[BASE_PRE:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "Base::pre_randomize"
 // CHECK-DAG: obelisk_sim.func private @[[BASE_POST:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "Base::post_randomize"
 // CHECK-DAG: obelisk_sim.func private @[[DERIVED_PRE:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "Derived::pre_randomize"

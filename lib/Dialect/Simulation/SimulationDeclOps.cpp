@@ -303,6 +303,18 @@ LogicalResult SimClassDeclOp::verify() {
       unique.push_back(interface.getValue());
     }
   }
+  if (Attribute attribute = (*this)->getAttr(metadata::randomModeField)) {
+    auto reference = dyn_cast<FlatSymbolRefAttr>(attribute);
+    auto field =
+        reference ? SymbolTable::lookupNearestSymbolFrom<SimClassFieldDeclOp>(
+                        *this, reference)
+                  : SimClassFieldDeclOp{};
+    if (getBaseAttr() || !field || field.getOwner() != getSymName() ||
+        field.getIsStatic() || !field.getType().isInteger(64))
+      return emitOpError(
+          "random mode field must name an instance i64 field owned by the "
+          "root class");
+  }
   return success();
 }
 
@@ -316,6 +328,23 @@ LogicalResult SimClassFieldDeclOp::verify() {
     return emitOpError("static properties cannot have an instance offset");
   if (getIsWeak() && !isa<ClassHandleType>(getType()))
     return emitOpError("weak properties must have class-handle type");
+  Attribute modeAttribute = (*this)->getAttr(metadata::randomModeIndex);
+  auto modeIndex = dyn_cast_or_null<IntegerAttr>(modeAttribute);
+  if (modeAttribute && !modeIndex)
+    return emitOpError("random mode index must be an integer attribute");
+  if (modeIndex && (modeIndex.getValue().isNegative() ||
+                    modeIndex.getValue().getActiveBits() > 6))
+    return emitOpError(
+        "random mode index exceeds the 64-property executable boundary");
+  if (Attribute edge = (*this)->getAttr(metadata::randomObjectEdge)) {
+    if (!isa<UnitAttr>(edge))
+      return emitOpError("random object edge must be a unit attribute");
+    if (!modeIndex || getIsStatic() || getIsWeak() ||
+        !isa<ClassHandleType>(getType()))
+      return emitOpError(
+          "random object edge requires an indexed, strong instance "
+          "class-handle field");
+  }
   if (!isNormalizedValueType(getType()))
     return emitOpError("property must have a normalized executable type");
   return success();

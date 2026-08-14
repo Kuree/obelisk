@@ -79,6 +79,9 @@ module {
 // IEEE 1800-2023 18.6.2 additionally invokes the enabled, non-null child's
 // lifecycle hooks. The child pre hook precedes sampling its modes and values;
 // the child post hook follows a successful commit and is absent on failure.
+// CHECK-DAG: obelisk_sim.class.field @__obelisk_class_s6_Parent_field_0 {{.*}}obelisk_sim.random_mode_index = 0 : i64
+// CHECK-DAG: obelisk_sim.class.field @__obelisk_class_s6_Parent_field_1 {{.*}}obelisk_sim.random_mode_index = 1 : i64{{.*}}obelisk_sim.random_object_edge
+// CHECK-DAG: obelisk_sim.class.field @__obelisk_class_s6_Parent_field_2 {{.*}}obelisk_sim.random_mode_index = 2 : i64{{.*}}obelisk_sim.random_object_edge
 // CHECK-DAG: obelisk_sim.func private @[[LEAF_PRE:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "Leaf::pre_randomize"
 // CHECK-DAG: obelisk_sim.func private @[[LEAF_POST:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "Leaf::post_randomize"
 // CHECK-LABEL: obelisk_sim.func private @{{unit_[0-9]+}}{{.*}}obelisk_sim.hierarchical_name = "top"
