@@ -229,17 +229,20 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
   ModuleOp module = function->getParentOfType<ModuleOp>();
   sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
   DenseMap<uint64_t, StringAttr> interfaceScopes;
+  bool hasCovergroupDeclarations = false;
   // Unit-lowering passes may run concurrently for sibling functions.  The
   // design declarations are immutable here, but recursively walking the whole
   // design would also traverse function bodies while sibling passes rewrite
   // them.  Inventory only the declaration operations in the design body.
-  for (Operation &operation : design.getBody().front())
+  for (Operation &operation : design.getBody().front()) {
+    hasCovergroupDeclarations |= isa<sim::SimCovergroupDeclOp>(operation);
     if (auto scope = dyn_cast<sim::SimScopeDeclOp>(operation)) {
       if (std::optional<StringRef> hierarchy = scope.getHierarchicalName())
         scopeIDs[*hierarchy] = scope.getId();
       if (StringAttr identity = scope.getInterfaceTypeAttr())
         interfaceScopes[scope.getId()] = identity;
     }
+  }
   auto memberKey = [](StringRef identity, StringRef member) {
     return (Twine(identity) + "\n" + member).str();
   };
@@ -269,11 +272,14 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
     if (auto definition = dyn_cast<semantic::SVDefinitionSymbolOp>(topLevel))
       if (auto name = definition.getName())
         coverageDefinitionNames.insert(*name);
-    if (auto root = dyn_cast<semantic::SVRootSymbolOp>(topLevel)) {
-      root->walk([&](semantic::SVCovergroupTypeOp covergroup) {
-        semanticCovergroups[covergroup.getSymName()] = covergroup;
-      });
-    }
+    if (!hasCovergroupDeclarations)
+      continue;
+    auto root = dyn_cast<semantic::SVRootSymbolOp>(topLevel);
+    if (!root)
+      continue;
+    root->walk([&](semantic::SVCovergroupTypeOp covergroup) {
+      semanticCovergroups[covergroup.getSymName()] = covergroup;
+    });
   }
   if (auto argument =
           function->getAttrOfType<IntegerAttr>(sim::metadata::thisArgument)) {
