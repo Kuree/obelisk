@@ -183,6 +183,8 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
                   : FlatSymbolRefAttr{};
   };
   bool invalid = false;
+  llvm::DenseMap<Operation *, sim::SimClassDeclOp> classDeclarations;
+  llvm::DenseMap<Operation *, sim::SimClassFieldDeclOp> fieldDeclarations;
   for (semantic::SVClassTypeOp classType : result.sources) {
     uint64_t randomPropertyIndex = 0;
     if (std::optional<Type> baseType = classType.getBaseClass()) {
@@ -245,6 +247,7 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
         classType.getIsAbstract() || classType.getIsInterface(),
         classType.getIsInterface(), classType.getIsFinal(),
         builder.getStringAttr(getDebugName(classType)));
+    classDeclarations[classType] = declaration;
     // Class inventory is part of the executable ABI. Keep descriptors even
     // when the only current reference is embedded in a type.
     SymbolTable::setSymbolVisibility(declaration,
@@ -283,6 +286,7 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
           builder, getSemanticLocation(property), fieldName, classSymbol, *type,
           ordinal++, IntegerAttr{}, isStatic,
           /*isWeak=*/false, builder.getStringAttr(getDebugName(property)));
+      fieldDeclarations[property] = field;
       if (property.getRandMode() != semantic::SVRandMode::None) {
         field->setAttr(sim::metadata::randomModeIndex,
                        builder.getI64IntegerAttr(randomPropertyIndex++));
@@ -363,6 +367,66 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
           "obelisk_sim.constraint_mode_field",
           addRandomField("__obelisk_constraint_mode",
                          "__obelisk_constraint_mode"));
+    }
+  }
+
+  // Freeze the effective base-to-derived packed random-variable inventory on
+  // each exact class descriptor.  These remain symbolic field references:
+  // native and bytecode layouts are deliberately unavailable at preparation.
+  // Rand object handles and containers have separate graph/container
+  // descriptors and therefore do not masquerade as scalar assignment slots.
+  llvm::DenseMap<Operation *, SmallVector<sim::RandomVariableReferenceAttr>>
+      randomVariableReferences;
+  llvm::SmallPtrSet<Operation *, 8> collectingRandomVariableReferences;
+  std::function<LogicalResult(semantic::SVClassTypeOp)>
+      collectRandomVariableReferences =
+          [&](semantic::SVClassTypeOp classType) -> LogicalResult {
+    if (randomVariableReferences.count(classType))
+      return success();
+    if (!collectingRandomVariableReferences.insert(classType).second)
+      return failure();
+
+    SmallVector<sim::RandomVariableReferenceAttr> references;
+    if (std::optional<Type> baseType = classType.getBaseClass()) {
+      auto baseHandle = dyn_cast<semantic::ClassHandleType>(*baseType);
+      auto base = baseHandle ? result.semanticClasses.find(
+                                   baseHandle.getClassName().getLeafReference())
+                             : result.semanticClasses.end();
+      if (base == result.semanticClasses.end() ||
+          failed(collectRandomVariableReferences(base->second)))
+        return failure();
+      llvm::append_range(
+          references, randomVariableReferences.find(base->second)->second);
+    }
+    for (Operation *child : getChildren(classType)) {
+      auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(child);
+      sim::SimClassFieldDeclOp field = fieldDeclarations.lookup(child);
+      if (!property || !field ||
+          !field->hasAttr(sim::metadata::randomVariableKind))
+        continue;
+      references.push_back(sim::RandomVariableReferenceAttr::get(
+          context, {}, result.fieldSymbols.lookup(property)));
+    }
+    collectingRandomVariableReferences.erase(classType);
+    randomVariableReferences[classType] = std::move(references);
+    return success();
+  };
+  for (semantic::SVClassTypeOp classType : result.sources) {
+    if (failed(collectRandomVariableReferences(classType))) {
+      emitError(getSemanticLocation(classType))
+          << "cannot determine inherited random-variable references";
+      invalid = true;
+      continue;
+    }
+    ArrayRef<sim::RandomVariableReferenceAttr> references =
+        randomVariableReferences.find(classType)->second;
+    if (!references.empty()) {
+      SmallVector<Attribute> attributes = llvm::map_to_vector(
+          references, [](sim::RandomVariableReferenceAttr reference) {
+            return Attribute(reference);
+          });
+      classDeclarations.lookup(classType).setRandomVariableReferencesAttr(
+          builder.getArrayAttr(attributes));
     }
   }
 
