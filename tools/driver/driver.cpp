@@ -681,6 +681,8 @@ static int executeCompilation(const InputArgList &args) {
 
   if (!emitSlang) {
     PassManager passManager(&context);
+    if (args.hasArg(OPT_mlir_timing))
+      passManager.enableTiming();
     passManager.addPass(obelisk::createConvertSlangToObeliskPass());
     if (emitSim || emitSchedule || native)
       obelisk::buildObeliskToSimulationPipeline(

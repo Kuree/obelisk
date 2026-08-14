@@ -44,6 +44,9 @@ def o : JoinedOrSeparate<["-"], "o">, Group<Output_Group>,
 def mlir_print_debuginfo : Flag<["--"], "mlir-print-debuginfo">,
   Group<Output_Group>,
   HelpText<"Include source locations in emitted MLIR">;
+def mlir_timing : Flag<["--"], "mlir-timing">, Group<Output_Group>,
+  Flags<[HelpHidden]>,
+  HelpText<"Report per-pass execution times for the MLIR pipeline">;
 def sysroot_EQ : Joined<["--"], "sysroot=">, Group<Output_Group>,
   MetaVarName<"<dir>">,
   HelpText<"Use <dir> for target C and C++ link inputs">;
