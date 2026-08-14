@@ -1339,11 +1339,22 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   }
   if (op->hasAttr("obelisk_sim.class_instance")) {
     auto formals = op->getAttrOfType<ArrayAttr>(calleeFormalsAttrName);
+    std::optional<ArrayRef<int64_t>> defaulted = op.getDefaultedArguments();
     bool superCall = op->hasAttr("obelisk_sim.class_super");
     bool implicitThis = !superCall && formals && thisObject &&
                         children.size() == formals.size();
-    if (!formals ||
-        formals.size() + (superCall || implicitThis ? 0 : 1) !=
+    if (!formals) {
+      emitError(location) << "instance call has no frozen formal inventory";
+      return failure();
+    }
+    if (!defaulted || defaulted->size() != formals.size() ||
+        llvm::any_of(*defaulted,
+                     [](int64_t value) { return value != 0 && value != 1; })) {
+      emitError(location)
+          << "instance call has malformed default argument inventory";
+      return failure();
+    }
+    if (formals.size() + (superCall || implicitThis ? 0 : 1) !=
             children.size() ||
         ((superCall || implicitThis) && !thisObject)) {
       emitError(location)
@@ -1389,10 +1400,16 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     SmallVector<ClassCopyOut> copyOuts;
     SmallVector<TaskIndirectCopyOut> taskIndirectCopyOuts;
     bool classTask = op->hasAttr("obelisk_sim.is_task");
+    size_t formalIndex = 0;
     for (auto [actual, formalAttr] :
          llvm::zip_equal(ArrayRef<Operation *>(children).drop_front(
                              superCall || implicitThis ? 0 : 1),
                          formals)) {
+      bool usesDefault = (*defaulted)[formalIndex++] != 0;
+      Value savedThisObject = thisObject;
+      if (usesDefault)
+        thisObject = *receiver;
+      llvm::scope_exit restoreThisObject([&] { thisObject = savedThisObject; });
       auto formal = cast<DictionaryAttr>(formalAttr);
       auto direction = static_cast<semantic::SVArgumentDirection>(
           formal.getAs<IntegerAttr>("direction").getInt());
@@ -2200,6 +2217,21 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
     return failure();
   }
 
+  SmallVector<Operation *> actuals = getChildren(call);
+  std::optional<ArrayRef<int64_t>> defaulted = call.getDefaultedArguments();
+  if (!defaulted || defaulted->size() != formals.size() ||
+      llvm::any_of(*defaulted,
+                   [](int64_t value) { return value != 0 && value != 1; })) {
+    emitError(location)
+        << "constructor has malformed default argument inventory";
+    return failure();
+  }
+  if (actuals.size() != formals.size()) {
+    emitError(location)
+        << "constructor has no complete frozen formal inventory";
+    return failure();
+  }
+
   Value receiver;
   if (op.getIsSuperClass()) {
     if (!thisObject) {
@@ -2218,12 +2250,6 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
       return failure();
   }
 
-  SmallVector<Operation *> actuals = getChildren(call);
-  if (actuals.size() != formals.size()) {
-    emitError(location)
-        << "constructor has no complete frozen formal inventory";
-    return failure();
-  }
   struct ConstructorCopyOut {
     Value destination;
     Type formalType;
@@ -2232,7 +2258,13 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
   };
   SmallVector<Value> arguments;
   SmallVector<ConstructorCopyOut> copyOuts;
+  size_t formalIndex = 0;
   for (auto [actual, formalAttr] : llvm::zip_equal(actuals, formals)) {
+    bool usesDefault = (*defaulted)[formalIndex++] != 0;
+    Value savedThisObject = thisObject;
+    if (usesDefault)
+      thisObject = receiver;
+    llvm::scope_exit restoreThisObject([&] { thisObject = savedThisObject; });
     auto formal = cast<DictionaryAttr>(formalAttr);
     auto direction = static_cast<semantic::SVArgumentDirection>(
         formal.getAs<IntegerAttr>("direction").getInt());
