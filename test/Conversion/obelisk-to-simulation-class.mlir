@@ -162,7 +162,7 @@ module attributes {
               }
               obelisk.sv.statement.expression_statement attributes {node_id = 44 : i64} {
                 obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = true, node_id = 45 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
-                  obelisk.sv.expression.member_access attributes {field_ordinal = 64 : i64, is_signed = true, node_id = 46 : i64, packed_offset = 0 : i64, referenced_path = "supported_object::static_field", referenced_symbol = @s1.$root::@s2::@s3.supported_object::@s23.static_field, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  obelisk.sv.expression.member_access attributes {is_signed = true, node_id = 46 : i64, referenced_path = "supported_object::static_field", referenced_symbol = @s1.$root::@s2::@s3.supported_object::@s23.static_field, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                     obelisk.sv.expression.named_value attributes {node_id = 47 : i64, referenced_path = "supported_class_use.object", referenced_symbol = @s1.$root::@s17.supported_class_use::@s18.supported_class_use::@s19::@s20.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.supported_object>} {
                     }
                   }

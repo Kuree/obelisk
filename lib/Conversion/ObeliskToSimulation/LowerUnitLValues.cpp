@@ -267,6 +267,7 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
   }
   if (isa<semantic::SVMemberAccessExpressionOp>(destination) &&
       !destination->hasAttr("obelisk_sim.class_field") &&
+      !destination->hasAttr(staticClassPropertyAttrName) &&
       !virtualInterfaceMember) {
     ArrayRef<Operation *> members = memberChildren;
     auto ordinalAttr = destination->getAttrOfType<IntegerAttr>("field_ordinal");
