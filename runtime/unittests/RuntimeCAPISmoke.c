@@ -31,7 +31,9 @@ _Static_assert(sizeof(obelisk_rt_method_descriptor_v1) == 32,
                "managed method descriptor size changed");
 _Static_assert(sizeof(obelisk_rt_random_edge_v1) == 24,
                "managed random edge size changed");
-_Static_assert(sizeof(obelisk_rt_random_layout_v1) == 24,
+_Static_assert(sizeof(obelisk_rt_random_variable_v1) == 48,
+               "managed random variable size changed");
+_Static_assert(sizeof(obelisk_rt_random_layout_v1) == 40,
                "managed random layout size changed");
 _Static_assert(sizeof(obelisk_rt_class_descriptor_v1) == 104,
                "managed class descriptor size changed");

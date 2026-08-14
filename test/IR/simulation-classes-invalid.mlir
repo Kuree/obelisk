@@ -49,6 +49,41 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @random_variable_without_signedness {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    // expected-error @below {{random variable metadata requires signedness}}
+    obelisk_sim.class.field @C_value of @C at 0 : i8 {
+      is_static = false, is_weak = false,
+      obelisk_sim.random_mode_index = 0 : i64,
+      obelisk_sim.random_variable_kind = 1 : i32
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @randc_without_cycle_state {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    // expected-error @below {{randc variables require key and position fields; rand variables forbid them}}
+    obelisk_sim.class.field @C_value of @C at 0 : i8 {
+      is_static = false, is_weak = false,
+      obelisk_sim.random_mode_index = 0 : i64,
+      obelisk_sim.random_variable_kind = 2 : i32,
+      obelisk_sim.random_variable_signed = false
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @self_interface_cycle {
     obelisk_sim.scope.decl 0
     // expected-error @below {{interface inheritance contains a cycle}}

@@ -45,6 +45,17 @@ inline constexpr llvm::StringLiteral randomModeIndex =
 /// Marks a non-static rand class-handle field as a recursive object edge.
 inline constexpr llvm::StringLiteral randomObjectEdge =
     "obelisk_sim.random_object_edge";
+/// Typed RandomVariableKindAttr on a direct packed instance rand property.
+inline constexpr llvm::StringLiteral randomVariableKind =
+    "obelisk_sim.random_variable_kind";
+/// Source signedness of a direct packed random variable.
+inline constexpr llvm::StringLiteral randomVariableSigned =
+    "obelisk_sim.random_variable_signed";
+/// Hidden i64 fields that carry one randc property's permutation state.
+inline constexpr llvm::StringLiteral randomCycleKeyField =
+    "obelisk_sim.random_cycle_key_field";
+inline constexpr llvm::StringLiteral randomCyclePositionField =
+    "obelisk_sim.random_cycle_position_field";
 /// Root-class field containing the 64-bit disabled-property mask.
 inline constexpr llvm::StringLiteral randomModeField =
     "obelisk_sim.random_mode_field";
@@ -129,6 +140,10 @@ inline bool isKnownBoundary(llvm::StringRef name) {
 inline bool isKnownOperation(llvm::StringRef name) {
   return isKnownBoundary(name) || name == bindings || name == delayScale ||
          name == delayQuantum || name == hierarchicalName || name == lowered ||
+         name == randomModeIndex || name == randomObjectEdge ||
+         name == randomVariableKind || name == randomVariableSigned ||
+         name == randomCycleKeyField || name == randomCyclePositionField ||
+         name == randomModeField ||
          name == staticBodyFusion || name == staticFusion ||
          name == computeKernels || name == threeTierSchedule ||
          name == staticSpecialization || name == staticSuperstep ||

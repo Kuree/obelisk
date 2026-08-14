@@ -345,6 +345,61 @@ LogicalResult SimClassFieldDeclOp::verify() {
           "random object edge requires an indexed, strong instance "
           "class-handle field");
   }
+  Attribute variableAttribute =
+      (*this)->getAttr(metadata::randomVariableKind);
+  auto variableKind =
+      dyn_cast_or_null<RandomVariableKindAttr>(variableAttribute);
+  if (variableAttribute && !variableKind)
+    return emitOpError(
+        "random variable kind must be a RandomVariableKind attribute");
+  Attribute signedAttribute =
+      (*this)->getAttr(metadata::randomVariableSigned);
+  auto isSigned = dyn_cast_or_null<BoolAttr>(signedAttribute);
+  Attribute keyAttribute = (*this)->getAttr(metadata::randomCycleKeyField);
+  Attribute positionAttribute =
+      (*this)->getAttr(metadata::randomCyclePositionField);
+  auto key = dyn_cast_or_null<FlatSymbolRefAttr>(keyAttribute);
+  auto position = dyn_cast_or_null<FlatSymbolRefAttr>(positionAttribute);
+  if (signedAttribute && !isSigned)
+    return emitOpError("random variable signedness must be a boolean");
+  if ((keyAttribute && !key) || (positionAttribute && !position))
+    return emitOpError("randc state fields must be flat symbol references");
+  if (variableKind) {
+    std::optional<unsigned> width = getPackedWidth(getType());
+    if (!modeIndex || getIsStatic() || !width || *width == 0 ||
+        (*this)->hasAttr(metadata::randomObjectEdge))
+      return emitOpError(
+          "random variable metadata requires an indexed, packed instance "
+          "field distinct from an object edge");
+    if (!isSigned)
+      return emitOpError("random variable metadata requires signedness");
+    bool isRandC = variableKind.getValue() == RandomVariableKind::RandC;
+    if (isRandC != static_cast<bool>(key) ||
+        isRandC != static_cast<bool>(position))
+      return emitOpError(
+          "randc variables require key and position fields; rand variables "
+          "forbid them");
+    if (isRandC) {
+      SimClassFieldDeclOp keyField =
+          SymbolTable::lookupNearestSymbolFrom<SimClassFieldDeclOp>(*this,
+                                                                    key);
+      SimClassFieldDeclOp positionField =
+          SymbolTable::lookupNearestSymbolFrom<SimClassFieldDeclOp>(*this,
+                                                                    position);
+      auto validStateField = [&](SimClassFieldDeclOp state) {
+        return state && state.getOwner() == getOwner() &&
+               !state.getIsStatic() && state.getType().isInteger(64);
+      };
+      if (!validStateField(keyField) || !validStateField(positionField) ||
+          keyField == positionField || keyField == *this ||
+          positionField == *this)
+        return emitOpError(
+            "randc state must name distinct owned instance i64 fields");
+    }
+  } else if (signedAttribute || keyAttribute || positionAttribute) {
+    return emitOpError(
+        "random variable auxiliary metadata requires a variable kind");
+  }
   if (!isNormalizedValueType(getType()))
     return emitOpError("property must have a normalized executable type");
   return success();

@@ -58,6 +58,21 @@ def SimManagedWatchKind
   let cppNamespace = "::obelisk::sim";
 }
 
+// A direct packed class property that participates in object randomization.
+// Object handles and containers have distinct executable metadata because
+// their storage and LRM semantics are not scalar assignment slots.
+def SimRandomVariableRand
+    : I32EnumAttrCase<"Rand", 1, "rand">;
+def SimRandomVariableRandC
+    : I32EnumAttrCase<"RandC", 2, "randc">;
+def SimRandomVariableKind
+    : I32EnumAttr<"RandomVariableKind",
+                  "direct packed random class-property kind", [
+        SimRandomVariableRand, SimRandomVariableRandC
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 // IEEE 1800-2023 event regions in their normative scheduling order. These
 // remain distinct from ComputeRegionKind: the latter is a coarse graph
 // partition and is not an executable scheduler queue.

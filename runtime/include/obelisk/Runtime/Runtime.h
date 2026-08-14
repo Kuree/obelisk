@@ -197,11 +197,29 @@ typedef struct obelisk_rt_random_edge_v1 {
   uint64_t mode_mask;
 } obelisk_rt_random_edge_v1;
 
+// One direct packed rand/randc property declared by a class. Four-state
+// storage has an equally sized unknown plane immediately after the value
+// plane. Randc offsets are UINT64_MAX for ordinary rand variables.
+#define OBELISK_RT_RANDOM_VARIABLE_FOUR_STATE (UINT32_C(1) << 0)
+#define OBELISK_RT_RANDOM_VARIABLE_SIGNED (UINT32_C(1) << 1)
+#define OBELISK_RT_RANDOM_VARIABLE_RANDC (UINT32_C(1) << 2)
+typedef struct obelisk_rt_random_variable_v1 {
+  uint64_t value_offset;
+  uint64_t mode_offset;
+  uint64_t mode_mask;
+  uint64_t randc_key_offset;
+  uint64_t randc_position_offset;
+  uint32_t bit_width;
+  uint32_t flags;
+} obelisk_rt_random_variable_v1;
+
 typedef struct obelisk_rt_random_layout_v1 {
   uint32_t version;
   uint32_t reserved;
   const obelisk_rt_random_edge_v1 *edges;
   uint64_t edge_count;
+  const obelisk_rt_random_variable_v1 *variables;
+  uint64_t variable_count;
 } obelisk_rt_random_layout_v1;
 
 #define OBELISK_RT_CLASS_ABSTRACT (UINT32_C(1) << 0)
@@ -1686,6 +1704,16 @@ obelisk_rt_v1_random_graph_size(const obelisk_rt_random_graph_v1 *graph);
 obelisk_rt_object_v1 *
 obelisk_rt_v1_random_graph_object(const obelisk_rt_random_graph_v1 *graph,
                                   uint64_t index);
+// Active direct packed variables are flattened in graph-object order and,
+// within each object, base-to-derived declaration order. Returned descriptor
+// pointers remain valid for the registered class lifetime; objects remain
+// pinned until graph destruction.
+uint64_t obelisk_rt_v1_random_graph_variable_count(
+    const obelisk_rt_random_graph_v1 *graph);
+obelisk_rt_status obelisk_rt_v1_random_graph_variable(
+    const obelisk_rt_random_graph_v1 *graph, uint64_t index,
+    obelisk_rt_object_v1 **out_object,
+    const obelisk_rt_random_variable_v1 **out_variable);
 
 // Validate and register immutable compiler-emitted element metadata. Repeated
 // registration of an equivalent descriptor is accepted; conflicting use of a

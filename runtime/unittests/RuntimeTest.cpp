@@ -3179,20 +3179,33 @@ const obelisk_rt_class_descriptor_v1 nodeDescriptor{OBELISK_RT_VERSION,
                                                     sizeof(nodeName) - 1,
                                                     nullptr};
 const obelisk_rt_random_edge_v1 randomNodeEdge{kNodeLinkOffset,
-                                               kNodeValueOffset, UINT64_C(1)};
+                                               kNodeValueOffset, UINT64_C(2)};
+constexpr uint64_t kRandomNodeValueOffset = sizeof(void *) * 3;
+const obelisk_rt_random_variable_v1 randomNodeVariable{
+    kRandomNodeValueOffset,
+    kNodeValueOffset,
+    UINT64_C(1),
+    UINT64_MAX,
+    UINT64_MAX,
+    64,
+    OBELISK_RT_RANDOM_VARIABLE_SIGNED};
 const obelisk_rt_random_layout_v1 randomNodeLayout{OBELISK_RT_VERSION, 0,
-                                                   &randomNodeEdge, 1};
+                                                   &randomNodeEdge, 1,
+                                                   &randomNodeVariable, 1};
+const obelisk_rt_trace_layout_v1 randomNodeTraceLayout{
+    OBELISK_RT_VERSION, 0, sizeof(void *) * 4, alignof(void *),
+    &nodeTraceEntry,    1};
 const char randomNodeName[] = "random_node";
 const obelisk_rt_class_descriptor_v1 randomNodeDescriptor{
     OBELISK_RT_VERSION,
     0,
     6,
-    sizeof(void *) * 3,
+    sizeof(void *) * 4,
     alignof(void *),
     nullptr,
     nullptr,
     0,
-    &nodeTraceLayout,
+    &randomNodeTraceLayout,
     nodeMethods,
     std::size(nodeMethods),
     randomNodeName,
@@ -3200,22 +3213,32 @@ const obelisk_rt_class_descriptor_v1 randomNodeDescriptor{
     &randomNodeLayout};
 const obelisk_rt_trace_entry_v1 randomDerivedTraceEntries[]{
     nodeTraceEntry,
-    {kDerivedExtraOffset, 0, 1, OBELISK_RT_TRACE_STRONG,
+    {sizeof(void *) * 4, 0, 1, OBELISK_RT_TRACE_STRONG,
      OBELISK_RT_MANAGED_SLOT_CLASS, nullptr}};
 const obelisk_rt_trace_layout_v1 randomDerivedTraceLayout{
     OBELISK_RT_VERSION,        0,
-    sizeof(void *) * 4,        alignof(void *),
+    sizeof(void *) * 6,        alignof(void *),
     randomDerivedTraceEntries, std::size(randomDerivedTraceEntries)};
 const obelisk_rt_random_edge_v1 randomDerivedEdge{
-    kDerivedExtraOffset, kNodeValueOffset, UINT64_C(2)};
+    sizeof(void *) * 4, kNodeValueOffset, UINT64_C(4)};
+const obelisk_rt_random_variable_v1 randomDerivedVariable{
+    sizeof(void *) * 5,
+    kNodeValueOffset,
+    UINT64_C(8),
+    UINT64_MAX,
+    UINT64_MAX,
+    32,
+    0};
 const obelisk_rt_random_layout_v1 randomDerivedLayout{OBELISK_RT_VERSION, 0,
-                                                      &randomDerivedEdge, 1};
+                                                      &randomDerivedEdge, 1,
+                                                      &randomDerivedVariable,
+                                                      1};
 const char randomDerivedName[] = "random_derived_node";
 const obelisk_rt_class_descriptor_v1 randomDerivedDescriptor{
     OBELISK_RT_VERSION,
     OBELISK_RT_CLASS_FINAL,
     7,
-    sizeof(void *) * 4,
+    sizeof(void *) * 6,
     alignof(void *),
     &randomNodeDescriptor,
     nullptr,
@@ -3439,7 +3462,7 @@ TEST_F(ManagedHeapTest, DiscoversActiveRandomObjectGraphByIdentity) {
   ASSERT_EQ(obelisk_rt_v1_object_field_store(root, kNodeLinkOffset, child),
             OBELISK_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_v1_object_field_store(root, kDerivedExtraOffset, derivedChild),
+      obelisk_rt_v1_object_field_store(root, sizeof(void *) * 4, derivedChild),
       OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_object_field_store(child, kNodeLinkOffset, root),
             OBELISK_RT_OK);
@@ -3453,6 +3476,34 @@ TEST_F(ManagedHeapTest, DiscoversActiveRandomObjectGraphByIdentity) {
   EXPECT_EQ(obelisk_rt_v1_random_graph_object(graph, 1), child);
   EXPECT_EQ(obelisk_rt_v1_random_graph_object(graph, 2), derivedChild);
   EXPECT_EQ(obelisk_rt_v1_random_graph_object(graph, 3), nullptr);
+  EXPECT_EQ(obelisk_rt_v1_random_graph_variable_count(graph), 4u);
+  obelisk_rt_object_v1 *variableObject = nullptr;
+  const obelisk_rt_random_variable_v1 *variable = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_random_graph_variable(
+                graph, 0, &variableObject, &variable),
+            OBELISK_RT_OK);
+  EXPECT_EQ(variableObject, root);
+  EXPECT_EQ(variable, &randomNodeVariable);
+  ASSERT_EQ(obelisk_rt_v1_random_graph_variable(
+                graph, 1, &variableObject, &variable),
+            OBELISK_RT_OK);
+  EXPECT_EQ(variableObject, root);
+  EXPECT_EQ(variable, &randomDerivedVariable);
+  ASSERT_EQ(obelisk_rt_v1_random_graph_variable(
+                graph, 2, &variableObject, &variable),
+            OBELISK_RT_OK);
+  EXPECT_EQ(variableObject, child);
+  EXPECT_EQ(variable, &randomNodeVariable);
+  ASSERT_EQ(obelisk_rt_v1_random_graph_variable(
+                graph, 3, &variableObject, &variable),
+            OBELISK_RT_OK);
+  EXPECT_EQ(variableObject, derivedChild);
+  EXPECT_EQ(variable, &randomNodeVariable);
+  EXPECT_EQ(obelisk_rt_v1_random_graph_variable(
+                graph, 4, &variableObject, &variable),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(variableObject, nullptr);
+  EXPECT_EQ(variable, nullptr);
 
   // The graph owns exact roots while callers compose a solver plan.
   ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
@@ -3461,7 +3512,7 @@ TEST_F(ManagedHeapTest, DiscoversActiveRandomObjectGraphByIdentity) {
   EXPECT_NE(obelisk_rt_v1_object_id(derivedChild), 0u);
   obelisk_rt_v1_random_graph_destroy(graph);
 
-  uint64_t disabled = 3;
+  uint64_t disabled = 7;
   ASSERT_EQ(obelisk_rt_v1_object_write(root, kNodeValueOffset, &disabled,
                                        sizeof(disabled)),
             OBELISK_RT_OK);
@@ -3471,6 +3522,12 @@ TEST_F(ManagedHeapTest, DiscoversActiveRandomObjectGraphByIdentity) {
   ASSERT_NE(graph, nullptr);
   EXPECT_EQ(obelisk_rt_v1_random_graph_size(graph), 1u);
   EXPECT_EQ(obelisk_rt_v1_random_graph_object(graph, 0), root);
+  EXPECT_EQ(obelisk_rt_v1_random_graph_variable_count(graph), 1u);
+  ASSERT_EQ(obelisk_rt_v1_random_graph_variable(
+                graph, 0, &variableObject, &variable),
+            OBELISK_RT_OK);
+  EXPECT_EQ(variableObject, root);
+  EXPECT_EQ(variable, &randomDerivedVariable);
   obelisk_rt_v1_random_graph_destroy(graph);
 }
 
@@ -4086,6 +4143,22 @@ TEST(ManagedHeap, RejectsMalformedClassLayouts) {
             OBELISK_RT_INVALID_DESIGN);
   badRandomEdge = randomNodeEdge;
   badRandomEdge.mode_mask = 3;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed),
+            OBELISK_RT_INVALID_DESIGN);
+  obelisk_rt_random_variable_v1 badRandomVariable = randomNodeVariable;
+  badRandomLayout = randomNodeLayout;
+  badRandomLayout.variables = &badRandomVariable;
+  malformed = randomNodeDescriptor;
+  malformed.random_layout = &badRandomLayout;
+  badRandomVariable.value_offset = kNodeLinkOffset;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed),
+            OBELISK_RT_INVALID_DESIGN);
+  badRandomVariable = randomNodeVariable;
+  badRandomVariable.mode_mask = randomNodeEdge.mode_mask;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed),
+            OBELISK_RT_INVALID_DESIGN);
+  badRandomVariable = randomNodeVariable;
+  badRandomVariable.randc_key_offset = kRandomNodeValueOffset;
   EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed),
             OBELISK_RT_INVALID_DESIGN);
   malformed = nodeDescriptor;

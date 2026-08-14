@@ -58,11 +58,21 @@ ABI_SIZE_ALIGN(obelisk_rt_random_edge_v1, 24, 8);
 ABI_OFFSET(obelisk_rt_random_edge_v1, handle_offset, 0);
 ABI_OFFSET(obelisk_rt_random_edge_v1, mode_offset, 8);
 ABI_OFFSET(obelisk_rt_random_edge_v1, mode_mask, 16);
-ABI_SIZE_ALIGN(obelisk_rt_random_layout_v1, 24, 8);
+ABI_SIZE_ALIGN(obelisk_rt_random_variable_v1, 48, 8);
+ABI_OFFSET(obelisk_rt_random_variable_v1, value_offset, 0);
+ABI_OFFSET(obelisk_rt_random_variable_v1, mode_offset, 8);
+ABI_OFFSET(obelisk_rt_random_variable_v1, mode_mask, 16);
+ABI_OFFSET(obelisk_rt_random_variable_v1, randc_key_offset, 24);
+ABI_OFFSET(obelisk_rt_random_variable_v1, randc_position_offset, 32);
+ABI_OFFSET(obelisk_rt_random_variable_v1, bit_width, 40);
+ABI_OFFSET(obelisk_rt_random_variable_v1, flags, 44);
+ABI_SIZE_ALIGN(obelisk_rt_random_layout_v1, 40, 8);
 ABI_OFFSET(obelisk_rt_random_layout_v1, version, 0);
 ABI_OFFSET(obelisk_rt_random_layout_v1, reserved, 4);
 ABI_OFFSET(obelisk_rt_random_layout_v1, edges, 8);
 ABI_OFFSET(obelisk_rt_random_layout_v1, edge_count, 16);
+ABI_OFFSET(obelisk_rt_random_layout_v1, variables, 24);
+ABI_OFFSET(obelisk_rt_random_layout_v1, variable_count, 32);
 ABI_SIZE_ALIGN(obelisk_rt_class_descriptor_v1, 104, 8);
 ABI_OFFSET(obelisk_rt_class_descriptor_v1, version, 0);
 ABI_OFFSET(obelisk_rt_class_descriptor_v1, flags, 4);
@@ -1232,6 +1242,13 @@ ABI_FUNCTION(obelisk_rt_v1_random_graph_size,
 ABI_FUNCTION(obelisk_rt_v1_random_graph_object,
              obelisk_rt_object_v1 *(*)(const obelisk_rt_random_graph_v1 *,
                                        uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_random_graph_variable_count,
+             uint64_t (*)(const obelisk_rt_random_graph_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_random_graph_variable,
+             obelisk_rt_status (*)(
+                 const obelisk_rt_random_graph_v1 *, uint64_t,
+                 obelisk_rt_object_v1 **,
+                 const obelisk_rt_random_variable_v1 **));
 ABI_FUNCTION(obelisk_rt_v1_element_type_validate,
              obelisk_rt_status (*)(const obelisk_rt_element_type_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_element_type_register,

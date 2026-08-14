@@ -14,8 +14,14 @@
 struct obelisk_rt_object_v1 {};
 
 struct obelisk_rt_random_graph_v1 {
+  struct VariableBinding {
+    obelisk_rt_object_v1 *object = nullptr;
+    const obelisk_rt_random_variable_v1 *variable = nullptr;
+  };
+
   obelisk_rt_context *context = nullptr;
   std::vector<obelisk_rt_object_v1 *> objects;
+  std::vector<VariableBinding> variables;
 };
 
 namespace {
@@ -261,6 +267,12 @@ private:
 
 bool checkedRange(uint64_t offset, uint64_t size, uint64_t extent) {
   return offset <= extent && size <= extent - offset;
+}
+
+bool rangesOverlap(uint64_t leftOffset, uint64_t leftSize,
+                   uint64_t rightOffset, uint64_t rightSize) {
+  return leftOffset < rightOffset + rightSize &&
+         rightOffset < leftOffset + leftSize;
 }
 
 struct TraceValidationFrame {
@@ -1824,6 +1836,9 @@ obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor) {
       OBELISK_RT_CLASS_FINAL | OBELISK_RT_CLASS_WEAK_WRAPPER;
   constexpr uint32_t validMethodFlags =
       OBELISK_RT_METHOD_TASK | OBELISK_RT_METHOD_PURE;
+  constexpr uint32_t validRandomVariableFlags =
+      OBELISK_RT_RANDOM_VARIABLE_FOUR_STATE |
+      OBELISK_RT_RANDOM_VARIABLE_SIGNED | OBELISK_RT_RANDOM_VARIABLE_RANDC;
   if (!descriptor)
     return OBELISK_RT_INVALID_DESIGN;
 
@@ -1912,7 +1927,9 @@ obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor) {
     }
     if (const obelisk_rt_random_layout_v1 *random = current->random_layout) {
       if (random->version != OBELISK_RT_VERSION || random->reserved != 0 ||
-          random->edge_count == 0 || !random->edges)
+          (random->edge_count == 0) != (random->edges == nullptr) ||
+          (random->variable_count == 0) != (random->variables == nullptr) ||
+          (random->edge_count == 0 && random->variable_count == 0))
         return OBELISK_RT_INVALID_DESIGN;
       for (uint64_t index = 0; index != random->edge_count; ++index) {
         const obelisk_rt_random_edge_v1 &edge = random->edges[index];
@@ -1931,6 +1948,106 @@ obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor) {
               (random->edges[previous].mode_offset == edge.mode_offset &&
                random->edges[previous].mode_mask == edge.mode_mask))
             return OBELISK_RT_INVALID_DESIGN;
+      }
+      for (uint64_t index = 0; index != random->variable_count; ++index) {
+        const obelisk_rt_random_variable_v1 &variable =
+            random->variables[index];
+        bool isRandC =
+            (variable.flags & OBELISK_RT_RANDOM_VARIABLE_RANDC) != 0;
+        uint64_t valueSize = (uint64_t(variable.bit_width) + 7) / 8;
+        uint64_t storageSize =
+            (variable.flags & OBELISK_RT_RANDOM_VARIABLE_FOUR_STATE) != 0
+                ? valueSize * 2
+                : valueSize;
+        if (variable.bit_width == 0 ||
+            (variable.flags & ~validRandomVariableFlags) != 0 ||
+            variable.value_offset < sizeof(void *) ||
+            variable.mode_offset < sizeof(void *) ||
+            variable.mode_offset % alignof(uint64_t) != 0 ||
+            !checkedRange(variable.value_offset, storageSize,
+                          current->instance_size) ||
+            !checkedRange(variable.mode_offset, sizeof(uint64_t),
+                          current->instance_size) ||
+            !validPowerOfTwo(variable.mode_mask) ||
+            rangesOverlap(variable.value_offset, storageSize,
+                          variable.mode_offset, sizeof(uint64_t)) ||
+            layoutOverlapsHandle(current->layout, 0, variable.value_offset,
+                                 storageSize) ||
+            (isRandC != (variable.randc_key_offset != UINT64_MAX)) ||
+            (isRandC != (variable.randc_position_offset != UINT64_MAX)))
+          return OBELISK_RT_INVALID_DESIGN;
+        if (isRandC &&
+            (variable.randc_key_offset < sizeof(void *) ||
+             variable.randc_position_offset < sizeof(void *) ||
+             variable.randc_key_offset % alignof(uint64_t) != 0 ||
+             variable.randc_position_offset % alignof(uint64_t) != 0 ||
+             variable.randc_key_offset == variable.randc_position_offset ||
+             rangesOverlap(variable.value_offset, storageSize,
+                           variable.randc_key_offset, sizeof(uint64_t)) ||
+             rangesOverlap(variable.value_offset, storageSize,
+                           variable.randc_position_offset, sizeof(uint64_t)) ||
+             rangesOverlap(variable.mode_offset, sizeof(uint64_t),
+                           variable.randc_key_offset, sizeof(uint64_t)) ||
+             rangesOverlap(variable.mode_offset, sizeof(uint64_t),
+                           variable.randc_position_offset, sizeof(uint64_t)) ||
+             !checkedRange(variable.randc_key_offset, sizeof(uint64_t),
+                           current->instance_size) ||
+             !checkedRange(variable.randc_position_offset, sizeof(uint64_t),
+                           current->instance_size) ||
+             layoutOverlapsHandle(current->layout, 0,
+                                  variable.randc_key_offset,
+                                  sizeof(uint64_t)) ||
+             layoutOverlapsHandle(current->layout, 0,
+                                  variable.randc_position_offset,
+                                  sizeof(uint64_t))))
+          return OBELISK_RT_INVALID_DESIGN;
+        for (uint64_t previous = 0; previous != index; ++previous) {
+          const obelisk_rt_random_variable_v1 &other =
+              random->variables[previous];
+          uint64_t otherValueSize =
+              (uint64_t(other.bit_width) + 7) / 8;
+          uint64_t otherStorageSize =
+              (other.flags & OBELISK_RT_RANDOM_VARIABLE_FOUR_STATE) != 0
+                  ? otherValueSize * 2
+                  : otherValueSize;
+          bool otherIsRandC =
+              (other.flags & OBELISK_RT_RANDOM_VARIABLE_RANDC) != 0;
+          if (rangesOverlap(other.value_offset, otherStorageSize,
+                            variable.value_offset, storageSize) ||
+              (isRandC &&
+               (rangesOverlap(other.value_offset, otherStorageSize,
+                              variable.randc_key_offset, sizeof(uint64_t)) ||
+                rangesOverlap(other.value_offset, otherStorageSize,
+                              variable.randc_position_offset,
+                              sizeof(uint64_t)))) ||
+              (otherIsRandC &&
+               (rangesOverlap(variable.value_offset, storageSize,
+                              other.randc_key_offset, sizeof(uint64_t)) ||
+                rangesOverlap(variable.value_offset, storageSize,
+                              other.randc_position_offset,
+                              sizeof(uint64_t)))) ||
+              (isRandC && otherIsRandC &&
+               (rangesOverlap(variable.randc_key_offset, sizeof(uint64_t),
+                              other.randc_key_offset, sizeof(uint64_t)) ||
+                rangesOverlap(variable.randc_key_offset, sizeof(uint64_t),
+                              other.randc_position_offset, sizeof(uint64_t)) ||
+                rangesOverlap(variable.randc_position_offset,
+                              sizeof(uint64_t), other.randc_key_offset,
+                              sizeof(uint64_t)) ||
+                rangesOverlap(variable.randc_position_offset,
+                              sizeof(uint64_t), other.randc_position_offset,
+                              sizeof(uint64_t)))) ||
+              (other.mode_offset == variable.mode_offset &&
+               other.mode_mask == variable.mode_mask))
+            return OBELISK_RT_INVALID_DESIGN;
+        }
+        for (uint64_t edgeIndex = 0; edgeIndex != random->edge_count;
+             ++edgeIndex) {
+          const obelisk_rt_random_edge_v1 &edge = random->edges[edgeIndex];
+          if (edge.mode_offset == variable.mode_offset &&
+              edge.mode_mask == variable.mode_mask)
+            return OBELISK_RT_INVALID_DESIGN;
+        }
       }
     }
     if (derived && !layoutContainsHandles(derived->layout, current->layout))
@@ -2222,6 +2339,18 @@ obelisk_rt_v1_random_graph_discover(obelisk_rt_gc_lane_v1 *lane,
         const obelisk_rt_random_layout_v1 *random = descriptor->random_layout;
         if (!random)
           continue;
+        for (uint64_t index = 0; index != random->variable_count; ++index) {
+          const obelisk_rt_random_variable_v1 &variable =
+              random->variables[index];
+          uint64_t mode = 0;
+          {
+            ObjectLock lock(metadata);
+            const uint8_t *bytes = reinterpret_cast<const uint8_t *>(object);
+            std::memcpy(&mode, bytes + variable.mode_offset, sizeof(mode));
+          }
+          if ((mode & variable.mode_mask) == 0)
+            graph->variables.push_back({object, &variable});
+        }
         for (uint64_t index = 0; index != random->edge_count; ++index) {
           const obelisk_rt_random_edge_v1 &edge = random->edges[index];
           uint64_t mode = 0;
@@ -2280,6 +2409,28 @@ obelisk_rt_v1_random_graph_object(const obelisk_rt_random_graph_v1 *graph,
                                   uint64_t index) {
   return graph && index < graph->objects.size() ? graph->objects[index]
                                                 : nullptr;
+}
+
+extern "C" uint64_t obelisk_rt_v1_random_graph_variable_count(
+    const obelisk_rt_random_graph_v1 *graph) {
+  return graph ? graph->variables.size() : 0;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_random_graph_variable(
+    const obelisk_rt_random_graph_v1 *graph, uint64_t index,
+    obelisk_rt_object_v1 **outObject,
+    const obelisk_rt_random_variable_v1 **outVariable) {
+  if (!outObject || !outVariable)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outObject = nullptr;
+  *outVariable = nullptr;
+  if (!graph || index >= graph->variables.size())
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const obelisk_rt_random_graph_v1::VariableBinding &binding =
+      graph->variables[index];
+  *outObject = binding.object;
+  *outVariable = binding.variable;
+  return OBELISK_RT_OK;
 }
 
 namespace {

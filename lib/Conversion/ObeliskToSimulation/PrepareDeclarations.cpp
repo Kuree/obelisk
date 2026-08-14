@@ -288,6 +288,31 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
         if (!isStatic && isa<sim::ClassHandleType>(*type))
           field->setAttr(sim::metadata::randomObjectEdge,
                          builder.getUnitAttr());
+        if (!isStatic && sim::getPackedWidth(*type)) {
+          sim::RandomVariableKind kind = sim::RandomVariableKind::Rand;
+          switch (property.getRandMode()) {
+          case semantic::SVRandMode::Rand:
+            kind = sim::RandomVariableKind::Rand;
+            break;
+          case semantic::SVRandMode::RandC:
+            kind = sim::RandomVariableKind::RandC;
+            break;
+          case semantic::SVRandMode::None:
+            llvm_unreachable("non-random property reached random metadata");
+          }
+          field->setAttr(sim::metadata::randomVariableKind,
+                         sim::RandomVariableKindAttr::get(context, kind));
+          std::optional<Type> semanticType = property.getSemanticType();
+          if (!semanticType) {
+            emitError(getSemanticLocation(property))
+                << "random property has no semantic type";
+            invalid = true;
+          } else {
+            field->setAttr(
+                sim::metadata::randomVariableSigned,
+                builder.getBoolAttr(isSignedSemanticType(*semanticType)));
+          }
+        }
       }
       if (!isStatic && property.getRandMode() == semantic::SVRandMode::RandC) {
         auto addRandCField = [&](StringRef suffix, StringRef debugName) {
@@ -304,6 +329,12 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
             addRandCField("_randc_key", "__obelisk_randc_key");
         result.randcPositionFieldSymbols[property] =
             addRandCField("_randc_position", "__obelisk_randc_position");
+        if (field->hasAttr(sim::metadata::randomVariableKind)) {
+          field->setAttr(sim::metadata::randomCycleKeyField,
+                         result.randcKeyFieldSymbols.lookup(property));
+          field->setAttr(sim::metadata::randomCyclePositionField,
+                         result.randcPositionFieldSymbols.lookup(property));
+        }
       }
     }
     // Every inheritance tree owns exactly one inline PCG stream.

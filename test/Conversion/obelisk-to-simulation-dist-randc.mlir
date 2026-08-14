@@ -23,8 +23,9 @@
 // DIST-SIGNED: arith.xori {{.*}}, {{.*}} : i64
 // DIST-SIGNED: obelisk_sim.random.solve
 
-// RANDC: obelisk_sim.class.field @[[KEY:[^ ]+]] {{.*}} {debug_name = "__obelisk_randc_key"
-// RANDC: obelisk_sim.class.field @[[POSITION:[^ ]+]] {{.*}} {debug_name = "__obelisk_randc_position"
+// RANDC: obelisk_sim.class.field @[[VALUE:[^ ]+]] {{.*}}obelisk_sim.random_cycle_key_field = @[[KEY:[^, }]+]]{{.*}}obelisk_sim.random_cycle_position_field = @[[POSITION:[^, }]+]]{{.*}}obelisk_sim.random_variable_kind = 2 : i32
+// RANDC: obelisk_sim.class.field @[[KEY]] {{.*}} {debug_name = "__obelisk_randc_key"
+// RANDC: obelisk_sim.class.field @[[POSITION]] {{.*}} {debug_name = "__obelisk_randc_position"
 // RANDC: %[[KEY_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@[[KEY]]]
 // RANDC: %[[POSITION_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@[[POSITION]]]
 // RANDC: %[[KEY_VALUE:.*]] = obelisk_sim.managed.load %[[KEY_REF]]

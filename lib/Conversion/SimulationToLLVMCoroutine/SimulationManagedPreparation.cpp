@@ -43,6 +43,16 @@ struct ManagedRandomEdge {
   uint64_t modeMask = 0;
 };
 
+struct ManagedRandomVariable {
+  uint64_t valueOffset = 0;
+  uint64_t modeOffset = 0;
+  uint64_t modeMask = 0;
+  uint64_t randcKeyOffset = UINT64_MAX;
+  uint64_t randcPositionOffset = UINT64_MAX;
+  uint32_t bitWidth = 0;
+  uint32_t flags = 0;
+};
+
 struct ManagedClassLayout {
   struct Interface {
     sim::SimClassDeclOp declaration;
@@ -54,6 +64,7 @@ struct ManagedClassLayout {
   uint32_t alignment = alignof(void *);
   SmallVector<ManagedTraceLayout> tracedFields;
   SmallVector<ManagedRandomEdge> randomEdges;
+  SmallVector<ManagedRandomVariable> randomVariables;
   SmallVector<sim::SimClassMethodDeclOp> methods;
   SmallVector<Interface> interfaces;
 };
@@ -142,6 +153,36 @@ prepareManagedClassInventory(ModuleOp module,
       layout.tracedFields.push_back(
           {*shared.weakReferentOffset, true, OBELISK_RT_MANAGED_SLOT_CLASS});
 
+    auto getModeOffset = [&](sim::SimClassFieldDeclOp field,
+                             IntegerAttr modeIndex)
+        -> FailureOr<std::pair<uint64_t, uint64_t>> {
+      if (!modeIndex || modeIndex.getValue().isNegative() ||
+          modeIndex.getValue().getActiveBits() > 6) {
+        field.emitError(
+            "random property exceeds the 64-property rand_mode boundary");
+        return failure();
+      }
+      sim::SimClassDeclOp root = declaration;
+      while (root.getBaseAttr()) {
+        auto base = classesByName.find(*root.getBase());
+        if (base == classesByName.end()) {
+          root.emitError("managed base descriptor is missing");
+          return failure();
+        }
+        root = base->second;
+      }
+      auto modeField = root->getAttrOfType<FlatSymbolRefAttr>(
+          sim::metadata::randomModeField);
+      auto modeOffset = modeField ? fieldOffsets.find(modeField.getValue())
+                                  : fieldOffsets.end();
+      if (!modeField || modeOffset == fieldOffsets.end()) {
+        field.emitError("random property has no executable rand_mode field");
+        return failure();
+      }
+      uint64_t index = modeIndex.getValue().getZExtValue();
+      return std::pair(modeOffset->second, UINT64_C(1) << index);
+    };
+
     for (const analysis::ManagedClassLayoutAnalysis::Field &sharedField :
          shared.fields) {
       sim::SimClassFieldDeclOp field = sharedField.declaration;
@@ -157,26 +198,55 @@ prepareManagedClassInventory(ModuleOp module,
       if (field->hasAttr(sim::metadata::randomObjectEdge)) {
         auto modeIndex =
             field->getAttrOfType<IntegerAttr>(sim::metadata::randomModeIndex);
-        if (!modeIndex || modeIndex.getValue().getActiveBits() > 6)
-          return field.emitError(
-              "rand-object edge exceeds the 64-property rand_mode boundary");
-        sim::SimClassDeclOp root = declaration;
-        while (root.getBaseAttr()) {
-          auto base = classesByName.find(*root.getBase());
-          if (base == classesByName.end())
-            return root.emitError("managed base descriptor is missing");
-          root = base->second;
-        }
-        auto modeField = root->getAttrOfType<FlatSymbolRefAttr>(
-            sim::metadata::randomModeField);
-        auto modeOffset = modeField ? fieldOffsets.find(modeField.getValue())
-                                    : fieldOffsets.end();
-        if (!modeField || modeOffset == fieldOffsets.end())
-          return field.emitError(
-              "rand-object edge has no executable rand_mode field");
-        uint64_t index = modeIndex.getValue().getZExtValue();
+        FailureOr<std::pair<uint64_t, uint64_t>> mode =
+            getModeOffset(field, modeIndex);
+        if (failed(mode))
+          return failure();
         layout.randomEdges.push_back(
-            {sharedField.offset, modeOffset->second, UINT64_C(1) << index});
+            {sharedField.offset, mode->first, mode->second});
+      }
+      if (auto kind = field->getAttrOfType<sim::RandomVariableKindAttr>(
+              sim::metadata::randomVariableKind)) {
+        auto modeIndex =
+            field->getAttrOfType<IntegerAttr>(sim::metadata::randomModeIndex);
+        FailureOr<std::pair<uint64_t, uint64_t>> mode =
+            getModeOffset(field, modeIndex);
+        std::optional<unsigned> width = sim::getPackedWidth(field.getType());
+        auto signedness = field->getAttrOfType<BoolAttr>(
+            sim::metadata::randomVariableSigned);
+        if (failed(mode))
+          return failure();
+        if (!width || !signedness)
+          return field.emitError(
+              "random variable has incomplete executable metadata");
+        ManagedRandomVariable variable;
+        variable.valueOffset = sharedField.offset;
+        variable.modeOffset = mode->first;
+        variable.modeMask = mode->second;
+        variable.bitWidth = *width;
+        if (sharedField.storage.fourState)
+          variable.flags |= OBELISK_RT_RANDOM_VARIABLE_FOUR_STATE;
+        if (signedness.getValue())
+          variable.flags |= OBELISK_RT_RANDOM_VARIABLE_SIGNED;
+        if (kind.getValue() == sim::RandomVariableKind::RandC) {
+          variable.flags |= OBELISK_RT_RANDOM_VARIABLE_RANDC;
+          auto key = field->getAttrOfType<FlatSymbolRefAttr>(
+              sim::metadata::randomCycleKeyField);
+          auto position = field->getAttrOfType<FlatSymbolRefAttr>(
+              sim::metadata::randomCyclePositionField);
+          auto keyOffset = key ? fieldOffsets.find(key.getValue())
+                               : fieldOffsets.end();
+          auto positionOffset = position
+                                    ? fieldOffsets.find(position.getValue())
+                                    : fieldOffsets.end();
+          if (!key || !position || keyOffset == fieldOffsets.end() ||
+              positionOffset == fieldOffsets.end())
+            return field.emitError(
+                "randc variable has no executable cycle state");
+          variable.randcKeyOffset = keyOffset->second;
+          variable.randcPositionOffset = positionOffset->second;
+        }
+        layout.randomVariables.push_back(variable);
       }
     }
 
@@ -304,8 +374,10 @@ prepareManagedClassInventory(ModuleOp module,
       context, {i32, i32, i64, i64, pointer, i64});
   Type randomEdgeType =
       LLVM::LLVMStructType::getLiteral(context, {i64, i64, i64});
-  Type randomLayoutType =
-      LLVM::LLVMStructType::getLiteral(context, {i32, i32, pointer, i64});
+  Type randomVariableType = LLVM::LLVMStructType::getLiteral(
+      context, {i64, i64, i64, i64, i64, i32, i32});
+  Type randomLayoutType = LLVM::LLVMStructType::getLiteral(
+      context, {i32, i32, pointer, i64, pointer, i64});
   Type methodType = LLVM::LLVMStructType::getLiteral(
       context, {i64, i32, i32, pointer, pointer});
   Type interfaceType =
@@ -330,6 +402,8 @@ prepareManagedClassInventory(ModuleOp module,
       std::string entriesName = prefix + ".__obelisk_trace_entries";
       std::string traceName = prefix + ".__obelisk_trace_layout";
       std::string randomEdgesName = prefix + ".__obelisk_random_edges";
+      std::string randomVariablesName =
+          prefix + ".__obelisk_random_variables";
       std::string randomLayoutName = prefix + ".__obelisk_random_layout";
       std::string methodsName = prefix + ".__obelisk_methods";
       std::string interfacesName = prefix + ".__obelisk_interfaces";
@@ -421,6 +495,57 @@ prepareManagedClassInventory(ModuleOp module,
               }
               return array;
             });
+      }
+      Type randomVariablesType = LLVM::LLVMArrayType::get(
+          randomVariableType, layout.randomVariables.size());
+      if (!layout.randomVariables.empty())
+        makeConstantGlobal(
+            module, location, randomVariablesType, randomVariablesName,
+            LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
+              Value array =
+                  LLVM::ZeroOp::create(builder, location, randomVariablesType);
+              for (auto [index, variable] :
+                   llvm::enumerate(layout.randomVariables)) {
+                Value record = LLVM::ZeroOp::create(builder, location,
+                                                    randomVariableType);
+                record = insertValue(
+                    builder, location, record,
+                    llvmConstant(builder, location, i64,
+                                 variable.valueOffset),
+                    0);
+                record = insertValue(
+                    builder, location, record,
+                    llvmConstant(builder, location, i64,
+                                 variable.modeOffset),
+                    1);
+                record = insertValue(
+                    builder, location, record,
+                    llvmConstant(builder, location, i64, variable.modeMask),
+                    2);
+                record = insertValue(
+                    builder, location, record,
+                    llvmConstant(builder, location, i64,
+                                 variable.randcKeyOffset),
+                    3);
+                record = insertValue(
+                    builder, location, record,
+                    llvmConstant(builder, location, i64,
+                                 variable.randcPositionOffset),
+                    4);
+                record = insertValue(
+                    builder, location, record,
+                    llvmConstant(builder, location, i32, variable.bitWidth),
+                    5);
+                record = insertValue(
+                    builder, location, record,
+                    llvmConstant(builder, location, i32, variable.flags), 6);
+                array = LLVM::InsertValueOp::create(
+                    builder, location, array, record,
+                    ArrayRef<int64_t>{static_cast<int64_t>(index)});
+              }
+              return array;
+            });
+      if (!layout.randomEdges.empty() || !layout.randomVariables.empty())
         makeConstantGlobal(
             module, location, randomLayoutType, randomLayoutName,
             LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
@@ -429,18 +554,29 @@ prepareManagedClassInventory(ModuleOp module,
               random = insertValue(
                   builder, location, random,
                   llvmConstant(builder, location, i32, OBELISK_RT_VERSION), 0);
-              random =
-                  insertValue(builder, location, random,
-                              LLVM::AddressOfOp::create(
-                                  builder, location, pointer, randomEdgesName),
-                              2);
+              if (!layout.randomEdges.empty())
+                random = insertValue(
+                    builder, location, random,
+                    LLVM::AddressOfOp::create(builder, location, pointer,
+                                              randomEdgesName),
+                    2);
               random = insertValue(builder, location, random,
                                    llvmConstant(builder, location, i64,
                                                 layout.randomEdges.size()),
                                    3);
+              if (!layout.randomVariables.empty())
+                random = insertValue(
+                    builder, location, random,
+                    LLVM::AddressOfOp::create(builder, location, pointer,
+                                              randomVariablesName),
+                    4);
+              random = insertValue(
+                  builder, location, random,
+                  llvmConstant(builder, location, i64,
+                               layout.randomVariables.size()),
+                  5);
               return random;
             });
-      }
 
       Type methodsType =
           LLVM::LLVMArrayType::get(methodType, layout.methods.size());
@@ -629,7 +765,7 @@ prepareManagedClassInventory(ModuleOp module,
             descriptor = insertValue(
                 builder, location, descriptor,
                 llvmConstant(builder, location, i64, debug.size()), 12);
-            if (!layout.randomEdges.empty())
+            if (!layout.randomEdges.empty() || !layout.randomVariables.empty())
               descriptor =
                   insertValue(builder, location, descriptor,
                               LLVM::AddressOfOp::create(
