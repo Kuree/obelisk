@@ -688,7 +688,15 @@ static FailureOr<Type> normalizeType(Type type, Location location,
                                             /*allowRealScalar=*/true);
     if (failed(key) || failed(element))
       return failure();
-    return sim::AssocArrayType::get(context, *key, *element,
+    // An integral key indexes on its value, not on its declared packed shape:
+    // `bit [63:0]` and `logic [63:0]` denote the same lookup domain as their
+    // 64-bit scalar. Packed aggregates therefore collapse to that scalar so a
+    // vector-typed key stays a normalized integral key. Non-packed keys
+    // (string, class handle, process) have no scalar and pass through.
+    Type keyType = *key;
+    if (Type scalar = sim::getPackedScalarType(keyType))
+      keyType = scalar;
+    return sim::AssocArrayType::get(context, keyType, *element,
                                     isSignedSemanticType(array.getKeyType()),
                                     array.getWildcardIndex());
   }
