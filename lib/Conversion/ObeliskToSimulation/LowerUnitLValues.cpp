@@ -279,8 +279,21 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
     if (failed(memberBaseType))
       return failure();
     auto unpackedUnion = dyn_cast<sim::UnpackedUnionType>(*memberBaseType);
+    Value frozenReceiver;
+    if (auto named =
+            dyn_cast<semantic::SVNamedValueExpressionOp>(members.front())) {
+      if (auto node = named->getAttrOfType<IntegerAttr>("node_id"))
+        frozenReceiver =
+            nodeLvalues.lookup(node.getValue().getZExtValue());
+      if (!frozenReceiver)
+        frozenReceiver = lvalues.lookup(named.getReferencedPath());
+    }
+    bool indirectReference =
+        frozenReceiver &&
+        isa<sim::ArgumentRefType, sim::ManagedRefType,
+            sim::ReferencePathType>(frozenReceiver.getType());
     if (isSequentialContainerSubvalue(destination) ||
-        sim::isManagedHandleType(*destinationType) ||
+        sim::isManagedHandleType(*destinationType) || indirectReference ||
         (unpackedUnion && !unpackedUnion.getIsTagged())) {
       FailureOr<CapturedLValue> base =
           captureLValue(members.front(), location);
