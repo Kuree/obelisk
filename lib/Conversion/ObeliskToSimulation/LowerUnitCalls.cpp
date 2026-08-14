@@ -525,6 +525,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       return failure();
     }
     Operation *receiverNode = children.front();
+    bool implicitThisProperty = false;
     if (propertyIndexAttr || staticStorageAttr) {
       auto member =
           dyn_cast<semantic::SVMemberAccessExpressionOp>(children.front());
@@ -533,23 +534,33 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       SmallVector<Operation *> memberChildren =
           member ? getChildren(member) : SmallVector<Operation *>{};
       bool classQualifiedStatic = staticStorageAttr && named;
-      if ((!member && !classQualifiedStatic) || memberChildren.size() > 1 ||
-          (propertyIndexAttr && memberChildren.empty())) {
+      implicitThisProperty = propertyIndexAttr && named && thisObject;
+      if ((!member && !classQualifiedStatic && !implicitThisProperty) ||
+          memberChildren.size() > 1 ||
+          (propertyIndexAttr && member && memberChildren.empty())) {
         emitError(location) << "property rand_mode has no object receiver";
         return failure();
       }
-      receiverNode = classQualifiedStatic || memberChildren.empty()
-                         ? nullptr
-                         : memberChildren.front();
+      if (classQualifiedStatic || implicitThisProperty ||
+          memberChildren.empty())
+        receiverNode = nullptr;
+      else
+        receiverNode = memberChildren.front();
     }
-    FailureOr<Value> loweredReceiver = failure();
-    if (receiverNode)
-      loweredReceiver = lowerExpression(receiverNode);
-    auto objectType =
-        succeeded(loweredReceiver)
-            ? dyn_cast<sim::ClassHandleType>((*loweredReceiver).getType())
-            : sim::ClassHandleType{};
-    if (receiverNode && (failed(loweredReceiver) || !objectType)) {
+    Value loweredReceiver;
+    if (implicitThisProperty) {
+      loweredReceiver = thisObject;
+    } else if (receiverNode) {
+      FailureOr<Value> receiver = lowerExpression(receiverNode);
+      if (failed(receiver))
+        return failure();
+      loweredReceiver = *receiver;
+    }
+    auto objectType = loweredReceiver
+                          ? dyn_cast<sim::ClassHandleType>(
+                                loweredReceiver.getType())
+                          : sim::ClassHandleType{};
+    if ((receiverNode || implicitThisProperty) && !objectType) {
       emitError(location) << "rand_mode receiver is not a class object";
       return failure();
     }
@@ -599,7 +610,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       return convert(enabled, *resultType, false, location);
     }
 
-    if (!receiverNode) {
+    if (!receiverNode && !implicitThisProperty) {
       emitError(location) << "rand_mode receiver is not a class object";
       return failure();
     }
@@ -624,7 +635,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     Type referenceType = sim::ManagedRefType::get(function.getContext(), i64,
                                                   objectType.getClassName());
     Value reference = sim::SimClassFieldRefOp::create(
-        builder, location, referenceType, *loweredReceiver, modeField);
+        builder, location, referenceType, loweredReceiver, modeField);
     uint64_t propertyBit = 0;
     if (propertyIndexAttr) {
       APInt propertyIndex = propertyIndexAttr.getValue();
@@ -688,7 +699,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
             return failure();
           }
           Value matches = sim::SimClassIsInstanceOp::create(
-              builder, location, *loweredReceiver, target);
+              builder, location, loweredReceiver, target);
           Block *selected = addBlock();
           Block *next = addBlock();
           cf::CondBranchOp::create(builder, location, matches, selected,

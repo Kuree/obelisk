@@ -18,7 +18,17 @@
 // CHECK: obelisk_sim.storage.decl 9 in 0 : i64 design hierarchy "C::cycle.$randc_key" debug "__obelisk_static_randc_key"
 // CHECK: obelisk_sim.storage.decl 10 in 0 : i64 design hierarchy "C::cycle.$randc_position" debug "__obelisk_static_randc_position"
 
-// CHECK-LABEL: obelisk_sim.func private @unit_2
+// An unqualified random property inside an instance method uses the method's
+// implicit this object for both the task and function forms of rand_mode.
+// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-SAME: %[[IMPLICIT_THIS:arg[0-9]+]]: !obelisk_sim.class_handle<@__obelisk_class_s3_C>
+// CHECK-SAME: obelisk_sim.hierarchical_name = "C::implicit_modes"
+// CHECK: %[[IMPLICIT_MODE_REF:.*]] = obelisk_sim.class.field_ref %[[IMPLICIT_THIS]][@__obelisk_class_s3_C_field___obelisk_rand_mode]
+// CHECK: obelisk_sim.managed.store {{.*}} to %[[IMPLICIT_MODE_REF]]
+// CHECK: %[[IMPLICIT_MODE:.*]] = obelisk_sim.managed.load %[[IMPLICIT_MODE_REF]]
+// CHECK: arith.andi %[[IMPLICIT_MODE]],
+
+// CHECK-LABEL: obelisk_sim.func private @unit_3
 // CHECK-SAME: %[[S_VALUE:arg[0-9]+]]: !obelisk_sim.ref<i32>
 // CHECK-SAME: %[[CYCLE_VALUE:arg[0-9]+]]: !obelisk_sim.ref<!obelisk_sim.packed_array<1 : 0 x i1>>
 // CHECK-SAME: %[[DS_VALUE:arg[0-9]+]]: !obelisk_sim.ref<i32>
@@ -89,6 +99,28 @@ module attributes {
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::cycle", lifetime = 1 : i32, name = "cycle", node_id = 5 : i64, rand_mode = 2 : i32, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s5.cycle"} {
         }
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::x", name = "x", node_id = 6 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s6.x"} {
+        }
+        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "C::implicit_modes", name = "implicit_modes", node_id = 300 : i64, return_variable_path = "C::implicit_modes.implicit_modes", return_variable_symbol = @s1.$root::@s2::@s3.C::@s45.implicit_modes::@s46.implicit_modes, semantic_type = !obelisk.subroutine<() -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, sym_name = "s45.implicit_modes", this_variable_path = "C::implicit_modes.this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s45.implicit_modes::@s47.this, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.list attributes {node_id = 301 : i64} {
+            obelisk.sv.statement.expression_statement attributes {node_id = 302 : i64} {
+              obelisk.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "rand_mode", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 303 : i64, semantic_type = !obelisk.void, subroutine_kind = 0 : i32, system_library_cell = "work.$unit", system_scope_path = "C::implicit_modes", system_scope_symbol = @s1.$root::@s2::@s3.C::@s45.implicit_modes} {
+                obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 304 : i64, referenced_path = "C::x", referenced_symbol = @s1.$root::@s2::@s3.C::@s6.x, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                }
+                obelisk.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 305 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                }
+              }
+            }
+            obelisk.sv.statement.return attributes {node_id = 306 : i64} {
+              obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "rand_mode", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = true, is_super_class = false, is_system_call = true, node_id = 307 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.$unit", system_scope_path = "C::implicit_modes", system_scope_symbol = @s1.$root::@s2::@s3.C::@s45.implicit_modes} {
+                obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 308 : i64, referenced_path = "C::x", referenced_symbol = @s1.$root::@s2::@s3.C::@s6.x, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                }
+              }
+            }
+          }
+          obelisk.sv.symbol.variable attributes {hierarchical_name = "C::implicit_modes.implicit_modes", is_compiler_generated, name = "implicit_modes", node_id = 309 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s46.implicit_modes"} {
+          }
+          obelisk.sv.symbol.variable attributes {hierarchical_name = "C::implicit_modes.this", is_compiler_generated, is_const, name = "this", node_id = 310 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s47.this"} {
+          }
         }
         obelisk.sv.symbol.subroutine attributes {hierarchical_name = "C::randomize", is_builtin, is_declared_virtual, is_randomize, is_virtual, name = "randomize", node_id = 7 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, sym_name = "s7.randomize", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.list attributes {node_id = 8 : i64} {
