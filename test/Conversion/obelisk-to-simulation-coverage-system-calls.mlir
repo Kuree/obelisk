@@ -228,10 +228,8 @@ module {
 // CHECK: obelisk_sim.ref.store %[[ZERO]]
 // CHECK: %[[DUT_INPUT:.*]] = obelisk_sim.string.literal "DUT"
 // CHECK: %[[DUT_NAME:.*]] = obelisk_sim.string.literal "DUT"
-// CHECK: %[[DUT_CMP:.*]] = obelisk_sim.string.compare %[[DUT_INPUT]], %[[DUT_NAME]] case_insensitive = false
-// CHECK: %[[DUT_VALID:.*]] = arith.cmpi eq, %[[DUT_CMP]], %[[ZERO]] : i32
-// CHECK: %[[RESET_STATUS:.*]] = arith.select {{.*}}, %[[ONE]], %[[ERROR]] : i32
-// CHECK: obelisk_sim.ref.store %[[RESET_STATUS]]
+// CHECK-NOT: obelisk_sim.string.compare %[[DUT_INPUT]], %[[DUT_NAME]]
+// CHECK: obelisk_sim.ref.store %[[ONE]]
 // CHECK: obelisk_sim.ref.store %[[ONE]]
 // CHECK: obelisk_sim.ref.store %[[ONE]]
 // CHECK: obelisk_sim.ref.store

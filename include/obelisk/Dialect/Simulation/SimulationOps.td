@@ -887,6 +887,7 @@ def SimStringCompareOp : SimOp<"string.compare", [Pure]> {
   let assemblyFormat = [{
     $lhs `,` $rhs `case_insensitive` `=` $case_insensitive attr-dict
   }];
+  let hasCanonicalizer = 1;
 }
 
 def SimStringCaseConvertOp

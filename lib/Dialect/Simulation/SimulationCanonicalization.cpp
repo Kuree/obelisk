@@ -1662,6 +1662,42 @@ struct FlattenSubelementPath final : OpRewritePattern<ViewOp> {
   }
 };
 
+struct FoldStringCompare final : OpRewritePattern<SimStringCompareOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimStringCompareOp op,
+                                PatternRewriter &rewriter) const override {
+    auto lhs = op.getLhs().getDefiningOp<SimStringLiteralOp>();
+    auto rhs = op.getRhs().getDefiningOp<SimStringLiteralOp>();
+    if (!lhs || !rhs)
+      return failure();
+
+    StringRef left = lhs.getValue();
+    StringRef right = rhs.getValue();
+    size_t common = std::min(left.size(), right.size());
+    int32_t result = 0;
+    for (size_t index = 0; index != common; ++index) {
+      unsigned char a = static_cast<unsigned char>(left[index]);
+      unsigned char b = static_cast<unsigned char>(right[index]);
+      if (op.getCaseInsensitive()) {
+        if (a >= 'A' && a <= 'Z')
+          a = static_cast<unsigned char>(a + ('a' - 'A'));
+        if (b >= 'A' && b <= 'Z')
+          b = static_cast<unsigned char>(b + ('a' - 'A'));
+      }
+      if (a == b)
+        continue;
+      result = a < b ? -1 : 1;
+      break;
+    }
+    if (result == 0 && left.size() != right.size())
+      result = left.size() < right.size() ? -1 : 1;
+    rewriter.replaceOpWithNewOp<arith::ConstantOp>(
+        op, rewriter.getI32Type(), rewriter.getI32IntegerAttr(result));
+    return success();
+  }
+};
+
 } // namespace
 
 void SimPackedFlattenOp::getCanonicalizationPatterns(RewritePatternSet &results,
@@ -1729,6 +1765,11 @@ void SimDriverArrayElementOp::getCanonicalizationPatterns(
 void SimLogicBinaryOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                    MLIRContext *context) {
   results.add<NormalizeBinaryConstant>(context);
+}
+
+void SimStringCompareOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results.add<FoldStringCompare>(context);
 }
 
 void SimLogicCompareOp::getCanonicalizationPatterns(RewritePatternSet &results,

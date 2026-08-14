@@ -1865,10 +1865,14 @@ FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
   FailureOr<Value> loweredSelector = lowerExpression(children.front());
   if (failed(loweredSelector))
     return failure();
-  FailureOr<Value> scalarSelector = toPackedScalar(*loweredSelector, location);
-  if (failed(scalarSelector))
-    return failure();
-  Value selector = *scalarSelector;
+  bool stringSelector = isa<sim::StringType>((*loweredSelector).getType());
+  Value selector = *loweredSelector;
+  if (!stringSelector) {
+    FailureOr<Value> scalarSelector = toPackedScalar(selector, location);
+    if (failed(scalarSelector))
+      return failure();
+    selector = *scalarSelector;
+  }
   bool logic = isa<sim::LogicType>(selector.getType());
   Value matched;
   if (logic) {
@@ -1898,6 +1902,22 @@ FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
         convert(candidate, (*loweredSelector).getType(), false, itemLocation);
     if (failed(normalized))
       return failure();
+    if (stringSelector) {
+      if (!isa<sim::StringType>((*normalized).getType())) {
+        emitError(itemLocation)
+            << "inside item does not normalize to the string selector type";
+        return failure();
+      }
+      Value comparison = sim::SimStringCompareOp::create(
+          builder, itemLocation, builder.getI32Type(), selector, *normalized,
+          builder.getBoolAttr(false));
+      Value zero = arith::ConstantOp::create(
+          builder, itemLocation, builder.getI32Type(),
+          builder.getI32IntegerAttr(0));
+      return arith::CmpIOp::create(builder, itemLocation, integerKind,
+                                   comparison, zero)
+          .getResult();
+    }
     FailureOr<Value> scalar = toPackedScalar(*normalized, itemLocation);
     if (failed(scalar))
       return failure();
@@ -1958,8 +1978,8 @@ FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
         FailureOr<Value> above = compare(
             *lower,
             signedSelector ? sim::CompareKind::SGE : sim::CompareKind::UGE,
-            signedSelector ? arith::CmpIPredicate::sge
-                           : arith::CmpIPredicate::uge,
+            stringSelector || signedSelector ? arith::CmpIPredicate::sge
+                                             : arith::CmpIPredicate::uge,
             itemLocation);
         if (failed(above))
           return failure();
@@ -1972,8 +1992,8 @@ FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
         FailureOr<Value> below = compare(
             *upper,
             signedSelector ? sim::CompareKind::SLE : sim::CompareKind::ULE,
-            signedSelector ? arith::CmpIPredicate::sle
-                           : arith::CmpIPredicate::ule,
+            stringSelector || signedSelector ? arith::CmpIPredicate::sle
+                                             : arith::CmpIPredicate::ule,
             itemLocation);
         if (failed(below))
           return failure();
