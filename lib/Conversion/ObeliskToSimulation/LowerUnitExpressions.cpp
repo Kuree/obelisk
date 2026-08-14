@@ -2202,29 +2202,43 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
     }
     return result;
   }
-  if (auto array = dyn_cast<sim::DynamicArrayType>(*resultType)) {
+  if (isa<sim::DynamicArrayType, sim::QueueType>(*resultType)) {
+    Type elementType =
+        isa<sim::DynamicArrayType>(*resultType)
+            ? cast<sim::DynamicArrayType>(*resultType).getElementType()
+            : cast<sim::QueueType>(*resultType).getElementType();
     SmallVector<Operation *> children = getChildren(op);
     FailureOr<ContainerElementDescriptor> descriptor =
-        describeContainerElement(array.getElementType(), location);
+        describeContainerElement(elementType, location);
     if (failed(descriptor))
       return failure();
     Value size =
         arith::ConstantOp::create(builder, location, builder.getI64Type(),
                                   builder.getI64IntegerAttr(children.size()));
+    bool dynamicArray = isa<sim::DynamicArrayType>(*resultType);
+    Value allocationSize =
+        dynamicArray
+            ? size
+            : arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                        builder.getI64IntegerAttr(0));
+    uint64_t bound = 0;
+    if (auto queue = dyn_cast<sim::QueueType>(*resultType))
+      bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
     Value result = sim::SimContainerCreateOp::create(
-        builder, location, *resultType, size, descriptor->typeID,
+        builder, location, *resultType, allocationSize, descriptor->typeID,
         descriptor->kind, descriptor->flags, descriptor->valueSize,
         descriptor->alignment, descriptor->bitWidth,
         builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
         builder.getDenseI32ArrayAttr(descriptor->traceKinds),
-        OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 0);
+        dynamicArray ? OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
+                     : OBELISK_RT_CONTAINER_QUEUE,
+        bound);
     for (auto [index, child] : llvm::enumerate(children)) {
       FailureOr<Value> value = lowerExpression(child);
       if (failed(value))
         return failure();
-      FailureOr<Value> converted =
-          convert(*value, array.getElementType(), isSignedNode(child),
-                  getSemanticLocation(child));
+      FailureOr<Value> converted = convert(
+          *value, elementType, isSignedNode(child), getSemanticLocation(child));
       if (failed(converted))
         return failure();
       Value ordinal =
