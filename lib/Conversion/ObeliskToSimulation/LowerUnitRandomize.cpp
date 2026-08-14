@@ -306,6 +306,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   auto nestedConstraintModes =
       op->getAttrOfType<ArrayAttr>(randomNestedConstraintModesAttrName);
   auto nestedHooks = op->getAttrOfType<ArrayAttr>(randomNestedHooksAttrName);
+  auto recursiveAliasGuards =
+      op->getAttrOfType<ArrayAttr>(randomRecursiveAliasGuardsAttrName);
   auto totalWidthAttr =
       op->getAttrOfType<IntegerAttr>(randomTotalWidthAttrName);
   auto receiverIndexAttr =
@@ -317,6 +319,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   if (children.empty() || !properties || !containerProperties ||
       !nestedConstraintModes ||
       !nestedHooks ||
+      !recursiveAliasGuards ||
       !totalWidthAttr ||
       !receiverIndexAttr || !constraintCountAttr) {
     emitError(location) << "randomize call has no frozen constraint plan";
@@ -1099,6 +1102,157 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         builder, location, type,
         builder.getIntegerAttr(type, APInt(type.getWidth(), value)));
   };
+  for (Attribute guardAttr : recursiveAliasGuards) {
+    auto guard = dyn_cast<DictionaryAttr>(guardAttr);
+    auto field = guard ? guard.getAs<FlatSymbolRefAttr>("field")
+                       : FlatSymbolRefAttr{};
+    auto concreteTypeAttr =
+        guard ? guard.getAs<TypeAttr>("concrete_type") : TypeAttr{};
+    auto storageTypeAttr =
+        guard ? guard.getAs<TypeAttr>("storage_type") : TypeAttr{};
+    auto outerModeIndexAttr =
+        guard ? guard.getAs<IntegerAttr>("outer_mode_index") : IntegerAttr{};
+    auto pathAttr = guard ? guard.getAs<ArrayAttr>("path") : ArrayAttr{};
+    auto aliasDepthAttr =
+        guard ? guard.getAs<IntegerAttr>("alias_depth") : IntegerAttr{};
+    SmallVector<ObjectPathElement> path;
+    if (!field || !concreteTypeAttr || !storageTypeAttr ||
+        !outerModeIndexAttr || !pathAttr || pathAttr.empty() ||
+        !aliasDepthAttr ||
+        !isa<sim::ClassHandleType>(concreteTypeAttr.getValue()) ||
+        !isa<sim::ClassHandleType>(storageTypeAttr.getValue()) ||
+        outerModeIndexAttr.getValue().isNegative() ||
+        outerModeIndexAttr.getValue().getActiveBits() > 32 ||
+        outerModeIndexAttr.getValue().getZExtValue() >= 64 ||
+        aliasDepthAttr.getValue().isNegative() ||
+        aliasDepthAttr.getValue().getActiveBits() > 32 ||
+        aliasDepthAttr.getValue().getZExtValue() >= pathAttr.size() ||
+        failed(parseNestedObjectPath(pathAttr, path))) {
+      emitError(location) << "recursive random-object alias guard is malformed";
+      return failure();
+    }
+    auto rootConcreteType =
+        cast<sim::ClassHandleType>(concreteTypeAttr.getValue());
+    auto rootDeclaration =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+            function, rootConcreteType.getClassName());
+    while (rootDeclaration &&
+           !rootDeclaration->hasAttr("obelisk_sim.random_mode_field")) {
+      if (!rootDeclaration.getBaseAttr())
+        break;
+      rootDeclaration =
+          SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+              function, rootDeclaration.getBaseAttr());
+    }
+    auto rootModeField =
+        rootDeclaration
+            ? rootDeclaration->getAttrOfType<FlatSymbolRefAttr>(
+                  "obelisk_sim.random_mode_field")
+            : FlatSymbolRefAttr{};
+    if (!rootModeField) {
+      emitError(location)
+          << "recursive random-object root has no rand_mode field";
+      return failure();
+    }
+
+    Type rootReferenceType = sim::ManagedRefType::get(
+        function.getContext(), storageTypeAttr.getValue(),
+        objectType.getClassName());
+    Value rootReference = sim::SimClassFieldRefOp::create(
+        builder, location, rootReferenceType, receiver, field);
+    FailureOr<Value> loadedRoot = loadReference(rootReference, location);
+    if (failed(loadedRoot))
+      return failure();
+    Value rootNull = sim::SimManagedIsNullOp::create(
+        builder, location, builder.getI1Type(), *loadedRoot);
+    uint64_t outerModeIndex =
+        outerModeIndexAttr.getValue().getZExtValue();
+    Value outerModeBit = arith::AndIOp::create(
+        builder, location, mode, constant64(uint64_t{1} << outerModeIndex));
+    Value outerEnabled = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, outerModeBit,
+        constant64(0));
+    Value rootNonNull = arith::XOrIOp::create(
+        builder, location, rootNull,
+        arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                  builder.getBoolAttr(true)));
+    Value rootActive = arith::AndIOp::create(builder, location, outerEnabled,
+                                             rootNonNull);
+    Block *continueBlock = addBlock();
+    Block *rootPresentBlock = addBlock();
+    cf::CondBranchOp::create(builder, location, rootActive, rootPresentBlock,
+                             ValueRange{}, continueBlock, ValueRange{});
+    setCurrent(rootPresentBlock);
+
+    Value currentObject = *loadedRoot;
+    if (currentObject.getType() != concreteTypeAttr.getValue())
+      currentObject = sim::SimClassCastOp::create(
+          builder, location, concreteTypeAttr.getValue(), currentObject);
+    auto currentType = rootConcreteType;
+    FlatSymbolRefAttr currentModeField = rootModeField;
+    SmallVector<Value> activeObjects{currentObject};
+    for (const ObjectPathElement &element : path) {
+      Type modeReferenceType = sim::ManagedRefType::get(
+          function.getContext(), i64, currentType.getClassName());
+      Value currentModeReference = sim::SimClassFieldRefOp::create(
+          builder, location, modeReferenceType, currentObject,
+          currentModeField);
+      Value currentMode = sim::SimManagedLoadOp::create(
+          builder, location, i64, currentModeReference);
+      Value edgeModeBit = arith::AndIOp::create(
+          builder, location, currentMode,
+          constant64(uint64_t{1} << element.modeIndex));
+      Value edgeEnabled = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, edgeModeBit,
+          constant64(0));
+      Type edgeReferenceType = sim::ManagedRefType::get(
+          function.getContext(), element.storageType,
+          currentType.getClassName());
+      Value edgeReference = sim::SimClassFieldRefOp::create(
+          builder, location, edgeReferenceType, currentObject, element.field);
+      FailureOr<Value> loadedEdge = loadReference(edgeReference, location);
+      if (failed(loadedEdge))
+        return failure();
+      Value edgeNull = sim::SimManagedIsNullOp::create(
+          builder, location, builder.getI1Type(), *loadedEdge);
+      Value edgeNonNull = arith::XOrIOp::create(
+          builder, location, edgeNull,
+          arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                    builder.getBoolAttr(true)));
+      Value edgeActive = arith::AndIOp::create(builder, location, edgeEnabled,
+                                               edgeNonNull);
+      Block *edgePresentBlock = addBlock();
+      cf::CondBranchOp::create(builder, location, edgeActive, edgePresentBlock,
+                               ValueRange{}, continueBlock, ValueRange{});
+      setCurrent(edgePresentBlock);
+      currentObject = *loadedEdge;
+      if (currentObject.getType() != element.concreteType)
+        currentObject = sim::SimClassCastOp::create(
+            builder, location, element.concreteType, currentObject);
+      activeObjects.push_back(currentObject);
+      currentType = cast<sim::ClassHandleType>(element.concreteType);
+      currentModeField = element.modeField;
+    }
+
+    unsigned aliasDepth =
+        static_cast<unsigned>(aliasDepthAttr.getValue().getZExtValue());
+    Value targetID =
+        sim::SimClassIdOp::create(builder, location, activeObjects.back());
+    Value ancestorID = sim::SimClassIdOp::create(
+        builder, location, activeObjects[aliasDepth]);
+    Value closesCycle = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, targetID, ancestorID);
+    Block *unsupportedBlock = addBlock();
+    cf::CondBranchOp::create(builder, location, closesCycle, continueBlock,
+                             ValueRange{}, unsupportedBlock, ValueRange{});
+    setCurrent(unsupportedBlock);
+    if (failed(emitRuntimeFatal(
+            location,
+            "randomize encountered a distinct object beyond the static "
+            "recursive graph plan")))
+      return failure();
+    setCurrent(continueBlock);
+  }
   struct NestedHookRuntime {
     DictionaryAttr plan;
     Value object;

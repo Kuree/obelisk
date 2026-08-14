@@ -260,6 +260,8 @@ inline constexpr ::mlir::StringLiteral randomNestedConstraintModesAttrName =
     "obelisk_sim.random_nested_constraint_modes";
 inline constexpr ::mlir::StringLiteral randomNestedHooksAttrName =
     "obelisk_sim.random_nested_hooks";
+inline constexpr ::mlir::StringLiteral randomRecursiveAliasGuardsAttrName =
+    "obelisk_sim.random_recursive_alias_guards";
 inline constexpr ::mlir::StringLiteral randomNestedStateFieldAttrName =
     "obelisk_sim.random_nested_state_field";
 inline constexpr ::mlir::StringLiteral randomNestedStateConcreteTypeAttrName =

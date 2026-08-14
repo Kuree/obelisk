@@ -1768,9 +1768,18 @@ void ObeliskSimPreparePass::runOnOperation() {
       semantic::SVSubroutineSymbolOp postHook;
       SmallVector<RandomObjectPathElement> nestedObjectPath;
     };
+    struct RecursiveAliasGuard {
+      FlatSymbolRefAttr field;
+      Type concreteType;
+      Type storageType;
+      unsigned outerModeIndex;
+      SmallVector<RandomObjectPathElement> path;
+      unsigned aliasDepth;
+    };
     SmallVector<RandomProperty, 0> properties;
     SmallVector<RandomContainerProperty> containerProperties;
     SmallVector<NestedObjectPlan, 0> nestedObjectPlans;
+    SmallVector<RecursiveAliasGuard, 0> recursiveAliasGuards;
     SmallVector<Operation *> constraintRoots;
     SmallVector<EffectiveConstraintGroup> constraintGroups;
     semantic::SVSubroutineSymbolOp preRandomizeHook;
@@ -2417,11 +2426,41 @@ void ObeliskSimPreparePass::runOnOperation() {
                 return failure();
               }
               semantic::SVClassTypeOp concreteClass = candidates.front();
+              Type concreteType = sim::ClassHandleType::get(
+                  context,
+                  FlatSymbolRefAttr::get(
+                      context, classSymbols.lookup(concreteClass).getValue()));
               if (!ancestors.insert(concreteClass).second) {
-                emitError(getSemanticLocation(edgeProperty))
-                    << "cyclic rand object graphs require identity-aware "
-                       "recursive planning";
-                return failure();
+                // IEEE 1800-2017 18.5.9 defines the active random objects as
+                // a set. A recursive edge that is null contributes nothing;
+                // one that closes onto an already planned ancestor must not
+                // duplicate that object's variables, constraints, or hooks.
+                // Freeze a runtime identity guard instead of recursively
+                // expanding the class type forever. A distinct object at the
+                // repeated type is diagnosed at runtime until the fully
+                // dynamic graph planner can instantiate another plan node.
+                unsigned aliasDepth = 0;
+                if (concreteType != rootNestedConcreteType) {
+                  auto alias = llvm::find_if(
+                      path, [&](const RandomObjectPathElement &element) {
+                        return element.concreteType == concreteType;
+                      });
+                  if (alias == path.end()) {
+                    emitError(getSemanticLocation(edgeProperty))
+                        << "recursive rand object cycle has no matching "
+                           "ancestor plan";
+                    return failure();
+                  }
+                  aliasDepth = static_cast<unsigned>(
+                                   std::distance(path.begin(), alias)) +
+                               1;
+                }
+                path.push_back({classFieldSymbols.lookup(edgeProperty),
+                                concreteType, edgeStorageType, edgeModeIndex});
+                recursiveAliasGuards.push_back(
+                    {field, rootNestedConcreteType, objectType, modeIndex,
+                     std::move(path), aliasDepth});
+                return success();
               }
               SmallVector<semantic::SVClassTypeOp> recursiveHierarchy;
               if (failed(collectClassHierarchy(
@@ -2473,10 +2512,6 @@ void ObeliskSimPreparePass::runOnOperation() {
                       return failure();
                     }
                   }
-              Type concreteType = sim::ClassHandleType::get(
-                  context,
-                  FlatSymbolRefAttr::get(
-                      context, classSymbols.lookup(concreteClass).getValue()));
               path.push_back({classFieldSymbols.lookup(edgeProperty),
                               concreteType, edgeStorageType, edgeModeIndex});
               if (!recursiveConstraints.empty() || recursivePreHook ||
@@ -4226,6 +4261,36 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     call->setAttr(randomNestedHooksAttrName,
                   builder.getArrayAttr(nestedHookAttrs));
+    SmallVector<Attribute> recursiveAliasGuardAttrs;
+    for (const RecursiveAliasGuard &guard : recursiveAliasGuards) {
+      SmallVector<Attribute> path;
+      for (const RandomObjectPathElement &element : guard.path)
+        path.push_back(builder.getDictionaryAttr({
+            builder.getNamedAttr("field", element.field),
+            builder.getNamedAttr("concrete_type",
+                                 TypeAttr::get(element.concreteType)),
+            builder.getNamedAttr("storage_type",
+                                 TypeAttr::get(element.storageType)),
+            builder.getNamedAttr(
+                "rand_mode_index",
+                builder.getI32IntegerAttr(element.modeIndex)),
+        }));
+      recursiveAliasGuardAttrs.push_back(builder.getDictionaryAttr({
+          builder.getNamedAttr("field", guard.field),
+          builder.getNamedAttr("concrete_type",
+                               TypeAttr::get(guard.concreteType)),
+          builder.getNamedAttr("storage_type",
+                               TypeAttr::get(guard.storageType)),
+          builder.getNamedAttr(
+              "outer_mode_index",
+              builder.getI32IntegerAttr(guard.outerModeIndex)),
+          builder.getNamedAttr("path", builder.getArrayAttr(path)),
+          builder.getNamedAttr("alias_depth",
+                               builder.getI32IntegerAttr(guard.aliasDepth)),
+      }));
+    }
+    call->setAttr(randomRecursiveAliasGuardsAttrName,
+                  builder.getArrayAttr(recursiveAliasGuardAttrs));
     call->setAttr(randomTotalWidthAttrName,
                   builder.getI64IntegerAttr(totalWidth));
     call->setAttr(randomConstraintCountAttrName,
