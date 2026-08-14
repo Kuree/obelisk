@@ -160,6 +160,25 @@ def SimRandomValueReferenceArrayAttr
   let constBuilderCall = "$_builder.getArrayAttr($0)";
 }
 
+def SimRandomConstraintBlockReferenceAttr
+    : SimAttr<"RandomConstraintBlockReference",
+              "random_constraint_block_reference"> {
+  let summary = "symbolic constraint_mode state consumed by a template";
+  let parameters = (ins
+    EnumParameter<SimRandomConstraintBlockReferenceKind>:$kind,
+    OptionalParameter<"::mlir::IntegerAttr">:$index,
+    OptionalParameter<"::mlir::IntegerAttr">:$storage
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimRandomConstraintBlockReferenceArrayAttr
+    : TypedArrayAttrBase<SimRandomConstraintBlockReferenceAttr,
+                         "random-constraint block reference array"> {
+  let constBuilderCall = "$_builder.getArrayAttr($0)";
+}
+
 def SimComputeEffectAttr : SimAttr<"ComputeEffect", "effect"> {
   let parameters = (ins
     EnumParameter<SimComputeEffectKind>:$effect,

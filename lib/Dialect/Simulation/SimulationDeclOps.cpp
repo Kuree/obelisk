@@ -524,6 +524,208 @@ LogicalResult SimClassMethodDeclOp::verify() {
   return success();
 }
 
+static SimStorageDeclOp lookupStorage(Operation *operation, uint64_t id) {
+  SimDesignOp design = operation->getParentOfType<SimDesignOp>();
+  if (!design)
+    return {};
+  for (Operation &candidate : design.getBody().front())
+    if (auto storage = dyn_cast<SimStorageDeclOp>(candidate);
+        storage && storage.getId() == id)
+      return storage;
+  return {};
+}
+
+static LogicalResult verifyRandomValueReference(
+    SimRandomConstraintTemplateOp templateOp, SimClassDeclOp owner,
+    RandomValueReferenceAttr reference) {
+  auto verifyRange = [&](Type type, StringRef source) -> LogicalResult {
+    std::optional<unsigned> packedWidth = getPackedWidth(type);
+    if (!packedWidth || reference.getWidth() > *packedWidth ||
+        reference.getLow() > *packedWidth - reference.getWidth())
+      return templateOp.emitOpError()
+             << source << " does not contain packed bit range ["
+             << reference.getLow() << ", "
+             << reference.getLow() + reference.getWidth() << ")";
+    return success();
+  };
+
+  switch (reference.getKind()) {
+  case RandomValueReferenceKind::ObjectField: {
+    SimClassDeclOp current = owner;
+    for (FlatSymbolRefAttr pathComponent : reference.getPath()) {
+      SimClassFieldDeclOp field = lookupClassField(templateOp, pathComponent);
+      SimClassDeclOp fieldOwner =
+          field ? lookupClass(field, field.getOwnerAttr()) : SimClassDeclOp{};
+      if (!field || !fieldOwner || !classDerivesFrom(current, fieldOwner))
+        return templateOp.emitOpError()
+               << "random-value path field " << pathComponent
+               << " is not visible from class " << current.getSymName();
+      auto handle = dyn_cast<ClassHandleType>(field.getType());
+      if (field.getIsStatic() || field.getIsWeak() || !handle)
+        return templateOp.emitOpError()
+               << "random-value path field " << pathComponent
+               << " must be a strong instance class handle";
+      current = lookupClass(field, handle.getClassName());
+      if (!current)
+        return templateOp.emitOpError()
+               << "random-value path field " << pathComponent
+               << " has an unknown class type";
+    }
+
+    SimClassFieldDeclOp target =
+        lookupClassField(templateOp, reference.getTarget());
+    SimClassDeclOp targetOwner =
+        target ? lookupClass(target, target.getOwnerAttr()) : SimClassDeclOp{};
+    if (!target || !targetOwner || !classDerivesFrom(current, targetOwner))
+      return templateOp.emitOpError()
+             << "random-value target " << reference.getTarget()
+             << " is not visible from class " << current.getSymName();
+    if (target.getIsStatic())
+      return templateOp.emitOpError()
+             << "object-field random-value target " << reference.getTarget()
+             << " must be an instance field";
+    return verifyRange(target.getType(), "random-value target");
+  }
+  case RandomValueReferenceKind::Storage: {
+    uint64_t id = reference.getStorage().getValue().getZExtValue();
+    SimStorageDeclOp storage = lookupStorage(templateOp, id);
+    if (!storage)
+      return templateOp.emitOpError()
+             << "random-value reference names unknown storage ID " << id;
+    return verifyRange(storage.getType(), "random-value storage");
+  }
+  }
+  llvm_unreachable("unknown random-value reference kind");
+}
+
+LogicalResult SimRandomConstraintTemplateOp::verify() {
+  SimClassDeclOp owner = lookupClass(*this, getOwnerAttr());
+  if (!owner)
+    return emitOpError("references an unknown owner class");
+
+  ArrayAttr references =
+      (*this)->getAttrOfType<ArrayAttr>(getReferencesAttrName());
+  if (references && references.empty())
+    return emitOpError("random-value references must be absent when empty");
+  llvm::SmallDenseSet<Attribute> uniqueReferences;
+  if (references)
+    for (Attribute attribute : references) {
+      auto reference = cast<RandomValueReferenceAttr>(attribute);
+      if (!uniqueReferences.insert(reference).second)
+        return emitOpError("random-value references contain a duplicate");
+      if (failed(verifyRandomValueReference(*this, owner, reference)))
+        return failure();
+    }
+
+  ArrayAttr blocks =
+      (*this)->getAttrOfType<ArrayAttr>(getConstraintBlocksAttrName());
+  if (!blocks || blocks.empty())
+    return emitOpError("requires at least one constraint-block reference");
+  llvm::SmallDenseSet<Attribute> uniqueBlocks;
+  for (Attribute attribute : blocks) {
+    auto block = cast<RandomConstraintBlockReferenceAttr>(attribute);
+    if (!uniqueBlocks.insert(block).second)
+      return emitOpError("constraint-block references contain a duplicate");
+    if (block.getKind() == RandomConstraintBlockReferenceKind::Storage) {
+      uint64_t id = block.getStorage().getValue().getZExtValue();
+      SimStorageDeclOp storage = lookupStorage(*this, id);
+      if (!storage)
+        return emitOpError()
+               << "constraint-block reference names unknown storage ID "
+               << id;
+      if (!storage.getType().isInteger(64))
+        return emitOpError()
+               << "constraint-block storage ID " << id << " must be i64";
+    }
+  }
+
+  if (getBody().empty())
+    return emitOpError("requires one dataflow block");
+  Block &body = getBody().front();
+  if (body.getNumArguments() != 0)
+    return emitOpError("dataflow block cannot have arguments");
+
+  unsigned constraintCount = 0;
+  llvm::SmallDenseSet<uint32_t> softPriorities;
+  for (Operation &operation : body) {
+    if (auto hard = dyn_cast<SimRandomHardConstraintOp>(operation)) {
+      ++constraintCount;
+      continue;
+    }
+    if (auto soft = dyn_cast<SimRandomSoftConstraintOp>(operation)) {
+      ++constraintCount;
+      if (!softPriorities.insert(soft.getPriority()).second)
+        return soft.emitOpError("soft priority is duplicated in its template");
+      continue;
+    }
+    if (isa<SimRandomConstraintValueOp>(operation))
+      continue;
+    if (operation.getNumRegions() != 0 || operation.getNumSuccessors() != 0 ||
+        !isMemoryEffectFree(&operation))
+      return operation.emitOpError(
+          "random constraint template dataflow must be pure and regionless");
+    if (llvm::any_of(operation.getOperandTypes(),
+                     [](Type type) { return !type.isSignlessInteger(); }) ||
+        llvm::any_of(operation.getResultTypes(),
+                     [](Type type) { return !type.isSignlessInteger(); }))
+      return operation.emitOpError(
+          "random constraint template dataflow must use signless integers");
+  }
+  if (constraintCount == 0)
+    return emitOpError("requires at least one hard or soft constraint");
+  for (uint32_t priority = 0; priority < softPriorities.size(); ++priority)
+    if (!softPriorities.contains(priority))
+      return emitOpError(
+          "soft priorities must be dense from zero in declaration order");
+  return success();
+}
+
+LogicalResult SimRandomConstraintValueOp::verify() {
+  auto templateOp = (*this)->getParentOfType<SimRandomConstraintTemplateOp>();
+  if (!templateOp)
+    return emitOpError("must be nested in a random constraint template");
+  if (getIndexAttr().getValue().isNegative() ||
+      getIndexAttr().getValue().getActiveBits() > 32)
+    return emitOpError("reference index exceeds 32 bits");
+  ArrayAttr references = templateOp->getAttrOfType<ArrayAttr>(
+      templateOp.getReferencesAttrName());
+  uint64_t index = getIndexAttr().getValue().getZExtValue();
+  if (!references || index >= references.size())
+    return emitOpError("reference index is outside the template inventory");
+  auto reference = cast<RandomValueReferenceAttr>(references[index]);
+  if (getResult().getType().getWidth() != reference.getWidth())
+    return emitOpError("result width does not match the symbolic reference");
+  return success();
+}
+
+static LogicalResult verifyRandomConstraintSink(Operation *operation,
+                                                IntegerAttr block) {
+  auto templateOp =
+      operation->getParentOfType<SimRandomConstraintTemplateOp>();
+  if (!templateOp)
+    return operation->emitOpError(
+        "must be nested in a random constraint template");
+  ArrayAttr blocks = templateOp->getAttrOfType<ArrayAttr>(
+      templateOp.getConstraintBlocksAttrName());
+  if (!blocks || block.getValue().isNegative() ||
+      block.getValue().getActiveBits() > 32 ||
+      block.getValue().getZExtValue() >= blocks.size())
+    return operation->emitOpError(
+        "constraint-block index is outside the template inventory");
+  return success();
+}
+
+LogicalResult SimRandomHardConstraintOp::verify() {
+  return verifyRandomConstraintSink(*this, getBlockAttr());
+}
+
+LogicalResult SimRandomSoftConstraintOp::verify() {
+  if (getPriorityAttr().getValue().isNegative() ||
+      getPriorityAttr().getValue().getActiveBits() > 32)
+    return emitOpError("soft priority exceeds 32 bits");
+  return verifyRandomConstraintSink(*this, getBlockAttr());
+}
+
 LogicalResult SimClassAllocOp::verify() {
   auto type = getResult().getType();
   SimClassDeclOp descriptor = lookupClass(*this, type.getClassName());

@@ -3,6 +3,7 @@
 module {
   obelisk_sim.design @classes {
     obelisk_sim.scope.decl 0 hierarchy "top"
+    obelisk_sim.storage.decl 0 in 0 : i64 design
     obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
     obelisk_sim.code_unit.decl 2 in 0 function hierarchy "Base.get"
     obelisk_sim.code_unit.decl 3 in 0 task hierarchy "Base.run"
@@ -56,6 +57,29 @@ module {
       is_static = false, is_weak = false,
       obelisk_sim.random_mode_index = 0 : i64,
       obelisk_sim.random_object_edge
+    }
+    obelisk_sim.random.constraint_template @RandomRoot_constraints
+        of @RandomRoot attributes {
+      references = [
+        #obelisk_sim.random_value_reference<
+          kind = object_field, path = [@RandomRoot_child],
+          target = @RandomLeaf_value, low = 0, width = 8>,
+        #obelisk_sim.random_value_reference<
+          kind = storage, storage = 0 : i64, low = 0, width = 8>
+      ],
+      constraint_blocks = [
+        #obelisk_sim.random_constraint_block_reference<
+          kind = object_block, index = 0 : i32>,
+        #obelisk_sim.random_constraint_block_reference<
+          kind = storage, storage = 0 : i64>
+      ]
+    } {
+      %field = obelisk_sim.random.constraint_value 0 : i8
+      %state = obelisk_sim.random.constraint_value 1 : i8
+      %equal = arith.cmpi eq, %field, %state : i8
+      obelisk_sim.random.hard_constraint %equal block 0
+      %true = arith.constant true
+      obelisk_sim.random.soft_constraint %true block 1 priority 0
     }
     obelisk_sim.class.method @I_first of @I slot 4294967295
         signature_id 15 interface_ordinal 0 :
@@ -181,6 +205,12 @@ module {
 // CHECK: obelisk_sim.class.decl @RandomRoot id 5
 // CHECK-SAME: #obelisk_sim.random_variable_reference<path = [@RandomRoot_child],target = @RandomLeaf_value>
 // CHECK-SAME: test_random_value_references = [#obelisk_sim.random_value_reference<kind = object_field, path = [@RandomRoot_child], target = @RandomLeaf_value, low = 0, width = 8>, #obelisk_sim.random_value_reference<kind = storage, storage = 7 : i64, low = 4, width = 8>]
+// CHECK: obelisk_sim.random.constraint_template @RandomRoot_constraints of @RandomRoot
+// CHECK-SAME: constraint_blocks = [#obelisk_sim.random_constraint_block_reference<kind = object_block, index = 0 : i32>, #obelisk_sim.random_constraint_block_reference<kind = storage, storage = 0 : i64>]
+// CHECK-SAME: references = [#obelisk_sim.random_value_reference<kind = object_field, path = [@RandomRoot_child], target = @RandomLeaf_value, low = 0, width = 8>, #obelisk_sim.random_value_reference<kind = storage, storage = 0 : i64, low = 0, width = 8>]
+// CHECK: %{{.*}} = obelisk_sim.random.constraint_value 0 : i8
+// CHECK: obelisk_sim.random.hard_constraint %{{.*}} block 0
+// CHECK: obelisk_sim.random.soft_constraint %{{.*}} block 1 priority 0
 // CHECK: obelisk_sim.class.method @I_first of @I slot 4294967295
 // CHECK-SAME: interface_ordinal 0
 // CHECK: obelisk_sim.class.method @I_second of @I slot 4294967295

@@ -84,6 +84,36 @@ LogicalResult RandomValueReferenceAttr::verify(
   llvm_unreachable("unknown random-value reference kind");
 }
 
+LogicalResult RandomConstraintBlockReferenceAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError,
+    RandomConstraintBlockReferenceKind kind, IntegerAttr index,
+    IntegerAttr storage) {
+  switch (kind) {
+  case RandomConstraintBlockReferenceKind::ObjectBlock:
+    if (!index || index.getValue().isNegative() ||
+        index.getValue().getActiveBits() > 6)
+      return emitError()
+             << "object constraint-block reference requires an index from 0 "
+                "through 63";
+    if (storage)
+      return emitError()
+             << "object constraint-block reference cannot name storage";
+    return success();
+  case RandomConstraintBlockReferenceKind::Storage:
+    if (index)
+      return emitError()
+             << "storage constraint-block reference cannot name an object "
+                "index";
+    if (!storage || storage.getValue().isNegative() ||
+        storage.getValue().getActiveBits() > 64)
+      return emitError()
+             << "storage constraint-block reference requires a nonnegative "
+                "64-bit descriptor ID";
+    return success();
+  }
+  llvm_unreachable("unknown random constraint-block reference kind");
+}
+
 static LogicalResult
 verifyEffectArray(llvm::function_ref<InFlightDiagnostic()> emitError,
                   ArrayAttr effects, StringRef owner) {

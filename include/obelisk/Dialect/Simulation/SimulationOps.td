@@ -431,6 +431,55 @@ def SimClassMethodDeclOp : SimOp<"class.method", [
   let hasVerifier = 1;
 }
 
+// Constraint templates are declaration IR, not executable call-site plans.
+// Their isolated body is a pure integer dataflow graph whose only roots are
+// random.constraint_value operations and whose observable sinks are hard or
+// soft constraints. Runtime composition binds those roots to the active
+// object graph before translating the combined graph to the solver.
+def SimRandomConstraintTemplateOp
+    : SimOp<"random.constraint_template", [
+        Symbol, IsolatedFromAbove, NoTerminator, SingleBlock,
+        RecursiveMemoryEffects
+      ]> {
+  let summary = "reusable class-local random constraint dataflow";
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    FlatSymbolRefAttr:$owner,
+    OptionalAttr<SimRandomValueReferenceArrayAttr>:$references,
+    SimRandomConstraintBlockReferenceArrayAttr:$constraint_blocks
+  );
+  let regions = (region AnyRegion:$body);
+  let assemblyFormat = "$sym_name `of` $owner attr-dict-with-keyword $body";
+  let hasVerifier = 1;
+}
+
+def SimRandomConstraintValueOp : SimOp<"random.constraint_value", [Pure]> {
+  let summary = "read one symbolic random constraint template operand";
+  let arguments = (ins I32Attr:$index);
+  let results = (outs AnySignlessInteger:$result);
+  let assemblyFormat = "$index attr-dict `:` type($result)";
+  let hasVerifier = 1;
+}
+
+def SimRandomHardConstraintOp : SimOp<"random.hard_constraint", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "require one template predicate when its block is active";
+  let arguments = (ins I1:$predicate, I32Attr:$block);
+  let assemblyFormat = "$predicate `block` $block attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimRandomSoftConstraintOp : SimOp<"random.soft_constraint", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "prefer one template predicate with declaration-local order";
+  let arguments = (ins I1:$predicate, I32Attr:$block, I32Attr:$priority);
+  let assemblyFormat =
+      "$predicate `block` $block `priority` $priority attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimClassNullOp : SimOp<"class.null", [Pure, ConstantLike]> {
   let summary = "typed null managed class handle";
   let results = (outs SimClassHandleType:$result);

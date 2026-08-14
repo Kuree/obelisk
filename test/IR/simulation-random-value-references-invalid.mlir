@@ -9,6 +9,37 @@ module attributes {
 // -----
 
 module attributes {
+  // expected-error @below {{object constraint-block reference requires an index from 0 through 63}}
+  test = #obelisk_sim.random_constraint_block_reference<
+    kind = object_block, index = 64 : i32>
+} {}
+
+// -----
+
+module attributes {
+  // expected-error @below {{object constraint-block reference cannot name storage}}
+  test = #obelisk_sim.random_constraint_block_reference<
+    kind = object_block, index = 0 : i32, storage = 1 : i64>
+} {}
+
+// -----
+
+module attributes {
+  // expected-error @below {{storage constraint-block reference cannot name an object index}}
+  test = #obelisk_sim.random_constraint_block_reference<
+    kind = storage, index = 0 : i32, storage = 1 : i64>
+} {}
+
+// -----
+
+module attributes {
+  // expected-error @below {{storage constraint-block reference requires a nonnegative 64-bit descriptor ID}}
+  test = #obelisk_sim.random_constraint_block_reference<kind = storage>
+} {}
+
+// -----
+
+module attributes {
   // expected-error @below {{random-value reference bit range overflows}}
   test = #obelisk_sim.random_value_reference<
     kind = object_field, target = @value,

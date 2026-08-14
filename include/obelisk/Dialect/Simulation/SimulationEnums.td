@@ -89,6 +89,21 @@ def SimRandomValueReferenceKind
   let cppNamespace = "::obelisk::sim";
 }
 
+// Non-static constraint_mode state belongs to the active object. A static
+// constraint block instead uses one design-storage bit shared by every
+// instance (IEEE 1800-2017 18.5.11).
+def SimRandomConstraintObjectBlock
+    : I32EnumAttrCase<"ObjectBlock", 0, "object_block">;
+def SimRandomConstraintStorage
+    : I32EnumAttrCase<"Storage", 1, "storage">;
+def SimRandomConstraintBlockReferenceKind
+    : I32EnumAttr<"RandomConstraintBlockReferenceKind",
+                  "constraint template mode-state root", [
+        SimRandomConstraintObjectBlock, SimRandomConstraintStorage
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 // IEEE 1800-2023 event regions in their normative scheduling order. These
 // remain distinct from ComputeRegionKind: the latter is a coarse graph
 // partition and is not an executable scheduler queue.
