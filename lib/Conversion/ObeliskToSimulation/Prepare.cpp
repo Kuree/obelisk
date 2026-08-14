@@ -1469,6 +1469,37 @@ void ObeliskSimPreparePass::runOnOperation() {
   // constraint declarations are erased. The unit-lowering pass is isolated,
   // so the cloned constraint expressions and this compact field inventory are
   // its complete compiler-owned randomization plan.
+  llvm::DenseMap<Operation *, bool> randomizationBehaviorCache;
+  auto hasObservableRandomizationBehavior =
+      [&](semantic::SVClassTypeOp classType) -> FailureOr<bool> {
+    auto cached = randomizationBehaviorCache.find(classType);
+    if (cached != randomizationBehaviorCache.end())
+      return cached->second;
+    SmallVector<semantic::SVClassTypeOp> hierarchy;
+    if (failed(collectClassHierarchy(classType, hierarchy,
+                                     "randomization behavior analysis")))
+      return failure();
+    for (semantic::SVClassTypeOp hierarchyClass : hierarchy)
+      for (Operation *member : getChildren(hierarchyClass)) {
+        if (auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(member);
+            property && property.getRandMode() != semantic::SVRandMode::None) {
+          randomizationBehaviorCache[classType] = true;
+          return true;
+        }
+        if (auto method = getClassMethod(member);
+            method && method.getIsPrePostRandomize().value_or(false) &&
+            !method.getIsBuiltin().value_or(false)) {
+          randomizationBehaviorCache[classType] = true;
+          return true;
+        }
+      }
+    SmallVector<EffectiveConstraintGroup> effectiveConstraints;
+    collectEffectiveConstraints(hierarchy, effectiveConstraints);
+    bool hasBehavior = !effectiveConstraints.empty();
+    randomizationBehaviorCache[classType] = hasBehavior;
+    return hasBehavior;
+  };
+
   std::function<bool(semantic::SVCallExpressionOp)> freezeRandomizeContract;
   freezeRandomizeContract = [&](semantic::SVCallExpressionOp call) -> bool {
     if (!call.getIsSystemCall() || call.getCalleeName() != "randomize")
@@ -2036,6 +2067,27 @@ void ObeliskSimPreparePass::runOnOperation() {
                 if (compatible)
                   concreteClasses.push_back(candidate);
               }
+            size_t unfilteredConcreteClassCount = concreteClasses.size();
+            llvm::erase_if(concreteClasses,
+                           [&](semantic::SVClassTypeOp candidate) {
+                             FailureOr<bool> hasBehavior =
+                                 hasObservableRandomizationBehavior(candidate);
+                             if (failed(hasBehavior)) {
+                               invalid = true;
+                               return false;
+                             }
+                             return !*hasBehavior;
+                           });
+            if (invalid)
+              return true;
+            bool hasBehaviorlessCandidate =
+                concreteClasses.size() != unfilteredConcreteClassCount;
+            // A non-null object with no rand state, active constraints, or
+            // lifecycle hooks contributes exactly the same singleton solution
+            // as a null rand handle. It therefore belongs to the default
+            // branch and must not multiply the active-object plan space.
+            if (concreteClasses.empty())
+              continue;
             DictionaryAttr selectedPlan;
             if (auto selectedPlans =
                     call->getAttrOfType<ArrayAttr>(randomizeNestedPlansAttrName))
@@ -2048,7 +2100,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                   break;
                 }
             bool selectedProperty = static_cast<bool>(selectedPlan);
-            if (concreteClasses.size() != 1 && !selectedProperty) {
+            if ((concreteClasses.size() != 1 || hasBehaviorlessCandidate) &&
+                !selectedProperty) {
               struct NestedDynamicPlan {
                 semantic::SVClassTypeOp classType;
                 unsigned depth;
@@ -2276,31 +2329,16 @@ void ObeliskSimPreparePass::runOnOperation() {
                           candidate, candidateHierarchy,
                           "recursive nested object dispatch")))
                     return failure();
-                  bool hasRandomProperty = false;
-                  bool hasLifecycleHook = false;
-                  for (semantic::SVClassTypeOp candidateClass :
-                       candidateHierarchy)
-                    for (Operation *member : getChildren(candidateClass)) {
-                      if (auto property = dyn_cast<
-                              semantic::SVClassPropertySymbolOp>(member))
-                        hasRandomProperty |=
-                            property.getRandMode() !=
-                            semantic::SVRandMode::None;
-                      if (auto method = getClassMethod(member))
-                        hasLifecycleHook |=
-                            method.getIsPrePostRandomize().value_or(false) &&
-                            !method.getIsBuiltin().value_or(false);
-                    }
-                  SmallVector<EffectiveConstraintGroup> effectiveConstraints;
-                  collectEffectiveConstraints(candidateHierarchy,
-                                              effectiveConstraints);
                   // Null and a concrete object with no rand state,
                   // constraints, or lifecycle hooks have identical recursive
                   // randomization behavior: they contribute no variables or
                   // predicates and invoke no callbacks. Share one default
                   // dispatch alternative for every such concrete class.
-                  if (!hasRandomProperty && !hasLifecycleHook &&
-                      effectiveConstraints.empty())
+                  FailureOr<bool> hasBehavior =
+                      hasObservableRandomizationBehavior(candidate);
+                  if (failed(hasBehavior))
+                    return failure();
+                  if (!*hasBehavior)
                     continue;
                   dynamicPlans.push_back(
                       {candidate,
