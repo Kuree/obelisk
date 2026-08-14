@@ -1191,21 +1191,21 @@ FailureOr<Value> UnitLowering::lowerStreaming(
         inserted = sim::SimLogicInsertOp::create(
             builder, location, targetScalar, assembled, *logicBit, low);
       } else {
-        FailureOr<Value> bits = convert(bit, builder.getI1Type(), false,
-                                        location);
+        FailureOr<Value> bits =
+            convert(bit, builder.getI1Type(), false, location);
         if (failed(bits))
           return failure();
-        Value extended =
-            arith::ExtUIOp::create(builder, location, targetScalar, *bits);
+        Value extended = *bits;
+        if (extended.getType() != targetScalar)
+          extended =
+              arith::ExtUIOp::create(builder, location, targetScalar, *bits);
         if (low) {
           Value amount = arith::ConstantOp::create(
               builder, location, targetScalar,
               builder.getIntegerAttr(targetScalar, low));
-          extended =
-              arith::ShLIOp::create(builder, location, extended, amount);
+          extended = arith::ShLIOp::create(builder, location, extended, amount);
         }
-        inserted =
-            arith::OrIOp::create(builder, location, assembled, extended);
+        inserted = arith::OrIOp::create(builder, location, assembled, extended);
       }
       cf::BranchOp::create(builder, location, resume, ValueRange{inserted});
       setCurrent(resume);

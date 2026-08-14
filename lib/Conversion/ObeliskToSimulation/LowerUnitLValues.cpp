@@ -1364,20 +1364,21 @@ UnitLowering::readBitStreamValue(Value stream, Value start, Type type,
       FailureOr<Value> logicBit = toLogic(bit, location);
       if (failed(logicBit))
         return failure();
-      assembled = sim::SimLogicInsertOp::create(
-          builder, location, scalarType, assembled, *logicBit, low);
+      assembled = sim::SimLogicInsertOp::create(builder, location, scalarType,
+                                                assembled, *logicBit, low);
       continue;
     }
     FailureOr<Value> knownBit =
         convert(bit, builder.getI1Type(), false, location);
     if (failed(knownBit))
       return failure();
-    Value placed =
-        arith::ExtUIOp::create(builder, location, scalarType, *knownBit);
+    Value placed = *knownBit;
+    if (placed.getType() != scalarType)
+      placed = arith::ExtUIOp::create(builder, location, scalarType, *knownBit);
     if (low) {
-      Value amount = arith::ConstantOp::create(
-          builder, location, scalarType,
-          builder.getIntegerAttr(scalarType, low));
+      Value amount =
+          arith::ConstantOp::create(builder, location, scalarType,
+                                    builder.getIntegerAttr(scalarType, low));
       placed = arith::ShLIOp::create(builder, location, placed, amount);
     }
     assembled = arith::OrIOp::create(builder, location, assembled, placed);

@@ -51,6 +51,13 @@
 // CHECK: obelisk_sim.ref.store %[[PAD_COPY]]
 // CHECK: obelisk_sim.container.read %[[PAD_STREAM]]
 // CHECK: obelisk_sim.container.write %[[PAD_PACKET]],
+// A one-bit destination reuses the converted bit directly; an equal-width
+// arith.extui is invalid and must never be constructed.
+// CHECK: %[[BIT_PACKET:.*]] = obelisk_sim.container.create
+// CHECK-SAME: -> !obelisk_sim.queue<i1, 0>
+// CHECK: %[[PACKED_BIT:.*]] = obelisk_sim.logic.to_bits
+// CHECK-NOT: arith.extui {{.*}} : i1 to i1
+// CHECK: obelisk_sim.container.write %[[BIT_PACKET]], {{.*}}, %[[PACKED_BIT]]
 // CHECK-NOT: obelisk.sv.
 
 module {
@@ -70,6 +77,8 @@ module {
         obelisk.sv.symbol.variable attributes {hierarchical_name = "dynamic_pack.state", lifetime = 1 : i32, name = "state", node_id = 18 : i64, semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>, sym_name = "s18.state"} {
         }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "dynamic_pack.packet", lifetime = 1 : i32, name = "packet", node_id = 7 : i64, semantic_type = !obelisk.queue<!obelisk.integral<8, true, false, 7 : 0, byte>, 0>, sym_name = "s7.packet"} {
+        }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "dynamic_pack.bits", lifetime = 1 : i32, name = "bits", node_id = 30 : i64, semantic_type = !obelisk.queue<!obelisk.integral<1, false, false, 0 : 0, bit>, 0>, sym_name = "s30.bits"} {
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "dynamic_pack", node_id = 8 : i64, procedure_kind = 0 : i32, sym_name = "s8"} {
           obelisk.sv.statement.expression_statement attributes {node_id = 9 : i64} {
@@ -105,6 +114,18 @@ module {
               obelisk.sv.expression.conversion attributes {is_signed = false, node_id = 23 : i64, semantic_type = !obelisk.queue<!obelisk.integral<8, true, false, 7 : 0, byte>, 0>} {
                 obelisk.sv.expression.streaming attributes {bitstream_width = 4 : i64, is_fixed_size = true, is_signed = false, node_id = 24 : i64, semantic_type = !obelisk.void, slice_size = 0 : i64, stream_count = 1 : i64, stream_with_flags = array<i64: 0>} {
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 25 : i64, referenced_path = "dynamic_pack.state", referenced_symbol = @s1.$root::@s3.dynamic_pack::@s4.dynamic_pack::@s18.state, semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>} {
+                  }
+                }
+              }
+            }
+          }
+          obelisk.sv.statement.expression_statement attributes {node_id = 31 : i64} {
+            obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 32 : i64, semantic_type = !obelisk.queue<!obelisk.integral<1, false, false, 0 : 0, bit>, 0>} {
+              obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 33 : i64, referenced_path = "dynamic_pack.bits", referenced_symbol = @s1.$root::@s3.dynamic_pack::@s4.dynamic_pack::@s30.bits, semantic_type = !obelisk.queue<!obelisk.integral<1, false, false, 0 : 0, bit>, 0>} {
+              }
+              obelisk.sv.expression.conversion attributes {is_signed = false, node_id = 34 : i64, semantic_type = !obelisk.queue<!obelisk.integral<1, false, false, 0 : 0, bit>, 0>} {
+                obelisk.sv.expression.streaming attributes {bitstream_width = 4 : i64, is_fixed_size = true, is_signed = false, node_id = 35 : i64, semantic_type = !obelisk.void, slice_size = 0 : i64, stream_count = 1 : i64, stream_with_flags = array<i64: 0>} {
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 36 : i64, referenced_path = "dynamic_pack.state", referenced_symbol = @s1.$root::@s3.dynamic_pack::@s4.dynamic_pack::@s18.state, semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>} {
                   }
                 }
               }

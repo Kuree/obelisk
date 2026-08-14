@@ -18,6 +18,13 @@
 // CHECK: obelisk_sim.container.read %[[REORDERED]]
 // CHECK: obelisk_sim.container.write %[[DYNAMIC]],
 // CHECK: obelisk_sim.ref.store
+// A one-bit dynamic destination stores the converted i1 directly. Equal-width
+// extensions are invalid MLIR and must not be constructed.
+// CHECK: %[[BIT_ARRAY:.*]] = obelisk_sim.container.create {{.*}}container_kind = 1{{.*}} -> !obelisk_sim.dynamic_array<i1>
+// CHECK-NOT: arith.extui {{.*}} : i1 to i1
+// CHECK: obelisk_sim.container.write %[[BIT_ARRAY]],
+// CHECK: %[[BIT_ARRAY_COPY:.*]] = obelisk_sim.container.clone %[[BIT_ARRAY]]
+// CHECK: obelisk_sim.ref.store %[[BIT_ARRAY_COPY]]
 // CHECK-NOT: obelisk.sv.
 
 module {
@@ -36,6 +43,8 @@ module {
         }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "dynamic_unpack.crc", lifetime = 1 : i32, name = "crc", node_id = 8 : i64, semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>, sym_name = "s8.crc"} {
         }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "dynamic_unpack.bits", lifetime = 1 : i32, name = "bits", node_id = 17 : i64, semantic_type = !obelisk.dynarray<!obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s17.bits"} {
+        }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "dynamic_unpack", node_id = 9 : i64, procedure_kind = 0 : i32, sym_name = "s9"} {
           obelisk.sv.statement.expression_statement attributes {node_id = 10 : i64} {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 11 : i64, semantic_type = !obelisk.void} {
@@ -48,6 +57,16 @@ module {
                 }
               }
               obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 16 : i64, referenced_path = "dynamic_unpack.source", referenced_symbol = @s1.$root::@s3.dynamic_unpack::@s4.dynamic_unpack::@s5.source, semantic_type = !obelisk.queue<!obelisk.integral<8, false, false, 7 : 0, byte>, 0>} {
+              }
+            }
+          }
+          obelisk.sv.statement.expression_statement attributes {node_id = 18 : i64} {
+            obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 19 : i64, semantic_type = !obelisk.void} {
+              obelisk.sv.expression.streaming attributes {bitstream_width = 0 : i64, is_fixed_size = false, is_signed = false, node_id = 20 : i64, semantic_type = !obelisk.void, slice_size = 1 : i64, stream_count = 1 : i64, stream_with_flags = array<i64: 0>} {
+                obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 21 : i64, referenced_path = "dynamic_unpack.bits", referenced_symbol = @s1.$root::@s3.dynamic_unpack::@s4.dynamic_unpack::@s17.bits, semantic_type = !obelisk.dynarray<!obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                }
+              }
+              obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 22 : i64, referenced_path = "dynamic_unpack.header", referenced_symbol = @s1.$root::@s3.dynamic_unpack::@s4.dynamic_unpack::@s6.header, semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>} {
               }
             }
           }
