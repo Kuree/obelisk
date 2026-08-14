@@ -14,6 +14,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/IRMapping.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -316,6 +317,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       op->getAttrOfType<IntegerAttr>(randomConstraintCountAttrName);
   auto staticConstraintStorages = op->getAttrOfType<DenseI64ArrayAttr>(
       constraintModeStaticStoragesAttrName);
+  auto constraintTemplateAttr =
+      op->getAttrOfType<FlatSymbolRefAttr>(randomizeConstraintTemplateAttrName);
   if (children.empty() || !properties || !containerProperties ||
       !nestedConstraintModes ||
       !nestedHooks ||
@@ -378,6 +381,58 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   if (failed(loweredReceiver) || !objectType)
     return failure();
   Value receiver = *loweredReceiver;
+
+  sim::SimRandomConstraintTemplateOp constraintTemplate;
+  if (constraintTemplateAttr) {
+    constraintTemplate = SymbolTable::lookupNearestSymbolFrom<
+        sim::SimRandomConstraintTemplateOp>(function, constraintTemplateAttr);
+    auto planClass =
+        op->getAttrOfType<FlatSymbolRefAttr>(randomizePlanClassAttrName);
+    if (!constraintTemplate || !planClass ||
+        constraintTemplate.getOwnerAttr() != planClass ||
+        !staticConstraintStorages) {
+      emitError(location)
+          << "randomize constraint-template metadata is inconsistent";
+      return failure();
+    }
+    ArrayAttr blocks = constraintTemplate.getConstraintBlocks();
+    if (blocks.size() != constraintCount) {
+      emitError(location)
+          << "randomize constraint template has a different block inventory";
+      return failure();
+    }
+    unsigned softCount = 0;
+    for (auto [index, blockAttr] : llvm::enumerate(blocks)) {
+      auto block = cast<sim::RandomConstraintBlockReferenceAttr>(blockAttr);
+      int64_t expectedStorage = staticConstraintStorages[index];
+      switch (block.getKind()) {
+      case sim::RandomConstraintBlockReferenceKind::ObjectBlock:
+        if (block.getIndex().getValue().getZExtValue() != index ||
+            expectedStorage != -1) {
+          emitError(location)
+              << "randomize constraint template object block is inconsistent";
+          return failure();
+        }
+        break;
+      case sim::RandomConstraintBlockReferenceKind::Storage:
+        if (expectedStorage < 0 ||
+            block.getStorage().getValue().getZExtValue() !=
+                static_cast<uint64_t>(expectedStorage)) {
+          emitError(location)
+              << "randomize constraint template static block is inconsistent";
+          return failure();
+        }
+        break;
+      }
+    }
+    constraintTemplate.getBody().walk(
+        [&](sim::SimRandomSoftConstraintOp) { ++softCount; });
+    if (softCount > 64) {
+      emitError(location)
+          << "random constraint template exceeds 64 soft priorities";
+      return failure();
+    }
+  }
 
   auto callLifecycleHook = [&](StringRef calleeAttr,
                                StringRef ownerAttr, StringRef capturesAttr,
@@ -442,6 +497,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     FlatSymbolRefAttr modeField;
   };
   struct Property {
+    FlatSymbolRefAttr field;
     Type type;
     unsigned width;
     unsigned modeIndex;
@@ -820,38 +876,38 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (failed(parseNestedObjectPath(nestedObjectPathAttr,
                                      nestedObjectPath)))
       return failure();
-    planned.push_back({type,
-                       static_cast<unsigned>(width),
-                       static_cast<unsigned>(
-                           modeIndexAttr.getValue().getZExtValue()),
-                       isContainerSize,
-                       containerTypeAttr ? containerTypeAttr.getValue() : Type{},
-                       sizeConstraintMaskAttr
-                           ? sizeConstraintMaskAttr.getValue().getZExtValue()
-                           : 0,
-                       unconditionalSizeConstraintAttr &&
-                           unconditionalSizeConstraintAttr.getValue(),
-                       nestedObjectReference,
-                       nestedObjectTypeAttr ? nestedObjectTypeAttr.getValue()
-                                            : Type{},
-                       field,
-                       nestedModeIndexAttr
-                           ? static_cast<unsigned>(
-                                 nestedModeIndexAttr.getValue().getZExtValue())
-                           : 0,
-                       nestedModeField,
-                       signedAttr.getValue(),
-                       reference,
-                       randcAttr.getValue(),
-                       randcKeyReference,
-                       randcPositionReference,
-                       {},
-                       {},
-                       randomModeStorage,
-                       std::move(propertyDomains),
-                       std::move(nestedObjectPath),
-                       nestedObjectField,
-                       {}});
+    planned.push_back(
+        {field,
+         type,
+         static_cast<unsigned>(width),
+         static_cast<unsigned>(modeIndexAttr.getValue().getZExtValue()),
+         isContainerSize,
+         containerTypeAttr ? containerTypeAttr.getValue() : Type{},
+         sizeConstraintMaskAttr
+             ? sizeConstraintMaskAttr.getValue().getZExtValue()
+             : 0,
+         unconditionalSizeConstraintAttr &&
+             unconditionalSizeConstraintAttr.getValue(),
+         nestedObjectReference,
+         nestedObjectTypeAttr ? nestedObjectTypeAttr.getValue() : Type{},
+         field,
+         nestedModeIndexAttr
+             ? static_cast<unsigned>(
+                   nestedModeIndexAttr.getValue().getZExtValue())
+             : 0,
+         nestedModeField,
+         signedAttr.getValue(),
+         reference,
+         randcAttr.getValue(),
+         randcKeyReference,
+         randcPositionReference,
+         {},
+         {},
+         randomModeStorage,
+         std::move(propertyDomains),
+         std::move(nestedObjectPath),
+         nestedObjectField,
+         {}});
     plannedWidth += width;
   }
   if (plannedWidth != totalWidth) {
@@ -2316,6 +2372,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       hasRuntimeForeachConstraint = true;
     });
   }
+  if (constraintTemplate)
+    constraintTemplate.getBody().walk(
+        [&](sim::SimRandomSoftConstraintOp) { hasSoftConstraint = true; });
 
   struct SolveBeforeEdge {
     uint64_t beforeMask;
@@ -2571,6 +2630,408 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1;
   auto emitLiteral = [&](bool value) {
     instruction(OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, false, 0, value);
+  };
+
+  auto sliceTemplateValue = [&](Value value, uint64_t low, uint64_t width,
+                                Location captureLocation) -> FailureOr<Value> {
+    FailureOr<Value> scalar = toPackedScalar(value, captureLocation);
+    auto scalarType = succeeded(scalar)
+                          ? dyn_cast<IntegerType>((*scalar).getType())
+                          : IntegerType{};
+    if (!scalarType || width == 0 || low > scalarType.getWidth() ||
+        width > scalarType.getWidth() - low) {
+      emitError(captureLocation)
+          << "random constraint template capture has an invalid packed slice";
+      return failure();
+    }
+    Value sliced = *scalar;
+    if (low != 0) {
+      Type type = scalarType;
+      Value amount = arith::ConstantOp::create(
+          builder, captureLocation, type,
+          builder.getIntegerAttr(type, APInt(scalarType.getWidth(), low)));
+      sliced = arith::ShRUIOp::create(builder, captureLocation, sliced, amount);
+    }
+    if (width != scalarType.getWidth()) {
+      Type type = IntegerType::get(function.getContext(), width);
+      sliced = arith::TruncIOp::create(builder, captureLocation, type, sliced);
+    }
+    return sliced;
+  };
+
+  auto appendTemplateCapture =
+      [&](Value value, uint64_t low, uint64_t width,
+          Location captureLocation) -> FailureOr<uint32_t> {
+    FailureOr<Value> sliced =
+        sliceTemplateValue(value, low, width, captureLocation);
+    if (failed(sliced))
+      return failure();
+    Type captureType =
+        width <= 64 ? Type(i64)
+                    : Type(IntegerType::get(function.getContext(), width));
+    FailureOr<Value> captured =
+        convert(*sliced, captureType, false, captureLocation, false);
+    if (failed(captured))
+      return failure();
+    uint32_t index = static_cast<uint32_t>(programCaptures.size());
+    programCaptures.push_back(*captured);
+    return index;
+  };
+
+  auto lookupTemplateReference = [&](sim::SimRandomConstraintValueOp valueOp)
+      -> FailureOr<sim::RandomValueReferenceAttr> {
+    ArrayAttr references = constraintTemplate
+                               ? constraintTemplate.getReferencesAttr()
+                               : ArrayAttr{};
+    uint64_t index = valueOp.getIndex();
+    if (!references || index >= references.size()) {
+      emitError(valueOp.getLoc())
+          << "random constraint template reference is outside its inventory";
+      return failure();
+    }
+    return cast<sim::RandomValueReferenceAttr>(references[index]);
+  };
+
+  auto templateVariableOffset =
+      [&](sim::RandomValueReferenceAttr reference,
+          Location referenceLocation) -> FailureOr<std::optional<uint32_t>> {
+    if (reference.getKind() != sim::RandomValueReferenceKind::ObjectField)
+      return std::optional<uint32_t>{};
+    if (!reference.getPath().empty()) {
+      emitError(referenceLocation)
+          << "nested object paths are not composed by scalar random plans";
+      return failure();
+    }
+    uint32_t offset = 0;
+    for (const Property &property : planned) {
+      if (property.field == reference.getTarget()) {
+        if (reference.getLow() > property.width ||
+            reference.getWidth() > property.width - reference.getLow()) {
+          emitError(referenceLocation)
+              << "random constraint template variable slice is invalid";
+          return failure();
+        }
+        return std::optional<uint32_t>(
+            offset + static_cast<uint32_t>(reference.getLow()));
+      }
+      offset += property.width;
+    }
+    return std::optional<uint32_t>{};
+  };
+
+  auto materializeTemplateReference =
+      [&](sim::SimRandomConstraintValueOp valueOp,
+          sim::RandomValueReferenceAttr reference) -> FailureOr<Value> {
+    switch (reference.getKind()) {
+    case sim::RandomValueReferenceKind::ObjectField: {
+      FailureOr<std::optional<uint32_t>> variable =
+          templateVariableOffset(reference, valueOp.getLoc());
+      if (failed(variable))
+        return failure();
+      if (variable->has_value()) {
+        emitError(valueOp.getLoc())
+            << "active random variable cannot be materialized as state";
+        return failure();
+      }
+      auto field =
+          SymbolTable::lookupNearestSymbolFrom<sim::SimClassFieldDeclOp>(
+              function, reference.getTarget());
+      if (!field || field.getIsStatic()) {
+        emitError(valueOp.getLoc())
+            << "random constraint template state field does not resolve";
+        return failure();
+      }
+      Type referenceType = sim::ManagedRefType::get(
+          function.getContext(), field.getType(), objectType.getClassName());
+      Value fieldReference = sim::SimClassFieldRefOp::create(
+          builder, valueOp.getLoc(), referenceType, receiver,
+          reference.getTarget());
+      FailureOr<Value> loaded = loadReference(fieldReference, valueOp.getLoc());
+      if (failed(loaded))
+        return failure();
+      return sliceTemplateValue(*loaded, reference.getLow(),
+                                reference.getWidth(), valueOp.getLoc());
+    }
+    case sim::RandomValueReferenceKind::Storage: {
+      uint64_t storageID = reference.getStorage().getValue().getZExtValue();
+      sim::SimStorageDeclOp storage;
+      sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
+      if (design)
+        for (Operation &candidate : design.getBody().front())
+          if (auto declaration = dyn_cast<sim::SimStorageDeclOp>(candidate);
+              declaration && declaration.getId() == storageID) {
+            storage = declaration;
+            break;
+          }
+      if (!storage) {
+        emitError(valueOp.getLoc())
+            << "random constraint template storage does not resolve";
+        return failure();
+      }
+      Type referenceType =
+          sim::RefType::get(function.getContext(), storage.getType());
+      Value storageReference = sim::SimContextStorageOp::create(
+          builder, valueOp.getLoc(), referenceType,
+          function.getBody().front().getArgument(0),
+          builder.getI64IntegerAttr(storageID));
+      Value loaded = sim::SimRefLoadOp::create(
+          builder, valueOp.getLoc(), storage.getType(), storageReference);
+      return sliceTemplateValue(loaded, reference.getLow(),
+                                reference.getWidth(), valueOp.getLoc());
+    }
+    }
+    llvm_unreachable("unknown random-value reference kind");
+  };
+
+  llvm::DenseMap<Value, bool> templateVariableDependencies;
+  std::function<FailureOr<bool>(Value)> templateDependsOnVariable;
+  templateDependsOnVariable = [&](Value value) -> FailureOr<bool> {
+    if (auto found = templateVariableDependencies.find(value);
+        found != templateVariableDependencies.end())
+      return found->second;
+    Operation *operation = value.getDefiningOp();
+    if (!operation) {
+      emitError(value.getLoc())
+          << "random constraint template value has no defining operation";
+      return failure();
+    }
+    bool dependent = false;
+    if (auto valueOp = dyn_cast<sim::SimRandomConstraintValueOp>(operation)) {
+      FailureOr<sim::RandomValueReferenceAttr> reference =
+          lookupTemplateReference(valueOp);
+      if (failed(reference))
+        return failure();
+      FailureOr<std::optional<uint32_t>> variable =
+          templateVariableOffset(*reference, valueOp.getLoc());
+      if (failed(variable))
+        return failure();
+      dependent = variable->has_value();
+    } else {
+      for (Value operand : operation->getOperands()) {
+        FailureOr<bool> operandDependent = templateDependsOnVariable(operand);
+        if (failed(operandDependent))
+          return failure();
+        dependent |= *operandDependent;
+      }
+    }
+    templateVariableDependencies[value] = dependent;
+    return dependent;
+  };
+
+  llvm::DenseMap<Value, Value> materializedTemplateValues;
+  std::function<FailureOr<Value>(Value)> materializeTemplateValue;
+  materializeTemplateValue = [&](Value value) -> FailureOr<Value> {
+    if (Value materialized = materializedTemplateValues.lookup(value))
+      return materialized;
+    Operation *operation = value.getDefiningOp();
+    auto result = dyn_cast<OpResult>(value);
+    if (!operation || !result) {
+      emitError(value.getLoc()) << "random constraint template state value is "
+                                   "not an operation result";
+      return failure();
+    }
+    if (auto valueOp = dyn_cast<sim::SimRandomConstraintValueOp>(operation)) {
+      FailureOr<sim::RandomValueReferenceAttr> reference =
+          lookupTemplateReference(valueOp);
+      if (failed(reference))
+        return failure();
+      FailureOr<Value> materialized =
+          materializeTemplateReference(valueOp, *reference);
+      if (failed(materialized))
+        return failure();
+      materializedTemplateValues[value] = *materialized;
+      return *materialized;
+    }
+
+    IRMapping mapping;
+    for (Value operand : operation->getOperands()) {
+      FailureOr<Value> materialized = materializeTemplateValue(operand);
+      if (failed(materialized))
+        return failure();
+      mapping.map(operand, *materialized);
+    }
+    Operation *cloned = builder.clone(*operation, mapping);
+    for (auto [original, replacement] :
+         llvm::zip_equal(operation->getResults(), cloned->getResults()))
+      materializedTemplateValues[original] = replacement;
+    return materializedTemplateValues.lookup(value);
+  };
+
+  llvm::DenseMap<Value, uint32_t> materializedTemplateCaptures;
+
+  auto emitTemplateReference =
+      [&](sim::SimRandomConstraintValueOp valueOp) -> LogicalResult {
+    FailureOr<sim::RandomValueReferenceAttr> reference =
+        lookupTemplateReference(valueOp);
+    if (failed(reference))
+      return failure();
+    FailureOr<std::optional<uint32_t>> variable =
+        templateVariableOffset(*reference, valueOp.getLoc());
+    if (failed(variable))
+      return failure();
+    if (!variable->has_value()) {
+      emitError(valueOp.getLoc())
+          << "random constraint template state escaped materialization";
+      return failure();
+    }
+    instruction(OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, reference->getWidth(),
+                false, **variable);
+    return success();
+  };
+
+  std::function<LogicalResult(Value)> emitTemplateValue;
+  emitTemplateValue = [&](Value value) -> LogicalResult {
+    Operation *operation = value.getDefiningOp();
+    auto resultType = dyn_cast<IntegerType>(value.getType());
+    if (!operation || !resultType) {
+      emitError(value.getLoc())
+          << "random constraint template value is not an integer dataflow node";
+      return failure();
+    }
+    unsigned width = resultType.getWidth();
+    if (auto constant = dyn_cast<arith::ConstantOp>(operation)) {
+      auto integer = dyn_cast<IntegerAttr>(constant.getValue());
+      if (!integer) {
+        emitError(operation->getLoc())
+            << "random constraint template constant is not integral";
+        return failure();
+      }
+      literalInstruction(width, false, integer.getValue());
+      return success();
+    }
+    FailureOr<bool> dependsOnVariable = templateDependsOnVariable(value);
+    if (failed(dependsOnVariable))
+      return failure();
+    if (!*dependsOnVariable) {
+      uint32_t captureIndex = 0;
+      auto found = materializedTemplateCaptures.find(value);
+      if (found != materializedTemplateCaptures.end()) {
+        captureIndex = found->second;
+      } else {
+        FailureOr<Value> materialized = materializeTemplateValue(value);
+        if (failed(materialized))
+          return failure();
+        FailureOr<uint32_t> appended =
+            appendTemplateCapture(*materialized, 0, width, operation->getLoc());
+        if (failed(appended))
+          return failure();
+        captureIndex = *appended;
+        materializedTemplateCaptures[value] = captureIndex;
+      }
+      instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, width, false,
+                  captureIndex);
+      return success();
+    }
+    if (auto reference = dyn_cast<sim::SimRandomConstraintValueOp>(operation))
+      return emitTemplateReference(reference);
+    if (isa<arith::TruncIOp, arith::ExtUIOp, arith::ExtSIOp>(operation)) {
+      if (operation->getNumOperands() != 1 ||
+          failed(emitTemplateValue(operation->getOperand(0))))
+        return failure();
+      instruction(OBELISK_RT_RANDOM_CAST_V1, width,
+                  isa<arith::ExtSIOp>(operation));
+      return success();
+    }
+    if (auto compare = dyn_cast<arith::CmpIOp>(operation)) {
+      if (failed(emitTemplateValue(compare.getLhs())) ||
+          failed(emitTemplateValue(compare.getRhs())))
+        return failure();
+      uint8_t opcode = 0;
+      bool signedComparison = false;
+      switch (compare.getPredicate()) {
+      case arith::CmpIPredicate::eq:
+        opcode = OBELISK_RT_RANDOM_EQ_V1;
+        break;
+      case arith::CmpIPredicate::ne:
+        opcode = OBELISK_RT_RANDOM_NE_V1;
+        break;
+      case arith::CmpIPredicate::slt:
+        opcode = OBELISK_RT_RANDOM_LT_V1;
+        signedComparison = true;
+        break;
+      case arith::CmpIPredicate::sle:
+        opcode = OBELISK_RT_RANDOM_LE_V1;
+        signedComparison = true;
+        break;
+      case arith::CmpIPredicate::sgt:
+        opcode = OBELISK_RT_RANDOM_GT_V1;
+        signedComparison = true;
+        break;
+      case arith::CmpIPredicate::sge:
+        opcode = OBELISK_RT_RANDOM_GE_V1;
+        signedComparison = true;
+        break;
+      case arith::CmpIPredicate::ult:
+        opcode = OBELISK_RT_RANDOM_LT_V1;
+        break;
+      case arith::CmpIPredicate::ule:
+        opcode = OBELISK_RT_RANDOM_LE_V1;
+        break;
+      case arith::CmpIPredicate::ugt:
+        opcode = OBELISK_RT_RANDOM_GT_V1;
+        break;
+      case arith::CmpIPredicate::uge:
+        opcode = OBELISK_RT_RANDOM_GE_V1;
+        break;
+      }
+      instruction(opcode, width, signedComparison);
+      return success();
+    }
+    if (auto select = dyn_cast<arith::SelectOp>(operation)) {
+      if (failed(emitTemplateValue(select.getCondition())) ||
+          failed(emitTemplateValue(select.getTrueValue())) ||
+          failed(emitTemplateValue(select.getFalseValue())))
+        return failure();
+      instruction(OBELISK_RT_RANDOM_SELECT_V1, width);
+      return success();
+    }
+    if (operation->getNumOperands() != 2 ||
+        failed(emitTemplateValue(operation->getOperand(0))) ||
+        failed(emitTemplateValue(operation->getOperand(1)))) {
+      emitError(operation->getLoc())
+          << "random constraint template operation is not encodable: "
+          << operation->getName();
+      return failure();
+    }
+    uint8_t opcode = 0;
+    bool signedOperation = false;
+    if (isa<arith::AddIOp>(operation))
+      opcode = OBELISK_RT_RANDOM_ADD_V1;
+    else if (isa<arith::SubIOp>(operation))
+      opcode = OBELISK_RT_RANDOM_SUB_V1;
+    else if (isa<arith::MulIOp>(operation))
+      opcode = OBELISK_RT_RANDOM_MUL_V1;
+    else if (isa<arith::DivUIOp>(operation))
+      opcode = OBELISK_RT_RANDOM_DIV_V1;
+    else if (isa<arith::DivSIOp>(operation)) {
+      opcode = OBELISK_RT_RANDOM_DIV_V1;
+      signedOperation = true;
+    } else if (isa<arith::RemUIOp>(operation))
+      opcode = OBELISK_RT_RANDOM_MOD_V1;
+    else if (isa<arith::RemSIOp>(operation)) {
+      opcode = OBELISK_RT_RANDOM_MOD_V1;
+      signedOperation = true;
+    } else if (isa<arith::AndIOp>(operation))
+      opcode = OBELISK_RT_RANDOM_BIT_AND_V1;
+    else if (isa<arith::OrIOp>(operation))
+      opcode = OBELISK_RT_RANDOM_BIT_OR_V1;
+    else if (isa<arith::XOrIOp>(operation))
+      opcode = OBELISK_RT_RANDOM_BIT_XOR_V1;
+    else if (isa<arith::ShLIOp>(operation))
+      opcode = OBELISK_RT_RANDOM_SHIFT_LEFT_V1;
+    else if (isa<arith::ShRUIOp>(operation))
+      opcode = OBELISK_RT_RANDOM_SHIFT_RIGHT_V1;
+    else if (isa<arith::ShRSIOp>(operation)) {
+      opcode = OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1;
+      signedOperation = true;
+    } else {
+      emitError(operation->getLoc())
+          << "random constraint template operation is not encodable: "
+          << operation->getName();
+      return failure();
+    }
+    instruction(opcode, width, signedOperation);
+    return success();
   };
   std::function<LogicalResult(Operation *)> emitProgramExpression;
   emitProgramExpression = [&](Operation *expression) -> LogicalResult {
@@ -3616,6 +4077,32 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     emitError(location)
         << "random fallback supports at most 64 soft constraint priorities";
     return failure();
+  }
+  if (constraintTemplate) {
+    for (auto [index, root] : llvm::enumerate(children)) {
+      if (index != receiverIndex && isa<semantic::SVConstraintListOp>(root)) {
+        emitError(getSemanticLocation(root))
+            << "randomize call mixes a reusable template with cloned "
+               "constraints";
+        return failure();
+      }
+    }
+    for (Operation &templateOperation : constraintTemplate.getBody().front()) {
+      if (auto hard =
+              dyn_cast<sim::SimRandomHardConstraintOp>(templateOperation)) {
+        if (failed(emitTemplateValue(hard.getPredicate())))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_END_HARD_V1, 1, false, hard.getBlock());
+        emittedHard = true;
+      } else if (auto soft = dyn_cast<sim::SimRandomSoftConstraintOp>(
+                     templateOperation)) {
+        if (failed(emitTemplateValue(soft.getPredicate())))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_END_SOFT_V1, 1, false, soft.getBlock(),
+                    soft.getPriority());
+        emittedSoft = true;
+      }
+    }
   }
   for (auto [index, root] : llvm::enumerate(children)) {
     if (index == receiverIndex)
@@ -6063,6 +6550,130 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             arith::AndIOp::create(builder, location, satisfied, accepted);
       }
       domainPropertyOffset += property.width;
+    }
+    if (constraintTemplate) {
+      llvm::DenseMap<Value, Value> checkedTemplateValues;
+      std::function<FailureOr<Value>(Value)> materializeTemplateCheckValue;
+      materializeTemplateCheckValue = [&](Value value) -> FailureOr<Value> {
+        if (Value checked = checkedTemplateValues.lookup(value))
+          return checked;
+        FailureOr<bool> dependsOnVariable = templateDependsOnVariable(value);
+        if (failed(dependsOnVariable))
+          return failure();
+        if (!*dependsOnVariable) {
+          // State subgraphs were captured before the sampling CFG was built,
+          // so their materialized SSA values dominate every checker. Constants
+          // that were encoded directly have no such binding and must be cloned
+          // into this checker invocation rather than cached across sibling
+          // blocks.
+          if (Value materialized = materializedTemplateValues.lookup(value)) {
+            checkedTemplateValues[value] = materialized;
+            return materialized;
+          }
+        }
+
+        Operation *operation = value.getDefiningOp();
+        auto result = dyn_cast<OpResult>(value);
+        if (!operation || !result) {
+          emitError(value.getLoc())
+              << "random constraint template checker value is not an operation "
+                 "result";
+          return failure();
+        }
+        if (auto valueOp =
+                dyn_cast<sim::SimRandomConstraintValueOp>(operation)) {
+          FailureOr<sim::RandomValueReferenceAttr> reference =
+              lookupTemplateReference(valueOp);
+          if (failed(reference))
+            return failure();
+          FailureOr<std::optional<uint32_t>> variable =
+              templateVariableOffset(*reference, valueOp.getLoc());
+          if (failed(variable))
+            return failure();
+          if (!variable->has_value()) {
+            emitError(valueOp.getLoc())
+                << "random constraint template state escaped checker "
+                   "materialization";
+            return failure();
+          }
+          for (auto [index, property] : llvm::enumerate(planned)) {
+            if (property.field != reference->getTarget())
+              continue;
+            FailureOr<Value> checked = sliceTemplateValue(
+                randomizeCandidateValues[index], reference->getLow(),
+                reference->getWidth(), valueOp.getLoc());
+            if (failed(checked))
+              return failure();
+            checkedTemplateValues[value] = *checked;
+            return *checked;
+          }
+          emitError(valueOp.getLoc())
+              << "random constraint template variable has no checker binding";
+          return failure();
+        }
+
+        IRMapping mapping;
+        for (Value operand : operation->getOperands()) {
+          FailureOr<Value> checked = materializeTemplateCheckValue(operand);
+          if (failed(checked))
+            return failure();
+          mapping.map(operand, *checked);
+        }
+        Operation *cloned = builder.clone(*operation, mapping);
+        for (auto [original, replacement] :
+             llvm::zip_equal(operation->getResults(), cloned->getResults()))
+          checkedTemplateValues[original] = replacement;
+        return checkedTemplateValues.lookup(value);
+      };
+
+      auto applyTemplateConstraintMode =
+          [&](Value predicate, uint32_t block) -> FailureOr<Value> {
+        if (block >= constraintCount) {
+          emitError(location)
+              << "random constraint template block index is malformed";
+          return failure();
+        }
+        uint64_t blockBit = uint64_t{1} << block;
+        Value selected = arith::AndIOp::create(
+            builder, location, relevantConstraintMode, constant64(blockBit));
+        Value disabled =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                  selected, constant64(0));
+        Value trueValue = arith::ConstantOp::create(
+            builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+        return arith::SelectOp::create(builder, location, disabled, trueValue,
+                                       predicate)
+            .getResult();
+      };
+
+      for (Operation &templateOperation :
+           constraintTemplate.getBody().front()) {
+        if (auto hard =
+                dyn_cast<sim::SimRandomHardConstraintOp>(templateOperation)) {
+          FailureOr<Value> predicate =
+              materializeTemplateCheckValue(hard.getPredicate());
+          if (failed(predicate))
+            return failure();
+          predicate = applyTemplateConstraintMode(*predicate, hard.getBlock());
+          if (failed(predicate))
+            return failure();
+          satisfied =
+              arith::AndIOp::create(builder, location, satisfied, *predicate);
+          continue;
+        }
+        if (auto soft =
+                dyn_cast<sim::SimRandomSoftConstraintOp>(templateOperation)) {
+          FailureOr<Value> predicate =
+              materializeTemplateCheckValue(soft.getPredicate());
+          if (failed(predicate))
+            return failure();
+          predicate = applyTemplateConstraintMode(*predicate, soft.getBlock());
+          if (failed(predicate))
+            return failure();
+          softSatisfied = arith::AndIOp::create(builder, location,
+                                                softSatisfied, *predicate);
+        }
+      }
     }
     for (auto [index, constraint] : llvm::enumerate(children)) {
       if (index == receiverIndex)

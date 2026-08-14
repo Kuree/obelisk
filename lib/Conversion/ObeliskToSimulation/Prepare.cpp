@@ -3176,6 +3176,34 @@ void ObeliskSimPreparePass::runOnOperation() {
     llvm::DenseMap<Operation *, unsigned> randomIndices;
     for (auto [index, property] : llvm::enumerate(properties))
       randomIndices[property.source] = index;
+
+    // A declaration template is an exact replacement for the class-owned
+    // constraint roots only when this invocation's active object graph is the
+    // exact receiver. Inline constraints and recursively randomized members
+    // still require call-local composition, while active static rand properties
+    // need a storage-to-variable binding that the current scalar plan does not
+    // carry. Keep every such case on the complete legacy path.
+    sim::SimClassDeclOp exactDeclaration =
+        classes->declarations.lookup(foundClass->second);
+    FlatSymbolRefAttr constraintTemplate =
+        exactDeclaration ? exactDeclaration.getRandomConstraintTemplateAttr()
+                         : FlatSymbolRefAttr{};
+    bool templateEligible =
+        constraintTemplate && !hasInlineConstraints &&
+        nestedObjectPlans.empty() && containerProperties.empty() &&
+        recursiveAliasGuards.empty() &&
+        llvm::all_of(properties, [](const RandomProperty &property) {
+          return property.field && !property.referencePath &&
+                 !property.isContainerSize && !property.nestedObjectField;
+        });
+    if (templateEligible) {
+      call->setAttr(randomizeConstraintTemplateAttrName, constraintTemplate);
+      // The template contains the complete effective class constraint set.
+      // Clearing the borrowed declaration roots prevents the clone/expand and
+      // annotation stages below from manufacturing a call-local copy.
+      constraintRoots.clear();
+    }
+
     // Clone declaration-owned constraints into the call before expanding
     // function calls. A dynamic randomize dispatch has one frozen call per
     // concrete class, so mutating the shared class declaration would leak one

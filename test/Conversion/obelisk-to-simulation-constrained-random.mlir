@@ -7,6 +7,10 @@
 // RUN: not obelisk-opt %t/unsupported.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=UNSUPPORTED
 // RUN: not obelisk-opt %t/replication-invalid.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=REPLICATION-INVALID
 // RUN: %if z3 %{ \
+// RUN:   obelisk-opt %t/unsat.mlir --obelisk-sim-prepare \
+// RUN:     | FileCheck %s --check-prefix=TEMPLATE-PREPARED \
+// RUN: %}
+// RUN: %if z3 %{ \
 // RUN:   obelisk-opt %t/unsat.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
 // RUN:     | FileCheck %s --check-prefix=UNSAT \
 // RUN: %}
@@ -598,6 +602,17 @@ module {
 // REPLICATION-INVALID: error: replication count must be a known positive value
 
 // UNSAT: warning: randomize hard constraints are statically unsatisfiable (z3-4.13.4)
+// The declaration remains the sole owner of the semantic constraint list. The
+// exact randomize alternative references its reusable template without cloning
+// that list into the call.
+// TEMPLATE-PREPARED: obelisk_sim.random.constraint_template @[[UNSAT_TEMPLATE:[A-Za-z0-9_.$]+]]
+// TEMPLATE-PREPARED: obelisk.sv.expression.call attributes {{.*}}obelisk_sim.randomize_constraint_template = @[[UNSAT_TEMPLATE]]
+// TEMPLATE-PREPARED-NOT: obelisk.sv.constraint.list
+// TEMPLATE-PREPARED: obelisk.sv.expression.named_value
+
+// The template makes the contradiction visible to Z3 at compile time. Dynamic
+// constraint_mode state still retains the cold runtime path because disabling
+// the block makes the otherwise contradictory plan satisfiable.
 // UNSAT: obelisk_sim.random.solve {{.*}} constraints
 
 // A Z3-proven power-of-two domain is folded without modulo bias into the
