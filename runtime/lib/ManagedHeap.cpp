@@ -14,13 +14,18 @@
 struct obelisk_rt_object_v1 {};
 
 struct obelisk_rt_random_graph_v1 {
+  struct ObjectBinding {
+    obelisk_rt_object_v1 *object = nullptr;
+    const obelisk_rt_class_descriptor_v1 *descriptor = nullptr;
+  };
+
   struct VariableBinding {
     obelisk_rt_object_v1 *object = nullptr;
     const obelisk_rt_random_variable_v1 *variable = nullptr;
   };
 
   obelisk_rt_context *context = nullptr;
-  std::vector<obelisk_rt_object_v1 *> objects;
+  std::vector<ObjectBinding> objects;
   std::vector<VariableBinding> variables;
 };
 
@@ -2298,16 +2303,18 @@ obelisk_rt_v1_random_graph_discover(obelisk_rt_gc_lane_v1 *lane,
   graph->context = lane->context;
   std::unordered_set<uint64_t> seen;
   auto rollback = [&] {
-    for (obelisk_rt_object_v1 *object : graph->objects)
-      (void)lane->heap->unpin(object, /*activeCaller=*/true);
+    for (const auto &binding : graph->objects)
+      (void)lane->heap->unpin(binding.object, /*activeCaller=*/true);
     graph->objects.clear();
   };
-  auto append = [&](obelisk_rt_object_v1 *object) -> obelisk_rt_status {
+  auto append = [&](obelisk_rt_object_v1 *object,
+                    const obelisk_rt_class_descriptor_v1 *descriptor)
+      -> obelisk_rt_status {
     obelisk_rt_status status = lane->heap->pin(object, /*activeCaller=*/true);
     if (status != OBELISK_RT_OK)
       return status;
     try {
-      graph->objects.push_back(object);
+      graph->objects.push_back({object, descriptor});
     } catch (...) {
       (void)lane->heap->unpin(object, /*activeCaller=*/true);
       throw;
@@ -2317,14 +2324,16 @@ obelisk_rt_v1_random_graph_discover(obelisk_rt_gc_lane_v1 *lane,
 
   try {
     seen.insert(rootMetadata->identity);
-    obelisk_rt_status status = append(root);
+    obelisk_rt_status status = append(root, rootMetadata->descriptor);
     if (status != OBELISK_RT_OK)
       return status;
     for (size_t cursor = 0; cursor != graph->objects.size(); ++cursor) {
-      obelisk_rt_object_v1 *object = graph->objects[cursor];
+      const auto &binding = graph->objects[cursor];
+      obelisk_rt_object_v1 *object = binding.object;
       ObjectMetadata *metadata = metadataFor(object);
       if (!metadata || metadata->heap != lane->heap ||
-          metadata->kind != OBELISK_RT_MANAGED_CLASS) {
+          metadata->kind != OBELISK_RT_MANAGED_CLASS ||
+          metadata->descriptor != binding.descriptor) {
         rollback();
         return OBELISK_RT_INVALID_HANDLE;
       }
@@ -2371,7 +2380,7 @@ obelisk_rt_v1_random_graph_discover(obelisk_rt_gc_lane_v1 *lane,
           }
           if (!seen.insert(childMetadata->identity).second)
             continue;
-          status = append(child);
+          status = append(child, childMetadata->descriptor);
           if (status != OBELISK_RT_OK) {
             rollback();
             return status;
@@ -2394,8 +2403,8 @@ extern "C" void
 obelisk_rt_v1_random_graph_destroy(obelisk_rt_random_graph_v1 *graph) {
   if (!graph)
     return;
-  for (obelisk_rt_object_v1 *object : graph->objects)
-    (void)obelisk_rt_v1_gc_unpin(graph->context, object);
+  for (const auto &binding : graph->objects)
+    (void)obelisk_rt_v1_gc_unpin(graph->context, binding.object);
   delete graph;
 }
 
@@ -2407,8 +2416,17 @@ obelisk_rt_v1_random_graph_size(const obelisk_rt_random_graph_v1 *graph) {
 extern "C" obelisk_rt_object_v1 *
 obelisk_rt_v1_random_graph_object(const obelisk_rt_random_graph_v1 *graph,
                                   uint64_t index) {
-  return graph && index < graph->objects.size() ? graph->objects[index]
-                                                : nullptr;
+  return graph && index < graph->objects.size()
+             ? graph->objects[index].object
+             : nullptr;
+}
+
+extern "C" const obelisk_rt_class_descriptor_v1 *
+obelisk_rt_v1_random_graph_object_descriptor(
+    const obelisk_rt_random_graph_v1 *graph, uint64_t index) {
+  return graph && index < graph->objects.size()
+             ? graph->objects[index].descriptor
+             : nullptr;
 }
 
 extern "C" uint64_t obelisk_rt_v1_random_graph_variable_count(

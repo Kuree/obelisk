@@ -3476,6 +3476,13 @@ TEST_F(ManagedHeapTest, DiscoversActiveRandomObjectGraphByIdentity) {
   EXPECT_EQ(obelisk_rt_v1_random_graph_object(graph, 1), child);
   EXPECT_EQ(obelisk_rt_v1_random_graph_object(graph, 2), derivedChild);
   EXPECT_EQ(obelisk_rt_v1_random_graph_object(graph, 3), nullptr);
+  EXPECT_EQ(obelisk_rt_v1_random_graph_object_descriptor(graph, 0),
+            &randomDerivedDescriptor);
+  EXPECT_EQ(obelisk_rt_v1_random_graph_object_descriptor(graph, 1),
+            &randomNodeDescriptor);
+  EXPECT_EQ(obelisk_rt_v1_random_graph_object_descriptor(graph, 2),
+            &randomNodeDescriptor);
+  EXPECT_EQ(obelisk_rt_v1_random_graph_object_descriptor(graph, 3), nullptr);
   EXPECT_EQ(obelisk_rt_v1_random_graph_variable_count(graph), 4u);
   obelisk_rt_object_v1 *variableObject = nullptr;
   const obelisk_rt_random_variable_v1 *variable = nullptr;
@@ -3522,6 +3529,8 @@ TEST_F(ManagedHeapTest, DiscoversActiveRandomObjectGraphByIdentity) {
   ASSERT_NE(graph, nullptr);
   EXPECT_EQ(obelisk_rt_v1_random_graph_size(graph), 1u);
   EXPECT_EQ(obelisk_rt_v1_random_graph_object(graph, 0), root);
+  EXPECT_EQ(obelisk_rt_v1_random_graph_object_descriptor(graph, 0),
+            &randomDerivedDescriptor);
   EXPECT_EQ(obelisk_rt_v1_random_graph_variable_count(graph), 1u);
   ASSERT_EQ(obelisk_rt_v1_random_graph_variable(
                 graph, 0, &variableObject, &variable),

@@ -1704,6 +1704,9 @@ obelisk_rt_v1_random_graph_size(const obelisk_rt_random_graph_v1 *graph);
 obelisk_rt_object_v1 *
 obelisk_rt_v1_random_graph_object(const obelisk_rt_random_graph_v1 *graph,
                                   uint64_t index);
+const obelisk_rt_class_descriptor_v1 *
+obelisk_rt_v1_random_graph_object_descriptor(
+    const obelisk_rt_random_graph_v1 *graph, uint64_t index);
 // Active direct packed variables are flattened in graph-object order and,
 // within each object, base-to-derived declaration order. Returned descriptor
 // pointers remain valid for the registered class lifetime; objects remain

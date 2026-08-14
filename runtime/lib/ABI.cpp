@@ -1242,6 +1242,9 @@ ABI_FUNCTION(obelisk_rt_v1_random_graph_size,
 ABI_FUNCTION(obelisk_rt_v1_random_graph_object,
              obelisk_rt_object_v1 *(*)(const obelisk_rt_random_graph_v1 *,
                                        uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_random_graph_object_descriptor,
+             const obelisk_rt_class_descriptor_v1 *(*) (
+                 const obelisk_rt_random_graph_v1 *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_random_graph_variable_count,
              uint64_t (*)(const obelisk_rt_random_graph_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_random_graph_variable,
