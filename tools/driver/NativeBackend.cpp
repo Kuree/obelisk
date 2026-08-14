@@ -162,8 +162,9 @@ LogicalResult linkELFExecutable(StringRef modulePath, StringRef outputPath,
                                 StringRef supportRoot, StringRef explicitSysroot,
                              ArrayRef<NativeLinkInput> nativeLinkInputs,
                              ArrayRef<SharedLibraryInput> sharedLibraryInputs,
-                             uint32_t optLevel, uint32_t linkThreads) {
-  bool fullLTO = optLevel != 0;
+                             uint32_t optLevel, bool noLTO,
+                             uint32_t linkThreads) {
+  bool fullLTO = optLevel != 0 && !noLTO;
   SmallString<256> glibcRoot;
   if (explicitSysroot.empty()) {
     glibcRoot = supportRoot;
@@ -420,7 +421,7 @@ public:
     return linkELFExecutable(modulePath, outputPath, supportRoot,
                              options.explicitSysroot, options.nativeLinkInputs,
                              options.sharedLibraryInputs, options.optLevel,
-                             options.compileThreads);
+                             options.noLTO, options.compileThreads);
   }
 };
 

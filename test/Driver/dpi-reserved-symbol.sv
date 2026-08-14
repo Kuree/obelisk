@@ -1,4 +1,4 @@
-// RUN: not obelisk %s -o %t 2>&1 | FileCheck %s
+// RUN: not obelisk -fno-lto %s -o %t 2>&1 | FileCheck %s
 
 module dpi_reserved_symbol;
   import "DPI-C" obelisk_rt_v1_import_call = function int bad(input int value);

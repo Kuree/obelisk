@@ -1,4 +1,4 @@
-// RUN: obelisk --compile-threads=1 %s -o %t.native
+// RUN: obelisk -fno-lto --compile-threads=1 %s -o %t.native
 
 module native_concurrent_sva_unpacked_array(
     input logic clock, reset_n, acknowledge);

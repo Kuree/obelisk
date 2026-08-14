@@ -72,6 +72,10 @@ def static_specialization_EQ : Joined<["--"], "static-specialization=">,
   Group<Compilation_Group>, MetaVarName<"<auto|off|on>">,
   Values<"auto,off,on">,
   HelpText<"Select direct static-state and narrow-NBA specialization">;
+def fno_lto : Flag<["-"], "fno-lto">, Group<Compilation_Group>,
+  HelpText<"Link against the prebuilt runtime instead of running full LTO">;
+def flto : Flag<["-"], "flto">, Group<Compilation_Group>, Flags<[HelpHidden]>,
+  HelpText<"Run full LTO over the runtime (default above -O0)">;
 def O0 : Flag<["-"], "O0">, Group<Compilation_Group>,
   HelpText<"Disable simulation and LLVM optimization">;
 def O1 : Flag<["-"], "O1">, Group<Compilation_Group>,

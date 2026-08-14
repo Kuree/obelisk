@@ -10,7 +10,7 @@
 // RUN: not obelisk -Y 2>&1 | FileCheck %s --check-prefix=MISSING
 // RUN: not obelisk -l 2>&1 | FileCheck %s --check-prefix=MISSING
 // RUN: not obelisk -G 2>&1 | FileCheck %s --check-prefix=MISSING
-// RUN: not obelisk -o 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: not obelisk -fno-lto -o 2>&1 | FileCheck %s --check-prefix=MISSING
 // RUN: not obelisk -Xslang 2>&1 | FileCheck %s --check-prefix=MISSING
 
 // RUN: not obelisk --max-include-depth=invalid 2>&1 \

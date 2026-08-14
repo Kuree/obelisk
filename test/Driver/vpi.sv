@@ -8,12 +8,12 @@
 // RUN:   -I$(obelisk --print-resource-dir)/include \
 // RUN:   -Wl,-soname,libobelisk_vpi_second.so \
 // RUN:   -o %t.dir/lib/libobelisk_vpi_second.so
-// RUN: not obelisk --vpi=off %s %t.dir/lib/libobelisk_vpi_test.so \
+// RUN: not obelisk -fno-lto --vpi=off %s %t.dir/lib/libobelisk_vpi_test.so \
 // RUN:   -o %t.dir/off 2>&1 | FileCheck %s --check-prefix=OFF
-// RUN: cd %t.dir && obelisk --vpi=full %s lib/libobelisk_vpi_test.so \
+// RUN: cd %t.dir && obelisk -fno-lto --vpi=full %s lib/libobelisk_vpi_test.so \
 // RUN:   lib/libobelisk_vpi_test.so lib/libobelisk_vpi_second.so -o bin/simulator
 // RUN: %t.dir/bin/simulator | FileCheck %s --check-prefix=OUTPUT
-// RUN: cd %t.dir && obelisk --execution-tier=bytecode --vpi=full %s \
+// RUN: cd %t.dir && obelisk -fno-lto --execution-tier=bytecode --vpi=full %s \
 // RUN:   lib/libobelisk_vpi_test.so lib/libobelisk_vpi_second.so \
 // RUN:   -o bin/simulator-bytecode
 // RUN: %t.dir/bin/simulator-bytecode | FileCheck %s --check-prefix=OUTPUT

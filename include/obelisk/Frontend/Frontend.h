@@ -34,7 +34,6 @@ struct FrontendOptions {
   std::vector<std::string> includeSystemDirs;
   std::vector<std::string> defines;
   std::vector<std::string> undefines;
-  std::vector<std::string> commandFiles;
   std::vector<std::string> libDirs;
   std::vector<std::string> libExts;
   std::vector<std::string> libraryFiles;

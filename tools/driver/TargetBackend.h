@@ -70,6 +70,10 @@ struct NativeOutputOptions {
   std::string vpi = "off";
   std::string nativeScheduler = "auto";
   bool bytecode = false;
+  // Full LTO re-optimizes the entire runtime on every link. Opting out links
+  // the prebuilt runtime archive instead, trading peak simulation speed for a
+  // link that costs milliseconds rather than seconds.
+  bool noLTO = false;
   uint32_t optLevel = 3;
   uint32_t compileThreads = 1;
 };

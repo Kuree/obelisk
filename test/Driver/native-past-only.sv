@@ -1,5 +1,5 @@
-// RUN: obelisk --std=1800-2023 -O0 --native-scheduler=generic %s -o %t.o0
-// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=generic %s -o %t.o3
+// RUN: obelisk -fno-lto --std=1800-2023 -O0 --native-scheduler=generic %s -o %t.o0
+// RUN: obelisk -fno-lto --std=1800-2023 -O3 --native-scheduler=generic %s -o %t.o3
 // RUN: %t.o0 > %t.o0.out
 // RUN: %t.o3 > %t.o3.out
 // RUN: diff -u %t.o0.out %t.o3.out

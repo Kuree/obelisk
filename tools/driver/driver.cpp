@@ -28,7 +28,9 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/PassManager.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Option/Arg.h"
@@ -36,6 +38,8 @@
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/InitLLVM.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Process.h"
 #include "llvm/Support/StringSaver.h"
 #include "llvm/Support/ThreadPool.h"
 #include "llvm/Support/Threading.h"
@@ -62,6 +66,187 @@ static std::string driverExecutablePath;
 
 static void emitDriverError(const Twine &message) {
   WithColor::error(errs(), "obelisk") << message << '\n';
+}
+
+// Command files are the delivery format for real testbenches, and every other
+// tool treats them as "my whole command line, in a file" rather than a
+// frontend-only filelist. Expanding them into the driver's own argv before
+// option parsing is what makes that true here: a `.f` may carry any obelisk
+// option, not just the ones slang happens to understand. The frontend still
+// receives everything, because buildSlangArguments() reconstructs slang's
+// command line from the parsed options rather than forwarding the file.
+//
+// Tokenization mirrors slang's own command-file lexer (`#`, `//` and `/*`
+// comments, `$VAR` expansion, backslash escapes, single and double quotes) so
+// that a file accepted before is tokenized identically now.
+static void tokenizeCommandFile(StringRef text, StringSaver &saver,
+                                SmallVectorImpl<const char *> &tokens) {
+  std::string current;
+  bool pending = false;
+  auto finish = [&]() {
+    if (pending) {
+      tokens.push_back(saver.save(StringRef(current)).data());
+      current.clear();
+      pending = false;
+    }
+  };
+
+  const char *ptr = text.begin();
+  const char *end = text.end();
+  while (ptr != end) {
+    char c = *ptr++;
+    if (isSpace(static_cast<unsigned char>(c)) || c == '\0') {
+      finish();
+      continue;
+    }
+
+    // A '#' always starts a comment; '/' only when not already mid-argument,
+    // so that path components like `a//b` survive.
+    if (c == '#') {
+      finish();
+      while (ptr != end && *ptr != '\n' && *ptr != '\r')
+        ++ptr;
+      continue;
+    }
+    if (c == '/' && !pending && ptr != end) {
+      if (*ptr == '/') {
+        ++ptr;
+        while (ptr != end && *ptr != '\n' && *ptr != '\r')
+          ++ptr;
+        continue;
+      }
+      if (*ptr == '*') {
+        ++ptr;
+        while (ptr != end) {
+          char inner = *ptr++;
+          if (inner == '*' && ptr != end && *ptr == '/') {
+            ++ptr;
+            break;
+          }
+        }
+        continue;
+      }
+    }
+
+    if (c == '$' && ptr != end) {
+      // ${NAME} and $NAME both expand; an unset variable expands to nothing,
+      // matching slang.
+      const char *nameStart = ptr;
+      bool braced = *ptr == '{';
+      if (braced)
+        ++nameStart;
+      const char *scan = nameStart;
+      while (scan != end && (isAlnum(static_cast<unsigned char>(*scan)) ||
+                             *scan == '_'))
+        ++scan;
+      if (scan != nameStart && (!braced || (scan != end && *scan == '}'))) {
+        StringRef name(nameStart, scan - nameStart);
+        ptr = braced ? scan + 1 : scan;
+        if (std::optional<std::string> value = sys::Process::GetEnv(name)) {
+          current.append(*value);
+          pending = true;
+        }
+        continue;
+      }
+    }
+
+    if (c == '\\') {
+      if (ptr != end && *ptr != '\n' && *ptr != '\r') {
+        current.push_back(*ptr++);
+        pending = true;
+      }
+      continue;
+    }
+
+    // Any non-whitespace character starts an argument, so that a quoted empty
+    // string still produces a token.
+    pending = true;
+
+    if (c == '\'') {
+      while (ptr != end && *ptr != '\'')
+        current.push_back(*ptr++);
+      if (ptr != end)
+        ++ptr;
+      continue;
+    }
+    if (c == '"') {
+      while (ptr != end && *ptr != '"') {
+        char inner = *ptr++;
+        if (inner == '\\' && ptr != end)
+          inner = *ptr++;
+        current.push_back(inner);
+      }
+      if (ptr != end)
+        ++ptr;
+      continue;
+    }
+    current.push_back(c);
+  }
+  finish();
+}
+
+/// Splices the contents of every `-f`/`--filelist` command file into `argv`,
+/// recursively. Returns false after reporting a read error or a cycle.
+///
+/// This runs before option parsing, so it matches `-f` lexically rather than
+/// semantically: a literal `-f` supplied as some other option's separate value
+/// (`-D -f`) would be taken as a command file. Response-file expansion has the
+/// same ambiguity everywhere it exists, and the alternative is parsing twice.
+static bool expandCommandFiles(SmallVectorImpl<const char *> &argv,
+                               StringSaver &saver,
+                               SmallVectorImpl<std::string> &activeFiles) {
+  // A testbench that includes a shared `.f` twice is legitimate; only a file
+  // that (transitively) includes itself is an error, so track the active
+  // chain rather than every file ever visited.
+  static constexpr unsigned kMaxDepth = 64;
+  if (activeFiles.size() > kMaxDepth) {
+    emitDriverError("command files nested more than " + Twine(kMaxDepth) +
+                    " levels deep");
+    return false;
+  }
+
+  SmallVector<const char *> expanded;
+  for (size_t index = 0, size = argv.size(); index != size; ++index) {
+    StringRef argument(argv[index]);
+    if (argument != "-f" && argument != "--filelist") {
+      expanded.push_back(argv[index]);
+      continue;
+    }
+    if (index + 1 == size) {
+      emitDriverError("missing argument to '" + argument +
+                      "' (expected a command file)");
+      return false;
+    }
+    StringRef path(argv[++index]);
+
+    SmallString<256> canonical(path);
+    if (std::error_code error = sys::fs::real_path(path, canonical))
+      canonical = path;
+    if (llvm::is_contained(activeFiles, StringRef(canonical))) {
+      emitDriverError("command file '" + path + "' includes itself");
+      return false;
+    }
+
+    ErrorOr<std::unique_ptr<MemoryBuffer>> buffer =
+        MemoryBuffer::getFile(path, /*IsText=*/true);
+    if (!buffer) {
+      emitDriverError("could not read command file '" + path +
+                      "': " + buffer.getError().message());
+      return false;
+    }
+
+    SmallVector<const char *> nested;
+    tokenizeCommandFile((*buffer)->getBuffer(), saver, nested);
+    activeFiles.emplace_back(canonical);
+    bool expandedNested = expandCommandFiles(nested, saver, activeFiles);
+    activeFiles.pop_back();
+    if (!expandedNested)
+      return false;
+    expanded.append(nested.begin(), nested.end());
+  }
+
+  argv.assign(expanded.begin(), expanded.end());
+  return true;
 }
 
 // The compute graph is deliberately operation-independent, but the schedule
@@ -249,7 +434,6 @@ buildFrontendOptions(const InputArgList &args, bool &valid) {
   options.includeSystemDirs = args.getAllArgValues(OPT_isystem);
   options.defines = args.getAllArgValues(OPT_D);
   options.undefines = args.getAllArgValues(OPT_U);
-  options.commandFiles = args.getAllArgValues(OPT_f);
   options.libDirs = args.getAllArgValues(OPT_y);
   options.libExts = args.getAllArgValues(OPT_Y);
   options.libraryFiles = args.getAllArgValues(OPT_l);
@@ -297,7 +481,9 @@ static int executeCompilation(const InputArgList &args) {
   bool valid = true;
   obelisk::frontend::FrontendOptions frontendOptions =
       buildFrontendOptions(args, valid);
-  if (inputs.empty() && frontendOptions.commandFiles.empty()) {
+  // Command files were already spliced into argv, so anything they contributed
+  // is present here as an ordinary input.
+  if (inputs.empty()) {
     emitDriverError("no input files");
     valid = false;
   }
@@ -424,8 +610,7 @@ static int executeCompilation(const InputArgList &args) {
   if (failed(obelisk::driver::classifyDirectInputs(inputs, action == nullptr,
                                                    vpiMode, classifiedInputs)))
     return 1;
-  if (classifiedInputs.systemVerilog.empty() &&
-      frontendOptions.commandFiles.empty()) {
+  if (classifiedInputs.systemVerilog.empty()) {
     emitDriverError(
         "at least one SystemVerilog input or command file is required");
     return 1;
@@ -525,6 +710,7 @@ static int executeCompilation(const InputArgList &args) {
     nativeOptions.nativeScheduler = nativeScheduler.str();
     nativeOptions.bytecode = executionTier == "bytecode";
     nativeOptions.optLevel = optLevel;
+    nativeOptions.noLTO = args.hasFlag(OPT_fno_lto, OPT_flto, false);
     nativeOptions.compileThreads = resolvedCompilerThreads;
     nativeOptions.target = targetName == "wasm64"
                                ? obelisk::driver::TargetKind::Wasm
@@ -581,9 +767,17 @@ int main(int argc, char **argv) {
 
   BumpPtrAllocator allocator;
   StringSaver saver(allocator);
+
+  SmallVector<const char *> arguments(argv, argv + argc);
+  SmallVector<std::string> activeCommandFiles;
+  if (!expandCommandFiles(arguments, saver, activeCommandFiles))
+    return 1;
+
   bool parseFailed = false;
-  InputArgList args =
-      optionTable.parseArgs(argc, argv, OPT_UNKNOWN, saver, [&](StringRef msg) {
+  InputArgList args = optionTable.parseArgs(
+      static_cast<int>(arguments.size()),
+      const_cast<char *const *>(arguments.data()), OPT_UNKNOWN, saver,
+      [&](StringRef msg) {
         emitDriverError(msg);
         parseFailed = true;
       });

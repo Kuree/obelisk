@@ -1,4 +1,4 @@
-// RUN: not obelisk -O0 --vpi=read %s -o %t.vpi 2>&1 | FileCheck %s
+// RUN: not obelisk -fno-lto -O0 --vpi=read %s -o %t.vpi 2>&1 | FileCheck %s
 
 module associative_array_vpi_unsupported;
   int array[string];

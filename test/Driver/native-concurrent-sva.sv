@@ -1,8 +1,8 @@
-// RUN: obelisk --std=1800-2023 -O0 %s -o %t.o0.native
-// RUN: obelisk --std=1800-2023 -O0 --execution-tier=bytecode %s -o %t.o0.bytecode
-// RUN: obelisk --std=1800-2023 -O3 %s -o %t.o3.native
-// RUN: obelisk --std=1800-2023 -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
-// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=aot %s -o %t.o3.aot
+// RUN: obelisk -fno-lto --std=1800-2023 -O0 %s -o %t.o0.native
+// RUN: obelisk -fno-lto --std=1800-2023 -O0 --execution-tier=bytecode %s -o %t.o0.bytecode
+// RUN: obelisk -fno-lto --std=1800-2023 -O3 %s -o %t.o3.native
+// RUN: obelisk -fno-lto --std=1800-2023 -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
+// RUN: obelisk -fno-lto --std=1800-2023 -O3 --native-scheduler=aot %s -o %t.o3.aot
 // RUN: %t.o0.native > %t.o0.native.out
 // RUN: %t.o0.bytecode > %t.o0.bytecode.out
 // RUN: %t.o3.native > %t.o3.native.out

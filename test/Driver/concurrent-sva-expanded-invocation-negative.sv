@@ -1,6 +1,6 @@
-// RUN: not obelisk --std=1800-2023 -O0 -DLOCAL_INVOCATION %s -o %t.local 2>&1 | FileCheck %s --check-prefix=LOCAL
-// RUN: not obelisk --std=1800-2023 -O0 -DRECURSIVE_INVOCATION %s -o %t.recursive 2>&1 | FileCheck %s --check-prefix=NEGATIVE
-// RUN: not obelisk --std=1800-2023 -O0 -DRANGED_INVOCATION %s -o %t.ranged 2>&1 | FileCheck %s --check-prefix=NEGATIVE
+// RUN: not obelisk -fno-lto --std=1800-2023 -O0 -DLOCAL_INVOCATION %s -o %t.local 2>&1 | FileCheck %s --check-prefix=LOCAL
+// RUN: not obelisk -fno-lto --std=1800-2023 -O0 -DRECURSIVE_INVOCATION %s -o %t.recursive 2>&1 | FileCheck %s --check-prefix=NEGATIVE
+// RUN: not obelisk -fno-lto --std=1800-2023 -O0 -DRANGED_INVOCATION %s -o %t.ranged 2>&1 | FileCheck %s --check-prefix=NEGATIVE
 
 module concurrent_sva_expanded_invocation_negative;
   logic clk, request, acknowledge;

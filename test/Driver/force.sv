@@ -1,7 +1,7 @@
-// RUN: obelisk -O0 %s -o %t.native-o0
-// RUN: obelisk -O3 %s -o %t.native-o3
-// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode-o0
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode-o3
+// RUN: obelisk -fno-lto -O0 %s -o %t.native-o0
+// RUN: obelisk -fno-lto -O3 %s -o %t.native-o3
+// RUN: obelisk -fno-lto -O0 --execution-tier=bytecode %s -o %t.bytecode-o0
+// RUN: obelisk -fno-lto -O3 --execution-tier=bytecode %s -o %t.bytecode-o3
 // RUN: %t.native-o0 > %t.native-o0.out
 // RUN: %t.native-o3 > %t.native-o3.out
 // RUN: %t.bytecode-o0 > %t.bytecode-o0.out
@@ -10,9 +10,9 @@
 // RUN: diff -u %t.native-o0.out %t.bytecode-o0.out
 // RUN: diff -u %t.native-o0.out %t.bytecode-o3.out
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.native-o0.out
-// RUN: not obelisk -DDEPENDENT %s -o %t.dependent 2>&1 \
+// RUN: not obelisk -fno-lto -DDEPENDENT %s -o %t.dependent 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=DEPENDENT
-// RUN: not obelisk -DAUTOMATIC %s -o %t.automatic 2>&1 \
+// RUN: not obelisk -fno-lto -DAUTOMATIC %s -o %t.automatic 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=AUTOMATIC
 
 module force_alias_leaf(inout wire p);

@@ -1,10 +1,10 @@
-// RUN: obelisk --std=1800-2023 -O0 --vpi=read %s -o %t.o0.native
+// RUN: obelisk -fno-lto --std=1800-2023 -O0 --vpi=read %s -o %t.o0.native
 // RUN: %t.o0.native | FileCheck %s
-// RUN: obelisk --std=1800-2023 -O0 --vpi=read --execution-tier=bytecode %s -o %t.o0.bytecode
+// RUN: obelisk -fno-lto --std=1800-2023 -O0 --vpi=read --execution-tier=bytecode %s -o %t.o0.bytecode
 // RUN: %t.o0.bytecode | FileCheck %s
-// RUN: obelisk --std=1800-2023 -O3 %s -o %t.o3.native
+// RUN: obelisk -fno-lto --std=1800-2023 -O3 %s -o %t.o3.native
 // RUN: %t.o3.native | FileCheck %s
-// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=aot %s -o %t.o3.aot
+// RUN: obelisk -fno-lto --std=1800-2023 -O3 --native-scheduler=aot %s -o %t.o3.aot
 // RUN: %t.o3.aot | FileCheck %s
 // RUN: obelisk --std=1800-2023 -O0 -emit-sim %s | FileCheck %s --check-prefix=SIM
 // RUN: obelisk --std=1800-2023 -O0 -emit-llvm %s | FileCheck %s --check-prefix=LLVM-FLAG

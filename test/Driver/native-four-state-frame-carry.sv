@@ -4,9 +4,9 @@
 // two planes one limb apart, so the tiers must marshal the planes separately.
 // Copying one contiguous run instead turns x and z into 0 for every logic
 // value narrower than a limb.
-// RUN: obelisk --native-scheduler=generic %s -o %t.native
-// RUN: obelisk --native-scheduler=aot %s -o %t.aot
-// RUN: obelisk --execution-tier=bytecode %s -o %t.bytecode
+// RUN: obelisk -fno-lto --native-scheduler=generic %s -o %t.native
+// RUN: obelisk -fno-lto --native-scheduler=aot %s -o %t.aot
+// RUN: obelisk -fno-lto --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.native > %t.native.out
 // RUN: %t.aot > %t.aot.out
 // RUN: %t.bytecode > %t.bytecode.out

@@ -1,6 +1,6 @@
-// RUN: obelisk -O2 --native-scheduler=auto %s -o %t.auto
-// RUN: obelisk -O2 --native-scheduler=eval %s -o %t.eval
-// RUN: obelisk -O2 --native-scheduler=generic %s -o %t.generic
+// RUN: obelisk -fno-lto -O2 --native-scheduler=auto %s -o %t.auto
+// RUN: obelisk -fno-lto -O2 --native-scheduler=eval %s -o %t.eval
+// RUN: obelisk -fno-lto -O2 --native-scheduler=generic %s -o %t.generic
 // RUN: obelisk -O2 -emit-llvm --native-scheduler=eval %s -o - \
 // RUN:   | FileCheck %s --check-prefix=LLVM
 // RUN: %t.auto > %t.auto.out

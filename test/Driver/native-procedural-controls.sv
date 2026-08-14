@@ -1,6 +1,6 @@
-// RUN: obelisk %s -o %t.native
+// RUN: obelisk -fno-lto %s -o %t.native
 // RUN: %t.native > %t.native.out
-// RUN: obelisk --execution-tier=bytecode %s -o %t.bytecode
+// RUN: obelisk -fno-lto --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode > %t.bytecode.out
 // RUN: diff -u %t.native.out %t.bytecode.out
 // RUN: FileCheck %s < %t.native.out

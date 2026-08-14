@@ -1,6 +1,6 @@
-// RUN: obelisk -O0 %s -o %t.native
+// RUN: obelisk -fno-lto -O0 %s -o %t.native
 // RUN: %t.native | FileCheck %s
-// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: obelisk -fno-lto -O0 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
 
 module native_string_format;

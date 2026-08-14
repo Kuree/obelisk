@@ -1,4 +1,4 @@
-// RUN: obelisk --compile-threads=1 %s -o %t.native
+// RUN: obelisk -fno-lto --compile-threads=1 %s -o %t.native
 // RUN: %t.native | FileCheck %s
 
 module native_name_shadowing;

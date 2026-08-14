@@ -2,12 +2,12 @@
 // state planes, so every execution tier must produce the same file.
 //
 // RUN: %split-file %s %t
-// RUN: cd %t && obelisk design.sv -o %t/native.sim
+// RUN: cd %t && obelisk -fno-lto design.sv -o %t/native.sim
 // RUN: cd %t && %t/native.sim
 // RUN: FileCheck %s --check-prefix=VCD --implicit-check-not='$root' \
 // RUN:   < %t/waves.vcd
 //
-// RUN: cd %t && obelisk --execution-tier=bytecode design.sv \
+// RUN: cd %t && obelisk -fno-lto --execution-tier=bytecode design.sv \
 // RUN:   -o %t/bytecode.sim
 // RUN: cd %t && %t/bytecode.sim
 // RUN: FileCheck %s --check-prefix=VCD --implicit-check-not='$root' \
@@ -15,30 +15,30 @@
 //
 // A VCD may have multiple root scopes. Flattening the synthetic design root
 // must retain all independently elaborated top-level modules.
-// RUN: cd %t && obelisk multiple-tops.sv -o %t/multiple-tops.sim
+// RUN: cd %t && obelisk -fno-lto multiple-tops.sv -o %t/multiple-tops.sim
 // RUN: cd %t && %t/multiple-tops.sim
 // RUN: FileCheck %s --check-prefix=MULTIPLE --implicit-check-not='$root' \
 // RUN:   < %t/multiple.vcd
 //
 // Explicit generic scheduling still needs the waveform database even with VPI
 // disabled, and an individual variable is a valid $dumpvars selection.
-// RUN: cd %t && obelisk --native-scheduler=generic selected.sv \
+// RUN: cd %t && obelisk -fno-lto --native-scheduler=generic selected.sv \
 // RUN:   -o %t/selected.sim
 // RUN: cd %t && %t/selected.sim
 // RUN: FileCheck %s --check-prefix=SELECTED < %t/selected.vcd
 //
 // The LRM permits a string expression and an omitted argument as file names.
-// RUN: cd %t && obelisk computed.sv -o %t/computed.sim
+// RUN: cd %t && obelisk -fno-lto computed.sv -o %t/computed.sim
 // RUN: cd %t && %t/computed.sim
 // RUN: FileCheck %s --check-prefix=COMPUTED < %t/computed.vcd
-// RUN: cd %t && obelisk --execution-tier=bytecode computed.sv \
+// RUN: cd %t && obelisk -fno-lto --execution-tier=bytecode computed.sv \
 // RUN:   -o %t/computed-bytecode.sim
 // RUN: cd %t && %t/computed-bytecode.sim
 // RUN: FileCheck %s --check-prefix=COMPUTED < %t/computed.vcd
-// RUN: cd %t && obelisk default-name.sv -o %t/default-name.sim
+// RUN: cd %t && obelisk -fno-lto default-name.sv -o %t/default-name.sim
 // RUN: cd %t && %t/default-name.sim
 // RUN: FileCheck %s --check-prefix=DEFAULT-NAME < %t/dump.vcd
-// RUN: cd %t && obelisk integral-name.sv -o %t/integral-name.sim
+// RUN: cd %t && obelisk -fno-lto integral-name.sv -o %t/integral-name.sim
 // RUN: cd %t && %t/integral-name.sim
 // RUN: FileCheck %s --check-prefix=INTEGRAL-NAME < %t/integral.vcd
 

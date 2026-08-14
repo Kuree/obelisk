@@ -1,0 +1,1 @@
+-D "QUOTED_MACRO=42"

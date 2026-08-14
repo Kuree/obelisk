@@ -3236,7 +3236,6 @@ buildSlangArguments(ArrayRef<std::string> inputs,
   appendValues(result, "--isystem", options.includeSystemDirs);
   appendValues(result, "-D", options.defines);
   appendValues(result, "-U", options.undefines);
-  appendValues(result, "-f", options.commandFiles);
   appendValues(result, "-y", options.libDirs);
   appendValues(result, "-Y", options.libExts);
   appendValues(result, "-v", options.libraryFiles);

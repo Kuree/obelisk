@@ -4,13 +4,13 @@
 // RUN:   -I$(obelisk --print-resource-dir)/include \
 // RUN:   -Wl,-soname,libobelisk_vpi_net_probe.so \
 // RUN:   -o %t.dir/lib/libobelisk_vpi_net_probe.so
-// RUN: cd %t.dir && obelisk -O2 --vpi=read --native-scheduler=auto %s \
+// RUN: cd %t.dir && obelisk -fno-lto -O2 --vpi=read --native-scheduler=auto %s \
 // RUN:   lib/libobelisk_vpi_net_probe.so -o bin/read-auto
-// RUN: cd %t.dir && obelisk -O2 --vpi=full --native-scheduler=auto %s \
+// RUN: cd %t.dir && obelisk -fno-lto -O2 --vpi=full --native-scheduler=auto %s \
 // RUN:   lib/libobelisk_vpi_net_probe.so -o bin/full-auto
-// RUN: cd %t.dir && obelisk -O2 --vpi=read --native-scheduler=generic %s \
+// RUN: cd %t.dir && obelisk -fno-lto -O2 --vpi=read --native-scheduler=generic %s \
 // RUN:   lib/libobelisk_vpi_net_probe.so -o bin/read-generic
-// RUN: cd %t.dir && obelisk --execution-tier=bytecode --vpi=read %s \
+// RUN: cd %t.dir && obelisk -fno-lto --execution-tier=bytecode --vpi=read %s \
 // RUN:   lib/libobelisk_vpi_net_probe.so -o bin/read-bytecode
 // RUN: %t.dir/bin/read-generic > %t.oracle.out
 // RUN: %t.dir/bin/read-auto > %t.read-auto.out

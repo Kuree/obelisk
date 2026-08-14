@@ -1,15 +1,15 @@
-// RUN: obelisk -O0 --std=1800-2017 %s -o %t.17.o0.native
+// RUN: obelisk -fno-lto -O0 --std=1800-2017 %s -o %t.17.o0.native
 // RUN: %t.17.o0.native --seed=5 > %t.17.o0.native.out
-// RUN: obelisk -O0 --execution-tier=bytecode --std=1800-2017 %s -o %t.17.o0.bytecode
+// RUN: obelisk -fno-lto -O0 --execution-tier=bytecode --std=1800-2017 %s -o %t.17.o0.bytecode
 // RUN: %t.17.o0.bytecode --seed=5 > %t.17.o0.bytecode.out
 // RUN: diff -u %t.17.o0.native.out %t.17.o0.bytecode.out
-// RUN: obelisk -O3 --std=1800-2017 %s -o %t.17.o3.native
+// RUN: obelisk -fno-lto -O3 --std=1800-2017 %s -o %t.17.o3.native
 // RUN: %t.17.o3.native --seed=5 > %t.17.o3.native.out
-// RUN: obelisk -O3 --execution-tier=bytecode --std=1800-2017 %s -o %t.17.o3.bytecode
+// RUN: obelisk -fno-lto -O3 --execution-tier=bytecode --std=1800-2017 %s -o %t.17.o3.bytecode
 // RUN: %t.17.o3.bytecode --seed=5 > %t.17.o3.bytecode.out
 // RUN: diff -u %t.17.o0.native.out %t.17.o3.native.out
 // RUN: diff -u %t.17.o0.native.out %t.17.o3.bytecode.out
-// RUN: obelisk -O0 --std=1800-2023 %s -o %t.23.o0.native
+// RUN: obelisk -fno-lto -O0 --std=1800-2023 %s -o %t.23.o0.native
 // RUN: %t.23.o0.native --seed=5 > %t.23.o0.native.out
 // RUN: diff -u %t.17.o0.native.out %t.23.o0.native.out
 // RUN: %t.23.o0.native --seed=6 > %t.seed6.out

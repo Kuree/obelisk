@@ -1,9 +1,9 @@
-// RUN: not obelisk -O0 -DCONCURRENT %s -o %t.concurrent 2>&1 | FileCheck %s --check-prefix=CONCURRENT
-// RUN: not obelisk -O0 -DACTION_CONCURRENT %s -o %t.action-concurrent 2>&1 | FileCheck %s --check-prefix=ACTION-CONCURRENT
-// RUN: not obelisk -O0 -DDYNAMIC_LEVEL %s -o %t.dynamic 2>&1 | FileCheck %s --check-prefix=DYNAMIC
-// RUN: not obelisk -O0 -DACTION_DYNAMIC %s -o %t.action-dynamic 2>&1 | FileCheck %s --check-prefix=ACTION-DYNAMIC
-// RUN: not obelisk -O0 -DPROCEDURAL_SCOPE %s -o %t.scope 2>&1 | FileCheck %s --check-prefix=SCOPE
-// RUN: not obelisk -O0 -DINVALID_CONTROL %s -o %t.invalid 2>&1 | FileCheck %s --check-prefix=INVALID
+// RUN: not obelisk -fno-lto -O0 -DCONCURRENT %s -o %t.concurrent 2>&1 | FileCheck %s --check-prefix=CONCURRENT
+// RUN: not obelisk -fno-lto -O0 -DACTION_CONCURRENT %s -o %t.action-concurrent 2>&1 | FileCheck %s --check-prefix=ACTION-CONCURRENT
+// RUN: not obelisk -fno-lto -O0 -DDYNAMIC_LEVEL %s -o %t.dynamic 2>&1 | FileCheck %s --check-prefix=DYNAMIC
+// RUN: not obelisk -fno-lto -O0 -DACTION_DYNAMIC %s -o %t.action-dynamic 2>&1 | FileCheck %s --check-prefix=ACTION-DYNAMIC
+// RUN: not obelisk -fno-lto -O0 -DPROCEDURAL_SCOPE %s -o %t.scope 2>&1 | FileCheck %s --check-prefix=SCOPE
+// RUN: not obelisk -fno-lto -O0 -DINVALID_CONTROL %s -o %t.invalid 2>&1 | FileCheck %s --check-prefix=INVALID
 
 module assertion_control_unsupported;
 `ifdef CONCURRENT

@@ -529,7 +529,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
     return failure();
 
   bool fullLTO = options.kind == NativeOutputKind::Executable &&
-                 backend->usesFullLTO(options.optLevel);
+                 !options.noLTO && backend->usesFullLTO(options.optLevel);
   if (fullLTO) {
     // LLD's explicit --lto=full mode selects LLVM's unified LTO pipeline.
     // Match Clang -flto=full -funified-lto bitcode so every module in the

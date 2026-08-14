@@ -1,10 +1,10 @@
-// RUN: obelisk --std=1800-2023 -O0 -DASSERT_DIRECTIVE %s -o %t.assert
-// RUN: obelisk --std=1800-2023 -O0 -DASSUME_DIRECTIVE %s -o %t.assume
-// RUN: obelisk --std=1800-2023 -O0 -DCOVER_DIRECTIVE %s -o %t.cover
-// RUN: not obelisk --std=1800-2023 -O0 -DEXPECT_DIRECTIVE %s -o %t.expect 2>&1 | FileCheck %s --check-prefix=EXPECT
-// RUN: obelisk --std=1800-2023 -O0 -DDISABLE_IFF %s -o %t.disable
-// RUN: not obelisk --std=1800-2023 -O0 -DAUTOMATIC_DISABLE %s -o %t.automatic-disable 2>&1 | FileCheck %s --check-prefix=AUTOMATIC-DISABLE
-// RUN: not obelisk --std=1800-2023 -O0 -DRANGED_DELAY %s -o %t.range 2>&1 | FileCheck %s --check-prefix=RANGE
+// RUN: obelisk -fno-lto --std=1800-2023 -O0 -DASSERT_DIRECTIVE %s -o %t.assert
+// RUN: obelisk -fno-lto --std=1800-2023 -O0 -DASSUME_DIRECTIVE %s -o %t.assume
+// RUN: obelisk -fno-lto --std=1800-2023 -O0 -DCOVER_DIRECTIVE %s -o %t.cover
+// RUN: not obelisk -fno-lto --std=1800-2023 -O0 -DEXPECT_DIRECTIVE %s -o %t.expect 2>&1 | FileCheck %s --check-prefix=EXPECT
+// RUN: obelisk -fno-lto --std=1800-2023 -O0 -DDISABLE_IFF %s -o %t.disable
+// RUN: not obelisk -fno-lto --std=1800-2023 -O0 -DAUTOMATIC_DISABLE %s -o %t.automatic-disable 2>&1 | FileCheck %s --check-prefix=AUTOMATIC-DISABLE
+// RUN: not obelisk -fno-lto --std=1800-2023 -O0 -DRANGED_DELAY %s -o %t.range 2>&1 | FileCheck %s --check-prefix=RANGE
 
 module concurrent_sva_unsupported;
   logic clk, a, b, reset;
