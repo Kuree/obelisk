@@ -1,4 +1,8 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines -o /dev/null
 
 // A dynamically sized stream is flattened into a runtime-sized one-bit
 // container, reordered in slice-sized blocks, and grouped into the smallest
@@ -58,9 +62,29 @@
 // CHECK: %[[PACKED_BIT:.*]] = obelisk_sim.logic.to_bits
 // CHECK-NOT: arith.extui {{.*}} : i1 to i1
 // CHECK: obelisk_sim.container.write %[[BIT_PACKET]], {{.*}}, %[[PACKED_BIT]]
+// A runtime-sized stream may target a fixed packed value when it fits. The
+// conversion pads on the right and diagnoses an oversized stream at runtime.
+// CHECK: %[[FIXED_STREAM:.*]] = obelisk_sim.container.create
+// CHECK: %[[FIXED_WIDTH:.*]] = obelisk_sim.container.size %[[FIXED_STREAM]]
+// CHECK: %[[FITS:.*]] = arith.cmpi ule, %[[FIXED_WIDTH]], {{.*}} : i64
+// CHECK: cf.cond_br %[[FITS]]
+// CHECK: obelisk_sim.container.read %[[FIXED_STREAM]]
+// CHECK: obelisk_sim.ref.store
+// CHECK: obelisk_sim.fatal
+// Strings participate recursively as dynamic arrays of bytes. A string target
+// greedily receives the runtime stream in eight-bit elements.
+// CHECK: obelisk_sim.container.read {{.*}} : {{.*}} -> !obelisk_sim.string
+// CHECK: obelisk_sim.string.length
+// CHECK: obelisk_sim.string.getc
+// CHECK: obelisk_sim.ref.store
+// CHECK: %[[JOINED_BYTE:.*]] = obelisk_sim.string.from_packed
+// CHECK: obelisk_sim.string.concat {{.*}}%[[JOINED_BYTE]]
 // CHECK-NOT: obelisk.sv.
 
-module {
+module attributes {
+  llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
+  llvm.target_triple = "x86_64-unknown-linux-gnu"
+} {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "dynamic_pack", name = "dynamic_pack", node_id = 0 : i64, sym_name = "s0.dynamic_pack"} {
   }
   obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
@@ -79,6 +103,12 @@ module {
         obelisk.sv.symbol.variable attributes {hierarchical_name = "dynamic_pack.packet", lifetime = 1 : i32, name = "packet", node_id = 7 : i64, semantic_type = !obelisk.queue<!obelisk.integral<8, true, false, 7 : 0, byte>, 0>, sym_name = "s7.packet"} {
         }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "dynamic_pack.bits", lifetime = 1 : i32, name = "bits", node_id = 30 : i64, semantic_type = !obelisk.queue<!obelisk.integral<1, false, false, 0 : 0, bit>, 0>, sym_name = "s30.bits"} {
+        }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "dynamic_pack.fixed", lifetime = 1 : i32, name = "fixed", node_id = 37 : i64, semantic_type = !obelisk.integral<64, false, true, 63 : 0, logic>, sym_name = "s37.fixed"} {
+        }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "dynamic_pack.parts", lifetime = 1 : i32, name = "parts", node_id = 44 : i64, semantic_type = !obelisk.queue<!obelisk.string, 0>, sym_name = "s44.parts"} {
+        }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "dynamic_pack.joined", lifetime = 1 : i32, name = "joined", node_id = 45 : i64, semantic_type = !obelisk.string, sym_name = "s45.joined"} {
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "dynamic_pack", node_id = 8 : i64, procedure_kind = 0 : i32, sym_name = "s8"} {
           obelisk.sv.statement.expression_statement attributes {node_id = 9 : i64} {
@@ -126,6 +156,30 @@ module {
               obelisk.sv.expression.conversion attributes {is_signed = false, node_id = 34 : i64, semantic_type = !obelisk.queue<!obelisk.integral<1, false, false, 0 : 0, bit>, 0>} {
                 obelisk.sv.expression.streaming attributes {bitstream_width = 4 : i64, is_fixed_size = true, is_signed = false, node_id = 35 : i64, semantic_type = !obelisk.void, slice_size = 0 : i64, stream_count = 1 : i64, stream_with_flags = array<i64: 0>} {
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 36 : i64, referenced_path = "dynamic_pack.state", referenced_symbol = @s1.$root::@s3.dynamic_pack::@s4.dynamic_pack::@s18.state, semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>} {
+                  }
+                }
+              }
+            }
+          }
+          obelisk.sv.statement.expression_statement attributes {node_id = 38 : i64} {
+            obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 39 : i64, semantic_type = !obelisk.integral<64, false, true, 63 : 0, logic>} {
+              obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 40 : i64, referenced_path = "dynamic_pack.fixed", referenced_symbol = @s1.$root::@s3.dynamic_pack::@s4.dynamic_pack::@s37.fixed, semantic_type = !obelisk.integral<64, false, true, 63 : 0, logic>} {
+              }
+              obelisk.sv.expression.conversion attributes {is_signed = false, node_id = 43 : i64, semantic_type = !obelisk.integral<64, false, true, 63 : 0, logic>} {
+                obelisk.sv.expression.streaming attributes {bitstream_width = 0 : i64, is_fixed_size = false, is_signed = false, node_id = 41 : i64, semantic_type = !obelisk.void, slice_size = 0 : i64, stream_count = 1 : i64, stream_with_flags = array<i64: 0>} {
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 42 : i64, referenced_path = "dynamic_pack.data", referenced_symbol = @s1.$root::@s3.dynamic_pack::@s4.dynamic_pack::@s6.data, semantic_type = !obelisk.dynarray<!obelisk.integral<8, true, false, 7 : 0, byte>>} {
+                  }
+                }
+              }
+            }
+          }
+          obelisk.sv.statement.expression_statement attributes {node_id = 46 : i64} {
+            obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 47 : i64, semantic_type = !obelisk.string} {
+              obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 48 : i64, referenced_path = "dynamic_pack.joined", referenced_symbol = @s1.$root::@s3.dynamic_pack::@s4.dynamic_pack::@s45.joined, semantic_type = !obelisk.string} {
+              }
+              obelisk.sv.expression.conversion attributes {is_signed = false, node_id = 49 : i64, semantic_type = !obelisk.string} {
+                obelisk.sv.expression.streaming attributes {bitstream_width = 0 : i64, is_fixed_size = false, is_signed = false, node_id = 50 : i64, semantic_type = !obelisk.void, slice_size = 0 : i64, stream_count = 1 : i64, stream_with_flags = array<i64: 0>} {
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 51 : i64, referenced_path = "dynamic_pack.parts", referenced_symbol = @s1.$root::@s3.dynamic_pack::@s4.dynamic_pack::@s44.parts, semantic_type = !obelisk.queue<!obelisk.string, 0>} {
                   }
                 }
               }
