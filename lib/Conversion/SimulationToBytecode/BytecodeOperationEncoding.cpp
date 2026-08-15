@@ -698,6 +698,15 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return emitIntrinsic(plan, kIntrinsicDumpLimit, {op.getBytes()}, {});
   if (isa<sim::SimDumpFlushOp>(operation))
     return emitIntrinsic(plan, kIntrinsicDumpFlush, {}, {});
+  if (auto op = dyn_cast<sim::SimDumpPortsOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicDumpPorts,
+                         {op.getPath(), op.getScope(),
+                          op.getTimescaleExponent()},
+                         {});
+  if (auto op = dyn_cast<sim::SimDumpPortsControlOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicDumpPortsControl,
+                         {op.getPath(), op.getValue()}, {},
+                         static_cast<uint32_t>(op.getAction()));
   if (auto op = dyn_cast<sim::SimMonitorRegisterOp>(operation))
     return emitIntrinsic(plan, kIntrinsicMonitorRegister, {op.getProcess()},
                          {});

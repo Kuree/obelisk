@@ -32,7 +32,8 @@ FailureOr<SmallVector<NativePeriodicClock>> buildNativePeriodicClockPlan(
   module.walk([&](Operation *operation) {
     if (isa<sim::SimDumpOpenOp, sim::SimDumpOpenStringOp, sim::SimDumpVarsOp,
             sim::SimDumpAllOp,
-            sim::SimDumpControlOp, sim::SimDumpFlushOp>(operation))
+            sim::SimDumpControlOp, sim::SimDumpFlushOp, sim::SimDumpPortsOp,
+            sim::SimDumpPortsControlOp>(operation))
       dumping = true;
   });
   if (dumping)

@@ -343,7 +343,8 @@ LogicalResult lowerPackedSimulationOperations(
       sim::SimFileSeekOp, sim::SimFileTellOp, sim::SimFileRewindOp,
       sim::SimDumpOpenOp, sim::SimDumpOpenStringOp, sim::SimDumpTimescaleOp,
       sim::SimDumpVarsOp, sim::SimDumpAllOp, sim::SimDumpControlOp,
-      sim::SimDumpLimitOp, sim::SimDumpFlushOp>();
+      sim::SimDumpLimitOp, sim::SimDumpFlushOp, sim::SimDumpPortsOp,
+      sim::SimDumpPortsControlOp>();
   packedTarget.addIllegalOp<
       sim::SimContextStorageOp, sim::SimContextNetOp, sim::SimContextDriverOp,
       sim::SimContextEventOp, sim::SimRefAllocOp, sim::SimRefReleaseOwnerOp,

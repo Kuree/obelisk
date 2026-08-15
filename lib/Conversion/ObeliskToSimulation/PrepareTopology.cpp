@@ -587,6 +587,94 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     }
     descriptors[path] = target->second;
   }
+  uint64_t nextPortId = 0;
+  llvm::StringSet<> emittedPorts;
+  for (semantic::SVPortConnectionOp connection : portAliases.connections) {
+    StringRef path = connection.getInternalPath().value_or(StringRef{});
+    if (path.empty())
+      continue;
+    auto source = descriptors.find(path);
+    if (source == descriptors.end()) {
+      // Interface-instance and untyped ports intentionally have no packed
+      // canonical state descriptor and therefore cannot appear in EVCD.
+      if (connection.getInterfaceInstanceSymbol() ||
+          isa<semantic::UntypedType>(connection.getFormalType()))
+        continue;
+      emitError(getSemanticLocation(connection))
+          << "module port has no flattened source descriptor: " << path;
+      invalid = true;
+      continue;
+    }
+    if (source->second.kind != DescriptorInfo::Kind::Storage &&
+        source->second.kind != DescriptorInfo::Kind::Net) {
+      emitError(getSemanticLocation(connection))
+          << "module port does not reference packed storage or a net: "
+          << path;
+      invalid = true;
+      continue;
+    }
+    // The current EVCD record is one fixed packed vector. Keep unpacked and
+    // otherwise aggregate-only ports out of that inventory until they can be
+    // expanded into declaration-ordered element records; their executable
+    // port connection remains fully supported.
+    if (!sim::getPackedWidth(source->second.type))
+      continue;
+    sim::PortDirection direction = sim::PortDirection::InOut;
+    switch (connection.getDirection()) {
+    case semantic::SVArgumentDirection::In:
+      direction = sim::PortDirection::Input;
+      break;
+    case semantic::SVArgumentDirection::Out:
+      direction = sim::PortDirection::Output;
+      break;
+    case semantic::SVArgumentDirection::InOut:
+    case semantic::SVArgumentDirection::Ref:
+      direction = sim::PortDirection::InOut;
+      break;
+    }
+    std::optional<uint64_t> portScopeId;
+    std::string portScopeHierarchy;
+    for (Operation *member : getChildren(connection->getParentOp()))
+      if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(member)) {
+        auto found = scopes.ids.find(body);
+        if (found != scopes.ids.end()) {
+          portScopeId = found->second;
+          portScopeHierarchy = getHierarchyName(body).str();
+        }
+        break;
+      }
+    if (!portScopeId) {
+      emitError(getSemanticLocation(connection))
+          << "module port has no owning instance scope: " << path;
+      invalid = true;
+      continue;
+    }
+    std::string portKey =
+        (Twine(*portScopeId) + ":" + Twine(connection.getFormalOrdinal()))
+            .str();
+    if (!emittedPorts.insert(portKey).second)
+      continue;
+    StringRef formalName =
+        connection.getFormalName().value_or(path.rsplit('.').second);
+    if (portScopeHierarchy.empty() || formalName.empty()) {
+      emitError(getSemanticLocation(connection))
+          << "module port has no reflected formal hierarchy: " << path;
+      invalid = true;
+      continue;
+    }
+    std::string portHierarchy =
+        (Twine(portScopeHierarchy) + "." + formalName).str();
+    sim::SimPortDeclOp::create(
+        builder, getSemanticLocation(connection), nextPortId++,
+        *portScopeId, source->second.id,
+        source->second.kind == DescriptorInfo::Kind::Net,
+        source->second.viewOffset, source->second.type, direction,
+        connection.getFormalOrdinal(),
+        builder.getStringAttr(portHierarchy),
+        connection.getFormalName()
+            ? builder.getStringAttr(*connection.getFormalName())
+            : StringAttr{});
+  }
   if (invalid)
     return failure();
   return descriptors;

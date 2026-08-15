@@ -47,6 +47,16 @@ def SimNativeSchedulerMode
   let cppNamespace = "::obelisk::sim";
 }
 
+def SimPortInput : I32EnumAttrCase<"Input", 0, "input">;
+def SimPortOutput : I32EnumAttrCase<"Output", 1, "output">;
+def SimPortInOut : I32EnumAttrCase<"InOut", 2, "inout">;
+def SimPortDirection
+    : I32EnumAttr<"PortDirection", "elaborated module-port direction", [
+        SimPortInput, SimPortOutput, SimPortInOut
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 def SimManagedWatchField
     : I32EnumAttrCase<"Field", 1, "field">;
 def SimManagedWatchContainerSize
@@ -614,6 +624,19 @@ def SimManagedRootCandidate : I32EnumAttrCase<"Candidate", 1, "candidate">;
 def SimManagedRootMode
     : I32EnumAttr<"ManagedRootMode", "managed root classification", [
         SimManagedRootExact, SimManagedRootCandidate
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
+def SimDumpPortsOff : I32EnumAttrCase<"Off", 0, "off">;
+def SimDumpPortsOn : I32EnumAttrCase<"On", 1, "on">;
+def SimDumpPortsAll : I32EnumAttrCase<"All", 2, "all">;
+def SimDumpPortsFlush : I32EnumAttrCase<"Flush", 3, "flush">;
+def SimDumpPortsLimit : I32EnumAttrCase<"Limit", 4, "limit">;
+def SimDumpPortsAction
+    : I32EnumAttr<"DumpPortsAction", "EVCD session control action", [
+        SimDumpPortsOff, SimDumpPortsOn, SimDumpPortsAll,
+        SimDumpPortsFlush, SimDumpPortsLimit
       ]> {
   let cppNamespace = "::obelisk::sim";
 }

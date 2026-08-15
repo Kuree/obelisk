@@ -370,7 +370,8 @@ enum {
   OBELISK_RT_DESCRIPTOR_PROCESS = 6,
   OBELISK_RT_DESCRIPTOR_FRAGMENT = 7,
   OBELISK_RT_DESCRIPTOR_FUNCTION = 8,
-  OBELISK_RT_DESCRIPTOR_OBSERVER = 9
+  OBELISK_RT_DESCRIPTOR_OBSERVER = 9,
+  OBELISK_RT_DESCRIPTOR_PORT = 10
 };
 
 typedef struct obelisk_rt_handle_v1 {
@@ -879,6 +880,8 @@ enum {
   // value: bit offset, allowed managed-kind mask, and root-slot flags.
   OBELISK_RT_INTRINSIC_V1_STATE_ALLOC_TYPED = UINT32_C(0x00010230),
   OBELISK_RT_INTRINSIC_V1_ERROR = UINT32_C(0x00010231),
+  OBELISK_RT_INTRINSIC_V1_DUMP_PORTS = UINT32_C(0x00010232),
+  OBELISK_RT_INTRINSIC_V1_DUMP_PORTS_CONTROL = UINT32_C(0x00010233),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -1051,14 +1054,19 @@ enum {
   OBELISK_RT_DESIGN_RECORD_DRIVER = 4,
   OBELISK_RT_DESIGN_RECORD_PROCESS = 5,
   OBELISK_RT_DESIGN_RECORD_TYPE = 6,
-  OBELISK_RT_DESIGN_RECORD_FUNCTION = 7
+  OBELISK_RT_DESIGN_RECORD_FUNCTION = 7,
+  OBELISK_RT_DESIGN_RECORD_PORT = 8
 };
 
 typedef uint32_t obelisk_rt_design_capability;
 enum {
   OBELISK_RT_DESIGN_CAP_READ = UINT32_C(1) << 0,
   OBELISK_RT_DESIGN_CAP_WRITE = UINT32_C(1) << 1,
-  OBELISK_RT_DESIGN_CAP_ITERATE = UINT32_C(1) << 2
+  OBELISK_RT_DESIGN_CAP_ITERATE = UINT32_C(1) << 2,
+  OBELISK_RT_DESIGN_CAP_PORT_INPUT = UINT32_C(1) << 3,
+  OBELISK_RT_DESIGN_CAP_PORT_OUTPUT = UINT32_C(1) << 4,
+  OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT = 8,
+  OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK = UINT32_C(0xffffff) << 8
 };
 
 typedef struct obelisk_rt_design_cursor_v1 {
@@ -3009,6 +3017,17 @@ obelisk_rt_status obelisk_rt_v1_dump_limit(obelisk_rt_context *context,
                                            uint64_t bytes);
 obelisk_rt_status obelisk_rt_v1_dump_flush(obelisk_rt_context *context);
 obelisk_rt_status obelisk_rt_v1_dump_close(obelisk_rt_context *context);
+
+// Extended VCD sessions are independent of the ordinary VCD session and are
+// keyed by filename. Repeated selections for one file accumulate module
+// scopes. An empty control path targets all sessions; an unknown nonempty path
+// is ignored. Actions are 0=off, 1=on, 2=checkpoint, 3=flush, and 4=limit.
+obelisk_rt_status obelisk_rt_v1_dump_ports(
+    obelisk_rt_context *context, obelisk_rt_string_v1 path,
+    obelisk_rt_string_v1 scope, int32_t timescale_exponent);
+obelisk_rt_status obelisk_rt_v1_dump_ports_control(
+    obelisk_rt_context *context, obelisk_rt_string_v1 path, uint32_t action,
+    uint64_t value);
 
 typedef uint32_t obelisk_rt_fragment_code_kind;
 enum { OBELISK_RT_FRAGMENT_NATIVE = 0, OBELISK_RT_FRAGMENT_BYTECODE = 1 };

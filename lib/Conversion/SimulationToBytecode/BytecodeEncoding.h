@@ -126,6 +126,9 @@ constexpr uint32_t kIntrinsicDumpAll = OBELISK_RT_INTRINSIC_V1_DUMP_ALL;
 constexpr uint32_t kIntrinsicDumpControl = OBELISK_RT_INTRINSIC_V1_DUMP_CONTROL;
 constexpr uint32_t kIntrinsicDumpLimit = OBELISK_RT_INTRINSIC_V1_DUMP_LIMIT;
 constexpr uint32_t kIntrinsicDumpFlush = OBELISK_RT_INTRINSIC_V1_DUMP_FLUSH;
+constexpr uint32_t kIntrinsicDumpPorts = OBELISK_RT_INTRINSIC_V1_DUMP_PORTS;
+constexpr uint32_t kIntrinsicDumpPortsControl =
+    OBELISK_RT_INTRINSIC_V1_DUMP_PORTS_CONTROL;
 constexpr uint32_t kIntrinsicImport = OBELISK_RT_INTRINSIC_V1_IMPORT;
 constexpr uint32_t kIntrinsicDPIImport = OBELISK_RT_INTRINSIC_V1_DPI_IMPORT;
 constexpr uint32_t kIntrinsicClassAlloc = OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC;

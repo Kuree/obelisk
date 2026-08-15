@@ -41,6 +41,54 @@ namespace obelisk::sim {
 static constexpr uint64_t interfaceDispatchSlot =
     std::numeric_limits<uint32_t>::max();
 
+// Classify the physical representation of one fixed packed subrange. A port
+// view may select a two-state member from a mixed aggregate, so comparing the
+// port against the whole source type is both too strict and too imprecise.
+static bool packedRangeContainsFourState(Type type, uint64_t low,
+                                         uint64_t width) {
+  if (width == 0)
+    return false;
+  if (auto array = dyn_cast<PackedArrayType>(type)) {
+    uint64_t elementWidth = *getPackedWidth(array.getElementType());
+    uint64_t end = low + width;
+    uint64_t first = low / elementWidth;
+    uint64_t last = (end - 1) / elementWidth;
+    if (first == last)
+      return packedRangeContainsFourState(array.getElementType(),
+                                          low % elementWidth, width);
+    uint64_t firstWidth = elementWidth - low % elementWidth;
+    if (packedRangeContainsFourState(array.getElementType(),
+                                     low % elementWidth, firstWidth))
+      return true;
+    if (last > first + 1 && containsFourStateLeaf(array.getElementType()))
+      return true;
+    return packedRangeContainsFourState(array.getElementType(), 0,
+                                        end - last * elementWidth);
+  }
+  ArrayAttr fields;
+  if (auto aggregate = dyn_cast<PackedStructType>(type))
+    fields = aggregate.getFields();
+  else if (auto aggregate = dyn_cast<PackedUnionType>(type))
+    fields = aggregate.getFields();
+  if (fields) {
+    uint64_t end = low + width;
+    for (Attribute attribute : fields) {
+      auto field = cast<FieldAttr>(attribute);
+      uint64_t fieldWidth = *getPackedWidth(field.getType());
+      uint64_t fieldLow = field.getPackedOffset();
+      uint64_t fieldEnd = fieldLow + fieldWidth;
+      uint64_t overlapLow = std::max(low, fieldLow);
+      uint64_t overlapEnd = std::min(end, fieldEnd);
+      if (overlapLow < overlapEnd &&
+          packedRangeContainsFourState(field.getType(), overlapLow - fieldLow,
+                                       overlapEnd - overlapLow))
+        return true;
+    }
+    return false;
+  }
+  return containsFourStateLeaf(type);
+}
+
 LogicalResult SimScopeDeclOp::verify() {
   if (failed(verifyNonnegative(*this, getIdAttr(), "scope ID")))
     return failure();
@@ -122,6 +170,20 @@ LogicalResult SimDriverDeclOp::verify() {
   }
   if (getType().isF64())
     return emitOpError("real-valued drivers are not supported");
+  return verifyElementType([&] { return emitOpError(); }, getType());
+}
+
+LogicalResult SimPortDeclOp::verify() {
+  if (failed(verifyNonnegative(*this, getIdAttr(), "port ID")) ||
+      failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||
+      failed(verifyNonnegative(*this, getSourceIdAttr(), "source ID")) ||
+      failed(verifyNonnegative(*this, getSourceLowAttr(), "source offset")) ||
+      failed(verifyNonnegative(*this, getOrdinalAttr(), "port ordinal")))
+    return failure();
+  if (getHierarchicalName().empty())
+    return emitOpError("requires a nonempty hierarchical name");
+  if (getOrdinalAttr().getValue().getActiveBits() > 24)
+    return emitOpError("port ordinal must be an unsigned 24-bit integer");
   return verifyElementType([&] { return emitOpError(); }, getType());
 }
 
@@ -1081,7 +1143,7 @@ LogicalResult SimDesignOp::verifyRegions() {
       (precision.getValue().isNegative() || precision.getValue().isZero()))
     return emitOpError("time precision must be a positive femtosecond value");
   llvm::DenseSet<uint64_t> scopeIds, codeUnitIds, storageIds, netIds, driverIds,
-      connectionIds, covergroupIds, classIds;
+      portIds, connectionIds, covergroupIds, classIds;
   llvm::DenseMap<uint64_t, SimCodeUnitDeclOp> codeUnits;
   llvm::DenseMap<uint64_t, Type> storageTypes, netTypes, driverTypes;
   llvm::DenseMap<uint64_t, NetResolutionKind> netResolutions;
@@ -1122,6 +1184,9 @@ LogicalResult SimDesignOp::verifyRegions() {
       if (failed(addId(driver.getIdAttr(), driverIds, "driver")))
         return failure();
       driverTypes[driver.getId()] = driver.getType();
+    } else if (auto port = dyn_cast<SimPortDeclOp>(op)) {
+      if (failed(addId(port.getIdAttr(), portIds, "port")))
+        return failure();
     } else if (auto connection = dyn_cast<SimNetConnectDeclOp>(op)) {
       if (failed(
               addId(connection.getIdAttr(), connectionIds, "net connection")))
@@ -1212,6 +1277,7 @@ LogicalResult SimDesignOp::verifyRegions() {
       failed(verifyDense(storageIds, "storage")) ||
       failed(verifyDense(netIds, "net")) ||
       failed(verifyDense(driverIds, "driver")) ||
+      failed(verifyDense(portIds, "port")) ||
       failed(verifyDense(connectionIds, "net connection")))
     return failure();
   for (uint64_t id = 1; id <= classIds.size(); ++id)
@@ -1331,6 +1397,26 @@ LogicalResult SimDesignOp::verifyRegions() {
           netType->second != driver.getType())
         return driver.emitOpError(
             "references an incompatible scope or net descriptor");
+    } else if (auto port = dyn_cast<SimPortDeclOp>(op)) {
+      auto &sourceTypes = port.getSourceIsNet() ? netTypes : storageTypes;
+      auto source = sourceTypes.find(port.getSourceId());
+      std::optional<unsigned> sourceWidth;
+      if (source != sourceTypes.end())
+        sourceWidth = getPackedWidth(source->second);
+      std::optional<unsigned> portWidth = getPackedWidth(port.getType());
+      uint64_t low = port.getSourceLow();
+      bool invalidRange = !sourceWidth || !portWidth;
+      if (!invalidRange)
+        invalidRange = low > sourceWidth.value() ||
+                       portWidth.value() > sourceWidth.value() - low;
+      if (!scopeIds.count(port.getScopeId()) || source == sourceTypes.end() ||
+          invalidRange ||
+          (!invalidRange &&
+           packedRangeContainsFourState(source->second, low,
+                                        portWidth.value()) !=
+               containsFourStateLeaf(port.getType())))
+        return port.emitOpError(
+            "references an incompatible scope or source descriptor");
     } else if (auto connection = dyn_cast<SimNetConnectDeclOp>(op)) {
       auto lhs = netTypes.find(connection.getLhsNetId());
       auto rhs = netTypes.find(connection.getRhsNetId());

@@ -1395,7 +1395,10 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
 
   bool dumpCall = llvm::StringSwitch<bool>(name)
                       .Cases({"$dumpfile", "$dumpvars", "$dumpoff", "$dumpon",
-                              "$dumpall", "$dumpflush", "$dumplimit"},
+                              "$dumpall", "$dumpflush", "$dumplimit",
+                              "$dumpports", "$dumpportsoff", "$dumpportson",
+                              "$dumpportsall", "$dumpportsflush",
+                              "$dumpportslimit"},
                              true)
                       .Default(false);
   if (dumpCall)

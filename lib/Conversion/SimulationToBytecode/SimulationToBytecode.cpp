@@ -60,8 +60,8 @@ static bool needsWaveformMetadata(sim::SimDesignOp design) {
   design.walk([&](Operation *operation) {
     if (isa<sim::SimDumpOpenOp, sim::SimDumpOpenStringOp,
             sim::SimDumpTimescaleOp, sim::SimDumpVarsOp, sim::SimDumpAllOp,
-            sim::SimDumpControlOp, sim::SimDumpLimitOp, sim::SimDumpFlushOp>(
-            operation))
+            sim::SimDumpControlOp, sim::SimDumpLimitOp, sim::SimDumpFlushOp,
+            sim::SimDumpPortsOp, sim::SimDumpPortsControlOp>(operation))
       needed = true;
   });
   return needed;

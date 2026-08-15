@@ -202,6 +202,38 @@ void ObeliskSimPreparePass::runOnOperation() {
   llvm::StringMap<Operation *> &semanticSymbols = validated->symbols;
   bool invalid = false;
 
+  // `$dumpports` selections are arbitrary-symbol expressions whose semantic
+  // type is void, so their module-instance kind is otherwise lost when code
+  // units are isolated from the semantic symbol table. Freeze just that fact
+  // while the whole elaborated inventory is still available.
+  semanticRoot->walk([&](semantic::SVCallExpressionOp call) {
+    if (!call.getIsSystemCall() || call.getCalleeName() != "$dumpports")
+      return;
+    for (Operation *child : getChildren(call)) {
+      auto selection = dyn_cast<semantic::SVArbitrarySymbolExpressionOp>(child);
+      if (!selection)
+        continue;
+      auto found = semanticSymbols.find(
+          selection.getReferencedSymbol().getLeafReference());
+      Operation *target =
+          found == semanticSymbols.end() ? nullptr : found->second;
+      semantic::SVDefinitionSymbolOp definition;
+      if (auto instance = dyn_cast_or_null<semantic::SVInstanceSymbolOp>(target)) {
+        if (auto reference = instance.getReferencedSymbolAttr()) {
+          auto source =
+              semanticSymbols.find(reference.getLeafReference());
+          if (source != semanticSymbols.end())
+            definition =
+                dyn_cast<semantic::SVDefinitionSymbolOp>(source->second);
+        }
+      }
+      if (definition && definition.getDefinitionKind() ==
+                            semantic::SVDefinitionKind::Module)
+        selection->setAttr("obelisk_sim.dumpports_scope",
+                           UnitAttr::get(context));
+    }
+  });
+
   // A sequence used as a procedural event is a static assertion instance
   // (IEEE 1800-2017 9.4.2.4). Mark the referenced declaration so preparation
   // can materialize one time-zero endpoint monitor and one shared event

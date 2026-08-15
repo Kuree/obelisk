@@ -2460,6 +2460,25 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     return obelisk_rt_v1_dump_flush(context);
   case OBELISK_RT_INTRINSIC_V1_DUMP_CONTROL:
     return obelisk_rt_v1_dump_control(context, signature.flags);
+  case OBELISK_RT_INTRINSIC_V1_DUMP_PORTS: {
+    obelisk_rt_string_v1 path = 0;
+    obelisk_rt_string_v1 scope = 0;
+    auto exponent = scalar(2);
+    if (!readString(inputRegister(0), path) ||
+        !readString(inputRegister(1), scope) || !exponent)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return obelisk_rt_v1_dump_ports(
+        context, path, scope,
+        static_cast<int32_t>(static_cast<uint32_t>(*exponent)));
+  }
+  case OBELISK_RT_INTRINSIC_V1_DUMP_PORTS_CONTROL: {
+    obelisk_rt_string_v1 path = 0;
+    auto value = scalar(1);
+    if (!readString(inputRegister(0), path) || !value)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return obelisk_rt_v1_dump_ports_control(context, path, signature.flags,
+                                            *value);
+  }
   case OBELISK_RT_INTRINSIC_V1_MONITOR_CONTROL:
     return obelisk_rt_v1_monitor_control(context, signature.flags);
   case OBELISK_RT_INTRINSIC_V1_MONITOR_CURRENT:

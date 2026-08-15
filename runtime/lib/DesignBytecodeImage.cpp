@@ -376,6 +376,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       signature.id != OBELISK_RT_INTRINSIC_V1_ASSERTION_CONTROL &&
       signature.id != OBELISK_RT_INTRINSIC_V1_MONITOR_CONTROL &&
       signature.id != OBELISK_RT_INTRINSIC_V1_DUMP_CONTROL &&
+      signature.id != OBELISK_RT_INTRINSIC_V1_DUMP_PORTS_CONTROL &&
       signature.id != OBELISK_RT_INTRINSIC_V1_REAL_FROM_INTEGER &&
       signature.id != OBELISK_RT_INTRINSIC_V1_REAL_TO_INTEGER &&
       signature.id != OBELISK_RT_INTRINSIC_V1_REAL_COMPARE &&
@@ -582,6 +583,14 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_DUMP_CONTROL:
     return signature.flags <= 1 && site.inputCount == 0 &&
            site.outputCount == 0;
+  case OBELISK_RT_INTRINSIC_V1_DUMP_PORTS:
+    return signature.flags == 0 && site.inputCount == 3 &&
+           site.outputCount == 0 && string(input(0)) && string(input(1)) &&
+           twoStateBits(input(2), 32);
+  case OBELISK_RT_INTRINSIC_V1_DUMP_PORTS_CONTROL:
+    return signature.flags <= 4 && site.inputCount == 2 &&
+           site.outputCount == 0 && string(input(0)) &&
+           twoStateBits(input(1), 64);
   case OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 &&

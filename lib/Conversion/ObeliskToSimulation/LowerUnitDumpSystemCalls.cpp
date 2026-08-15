@@ -44,6 +44,17 @@ UnitLowering::lowerDumpSystemCall(semantic::SVCallExpressionOp op) {
   auto bytesConstant = [&](Location where, StringRef text) -> Value {
     return sim::SimBytesConstantOp::create(builder, where, text).getResult();
   };
+  auto timescaleExponent = [&]() -> Value {
+    int32_t exponent = -9;
+    if (auto design = function->getParentOfType<sim::SimDesignOp>())
+      if (IntegerAttr precisionFs = design.getTimePrecisionFsAttr()) {
+        exponent = -15;
+        for (uint64_t scale = precisionFs.getValue().getZExtValue(); scale > 1;
+             scale /= 10)
+          ++exponent;
+      }
+    return constant(i32, exponent);
+  };
 
   // The header carries the elaborated design precision as a decimal exponent
   // in seconds; the runtime cannot recover it from the state image.
@@ -61,6 +72,134 @@ UnitLowering::lowerDumpSystemCall(semantic::SVCallExpressionOp op) {
     sim::SimDumpTimescaleOp::create(builder, location, context,
                                     constant(i32, exponent));
   };
+
+  auto lowerDumpPortsPath = [&](Operation *child,
+                                bool defaultPath) -> FailureOr<Value> {
+    Type stringType = sim::StringType::get(function.getContext());
+    if (!child)
+      return sim::SimStringLiteralOp::create(
+                 builder, location, stringType,
+                 builder.getStringAttr(defaultPath ? "dumpports.vcd" : ""))
+          .getResult();
+    FailureOr<Value> value = failure();
+    if (auto arbitrary =
+            dyn_cast<semantic::SVArbitrarySymbolExpressionOp>(child))
+      value = lowerReferencedValue(child, arbitrary.getReferencedPath(), false);
+    else
+      value = lowerExpression(child);
+    if (failed(value))
+      return failure();
+    return convert(*value, stringType, isSignedNode(child),
+                   getSemanticLocation(child));
+  };
+
+  if (name == "$dumpports") {
+    // Slang deliberately accepts the common compatibility extension of zero
+    // or more module selections followed by one optional filename, including
+    // a filename-only call. Preserve that already-validated AST contract;
+    // the strict LRM forms are a subset, including `(, filename)`.
+    Operation *pathChild = nullptr;
+    SmallVector<Operation *> scopes(children.begin(), children.end());
+    if (!scopes.empty()) {
+      Operation *last = scopes.back();
+      if (auto arbitrary =
+              dyn_cast<semantic::SVArbitrarySymbolExpressionOp>(last)) {
+        StringRef path = arbitrary.getReferencedPath();
+        if (values.lookup(path) || lvalues.lookup(path)) {
+          pathChild = last;
+          scopes.pop_back();
+        }
+      } else if (!isa<semantic::SVEmptyArgumentExpressionOp>(last)) {
+        pathChild = last;
+        scopes.pop_back();
+      }
+    }
+    if (!scopes.empty() &&
+        isa<semantic::SVEmptyArgumentExpressionOp>(scopes.front()))
+      scopes.erase(scopes.begin());
+    if (llvm::any_of(scopes, [](Operation *scope) {
+          return isa<semantic::SVEmptyArgumentExpressionOp>(scope) ||
+                 !isa<semantic::SVArbitrarySymbolExpressionOp>(scope) ||
+                 !scope->hasAttr("referenced_path");
+        })) {
+      emitError(location)
+          << "$dumpports requires module-instance selections followed by an "
+             "optional file name";
+      return failure();
+    }
+    for (Operation *scope : scopes) {
+      if (!scope->hasAttr("obelisk_sim.dumpports_scope")) {
+        emitError(getSemanticLocation(scope))
+            << "$dumpports selection must name a module instance";
+        return failure();
+      }
+    }
+    FailureOr<Value> path = lowerDumpPortsPath(pathChild, true);
+    if (failed(path))
+      return failure();
+    SmallVector<StringRef> scopePaths;
+    if (scopes.empty()) {
+      auto current = op->getAttrOfType<StringAttr>("system_scope_path");
+      if (!current || current.getValue().empty()) {
+        emitError(location)
+            << "$dumpports has no calling module for its default selection";
+        return failure();
+      }
+      scopePaths.push_back(current.getValue());
+    } else {
+      for (Operation *scope : scopes)
+        scopePaths.push_back(
+            scope->getAttrOfType<StringAttr>("referenced_path").getValue());
+    }
+    for (StringRef scope : scopePaths)
+      sim::SimDumpPortsOp::create(
+          builder, location, context, *path,
+          sim::SimStringLiteralOp::create(
+              builder, location, sim::StringType::get(function.getContext()),
+              builder.getStringAttr(scope)),
+          timescaleExponent());
+    return dummyTaskResult();
+  }
+
+  if (name == "$dumpportsoff" || name == "$dumpportson" ||
+      name == "$dumpportsall" || name == "$dumpportsflush") {
+    if (children.size() > 1) {
+      emitError(location) << name << " accepts at most one file name";
+      return failure();
+    }
+    FailureOr<Value> path = lowerDumpPortsPath(
+        children.empty() ? nullptr : children.front(), false);
+    if (failed(path))
+      return failure();
+    sim::DumpPortsAction action =
+        name == "$dumpportsoff"   ? sim::DumpPortsAction::Off
+        : name == "$dumpportson"  ? sim::DumpPortsAction::On
+        : name == "$dumpportsall" ? sim::DumpPortsAction::All
+                                    : sim::DumpPortsAction::Flush;
+    sim::SimDumpPortsControlOp::create(builder, location, context, *path,
+                                       action, constant(i64, 0));
+    return dummyTaskResult();
+  }
+
+  if (name == "$dumpportslimit") {
+    if (children.empty() || children.size() > 2) {
+      emitError(location)
+          << "$dumpportslimit requires a byte count and optional file name";
+      return failure();
+    }
+    FailureOr<Value> bytes = lowerExpression(children.front());
+    if (failed(bytes))
+      return failure();
+    FailureOr<Value> limit =
+        convert(*bytes, i64, isSignedNode(children.front()), location);
+    FailureOr<Value> path = lowerDumpPortsPath(
+        children.size() == 2 ? children.back() : nullptr, false);
+    if (failed(limit) || failed(path))
+      return failure();
+    sim::SimDumpPortsControlOp::create(builder, location, context, *path,
+                                       sim::DumpPortsAction::Limit, *limit);
+    return dummyTaskResult();
+  }
 
   if (name == "$dumpfile") {
     if (children.size() > 1) {

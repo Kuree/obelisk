@@ -370,6 +370,55 @@ public:
   }
 };
 
+class StringDumpPortsConversion final
+    : public OpConversionPattern<sim::SimDumpPortsOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimDumpPortsOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_dump_ports"),
+            ValueRange{context, adaptor.getPath().front(),
+                       adaptor.getScope().front(),
+                       adaptor.getTimescaleExponent().front()})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+class StringDumpPortsControlConversion final
+    : public OpConversionPattern<sim::SimDumpPortsControlOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimDumpPortsControlOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    Value action = llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
+                                static_cast<uint32_t>(op.getAction()));
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_dump_ports_control"),
+            ValueRange{context, adaptor.getPath().front(), action,
+                       adaptor.getValue().front()})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 class StringScanFieldConversion final
     : public OpConversionPattern<sim::SimStringScanFieldOp> {
 public:
@@ -672,7 +721,8 @@ void populateManagedStringToLLVMConversionPatterns(
                FileScanFieldConversion,
                PlusargTestConversion,
                PlusargValueConversion,
-               StringDumpOpenConversion>(converter, context);
+               StringDumpOpenConversion, StringDumpPortsConversion,
+               StringDumpPortsControlConversion>(converter, context);
   patterns.add<StringFileOpenConversion<sim::SimFileOpenStringMCDOp>,
                StringFileOpenConversion<sim::SimFileOpenStringOp>>(
       converter, context);

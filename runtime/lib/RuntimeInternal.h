@@ -710,6 +710,7 @@ struct NetAliasCache {
 // re-walking the design on every query.
 // Waveform dump state. Defined in VCD.cpp; the context only owns the pointer.
 struct VCDTraceState;
+struct EVCDTraceState;
 
 struct DesignDatabaseCache {
   const uint8_t *data = nullptr;
@@ -1000,6 +1001,7 @@ struct obelisk_rt_context {
   // Waveform dump plan, shadow planes, and output buffer. Allocated on the
   // first $dumpfile/$dumpvars and owned by the context.
   VCDTraceState *vcdState = nullptr;
+  EVCDTraceState *evcdState = nullptr;
   std::unordered_map<uint64_t, const obelisk_rt_class_descriptor_v1 *>
       managedClasses;
   std::unordered_map<uint64_t, const obelisk_rt_element_type_v1 *>

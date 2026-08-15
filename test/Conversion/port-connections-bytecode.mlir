@@ -456,7 +456,7 @@ module attributes {
             obelisk.sv.expression.named_value attributes {node_id = 209 : i64, referenced_path = "port_connections_inventory.input_value", referenced_symbol = @s10.$root::@s39.port_connections_inventory::@s40.port_connections_inventory::@s42.input_value, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }
           }
-          obelisk.sv.port.connection attributes {actual_is_constant = false, direction = 0 : i32, formal_name = "b", formal_ordinal = 1 : i64, formal_path = "port_connections_inventory.nonansi.b", formal_symbol = @s10.$root::@s39.port_connections_inventory::@s40.port_connections_inventory::@s115.nonansi::@s116.inventory_nonansi::@s118.b, formal_type = !obelisk.integral<1, false, true, 0 : 0, logic>, internal_path = "port_connections_inventory.nonansi.b", internal_symbol = @s10.$root::@s39.port_connections_inventory::@s40.port_connections_inventory::@s115.nonansi::@s116.inventory_nonansi::@s120.b, is_ansi = false, is_net = true, node_id = 210 : i64, provenance = 0 : i32} {
+          obelisk.sv.port.connection attributes {actual_is_constant = false, direction = 0 : i32, formal_name = "b", formal_ordinal = 1 : i64, formal_path = "port_connections_inventory.nonansi.b", formal_symbol = @s10.$root::@s39.port_connections_inventory::@s40.port_connections_inventory::@s115.nonansi::@s116.inventory_nonansi::@s118.b, formal_type = !obelisk.integral<1, false, true, 0 : 0, logic>, internal_path = "port_connections_inventory.nonansi.a", internal_symbol = @s10.$root::@s39.port_connections_inventory::@s40.port_connections_inventory::@s115.nonansi::@s116.inventory_nonansi::@s121.a, is_ansi = false, is_net = true, node_id = 210 : i64, provenance = 0 : i32} {
           } {
             obelisk.sv.expression.named_value attributes {node_id = 211 : i64, referenced_path = "port_connections_inventory.defaulted", referenced_symbol = @s10.$root::@s39.port_connections_inventory::@s40.port_connections_inventory::@s41.defaulted, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }
@@ -758,6 +758,17 @@ module attributes {
 // driver: static net topology remains declarative, empty defaulted inputs get
 // initialization code units, and generated/arrayed instances retain distinct
 // hidden connection identities.
+// The port inventory keeps declaration order, direction, canonical source,
+// and the child module's scope independently of its backing descriptor.
+// LOWER-DAG: obelisk_sim.port.decl 0 in 9 source 6 net = false at 0 : !obelisk_sim.logic<1> input ordinal 0 hierarchy "port_connections_inventory.ordered.defaulted" debug "defaulted"
+// LOWER-DAG: obelisk_sim.port.decl 1 in 9 source 7 net = false at 0 : !obelisk_sim.logic<1> input ordinal 1 hierarchy "port_connections_inventory.ordered.input_value" debug "input_value"
+// LOWER-DAG: obelisk_sim.port.decl 2 in 9 source 8 net = false at 0 : !obelisk_sim.logic<1> output ordinal 2 hierarchy "port_connections_inventory.ordered.output_value" debug "output_value"
+// LOWER-DAG: obelisk_sim.port.decl 3 in 9 source 1 net = true at 0 : !obelisk_sim.logic<1> inout ordinal 3 hierarchy "port_connections_inventory.ordered.net_value" debug "net_value"
+// LOWER-DAG: obelisk_sim.port.decl 4 in 10 source 9 net = false at 0 : !obelisk_sim.logic<1> input ordinal 0 hierarchy "port_connections_inventory.named.defaulted" debug "defaulted"
+// Two non-ANSI formal names may intentionally alias one internal net. Both
+// remain distinct declaration-ordered ports in the child instance scope.
+// LOWER-DAG: obelisk_sim.port.decl 28 in 16 source 9 net = true at 0 : !obelisk_sim.logic<1> input ordinal 0 hierarchy "port_connections_inventory.nonansi.a" debug "a"
+// LOWER-DAG: obelisk_sim.port.decl 29 in 16 source 9 net = true at 0 : !obelisk_sim.logic<1> input ordinal 1 hierarchy "port_connections_inventory.nonansi.b" debug "b"
 // LOWER-DAG: obelisk_sim.net.connect.decl {{[0-9]+}} in {{[0-9]+}} 0[0] to 1[0] width 1 reversed = false provenance "ordered"
 // LOWER-DAG: obelisk_sim.net.connect.decl {{[0-9]+}} in {{[0-9]+}} 0[0] to 2[0] width 1 reversed = false provenance "named"
 // LOWER-DAG: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_initialize hierarchy "port_connections_inventory.uses_default.$port_connection_0"{{.*}}{internal}

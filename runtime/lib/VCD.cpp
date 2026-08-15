@@ -18,8 +18,10 @@
 #include <ctime>
 #include <limits>
 #include <map>
+#include <memory>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -238,6 +240,8 @@ struct TraceVariable {
   bool fourState = false;
   // Emitted as a VCD `r` record rather than a bit vector.
   bool isReal = false;
+  // Zero for ordinary VCD. EVCD stores the port-direction capability bits.
+  uint32_t portCaps = 0;
 };
 
 // One byte-aligned window of the canonical planes that covers a contiguous
@@ -253,6 +257,37 @@ struct TraceRange {
 struct TraceSelection {
   std::string scope;
   uint64_t levels = 0;
+};
+
+struct EVCDSession {
+  ~EVCDSession() {
+    if (file)
+      std::fclose(file);
+  }
+
+  std::FILE *file = nullptr;
+  std::string path;
+  std::string buffer;
+  bool timescaleSet = false;
+  int32_t timescaleExponent = 0;
+  uint64_t startTime = 0;
+  std::vector<std::string> selections;
+  bool planBuilt = false;
+  bool planFailed = false;
+  bool headerWritten = false;
+  bool pendingInitial = false;
+  bool enabled = true;
+  std::vector<TraceVariable> variables;
+  std::vector<std::string> codeText;
+  std::vector<TraceRange> ranges;
+  std::vector<uint8_t> shadowValue;
+  std::vector<uint8_t> shadowUnknown;
+  uint64_t limitBytes = 0;
+  uint64_t writtenBytes = 0;
+  bool limitReached = false;
+  bool haveEmittedTime = false;
+  uint64_t emittedTime = 0;
+  std::string scratch;
 };
 
 } // namespace
@@ -294,9 +329,14 @@ struct VCDTraceState {
   std::string scratch;
 };
 
+struct EVCDTraceState {
+  std::vector<std::unique_ptr<EVCDSession>> sessions;
+};
+
 namespace {
 
-void appendRaw(VCDTraceState &state, const char *data, size_t size) {
+template <typename State>
+void appendRaw(State &state, const char *data, size_t size) {
   if (!state.file)
     return;
   state.buffer.append(data, size);
@@ -306,7 +346,8 @@ void appendRaw(VCDTraceState &state, const char *data, size_t size) {
   }
 }
 
-void append(VCDTraceState &state, std::string_view text) {
+template <typename State>
+void append(State &state, std::string_view text) {
   if (state.limitReached)
     return;
   if (state.limitBytes != 0 &&
@@ -318,7 +359,8 @@ void append(VCDTraceState &state, std::string_view text) {
   appendRaw(state, text.data(), text.size());
 }
 
-void appendUnsigned(VCDTraceState &state, uint64_t value) {
+template <typename State>
+void appendUnsigned(State &state, uint64_t value) {
   char digits[24];
   int length = std::snprintf(digits, sizeof(digits), "%llu",
                              static_cast<unsigned long long>(value));
@@ -326,7 +368,8 @@ void appendUnsigned(VCDTraceState &state, uint64_t value) {
     append(state, std::string_view(digits, static_cast<size_t>(length)));
 }
 
-void appendSigned(VCDTraceState &state, int64_t value) {
+template <typename State>
+void appendSigned(State &state, int64_t value) {
   char digits[24];
   int length = std::snprintf(digits, sizeof(digits), "%lld",
                              static_cast<long long>(value));
@@ -334,7 +377,8 @@ void appendSigned(VCDTraceState &state, int64_t value) {
     append(state, std::string_view(digits, static_cast<size_t>(length)));
 }
 
-void flushBuffer(VCDTraceState &state) {
+template <typename State>
+void flushBuffer(State &state) {
   if (state.file && !state.buffer.empty()) {
     std::fwrite(state.buffer.data(), 1, state.buffer.size(), state.file);
     state.buffer.clear();
@@ -343,7 +387,8 @@ void flushBuffer(VCDTraceState &state) {
     std::fflush(state.file);
 }
 
-void closeFile(VCDTraceState &state) {
+template <typename State>
+void closeFile(State &state) {
   if (!state.file)
     return;
   if (!state.buffer.empty()) {
@@ -354,8 +399,9 @@ void closeFile(VCDTraceState &state) {
   state.file = nullptr;
 }
 
+template <typename State>
 int32_t resolveTimescale(const obelisk_rt_context *context,
-                         const VCDTraceState &state) {
+                         const State &state) {
   if (state.timescaleSet)
     return state.timescaleExponent;
   if (context->execution && context->execution->dpi_time_precision != 0)
@@ -759,7 +805,8 @@ struct PlanBuilder {
 // Coalesce the traced variables into byte-aligned windows and size the shadow
 // planes. Variables are sorted by canonical offset so each window owns a
 // contiguous index range.
-void buildRanges(VCDTraceState &state, uint64_t stateBitCount) {
+template <typename State>
+void buildRanges(State &state, uint64_t stateBitCount) {
   std::sort(state.variables.begin(), state.variables.end(),
             [](const TraceVariable &left, const TraceVariable &right) {
               if (left.sourceBit != right.sourceBit)
@@ -796,7 +843,8 @@ void buildRanges(VCDTraceState &state, uint64_t stateBitCount) {
 // Emission
 //===----------------------------------------------------------------------===//
 
-void emitTime(VCDTraceState &state, uint64_t time) {
+template <typename State>
+void emitTime(State &state, uint64_t time) {
   if (state.haveEmittedTime && state.emittedTime == time)
     return;
   append(state, "#");
@@ -916,7 +964,8 @@ obelisk_rt_status ensureState(obelisk_rt_context *context,
   return OBELISK_RT_OK;
 }
 
-obelisk_rt_status openFile(obelisk_rt_context *context, VCDTraceState &state,
+template <typename State>
+obelisk_rt_status openFile(obelisk_rt_context *context, State &state,
                            const std::string &path) {
   closeFile(state);
   state.file = std::fopen(path.c_str(), "wb");
@@ -930,7 +979,8 @@ obelisk_rt_status openFile(obelisk_rt_context *context, VCDTraceState &state,
   return OBELISK_RT_OK;
 }
 
-void writeHeader(obelisk_rt_context *context, VCDTraceState &state) {
+template <typename State>
+void writeHeader(obelisk_rt_context *context, State &state) {
   if (state.headerWritten)
     return;
   state.headerWritten = true;
@@ -1057,26 +1107,343 @@ obelisk_rt_status emitSlot(obelisk_rt_context *context, VCDTraceState &state,
   return OBELISK_RT_OK;
 }
 
+char evcdValueChar(const TraceVariable &variable, bool value, bool unknown) {
+  bool input = (variable.portCaps & OBELISK_RT_DESIGN_CAP_PORT_INPUT) != 0;
+  bool output = (variable.portCaps & OBELISK_RT_DESIGN_CAP_PORT_OUTPUT) != 0;
+  if (input && !output) {
+    if (unknown)
+      return value ? 'Z' : 'N';
+    return value ? 'U' : 'D';
+  }
+  if (output && !input) {
+    if (unknown)
+      return value ? 'T' : 'X';
+    return value ? 'H' : 'L';
+  }
+  if (unknown)
+    return value ? 'F' : '?';
+  return value ? '1' : '0';
+}
+
+void emitEVCDValue(EVCDSession &state, const TraceVariable &variable,
+                   const uint8_t *valuePlane,
+                   const uint8_t *unknownPlane) {
+  state.scratch.clear();
+  state.scratch.push_back('p');
+  for (uint64_t bit = variable.width; bit != 0; --bit) {
+    bool value = bitAt(valuePlane, variable.sourceBit + bit - 1);
+    bool unknown = variable.fourState &&
+                   bitAt(unknownPlane, variable.sourceBit + bit - 1);
+    state.scratch.push_back(evcdValueChar(variable, value, unknown));
+  }
+  state.scratch.push_back(' ');
+  for (uint64_t bit = variable.width; bit != 0; --bit) {
+    bool value = bitAt(valuePlane, variable.sourceBit + bit - 1);
+    bool unknown = variable.fourState &&
+                   bitAt(unknownPlane, variable.sourceBit + bit - 1);
+    state.scratch.push_back(unknown && value ? '0' : value ? '0' : '6');
+  }
+  state.scratch.push_back(' ');
+  for (uint64_t bit = variable.width; bit != 0; --bit) {
+    bool value = bitAt(valuePlane, variable.sourceBit + bit - 1);
+    bool unknown = variable.fourState &&
+                   bitAt(unknownPlane, variable.sourceBit + bit - 1);
+    state.scratch.push_back(unknown ? (value ? '0' : '6')
+                                    : (value ? '6' : '0'));
+  }
+  state.scratch.push_back(' ');
+  state.scratch.append(state.codeText[variable.code]);
+  state.scratch.push_back('\n');
+  append(state, state.scratch);
+}
+
+void emitEVCDOff(EVCDSession &state, const TraceVariable &variable) {
+  state.scratch.clear();
+  state.scratch.push_back('p');
+  state.scratch.append(static_cast<size_t>(variable.width), 'f');
+  state.scratch.push_back(' ');
+  state.scratch.append(static_cast<size_t>(variable.width), '0');
+  state.scratch.push_back(' ');
+  state.scratch.append(static_cast<size_t>(variable.width), '0');
+  state.scratch.push_back(' ');
+  state.scratch.append(state.codeText[variable.code]);
+  state.scratch.push_back('\n');
+  append(state, state.scratch);
+}
+
+obelisk_rt_status buildEVCDPlan(obelisk_rt_context *context,
+                                EVCDSession &state) {
+  if (state.planBuilt)
+    return OBELISK_RT_OK;
+  const DesignDatabaseCache &database = context->designDatabase;
+  if (!database.validated || !context->execution)
+    return OBELISK_RT_INVALID_DESIGN;
+
+  std::unordered_set<uint64_t> selectedScopes;
+  std::unordered_set<uint64_t> liveScopes;
+  for (const std::string &selection : state.selections) {
+    uint64_t scope = 0;
+    uint32_t kind = OBELISK_RT_DESIGN_RECORD_INVALID;
+    if (!resolveSelection(database, selection, scope, kind) ||
+        kind != OBELISK_RT_DESIGN_RECORD_SCOPE)
+      return OBELISK_RT_INVALID_HANDLE;
+    if (!selectedScopes.insert(scope).second)
+      continue;
+    for (uint64_t ancestor = scope; ancestor != 0;) {
+      if (!liveScopes.insert(ancestor).second)
+        break;
+      const uint8_t *record;
+      uint32_t ancestorKind;
+      if (!getRecord(database, ancestor, record, ancestorKind) ||
+          ancestorKind != OBELISK_RT_DESIGN_RECORD_SCOPE)
+        return OBELISK_RT_INVALID_DESIGN;
+      ancestor = parentOffset(record);
+    }
+  }
+
+  writeHeader(context, state);
+  uint32_t nextCode = 0;
+  std::function<obelisk_rt_status(uint64_t, std::string_view)> emitScope =
+      [&](uint64_t scope,
+          std::string_view parentName) -> obelisk_rt_status {
+    const uint8_t *scopeRecord = database.data + scope;
+    std::string_view scopeName;
+    if (!getString(database, nameOffset(scopeRecord), scopeName))
+      return OBELISK_RT_INVALID_DESIGN;
+    append(state, "$scope module ");
+    append(state, leafName(scopeName, parentName));
+    append(state, " $end\n");
+    std::vector<uint64_t> ports;
+    for (uint64_t child = firstChildOffset(scopeRecord); child != 0;) {
+      const uint8_t *record;
+      uint32_t childKind;
+      if (!getRecord(database, child, record, childKind))
+        return OBELISK_RT_INVALID_DESIGN;
+      uint32_t caps = read32(record + 4);
+      if (selectedScopes.count(scope) != 0 &&
+          (childKind == OBELISK_RT_DESIGN_RECORD_PORT ||
+           (caps & (OBELISK_RT_DESIGN_CAP_PORT_INPUT |
+                    OBELISK_RT_DESIGN_CAP_PORT_OUTPUT)) != 0))
+        ports.push_back(child);
+      child = nextSiblingOffset(record, childKind);
+    }
+    std::sort(ports.begin(), ports.end(), [&](uint64_t lhs, uint64_t rhs) {
+      uint32_t lhsCaps = read32(database.data + lhs + 4);
+      uint32_t rhsCaps = read32(database.data + rhs + 4);
+      uint32_t lhsOrdinal =
+          (lhsCaps & OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK) >>
+          OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT;
+      uint32_t rhsOrdinal =
+          (rhsCaps & OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK) >>
+          OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT;
+      return std::tie(lhsOrdinal, lhs) < std::tie(rhsOrdinal, rhs);
+    });
+    for (uint64_t offset : ports) {
+      const uint8_t *record = database.data + offset;
+      uint64_t width = objectBitWidth(record);
+      if (width == 0)
+        continue;
+      std::string_view name;
+      if (!getString(database, nameOffset(record), name))
+        return OBELISK_RT_INVALID_DESIGN;
+      TraceVariable variable;
+      variable.sourceBit = objectStateBit(record);
+      variable.width = width;
+      variable.code = nextCode++;
+      variable.fourState = typeFourState(database, objectTypeOffset(record));
+      variable.portCaps = read32(record + 4);
+      state.variables.push_back(variable);
+      state.codeText.push_back("<" + std::to_string(variable.code));
+      append(state, "$var port ");
+      if (width == 1) {
+        append(state, "1");
+      } else {
+        append(state, "[");
+        appendSigned(state, readI64(record + 64));
+        append(state, ":");
+        appendSigned(state, readI64(record + 72));
+        append(state, "]");
+      }
+      append(state, " ");
+      append(state, state.codeText.back());
+      append(state, " ");
+      append(state, leafName(name, scopeName));
+      append(state, " $end\n");
+    }
+    for (uint64_t child = firstChildOffset(scopeRecord); child != 0;) {
+      const uint8_t *record;
+      uint32_t childKind;
+      if (!getRecord(database, child, record, childKind))
+        return OBELISK_RT_INVALID_DESIGN;
+      if (childKind == OBELISK_RT_DESIGN_RECORD_SCOPE &&
+          liveScopes.count(child) != 0) {
+        obelisk_rt_status status = emitScope(child, scopeName);
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
+      child = nextSiblingOffset(record, childKind);
+    }
+    append(state, "$upscope $end\n");
+    return OBELISK_RT_OK;
+  };
+  const uint8_t *rootRecord;
+  uint32_t rootKind;
+  std::string_view rootName;
+  if (!getRecord(database, database.root, rootRecord, rootKind) ||
+      rootKind != OBELISK_RT_DESIGN_RECORD_SCOPE ||
+      !getString(database, nameOffset(rootRecord), rootName))
+    return OBELISK_RT_INVALID_DESIGN;
+  if (rootName != "$root" && rootName != "\\$root ") {
+    obelisk_rt_status status = emitScope(database.root, {});
+    if (status != OBELISK_RT_OK)
+      return status;
+  } else {
+    for (uint64_t child = firstChildOffset(rootRecord); child != 0;) {
+      const uint8_t *record;
+      uint32_t childKind;
+      if (!getRecord(database, child, record, childKind))
+        return OBELISK_RT_INVALID_DESIGN;
+      if (childKind == OBELISK_RT_DESIGN_RECORD_SCOPE &&
+          liveScopes.count(child) != 0) {
+        obelisk_rt_status status = emitScope(child, rootName);
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
+      child = nextSiblingOffset(record, childKind);
+    }
+  }
+  append(state, "$enddefinitions $end\n");
+  buildRanges(state, context->execution->state_bit_count);
+  state.planBuilt = true;
+  state.pendingInitial = true;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status emitEVCDSlot(obelisk_rt_context *context,
+                               EVCDSession &state, bool forceAll,
+                               std::string_view checkpoint = {}) {
+  if (!state.file || state.limitReached || !state.planBuilt)
+    return OBELISK_RT_OK;
+  const uint8_t *valuePlane = nullptr;
+  const uint8_t *unknownPlane = nullptr;
+  obelisk_rt_status status = dumpPlanes(context, valuePlane, unknownPlane);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (state.pendingInitial) {
+    emitTime(state, context->schedulerTime);
+    append(state, "$dumpports\n");
+    for (const TraceVariable &variable : state.variables)
+      emitEVCDValue(state, variable, valuePlane, unknownPlane);
+    append(state, "$end\n");
+    state.pendingInitial = false;
+    for (const TraceRange &range : state.ranges) {
+      size_t length = static_cast<size_t>(range.byteEnd - range.byteBegin);
+      std::memcpy(state.shadowValue.data() + range.byteBegin,
+                  valuePlane + range.byteBegin, length);
+      std::memcpy(state.shadowUnknown.data() + range.byteBegin,
+                  unknownPlane + range.byteBegin, length);
+    }
+    return OBELISK_RT_OK;
+  } else if (!checkpoint.empty()) {
+    emitTime(state, context->schedulerTime);
+    append(state, checkpoint);
+    append(state, "\n");
+    for (const TraceVariable &variable : state.variables)
+      emitEVCDValue(state, variable, valuePlane, unknownPlane);
+    append(state, "$end\n");
+    for (const TraceRange &range : state.ranges) {
+      size_t length = static_cast<size_t>(range.byteEnd - range.byteBegin);
+      std::memcpy(state.shadowValue.data() + range.byteBegin,
+                  valuePlane + range.byteBegin, length);
+      std::memcpy(state.shadowUnknown.data() + range.byteBegin,
+                  unknownPlane + range.byteBegin, length);
+    }
+    return OBELISK_RT_OK;
+  }
+  if (!state.enabled)
+    return OBELISK_RT_OK;
+  for (const TraceRange &range : state.ranges) {
+    size_t length = static_cast<size_t>(range.byteEnd - range.byteBegin);
+    bool moved = forceAll ||
+                 std::memcmp(state.shadowValue.data() + range.byteBegin,
+                             valuePlane + range.byteBegin, length) != 0 ||
+                 std::memcmp(state.shadowUnknown.data() + range.byteBegin,
+                             unknownPlane + range.byteBegin, length) != 0;
+    if (moved)
+      for (uint32_t index = range.firstVariable; index != range.lastVariable;
+           ++index) {
+        const TraceVariable &variable = state.variables[index];
+        if (forceAll ||
+            !bitRangeEqual(state.shadowValue.data(), valuePlane,
+                           variable.sourceBit, variable.width) ||
+            (variable.fourState &&
+             !bitRangeEqual(state.shadowUnknown.data(), unknownPlane,
+                            variable.sourceBit, variable.width))) {
+          emitTime(state, context->schedulerTime);
+          emitEVCDValue(state, variable, valuePlane, unknownPlane);
+        }
+      }
+    if (moved) {
+      std::memcpy(state.shadowValue.data() + range.byteBegin,
+                  valuePlane + range.byteBegin, length);
+      std::memcpy(state.shadowUnknown.data() + range.byteBegin,
+                  unknownPlane + range.byteBegin, length);
+    }
+  }
+  if (state.limitReached)
+    closeFile(state);
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status prepareEVCDSession(obelisk_rt_context *context,
+                                     EVCDSession &session) {
+  if (session.planBuilt)
+    return OBELISK_RT_OK;
+  if (session.planFailed || session.selections.empty())
+    return OBELISK_RT_OK;
+  obelisk_rt_status status = buildEVCDPlan(context, session);
+  if (status != OBELISK_RT_OK) {
+    session.planFailed = true;
+    closeFile(session);
+  }
+  return status;
+}
+
 } // namespace
 
 obelisk_rt_status obelisk_rt_dump_slot_unlocked(obelisk_rt_context *context) {
   VCDTraceState *state = traceState(context);
-  if (!state || !state->file)
-    return OBELISK_RT_OK;
-  // The plan is materialized at the end of the slot that made the first
-  // selection, so every $dumpvars issued during that slot is accounted for
-  // before the header is closed.
-  if (!state->planBuilt) {
-    if (state->planFailed || state->selections.empty())
-      return OBELISK_RT_OK;
-    obelisk_rt_status status = buildPlan(context, *state);
-    if (status != OBELISK_RT_OK) {
-      state->planFailed = true;
-      closeFile(*state);
-      return status;
+  if (state && state->file) {
+    // The plan is materialized at the end of the slot that made the first
+    // selection, so every $dumpvars issued during that slot is accounted for
+    // before the header is closed.
+    if (!state->planBuilt) {
+      if (!state->planFailed && !state->selections.empty()) {
+        obelisk_rt_status status = buildPlan(context, *state);
+        if (status != OBELISK_RT_OK) {
+          state->planFailed = true;
+          closeFile(*state);
+          return status;
+        }
+      }
+    }
+    if (state->planBuilt) {
+      obelisk_rt_status status = emitSlot(context, *state, false);
+      if (status != OBELISK_RT_OK)
+        return status;
     }
   }
-  return emitSlot(context, *state, false);
+  if (context && context->evcdState)
+    for (const std::unique_ptr<EVCDSession> &session :
+         context->evcdState->sessions) {
+      obelisk_rt_status status = prepareEVCDSession(context, *session);
+      if (status != OBELISK_RT_OK)
+        return status;
+      status = emitEVCDSlot(context, *session, false);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
+  return OBELISK_RT_OK;
 }
 
 uint64_t obelisk_rt_dump_traced_range_count(const obelisk_rt_context *context) {
@@ -1086,22 +1453,51 @@ uint64_t obelisk_rt_dump_traced_range_count(const obelisk_rt_context *context) {
 }
 
 bool obelisk_rt_dump_active_unlocked(const obelisk_rt_context *context) {
-  return context && context->vcdState && context->vcdState->file != nullptr;
+  if (!context)
+    return false;
+  if (context->vcdState && context->vcdState->file)
+    return true;
+  if (context->evcdState)
+    for (const std::unique_ptr<EVCDSession> &session :
+         context->evcdState->sessions)
+      if (session->file)
+        return true;
+  return false;
 }
 
 void obelisk_rt_dump_destroy(obelisk_rt_context *context) noexcept {
-  if (!context || !context->vcdState)
+  if (!context)
     return;
-  VCDTraceState *state = context->vcdState;
-  try {
-    if (state->file && state->planBuilt)
-      (void)emitSlot(context, *state, false);
-  } catch (...) {
-    // Teardown must not propagate; the file is still closed below.
+  if (context->vcdState) {
+    VCDTraceState *state = context->vcdState;
+    try {
+      if (state->file && !state->planBuilt && !state->planFailed &&
+          !state->selections.empty())
+        (void)buildPlan(context, *state);
+      if (state->file && state->planBuilt)
+        (void)emitSlot(context, *state, false);
+    } catch (...) {
+      // Teardown must not propagate; the file is still closed below.
+    }
+    closeFile(*state);
+    delete state;
+    context->vcdState = nullptr;
   }
-  closeFile(*state);
-  delete state;
-  context->vcdState = nullptr;
+  if (context->evcdState) {
+    for (const std::unique_ptr<EVCDSession> &session :
+         context->evcdState->sessions) {
+      try {
+        if (session->file && !session->planBuilt)
+          (void)prepareEVCDSession(context, *session);
+        if (session->file && session->planBuilt)
+          (void)emitEVCDSlot(context, *session, false);
+      } catch (...) {
+      }
+      closeFile(*session);
+    }
+    delete context->evcdState;
+    context->evcdState = nullptr;
+  }
 }
 
 extern "C" obelisk_rt_status
@@ -1326,6 +1722,167 @@ obelisk_rt_v1_dump_close(obelisk_rt_context *context) {
       (void)emitSlot(context, *state, false);
     closeFile(*state);
     return OBELISK_RT_OK;
+  } catch (...) {
+    return OBELISK_RT_IO_ERROR;
+  }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_dump_ports(
+    obelisk_rt_context *context, obelisk_rt_string_v1 pathValue,
+    obelisk_rt_string_v1 scopeValue, int32_t timescaleExponent) {
+  if (!context || timescaleExponent > 0 || timescaleExponent < -15)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  char pathScratch[8] = {};
+  char scopeScratch[8] = {};
+  const char *pathBytes = nullptr;
+  const char *scopeBytes = nullptr;
+  uint64_t pathSize = 0;
+  uint64_t scopeSize = 0;
+  obelisk_rt_status status = obelisk_rt_v1_string_view(
+      pathValue, pathScratch, &pathBytes, &pathSize);
+  if (status != OBELISK_RT_OK)
+    return status;
+  status = obelisk_rt_v1_string_view(scopeValue, scopeScratch, &scopeBytes,
+                                     &scopeSize);
+  if (status != OBELISK_RT_OK || pathSize == 0 || scopeSize == 0)
+    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+  ContextTransaction transaction(context);
+  try {
+    std::string path;
+    if (pathSize != 0)
+      path.assign(pathBytes, static_cast<size_t>(pathSize));
+    std::string scope(scopeBytes, static_cast<size_t>(scopeSize));
+    ContextMutexLock lock(context);
+    if (!context->designDatabase.validated)
+      return OBELISK_RT_INVALID_DESIGN;
+    uint64_t selectedScope = 0;
+    uint32_t selectedKind = OBELISK_RT_DESIGN_RECORD_INVALID;
+    if (!resolveSelection(context->designDatabase, scope, selectedScope,
+                          selectedKind) ||
+        selectedKind != OBELISK_RT_DESIGN_RECORD_SCOPE)
+      return OBELISK_RT_INVALID_HANDLE;
+    if (!context->evcdState) {
+      context->evcdState = new (std::nothrow) EVCDTraceState();
+      if (!context->evcdState)
+        return OBELISK_RT_OUT_OF_MEMORY;
+    }
+    EVCDTraceState &state = *context->evcdState;
+    EVCDSession *session = nullptr;
+    for (const std::unique_ptr<EVCDSession> &candidate : state.sessions)
+      if (candidate->path == path) {
+        session = candidate.get();
+        break;
+      }
+    if (!session) {
+      auto created = std::make_unique<EVCDSession>();
+      created->path = path;
+      created->timescaleSet = true;
+      created->timescaleExponent = timescaleExponent;
+      created->startTime = context->schedulerTime;
+      status = openFile(context, *created, path);
+      if (status != OBELISK_RT_OK)
+        return status;
+      session = created.get();
+      state.sessions.push_back(std::move(created));
+    } else if (session->startTime != context->schedulerTime ||
+               session->timescaleExponent != timescaleExponent) {
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    }
+    // Selections are unique per output file. The same module may be present
+    // in several independent EVCD sessions, and repeating it for one file is
+    // idempotent while the initial selection slot is still open.
+    if (std::find(session->selections.begin(), session->selections.end(),
+                  scope) != session->selections.end())
+      return OBELISK_RT_OK;
+    if (session->planBuilt)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    session->selections.push_back(std::move(scope));
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_IO_ERROR;
+  }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_dump_ports_control(
+    obelisk_rt_context *context, obelisk_rt_string_v1 pathValue,
+    uint32_t action, uint64_t value) {
+  if (!context || action > 4)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  char scratch[8] = {};
+  const char *pathBytes = nullptr;
+  uint64_t pathSize = 0;
+  obelisk_rt_status status =
+      obelisk_rt_v1_string_view(pathValue, scratch, &pathBytes, &pathSize);
+  if (status != OBELISK_RT_OK)
+    return status;
+  ContextTransaction transaction(context);
+  try {
+    std::string path;
+    if (pathSize != 0)
+      path.assign(pathBytes, static_cast<size_t>(pathSize));
+    ContextMutexLock lock(context);
+    if (!context->evcdState)
+      return OBELISK_RT_OK;
+    for (const std::unique_ptr<EVCDSession> &candidate :
+         context->evcdState->sessions) {
+      EVCDSession &session = *candidate;
+      if (!path.empty() && session.path != path)
+        continue;
+      if (action == 3) {
+        flushBuffer(session);
+        continue;
+      }
+      if (action == 4) {
+        session.limitBytes = value;
+        continue;
+      }
+      status = prepareEVCDSession(context, session);
+      if (status != OBELISK_RT_OK)
+        return status;
+      if (!session.file)
+        continue;
+      if (action == 2) {
+        status = emitEVCDSlot(context, session, true, "$dumpportsall");
+        if (status != OBELISK_RT_OK)
+          return status;
+        continue;
+      }
+      bool wanted = action == 1;
+      if (wanted == session.enabled)
+        continue;
+      status = emitEVCDSlot(context, session, false);
+      if (status != OBELISK_RT_OK)
+        return status;
+      session.enabled = wanted;
+      emitTime(session, context->schedulerTime);
+      append(session, wanted ? "$dumpportson\n" : "$dumpportsoff\n");
+      if (wanted) {
+        const uint8_t *valuePlane = nullptr;
+        const uint8_t *unknownPlane = nullptr;
+        status = dumpPlanes(context, valuePlane, unknownPlane);
+        if (status != OBELISK_RT_OK)
+          return status;
+        for (const TraceVariable &variable : session.variables)
+          emitEVCDValue(session, variable, valuePlane, unknownPlane);
+        for (const TraceRange &range : session.ranges) {
+          size_t length =
+              static_cast<size_t>(range.byteEnd - range.byteBegin);
+          std::memcpy(session.shadowValue.data() + range.byteBegin,
+                      valuePlane + range.byteBegin, length);
+          std::memcpy(session.shadowUnknown.data() + range.byteBegin,
+                      unknownPlane + range.byteBegin, length);
+        }
+      } else {
+        for (const TraceVariable &variable : session.variables)
+          emitEVCDOff(session, variable);
+      }
+      append(session, "$end\n");
+    }
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
   } catch (...) {
     return OBELISK_RT_IO_ERROR;
   }

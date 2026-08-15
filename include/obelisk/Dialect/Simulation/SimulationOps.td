@@ -164,6 +164,27 @@ def SimDriverDeclOp : SimOp<"driver.decl", [MemoryEffects<[MemWrite<SimInventory
   let hasVerifier = 1;
 }
 
+def SimPortDeclOp : SimOp<"port.decl", [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary = "immutable module-port reflection descriptor";
+  let description = [{
+    Describes a source-level module port separately from its canonical storage
+    or net. `source_low` is the fixed packed bit offset into that descriptor.
+    Keeping the alias explicit lets EVCD select only ports while ordinary VCD
+    and executable code continue to use the canonical descriptor.
+  }];
+  let arguments = (ins I64Attr:$id, I64Attr:$scope_id,
+                       I64Attr:$source_id, BoolAttr:$source_is_net,
+                       I64Attr:$source_low, TypeAttr:$type,
+                       SimPortDirection:$direction, I64Attr:$ordinal,
+                       StrAttr:$hierarchical_name,
+                       OptionalAttr<StrAttr>:$debug_name);
+  let assemblyFormat = [{$id `in` $scope_id `source` $source_id
+    `net` `=` $source_is_net `at` $source_low `:` $type $direction
+    `ordinal` $ordinal `hierarchy` $hierarchical_name
+    (`debug` $debug_name^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
 def SimCovergroupDeclOp : SimOp<"covergroup.decl", [
     Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
   ]> {
@@ -1770,6 +1791,34 @@ def SimDumpLimitOp : SimDumpOp<"dump.limit",
 def SimDumpFlushOp : SimDumpOp<"dump.flush",
     (ins SimContextType:$context)> {
   let summary = "flush buffered waveform output to the file";
+}
+
+def SimDumpPortsOp : SimOp<"dump.ports", [
+    MemoryEffects<[MemRead<SimIOResource>, MemWrite<SimIOResource>,
+                   MemRead<SimHeapResource>]>
+]> {
+  let summary = "add one module's ports to a named EVCD session";
+  let description = [{
+    `path` is the EVCD filename and `scope` is an elaborated module-instance
+    path. Calls naming the same file accumulate unique scopes. The runtime
+    starts every session at the end of the time slot containing its first
+    selection, independently of the ordinary VCD session.
+  }];
+  let arguments = (ins SimContextType:$context, SimStringType:$path,
+                       SimStringType:$scope, I32:$timescale_exponent);
+}
+
+def SimDumpPortsControlOp : SimOp<"dump.ports_control", [
+    MemoryEffects<[MemRead<SimIOResource>, MemWrite<SimIOResource>,
+                   MemRead<SimHeapResource>]>
+]> {
+  let summary = "control one or all named EVCD sessions";
+  let description = [{
+    An empty `path` targets every active EVCD session; a nonmatching path is
+    ignored. `value` carries the byte limit for `limit` and is otherwise zero.
+  }];
+  let arguments = (ins SimContextType:$context, SimStringType:$path,
+                       SimDumpPortsAction:$action, I64:$value);
 }
 
 class SimFileOp<string mnemonic, dag fileArgs, dag fileResults,

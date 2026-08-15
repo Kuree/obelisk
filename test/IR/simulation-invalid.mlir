@@ -12,6 +12,59 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @bad_port_ordinal {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.storage.decl 0 in 0 : i8 design hierarchy "top.a"
+    // expected-error @+1 {{port ordinal must be an unsigned 24-bit integer}}
+    obelisk_sim.port.decl 0 in 0 source 0 net = false at 0 : i8 input ordinal 16777216 hierarchy "top.a"
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @bad_port_range {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.storage.decl 0 in 0 : i8 design hierarchy "top.a"
+    // expected-error @+1 {{references an incompatible scope or source descriptor}}
+    obelisk_sim.port.decl 0 in 0 source 0 net = false at 7 : i2 input ordinal 0 hierarchy "top.a"
+  }
+}
+
+// -----
+
+!mixed_port_source = !obelisk_sim.packed_struct<[
+  #obelisk_sim.field<name = "bits", type = i1, ordinal = 0, packedOffset = 0>,
+  #obelisk_sim.field<name = "logic", type = !obelisk_sim.logic<1>, ordinal = 1, packedOffset = 1>
+]>
+
+module {
+  // A fixed two-state member view is valid even though another member makes
+  // the whole canonical storage descriptor four-state.
+  obelisk_sim.design @mixed_port_representation {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.storage.decl 0 in 0 : !mixed_port_source design hierarchy "top.value"
+    obelisk_sim.port.decl 0 in 0 source 0 net = false at 0 : i1 input ordinal 0 hierarchy "top.bits"
+    // expected-error @+1 {{references an incompatible scope or source descriptor}}
+    obelisk_sim.port.decl 1 in 0 source 0 net = false at 1 : i1 input ordinal 1 hierarchy "top.logic_as_bits"
+  }
+}
+
+// -----
+
+module {
+  func.func @bad_dumpports_action(
+      %ctx: !obelisk_sim.context, %path: !obelisk_sim.string, %value: i64) {
+    // expected-error @+1 {{attribute 'action' failed to satisfy constraint: EVCD session control action}}
+    obelisk_sim.dump.ports_control %ctx, %path, %value {action = 5 : i32} :
+        (!obelisk_sim.context, !obelisk_sim.string, i64) -> ()
+    return
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @empty_descriptor_binding_path {
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : i8 design

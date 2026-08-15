@@ -207,8 +207,9 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
                   obelisk::sim::SimDumpOpenStringOp,
                   obelisk::sim::SimDumpTimescaleOp, obelisk::sim::SimDumpVarsOp,
                   obelisk::sim::SimDumpAllOp, obelisk::sim::SimDumpControlOp,
-                  obelisk::sim::SimDumpLimitOp, obelisk::sim::SimDumpFlushOp>(
-            operation);
+                  obelisk::sim::SimDumpLimitOp, obelisk::sim::SimDumpFlushOp,
+                  obelisk::sim::SimDumpPortsOp,
+                  obelisk::sim::SimDumpPortsControlOp>(operation);
   });
   bool needsDesignEncoding = bytecode || needsHybridBytecode || vpi != "off" ||
                              hasLanguageOverride || needsWaveformMetadata;

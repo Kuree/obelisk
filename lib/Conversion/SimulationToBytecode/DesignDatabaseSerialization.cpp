@@ -63,6 +63,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
   auto fallbackName = [](StringRef kind, uint64_t id) {
     return (kind + "." + Twine(id)).str();
   };
+  auto addPortMetadata = [](sim::SimPortDeclOp port, uint32_t caps) {
+    if (port.getDirection() != sim::PortDirection::Output)
+      caps |= OBELISK_RT_DESIGN_CAP_PORT_INPUT;
+    if (port.getDirection() != sim::PortDirection::Input)
+      caps |= OBELISK_RT_DESIGN_CAP_PORT_OUTPUT;
+    caps |= static_cast<uint32_t>(port.getOrdinal())
+            << OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT;
+    return caps;
+  };
   std::function<bool(Type)> isReflectableType = [&](Type type) {
     if (!simulationWidth(type))
       return false;
@@ -88,13 +97,50 @@ SmallVector<uint8_t> serializeDesignDatabase(
       return field && isReflectableType(field.getType());
     });
   };
+  struct PortSource {
+    StringRef name;
+    uint64_t scope;
+    Type type;
+  };
+  llvm::DenseMap<uint64_t, PortSource> storageSources, netSources;
+  llvm::DenseMap<uint64_t, sim::SimPortDeclOp> directStoragePorts,
+      directNetPorts;
+  for (Operation &operation : design.getBody().front()) {
+    if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
+      if (auto name = storage.getHierarchicalName())
+        storageSources[storage.getId()] =
+            PortSource{*name, storage.getScopeId(), storage.getType()};
+    } else if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
+      if (auto name = net.getHierarchicalName())
+        netSources[net.getId()] =
+            PortSource{*name, net.getScopeId(), net.getType()};
+    }
+  }
+  for (sim::SimPortDeclOp port :
+       design.getBody().front().getOps<sim::SimPortDeclOp>()) {
+    const auto &sources =
+        port.getSourceIsNet() ? netSources : storageSources;
+    auto source = sources.find(port.getSourceId());
+    if (port.getSourceLow() != 0 || source == sources.end() ||
+        source->second.name != port.getHierarchicalName() ||
+        source->second.scope != port.getScopeId() ||
+        source->second.type != port.getType())
+      continue;
+    auto &directPorts =
+        port.getSourceIsNet() ? directNetPorts : directStoragePorts;
+    directPorts.try_emplace(port.getSourceId(), port);
+  }
+
   for (Operation &operation : design.getBody().front()) {
     if (auto scope = dyn_cast<sim::SimScopeDeclOp>(operation))
       scopes.push_back(scope);
     else if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
       if (!isReflectableType(storage.getType()))
         continue;
-      objects.push_back({2, profile & kDatabaseProfileWrite ? 3u : 1u,
+      uint32_t caps = profile & kDatabaseProfileWrite ? 3u : 1u;
+      if (sim::SimPortDeclOp port = directStoragePorts.lookup(storage.getId()))
+        caps = addPortMetadata(port, caps);
+      objects.push_back({2, caps,
                          storage.getId(), storage.getScopeId(),
                          storage.getHierarchicalName()
                              .value_or(storage.getDebugName().value_or(
@@ -106,7 +152,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
     } else if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
       if (!isReflectableType(net.getType()))
         continue;
-      objects.push_back({3, profile & kDatabaseProfileWrite ? 3u : 1u,
+      uint32_t caps = profile & kDatabaseProfileWrite ? 3u : 1u;
+      if (sim::SimPortDeclOp port = directNetPorts.lookup(net.getId()))
+        caps = addPortMetadata(port, caps);
+      objects.push_back({3, caps,
                          net.getId(), net.getScopeId(),
                          net.getHierarchicalName()
                              .value_or(net.getDebugName().value_or(
@@ -126,6 +175,23 @@ SmallVector<uint8_t> serializeDesignDatabase(
                              .str(),
                          driver.getType(), driverOffsets.lookup(driver.getId()),
                          sourceFor(driver)});
+    } else if (auto port = dyn_cast<sim::SimPortDeclOp>(operation)) {
+      if (!isReflectableType(port.getType()))
+        continue;
+      sim::SimPortDeclOp direct =
+          (port.getSourceIsNet() ? directNetPorts : directStoragePorts)
+              .lookup(port.getSourceId());
+      if (direct == port)
+        continue;
+      uint32_t caps = OBELISK_RT_DESIGN_CAP_READ;
+      caps = addPortMetadata(port, caps);
+      uint64_t sourceOffset =
+          port.getSourceIsNet() ? netOffsets.lookup(port.getSourceId())
+                                : storageOffsets.lookup(port.getSourceId());
+      objects.push_back({OBELISK_RT_DESIGN_RECORD_PORT, caps, port.getId(),
+                         port.getScopeId(), port.getHierarchicalName().str(),
+                         port.getType(), sourceOffset + port.getSourceLow(),
+                         sourceFor(port)});
     } else if (auto codeUnit = dyn_cast<sim::SimCodeUnitDeclOp>(operation))
       objects.push_back(
           {(codeUnit.getCodeUnitKind() == sim::EntryKind::Function ||
@@ -165,10 +231,6 @@ SmallVector<uint8_t> serializeDesignDatabase(
     design.emitOpError("reflection database requires a root scope");
     return {};
   }
-  llvm::sort(objects, [](const Record &left, const Record &right) {
-    return std::tie(left.scope, left.name, left.kind, left.id) <
-           std::tie(right.scope, right.name, right.kind, right.id);
-  });
   for (auto scope : scopes)
     if (scope.getParent() && !scopeIDs.contains(*scope.getParent())) {
       scope.emitOpError("reflection parent scope does not exist");

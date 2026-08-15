@@ -192,7 +192,8 @@ bool getRecord(const Database &database, uint64_t offset,
     return kind == OBELISK_RT_DESIGN_RECORD_TYPE;
   return (kind >= OBELISK_RT_DESIGN_RECORD_STORAGE &&
           kind <= OBELISK_RT_DESIGN_RECORD_PROCESS) ||
-         kind == OBELISK_RT_DESIGN_RECORD_FUNCTION;
+         kind == OBELISK_RT_DESIGN_RECORD_FUNCTION ||
+         kind == OBELISK_RT_DESIGN_RECORD_PORT;
 }
 
 bool getString(const Database &database, uint64_t offset,
@@ -239,8 +240,7 @@ uint64_t nextOffset(const uint8_t *record, uint32_t kind) {
 bool validateDatabaseImpl(const Database &database) {
   if (database.scopeCount == 0 || !isScopeOffset(database, database.root))
     return false;
-  std::array<std::unordered_set<uint64_t>,
-             OBELISK_RT_DESIGN_RECORD_FUNCTION + 1>
+  std::array<std::unordered_set<uint64_t>, OBELISK_RT_DESIGN_RECORD_PORT + 1>
       stableIDs;
   std::unordered_set<uint64_t> reached;
   std::vector<uint64_t> pending{database.root};
@@ -257,7 +257,10 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t caps = read32(record + 4);
     uint32_t supportedCaps = OBELISK_RT_DESIGN_CAP_READ |
                              OBELISK_RT_DESIGN_CAP_WRITE |
-                             OBELISK_RT_DESIGN_CAP_ITERATE;
+                             OBELISK_RT_DESIGN_CAP_ITERATE |
+                             OBELISK_RT_DESIGN_CAP_PORT_INPUT |
+                             OBELISK_RT_DESIGN_CAP_PORT_OUTPUT |
+                             OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
     if ((caps & ~supportedCaps) != 0 ||
         ((caps & OBELISK_RT_DESIGN_CAP_WRITE) != 0 &&
          (database.profile & OBELISK_RT_DESIGN_PROFILE_WRITE) == 0))
@@ -308,6 +311,21 @@ bool validateDatabaseImpl(const Database &database) {
                  read64(record + 56) == 0 ||
                  read64(database.data + typeOffset + 8) !=
                      read64(record + 56)) {
+        return false;
+      }
+      uint32_t portCaps = caps & (OBELISK_RT_DESIGN_CAP_PORT_INPUT |
+                                  OBELISK_RT_DESIGN_CAP_PORT_OUTPUT);
+      uint32_t ordinalCaps =
+          caps & OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
+      if (kind == OBELISK_RT_DESIGN_RECORD_PORT) {
+        if (portCaps == 0 ||
+            caps != (OBELISK_RT_DESIGN_CAP_READ | portCaps | ordinalCaps))
+          return false;
+      } else if (portCaps != 0 &&
+                 kind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
+                 kind != OBELISK_RT_DESIGN_RECORD_NET) {
+        return false;
+      } else if (portCaps == 0 && ordinalCaps != 0) {
         return false;
       }
       uint64_t stateOffset = read64(record + 80);
@@ -592,6 +610,8 @@ uint32_t descriptorKind(uint32_t recordKind) {
     return OBELISK_RT_DESCRIPTOR_PROCESS;
   case OBELISK_RT_DESIGN_RECORD_FUNCTION:
     return OBELISK_RT_DESCRIPTOR_FUNCTION;
+  case OBELISK_RT_DESIGN_RECORD_PORT:
+    return OBELISK_RT_DESCRIPTOR_PORT;
   default:
     return OBELISK_RT_DESCRIPTOR_INVALID;
   }
@@ -1235,7 +1255,8 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
   uint32_t kind;
   if (!database || !getRecord(*database, cursor.offset, record, kind) ||
       kind < OBELISK_RT_DESIGN_RECORD_STORAGE ||
-      kind > OBELISK_RT_DESIGN_RECORD_DRIVER)
+      (kind > OBELISK_RT_DESIGN_RECORD_DRIVER &&
+       kind != OBELISK_RT_DESIGN_RECORD_PORT))
     return OBELISK_RT_INVALID_HANDLE;
   uint32_t capabilities = read32(record + 4);
   if ((capabilities &
