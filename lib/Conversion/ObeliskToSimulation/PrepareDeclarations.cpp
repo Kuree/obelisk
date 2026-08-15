@@ -238,11 +238,20 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
             weakReferent = classReference(type.getValue());
           break;
         }
+    bool hasExplicitConstructor =
+        llvm::any_of(getChildren(classType), [](Operation *child) {
+          semantic::SVSubroutineSymbolOp method = getClassMethod(child);
+          return method && method.getIsConstructor().value_or(false);
+        });
+    FlatSymbolRefAttr implicitConstructor;
+    if (!hasExplicitConstructor && !classType.getIsInterface())
+      implicitConstructor = FlatSymbolRefAttr::get(
+          context, (classSymbol.getValue() + "_implicit_new").str());
     auto declaration = sim::SimClassDeclOp::create(
         builder, getSemanticLocation(classType), classSymbol,
         classIDs.lookup(classType), base,
         interfaces.empty() ? ArrayAttr{} : builder.getArrayAttr(interfaces),
-        weakReferent, ArrayAttr{}, FlatSymbolRefAttr{},
+        weakReferent, ArrayAttr{}, FlatSymbolRefAttr{}, implicitConstructor,
         classType.getIsAbstract() || classType.getIsInterface(),
         classType.getIsInterface(), classType.getIsFinal(),
         builder.getStringAttr(getDebugName(classType)));
@@ -251,18 +260,8 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
     // when the only current reference is embedded in a type.
     SymbolTable::setSymbolVisibility(declaration,
                                      SymbolTable::Visibility::Public);
-    bool hasExplicitConstructor =
-        llvm::any_of(getChildren(classType), [](Operation *child) {
-          semantic::SVSubroutineSymbolOp method = getClassMethod(child);
-          return method && method.getIsConstructor().value_or(false);
-        });
-    if (!hasExplicitConstructor && !classType.getIsInterface()) {
-      FlatSymbolRefAttr constructor = FlatSymbolRefAttr::get(
-          context, (classSymbol.getValue() + "_implicit_new").str());
-      result.implicitConstructorSymbols[classType] = constructor;
-      declaration->setAttr("obelisk_sim.implicit_constructor",
-                           builder.getStringAttr(constructor.getValue()));
-    }
+    if (implicitConstructor)
+      result.implicitConstructorSymbols[classType] = implicitConstructor;
 
     uint64_t ordinal = 0;
     for (Operation *child : getChildren(classType)) {

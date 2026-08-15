@@ -1,4 +1,5 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: obelisk-opt %s --obelisk-sim-prepare | FileCheck %s --check-prefix=PREPARE
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "function_local_sensitivity", name = "function_local_sensitivity", node_id = 0 : i64, sym_name = "s0.function_local_sensitivity"} {
@@ -73,14 +74,21 @@ module {
   }
 }
 
-// The continuous process still captures and passes both function-local
-// statics. Its implicit sensitivity excludes the callee-written scratch but
-// retains the true design input and the read-only static.
+// PREPARE-LABEL: obelisk_sim.func private @unit_1
+// PREPARE-SAME: (%[[CONTEXT:arg[0-9]+]]: !obelisk_sim.context
+// PREPARE: obelisk_sim.bindings = [
+// PREPARE-SAME: #obelisk_sim.descriptor_binding<path = "function_local_sensitivity.transform.scratch", descriptor = 2, type = !obelisk_sim.ref<!obelisk_sim.logic<32>>>
+// PREPARE-SAME: #obelisk_sim.descriptor_binding<path = "function_local_sensitivity.transform.read_only", descriptor = 3, type = !obelisk_sim.ref<!obelisk_sim.logic<32>>>
+
+// The continuous process keeps both function-local statics for sensitivity,
+// while the function resolves them directly from context. Its implicit
+// sensitivity excludes the callee-written scratch but retains the true design
+// input and the read-only static.
 // CHECK: obelisk_sim.storage.decl {{[0-9]+}} {{.*}} hierarchy "function_local_sensitivity.source"
 // CHECK: obelisk_sim.storage.decl {{[0-9]+}} {{.*}} hierarchy "function_local_sensitivity.transform.scratch"
 // CHECK: obelisk_sim.storage.decl {{[0-9]+}} {{.*}} hierarchy "function_local_sensitivity.transform.read_only"
 // CHECK-LABEL: obelisk_sim.func private @{{.*}}(
 // CHECK-SAME: %{{.*}}, %[[SOURCE_ARG:arg[0-9]+]]: {{.*}}, %[[SCRATCH_ARG:arg[0-9]+]]: {{.*}}, %[[READ_ONLY_ARG:arg[0-9]+]]: {{.*}}, %{{.*}}) attributes {{.*}}entry_kind = 7 : i32
-// CHECK: obelisk_sim.call {{.*}}%[[SCRATCH_ARG]], %[[READ_ONLY_ARG]]
+// CHECK: obelisk_sim.call @{{.*}}(%{{.*}}, %{{.*}})
 // CHECK: obelisk_sim.suspend.any %[[SOURCE_ARG]], %[[READ_ONLY_ARG]]
 // CHECK-NOT: obelisk.sv.

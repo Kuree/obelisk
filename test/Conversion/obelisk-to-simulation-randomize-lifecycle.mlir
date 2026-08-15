@@ -74,6 +74,13 @@
 // CHECK: ^[[INTERFACE_ENTRY:bb[0-9]+]]:
 // CHECK-NEXT: %[[INTERFACE_CAST:.*]] = obelisk_sim.class.cast %[[INTERFACE_OBJECT]] : !obelisk_sim.class_handle<@__obelisk_class_s30_I> to !obelisk_sim.class_handle<@__obelisk_class_s11_Derived>
 // CHECK-NEXT: obelisk_sim.class.direct_call @[[DERIVED_PRE]] %[[INTERFACE_CAST]]()
+// A context-backed read performed only by Base::pre_randomize remains in the
+// always_comb sensitivity even though it is no longer an ABI capture.
+// CHECK-LABEL: obelisk_sim.func private @unit_4(
+// CHECK-SAME: %{{arg[0-9]+}}: !obelisk_sim.context{{.*}}%[[HOOK_LIMIT:arg[0-9]+]]: !obelisk_sim.ref<i1> {{.*}}obelisk_sim.descriptor_id = 0
+// CHECK-SAME: %[[HOOK_OBJECT:arg[0-9]+]]: !obelisk_sim.ref<!obelisk_sim.class_handle<@__obelisk_class_s3_Base>>
+// CHECK-SAME: entry_kind = 4 : i32
+// CHECK: obelisk_sim.suspend.any %[[HOOK_OBJECT]], %[[HOOK_LIMIT]]
 
 //--- lifecycle.mlir
 
@@ -193,10 +200,11 @@ module {
             }
           }
         }
-        // Keep a second randomize-containing unit in this MLIR test. Unit
-        // lowering is parallel by default, which exercises serialization of
-        // the intentionally single-threaded compiler-side Z3 build.
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 116 : i64, procedure_kind = 0 : i32, sym_name = "s35", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        // Keep a second randomize-containing always_comb unit in this MLIR
+        // test. Besides exercising serialization of the intentionally
+        // single-threaded compiler-side Z3 build, it verifies lifecycle-hook
+        // reads participate independently in implicit sensitivity.
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 116 : i64, procedure_kind = 3 : i32, sym_name = "s35", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 117 : i64} {
             obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 118 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s19.top::@s20.top} {
               obelisk.sv.expression.named_value attributes {node_id = 119 : i64, referenced_path = "top.object", referenced_symbol = @s1.$root::@s19.top::@s20.top::@s21.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.Base>} {

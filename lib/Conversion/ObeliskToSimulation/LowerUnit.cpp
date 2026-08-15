@@ -306,6 +306,27 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
   if (!bindings)
     return;
   for (Attribute attr : bindings) {
+    if (auto descriptor = dyn_cast<sim::DescriptorBindingAttr>(attr)) {
+      StringRef path = descriptor.getPath().getValue();
+      Value storage = sim::SimContextStorageOp::create(
+          builder, function.getLoc(), descriptor.getType(),
+          function.getBody().front().getArgument(0),
+          descriptor.getDescriptor());
+      if (function.getEntryKind() == sim::EntryKind::Task) {
+        Value local = values.lookup(path);
+        if (local && local != storage && isa<sim::RefType>(local.getType()) &&
+            local.getType() == storage.getType()) {
+          Value initial = sim::SimRefLoadOp::create(
+              builder, function.getLoc(),
+              cast<sim::RefType>(local.getType()).getElementType(), local);
+          sim::SimRefStoreOp::create(builder, function.getLoc(), initial,
+                                     storage);
+        }
+      }
+      values[path] = storage;
+      lvalues[path] = storage;
+      continue;
+    }
     if (auto argument = dyn_cast<sim::ArgumentBindingAttr>(attr)) {
       StringRef path = argument.getPath().getValue();
       Value value =

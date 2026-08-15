@@ -352,7 +352,8 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
                              ValueRange{next->first, next->second});
         setCurrent(localExit);
         if (parentStep)
-          emitBranch(parentStep);
+          cf::BranchOp::create(builder, location, parentStep,
+                               parentStepOperands);
         return success();
       }
 
@@ -458,7 +459,7 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
       cf::BranchOp::create(builder, location, header, ValueRange{next});
       setCurrent(localExit);
       if (parentStep)
-        emitBranch(parentStep);
+        cf::BranchOp::create(builder, location, parentStep, parentStepOperands);
       return success();
     };
 
@@ -895,8 +896,13 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
     } else if (auto hierarchical =
                    dyn_cast<semantic::SVHierarchicalValueExpressionOp>(nested))
       path = hierarchical.getReferencedPath();
-    else if (auto instance =
-                 dyn_cast<semantic::SVAssertionInstanceExpressionOp>(nested)) {
+    else if (auto member =
+                 dyn_cast<semantic::SVMemberAccessExpressionOp>(nested)) {
+      if (member->hasAttr(staticClassPropertyAttrName))
+        path = member.getReferencedPath();
+    } else if (auto instance =
+                   dyn_cast<semantic::SVAssertionInstanceExpressionOp>(
+                       nested)) {
       auto type = instance->getAttrOfType<TypeAttr>("semantic_type");
       if (type && isa<semantic::SequenceType>(type.getValue()))
         path = instance.getReferencedPath();
@@ -961,6 +967,14 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
       // Elaborated constants are immutable compile-time facts, not runtime
       // ABI captures. Preserve their typed binding on the outlined child.
       if (isa<sim::ConstantBindingAttr>(attribute)) {
+        if (capturedPaths.insert(path).second)
+          bindings.push_back(attribute);
+        continue;
+      }
+      // Descriptor-backed storage is available from the process context in
+      // every outlined child. Preserve the binding instead of threading a
+      // reference through the spawn ABI.
+      if (isa<sim::DescriptorBindingAttr>(attribute)) {
         if (capturedPaths.insert(path).second)
           bindings.push_back(attribute);
         continue;

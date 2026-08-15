@@ -129,10 +129,10 @@ module {
 // CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} function hierarchy "constant_net_initializer.multiple_observed.$static_initializer"
 
 // CHECK-LABEL: obelisk_sim.func @__obelisk_root
-// CHECK: %[[STORAGE:.*]] = obelisk_sim.context.storage
 // CHECK: %[[NET:.*]] = obelisk_sim.context.net
 // CHECK-NEXT: obelisk_sim.call @unit_1
 // CHECK: obelisk_sim.spawn @unit_0
+// CHECK: %[[STORAGE:.*]] = obelisk_sim.context.storage
 // CHECK: obelisk_sim.spawn @unit_2
 // CHECK: obelisk_sim.return
 

@@ -372,6 +372,7 @@ def SimClassDeclOp : SimOp<"class.decl", [
     OptionalAttr<SimRandomVariableReferenceArrayAttr>:
         $random_variable_references,
     OptionalAttr<FlatSymbolRefAttr>:$random_constraint_template,
+    OptionalAttr<FlatSymbolRefAttr>:$implicit_constructor,
     BoolAttr:$is_abstract,
     BoolAttr:$is_interface,
     BoolAttr:$is_final,
@@ -1672,10 +1673,11 @@ def SimDisplayOp : SimOp<"display", [
     `item_flags` describes the logical argument sequence. Bit 0 marks a
     nonempty packed operand signed; bit 1 represents an omitted argument and
     consumes no entry from `items`; bit 2 marks an f64 real operand; bit 3
-    marks a managed string; bit 4 marks a managed container. Bit 5 is reserved
-    for the designated literal or managed-string format operand of
-    `string.output_format` and is invalid on `display`; bit 6 marks a managed
-    class handle. `scope` and `library_cell` carry the elaborated call-site
+    marks a managed string; bit 4 marks a managed container. Bit 5 designates
+    the literal or managed-string format that owns all remaining items on
+    `string.output_format`; bit 6 marks a managed class handle; bit 7 marks a
+    managed string as a non-designated output-list format. `scope` and
+    `library_cell` carry the elaborated call-site
     information used by `%m` and `%l`. `time_multiplier` converts a numeric
     `%t` argument from the invoking scope's time unit to the design precision
     used by the runtime clock.

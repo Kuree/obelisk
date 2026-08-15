@@ -1820,6 +1820,14 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     for (Attribute read : reads)
       readCaptures.insert(cast<StringAttr>(read).getValue());
   if (!virtualCallees)
+    for (const auto &read : readCaptures) {
+      Value capture = values.lookup(read.getKey());
+      if (!capture)
+        capture = lvalues.lookup(read.getKey());
+      if (capture)
+        recordSensitivity(capture);
+    }
+  if (!virtualCallees)
     if (auto captures = op->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
       for (Attribute captureAttr : captures) {
         StringRef path = cast<StringAttr>(captureAttr).getValue();
@@ -2083,6 +2091,18 @@ FailureOr<Value>
 UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
+  auto recordReadCaptures = [&](Operation *source) {
+    if (auto reads =
+            source->getAttrOfType<ArrayAttr>(calleeReadCapturesAttrName))
+      for (Attribute readAttr : reads) {
+        StringRef path = cast<StringAttr>(readAttr).getValue();
+        Value capture = values.lookup(path);
+        if (!capture)
+          capture = lvalues.lookup(path);
+        if (capture)
+          recordSensitivity(capture);
+      }
+  };
   if (children.empty()) {
     sim::ClassHandleType receiverType;
     Value receiver;
@@ -2119,17 +2139,15 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
       if (failed(initializeObjectRandomStream(receiver, location)))
         return failure();
     }
-    auto constructorName = declaration ? declaration->getAttrOfType<StringAttr>(
-                                             "obelisk_sim.implicit_constructor")
-                                       : StringAttr{};
-    if (!constructorName) {
+    auto constructor = declaration ? declaration.getImplicitConstructorAttr()
+                                   : FlatSymbolRefAttr{};
+    if (!constructor) {
       emitError(location)
           << "implicit class constructor has no executable implementation";
       return failure();
     }
-    FlatSymbolRefAttr constructor = FlatSymbolRefAttr::get(
-        function.getContext(), constructorName.getValue());
     SmallVector<Value> arguments;
+    recordReadCaptures(op);
     if (auto captures = op->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
       for (Attribute captureAttr : captures) {
         StringRef path = cast<StringAttr>(captureAttr).getValue();
@@ -2368,6 +2386,7 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
     copyOuts.push_back(
         {*destinationRef, formalType, formalSigned, isSignedNode(destination)});
   }
+  recordReadCaptures(call);
   if (auto captures = call->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
     for (Attribute captureAttr : captures) {
       StringRef path = cast<StringAttr>(captureAttr).getValue();

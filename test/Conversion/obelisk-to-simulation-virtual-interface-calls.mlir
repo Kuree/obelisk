@@ -235,7 +235,8 @@ module {
 // The outlined task copies its hidden output temporary back through the
 // caller-provided output reference.
 // CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK: [[OUT:%.*]] = obelisk_sim.ref.load %arg6
+// CHECK: [[OUT_STORAGE:%.*]] = obelisk_sim.context.storage %arg0[3]
+// CHECK: [[OUT:%.*]] = obelisk_sim.ref.load [[OUT_STORAGE]]
 // CHECK: obelisk_sim.ref.store [[OUT]] to %arg3
 // CHECK-LABEL: obelisk_sim.func private @unit_4(
 // CHECK: obelisk_sim.virtual_interface.scope
@@ -246,9 +247,9 @@ module {
 // CHECK: virtual interface call used a null or invalid handle.
 // CHECK: obelisk_sim.virtual_interface.scope
 // CHECK: arith.cmpi eq
-// CHECK: obelisk_sim.task.call @unit_1({{.*}}%arg8, %arg1, %arg2, %arg3) {{.*}} to [[CONT:\^bb[0-9]+]]
+// CHECK: obelisk_sim.task.call @unit_1(%arg0, %{{.*}}, %{{.*}}, %arg8) {{.*}} to [[CONT:\^bb[0-9]+]]
 // CHECK: arith.cmpi eq
-// CHECK: obelisk_sim.task.call @unit_3({{.*}}%arg8, %arg4, %arg5, %arg6) {{.*}} to [[CONT]]
+// CHECK: obelisk_sim.task.call @unit_3(%arg0, %{{.*}}, %{{.*}}, %arg8) {{.*}} to [[CONT]]
 // CHECK: virtual interface task call used a null or invalid handle.
 // CHECK-NOT: obelisk.sv.
 // Every possible instance capture read by a dynamically selected function is

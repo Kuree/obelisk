@@ -3,6 +3,7 @@
 #include "LowerUnit.h"
 
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "obelisk/Runtime/OutputItemFlags.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
@@ -68,19 +69,20 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
             << "format string cannot be omitted";
         return failure();
       }
-      output.flags.push_back(2);
+      output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_OMITTED);
       continue;
     }
     if (auto literal = getStringLiteral(child)) {
       if (isFormat || interpretLiteralsAsFormats) {
         output.items.push_back(sim::SimBytesConstantOp::create(
             builder, getSemanticLocation(literal), literal.getConstantValue()));
-        output.flags.push_back(isFormat ? 32 : 0);
+        output.flags.push_back(
+            isFormat ? OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT : 0);
       } else {
         output.items.push_back(sim::SimStringLiteralOp::create(
             builder, getSemanticLocation(literal), stringType,
             literal.getConstantValue()));
-        output.flags.push_back(8);
+        output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING);
       }
       continue;
     }
@@ -108,7 +110,8 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
         }
       }
       output.items.push_back(format);
-      output.flags.push_back(40);
+      output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING |
+                             OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT);
       continue;
     }
     if (isa<FloatType>((*value).getType())) {
@@ -117,24 +120,31 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
       if (failed(real))
         return failure();
       output.items.push_back(*real);
-      output.flags.push_back(4);
+      output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_REAL);
     } else if (isa<sim::StringType>((*value).getType())) {
       output.items.push_back(*value);
-      output.flags.push_back(8);
+      // Unconsumed strings in a display output list are format strings just
+      // like literal byte strings. A string consumed by an earlier format
+      // conversion is never inspected by the runtime, so marking every
+      // dynamic string here preserves both cases without statically parsing
+      // a runtime value.
+      output.flags.push_back(
+          OBELISK_RT_OUTPUT_ITEM_STRING |
+          (interpretLiteralsAsFormats ? OBELISK_RT_OUTPUT_ITEM_FORMAT : 0));
     } else if (auto bytes = lowerByteArray(child, *value); succeeded(bytes)) {
       output.items.push_back(*bytes);
-      output.flags.push_back(8);
+      output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING);
     } else if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
                    (*value).getType())) {
       output.items.push_back(*value);
-      output.flags.push_back(16);
+      output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_CONTAINER);
     } else if (isa<sim::ClassHandleType>((*value).getType())) {
       // IEEE 1800-2017 21.2.1.7 gives class handles singular assignment-
       // pattern formatting: null is spelled "null" and non-null rendering is
       // implementation dependent. Preserve the typed handle for the runtime
       // instead of pretending it is a packed integer.
       output.items.push_back(*value);
-      output.flags.push_back(64);
+      output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_CLASS);
     } else if (auto unionType =
                    dyn_cast<sim::UnpackedUnionType>((*value).getType());
                unionType && unionType.getIsTagged()) {
@@ -149,14 +159,15 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
       if (failed(pattern))
         return failure();
       output.items.push_back(*pattern);
-      output.flags.push_back(8);
+      output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING);
     } else {
       FailureOr<Value> scalar =
           toPackedScalar(*value, getSemanticLocation(child));
       if (failed(scalar))
         return failure();
       output.items.push_back(*scalar);
-      output.flags.push_back(isSignedNode(child) ? 1 : 0);
+      output.flags.push_back(isSignedNode(child) ? OBELISK_RT_OUTPUT_ITEM_SIGNED
+                                                 : 0);
     }
   }
   return output;

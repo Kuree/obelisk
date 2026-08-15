@@ -1,4 +1,5 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: obelisk-opt %s --obelisk-sim-prepare | FileCheck %s --check-prefix=PREPARE
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {
@@ -73,22 +74,28 @@ module {
   }
 }
 
-// The explicit base constructor captures base_seed.
-// CHECK: obelisk_sim.func private @[[BASE_NEW:unit_[0-9]+]]({{.*}}!obelisk_sim.class_handle<@[[BASE_CLASS:[^>]+]]>{{.*}}i32{{.*}}!obelisk_sim.ref<i32>{{.*}}obelisk_sim.hierarchical_name = "Base::new"
+// Descriptor-backed constructor state is resolved directly through the
+// simulation context instead of being threaded through constructor ABIs.
+// PREPARE: obelisk_sim.class.decl @[[PREPARED_DERIVED:[^ ]+]] {{.*}}implicit_constructor = @[[PREPARED_NEW:[^, }]+]]
+// PREPARE: obelisk.sv.expression.new_class attributes {{.*}}obelisk_sim.callee_captures = []
+// PREPARE-SAME: obelisk_sim.callee_read_captures = ["base_seed", "field_seed"]
+// CHECK: obelisk_sim.func private @[[BASE_NEW:unit_[0-9]+]](%[[BASE_CONTEXT:arg[0-9]+]]: !obelisk_sim.context{{.*}}%{{.*}}: !obelisk_sim.class_handle<@[[BASE_CLASS:[^>]+]]>{{.*}}%{{.*}}: i32{{.*}}obelisk_sim.hierarchical_name = "Base::new"
 // CHECK: %[[BASE_POLICY:.*]] = arith.constant 7 : i32
+// CHECK: %[[BASE_SEED:.*]] = obelisk_sim.context.storage %[[BASE_CONTEXT]][0] : !obelisk_sim.ref<i32>
 // CHECK: obelisk_sim.managed.store %[[BASE_POLICY]]
 
-// The caller of the implicit constructor carries and forwards the capture
-// union. Capture the synthesized symbol here for its definition below.
-// CHECK: obelisk_sim.class.direct_call @[[DERIVED_NEW:[^ ]+]] {{.*}}(%{{.*}}, %{{.*}})
+// Capture the synthesized constructor symbol at its call site for the
+// definition below.
+// CHECK: obelisk_sim.class.direct_call @[[DERIVED_NEW:[^ ]+]] {{.*}}()
 
-// The synthesized derived constructor takes the union of the base capture and
-// its own field-initializer capture, then forwards only base_seed to Base::new.
-// CHECK: obelisk_sim.func private @[[DERIVED_NEW]]({{.*}}%[[DERIVED_THIS:arg[0-9]+]]: !obelisk_sim.class_handle<@[[DERIVED_CLASS:[^>]+]]>{{.*}}%[[DERIVED_BASE_SEED:arg[0-9]+]]: !obelisk_sim.ref<i32>{{.*}}%[[FIELD_SEED:arg[0-9]+]]: !obelisk_sim.ref<i32>{{.*}}obelisk_sim.hierarchical_name = "Derived::new"
+// The synthesized derived constructor resolves its own field initializer from
+// context and the base constructor independently resolves base_seed.
+// CHECK: obelisk_sim.func private @[[DERIVED_NEW]](%[[DERIVED_CONTEXT:arg[0-9]+]]: !obelisk_sim.context{{.*}}%[[DERIVED_THIS:arg[0-9]+]]: !obelisk_sim.class_handle<@[[DERIVED_CLASS:[^>]+]]>{{.*}}obelisk_sim.hierarchical_name = "Derived::new"
 // CHECK: %[[DEFAULT:.*]] = arith.constant 3 : i32
 // CHECK: %[[POLICY:.*]] = arith.constant 7 : i32
+// CHECK: %[[FIELD_SEED:.*]] = obelisk_sim.context.storage %[[DERIVED_CONTEXT]][1] : !obelisk_sim.ref<i32>
 // CHECK: %[[CAST:.*]] = obelisk_sim.class.cast %[[DERIVED_THIS]] : !obelisk_sim.class_handle<@[[DERIVED_CLASS]]> to !obelisk_sim.class_handle<@[[BASE_CLASS]]>
-// CHECK-NEXT: obelisk_sim.class.direct_call @[[BASE_NEW]] %[[CAST]](%[[DEFAULT]], %[[DERIVED_BASE_SEED]])
+// CHECK-NEXT: obelisk_sim.class.direct_call @[[BASE_NEW]] %[[CAST]](%[[DEFAULT]])
 // CHECK: %[[FIELD_VALUE:.*]] = obelisk_sim.ref.load %[[FIELD_SEED]] : !obelisk_sim.ref<i32> -> i32
 // CHECK: obelisk_sim.managed.store %[[FIELD_VALUE]]
 // CHECK: obelisk_sim.managed.store %[[POLICY]]

@@ -8,6 +8,7 @@
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "SimulationVerifiers.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Runtime/OutputItemFlags.h"
 #include "obelisk/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -468,12 +469,12 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
     return operation->emitOpError("time multiplier must be positive");
   unsigned itemIndex = 0;
   for (auto [logicalIndex, flags] : llvm::enumerate(itemFlags)) {
-    if ((flags & 32) != 0 &&
+    if ((flags & OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT) != 0 &&
         (!allowDesignatedFormat || logicalIndex != 0))
       return operation->emitOpError(
           "designated format must be the first string output-format item");
-    if ((flags & 2) != 0) {
-      if (flags != 2)
+    if ((flags & OBELISK_RT_OUTPUT_ITEM_OMITTED) != 0) {
+      if (flags != OBELISK_RT_OUTPUT_ITEM_OMITTED)
         return operation->emitOpError(
             "omitted display items cannot carry other flags");
       continue;
@@ -487,49 +488,59 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
       return operation->emitOpError(
           "items must be literal bytes, packed integers, or f64 reals; "
           "managed strings, containers, and class handles are also accepted");
-    if ((flags & ~127) != 0)
+    if ((flags & ~OBELISK_RT_OUTPUT_ITEM_ALL) != 0)
       return operation->emitOpError(
           "display item flags contain an unknown bit");
-    if ((flags & 16) != 0 &&
+    if ((flags & OBELISK_RT_OUTPUT_ITEM_CONTAINER) != 0 &&
         !isa<DynamicArrayType, QueueType, AssocArrayType>(item.getType()))
       return operation->emitOpError(
           "container display flags require a container operand");
-    if ((flags & 64) != 0 && !isa<ClassHandleType>(item.getType()))
+    if ((flags & OBELISK_RT_OUTPUT_ITEM_CLASS) != 0 &&
+        !isa<ClassHandleType>(item.getType()))
       return operation->emitOpError(
           "class-handle display flags require a class-handle operand");
-    if ((flags & 4) != 0 && !item.getType().isF64())
+    if ((flags & OBELISK_RT_OUTPUT_ITEM_REAL) != 0 && !item.getType().isF64())
       return operation->emitOpError(
           "real display items must have f64 operands");
-    if ((flags & 4) == 0 && item.getType().isF64())
+    if ((flags & OBELISK_RT_OUTPUT_ITEM_REAL) == 0 && item.getType().isF64())
       return operation->emitOpError("f64 display operands must be marked real");
-    if ((flags & 5) == 5)
+    if ((flags &
+         (OBELISK_RT_OUTPUT_ITEM_REAL | OBELISK_RT_OUTPUT_ITEM_SIGNED)) ==
+        (OBELISK_RT_OUTPUT_ITEM_REAL | OBELISK_RT_OUTPUT_ITEM_SIGNED))
       return operation->emitOpError(
           "real display items cannot be marked signed");
-    if (isa<BytesType>(item.getType()) && flags == 1)
+    if (isa<BytesType>(item.getType()) &&
+        flags == OBELISK_RT_OUTPUT_ITEM_SIGNED)
       return operation->emitOpError("literal byte items cannot be signed");
     if (isa<BytesType>(item.getType()) && flags != 0 &&
-        (!allowDesignatedFormat || flags != 32))
+        (!allowDesignatedFormat ||
+         flags != OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT))
       return operation->emitOpError(
           "only a string output-format literal may carry the designated "
           "format flag");
     if (isa<StringType>(item.getType())) {
-      if (flags != 8 && (!allowDesignatedFormat || flags != 40))
+      if (flags != OBELISK_RT_OUTPUT_ITEM_STRING &&
+          flags != (OBELISK_RT_OUTPUT_ITEM_STRING |
+                    OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT) &&
+          flags !=
+              (OBELISK_RT_OUTPUT_ITEM_STRING | OBELISK_RT_OUTPUT_ITEM_FORMAT))
         return operation->emitOpError(
-            "managed string items require the string flag; only a string "
-            "output-format item may also carry the format flag");
+            "managed string items require the string flag and may also carry "
+            "the format flag");
     } else if (isa<DynamicArrayType, QueueType, AssocArrayType>(
                    item.getType())) {
-      if (flags != 16)
+      if (flags != OBELISK_RT_OUTPUT_ITEM_CONTAINER)
         return operation->emitOpError(
             "managed container items require only the container flag");
     } else if (isa<ClassHandleType>(item.getType())) {
-      if (flags != 64)
+      if (flags != OBELISK_RT_OUTPUT_ITEM_CLASS)
         return operation->emitOpError(
             "class-handle items require only the class-handle flag");
     } else if (item.getType().isF64()) {
-      if (flags != 4)
+      if (flags != OBELISK_RT_OUTPUT_ITEM_REAL)
         return operation->emitOpError("f64 items require only the real flag");
-    } else if (!isa<BytesType>(item.getType()) && flags != 0 && flags != 1) {
+    } else if (!isa<BytesType>(item.getType()) && flags != 0 &&
+               flags != OBELISK_RT_OUTPUT_ITEM_SIGNED) {
       return operation->emitOpError(
           "packed integer items may only carry the signed flag");
     }

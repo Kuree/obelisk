@@ -424,14 +424,26 @@ UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
     return convert(selected, destination.type, false, location,
                    isSignedNode(destination.semanticNode));
   }
-  case CapturedLValue::Kind::ContainerElement:
+  case CapturedLValue::Kind::ContainerElement: {
+    if (destination.children.size() != 1)
+      return failure();
+    FailureOr<Value> container =
+        loadCapturedLValue(destination.children.front(), location);
+    if (failed(container))
+      return failure();
     return sim::SimContainerReadOp::create(builder, location, destination.type,
-                                           destination.container,
-                                           destination.index)
+                                           *container, destination.index)
         .getResult();
+  }
   case CapturedLValue::Kind::AssociativeElement: {
+    if (destination.children.size() != 1)
+      return failure();
+    FailureOr<Value> container =
+        loadCapturedLValue(destination.children.front(), location);
+    if (failed(container))
+      return failure();
     Value isNull = sim::SimManagedIsNullOp::create(
-        builder, location, builder.getI1Type(), destination.container);
+        builder, location, builder.getI1Type(), *container);
     Block *missing = addBlock();
     Block *present = addBlock();
     Block *resume = addBlock();
@@ -445,9 +457,8 @@ UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
       return failure();
     cf::BranchOp::create(builder, location, resume, ValueRange{defaultValue});
     setCurrent(present);
-    Value value =
-        sim::SimAssocReadOp::create(builder, location, destination.type,
-                                    destination.container, destination.index);
+    Value value = sim::SimAssocReadOp::create(
+        builder, location, destination.type, *container, destination.index);
     cf::BranchOp::create(builder, location, resume, ValueRange{value});
     setCurrent(resume);
     return resume->getArgument(0);
@@ -913,8 +924,11 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
       return success();
     }
 
+    FailureOr<Value> currentContainer = loadCapturedLValue(base, location);
+    if (failed(currentContainer))
+      return failure();
     Value size = sim::SimContainerSizeOp::create(
-        builder, location, builder.getI64Type(), destination.container);
+        builder, location, builder.getI64Type(), *currentContainer);
     Value zero = arith::ConstantOp::create(
         builder, location, builder.getI64Type(), builder.getI64IntegerAttr(0));
     Value nonnegative = arith::CmpIOp::create(
@@ -925,11 +939,11 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         arith::AndIOp::create(builder, location, nonnegative, inRange);
     Block *write = addBlock();
     Block *resume = addBlock();
-    resume->addArgument(destination.container.getType(), location);
+    resume->addArgument((*currentContainer).getType(), location);
     cf::CondBranchOp::create(builder, location, valid, write, ValueRange{},
-                             resume, ValueRange{destination.container});
+                             resume, ValueRange{*currentContainer});
     setCurrent(write);
-    Value updated = cloneSequentialValue(destination.container, location);
+    Value updated = cloneSequentialValue(*currentContainer, location);
     sim::SimContainerWriteOp::create(builder, location, updated,
                                      destination.index, *converted);
     if (failed(writeCapturedLValue(base, updated, false, false, location)))
@@ -954,18 +968,21 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     if (failed(converted))
       return failure();
     CapturedLValue &base = destination.children.front();
+    FailureOr<Value> currentContainer = loadCapturedLValue(base, location);
+    if (failed(currentContainer))
+      return failure();
     CapturedLValue createBase = base;
     CapturedLValue existingBase = base;
     Value isNull = sim::SimManagedIsNullOp::create(
-        builder, location, builder.getI1Type(), destination.container);
+        builder, location, builder.getI1Type(), *currentContainer);
     Block *create = addBlock();
     Block *existing = addBlock();
     Block *resume = addBlock();
-    resume->addArgument(destination.container.getType(), location);
+    resume->addArgument((*currentContainer).getType(), location);
     cf::CondBranchOp::create(builder, location, isNull, create, ValueRange{},
                              existing, ValueRange{});
     setCurrent(create);
-    auto arrayType = cast<sim::AssocArrayType>(destination.container.getType());
+    auto arrayType = cast<sim::AssocArrayType>((*currentContainer).getType());
     FailureOr<Value> allocated = createAssocArray(arrayType, location);
     if (failed(allocated))
       return failure();
@@ -978,8 +995,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
 
     setCurrent(existing);
     Value updated = sim::SimContainerCloneOp::create(
-        builder, location, destination.container.getType(),
-        destination.container);
+        builder, location, (*currentContainer).getType(), *currentContainer);
     sim::SimAssocWriteOp::create(builder, location, updated, destination.index,
                                  *converted);
     if (failed(

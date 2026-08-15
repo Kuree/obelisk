@@ -52,6 +52,18 @@ def SimArgumentBindingAttr
   let genVerifyDecl = 1;
 }
 
+def SimDescriptorBindingAttr
+    : SimAttr<"DescriptorBinding", "descriptor_binding"> {
+  let summary = "source name bound directly through the simulation context";
+  let parameters = (ins
+    "::mlir::StringAttr":$path,
+    "uint64_t":$descriptor,
+    "::mlir::Type":$type
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
 def SimLocalBindingAttr : SimAttr<"LocalBinding", "local_binding"> {
   let summary = "source name bound to activation-local storage";
   let parameters = (ins

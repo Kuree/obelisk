@@ -143,39 +143,22 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     return failure();
   }
   FailureOr<Value> receiver;
+  std::optional<CapturedLValue> capturedReceiver;
   if (receiverOverride) {
     receiver = receiverOverride;
   } else if (mutatesReceiver) {
-    FailureOr<Value> reference = lowerExpression(receiverNode, true);
-    FailureOr<Value> loaded = succeeded(reference)
-                                  ? loadReference(*reference, location)
+    FailureOr<CapturedLValue> captured = captureLValue(receiverNode, location);
+    FailureOr<Value> loaded = succeeded(captured)
+                                  ? loadCapturedLValue(*captured, location)
                                   : FailureOr<Value>(failure());
-    if (failed(reference) || failed(loaded))
+    if (failed(captured) || failed(loaded))
       return failure();
     Value updated = cloneSequentialValue(*loaded, location);
     FailureOr<Value> allocated = ensureSequentialContainer(updated, location);
     if (failed(allocated))
       return failure();
-    updated = *allocated;
-    if (isa<sim::RefType>((*reference).getType()))
-      sim::SimRefStoreOp::create(builder, location, updated, *reference);
-    else if (isa<sim::ManagedRefType>((*reference).getType()))
-      sim::SimManagedStoreOp::create(builder, location, updated, *reference);
-    else if (isa<sim::ArgumentRefType>((*reference).getType()))
-      sim::SimArgumentRefStoreOp::create(builder, location, updated,
-                                         *reference);
-    else
-      // The receiver is stored by key rather than by address - it is an
-      // element of an associative array, a dynamic array, or a queue. Writing
-      // the mutated container back needs a store that runs *after* the method
-      // body, because those elements hold values rather than references, so
-      // the reference-store shape above cannot express it.
-      return emitError(location)
-                 << "mutating method '" << methodName
-                 << "' on a container nested inside a dynamic container is "
-                    "not executable yet",
-             failure();
-    receiver = updated;
+    capturedReceiver.emplace(std::move(*captured));
+    receiver = *allocated;
   } else {
     receiver = lowerExpression(receiverNode);
   }
@@ -192,6 +175,23 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     elementType = fixedArray.getElementType();
   else
     return failure();
+
+  // Sequential containers have value semantics. Mutating a selected queue or
+  // dynamic array therefore operates on a cloned value and commits that value
+  // back through the complete captured lvalue after the method finishes. The
+  // captured-lvalue writer recursively rebuilds associative and sequential
+  // parents, which covers UVM's associative-array-of-queues idiom.
+  auto commitMutation = [&]() -> LogicalResult {
+    if (!capturedReceiver)
+      return success();
+    return writeCapturedLValue(*capturedReceiver, *receiver, false, false,
+                               location);
+  };
+  auto mutatedResult = [&](Value result) -> FailureOr<Value> {
+    if (failed(commitMutation()))
+      return failure();
+    return result;
+  };
 
   if (method == ArrayMethod::Size) {
     if (withClause || children.size() != 1)
@@ -231,9 +231,8 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         builder, location, builder.getI64Type(), *receiver);
     sim::SimContainerWriteOp::create(builder, location, *receiver, size,
                                      *converted);
-    return arith::ConstantOp::create(builder, location, builder.getI1Type(),
-                                     builder.getBoolAttr(false))
-        .getResult();
+    return mutatedResult(arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(false)));
   }
   if (method == ArrayMethod::PushFront) {
     if (withClause || children.size() != 2)
@@ -277,9 +276,8 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         builder, location, builder.getI64Type(), builder.getI64IntegerAttr(0));
     sim::SimQueueInsertOp::create(builder, location, *receiver, zero,
                                   *converted);
-    return arith::ConstantOp::create(builder, location, builder.getI1Type(),
-                                     builder.getBoolAttr(false))
-        .getResult();
+    return mutatedResult(arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(false)));
   }
   if (method == ArrayMethod::PopFront) {
     if (withClause || children.size() != 1)
@@ -295,9 +293,12 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
                                                   elementType, *receiver, zero);
     sim::SimQueueDeleteOp::create(builder, location, *receiver, zero);
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
-    return failed(resultType)
-               ? FailureOr<Value>(failure())
-               : convert(value, *resultType, isSignedNode(op), location);
+    FailureOr<Value> result =
+        failed(resultType)
+            ? FailureOr<Value>(failure())
+            : convert(value, *resultType, isSignedNode(op), location);
+    return failed(result) ? FailureOr<Value>(failure())
+                          : mutatedResult(*result);
   }
   if (method == ArrayMethod::PopBack) {
     if (withClause || children.size() != 1)
@@ -316,9 +317,12 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         builder, location, elementType, *receiver, index);
     sim::SimQueueDeleteOp::create(builder, location, *receiver, index);
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
-    return failed(resultType)
-               ? FailureOr<Value>(failure())
-               : convert(value, *resultType, isSignedNode(op), location);
+    FailureOr<Value> result =
+        failed(resultType)
+            ? FailureOr<Value>(failure())
+            : convert(value, *resultType, isSignedNode(op), location);
+    return failed(result) ? FailureOr<Value>(failure())
+                          : mutatedResult(*result);
   }
   if (method == ArrayMethod::Insert) {
     if (withClause || children.size() != 3)
@@ -343,9 +347,8 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
       return failure();
     sim::SimQueueInsertOp::create(builder, location, *receiver, *convertedIndex,
                                   *convertedValue);
-    return arith::ConstantOp::create(builder, location, builder.getI1Type(),
-                                     builder.getBoolAttr(false))
-        .getResult();
+    return mutatedResult(arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(false)));
   }
   if (method == ArrayMethod::Delete) {
     if (withClause || children.size() > 2)
@@ -369,9 +372,8 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         return failure();
       sim::SimQueueDeleteOp::create(builder, location, *receiver, *converted);
     }
-    return arith::ConstantOp::create(builder, location, builder.getI1Type(),
-                                     builder.getBoolAttr(false))
-        .getResult();
+    return mutatedResult(arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(false)));
   }
 
   auto iteratorPath = [&]() -> FailureOr<StringRef> {
@@ -624,9 +626,8 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         arith::AddIOp::create(builder, location, leftIndex, indexConstant(1));
     cf::BranchOp::create(builder, location, header, ValueRange{next});
     setCurrent(exit);
-    return arith::ConstantOp::create(builder, location, builder.getI1Type(),
-                                     builder.getBoolAttr(false))
-        .getResult();
+    return mutatedResult(arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(false)));
   }
 
   if (method == ArrayMethod::Shuffle) {
@@ -661,9 +662,8 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
                                      left);
     cf::BranchOp::create(builder, location, header, ValueRange{last});
     setCurrent(exit);
-    return arith::ConstantOp::create(builder, location, builder.getI1Type(),
-                                     builder.getBoolAttr(false))
-        .getResult();
+    return mutatedResult(arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(false)));
   }
 
   bool locator =
@@ -954,9 +954,8 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         builder, location, outerStep->getArgument(0), indexConstant(1));
     cf::BranchOp::create(builder, location, outerHeader, ValueRange{nextPass});
     setCurrent(exit);
-    return arith::ConstantOp::create(builder, location, builder.getI1Type(),
-                                     builder.getBoolAttr(false))
-        .getResult();
+    return mutatedResult(arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(false)));
   }
 
   if (method == ArrayMethod::Map) {

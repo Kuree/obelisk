@@ -325,6 +325,23 @@ SimClassDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (getWeakReferentAttr() &&
       !lookupClass(symbolTable, *this, getWeakReferentAttr()))
     return emitOpError("weak wrapper references an unknown referent class");
+  if (FlatSymbolRefAttr reference = getImplicitConstructorAttr()) {
+    auto constructor =
+        symbolTable.lookupNearestSymbolFrom<SimFuncOp>(*this, reference);
+    if (!constructor)
+      return emitOpError("implicit constructor references an unknown function");
+    if (constructor.getEntryKind() != EntryKind::Function)
+      return emitOpError(
+          "implicit constructor must reference a function code unit");
+    Type receiverType = ClassHandleType::get(
+        getContext(), FlatSymbolRefAttr::get(getContext(), getSymName()));
+    if (constructor.getFunctionType().getNumInputs() < 2 ||
+        constructor.getFunctionType().getInput(1) != receiverType ||
+        constructor.getFunctionType().getNumResults() != 0)
+      return emitOpError(
+          "implicit constructor must reference a void constructor function "
+          "for this class");
+  }
   if (Attribute attribute = (*this)->getAttr(metadata::randomModeField)) {
     auto reference = dyn_cast<FlatSymbolRefAttr>(attribute);
     SimClassFieldDeclOp field =
@@ -1382,6 +1399,22 @@ LogicalResult SimDesignOp::verifyRegions() {
         }
       }
     }
+    if (ArrayAttr bindings =
+            function->getAttrOfType<ArrayAttr>(metadata::bindings))
+      for (Attribute attribute : bindings) {
+        auto binding = dyn_cast<DescriptorBindingAttr>(attribute);
+        if (!binding)
+          continue;
+        auto reference = dyn_cast<RefType>(binding.getType());
+        auto descriptor = storageTypes.find(binding.getDescriptor());
+        if (!reference || descriptor == storageTypes.end() ||
+            descriptor->second != reference.getElementType())
+          return function.emitOpError()
+                 << "descriptor binding for path '"
+                 << binding.getPath().getValue()
+                 << "' references an unknown or incompatible storage "
+                    "descriptor";
+      }
     WalkResult result = function.walk([&](Operation *op) {
       auto verifyDescriptor = [&](uint64_t id, Type elementType,
                                   const llvm::DenseMap<uint64_t, Type> &table,

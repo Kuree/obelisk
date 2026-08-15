@@ -123,7 +123,7 @@ module attributes {
 
 // CHECK: %[[DECIMAL:.*]] = obelisk_sim.string.output_format {{.*}} radix = 10 flags = [0, 1] {library_cell = "work.swrite_test", scope = "swrite_test"
 // CHECK-NEXT: obelisk_sim.ref.store %[[DECIMAL]]
-// CHECK: %[[HEX:.*]] = obelisk_sim.string.output_format {{.*}} radix = 16 flags = [1, 2, 8] {library_cell = "work.swrite_test", scope = "swrite_test"
+// CHECK: %[[HEX:.*]] = obelisk_sim.string.output_format {{.*}} radix = 16 flags = [1, 2, 136] {library_cell = "work.swrite_test", scope = "swrite_test"
 // CHECK-NEXT: %[[PACKED:.*]] = obelisk_sim.string.to_packed %[[HEX]] : (!obelisk_sim.string) -> i128
 // CHECK: %[[BYTES:.*]] = obelisk_sim.string.output_format {{.*}} radix = 10 flags = [0, 0] {library_cell = "work.swrite_test", scope = "swrite_test"
 // CHECK: %[[BYTE0:.*]] = obelisk_sim.string.getc %[[BYTES]], {{.*}} : (!obelisk_sim.string, i64) -> i8

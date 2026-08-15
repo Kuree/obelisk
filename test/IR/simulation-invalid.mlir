@@ -12,6 +12,72 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @empty_descriptor_binding_path {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.storage.decl 0 in 0 : i8 design
+    obelisk_sim.code_unit.decl 9100001 in 0 function hierarchy "bad"
+    obelisk_sim.func private @bad(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {
+          entry_kind = 8 : i32, code_unit_id = 9100001 : i64,
+          obelisk_sim.bindings = [
+            // expected-error @+1 {{descriptor binding path must not be empty}}
+            #obelisk_sim.descriptor_binding<path = "", descriptor = 0, type = !obelisk_sim.ref<i8>>]
+        } {
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @unknown_descriptor_binding {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.storage.decl 0 in 0 : i8 design
+    obelisk_sim.code_unit.decl 9100002 in 0 function hierarchy "bad"
+    // expected-error @+1 {{descriptor binding for path 'state' references an unknown or incompatible storage descriptor}}
+    obelisk_sim.func private @bad(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {
+          entry_kind = 8 : i32, code_unit_id = 9100002 : i64,
+          obelisk_sim.bindings = [
+            #obelisk_sim.descriptor_binding<path = "state", descriptor = 1, type = !obelisk_sim.ref<i8>>]
+        } {
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @missing_implicit_constructor {
+    // expected-error @+1 {{implicit constructor references an unknown function}}
+    obelisk_sim.class.decl @C id 1 {implicit_constructor = @missing, is_abstract = false, is_final = false, is_interface = false}
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @format_flag_on_integer {
+    obelisk_sim.code_unit.decl 9100003 in 0 initial hierarchy "bad"
+    obelisk_sim.func private @bad(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 9100003 : i64} {
+      %fd = arith.constant 1 : i32
+      %value = arith.constant 0 : i8
+      // expected-error @+1 {{packed integer items may only carry the signed flag}}
+      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [128] : i8
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
   func.func @bad_container_read(
       %array: !obelisk_sim.dynamic_array<i32>, %index: i64) {
     // expected-error @+1 {{result type must match the container element}}

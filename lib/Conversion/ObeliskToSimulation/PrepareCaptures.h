@@ -25,6 +25,13 @@ struct PreparedConstant {
   sim::FrozenConstantAttr value;
 };
 
+inline bool isContextResolvableStorage(const DescriptorInfo &descriptor) {
+  return descriptor.kind == DescriptorInfo::Kind::Storage &&
+         (!descriptor.rootType || descriptor.rootType == descriptor.type) &&
+         descriptor.viewOffset == 0 && descriptor.viewIndices.empty() &&
+         !descriptor.aggregateViewType && descriptor.packedViewOffset == 0;
+}
+
 struct PreparedCaptures {
   llvm::DenseMap<mlir::Operation *,
                  mlir::SmallVector<std::pair<std::string, DescriptorInfo>>>
@@ -39,6 +46,7 @@ struct PreparedCaptures {
       observerValues;
   llvm::DenseMap<mlir::Operation *, llvm::StringSet<>> observerReadLocals;
   llvm::DenseSet<mlir::Operation *> indirectRefTasks;
+  llvm::DenseSet<mlir::Operation *> contextStorageSources;
 };
 
 /// Analyze explicit unit captures and close descriptor captures over direct

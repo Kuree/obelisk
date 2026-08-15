@@ -5,6 +5,7 @@
 #include "obelisk/Conversion/SimulationToStandard.h"
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Runtime/OutputItemFlags.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -101,7 +102,7 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
   SmallVector<Value> arguments;
   unsigned itemIndex = 0;
   for (int32_t flags : op.getItemFlags()) {
-    if ((flags & 2) != 0) {
+    if ((flags & OBELISK_RT_OUTPUT_ITEM_OMITTED) != 0) {
       arguments.push_back(runtime::RTArgumentEmptyOp::create(
           rewriter, loc, runtime::ArgumentType::get(rewriter.getContext())));
       continue;
@@ -114,7 +115,8 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
             op, "literal byte item did not convert 1:1");
       arguments.push_back(runtime::RTArgumentBytesOp::create(
           rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
-          converted.front(), true, (flags & 32) != 0));
+          converted.front(), true,
+          (flags & OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT) != 0));
       continue;
     }
     if (isa<sim::StringType>(sourceType)) {
@@ -123,7 +125,10 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
             op, "managed string output item did not convert 1:1");
       arguments.push_back(runtime::RTArgumentManagedStringOp::create(
           rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
-          converted.front(), (flags & 32) != 0, (flags & 32) != 0));
+          converted.front(),
+          (flags & (OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT |
+                    OBELISK_RT_OUTPUT_ITEM_FORMAT)) != 0,
+          (flags & OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT) != 0));
       continue;
     }
     if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
@@ -160,7 +165,8 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
     Value unknown = converted.size() == 2 ? converted[1] : Value();
     arguments.push_back(runtime::RTArgumentPackedOp::create(
         rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
-        converted.front(), unknown, (flags & 1) != 0));
+        converted.front(), unknown,
+        (flags & OBELISK_RT_OUTPUT_ITEM_SIGNED) != 0));
   }
   Value array = runtime::RTArgumentArrayOp::create(
       rewriter, loc, runtime::ArgumentArrayType::get(rewriter.getContext()),

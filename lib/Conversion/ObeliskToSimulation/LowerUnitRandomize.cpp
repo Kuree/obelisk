@@ -454,6 +454,13 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (auto reads = op->getAttrOfType<ArrayAttr>(readsAttr))
       for (Attribute read : reads)
         readCaptures.insert(cast<StringAttr>(read).getValue());
+    for (const auto &read : readCaptures) {
+      Value capture = values.lookup(read.getKey());
+      if (!capture)
+        capture = lvalues.lookup(read.getKey());
+      if (capture)
+        recordSensitivity(capture);
+    }
     SmallVector<Value> arguments;
     if (auto captures = op->getAttrOfType<ArrayAttr>(capturesAttr))
       for (Attribute captureAttr : captures) {
@@ -464,8 +471,6 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
               << "randomization hook capture has no local binding: " << path;
           return failure();
         }
-        if (readCaptures.contains(path))
-          recordSensitivity(capture);
         arguments.push_back(capture);
       }
     sim::SimClassDirectCallOp::create(builder, location, TypeRange{}, callee,
@@ -1336,6 +1341,13 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     llvm::StringSet<> readCaptures;
     for (Attribute read : reads)
       readCaptures.insert(cast<StringAttr>(read).getValue());
+    for (const auto &read : readCaptures) {
+      Value capture = values.lookup(read.getKey());
+      if (!capture)
+        capture = lvalues.lookup(read.getKey());
+      if (capture)
+        recordSensitivity(capture);
+    }
     SmallVector<Value> arguments;
     for (Attribute captureAttr : captures) {
       StringRef path = cast<StringAttr>(captureAttr).getValue();
@@ -1346,8 +1358,6 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             << path;
         return failure();
       }
-      if (readCaptures.contains(path))
-        recordSensitivity(capture);
       arguments.push_back(capture);
     }
     sim::SimClassDirectCallOp::create(builder, location, TypeRange{}, callee,

@@ -5038,6 +5038,22 @@ void ObeliskSimPreparePass::runOnOperation() {
   auto &observerReadLocals = preparedCaptures->observerReadLocals;
   auto &indirectRefTasks = preparedCaptures->indirectRefTasks;
 
+  auto usesContextStorage = [&](Operation *source, const auto &capture) {
+    return preparedCaptures->contextStorageSources.contains(source) &&
+           isContextResolvableStorage(capture.second);
+  };
+  auto readCaptureAttributes = [&](Operation *source) {
+    SmallVector<StringRef> paths;
+    for (const auto &read : unitReadCaptures[source])
+      paths.push_back(read.getKey());
+    llvm::sort(paths);
+    SmallVector<Attribute> attributes;
+    attributes.reserve(paths.size());
+    for (StringRef path : paths)
+      attributes.push_back(builder.getStringAttr(path));
+    return attributes;
+  };
+
   for (PreparedUnit &unit : units) {
     if (unit.entryKind != sim::EntryKind::Observer)
       continue;
@@ -5075,11 +5091,11 @@ void ObeliskSimPreparePass::runOnOperation() {
         return failure();
       }
       SmallVector<Attribute> captures;
-      SmallVector<Attribute> reads;
+      SmallVector<Attribute> reads = readCaptureAttributes(found->second);
       for (const auto &capture : unitCaptures[found->second]) {
+        if (usesContextStorage(found->second, capture))
+          continue;
         captures.push_back(builder.getStringAttr(capture.first));
-        if (unitReadCaptures[found->second].contains(capture.first))
-          reads.push_back(builder.getStringAttr(capture.first));
       }
       call->setAttr(capturesAttr, builder.getArrayAttr(captures));
       call->setAttr(readsAttr, builder.getArrayAttr(reads));
@@ -5112,11 +5128,11 @@ void ObeliskSimPreparePass::runOnOperation() {
           return failure();
         }
         SmallVector<Attribute> captures;
-        SmallVector<Attribute> reads;
+        SmallVector<Attribute> reads = readCaptureAttributes(found->second);
         for (const auto &capture : unitCaptures[found->second]) {
+          if (usesContextStorage(found->second, capture))
+            continue;
           captures.push_back(builder.getStringAttr(capture.first));
-          if (unitReadCaptures[found->second].contains(capture.first))
-            reads.push_back(builder.getStringAttr(capture.first));
         }
         attributes.push_back(builder.getNamedAttr(
             (prefix + "_captures").str(), builder.getArrayAttr(captures)));
@@ -5220,11 +5236,12 @@ void ObeliskSimPreparePass::runOnOperation() {
         subroutine && !subroutine.getIsDpiImport().value_or(false) &&
         subroutine.getSubroutineKind() == semantic::SVSubroutineKind::Task)
       call->setAttr("obelisk_sim.is_task", builder.getUnitAttr());
-    SmallVector<Attribute> readCapturePaths;
+    SmallVector<Attribute> readCapturePaths =
+        readCaptureAttributes(targetSource);
     for (auto &capture : unitCaptures[targetSource]) {
+      if (usesContextStorage(targetSource, capture))
+        continue;
       capturePaths.push_back(builder.getStringAttr(capture.first));
-      if (unitReadCaptures[targetSource].contains(capture.first))
-        readCapturePaths.push_back(builder.getStringAttr(capture.first));
     }
     call->setAttr(calleeCapturesAttrName, builder.getArrayAttr(capturePaths));
     call->setAttr(calleeReadCapturesAttrName,
@@ -5233,12 +5250,10 @@ void ObeliskSimPreparePass::runOnOperation() {
       SmallVector<Attribute> candidates;
       for (Operation *candidate : virtualTargets) {
         SmallVector<Attribute> captures;
-        SmallVector<Attribute> readCaptures;
+        SmallVector<Attribute> readCaptures = readCaptureAttributes(candidate);
         for (const auto &capture : unitCaptures[candidate])
-          captures.push_back(builder.getStringAttr(capture.first));
-        for (const auto &capture : unitCaptures[candidate])
-          if (unitReadCaptures[candidate].contains(capture.first))
-            readCaptures.push_back(builder.getStringAttr(capture.first));
+          if (!usesContextStorage(candidate, capture))
+            captures.push_back(builder.getStringAttr(capture.first));
         candidates.push_back(builder.getDictionaryAttr({
             builder.getNamedAttr(
                 "scope", builder.getI64IntegerAttr(
@@ -5371,10 +5386,33 @@ void ObeliskSimPreparePass::runOnOperation() {
       return;
     SmallVector<Attribute> captures;
     for (const auto &capture : unitCaptures[source])
-      captures.push_back(builder.getStringAttr(capture.first));
+      if (!usesContextStorage(source, capture))
+        captures.push_back(builder.getStringAttr(capture.first));
     construct->setAttr(calleeCapturesAttrName,
                        builder.getArrayAttr(captures));
+    construct->setAttr(calleeReadCapturesAttrName,
+                       builder.getArrayAttr(readCaptureAttributes(source)));
   });
+
+  // Most executable subroutines have exactly one frozen implementation. Move
+  // their statement bodies into that implementation instead of cloning the
+  // fully annotated semantic tree and retaining a second copy until final
+  // cleanup. Keep cloning sources that also contain observer or fork units,
+  // sources shared by multiple prepared units, and constructors whose bodies
+  // can still supply default arguments to derived constructors later in this
+  // loop.
+  llvm::DenseMap<Operation *, unsigned> sourceUseCounts;
+  llvm::SmallPtrSet<Operation *, 32> unitSources;
+  llvm::SmallPtrSet<Operation *, 32> sourcesWithNestedUnits;
+  for (PreparedUnit &unit : units) {
+    ++sourceUseCounts[unit.source];
+    unitSources.insert(unit.source);
+  }
+  for (PreparedUnit &unit : units)
+    for (Operation *parent = unit.source->getParentOp(); parent;
+         parent = parent->getParentOp())
+      if (unitSources.contains(parent))
+        sourcesWithNestedUnits.insert(parent);
 
   for (PreparedUnit &unit : units) {
     auto captures = unitCaptures.lookup(unit.source);
@@ -5421,9 +5459,14 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVector<DictionaryAttr> argAttrs{
         captureMetadata(builder, sim::CaptureKind::Context)};
     SmallVector<Attribute> bindings;
-    for (auto indexedCapture : llvm::enumerate(captures)) {
-      size_t captureIndex = indexedCapture.index();
-      const auto &capture = indexedCapture.value();
+    for (const auto &capture : captures) {
+      if (usesContextStorage(unit.source, capture)) {
+        Type storageType = sim::RefType::get(context, capture.second.type);
+        bindings.push_back(sim::DescriptorBindingAttr::get(
+            context, builder.getStringAttr(capture.first), capture.second.id,
+            storageType));
+        continue;
+      }
       sim::CaptureKind captureKind = sim::CaptureKind::Storage;
       Type handleType;
       switch (capture.second.kind) {
@@ -5444,6 +5487,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         handleType = sim::EventType::get(context);
         break;
       }
+      unsigned argument = inputs.size();
       inputs.push_back(handleType);
       DictionaryAttr metadata =
           captureMetadata(builder, captureKind, capture.second.id);
@@ -5489,7 +5533,7 @@ void ObeliskSimPreparePass::runOnOperation() {
               ? builder.getI64IntegerAttr(*plannedDriver->nodeId)
               : IntegerAttr{};
       bindings.push_back(sim::ArgumentBindingAttr::get(
-          context, builder.getStringAttr(capture.first), captureIndex + 1,
+          context, builder.getStringAttr(capture.first), argument,
           plannedDriver ? sim::UnitArgumentKind::LValueOnly
                         : sim::UnitArgumentKind::Direct,
           /*copyOut=*/false, lvalueNode));
@@ -6221,6 +6265,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             Operation *baseCaptureSource =
                 constructorCaptureSourceFor(base->second);
             for (const auto &capture : unitCaptures[baseCaptureSource]) {
+              if (usesContextStorage(baseCaptureSource, capture))
+                continue;
               Value value = lookupCaptureArgument(capture.first);
               if (!value) {
                 emitError(getSemanticLocation(subroutine))
@@ -6243,13 +6289,21 @@ void ObeliskSimPreparePass::runOnOperation() {
           initialized = true;
         }
       }
+      bool moveBody = subroutine && !constructor &&
+                      sourceUseCounts.lookup(unit.source) == 1 &&
+                      !sourcesWithNestedUnits.contains(unit.source);
       for (Operation *child : getChildren(unit.source)) {
         // Declarative children remain in the frozen semantic symbol table.
         // Cloning any Symbol into the isolated simulation function would put
         // it below an operation without the SymbolTable trait.
         if (isa<SymbolOpInterface>(child))
           continue;
-        Operation *clonedChild = bodyBuilder.clone(*child);
+        Operation *clonedChild = child;
+        if (moveBody)
+          child->moveBefore(bodyBuilder.getInsertionBlock(),
+                            bodyBuilder.getInsertionBlock()->end());
+        else
+          clonedChild = bodyBuilder.clone(*child);
         if (constructor && owner && owner.getBaseClass() && !initialized) {
           Operation *superStatement = nullptr;
           clonedChild->walk([&](semantic::SVNewClassExpressionOp construct) {
@@ -6441,6 +6495,12 @@ void ObeliskSimPreparePass::runOnOperation() {
         captureMetadata(builder, sim::CaptureKind::Formal)};
     SmallVector<Attribute> bindings;
     for (const auto &capture : unitCaptures[classType]) {
+      if (usesContextStorage(classType, capture)) {
+        bindings.push_back(sim::DescriptorBindingAttr::get(
+            context, builder.getStringAttr(capture.first), capture.second.id,
+            sim::RefType::get(context, capture.second.type)));
+        continue;
+      }
       sim::CaptureKind captureKind = sim::CaptureKind::Storage;
       Type handleType;
       switch (capture.second.kind) {
@@ -6530,9 +6590,13 @@ void ObeliskSimPreparePass::runOnOperation() {
     OpBuilder bodyBuilder = OpBuilder::atBlockEnd(&function.getBody().front());
     Value receiver = function.getBody().front().getArgument(1);
     llvm::StringMap<Value> captureValues;
-    for (auto [index, capture] : llvm::enumerate(unitCaptures[classType]))
+    unsigned captureArgument = 2;
+    for (const auto &capture : unitCaptures[classType]) {
+      if (usesContextStorage(classType, capture))
+        continue;
       captureValues[capture.first] =
-          function.getBody().front().getArgument(index + 2);
+          function.getBody().front().getArgument(captureArgument++);
+    }
 
     if (std::optional<Type> baseType = classType.getBaseClass()) {
       auto baseHandle = dyn_cast<semantic::ClassHandleType>(*baseType);
@@ -6646,6 +6710,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           Operation *baseCaptureSource =
               constructorCaptureSourceFor(base->second);
           for (const auto &capture : unitCaptures[baseCaptureSource]) {
+            if (usesContextStorage(baseCaptureSource, capture))
+              continue;
             Value value = captureValues.lookup(capture.first);
             if (!value) {
               emitError(getSemanticLocation(classType))

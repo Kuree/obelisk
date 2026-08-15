@@ -93,7 +93,7 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
            << "has malformed " << metadata::bindings << ": expected an array";
 
   FunctionType type = function.getFunctionType();
-  enum class ProviderKind { Direct, FormalLocal, Local, Constant };
+  enum class ProviderKind { Direct, Descriptor, FormalLocal, Local, Constant };
   struct PathState {
     std::optional<unsigned> provider;
     std::optional<ProviderKind> providerKind;
@@ -115,7 +115,8 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
       // static-storage binding second; UnitLowering copies in between them.
       if (function.getEntryKind() == EntryKind::Task &&
           state.providerKind == ProviderKind::FormalLocal &&
-          kind == ProviderKind::Direct && !state.taskStaticDirect) {
+          (kind == ProviderKind::Direct || kind == ProviderKind::Descriptor) &&
+          !state.taskStaticDirect) {
         state.taskStaticDirect = index;
         return success();
       }
@@ -130,6 +131,16 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
   };
 
   for (auto [index, binding] : llvm::enumerate(bindings)) {
+    if (auto descriptor = dyn_cast<DescriptorBindingAttr>(binding)) {
+      if (!isa<RefType>(descriptor.getType()))
+        return function.emitOpError()
+               << "has malformed " << metadata::bindings << " entry #" << index
+               << ": descriptor binding requires a storage type";
+      if (failed(claimProvider(descriptor.getPath().getValue(), index,
+                               ProviderKind::Descriptor)))
+        return failure();
+      continue;
+    }
     if (auto local = dyn_cast<LocalBindingAttr>(binding)) {
       if (failed(claimProvider(local.getPath().getValue(), index,
                                ProviderKind::Local)))
@@ -160,7 +171,8 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
     if (!argument)
       return function.emitOpError()
              << "has malformed " << metadata::bindings << " entry #" << index
-             << ": expected an argument, local, or constant binding";
+             << ": expected an argument, descriptor, local, or constant "
+                "binding";
     if (argument.getArgument() >= type.getNumInputs())
       return function.emitOpError()
              << "has malformed " << metadata::bindings << " entry #" << index

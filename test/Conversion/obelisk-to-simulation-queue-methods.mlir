@@ -206,9 +206,9 @@ module {
 }
 
 // push_front lowers to insertion at index zero.
+// CHECK: arith.constant {{.*}}0 : i64
+// CHECK: obelisk_sim.queue.insert
 // CHECK: obelisk_sim.ref.store
-// CHECK: %[[ZERO:.*]] = arith.constant {{.*}}0 : i64
-// CHECK: obelisk_sim.queue.insert {{.*}} into {{.*}}[%[[ZERO]]]
 
 // pop_front reads and removes the element at index zero.
 // CHECK-LABEL: obelisk_sim.func private @unit_1

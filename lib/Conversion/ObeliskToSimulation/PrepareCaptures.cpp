@@ -605,6 +605,16 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       if (seen.insert(constant.path).second)
         constants.push_back(constant);
   };
+  auto mergeDescriptorCaptures = [&](Operation *destination,
+                                     Operation *source) {
+    auto &captures = result.descriptors[destination];
+    llvm::StringSet<> seen;
+    for (const auto &capture : captures)
+      seen.insert(capture.first);
+    for (const auto &capture : result.descriptors[source])
+      if (seen.insert(capture.first).second)
+        captures.push_back(capture);
+  };
 
   // Constructor execution includes the base constructor first and then every
   // declaration-order instance-property initializer. Model both lifecycle
@@ -625,8 +635,9 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
     for (Operation *property : propertyInitializers[classType]) {
       addEdge(constructor, property);
       // Property initializers are cloned into the constructor rather than
-      // called as independent units. Their immutable bindings must therefore
-      // be present on the constructor that lowers the cloned expression.
+      // called as independent units. Their bindings must therefore be present
+      // on the constructor that lowers the cloned expression.
+      mergeDescriptorCaptures(constructor, property);
       mergeConstantCaptures(constructor, property);
     }
   }
@@ -654,6 +665,17 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
         virtualOverrideEdges.emplace_back(method, overridden->second);
     }
 
+  for (const PreparedUnit &unit : analysisUnits.units)
+    if (unit.entryKind == sim::EntryKind::Function ||
+        unit.entryKind == sim::EntryKind::Task)
+      result.contextStorageSources.insert(unit.source);
+  for (const auto &constructor : constructorSources)
+    result.contextStorageSources.insert(constructor.second);
+  auto isDirectContextStorage = [&](Operation *source, const auto &capture) {
+    return result.contextStorageSources.contains(source) &&
+           isContextResolvableStorage(capture.second);
+  };
+
   bool changed;
   do {
     changed = false;
@@ -662,11 +684,18 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       llvm::StringSet<> seen;
       for (auto &capture : captures)
         seen.insert(capture.first);
-      for (auto &capture : result.descriptors[source])
+      for (auto &capture : result.descriptors[source]) {
+        // Functions and tasks resolve ordinary design storage from their
+        // context. Keeping callee-only storage in the caller made large class
+        // libraries grow a quadratic capture ABI even though no reference is
+        // passed at the call site.
+        if (isDirectContextStorage(destination, capture))
+          continue;
         if (seen.insert(capture.first).second) {
           captures.push_back(capture);
           changed = true;
         }
+      }
       for (const auto &read : result.readDescriptors[source])
         changed |=
             result.readDescriptors[destination].insert(read.getKey()).second;
@@ -680,6 +709,24 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       for (Operation *target : edge.second)
         mergeCaptures(edge.first, target);
   } while (changed);
+
+  // Non-callable code units still need the complete transitive read set for
+  // implicit sensitivity and observer dependencies. Reattach those descriptor
+  // records only at the process boundary; callable units keep their compact,
+  // direct context bindings.
+  for (const PreparedUnit &unit : analysisUnits.units) {
+    if (result.contextStorageSources.contains(unit.source))
+      continue;
+    auto &captures = result.descriptors[unit.source];
+    llvm::StringSet<> seen;
+    for (const auto &capture : captures)
+      seen.insert(capture.first);
+    for (const auto &read : result.readDescriptors[unit.source]) {
+      auto descriptor = descriptors.find(read.getKey());
+      if (descriptor != descriptors.end() && seen.insert(read.getKey()).second)
+        captures.push_back({read.getKey().str(), descriptor->second});
+    }
+  }
 
   for (auto &entry : result.descriptors)
     llvm::sort(entry.second,

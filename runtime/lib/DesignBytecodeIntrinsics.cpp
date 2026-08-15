@@ -3,6 +3,7 @@
 #include "DesignBytecodeExecution.h"
 #include "DesignBytecodeNets.h"
 #include "RuntimeInternal.h"
+#include "obelisk/Runtime/OutputItemFlags.h"
 #include "obelisk/Runtime/StableHash.h"
 
 #include <algorithm>
@@ -2712,10 +2713,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     arguments.reserve(itemCount);
     for (uint32_t index = 0; index != itemCount; ++index) {
       uint32_t itemFlags = read32(flags + uint64_t{index} * 4);
-      if ((itemFlags & ~uint32_t{127}) != 0 ||
-          ((itemFlags & 4) != 0 && (itemFlags & 3) != 0))
+      if ((itemFlags & ~uint32_t{OBELISK_RT_OUTPUT_ITEM_ALL}) != 0 ||
+          ((itemFlags & OBELISK_RT_OUTPUT_ITEM_REAL) != 0 &&
+           (itemFlags & (OBELISK_RT_OUTPUT_ITEM_SIGNED |
+                         OBELISK_RT_OUTPUT_ITEM_OMITTED)) != 0))
         return OBELISK_RT_INVALID_BYTECODE;
-      if ((itemFlags & 2) != 0) {
+      if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_OMITTED) != 0) {
         arguments.push_back({OBELISK_RT_ARG_EMPTY, 0, 0, nullptr, nullptr});
         continue;
       }
@@ -2725,39 +2728,50 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       Layout layout = layoutAt(image, frame.function, reg);
       if (layout.kind == OBELISK_RT_DBREG_BYTES) {
         auto value = readByteSpan(image, frame, reg);
-        if (!value || (itemFlags != 0 && itemFlags != 32))
+        if (!value || (itemFlags != 0 &&
+                       itemFlags != OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT))
           return OBELISK_RT_INVALID_BYTECODE;
         arguments.push_back(
             {OBELISK_RT_ARG_STRING,
              static_cast<obelisk_rt_arg_flags>(
                  OBELISK_RT_ARG_FORMAT_STRING |
-                 ((itemFlags & 32) ? OBELISK_RT_ARG_DESIGNATED_FORMAT : 0)),
+                 ((itemFlags & OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT)
+                      ? OBELISK_RT_ARG_DESIGNATED_FORMAT
+                      : 0)),
              value->size, value->data, nullptr});
-      } else if ((itemFlags & 8) != 0) {
+      } else if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_STRING) != 0) {
         if (layout.kind != OBELISK_RT_DBREG_STRING || layout.size != 8 ||
-            (itemFlags != 8 && itemFlags != 40))
+            (itemFlags != OBELISK_RT_OUTPUT_ITEM_STRING &&
+             itemFlags != (OBELISK_RT_OUTPUT_ITEM_STRING |
+                           OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT) &&
+             itemFlags != (OBELISK_RT_OUTPUT_ITEM_STRING |
+                           OBELISK_RT_OUTPUT_ITEM_FORMAT)))
           return OBELISK_RT_INVALID_BYTECODE;
         arguments.push_back(
             {OBELISK_RT_ARG_MANAGED_STRING,
              static_cast<obelisk_rt_arg_flags>(
-                 (itemFlags & 32) ? OBELISK_RT_ARG_FORMAT_STRING |
-                                        OBELISK_RT_ARG_DESIGNATED_FORMAT
-                                  : 0),
+                 ((itemFlags & (OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT |
+                                OBELISK_RT_OUTPUT_ITEM_FORMAT))
+                      ? obelisk_rt_arg_flags{OBELISK_RT_ARG_FORMAT_STRING}
+                      : obelisk_rt_arg_flags{0}) |
+                 ((itemFlags & OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT)
+                      ? obelisk_rt_arg_flags{OBELISK_RT_ARG_DESIGNATED_FORMAT}
+                      : obelisk_rt_arg_flags{0})),
              0, frame.data + layout.offset, nullptr});
-      } else if ((itemFlags & 16) != 0) {
+      } else if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_CONTAINER) != 0) {
         if (layout.kind != OBELISK_RT_DBREG_MANAGED || layout.size != 8 ||
-            itemFlags != 16)
+            itemFlags != OBELISK_RT_OUTPUT_ITEM_CONTAINER)
           return OBELISK_RT_INVALID_BYTECODE;
         arguments.push_back({OBELISK_RT_ARG_MANAGED_CONTAINER, 0, 0,
                              frame.data + layout.offset, nullptr});
-      } else if ((itemFlags & 64) != 0) {
+      } else if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_CLASS) != 0) {
         if (layout.kind != OBELISK_RT_DBREG_MANAGED || layout.size != 8 ||
-            itemFlags != 64)
+            itemFlags != OBELISK_RT_OUTPUT_ITEM_CLASS)
           return OBELISK_RT_INVALID_BYTECODE;
         arguments.push_back({OBELISK_RT_ARG_MANAGED_OBJECT, 0, 0,
                              frame.data + layout.offset, nullptr});
-      } else if ((itemFlags & 4) != 0) {
-        if (itemFlags != 4)
+      } else if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_REAL) != 0) {
+        if (itemFlags != OBELISK_RT_OUTPUT_ITEM_REAL)
           return OBELISK_RT_INVALID_BYTECODE;
         if (layout.kind != OBELISK_RT_DBREG_REAL32 &&
             layout.kind != OBELISK_RT_DBREG_REAL64)
@@ -2774,13 +2788,15 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         arguments.push_back(
             {OBELISK_RT_ARG_REAL, 0, 0, &realValues.back(), nullptr});
       } else {
-        if (itemFlags != 0 && itemFlags != 1)
+        if (itemFlags != 0 && itemFlags != OBELISK_RT_OUTPUT_ITEM_SIGNED)
           return OBELISK_RT_INVALID_BYTECODE;
         values.push_back(readLogic(frame.data, layout));
         Logic &value = values.back();
         arguments.push_back({OBELISK_RT_ARG_LOGIC,
                              static_cast<obelisk_rt_arg_flags>(
-                                 (itemFlags & 1) ? OBELISK_RT_ARG_SIGNED : 0),
+                                 (itemFlags & OBELISK_RT_OUTPUT_ITEM_SIGNED)
+                                     ? OBELISK_RT_ARG_SIGNED
+                                     : 0),
                              value.width, value.value.data(),
                              value.fourState ? value.unknown.data() : nullptr});
       }

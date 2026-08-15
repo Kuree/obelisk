@@ -182,6 +182,18 @@ ArgumentBindingAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
   return success();
 }
 
+LogicalResult DescriptorBindingAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError, StringAttr path,
+    uint64_t, Type type) {
+  if (!path || path.getValue().empty())
+    return emitError() << "descriptor binding path must not be empty";
+  auto reference = dyn_cast_or_null<RefType>(type);
+  if (!reference || !isNormalizedValueType(reference.getElementType()))
+    return emitError() << "descriptor binding type must reference a normalized "
+                          "simulation value";
+  return success();
+}
+
 LogicalResult
 LocalBindingAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                          StringAttr path, Type type, bool automatic,
@@ -209,6 +221,8 @@ ConstantBindingAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 StringRef getUnitBindingPath(Attribute binding) {
   if (auto argument = dyn_cast<ArgumentBindingAttr>(binding))
     return argument.getPath().getValue();
+  if (auto descriptor = dyn_cast<DescriptorBindingAttr>(binding))
+    return descriptor.getPath().getValue();
   if (auto local = dyn_cast<LocalBindingAttr>(binding))
     return local.getPath().getValue();
   if (auto constant = dyn_cast<ConstantBindingAttr>(binding))
