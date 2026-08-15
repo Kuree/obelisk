@@ -342,6 +342,17 @@ def judge_one(
         flags += ["-I", include]
     for define in defines:
         flags += ["-D", define]
+    if "uvm" in values.get("tags", "").split():
+        # The pinned suite supplies the SystemVerilog UVM package but not its
+        # optional C DPI implementation.  UVM_NO_DPI selects the library's
+        # portable fallback, while bytecode avoids recompiling the full class
+        # library through the slower native packed-lowering path for every
+        # standalone sv-test.
+        if not any(define.split("=", 1)[0] == "UVM_NO_DPI"
+                   for define in defines):
+            flags += ["-D", "UVM_NO_DPI"]
+        if mode not in _FRONTEND_MODES:
+            flags += ["--execution-tier=bytecode", "-fno-lto"]
     top = values.get("top_module", "")
     if top:
         flags.append("--top=" + top)

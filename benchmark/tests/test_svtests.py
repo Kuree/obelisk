@@ -224,6 +224,103 @@ class SvTestsJudgeTest(unittest.TestCase):
 
         self.assertEqual(outcome.status, model.RUN_FAIL)
 
+    def test_uvm_simulation_uses_portable_bytecode_configuration(self):
+        self.write_test(":type: simulation\n:tags: uvm")
+        build, compile_design, execute = self.native_patches(
+            runner.ExecResult(True, "", False, returncode=0))
+        with (
+            mock.patch.object(
+                svtests,
+                "_resolve_test_inputs",
+                return_value=([str(self.test)], [], []),
+            ),
+            build,
+            compile_design as compile_mock,
+            execute,
+        ):
+            _, outcome = svtests.judge_one(
+                "obelisk", self.root, self.test, 60, 10)
+
+        self.assertEqual(outcome.status, model.PASS)
+        flags = compile_mock.call_args.args[3]
+        self.assertEqual(
+            [flags[index:index + 2] for index in range(len(flags) - 1)].count(
+                ["-D", "UVM_NO_DPI"]),
+            1,
+        )
+        self.assertIn("--execution-tier=bytecode", flags)
+        self.assertIn("-fno-lto", flags)
+
+    def test_uvm_configuration_preserves_existing_no_dpi_define(self):
+        self.write_test(
+            ":type: simulation\n:tags: uvm\n:defines: UVM_NO_DPI=1")
+        build, compile_design, execute = self.native_patches(
+            runner.ExecResult(True, "", False, returncode=0))
+        with build, compile_design as compile_mock, execute:
+            _, outcome = svtests.judge_one(
+                "obelisk", self.root, self.test, 60, 10)
+
+        self.assertEqual(outcome.status, model.PASS)
+        flags = compile_mock.call_args.args[3]
+        definitions = [
+            flags[index + 1]
+            for index, flag in enumerate(flags[:-1])
+            if flag == "-D" and flags[index + 1].split("=", 1)[0]
+            == "UVM_NO_DPI"
+        ]
+        self.assertEqual(definitions, ["UVM_NO_DPI=1"])
+
+    def test_non_uvm_simulation_keeps_default_backend_policy(self):
+        self.write_test(":type: simulation")
+        build, compile_design, execute = self.native_patches(
+            runner.ExecResult(True, "", False, returncode=0))
+        with build, compile_design as compile_mock, execute:
+            _, outcome = svtests.judge_one(
+                "obelisk", self.root, self.test, 60, 10)
+
+        self.assertEqual(outcome.status, model.PASS)
+        flags = compile_mock.call_args.args[3]
+        self.assertNotIn("UVM_NO_DPI", flags)
+        self.assertNotIn("--execution-tier=bytecode", flags)
+        self.assertNotIn("-fno-lto", flags)
+
+    def test_uvm_simulation_without_run_uses_bytecode_policy(self):
+        self.write_test(":type: simulation_without_run\n:tags: uvm")
+        build, compile_design, execute = self.native_patches(
+            runner.ExecResult(True, "", False, returncode=0))
+        with build, compile_design as compile_mock, execute as execute_mock:
+            _, outcome = svtests.judge_one(
+                "obelisk", self.root, self.test, 60, 10)
+
+        self.assertEqual(outcome.status, model.PASS)
+        flags = compile_mock.call_args.args[3]
+        self.assertIn("--execution-tier=bytecode", flags)
+        self.assertIn("-fno-lto", flags)
+        execute_mock.assert_not_called()
+
+    def test_uvm_elaboration_does_not_receive_native_tier_flags(self):
+        self.write_test(":type: elaboration\n:tags: uvm")
+        with (
+            mock.patch.object(
+                svtests,
+                "_resolve_test_inputs",
+                return_value=([str(self.test)], [], []),
+            ),
+            mock.patch.object(
+                svtests.runner,
+                "compile_frontend",
+                return_value=runner.CompileResult(True, ""),
+            ) as compile_frontend,
+        ):
+            _, outcome = svtests.judge_one(
+                "obelisk", self.root, self.test, 60, 10)
+
+        self.assertEqual(outcome.status, model.PASS)
+        flags = compile_frontend.call_args.args[3]
+        self.assertIn("UVM_NO_DPI", flags)
+        self.assertNotIn("--execution-tier=bytecode", flags)
+        self.assertNotIn("-fno-lto", flags)
+
     def test_parsing_test_stops_after_frontend(self):
         self.write_test(":type: parsing")
         with (
