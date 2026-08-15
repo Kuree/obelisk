@@ -62,6 +62,19 @@ inline uint64_t encodeStaticHandle(uint32_t id, int64_t offset) {
                                          offset);
 }
 
+inline bool isDynamicEventStableHandle(uint64_t stable) {
+  return stable != OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG &&
+         (stable & OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG) != 0 &&
+         (stable & OBELISK_RT_STABLE_HANDLE_TAG_MASK) == 0;
+}
+
+inline bool isDynamicEventHandle(uint32_t kind, uint64_t stable) {
+  uint32_t descriptorKind =
+      kind & ~(kLocalHandleKind | kAutomaticHandleKind);
+  return descriptorKind == OBELISK_RT_DESCRIPTOR_EVENT &&
+         isDynamicEventStableHandle(stable);
+}
+
 inline bool encodeCanonicalHandle(const uint8_t *address, uint64_t &stable) {
   uint32_t kind = 0;
   int64_t start = kInvalidHandleStart;
@@ -71,6 +84,11 @@ inline bool encodeCanonicalHandle(const uint8_t *address, uint64_t &stable) {
     return false;
   if (start == kInvalidHandleStart) {
     stable = UINT64_MAX;
+    return true;
+  }
+  uint64_t raw = static_cast<uint64_t>(start);
+  if (isDynamicEventHandle(kind, raw)) {
+    stable = raw;
     return true;
   }
   stable = encodeGlobalHandle(start);

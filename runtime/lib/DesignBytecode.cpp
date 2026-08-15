@@ -151,6 +151,8 @@ obelisk_rt_status releaseCapturedAutomaticStates(const Image &image,
       continue;
     if (decodeStaticHandle(stable, id, offset))
       continue;
+    if (isDynamicEventStableHandle(stable))
+      continue;
     if (!decodeGlobalHandle(stable, offset))
       return OBELISK_RT_INVALID_HANDLE;
   }
@@ -1238,10 +1240,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       uint32_t descriptorKind =
           kind & ~(kLocalHandleKind | kAutomaticHandleKind);
       uint64_t raw = static_cast<uint64_t>(start);
-      bool dynamicEvent =
-          descriptorKind == OBELISK_RT_DESCRIPTOR_EVENT &&
-          (raw & OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG) != 0 &&
-          (raw & OBELISK_RT_STABLE_HANDLE_TAG_MASK) == 0;
+      bool dynamicEvent = isDynamicEventHandle(descriptorKind, raw);
       uint64_t stable = dynamicEvent ? raw : encodeGlobalHandle(start);
       if (!dynamicEvent && (kind & kAutomaticHandleKind) != 0) {
         uint64_t base = 0;
@@ -1394,7 +1393,13 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         uint32_t automaticID = 0;
         int64_t automaticOffset = 0;
         bool boundedStatic = false;
-        if (decodeAutomaticHandle(stable, automaticID, automaticOffset)) {
+        bool dynamicEvent = isDynamicEventHandle(kind, stable);
+        if (dynamicEvent) {
+          start = static_cast<int64_t>(stable);
+          begin = start;
+          end = start == INT64_MAX ? start : start + 1;
+        } else if (decodeAutomaticHandle(stable, automaticID,
+                                         automaticOffset)) {
           if (!context || kind != OBELISK_RT_DESCRIPTOR_STORAGE)
             return OBELISK_RT_INVALID_HANDLE;
           std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -2607,9 +2612,7 @@ obelisk_rt_status obelisk_rt_execute_design_observer(
         uint64_t base = 0;
         uint32_t dynamicID = 0;
         int64_t dynamicOffset = 0;
-        if (kind == OBELISK_RT_DESCRIPTOR_EVENT &&
-            (stable & OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG) != 0 &&
-            (stable & OBELISK_RT_STABLE_HANDLE_TAG_MASK) == 0) {
+        if (isDynamicEventHandle(kind, stable)) {
           start = static_cast<int64_t>(stable);
           begin = start;
           end = start == INT64_MAX ? start : start + 1;

@@ -365,13 +365,125 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   }
   SmallVector<Operation *> children = getChildren(op);
 
+  bool expect =
+      op.getAssertionKind() == semantic::SVAssertionKind::Expect;
+  bool expectMonitor = op->hasAttr("obelisk_sim.expect_monitor");
+  if (expect && !expectMonitor) {
+    size_t actionCount = static_cast<size_t>(op.getHasPassAction()) +
+                         static_cast<size_t>(op.getHasFailAction());
+    if (children.size() <= actionCount)
+      return op.emitError("malformed expect statement inventory"), failure();
+
+    Value zero = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+    Value resultStorage = sim::SimRefAllocOp::create(
+        builder, location,
+        sim::RefType::get(function.getContext(), builder.getI1Type()), zero);
+    Value completed = sim::SimEventCreateOp::create(
+        builder, location, sim::EventType::get(function.getContext()));
+
+    auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
+    uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
+    uint64_t occurrence = nextForkOrdinal;
+    std::string donePath =
+        (function.getSymName() + ".$expect_done." + Twine(node)).str();
+    std::string resultPath =
+        (function.getSymName() + ".$expect_result." + Twine(node)).str();
+    std::string identity = (function.getSymName() + ".$expect_monitor." +
+                            Twine(node) + "." + Twine(occurrence))
+                               .str();
+
+    Attribute previousCodeUnit =
+        op->getAttr("obelisk_sim.fork_code_unit_id");
+    Attribute previousCaptures = op->getAttr(calleeCapturesAttrName);
+    op->setAttr("obelisk_sim.fork_code_unit_id",
+                builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+    op->setAttr("obelisk_sim.expect_monitor", builder.getUnitAttr());
+    op->setAttr("obelisk_sim.expect_done_path",
+                builder.getStringAttr(donePath));
+    op->setAttr("obelisk_sim.expect_result_path",
+                builder.getStringAttr(resultPath));
+    SmallVector<Attribute> capturePaths;
+    if (auto captures = dyn_cast_or_null<ArrayAttr>(previousCaptures))
+      llvm::append_range(capturePaths, captures);
+    capturePaths.push_back(builder.getStringAttr(donePath));
+    capturePaths.push_back(builder.getStringAttr(resultPath));
+    op->setAttr(calleeCapturesAttrName, builder.getArrayAttr(capturePaths));
+    Value previousDoneValue = values.lookup(donePath);
+    Value previousResultLValue = lvalues.lookup(resultPath);
+    values[donePath] = completed;
+    lvalues[resultPath] = resultStorage;
+    FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> monitor =
+        outlineForkBranch(op, node, /*branchIndex=*/16,
+                          /*captureReferences=*/true);
+    if (previousDoneValue)
+      values[donePath] = previousDoneValue;
+    else
+      values.erase(donePath);
+    if (previousResultLValue)
+      lvalues[resultPath] = previousResultLValue;
+    else
+      lvalues.erase(resultPath);
+    op->removeAttr("obelisk_sim.expect_monitor");
+    op->removeAttr("obelisk_sim.expect_done_path");
+    op->removeAttr("obelisk_sim.expect_result_path");
+    if (previousCaptures)
+      op->setAttr(calleeCapturesAttrName, previousCaptures);
+    else
+      op->removeAttr(calleeCapturesAttrName);
+    if (previousCodeUnit)
+      op->setAttr("obelisk_sim.fork_code_unit_id", previousCodeUnit);
+    else
+      op->removeAttr("obelisk_sim.fork_code_unit_id");
+    if (failed(monitor))
+      return failure();
+    monitor->first->setAttr("obelisk_sim.expect_monitor_actor",
+                            builder.getUnitAttr());
+    sim::SimSpawnOp::create(builder, location,
+                            monitor->first.getSymNameAttr(), monitor->second,
+                            ArrayAttr{}, ArrayAttr{});
+
+    Block *completedBlock = addBlock();
+    sim::SimSuspendEventOp::create(
+        builder, location, completed, ValueRange{},
+        sim::ContinuationSiteAttr{},
+        sim::EventRegionAttr::get(function.getContext(),
+                                  sim::EventRegion::Reactive),
+        completedBlock);
+    setCurrent(completedBlock);
+    Value passed = sim::SimRefLoadOp::create(
+        builder, location, builder.getI1Type(), resultStorage);
+    Block *passBlock = addBlock();
+    Block *failBlock = addBlock();
+    Block *mergeBlock = addBlock();
+    cf::CondBranchOp::create(builder, location, passed, passBlock, ValueRange{},
+                             failBlock, ValueRange{});
+    size_t actionBase = children.size() - actionCount;
+    setCurrent(passBlock);
+    if (op.getHasPassAction() &&
+        failed(lowerStatement(children[actionBase])))
+      return failure();
+    emitBranch(mergeBlock);
+    setCurrent(failBlock);
+    if (op.getHasFailAction()) {
+      if (failed(lowerStatement(
+              children[actionBase + op.getHasPassAction()])))
+        return failure();
+    } else {
+      emitDefaultAssertionFailure(location, "expect");
+    }
+    emitBranch(mergeBlock);
+    setCurrent(mergeBlock);
+    return success();
+  }
+
   bool cover =
       op.getAssertionKind() == semantic::SVAssertionKind::CoverProperty ||
       op.getAssertionKind() == semantic::SVAssertionKind::CoverSequence;
   bool assertion = op.getAssertionKind() == semantic::SVAssertionKind::Assert ||
                    op.getAssertionKind() == semantic::SVAssertionKind::Assume;
   bool observable = assertion || cover;
-  if (!observable &&
+  if (!observable && !expectMonitor &&
       op.getAssertionKind() != semantic::SVAssertionKind::Restrict) {
     emitError(location)
         << "expect statements are not executable by the bounded concurrent "
@@ -519,6 +631,95 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                << "assertion match items require a supported local-variable "
                   "assertion instance",
            failure();
+
+  if (expectMonitor) {
+    if (localInstance || implication || disable ||
+        llvm::any_of(sequence.ages, [](const FixedSequenceAge &age) {
+          return !age.matchItems.empty();
+        }))
+      return emitError(location)
+                 << "expect currently requires a fixed sequence without "
+                    "locals, implication, disable iff, or match items",
+             failure();
+    auto donePath =
+        op->getAttrOfType<StringAttr>("obelisk_sim.expect_done_path");
+    auto resultPath =
+        op->getAttrOfType<StringAttr>("obelisk_sim.expect_result_path");
+    Value completed = donePath ? values.lookup(donePath.getValue()) : Value{};
+    Value resultStorage =
+        resultPath ? lvalues.lookup(resultPath.getValue()) : Value{};
+    if (!resultStorage && resultPath)
+      resultStorage = values.lookup(resultPath.getValue());
+    if (!completed || !isa<sim::EventType>(completed.getType()) ||
+        !resultStorage ||
+        !isa<sim::RefType>(resultStorage.getType()))
+      return emitError(location)
+                 << "expect monitor has no completion captures",
+             failure();
+
+    function->setAttr("home_region",
+                      sim::EventRegionAttr::get(function.getContext(),
+                                                sim::EventRegion::Observed));
+    function->setAttr(
+        "domain", sim::ExecutionDomainAttr::get(function.getContext(),
+                                                 sim::ExecutionDomain::Design));
+    Block *successBlock = addBlock();
+    Block *failureBlock = addBlock();
+    Block *wait = addBlock();
+    emitBranch(wait);
+
+    bool savedSampleAssertionValues = sampleAssertionValues;
+    sampleAssertionValues = true;
+    Operation *savedSampledClock = activeSampledClock;
+    activeSampledClock = clock;
+    llvm::scope_exit restoreSampling([&] {
+      sampleAssertionValues = savedSampleAssertionValues;
+      activeSampledClock = savedSampledClock;
+    });
+    for (auto [age, sequenceAge] : llvm::enumerate(sequence.ages)) {
+      Block *sample = addBlock();
+      setCurrent(wait);
+      if (failed(emitEventSuspend(clock, sample)))
+        return failure();
+      wait->getTerminator()->setAttr(
+          "resume_region",
+          sim::EventRegionAttr::get(function.getContext(),
+                                    sim::EventRegion::Observed));
+      setCurrent(sample);
+      Value matches = arith::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+      for (Operation *predicate : sequenceAge.predicates) {
+        FailureOr<Value> value = lowerExpression(predicate);
+        if (failed(value))
+          return failure();
+        FailureOr<Value> truth =
+            truthValue(*value, getSemanticLocation(predicate));
+        if (failed(truth))
+          return failure();
+        matches = arith::AndIOp::create(builder, location, matches, *truth);
+      }
+      Block *matched = age + 1 == sequence.ages.size()
+                           ? successBlock
+                           : addBlock();
+      cf::CondBranchOp::create(builder, location, matches, matched,
+                               ValueRange{}, failureBlock, ValueRange{});
+      wait = matched;
+    }
+    auto finish = [&](Block *block, bool passed) {
+      setCurrent(block);
+      Value result = arith::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(passed));
+      sim::SimRefStoreOp::create(builder, location, result, resultStorage);
+      sim::SimEventTriggerOp::create(builder, location, completed, Value{},
+                                     builder.getBoolAttr(false),
+                                     sim::EventSiteAttr{});
+      sim::SimReturnOp::create(builder, location, ValueRange{});
+    };
+    finish(successBlock, true);
+    finish(failureBlock, false);
+    setCurrent(addBlock());
+    return success();
+  }
   // IEEE 1800 evaluates sampled predicates and monitor state in Observed.
   function->setAttr("home_region",
                     sim::EventRegionAttr::get(function.getContext(),

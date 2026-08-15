@@ -855,12 +855,22 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
     unsigned argument = inputs.size();
     inputs.push_back(capture.getType());
     captures.push_back(capture);
-    DictionaryAttr metadata =
-        captureMetadata(builder, sim::CaptureKind::Formal);
+    // A captured entry argument may still name concrete design storage. Keep
+    // its descriptor/view metadata on the outlined ABI so sampled reads and
+    // effect analysis can recover the same canonical state range. Falling
+    // back to Formal is appropriate only for lexical SSA values and values
+    // produced inside the parent body.
+    DictionaryAttr metadata;
+    if (auto argument = dyn_cast<BlockArgument>(capture);
+        argument && argument.getOwner() == &function.getBody().front())
+      metadata = function.getArgAttrDict(argument.getArgNumber());
+    if (!metadata)
+      metadata = captureMetadata(builder, sim::CaptureKind::Formal);
     if (!isStaticallyAllocatedOverrideTarget(capture)) {
       SmallVector<NamedAttribute> entries(metadata.begin(), metadata.end());
-      entries.push_back(builder.getNamedAttr(
-          "obelisk_sim.automatic_reference_capture", builder.getUnitAttr()));
+      if (!metadata.contains("obelisk_sim.automatic_reference_capture"))
+        entries.push_back(builder.getNamedAttr(
+            "obelisk_sim.automatic_reference_capture", builder.getUnitAttr()));
       metadata = builder.getDictionaryAttr(entries);
     }
     argumentAttrs.push_back(metadata);
