@@ -35,6 +35,21 @@ struct FixedSequence {
   SmallVector<FixedSequenceAge, 8> ages;
 };
 
+/// One nonempty maximal clocked subsequence in the deliberately small
+/// multi-clock slice below. Each stage is reached through a source `##1`, so
+/// an attempt waits for the next occurrence of `clock` before evaluating its
+/// predicates.
+struct MultiClockSequenceStage {
+  Operation *clock = nullptr;
+  SmallVector<Operation *, 2> predicates;
+};
+
+struct MultiClockSequence {
+  SmallVector<MultiClockSequenceStage, 4> stages;
+  bool changesClock = false;
+  bool hasLeadingDelay = false;
+};
+
 using FixedSequenceAlternatives = SmallVector<FixedSequence, 4>;
 
 static constexpr size_t maxFixedSequenceAlternatives = 256;
@@ -49,11 +64,32 @@ static bool areEquivalentDirectClocks(Operation *left, Operation *right) {
   SmallVector<Operation *> rhsChildren = getChildren(rhs);
   if (lhsChildren.size() != 1 || rhsChildren.size() != 1)
     return false;
-  auto lhsPath = lhsChildren.front()->getAttrOfType<StringAttr>(
-      "referenced_path");
-  auto rhsPath = rhsChildren.front()->getAttrOfType<StringAttr>(
-      "referenced_path");
-  return lhsPath && rhsPath && lhsPath == rhsPath;
+  // A member clock may have the same leaf path through two different dynamic
+  // receivers (for example vif0.clk and vif1.clk). This initial multi-clock
+  // slice deliberately accepts only statically identified storage, where an
+  // exact semantic symbol is sufficient to prove clock identity.
+  if (!isa<semantic::SVNamedValueExpressionOp,
+           semantic::SVHierarchicalValueExpressionOp>(lhsChildren.front()) ||
+      !isa<semantic::SVNamedValueExpressionOp,
+           semantic::SVHierarchicalValueExpressionOp>(rhsChildren.front()))
+    return false;
+  auto lhsSymbol = lhsChildren.front()->getAttrOfType<SymbolRefAttr>(
+      "referenced_symbol");
+  auto rhsSymbol = rhsChildren.front()->getAttrOfType<SymbolRefAttr>(
+      "referenced_symbol");
+  return lhsSymbol && rhsSymbol && lhsSymbol == rhsSymbol;
+}
+
+static bool isStaticDirectClock(Operation *operation) {
+  auto event = dyn_cast_or_null<semantic::SVSignalEventControlOp>(operation);
+  if (!event || event.getHasIff())
+    return false;
+  SmallVector<Operation *> children = getChildren(event);
+  return children.size() == 1 &&
+         isa<semantic::SVNamedValueExpressionOp,
+             semantic::SVHierarchicalValueExpressionOp>(children.front()) &&
+         children.front()->hasAttr("referenced_symbol") &&
+         isAddressableExpression(children.front());
 }
 
 /// Return the substituted body of a nonrecursive assertion invocation. The
@@ -174,6 +210,87 @@ static FailureOr<FixedSequence> compileFixedSequence(Operation *operation) {
   }
 
   return failure();
+}
+
+/// Compile the leading-##1 LRM multi-clock handoff form used by UVM's
+/// conformance sequence into a short sequence of independently clocked stages.
+/// This is intentionally narrower than the single-clock compiler: every
+/// concatenation delay, including the leading delay, must be exactly ##1 and
+/// every maximal clocked subsequence must be a nonempty boolean term. A
+/// detached attempt actor can then wait on each clock in order without a
+/// runtime temporal interpreter. In particular, a transition to a different
+/// clock observes its nearest strictly subsequent tick, as required for ##1.
+static FailureOr<MultiClockSequence>
+compileMultiClockSequence(Operation *operation, Operation *inheritedClock) {
+  if (auto instance =
+          dyn_cast<semantic::SVAssertionInstanceExpressionOp>(operation)) {
+    FailureOr<Operation *> body = getExpandedAssertionBody(instance);
+    if (failed(body))
+      return failure();
+    return compileMultiClockSequence(*body, inheritedClock);
+  }
+
+  if (auto clocking =
+          dyn_cast<semantic::SVClockingAssertionExprOp>(operation)) {
+    SmallVector<Operation *> children = getChildren(clocking);
+    if (children.size() != 2)
+      return failure();
+    Operation *clock = children.front();
+    FailureOr<MultiClockSequence> nested =
+        compileMultiClockSequence(children.back(), clock);
+    if (failed(nested))
+      return failure();
+    nested->changesClock |= inheritedClock &&
+                            !areEquivalentDirectClocks(inheritedClock, clock);
+    return nested;
+  }
+
+  if (auto simple = dyn_cast<semantic::SVSimpleAssertionExprOp>(operation)) {
+    SmallVector<Operation *> children = getChildren(simple);
+    if (!inheritedClock || simple.getIsNull() || simple.getHasRepetition() ||
+        children.size() != 1)
+      return failure();
+    if (isa<semantic::SVAssertionInstanceExpressionOp>(children.front()))
+      return compileMultiClockSequence(children.front(), inheritedClock);
+    MultiClockSequence result;
+    result.stages.push_back({inheritedClock, {children.front()}});
+    return result;
+  }
+
+  auto concat = dyn_cast<semantic::SVSequenceConcatExprOp>(operation);
+  if (!concat || !inheritedClock)
+    return failure();
+  SmallVector<Operation *> children = getChildren(concat);
+  ArrayAttr delays = concat.getDelays();
+  if (children.empty() || delays.size() != children.size())
+    return failure();
+
+  MultiClockSequence result;
+  result.hasLeadingDelay = true;
+  Operation *previousClock = inheritedClock;
+  for (auto [index, child] : llvm::enumerate(children)) {
+    auto delay = dyn_cast<DictionaryAttr>(delays[index]);
+    auto minimum = delay ? delay.getAs<IntegerAttr>("min") : IntegerAttr{};
+    auto maximum = delay ? delay.getAs<IntegerAttr>("max") : IntegerAttr{};
+    auto unbounded =
+        delay ? delay.getAs<BoolAttr>("is_unbounded") : BoolAttr{};
+    if (!minimum || !maximum || !unbounded || unbounded.getValue() ||
+        minimum.getInt() != 1 || maximum.getInt() != 1)
+      return failure();
+    FailureOr<MultiClockSequence> nested =
+        compileMultiClockSequence(child, inheritedClock);
+    if (failed(nested) || nested->stages.empty())
+      return failure();
+    result.changesClock |= nested->changesClock;
+    result.hasLeadingDelay |= nested->hasLeadingDelay;
+    for (MultiClockSequenceStage &stage : nested->stages) {
+      result.changesClock |=
+          !areEquivalentDirectClocks(previousClock, stage.clock);
+      previousClock = stage.clock;
+      result.stages.push_back(std::move(stage));
+    }
+  }
+  return result;
 }
 
 static LogicalResult appendFixedSequence(FixedSequence &result,
@@ -773,13 +890,110 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return op.emitError("disable iff wraps an unsupported assertion instance"),
            failure();
 
+  bool multiClockAttempt =
+      op->hasAttr("obelisk_sim.multiclock_sequence_attempt");
+  MultiClockSequence multiClockSequence;
+  if (FailureOr<MultiClockSequence> compiled =
+          compileMultiClockSequence(property, clock);
+      succeeded(compiled) && compiled->changesClock &&
+      compiled->hasLeadingDelay) {
+    multiClockSequence = std::move(*compiled);
+    if (localInstance || disable || expectMonitor ||
+        op.getAssertionKind() == semantic::SVAssertionKind::CoverSequence)
+      return emitError(getSemanticLocation(property))
+                 << "multi-clock sequence handoff currently requires a plain "
+                    "property directive without locals, disable iff, expect, "
+                    "or cover-sequence per-match accounting",
+             failure();
+    for (const MultiClockSequenceStage &stage : multiClockSequence.stages) {
+      if (!isStaticDirectClock(stage.clock))
+        return emitError(getSemanticLocation(stage.clock))
+                   << "multi-clock sequence stages require one direct signal "
+                      "edge clock without iff",
+               failure();
+    }
+
+    if (!multiClockAttempt) {
+      auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
+      uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
+      uint64_t occurrence = nextForkOrdinal;
+      std::string identity =
+          (function.getSymName() + ".$multiclock_attempt." + Twine(node) +
+           "." + Twine(occurrence))
+              .str();
+      Attribute previousCodeUnit =
+          op->getAttr("obelisk_sim.fork_code_unit_id");
+      op->setAttr("obelisk_sim.fork_code_unit_id",
+                  builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+      op->setAttr("obelisk_sim.multiclock_sequence_attempt",
+                  builder.getUnitAttr());
+      FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> attempt =
+          outlineForkBranch(op, node, /*branchIndex=*/24,
+                            /*captureReferences=*/true);
+      op->removeAttr("obelisk_sim.multiclock_sequence_attempt");
+      if (previousCodeUnit)
+        op->setAttr("obelisk_sim.fork_code_unit_id", previousCodeUnit);
+      else
+        op->removeAttr("obelisk_sim.fork_code_unit_id");
+      if (failed(attempt))
+        return failure();
+
+      attempt->first->setAttr("obelisk_sim.multiclock_sequence_attempt_actor",
+                              builder.getUnitAttr());
+      attempt->first->setAttr("obelisk_sim.detached_controls",
+                              builder.getUnitAttr());
+      attempt->first->setAttr(
+          "home_region",
+          sim::EventRegionAttr::get(function.getContext(),
+                                    sim::EventRegion::Observed));
+      attempt->first->setAttr(
+          "domain", sim::ExecutionDomainAttr::get(
+                        function.getContext(), sim::ExecutionDomain::Design));
+      function->setAttr("obelisk_sim.multiclock_sequence_monitor",
+                        builder.getUnitAttr());
+      function->setAttr(
+          "home_region",
+          sim::EventRegionAttr::get(function.getContext(),
+                                    sim::EventRegion::Observed));
+      function->setAttr(
+          "domain", sim::ExecutionDomainAttr::get(
+                        function.getContext(), sim::ExecutionDomain::Design));
+
+      Block *wait = addBlock();
+      Block *start = addBlock();
+      emitBranch(wait);
+      setCurrent(wait);
+      if (failed(emitEventSuspend(clock, start)))
+        return failure();
+      wait->getTerminator()->setAttr(
+          "resume_region",
+          sim::EventRegionAttr::get(function.getContext(),
+                                    sim::EventRegion::Observed));
+      setCurrent(start);
+      sim::SimSpawnOp::create(builder, location,
+                              attempt->first.getSymNameAttr(), attempt->second,
+                              ArrayAttr{}, ArrayAttr{});
+      cf::BranchOp::create(builder, location, wait);
+      return success();
+    }
+  } else if (multiClockAttempt) {
+    return emitError(getSemanticLocation(property))
+               << "malformed multi-clock sequence attempt",
+           failure();
+  }
+
   semantic::SVBinaryAssertionExprOp implication;
   FixedSequence sequence;
   FixedSequenceAlternatives sequenceAlternatives;
   Operation *antecedent = nullptr;
   SmallVector<Operation *> antecedentMatchItems;
   bool nonoverlapped = false;
-  if (auto binary =
+  if (multiClockAttempt) {
+    // The staged actor below owns temporal evaluation. Keep the ordinary
+    // validation path structurally nonempty without constructing bitset
+    // monitor state that it will never use.
+    sequence.ages.resize(1);
+  } else if (auto binary =
           dyn_cast_or_null<semantic::SVBinaryAssertionExprOp>(property);
       binary &&
       (binary.getOperatorKind() ==
@@ -1290,6 +1504,72 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                             report->function.getSymNameAttr(), captures,
                             ArrayAttr{}, ArrayAttr{});
   };
+
+  if (multiClockAttempt) {
+    function->setAttr(
+        "home_region",
+        sim::EventRegionAttr::get(function.getContext(),
+                                  sim::EventRegion::Observed));
+    function->setAttr(
+        "domain", sim::ExecutionDomainAttr::get(
+                      function.getContext(), sim::ExecutionDomain::Design));
+    Block *successBlock = addBlock();
+    Block *failureBlock = addBlock();
+    Block *wait = addBlock();
+    emitBranch(wait);
+    for (auto [index, stage] : llvm::enumerate(multiClockSequence.stages)) {
+      Block *sample = addBlock();
+      setCurrent(wait);
+      if (failed(emitEventSuspend(stage.clock, sample)))
+        return failure();
+      wait->getTerminator()->setAttr(
+          "resume_region",
+          sim::EventRegionAttr::get(function.getContext(),
+                                    sim::EventRegion::Observed));
+      setCurrent(sample);
+
+      bool savedSampleAssertionValues = sampleAssertionValues;
+      Operation *savedSampledClock = activeSampledClock;
+      sampleAssertionValues = true;
+      activeSampledClock = stage.clock;
+      Value matches = arith::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+      for (Operation *predicate : stage.predicates) {
+        FailureOr<Value> value = lowerExpression(predicate);
+        if (failed(value)) {
+          sampleAssertionValues = savedSampleAssertionValues;
+          activeSampledClock = savedSampledClock;
+          return failure();
+        }
+        FailureOr<Value> truth =
+            truthValue(*value, getSemanticLocation(predicate));
+        if (failed(truth)) {
+          sampleAssertionValues = savedSampleAssertionValues;
+          activeSampledClock = savedSampledClock;
+          return failure();
+        }
+        matches = arith::AndIOp::create(builder, location, matches, *truth);
+      }
+      sampleAssertionValues = savedSampleAssertionValues;
+      activeSampledClock = savedSampledClock;
+
+      Block *matched = index + 1 == multiClockSequence.stages.size()
+                           ? successBlock
+                           : addBlock();
+      cf::CondBranchOp::create(builder, location, matches, matched,
+                               ValueRange{}, failureBlock, ValueRange{});
+      wait = matched;
+    }
+    auto finish = [&](Block *block, bool passed) {
+      setCurrent(block);
+      scheduleResult(passed);
+      sim::SimReturnOp::create(builder, location, ValueRange{});
+    };
+    finish(successBlock, true);
+    finish(failureBlock, false);
+    setCurrent(addBlock());
+    return success();
+  }
 
   auto cancelDisabledSample = [&](Block *wait) -> LogicalResult {
     if (!disable)
