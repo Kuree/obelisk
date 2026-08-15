@@ -55,6 +55,7 @@ class ExecResult:
     stdout: str
     timed_out: bool
     stderr: str = ""
+    returncode: int | None = None
 
 
 @dataclasses.dataclass
@@ -314,7 +315,8 @@ def execute(binary: str, timeout: float, args: list[str] | None = None,
             result = subprocess.run(command, capture_output=True, text=True,
                                     timeout=timeout, check=False, cwd=cwd)
             return ExecResult(ok=result.returncode == 0, stdout=result.stdout,
-                              timed_out=False, stderr=result.stderr)
+                              timed_out=False, stderr=result.stderr,
+                              returncode=result.returncode)
         except subprocess.TimeoutExpired as expired:
             stdout = expired.stdout or b""
             if isinstance(stdout, bytes):

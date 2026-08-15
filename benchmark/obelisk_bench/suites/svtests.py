@@ -1,9 +1,10 @@
 """chipsalliance/sv-tests suite driver.
 
 The upstream corpus describes the phase to exercise and the expected outcome
-in each test's inline metadata. Simulation tests additionally emit
-``:assert: <python-expression>`` records that must all evaluate true. This
-driver preserves those contracts while invoking Obelisk directly.
+in each test's inline metadata. Positive simulation tests additionally emit
+``:assert: <python-expression>`` records that must all evaluate true. Expected
+runtime-failure tests are instead judged by an ordinary nonzero simulator exit.
+This driver preserves those contracts while invoking Obelisk directly.
 
 ``--design`` is a compile-only smoke test for cores that provide an explicit
 file list. It intentionally skips cores with only tool-specific manifests:
@@ -415,10 +416,13 @@ def judge_one(
             if result.timed_out:
                 return rel, model.Outcome(model.RUN_FAIL, "timeout\n" + output)
             if not result.ok:
-                assertions_ok, detail = _assertions_pass(output)
-                if not assertions_ok:
-                    return rel, model.Outcome(
-                        model.RUN_FAIL, detail + "\n" + output)
+                # A should-fail simulation may emit a failing :assert: record.
+                # Re-evaluating it as a positive test would invert the suite's
+                # expectation.  Still reject launch failures and signal
+                # crashes: only an ordinary nonzero simulator status is an
+                # expected runtime failure.
+                if result.returncode is None or result.returncode <= 0:
+                    return rel, model.Outcome(model.RUN_FAIL, output)
                 return rel, model.Outcome(model.XFAIL_PASS)
             return rel, model.Outcome(model.RUN_FAIL, output)
 

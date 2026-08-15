@@ -164,7 +164,8 @@ class SvTestsJudgeTest(unittest.TestCase):
             ":type: simulation\n"
             ":should_fail_because: runtime assertion failure")
         build, compile_design, execute = self.native_patches(
-            runner.ExecResult(False, "", False, "assertion failed\n"))
+            runner.ExecResult(
+                False, "", False, "assertion failed\n", returncode=19))
         with build, compile_design, execute:
             _, outcome = svtests.judge_one(
                 "obelisk", self.root, self.test, 60, 10)
@@ -184,18 +185,44 @@ class SvTestsJudgeTest(unittest.TestCase):
         self.assertEqual(outcome.status, model.RUN_FAIL)
         self.assertIn("timeout", outcome.log)
 
-    def test_expected_runtime_failure_still_checks_assertion_records(self):
+    def test_expected_runtime_failure_accepts_failing_assertion_record(self):
         self.write_test(
             ":type: simulation\n"
             ":should_fail_because: runtime assertion failure")
         build, compile_design, execute = self.native_patches(
-            runner.ExecResult(False, ":assert: (False)\n", False))
+            runner.ExecResult(
+                False, ":assert: (False)\n", False, returncode=19))
+        with build, compile_design, execute:
+            _, outcome = svtests.judge_one(
+                "obelisk", self.root, self.test, 60, 10)
+
+        self.assertEqual(outcome.status, model.XFAIL_PASS)
+
+    def test_expected_runtime_failure_does_not_accept_signal_crash(self):
+        self.write_test(
+            ":type: simulation\n"
+            ":should_fail_because: runtime assertion failure")
+        build, compile_design, execute = self.native_patches(
+            runner.ExecResult(
+                False, "", False, "segmentation fault\n", returncode=-11))
         with build, compile_design, execute:
             _, outcome = svtests.judge_one(
                 "obelisk", self.root, self.test, 60, 10)
 
         self.assertEqual(outcome.status, model.RUN_FAIL)
-        self.assertIn("failed :assert:", outcome.log)
+        self.assertIn("segmentation fault", outcome.log)
+
+    def test_expected_runtime_failure_requires_positive_exit_status(self):
+        self.write_test(
+            ":type: simulation\n"
+            ":should_fail_because: runtime assertion failure")
+        build, compile_design, execute = self.native_patches(
+            runner.ExecResult(False, "", False, returncode=0))
+        with build, compile_design, execute:
+            _, outcome = svtests.judge_one(
+                "obelisk", self.root, self.test, 60, 10)
+
+        self.assertEqual(outcome.status, model.RUN_FAIL)
 
     def test_parsing_test_stops_after_frontend(self):
         self.write_test(":type: parsing")
@@ -285,6 +312,16 @@ class SvTestsJudgeTest(unittest.TestCase):
 
 
 class BenchmarkRunnerTest(unittest.TestCase):
+    def test_execute_preserves_process_returncode(self):
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=19, stdout="diagnostic\n", stderr="")
+        with mock.patch.object(
+                runner.subprocess, "run", return_value=completed):
+            result = runner.execute("sim", 10)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.returncode, 19)
+
     def test_compile_frontend_uses_emit_slang_phase_boundary(self):
         completed = subprocess.CompletedProcess(
             args=[], returncode=0, stdout="", stderr="")
