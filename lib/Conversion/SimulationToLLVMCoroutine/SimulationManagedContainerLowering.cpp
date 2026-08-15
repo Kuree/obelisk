@@ -113,27 +113,12 @@ public:
       return llvmConstant(rewriter, op.getLoc(), i64, value);
     };
     ArrayRef<int64_t> traceOffsets = op.getTraceOffsets();
-    ArrayRef<int32_t> traceKinds = op.getTraceKinds();
     Value traceSlots = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
     if (!traceOffsets.empty()) {
-      std::string bytes(
-          traceOffsets.size() * sizeof(obelisk_rt_element_trace_slot_v1), '\0');
-      for (auto [index, offset, kind] :
-           llvm::enumerate(traceOffsets, traceKinds)) {
-        obelisk_rt_element_trace_slot_v1 slot{
-            static_cast<uint64_t>(offset),
-            static_cast<obelisk_rt_managed_slot_kind_v1>(kind), 0};
-        std::memcpy(bytes.data() +
-                        index * sizeof(obelisk_rt_element_trace_slot_v1),
-                    &slot, sizeof(slot));
-      }
-      ModuleOp module = op->getParentOfType<ModuleOp>();
       std::string name =
           "__obelisk_element_trace_" + std::to_string(op.getTypeId());
-      LLVM::GlobalOp global = module.lookupSymbol<LLVM::GlobalOp>(name);
-      if (!global)
-        global = makeByteArrayGlobal(module, op.getLoc(), name, bytes);
-      traceSlots = LLVM::AddressOfOp::create(rewriter, op.getLoc(), global);
+      traceSlots = LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
+                                             name);
     }
     Value status =
         LLVM::CallOp::create(
@@ -300,27 +285,12 @@ public:
       return llvmConstant(rewriter, op.getLoc(), i64, value);
     };
     ArrayRef<int64_t> traceOffsets = op.getTraceOffsets();
-    ArrayRef<int32_t> traceKinds = op.getTraceKinds();
     Value traceSlots = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
     if (!traceOffsets.empty()) {
-      std::string bytes(
-          traceOffsets.size() * sizeof(obelisk_rt_element_trace_slot_v1), '\0');
-      for (auto [index, offset, kind] :
-           llvm::enumerate(traceOffsets, traceKinds)) {
-        obelisk_rt_element_trace_slot_v1 slot{
-            static_cast<uint64_t>(offset),
-            static_cast<obelisk_rt_managed_slot_kind_v1>(kind), 0};
-        std::memcpy(bytes.data() +
-                        index * sizeof(obelisk_rt_element_trace_slot_v1),
-                    &slot, sizeof(slot));
-      }
-      ModuleOp module = op->getParentOfType<ModuleOp>();
       std::string name =
           "__obelisk_mailbox_element_trace_" + std::to_string(op.getTypeId());
-      LLVM::GlobalOp global = module.lookupSymbol<LLVM::GlobalOp>(name);
-      if (!global)
-        global = makeByteArrayGlobal(module, op.getLoc(), name, bytes);
-      traceSlots = LLVM::AddressOfOp::create(rewriter, op.getLoc(), global);
+      traceSlots = LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
+                                             name);
     }
     Value status =
         LLVM::CallOp::create(
@@ -942,14 +912,10 @@ public:
     Type i32 = rewriter.getI32Type();
     Type i64 = rewriter.getI64Type();
     StringRef program = op.getProgram();
-    ModuleOp module = op->getParentOfType<ModuleOp>();
     std::string name = "__obelisk_random_program_" +
                        llvm::utohexstr(llvm::hash_value(program));
-    LLVM::GlobalOp global = module.lookupSymbol<LLVM::GlobalOp>(name);
-    if (!global)
-      global = makeByteArrayGlobal(module, op.getLoc(), name, program);
-    Value programAddress =
-        LLVM::AddressOfOp::create(rewriter, op.getLoc(), global);
+    Value programAddress = LLVM::AddressOfOp::create(
+        rewriter, op.getLoc(), pointer, name);
 
     Value captureAddress = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
     if (!captures.empty()) {
@@ -1023,14 +989,10 @@ public:
     Type i32 = rewriter.getI32Type();
     Type i64 = rewriter.getI64Type();
     StringRef program = op.getProgram();
-    ModuleOp module = op->getParentOfType<ModuleOp>();
     std::string name = "__obelisk_random_program_" +
                        llvm::utohexstr(llvm::hash_value(program));
-    LLVM::GlobalOp global = module.lookupSymbol<LLVM::GlobalOp>(name);
-    if (!global)
-      global = makeByteArrayGlobal(module, op.getLoc(), name, program);
-    Value programAddress =
-        LLVM::AddressOfOp::create(rewriter, op.getLoc(), global);
+    Value programAddress = LLVM::AddressOfOp::create(
+        rewriter, op.getLoc(), pointer, name);
     auto c64 = [&](uint64_t value) {
       return llvmConstant(rewriter, op.getLoc(), i64, value);
     };

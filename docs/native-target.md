@@ -171,6 +171,10 @@ Obelisk's pinned LLVM 22.1.6 bitcode format and unified Full-LTO pipeline. A
 compiler, generated module, or runtime archive from another LLVM or Obelisk
 build must not be mixed into a link.
 
+The planned transition from monolithic Full LTO to stable split objects,
+ThinLTO, and content-addressed incremental reuse is described in
+[Native partitioning and incremental builds](native-incremental-builds.md).
+
 The native compiler emits generic x86-64 PIE executables. Obelisk's runtime,
 libc++, libc++abi, libunwind, and compiler-rt are linked statically. glibc,
 libm, libpthread, libdl, librt, and the ELF loader remain dynamic dependencies.

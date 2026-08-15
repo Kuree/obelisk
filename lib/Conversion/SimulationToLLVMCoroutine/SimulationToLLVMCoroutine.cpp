@@ -38,6 +38,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/IR/Threading.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
@@ -59,6 +60,9 @@ using namespace mlir;
 
 namespace obelisk {
 
+static void populateSimulationCoroutineBodyToLLVMPatterns(
+    const LLVMTypeConverter &converter, RewritePatternSet &patterns);
+
 #define GEN_PASS_DEF_CONVERTOBELISKSIMPROCESSESTOLLVMCOROUTINESPASS
 #include "obelisk/Conversion/Passes.h.inc"
 
@@ -74,12 +78,14 @@ using detail::buildNativeStaticNBAPlan;
 using detail::buildNativeThreeTierPlan;
 using detail::convertProcessType;
 using detail::declareNativeRuntimeABI;
+using detail::finishPreparedPlainNativeProcess;
+using detail::finishPreparedSuspendableProcess;
 using detail::insertAutomaticOwnerReleases;
 using detail::instrumentManagedRoots;
 using detail::lowerOrdinaryFunction;
 using detail::lowerPackedSimulationOperations;
-using detail::lowerPlainNativeProcess;
-using detail::lowerSuspendableProcess;
+using detail::lowerPreparedPlainNativeProcess;
+using detail::lowerPreparedSuspendableProcess;
 using detail::makeDirectFragmentWrapper;
 using detail::makeNativeAOTPlanLegacy;
 using detail::makeNativeEvalPlan;
@@ -109,7 +115,11 @@ using detail::NativeStaticNBAPlan;
 using detail::NativeThreeTierKernelPlan;
 using detail::NativeThreeTierPlan;
 using detail::populateContextRuntimeToLLVMConversionPattern;
+using detail::PreparedPlainNativeProcess;
+using detail::PreparedSuspendableProcess;
 using detail::prepareManagedLowering;
+using detail::preparePlainNativeProcess;
+using detail::prepareSuspendableProcess;
 using detail::specializeNativeAOTCaptures;
 using detail::stableProcessID;
 using detail::threadProcessStateThroughCFG;
@@ -1945,7 +1955,12 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       return WalkResult::interrupt();
     if (suspendable && failed(threadProcessStateThroughCFG(function)))
       return WalkResult::interrupt();
-    if (!suspendable && !process)
+    // Zero-time functions can contain process-control terminators (for
+    // example `process::kill`) without becoming suspendable actors. Runtime
+    // status threading propagates those control effects through their call
+    // chain. Frame-analyzing them here would retain a second owner for the
+    // function after ordinary lowering erases it.
+    if (!process)
       return WalkResult::advance();
     auto analysis =
         SimulationProcessFrameAnalysis::create(function, dataLayout);
@@ -2910,17 +2925,53 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   if (failed(materializeManagedMethodThunks(module, dataLayout)))
     return failure();
 
+  SmallVector<std::pair<sim::SimFuncOp, SimulationProcessFrameAnalysis *>>
+      processFunctions;
+  processFunctions.reserve(analyses.size());
   for (auto &entry : analyses) {
     auto function = dyn_cast_if_present<sim::SimFuncOp>(entry.first);
     if (!function)
       return failure();
-    LogicalResult lowered =
-        entry.second->getSuspensions().empty()
-            ? lowerPlainNativeProcess(function, *entry.second)
-            : lowerSuspendableProcess(function, *entry.second);
-    if (failed(lowered))
-      return failure();
+    processFunctions.emplace_back(function, entry.second.get());
   }
+  llvm::sort(processFunctions, [](auto left, auto right) {
+    return left.first.getSymName() < right.first.getSymName();
+  });
+
+  SmallVector<PreparedPlainNativeProcess> plainProcesses;
+  SmallVector<PreparedSuspendableProcess> suspendableProcesses;
+  for (auto [function, analysis] : processFunctions) {
+    if (analysis->getSuspensions().empty()) {
+      FailureOr<PreparedPlainNativeProcess> prepared =
+          preparePlainNativeProcess(function, *analysis);
+      if (failed(prepared))
+        return failure();
+      plainProcesses.push_back(std::move(*prepared));
+      continue;
+    }
+    FailureOr<PreparedSuspendableProcess> prepared =
+        prepareSuspendableProcess(function, *analysis);
+    if (failed(prepared))
+      return failure();
+    suspendableProcesses.push_back(std::move(*prepared));
+  }
+  if (failed(failableParallelForEach(
+          context, plainProcesses, [&](PreparedPlainNativeProcess &process) {
+            return lowerPreparedPlainNativeProcess(process);
+          })))
+    return failure();
+  if (failed(failableParallelForEach(context, suspendableProcesses,
+                                     [&](PreparedSuspendableProcess &process) {
+                                       return lowerPreparedSuspendableProcess(
+                                           process);
+                                     })))
+    return failure();
+  for (PreparedPlainNativeProcess &process : plainProcesses)
+    if (failed(finishPreparedPlainNativeProcess(process)))
+      return failure();
+  for (PreparedSuspendableProcess &process : suspendableProcesses)
+    if (failed(finishPreparedSuspendableProcess(process)))
+      return failure();
 
   SmallVector<sim::SimDesignOp> designs;
   module.walk([&](sim::SimDesignOp design) { designs.push_back(design); });
@@ -2931,8 +2982,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     for (Operation *operation : nested) {
       if (isa<sim::SimScopeDeclOp, sim::SimCodeUnitDeclOp,
               sim::SimStorageDeclOp, sim::SimNetDeclOp, sim::SimDriverDeclOp,
-              sim::SimPortDeclOp, sim::SimNetConnectDeclOp,
-              sim::SimClassDeclOp,
+              sim::SimPortDeclOp, sim::SimNetConnectDeclOp, sim::SimClassDeclOp,
               sim::SimCovergroupDeclOp, sim::SimClassFieldDeclOp,
               sim::SimClassMethodDeclOp, sim::SimRandomConstraintTemplateOp>(
               operation)) {
@@ -4184,16 +4234,122 @@ public:
       return std::nullopt;
     });
     addRuntimeToLLVMTypeConversions(converter);
+    if (failed(prepareRuntimeToLLVMByteGlobals(module))) {
+      signalPassFailure();
+      return;
+    }
+
+    // Runtime materializers may create immutable byte globals and runtime
+    // calls may declare their C ABI entry points. Lower them serially before
+    // converting independent function bodies so parallel workers only mutate
+    // their own functions and symbol/global order remains deterministic.
+    {
+      RewritePatternSet runtimePatterns(&getContext());
+      populateRuntimeToLLVMPatterns(converter, runtimePatterns);
+      ConversionTarget runtimeTarget(getContext());
+      runtimeTarget.addLegalDialect<LLVM::LLVMDialect>();
+      runtimeTarget.addLegalOp<ModuleOp>();
+      runtimeTarget.addIllegalDialect<runtime::ObeliskRuntimeDialect>();
+      runtimeTarget.markUnknownOpDynamicallyLegal(
+          [](Operation *) { return true; });
+      if (failed(applyPartialConversion(module, runtimeTarget,
+                                        std::move(runtimePatterns)))) {
+        signalPassFailure();
+        return;
+      }
+    }
+
     RewritePatternSet patterns(&getContext());
-    populateSimulationCoroutineToLLVMPatterns(converter, patterns);
+    populateSimulationCoroutineBodyToLLVMPatterns(converter, patterns);
     if (failed(verify(module)))
       return signalPassFailure();
     ConversionTarget target(getContext());
     target.addLegalDialect<LLVM::LLVMDialect>();
-    target.addLegalOp<ModuleOp>();
+    target.addLegalOp<ModuleOp, UnrealizedConversionCastOp>();
     target.markUnknownOpDynamicallyLegal(
         [](Operation *operation) { return isa<LLVM::LLVMFuncOp>(operation); });
-    if (failed(applyFullConversion(module, target, std::move(patterns)))) {
+    FrozenRewritePatternSet frozenPatterns(std::move(patterns));
+
+    // Native preparation leaves function signatures in their final physical
+    // ABI and all cross-function symbols frozen. Convert independent bodies
+    // concurrently before the inexpensive serial wrapper conversion. A
+    // module-wide conversion driver otherwise walks thousands of cold UVM
+    // methods serially and dominates -O3 compile time.
+    SmallVector<SmallVector<Operation *>> functionBodies;
+    module.walk([&](FunctionOpInterface function) {
+      if (function.isExternal())
+        return;
+      bool needsConversion = false;
+      function.walk([&](Operation *operation) {
+        if (operation != function.getOperation() &&
+            operation->getDialect() !=
+                getContext().getLoadedDialect<LLVM::LLVMDialect>())
+          needsConversion = true;
+      });
+      if (!needsConversion)
+        return;
+      SmallVector<Operation *> roots;
+      for (Block &block : function.getFunctionBody())
+        for (Operation &operation : block)
+          roots.push_back(&operation);
+      if (!roots.empty())
+        functionBodies.push_back(std::move(roots));
+    });
+
+    // Amortize converter and pattern construction without sharing their
+    // mutable type-conversion caches between threads. Keeping chunks bounded
+    // also distributes the uneven UVM method sizes across workers.
+    constexpr size_t functionsPerChunk = 64;
+    SmallVector<SmallVector<Operation *>> chunks;
+    chunks.reserve((functionBodies.size() + functionsPerChunk - 1) /
+                   functionsPerChunk);
+    for (auto [index, roots] : llvm::enumerate(functionBodies)) {
+      if (index % functionsPerChunk == 0)
+        chunks.emplace_back();
+      chunks.back().append(roots);
+    }
+    if (failed(failableParallelForEach(
+            &getContext(), chunks, [&](ArrayRef<Operation *> roots) {
+              LowerToLLVMOptions workerOptions(&getContext());
+              workerOptions.dataLayout = *parsed;
+              LLVMTypeConverter workerConverter(&getContext(), workerOptions);
+              workerConverter.addConversion(
+                  [&](Type type) -> std::optional<Type> {
+                    Type converted = convertProcessType(type, &getContext());
+                    if (converted != type)
+                      return converted;
+                    return std::nullopt;
+                  });
+              addRuntimeToLLVMTypeConversions(workerConverter);
+              RewritePatternSet workerPatterns(&getContext());
+              populateSimulationCoroutineBodyToLLVMPatterns(workerConverter,
+                                                            workerPatterns);
+              FrozenRewritePatternSet workerFrozen(std::move(workerPatterns));
+              ConversionTarget workerTarget(getContext());
+              workerTarget.addLegalDialect<LLVM::LLVMDialect>();
+              workerTarget.addLegalOp<UnrealizedConversionCastOp>();
+              workerTarget.markUnknownOpDynamicallyLegal(
+                  [](Operation *operation) {
+                    return isa<LLVM::LLVMFuncOp>(operation);
+                  });
+              return applyFullConversion(roots, workerTarget, workerFrozen);
+            }))) {
+      signalPassFailure();
+      return;
+    }
+    if (failed(applyFullConversion(module, target, frozenPatterns))) {
+      signalPassFailure();
+      return;
+    }
+    SmallVector<UnrealizedConversionCastOp> unrealizedCasts;
+    module.walk([&](UnrealizedConversionCastOp cast) {
+      unrealizedCasts.push_back(cast);
+    });
+    SmallVector<UnrealizedConversionCastOp> remainingCasts;
+    reconcileUnrealizedCasts(unrealizedCasts, &remainingCasts);
+    if (!remainingCasts.empty()) {
+      remainingCasts.front().emitError(
+          "failed to reconcile staged runtime type conversion");
       signalPassFailure();
       return;
     }
@@ -4213,6 +4369,59 @@ public:
       signalPassFailure();
       return;
     }
+
+    // LLVM's aggressive scalar pipeline can spend minutes in a handful of
+    // mechanically expanded UVM helpers while the rest of the design is
+    // modest. Put a deterministic per-function ceiling on optimization work;
+    // this preserves exact native semantics and leaves every smaller function
+    // at the requested level. The threshold override is an internal testing
+    // hook so the policy is covered without a giant fixture.
+    auto optimizationLevel =
+        module->getAttrOfType<IntegerAttr>("obelisk.native.optimization_level");
+    auto limitAttr =
+        module->getAttrOfType<IntegerAttr>("obelisk.native.max_optimized_ops");
+    uint64_t operationLimit =
+        limitAttr ? limitAttr.getValue().getZExtValue() : UINT64_C(5000);
+    if (optimizationLevel && optimizationLevel.getInt() >= 2 &&
+        operationLimit != 0) {
+      module.walk([&](LLVM::LLVMFuncOp function) {
+        if (function.isExternal())
+          return;
+        uint64_t operations = 0;
+        function.walk([&](Operation *operation) {
+          operations += operation != function.getOperation();
+        });
+        if (operations <= operationLimit)
+          return;
+        function.setAlwaysInline(false);
+        function.setInlineHint(false);
+        function.setNoInline(true);
+        function.setOptimizeNone(true);
+        if (ArrayAttr passthrough = function.getPassthroughAttr()) {
+          SmallVector<Attribute> retained;
+          for (Attribute attribute : passthrough) {
+            StringAttr name = dyn_cast<StringAttr>(attribute);
+            if (!name)
+              if (auto pair = dyn_cast<ArrayAttr>(attribute);
+                  pair && !pair.empty())
+                name = dyn_cast<StringAttr>(pair.getValue()[0]);
+            if (name &&
+                (name.getValue() == "alwaysinline" ||
+                 name.getValue() == "minsize" || name.getValue() == "optsize"))
+              continue;
+            retained.push_back(attribute);
+          }
+          if (retained.empty())
+            function->removeAttr("passthrough");
+          else
+            function.setPassthroughAttr(
+                ArrayAttr::get(&getContext(), retained));
+        }
+      });
+    }
+    module->removeAttr("obelisk.native.optimization_level");
+    module->removeAttr("obelisk.native.max_optimized_ops");
+    module->removeAttr("obelisk.native.max_state_domain_functions");
     if (failed(verify(module)))
       signalPassFailure();
   }
@@ -4229,6 +4438,11 @@ prepareSimulationProcessesToLLVMCoroutines(ModuleOp module,
 void populateSimulationCoroutineToLLVMPatterns(
     const LLVMTypeConverter &converter, RewritePatternSet &patterns) {
   populateRuntimeToLLVMPatterns(converter, patterns);
+  populateSimulationCoroutineBodyToLLVMPatterns(converter, patterns);
+}
+
+static void populateSimulationCoroutineBodyToLLVMPatterns(
+    const LLVMTypeConverter &converter, RewritePatternSet &patterns) {
   populateContextRuntimeToLLVMConversionPattern(patterns, converter);
   arith::populateArithToLLVMConversionPatterns(converter, patterns);
   cf::populateControlFlowToLLVMConversionPatterns(converter, patterns);

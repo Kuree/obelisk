@@ -118,27 +118,13 @@ static SmallVector<Value> makeNativeValueStorage(OpBuilder &builder,
 }
 
 static Value makeNativeAssocTrace(OpBuilder &builder, Location location,
-                                  Operation *operation, uint64_t typeID,
-                                  ArrayRef<int64_t> offsets,
-                                  ArrayRef<int32_t> kinds) {
+                                  uint64_t typeID,
+                                  ArrayRef<int64_t> offsets) {
   Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
   if (offsets.empty())
     return LLVM::ZeroOp::create(builder, location, pointer);
-  std::string bytes(offsets.size() * sizeof(obelisk_rt_element_trace_slot_v1),
-                    '\0');
-  for (auto [index, offset, kind] : llvm::enumerate(offsets, kinds)) {
-    obelisk_rt_element_trace_slot_v1 slot{
-        static_cast<uint64_t>(offset),
-        static_cast<obelisk_rt_managed_slot_kind_v1>(kind), 0};
-    std::memcpy(bytes.data() + index * sizeof(obelisk_rt_element_trace_slot_v1),
-                &slot, sizeof(slot));
-  }
-  ModuleOp module = operation->getParentOfType<ModuleOp>();
   std::string name = "__obelisk_element_trace_" + std::to_string(typeID);
-  LLVM::GlobalOp global = module.lookupSymbol<LLVM::GlobalOp>(name);
-  if (!global)
-    global = makeByteArrayGlobal(module, location, name, bytes);
-  return LLVM::AddressOfOp::create(builder, location, global);
+  return LLVM::AddressOfOp::create(builder, location, pointer, name);
 }
 
 class AssocCreateConversion final
@@ -157,8 +143,10 @@ public:
                           LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer),
                           output, 8);
     Value trace =
-        makeNativeAssocTrace(rewriter, op.getLoc(), op, op.getTypeId(),
-                             op.getTraceOffsets(), op.getTraceKinds());
+        makeNativeAssocTrace(rewriter, op.getLoc(), op.getTypeId(),
+                             op.getTraceOffsets());
+    if (!trace)
+      return failure();
     auto c32 = [&](uint32_t value) {
       return llvmConstant(rewriter, op.getLoc(), i32, value);
     };

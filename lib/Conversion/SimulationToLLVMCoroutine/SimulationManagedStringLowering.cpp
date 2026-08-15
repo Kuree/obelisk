@@ -32,22 +32,16 @@ public:
   LogicalResult
   matchAndRewrite(sim::SimStringLiteralOp op, OneToNOpAdaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    ModuleOp module = op->getParentOfType<ModuleOp>();
-    if (!module)
-      return failure();
-    std::string name;
-    for (uint64_t suffix = 0;; ++suffix) {
-      name = ("__obelisk_string_literal." + Twine(suffix)).str();
-      if (!module.lookupSymbol(name))
-        break;
-    }
     StringRef bytes = op.getValue();
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
     Value data = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
     if (!bytes.empty()) {
-      LLVM::GlobalOp global =
-          makeByteArrayGlobal(module, op.getLoc(), name, bytes);
-      data = LLVM::AddressOfOp::create(rewriter, op.getLoc(), global);
+      auto name = op->getAttrOfType<StringAttr>(nativeStringGlobalAttr);
+      if (!name)
+        return op.emitOpError("has no prepared native string global"),
+               failure();
+      data = LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
+                                       name.getValue());
     }
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     Value output =
@@ -426,24 +420,18 @@ public:
   LogicalResult
   matchAndRewrite(sim::SimStringScanFieldOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    ModuleOp module = op->getParentOfType<ModuleOp>();
-    if (!module)
-      return failure();
     Type i64 = rewriter.getI64Type();
     Type i32 = rewriter.getI32Type();
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
     StringRef prefix = op.getPrefix();
     Value prefixData = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
     if (!prefix.empty()) {
-      std::string name;
-      for (uint64_t suffix = 0;; ++suffix) {
-        name = ("__obelisk_scan_prefix." + Twine(suffix)).str();
-        if (!module.lookupSymbol(name))
-          break;
-      }
-      prefixData = LLVM::AddressOfOp::create(
-          rewriter, op.getLoc(),
-          makeByteArrayGlobal(module, op.getLoc(), name, prefix));
+      auto name = op->getAttrOfType<StringAttr>(nativeScanPrefixGlobalAttr);
+      if (!name)
+        return op.emitOpError("has no prepared native scan-prefix global"),
+               failure();
+      prefixData = LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
+                                             name.getValue());
     }
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     Value fieldOutput = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
@@ -486,8 +474,7 @@ public:
   LogicalResult
   matchAndRewrite(sim::SimFileScanFieldOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    ModuleOp module = op->getParentOfType<ModuleOp>();
-    if (!module || adaptor.getContext().size() != 1 ||
+    if (adaptor.getContext().size() != 1 ||
         adaptor.getDescriptor().size() != 1 || adaptor.getEnabled().size() != 1)
       return failure();
     Type i64 = rewriter.getI64Type();
@@ -496,15 +483,14 @@ public:
     StringRef prefix = op.getPrefix();
     Value prefixData = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
     if (!prefix.empty()) {
-      std::string name;
-      for (uint64_t suffix = 0;; ++suffix) {
-        name = ("__obelisk_file_scan_prefix." + Twine(suffix)).str();
-        if (!module.lookupSymbol(name))
-          break;
-      }
-      prefixData = LLVM::AddressOfOp::create(
-          rewriter, op.getLoc(),
-          makeByteArrayGlobal(module, op.getLoc(), name, prefix));
+      auto name =
+          op->getAttrOfType<StringAttr>(nativeFileScanPrefixGlobalAttr);
+      if (!name)
+        return op.emitOpError(
+                   "has no prepared native file-scan-prefix global"),
+               failure();
+      prefixData = LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
+                                             name.getValue());
     }
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     Value fieldOutput = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);

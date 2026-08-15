@@ -2,6 +2,7 @@
 
 #include "RuntimeToLLVMPatterns.h"
 
+#include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Dialect/Runtime/RuntimeABI.h"
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -263,7 +264,7 @@ static Value getSpanField(OpBuilder &builder, Location location, Value span,
 static FailureOr<std::pair<Value, Value>>
 materializeGlobalBytes(Operation *anchor, StringRef bytes,
                        ConversionPatternRewriter &rewriter,
-                       const ABITypes &abi) {
+                       const ABITypes &abi, unsigned preparedIndex) {
   Location location = anchor->getLoc();
   Value size = llvmIntegerConstant(rewriter, location, abi.i64, bytes.size());
   if (bytes.empty())
@@ -273,20 +274,22 @@ materializeGlobalBytes(Operation *anchor, StringRef bytes,
   ModuleOp module = anchor->getParentOfType<ModuleOp>();
   if (!module)
     return anchor->emitOpError() << "requires a containing module";
-  unsigned counter = 0;
-  SmallString<32> name = SymbolTable::generateSymbolName<32>(
-      "__obelisk_rt_bytes",
-      [&](StringRef candidate) {
-        return SymbolTable::lookupSymbolIn(module, candidate) != nullptr;
-      },
-      counter);
+  auto names =
+      anchor->getAttrOfType<ArrayAttr>(preparedRuntimeByteGlobalsAttr);
+  if (!names || preparedIndex >= names.size())
+    return anchor->emitOpError(
+        "runtime byte global names were not prepared before conversion");
+  auto name = dyn_cast<StringAttr>(names[preparedIndex]);
+  if (!name || name.getValue().empty())
+    return anchor->emitOpError("prepared runtime byte global name is invalid");
   auto arrayType = LLVM::LLVMArrayType::get(abi.i8, bytes.size());
   LLVM::GlobalOp global;
   {
     OpBuilder::InsertionGuard guard(rewriter);
     rewriter.setInsertionPointToStart(module.getBody());
     global = LLVM::GlobalOp::create(
-        rewriter, location, arrayType, true, name, LLVM::Linkage::Internal,
+        rewriter, location, arrayType, true, name.getValue(),
+        LLVM::Linkage::Internal,
         false, false, false, rewriter.getStringAttr(bytes),
         rewriter.getI64IntegerAttr(abi.alignments.i8), 0, {}, {}, {}, {},
         LLVM::Visibility::Default, {});
@@ -336,7 +339,7 @@ public:
     case RuntimeMaterializer::BytesConstant: {
       auto op = cast<runtime::RTBytesConstantOp>(operation);
       FailureOr<std::pair<Value, Value>> bytes =
-          materializeGlobalBytes(operation, op.getValue(), rewriter, abi);
+          materializeGlobalBytes(operation, op.getValue(), rewriter, abi, 0);
       if (failed(bytes))
         return failure();
       rewriter.replaceOp(operation, makeSpan(rewriter, location, abi,
@@ -639,11 +642,13 @@ public:
     case RuntimeMaterializer::FormatEnvironment: {
       auto op = cast<runtime::RTFormatEnvironmentOp>(operation);
       FailureOr<std::pair<Value, Value>> scope =
-          materializeGlobalBytes(operation, op.getScope(), rewriter, abi);
+          materializeGlobalBytes(operation, op.getScope(), rewriter, abi, 0);
       FailureOr<std::pair<Value, Value>> libraryCell =
-          materializeGlobalBytes(operation, op.getLibraryCell(), rewriter, abi);
+          materializeGlobalBytes(operation, op.getLibraryCell(), rewriter, abi,
+                                 1);
       FailureOr<std::pair<Value, Value>> suffix =
-          materializeGlobalBytes(operation, op.getTimeSuffix(), rewriter, abi);
+          materializeGlobalBytes(operation, op.getTimeSuffix(), rewriter, abi,
+                                 2);
       if (failed(scope) || failed(libraryCell) || failed(suffix))
         return failure();
       Value environment =

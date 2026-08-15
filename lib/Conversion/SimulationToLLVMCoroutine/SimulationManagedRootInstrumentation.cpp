@@ -6,6 +6,7 @@
 
 #include "mlir/Analysis/Liveness.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/Threading.h"
 #include "mlir/Pass/Pass.h"
 
 #include "llvm/ADT/SetVector.h"
@@ -56,7 +57,9 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
   Type i64 = IntegerType::get(context, 64);
   Type rootType =
       LLVM::LLVMStructType::getLiteral(context, {pointer, i64, pointer, i64});
-  for (sim::SimFuncOp function : functions) {
+  if (failed(failableParallelForEach(
+          context, functions,
+          [&](sim::SimFuncOp function) -> LogicalResult {
     Liveness liveness(function);
     struct ManagedSSAValue {
       Value value;
@@ -96,20 +99,26 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
       }
     }
     if (handles.empty() || collectionPoints.empty())
-      continue;
+      return success();
+    DenseMap<Operation *, Liveness::ValueSetT> liveAtCollectionPoints;
+    for (Operation *point : collectionPoints) {
+      const LivenessBlockInfo *blockInfo =
+          liveness.getLiveness(point->getBlock());
+      if (blockInfo)
+        liveAtCollectionPoints.try_emplace(
+            point, blockInfo->currentlyLiveValues(point));
+    }
     llvm::erase_if(handles, [&](const ManagedSSAValue &handle) {
       return llvm::none_of(collectionPoints, [&](Operation *point) {
-        const LivenessBlockInfo *blockInfo =
-            liveness.getLiveness(point->getBlock());
-        if (!blockInfo)
+        auto found = liveAtCollectionPoints.find(point);
+        if (found == liveAtCollectionPoints.end())
           return false;
-        Liveness::ValueSetT live = blockInfo->currentlyLiveValues(point);
-        return live.contains(handle.value) &&
+        return found->second.contains(handle.value) &&
                handle.value.getDefiningOp() != point;
       });
     });
     if (handles.empty())
-      continue;
+      return success();
 
     OpBuilder builder(context);
     Block &entry = function.getBody().front();
@@ -207,12 +216,10 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
     // reachability follows SSA liveness and a later collection never observes
     // a pointer into an already reclaimed span.
     for (Operation *collectionPoint : collectionPoints) {
-      const LivenessBlockInfo *blockInfo =
-          liveness.getLiveness(collectionPoint->getBlock());
-      if (!blockInfo)
+      auto found = liveAtCollectionPoints.find(collectionPoint);
+      if (found == liveAtCollectionPoints.end())
         continue;
-      Liveness::ValueSetT live =
-          blockInfo->currentlyLiveValues(collectionPoint);
+      const Liveness::ValueSetT &live = found->second;
       builder.setInsertionPoint(collectionPoint);
       for (auto [handle, slot] : llvm::zip_equal(handles, slots)) {
         bool isLive = live.contains(handle.value) &&
@@ -243,7 +250,9 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
       builder.setInsertionPoint(exit);
       emitManagedRootRangePop(builder, exit->getLoc(), function);
     }
-  }
+    return success();
+  })))
+    return failure();
   return success();
 }
 

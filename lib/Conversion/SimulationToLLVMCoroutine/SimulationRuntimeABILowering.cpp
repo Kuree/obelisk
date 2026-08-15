@@ -513,6 +513,10 @@ void declareNativeRuntimeABI(ModuleOp module) {
       module, "obelisk_rt_v1_plusarg_value", managedI32,
       {managedPointer, managedPointer, managedI64, managedPointer,
        managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_import_call", managedI32,
+      {managedPointer, managedPointer, managedPointer, managedI32,
+       managedPointer, managedI32});
 }
 
 } // namespace obelisk::detail

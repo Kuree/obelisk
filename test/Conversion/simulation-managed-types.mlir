@@ -15,6 +15,10 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
+  // A serially prepared native byte global may be reused only when its full
+  // ABI shape and payload agree with the requested trace.
+  llvm.mlir.global internal constant @__obelisk_element_trace_100("\00\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00") {alignment = 1 : i64}
+
   obelisk_sim.design @managed_types {
     obelisk_sim.scope.decl 0 hierarchy "top"
     obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.process"
@@ -119,8 +123,8 @@ module attributes {
 
 // Candidate class roots retain the high candidate bit in the public trace
 // record, and reference paths retain their distinct exact slot kind.
-// NATIVE: llvm.mlir.global internal constant @__obelisk_element_trace_100("\00\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00")
 // NATIVE: llvm.mlir.global internal constant @__obelisk_element_trace_99("\00\00\00\00\00\00\00\00\01\00\00\80\00\00\00\00")
+// NATIVE-COUNT-1: llvm.mlir.global internal constant @__obelisk_element_trace_100("\00\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00")
 // NATIVE: llvm.call @obelisk_rt_v1_container_size
 // NATIVE: llvm.call @obelisk_rt_v1_container_create_like
 // NATIVE: llvm.call @obelisk_rt_v1_container_read

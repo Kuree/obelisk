@@ -166,7 +166,8 @@ LogicalResult addMinimalMain(ModuleOp module) {
 LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
                           StringRef triple, bool bytecode, StringRef vpi,
                           obelisk::sim::NativeSchedulerMode nativeScheduler,
-                          bool timing, bool &requiresStateSync) {
+                          uint32_t optLevel, bool timing,
+                          bool &requiresStateSync) {
   if (bytecode && nativeScheduler == obelisk::sim::NativeSchedulerMode::Auto)
     nativeScheduler = obelisk::sim::NativeSchedulerMode::Generic;
   module->setAttr("llvm.target_triple",
@@ -176,6 +177,10 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
       StringAttr::get(
           module.getContext(),
           targetMachine.createDataLayout().getStringRepresentation()));
+  module->setAttr(
+      "obelisk.native.optimization_level",
+      IntegerAttr::get(mlir::IntegerType::get(module.getContext(), 32),
+                       optLevel));
   mlir::PassManager manager(module.getContext());
   if (timing)
     manager.enableTiming();
@@ -521,7 +526,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
   }
   if (failed(lowerToLLVM(module, *targetMachine, backend->getTriple(),
                          options.bytecode, options.vpi, *nativeScheduler,
-                         options.timing, requiresStateSync)))
+                         options.optLevel, options.timing, requiresStateSync)))
     return failure();
 
   registerLLVMDialectTranslation(*module.getContext());

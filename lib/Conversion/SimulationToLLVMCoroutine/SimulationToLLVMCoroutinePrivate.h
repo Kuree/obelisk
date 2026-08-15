@@ -44,6 +44,13 @@ class SimFuncOp;
 
 namespace obelisk::detail {
 
+inline constexpr llvm::StringLiteral nativeStringGlobalAttr =
+    "obelisk.native.string_global";
+inline constexpr llvm::StringLiteral nativeScanPrefixGlobalAttr =
+    "obelisk.native.scan_prefix_global";
+inline constexpr llvm::StringLiteral nativeFileScanPrefixGlobalAttr =
+    "obelisk.native.file_scan_prefix_global";
+
 inline constexpr llvm::StringLiteral nativeTwoStateBlockUnknownsAttr =
     "obelisk.native.two_state_block_unknowns";
 inline constexpr llvm::StringLiteral managedRootRangeRecordAttr =

@@ -75,9 +75,6 @@ Value makeZeroDPIPlaneStorage(OpBuilder &builder, Location location, Type type,
 
 LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
                                  IRRewriter &rewriter) {
-  ModuleOp module = operation->getParentOfType<ModuleOp>();
-  if (!module)
-    return operation.emitOpError("requires a containing module");
   Location location = operation.getLoc();
   MLIRContext *context = operation.getContext();
   Type pointer = LLVM::LLVMPointerType::get(context);
@@ -217,19 +214,8 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
          Twine(operation.getSourceLine()) + "_" +
          Twine(operation.getSourceColumn()) + "_" + Twine(fileHash))
             .str();
-    LLVM::GlobalOp global = module.lookupSymbol<LLVM::GlobalOp>(base);
-    if (!global) {
-      OpBuilder::InsertionGuard guard(rewriter);
-      rewriter.setInsertionPointToStart(module.getBody());
-      Type array =
-          LLVM::LLVMArrayType::get(i8, operation.getSourceFile().size());
-      global = LLVM::GlobalOp::create(
-          rewriter, location, array, true, LLVM::Linkage::Internal, base,
-          rewriter.getStringAttr(operation.getSourceFile()), 1);
-    }
     rewriter.setInsertionPoint(operation);
-    source = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                       global.getSymName());
+    source = LLVM::AddressOfOp::create(rewriter, location, pointer, base);
   }
   storeAt(rewriter, location, site,
           offsetof(obelisk_rt_import_site_v1, version),
@@ -301,8 +287,6 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
     return operation.emitOpError("has inconsistent physical DPI results");
   rewriter.replaceOp(operation, physicalOutputValues);
 
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_import_call", i32,
-                           {pointer, pointer, pointer, i32, pointer, i32});
   return success();
 }
 

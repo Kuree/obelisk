@@ -5,6 +5,9 @@
 // RUN:   FileCheck %s --check-prefix=AOT
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | \
 // RUN:   FileCheck %s --check-prefix=BYTECODE
+// RUN: sed 's/llvm.data_layout =/obelisk.native.optimization_level = 3 : i32, obelisk.native.max_state_domain_functions = 0 : i64, llvm.data_layout =/' %s | \
+// RUN:   obelisk-opt - --convert-obelisk-sim-processes-to-llvm-coroutines | \
+// RUN:   FileCheck %s --check-prefix=BUDGET
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -144,3 +147,11 @@ module attributes {
 // BYTECODE-SAME: obelisk.bytecode.two_state_logic_registers = 0 : i32
 // BYTECODE-LABEL: obelisk_sim.func @root
 // BYTECODE-SAME: obelisk.bytecode.two_state_logic_registers = 3 : i32
+
+// The O3 compile-time budget conservatively retains the unknown plane instead
+// of applying a whole-design two-state proof on an oversized design.
+// BUDGET-NOT: obelisk.native.max_state_domain_functions
+// BUDGET-NOT: obelisk.native.optimization_level
+// BUDGET-LABEL: llvm.func @add_known(
+// BUDGET-SAME: %[[VALUE:.*]]: i64, %[[UNKNOWN:.*]]: i64)
+// BUDGET: llvm.icmp "ne" %[[UNKNOWN]],

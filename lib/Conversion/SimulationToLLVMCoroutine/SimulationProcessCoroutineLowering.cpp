@@ -328,15 +328,14 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
         int64_t conditional = rootsAttr[index * 4 + 3];
         if (argumentIndex < 0 ||
             static_cast<uint64_t>(argumentIndex) >= argumentStorage.size() ||
-            byteOffset < 0 || sizesAttr[argumentIndex] < 0 ||
-            kindMask <= 0 ||
+            byteOffset < 0 || sizesAttr[argumentIndex] < 0 || kindMask <= 0 ||
             static_cast<uint64_t>(kindMask) >
                 OBELISK_RT_MANAGED_ROOT_KIND_ALL ||
             (conditional != 0 && conditional != 1) ||
             static_cast<uint64_t>(byteOffset) >
                 static_cast<uint64_t>(sizesAttr[argumentIndex]) ||
             sizeof(void *) > static_cast<uint64_t>(sizesAttr[argumentIndex]) -
-                                  static_cast<uint64_t>(byteOffset))
+                                 static_cast<uint64_t>(byteOffset))
           return task.emitOpError("has an invalid native argument root");
         Value root = LLVM::LoadOp::create(
             builder, location, i64,
@@ -349,8 +348,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
                      SymbolRefAttr::get(builder.getContext(),
                                         "obelisk_rt_v1_gc_candidate_root"),
                      ValueRange{context, root,
-                                llvmConstant(builder, location, i32,
-                                             kindMask)})
+                                llvmConstant(builder, location, i32, kindMask)})
                      .getResult();
         LLVM::StoreOp::create(
             builder, location, root,
@@ -417,9 +415,9 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
               ValueRange{lane, rootRecord})
               .getResult();
       LLVM::CallOp::create(builder, location, TypeRange{},
-          SymbolRefAttr::get(builder.getContext(),
-                             "obelisk_rt_v1_scheduler_fail"),
-          ValueRange{context, popStatus});
+                           SymbolRefAttr::get(builder.getContext(),
+                                              "obelisk_rt_v1_scheduler_fail"),
+                           ValueRange{context, popStatus});
     }
     Value succeeded = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, status,
@@ -440,14 +438,14 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
                          llvmConstant(builder, location, i32, 0)})
               .getResult();
       LLVM::CallOp::create(builder, location, TypeRange{},
-          SymbolRefAttr::get(builder.getContext(),
-                             "obelisk_rt_v1_scheduler_fail"),
-          ValueRange{context, releaseStatus});
+                           SymbolRefAttr::get(builder.getContext(),
+                                              "obelisk_rt_v1_scheduler_fail"),
+                           ValueRange{context, releaseStatus});
     }
     LLVM::CallOp::create(builder, location, TypeRange{},
-        SymbolRefAttr::get(builder.getContext(),
-                           "obelisk_rt_v1_scheduler_fail"),
-        ValueRange{context, failed->getArgument(0)});
+                         SymbolRefAttr::get(builder.getContext(),
+                                            "obelisk_rt_v1_scheduler_fail"),
+                         ValueRange{context, failed->getArgument(0)});
     if (!blocks.terminate)
       return task.emitOpError("has no coroutine termination block");
     LLVM::BrOp::create(builder, location, blocks.terminate);
@@ -566,9 +564,9 @@ LogicalResult lowerFinalReturn(sim::SimReturnOp operation,
 
 } // namespace
 
-LogicalResult
-lowerSuspendableProcess(sim::SimFuncOp function,
-                        const SimulationProcessFrameAnalysis &analysis) {
+FailureOr<PreparedSuspendableProcess>
+prepareSuspendableProcess(sim::SimFuncOp function,
+                          const SimulationProcessFrameAnalysis &analysis) {
   if (failed(lowerSimulationTimeOperations(function)))
     return failure();
   ModuleOp module = function->getParentOfType<ModuleOp>();
@@ -577,7 +575,6 @@ lowerSuspendableProcess(sim::SimFuncOp function,
   MLIRContext *context = function.getContext();
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = builder.getI32Type();
-  Type i64 = builder.getI64Type();
   std::string baseName = function.getSymName().str();
   uint64_t stableID = function.getCodeUnitId().value_or(
       stableProcessID(baseName) &
@@ -597,6 +594,20 @@ lowerSuspendableProcess(sim::SimFuncOp function,
   for (Block &block : ramp.getBody())
     for (BlockArgument argument : block.getArguments())
       argument.setType(convertProcessType(argument.getType(), context));
+  return PreparedSuspendableProcess{
+      module, ramp, location, std::move(baseName), stableID, &analysis};
+}
+
+LogicalResult
+lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
+  LLVM::LLVMFuncOp ramp = process.ramp;
+  Location location = process.location;
+  const SimulationProcessFrameAnalysis &analysis = *process.analysis;
+  MLIRContext *context = ramp.getContext();
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  OpBuilder builder(context);
+  Type i32 = builder.getI32Type();
+  Type i64 = builder.getI64Type();
   if (failed(lowerNativeDPICalls(ramp)))
     return failure();
 
@@ -690,6 +701,7 @@ lowerSuspendableProcess(sim::SimFuncOp function,
   for (Block &block : ramp.getBody())
     if (!block.empty() && sim::isSuspensionOp(block.getTerminator()))
       continuationBlocks.insert(block.getTerminator()->getSuccessor(0));
+  DenseMap<uint32_t, Block *> continuationTargets;
   for (Block *continuation : continuationBlocks) {
     Block *shim = new Block;
     ramp.getBody().push_back(shim);
@@ -700,13 +712,18 @@ lowerSuspendableProcess(sim::SimFuncOp function,
     SmallVector<Value> loaded;
     size_t argumentIndex = 0;
     uint32_t continuationID = 0;
-    for (Block *predecessor : continuation->getPredecessors()) {
+    for (Block *predecessor : continuation->getPredecessors())
       if (auto id = predecessor->getTerminator()->getAttrOfType<IntegerAttr>(
               "obelisk.coro.continuation")) {
-        continuationID = id.getInt();
-        break;
+        uint32_t idValue = id.getInt();
+        if (continuationID == 0)
+          continuationID = idValue;
+        auto [target, inserted] =
+            continuationTargets.try_emplace(idValue, shim);
+        if (!inserted && target->second != shim)
+          return continuation->getParentOp()->emitError(
+              "continuation ID resolves to multiple blocks");
       }
-    }
     if (continuationID == 0)
       return continuation->getParentOp()->emitError(
           "continuation block is missing its stable continuation ID");
@@ -813,16 +830,7 @@ lowerSuspendableProcess(sim::SimFuncOp function,
   for (uint32_t idValue : analysis.getContinuations()) {
     if (idValue == 0)
       continue;
-    Block *target = nullptr;
-    for (Block *candidate : continuationBlocks) {
-      for (Block *predecessor : candidate->getPredecessors()) {
-        Operation *terminator = predecessor->getTerminator();
-        auto idAttr =
-            terminator->getAttrOfType<IntegerAttr>("obelisk.coro.continuation");
-        if (idAttr && idAttr.getInt() == idValue)
-          target = blocks.shims.lookup(candidate);
-      }
-    }
+    Block *target = continuationTargets.lookup(idValue);
     if (target)
       targets.emplace_back(idValue, target);
   }
@@ -918,9 +926,27 @@ lowerSuspendableProcess(sim::SimFuncOp function,
       emitManagedRootRangePop(builder, location, ramp);
     cf::BranchOp::create(builder, location, blocks.terminate);
   }
-  if (failed(makeNativeWrappers(module, ramp, baseName)))
+  return success();
+}
+
+LogicalResult
+finishPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
+  if (failed(
+          makeNativeWrappers(process.module, process.ramp, process.baseName)))
     return failure();
-  return makeProcessDescriptor(module, location, baseName, stableID, analysis);
+  return makeProcessDescriptor(process.module, process.location,
+                               process.baseName, process.stableID,
+                               *process.analysis);
+}
+
+LogicalResult
+lowerSuspendableProcess(sim::SimFuncOp function,
+                        const SimulationProcessFrameAnalysis &analysis) {
+  FailureOr<PreparedSuspendableProcess> prepared =
+      prepareSuspendableProcess(function, analysis);
+  if (failed(prepared) || failed(lowerPreparedSuspendableProcess(*prepared)))
+    return failure();
+  return finishPreparedSuspendableProcess(*prepared);
 }
 
 } // namespace obelisk::detail

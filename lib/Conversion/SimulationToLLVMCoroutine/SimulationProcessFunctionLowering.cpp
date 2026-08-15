@@ -7,7 +7,9 @@
 #include "obelisk/Conversion/SimulationTimeLowering.h"
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Runtime/Runtime.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 
@@ -17,9 +19,133 @@ using namespace mlir;
 
 namespace obelisk::detail {
 
-LogicalResult
-lowerPlainNativeProcess(sim::SimFuncOp function,
-                        const SimulationProcessFrameAnalysis &analysis) {
+namespace {
+
+// Process control in a zero-time callable completes synchronously when it
+// targets another process. A dynamically selected current process would have
+// to preserve and later reconstruct the native call stack; until that ABI is
+// available, return a checked lifecycle failure instead of miscompiling the
+// continuation. Bytecode retains the complete callable-control behavior.
+LogicalResult lowerCallableProcessControls(func::FuncOp function) {
+  SmallVector<sim::SimProcessControlOp> controls;
+  function.walk(
+      [&](sim::SimProcessControlOp control) { controls.push_back(control); });
+  if (controls.empty())
+    return success();
+  if (function.getResultTypes().empty() ||
+      function.getResultTypes().back() != IntegerType::get(function.getContext(), 32))
+    return function.emitError(
+        "callable process control is missing its threaded status result");
+
+  IRRewriter rewriter(function.getContext());
+  Type i32 = rewriter.getI32Type();
+  auto makeReturn = [&](Location location, Value status) -> LogicalResult {
+    SmallVector<Value> results;
+    for (Type type : function.getResultTypes().drop_back()) {
+      Value zero = zeroNativeValue(rewriter, location, type);
+      if (!zero)
+        return function.emitError()
+               << "cannot materialize callable-control result for " << type;
+      results.push_back(zero);
+    }
+    results.push_back(status);
+    emitManagedRootRangePop(rewriter, location, function);
+    func::ReturnOp::create(rewriter, location, results);
+    return success();
+  };
+
+  for (sim::SimProcessControlOp control : controls) {
+    Location location = control.getLoc();
+    Value controlledProcess = control.getProcess();
+    sim::ProcessControlKind controlKind = control.getKind();
+    Block *continuation = control.getContinuation();
+    SmallVector<Value> continuationOperands(control.getContinuationOperands());
+    Region *region = control->getParentRegion();
+    Block *invokeControl = new Block;
+    Block *dispatch = new Block;
+    Block *continueAction = new Block;
+    Block *unsupportedAction = new Block;
+    Block *failureBlock = new Block;
+    failureBlock->addArgument(i32, location);
+    region->push_back(invokeControl);
+    region->push_back(dispatch);
+    region->push_back(continueAction);
+    region->push_back(unsupportedAction);
+    region->push_back(failureBlock);
+
+    rewriter.setInsertionPoint(control);
+    Value disposition = entryAlloca(rewriter, location, i32, 1, 4);
+    LLVM::StoreOp::create(
+        rewriter, location,
+        llvmConstant(rewriter, location, i32,
+                     OBELISK_RT_PROCESS_CONTROL_CONTINUE),
+        disposition, 4);
+    Value context = managedContextAndLane(rewriter, location).first;
+    Value current =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI64Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_process_current"),
+            ValueRange{context})
+            .getResult();
+    Value targetsCurrent = arith::CmpIOp::create(
+        rewriter, location, arith::CmpIPredicate::eq, current,
+        controlledProcess);
+    cf::CondBranchOp::create(rewriter, location, targetsCurrent,
+                             unsupportedAction, ValueRange{}, invokeControl,
+                             ValueRange{});
+    rewriter.eraseOp(control);
+
+    rewriter.setInsertionPointToStart(invokeControl);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_process_control"),
+            ValueRange{context, controlledProcess,
+                       llvmConstant(rewriter, location, i32,
+                                    static_cast<uint32_t>(controlKind)),
+                       disposition})
+            .getResult();
+    Value succeeded = arith::CmpIOp::create(
+        rewriter, location, arith::CmpIPredicate::eq, status,
+        llvmConstant(rewriter, location, i32, OBELISK_RT_OK));
+    cf::CondBranchOp::create(rewriter, location, succeeded, dispatch,
+                             ValueRange{}, failureBlock, ValueRange{status});
+
+    rewriter.setInsertionPointToStart(dispatch);
+    Value selected =
+        LLVM::LoadOp::create(rewriter, location, i32, disposition, 4);
+    Value canContinue = arith::CmpIOp::create(
+        rewriter, location, arith::CmpIPredicate::eq, selected,
+        llvmConstant(rewriter, location, i32,
+                     OBELISK_RT_PROCESS_CONTROL_CONTINUE));
+    cf::CondBranchOp::create(rewriter, location, canContinue, continueAction,
+                             ValueRange{}, unsupportedAction, ValueRange{});
+
+    rewriter.setInsertionPointToStart(continueAction);
+    cf::BranchOp::create(rewriter, location, continuation,
+                         continuationOperands);
+
+    rewriter.setInsertionPointToStart(unsupportedAction);
+    if (failed(makeReturn(
+            location,
+            llvmConstant(rewriter, location, i32,
+                         OBELISK_RT_INVALID_LIFECYCLE))))
+      return failure();
+
+    rewriter.setInsertionPointToStart(failureBlock);
+    if (failed(makeReturn(location, failureBlock->getArgument(0))))
+      return failure();
+  }
+  return success();
+}
+
+} // namespace
+
+FailureOr<PreparedPlainNativeProcess>
+preparePlainNativeProcess(sim::SimFuncOp function,
+                          const SimulationProcessFrameAnalysis &analysis) {
   if (!function.getResultTypes().empty())
     return function.emitError("simulation process cannot return values");
   if (failed(lowerSimulationTimeOperations(function)))
@@ -48,6 +174,14 @@ lowerPlainNativeProcess(sim::SimFuncOp function,
   for (Block &block : body.getBody())
     for (BlockArgument argument : block.getArguments())
       argument.setType(convertProcessType(argument.getType(), context));
+  return PreparedPlainNativeProcess{module, body, location, std::move(baseName),
+                                    stableID, &analysis};
+}
+
+LogicalResult
+lowerPreparedPlainNativeProcess(PreparedPlainNativeProcess &process) {
+  func::FuncOp body = process.body;
+  MLIRContext *context = body.getContext();
   if (failed(lowerNativeDPICalls(body)))
     return failure();
 
@@ -80,9 +214,27 @@ lowerPlainNativeProcess(sim::SimFuncOp function,
     func::ReturnOp::create(rewriter, body.getLoc(), bits);
   }
 
-  if (failed(makePlainNativeWrappers(module, body, baseName, analysis)))
+  return success();
+}
+
+LogicalResult
+finishPreparedPlainNativeProcess(PreparedPlainNativeProcess &process) {
+  if (failed(makePlainNativeWrappers(process.module, process.body,
+                                     process.baseName, *process.analysis)))
     return failure();
-  return makeProcessDescriptor(module, location, baseName, stableID, analysis);
+  return makeProcessDescriptor(process.module, process.location,
+                               process.baseName, process.stableID,
+                               *process.analysis);
+}
+
+LogicalResult
+lowerPlainNativeProcess(sim::SimFuncOp function,
+                        const SimulationProcessFrameAnalysis &analysis) {
+  FailureOr<PreparedPlainNativeProcess> prepared =
+      preparePlainNativeProcess(function, analysis);
+  if (failed(prepared) || failed(lowerPreparedPlainNativeProcess(*prepared)))
+    return failure();
+  return finishPreparedPlainNativeProcess(*prepared);
 }
 
 LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
@@ -156,6 +308,8 @@ LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
   if (failed(lowerNativeFunctionBody(
           replacement, NativeReturnLowering::Preserve,
           NativeCallResultLowering::ConvertProcessTypes)))
+    return failure();
+  if (failed(lowerCallableProcessControls(replacement)))
     return failure();
   if (observer) {
     if (!observerWidth || !observerFourState)

@@ -27,6 +27,37 @@ module attributes {
 
 // -----
 
+!conflicting_path_holder = !obelisk_sim.unpacked_struct<[
+  #obelisk_sim.field<name = "path", type = !obelisk_sim.reference_path<i64>, ordinal = 0, packedOffset = 0>
+]>
+
+module attributes {
+  llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
+  llvm.target_triple = "x86_64-unknown-linux-gnu"
+} {
+  llvm.mlir.global internal constant @__obelisk_element_trace_77("wrong") {alignment = 1 : i64}
+  obelisk_sim.design @conflicting_native_trace {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 77 in 0 function hierarchy "trace"
+    obelisk_sim.func @trace(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {code_unit_id = 77 : i64, entry_kind = 8 : i32} {
+      %one = arith.constant 1 : i64
+      // expected-error @+1 {{native byte global @__obelisk_element_trace_77 conflicts with a pre-existing symbol}}
+      %values = obelisk_sim.container.create %one {
+        type_id = 77 : i64, element_kind = 7 : i32,
+        element_flags = 0 : i32, value_size = 8 : i64,
+        alignment = 8 : i64, bit_width = 64 : i64,
+        trace_offsets = array<i64: 0>, trace_kinds = array<i32: 4>,
+        container_kind = 1 : i32, bound = 0 : i64
+      } : (i64) -> !obelisk_sim.dynamic_array<!conflicting_path_holder>
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"
 } {

@@ -11,6 +11,7 @@
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringMap.h"
 
 #include <algorithm>
 #include <functional>
@@ -159,6 +160,14 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     rejectPlan("missing compute-graph metadata");
     return result;
   }
+  llvm::StringMap<sim::SimFuncOp> functionsByName;
+  for (Operation &operation : design.getBody().front())
+    if (auto function = dyn_cast<sim::SimFuncOp>(operation))
+      functionsByName.try_emplace(function.getSymName(), function);
+  auto lookupFunction = [&](StringRef name) -> sim::SimFuncOp {
+    auto found = functionsByName.find(name);
+    return found == functionsByName.end() ? sim::SimFuncOp{} : found->second;
+  };
   sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
   if (graph.getVersion() != sim::metadata::schemaVersion)
     rejectPlan("unsupported compute-graph version");
@@ -170,8 +179,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     if (auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute)) {
       if (fragment.getId() != index)
         rejectPlan("compute-fragment IDs do not match the node inventory");
-      sim::SimFuncOp function = design.lookupSymbol<sim::SimFuncOp>(
-          fragment.getFunction().getValue());
+      sim::SimFuncOp function =
+          lookupFunction(fragment.getFunction().getValue());
       Block *block =
           function ? lookupComputeGraphBlock(function, fragment.getBlock())
                    : nullptr;
@@ -240,8 +249,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
             nodes[static_cast<size_t>(member)]);
         if (!fragment)
           continue;
-        sim::SimFuncOp function = design.lookupSymbol<sim::SimFuncOp>(
-            fragment.getFunction().getValue());
+        sim::SimFuncOp function =
+            lookupFunction(fragment.getFunction().getValue());
         Block *block =
             function ? lookupComputeGraphBlock(function, fragment.getBlock())
                      : nullptr;
@@ -262,8 +271,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   module.walk([&](sim::SimSpawnOp spawn) {
     sim::SimFuncOp owner = spawn->getParentOfType<sim::SimFuncOp>();
     if (!owner || owner != root) {
-      sim::SimFuncOp target =
-          design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee());
+      sim::SimFuncOp target = lookupFunction(spawn.getCallee());
       bool concurrentCold = target && isConcurrentColdActor(target);
       if (concurrentCold)
         result.reasons.emplace_back("dynamic spawn multiplicity");
@@ -276,8 +284,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     if (++rootSpawnCounts[spawn.getCallee()] != 1) {
       result.reasons.emplace_back("duplicate statically spawned process");
       onlyConcurrentColdBoundaries = false;
-      if (sim::SimFuncOp target =
-              design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee()))
+      if (sim::SimFuncOp target = lookupFunction(spawn.getCallee()))
         dynamicActors.insert(target.getOperation());
     }
   });
@@ -429,8 +436,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       !bytecodeActors.contains(root.getOperation()))
     result.actorSlots[root.getOperation()] = slot++;
   root.walk([&](sim::SimSpawnOp spawn) {
-    sim::SimFuncOp target =
-        design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee());
+    sim::SimFuncOp target = lookupFunction(spawn.getCallee());
     if (!target || dynamicActors.contains(target.getOperation()) ||
         bytecodeActors.contains(target.getOperation()))
       return;
@@ -447,8 +453,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       continue;
     uint64_t weight = std::max<uint64_t>(fragment.getCost(), 1);
     result.totalGraphCost += weight;
-    sim::SimFuncOp function = design.lookupSymbol<sim::SimFuncOp>(
-        fragment.getFunction().getValue());
+    sim::SimFuncOp function =
+        lookupFunction(fragment.getFunction().getValue());
     Block *block =
         function ? lookupComputeGraphBlock(function, fragment.getBlock())
                  : nullptr;
