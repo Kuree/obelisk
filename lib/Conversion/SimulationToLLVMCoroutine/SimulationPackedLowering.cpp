@@ -28,6 +28,10 @@ namespace {
 
 constexpr StringLiteral inductiveTwoStateAccessAttr =
     "obelisk.eval.inductive_two_state_access";
+constexpr StringLiteral inductiveTwoStateAttr =
+    "obelisk.eval.inductive_two_state";
+constexpr StringLiteral conditionalTwoStateAttr =
+    "obelisk.eval.conditionally_two_state";
 
 LogicalResult convertNativeAggregateType(Type type,
                                          SmallVectorImpl<Type> &results) {
@@ -71,20 +75,39 @@ LogicalResult lowerPackedSimulationOperations(
   DenseSet<Value> nativeTwoStateValues;
   DenseSet<Operation *> nativeTwoStateOperations;
   WalkResult stateDomainsComputed = module.walk([&](sim::SimDesignOp design) {
-    FailureOr<StateDomainAnalysis> stateDomains =
-        StateDomainAnalysis::compute(design, /*proveInductiveRoots=*/true);
-    FailureOr<StateDomainAnalysis> knownStateDomains =
-        StateDomainAnalysis::computeAssumingKnownState(design);
-    if (failed(stateDomains) || failed(knownStateDomains))
+    if (design.getBody().empty()) {
+      design.emitOpError("cannot analyze a design with no body");
       return WalkResult::interrupt();
+    }
+    bool needsInductiveFacts = false;
+    bool needsKnownStateFacts = false;
     for (sim::SimFuncOp function :
          design.getBody().front().getOps<sim::SimFuncOp>()) {
       if (function.isExternal())
         continue;
-      bool guardedTwoState =
-          function->hasAttr("obelisk.eval.inductive_two_state");
-      bool conditionalTwoState =
-          function->hasAttr("obelisk.eval.conditionally_two_state");
+      bool guarded = function->hasAttr(inductiveTwoStateAttr);
+      bool conditional = function->hasAttr(conditionalTwoStateAttr);
+      needsInductiveFacts |= guarded && !conditional;
+      needsKnownStateFacts |= conditional;
+    }
+    FailureOr<StateDomainAnalysis> stateDomains =
+        StateDomainAnalysis::compute(design, needsInductiveFacts);
+    if (failed(stateDomains))
+      return WalkResult::interrupt();
+    std::optional<StateDomainAnalysis> knownStateDomains;
+    if (needsKnownStateFacts) {
+      FailureOr<StateDomainAnalysis> computed =
+          StateDomainAnalysis::computeAssumingKnownState(design);
+      if (failed(computed))
+        return WalkResult::interrupt();
+      knownStateDomains.emplace(std::move(*computed));
+    }
+    for (sim::SimFuncOp function :
+         design.getBody().front().getOps<sim::SimFuncOp>()) {
+      if (function.isExternal())
+        continue;
+      bool guardedTwoState = function->hasAttr(inductiveTwoStateAttr);
+      bool conditionalTwoState = function->hasAttr(conditionalTwoStateAttr);
       const StateDomainAnalysis &guardedDomains =
           conditionalTwoState ? *knownStateDomains : *stateDomains;
       auto isTwoState = [&](Value value) {
