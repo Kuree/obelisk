@@ -6064,10 +6064,11 @@ void ObeliskSimPreparePass::runOnOperation() {
                         builder.getStringAttr(getHierarchyName(unit.source)));
       }
     } else {
+      auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
+      auto owner = subroutine ? getOwningClass(subroutine)
+                              : semantic::SVClassTypeOp{};
       auto clonePropertyInitializers = [&](OpBuilder &initializerBuilder,
                                            bool nestedAfterSuper = false) {
-        auto owner = dyn_cast_or_null<semantic::SVClassTypeOp>(
-            unit.source->getParentOp());
         if (!owner)
           return;
         Value receiver = unit.function.getBody().front().getArgument(1);
@@ -6107,10 +6108,6 @@ void ObeliskSimPreparePass::runOnOperation() {
             cloned->setAttr("obelisk_sim.initialize_field", field);
         }
       };
-      auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
-      auto owner = subroutine ? dyn_cast_or_null<semantic::SVClassTypeOp>(
-                                    unit.source->getParentOp())
-                              : semantic::SVClassTypeOp{};
       bool constructor =
           subroutine && subroutine.getIsConstructor().value_or(false);
       bool initialized = false;
