@@ -103,6 +103,13 @@ public:
   static mlir::FailureOr<StateDomainAnalysis>
   compute(sim::SimDesignOp design, bool proveInductiveRoots = true);
 
+  /// Compute only the guarded fixed point and inductive-root inventory. This
+  /// avoids the separate unconditional solve for clients which exclusively
+  /// query getWithInductiveRoots() and isInductivelyTwoState(). Calls to get()
+  /// on the returned snapshot conservatively report unresolved logic values.
+  static mlir::FailureOr<StateDomainAnalysis>
+  computeInductiveOnly(sim::SimDesignOp design);
+
   /// Compute conditional facts under the boundary assumption that every
   /// canonical logic storage/net root is currently known.  Unlike compute(),
   /// this does not claim that those roots are globally inductive: clients must

@@ -1074,6 +1074,26 @@ StateDomainAnalysis::compute(sim::SimDesignOp design,
     DenseMap<Value, StateDomainFact> guarded = *facts;
     return StateDomainAnalysis(std::move(*facts), std::move(guarded), {});
   }
+  FailureOr<StateDomainAnalysis> analysis = computeInductiveOnly(design);
+  if (failed(analysis))
+    return failure();
+  // Keep the longstanding value facts unconditional. The inductive root set
+  // is a separate guarded capability: consumers may assume it only after
+  // checking the corresponding unknown planes at a kernel boundary.
+  FailureOr<DenseMap<Value, StateDomainFact>> unconditional =
+      computeValueFacts(design, RootSet{});
+  if (failed(unconditional))
+    return failure();
+  analysis->facts = std::move(*unconditional);
+  return analysis;
+}
+
+FailureOr<StateDomainAnalysis>
+StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
+  if (design.getBody().empty()) {
+    design.emitOpError("cannot analyze a design with no body");
+    return failure();
+  }
   RootSet candidates;
   DenseMap<uint64_t, unsigned> netDriverCounts;
   DenseMap<uint64_t, uint64_t> netWidths;
@@ -1213,16 +1233,7 @@ StateDomainAnalysis::compute(sim::SimDesignOp design,
       candidates.erase(root);
   }
 
-  DenseMap<Value, StateDomainFact> guardedFacts = facts;
-
-  // Keep the longstanding value facts unconditional. The inductive root set
-  // is a separate guarded capability: consumers may assume it only after
-  // checking the corresponding unknown planes at a kernel boundary.
-  FailureOr<DenseMap<Value, StateDomainFact>> unconditional =
-      computeValueFacts(design, RootSet{});
-  if (failed(unconditional))
-    return failure();
-  facts = std::move(*unconditional);
+  DenseMap<Value, StateDomainFact> guardedFacts = std::move(facts);
 
   SmallVector<InductiveStateRoot> inductiveRoots;
   inductiveRoots.reserve(candidates.size());
@@ -1233,7 +1244,8 @@ StateDomainAnalysis::compute(sim::SimDesignOp design,
     return std::tie(lhs.resource, lhs.descriptor) <
            std::tie(rhs.resource, rhs.descriptor);
   });
-  return StateDomainAnalysis(std::move(facts), std::move(guardedFacts),
+  return StateDomainAnalysis(DenseMap<Value, StateDomainFact>{},
+                             std::move(guardedFacts),
                              std::move(inductiveRoots));
 }
 

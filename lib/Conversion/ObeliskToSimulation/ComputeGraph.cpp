@@ -1991,7 +1991,7 @@ LogicalResult validateComputeGraphStructure(sim::SimDesignOp design,
 FailureOr<ComputeGraphResult> deriveComputeGraph(sim::SimDesignOp design,
                                                  ComputeGraphOptions options) {
   FailureOr<StateDomainAnalysis> stateDomains =
-      StateDomainAnalysis::compute(design, /*proveInductiveRoots=*/true);
+      StateDomainAnalysis::computeInductiveOnly(design);
   if (failed(stateDomains))
     return failure();
   ComputeGraphBuilder builder(design, options, *stateDomains);
