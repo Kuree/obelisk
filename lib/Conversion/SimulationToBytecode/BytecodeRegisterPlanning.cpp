@@ -71,6 +71,7 @@ planTwoStateRegisters(sim::SimDesignOp design) {
           consider(result);
 
         if (isa<BranchOpInterface, sim::SimCallOp, sim::SimTaskCallOp,
+                sim::SimClassDirectCallOp, sim::SimClassVirtualCallOp,
                 sim::SimClassVirtualTaskCallOp, sim::SimDPICallOp,
                 sim::SimSpawnOp, sim::SimReturnOp>(operation)) {
           for (Value operand : operation.getOperands())

@@ -2,9 +2,19 @@
 
 """Print serialized Obelisk design-bytecode instructions from MLIR input."""
 
+import argparse
 import re
 import struct
 import sys
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--metadata",
+    action="store_true",
+    help="print function, register-layout, and operand-map metadata",
+)
+args = parser.parse_args()
 
 
 text = sys.stdin.read()
@@ -41,6 +51,58 @@ operands = [
     struct.unpack_from("<II", image, operand_offset + index * operand_size)
     for index in range(operand_count)
 ]
+
+if args.metadata:
+    function_offset = struct.unpack_from("<Q", image, 40)[0]
+    function_count = struct.unpack_from("<Q", image, 48)[0]
+    function_size = 96
+    layout_offset = struct.unpack_from("<Q", image, 56)[0]
+    layout_count = struct.unpack_from("<Q", image, 64)[0]
+    layout_size = 40
+    if function_offset > len(image) or function_count > (
+        len(image) - function_offset
+    ) // function_size:
+        raise SystemExit("invalid Obelisk design-bytecode function range")
+    if layout_offset > len(image) or layout_count > (
+        len(image) - layout_offset
+    ) // layout_size:
+        raise SystemExit("invalid Obelisk design-bytecode layout range")
+    for index in range(function_count):
+        offset = function_offset + index * function_size
+        (
+            stable_id,
+            schedule_rank,
+            first_instruction,
+            function_instruction_count,
+            first_layout,
+            function_layout_count,
+            argument_count,
+            result_count,
+        ) = struct.unpack_from("<QQQQQQII", image, offset)
+        if first_layout > layout_count or function_layout_count > (
+            layout_count - first_layout
+        ):
+            raise SystemExit(
+                f"function {index} has an invalid register-layout range"
+            )
+        print(
+            f"function {index}: id={stable_id} rank={schedule_rank} "
+            f"first_instruction={first_instruction} "
+            f"instruction_count={function_instruction_count} "
+            f"arguments={argument_count} results={result_count}"
+        )
+        for register in range(function_layout_count):
+            layout = layout_offset + (first_layout + register) * layout_size
+            kind, flags, width, storage_offset, size, auxiliary = (
+                struct.unpack_from("<BB2xIQQQ", image, layout)
+            )
+            print(
+                f"layout function={index} register={register} kind={kind} "
+                f"flags={flags} width={width} offset={storage_offset} "
+                f"size={size} auxiliary={auxiliary}"
+            )
+    for index, (destination, source) in enumerate(operands):
+        print(f"operand {index}: dst={destination} src={source}")
 
 for index in range(instruction_count):
     offset = code_offset + index * instruction_size
