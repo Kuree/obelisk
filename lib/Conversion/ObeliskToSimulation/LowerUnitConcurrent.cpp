@@ -39,8 +39,8 @@ struct FixedSequence {
 /// remaining children are the source actual/default and local-initializer
 /// inventory retained for semantic tooling; they are deliberately not
 /// evaluated by the monitor compiler.
-static FailureOr<Operation *> getExpandedAssertionBody(
-    semantic::SVAssertionInstanceExpressionOp instance) {
+static FailureOr<Operation *>
+getExpandedAssertionBody(semantic::SVAssertionInstanceExpressionOp instance) {
   if (instance.getIsRecursiveProperty() || !instance.getHasExpandedBody())
     return failure();
 
@@ -48,8 +48,7 @@ static FailureOr<Operation *> getExpandedAssertionBody(
       instance.getLocalVariableHasInitializer(),
       [](int64_t hasInitializer) { return hasInitializer != 0; });
   SmallVector<Operation *> children = getChildren(instance);
-  size_t expectedChildren =
-      1 + instance.getArgumentCount() + initializedLocals;
+  size_t expectedChildren = 1 + instance.getArgumentCount() + initializedLocals;
   if (children.size() != expectedChildren)
     return failure();
   return children.front();
@@ -167,8 +166,8 @@ static Operation *unwrapAssertionInstance(Operation *operation) {
       continue;
     }
     auto simple = dyn_cast<semantic::SVSimpleAssertionExprOp>(operation);
-    SmallVector<Operation *> children = simple ? getChildren(simple)
-                                               : SmallVector<Operation *>{};
+    SmallVector<Operation *> children =
+        simple ? getChildren(simple) : SmallVector<Operation *>{};
     if (simple && !simple.getIsNull() && !simple.getHasRepetition() &&
         children.size() == 1 &&
         isa<semantic::SVAssertionInstanceExpressionOp>(children.front())) {
@@ -181,8 +180,8 @@ static Operation *unwrapAssertionInstance(Operation *operation) {
 
 } // namespace
 
-LogicalResult UnitLowering::lowerSequenceEndpointMonitor(
-    ArrayRef<Operation *> roots) {
+LogicalResult
+UnitLowering::lowerSequenceEndpointMonitor(ArrayRef<Operation *> roots) {
   if (roots.size() != 1)
     return function.emitError(
                "sequence endpoint monitor requires one assertion instance"),
@@ -205,8 +204,8 @@ LogicalResult UnitLowering::lowerSequenceEndpointMonitor(
                   "expanded instance without local variables",
            failure();
   auto clocking = dyn_cast<semantic::SVClockingAssertionExprOp>(*expanded);
-  SmallVector<Operation *> clocked = clocking ? getChildren(clocking)
-                                              : SmallVector<Operation *>{};
+  SmallVector<Operation *> clocked =
+      clocking ? getChildren(clocking) : SmallVector<Operation *>{};
   if (!clocking || clocked.size() != 2)
     return emitError(getSemanticLocation(*expanded))
                << "sequence endpoint monitor requires an explicit clock",
@@ -232,8 +231,8 @@ LogicalResult UnitLowering::lowerSequenceEndpointMonitor(
 
   auto endpointPath =
       function->getAttrOfType<StringAttr>(sequenceEndpointPathAttrName);
-  Value endpoint = endpointPath ? values.lookup(endpointPath.getValue())
-                                : Value{};
+  Value endpoint =
+      endpointPath ? values.lookup(endpointPath.getValue()) : Value{};
   if (!endpoint || !isa<sim::EventType>(endpoint.getType()))
     return function.emitError(
                "sequence endpoint monitor has no endpoint event capture"),
@@ -311,10 +310,9 @@ LogicalResult UnitLowering::lowerSequenceEndpointMonitor(
     setCurrent(continuation);
   };
 
-  Value state = stateStorage
-                    ? sim::SimRefLoadOp::create(builder, location, stateType,
-                                                stateStorage)
-                    : zero;
+  Value state = stateStorage ? sim::SimRefLoadOp::create(
+                                   builder, location, stateType, stateStorage)
+                             : zero;
   Value nextState = zero;
   for (uint64_t age = 1; age < compiled->ages.size(); ++age) {
     Value mask = arith::ConstantOp::create(
@@ -346,8 +344,8 @@ LogicalResult UnitLowering::lowerSequenceEndpointMonitor(
   if (compiled->ages.size() == 1) {
     triggerIf(*starts);
   } else {
-    Value nextMask = arith::ConstantOp::create(
-        builder, location, stateType, builder.getI64IntegerAttr(2));
+    Value nextMask = arith::ConstantOp::create(builder, location, stateType,
+                                               builder.getI64IntegerAttr(2));
     Value started =
         arith::SelectOp::create(builder, location, *starts, nextMask, zero);
     nextState = arith::OrIOp::create(builder, location, nextState, started);
@@ -629,8 +627,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       SmallVector<NamedAttribute> metadata;
       if (auto argument = dyn_cast<BlockArgument>(capture);
           argument && argument.getOwner() == &function.getBody().front()) {
-        if (DictionaryAttr source = function.getArgAttrDict(
-                argument.getArgNumber()))
+        if (DictionaryAttr source =
+                function.getArgAttrDict(argument.getArgNumber()))
           llvm::append_range(metadata, source);
       }
       if (metadata.empty())
@@ -717,18 +715,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     sim::SimRefStoreOp::create(cancelBuilder, getSemanticLocation(disable),
                                cancelZero,
                                entry.getArgument(stateStorageIndex));
-    Value epoch =
-        sim::SimRefLoadOp::create(cancelBuilder, getSemanticLocation(disable),
-                                  stateType,
-                                  entry.getArgument(disableEpochIndex));
+    Value epoch = sim::SimRefLoadOp::create(
+        cancelBuilder, getSemanticLocation(disable), stateType,
+        entry.getArgument(disableEpochIndex));
     Value one = arith::ConstantOp::create(
         cancelBuilder, getSemanticLocation(disable), stateType,
         cancelBuilder.getI64IntegerAttr(1));
     Value nextEpoch = arith::AddIOp::create(
         cancelBuilder, getSemanticLocation(disable), epoch, one);
     sim::SimRefStoreOp::create(cancelBuilder, getSemanticLocation(disable),
-                               nextEpoch,
-                               entry.getArgument(disableEpochIndex));
+                               nextEpoch, entry.getArgument(disableEpochIndex));
     Value currentTrue = arith::ConstantOp::create(
         cancelBuilder, getSemanticLocation(disable), builder.getI1Type(),
         builder.getBoolAttr(true));

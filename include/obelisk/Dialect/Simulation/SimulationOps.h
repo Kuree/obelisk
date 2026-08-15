@@ -58,7 +58,19 @@ enum class InlineLegality {
   UnknownBoundaryMetadata,
 };
 
+inline constexpr ::llvm::StringLiteral inlineLegalityCacheAttrName =
+    "obelisk.inline.callee_legality";
+
+bool hasLateInlineMetadata(SimDesignOp design);
+InlineLegality getInlineCalleeLegality(SimFuncOp callee, bool calleeIsRecursive,
+                                       bool designHasLateMetadata);
 InlineLegality getInlineLegality(SimCallOp call, SimFuncOp callee);
+/// Variant for clients that already computed call-graph SCC membership.
+InlineLegality getInlineLegality(SimCallOp call, SimFuncOp callee,
+                                 bool calleeIsRecursive);
+/// Variant for clients that already cached callee-invariant legality.
+InlineLegality getInlineLegality(SimCallOp call, SimFuncOp callee,
+                                 InlineLegality calleeLegality);
 ::llvm::StringRef getInlineLegalityReason(InlineLegality legality);
 
 /// Normalize direct instance-method calls to the ordinary zero-time call ABI.

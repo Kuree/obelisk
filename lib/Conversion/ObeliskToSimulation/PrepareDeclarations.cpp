@@ -361,10 +361,9 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
       declaration->setAttr(
           sim::metadata::randomModeField,
           addRandomField("__obelisk_rand_mode", "__obelisk_rand_mode"));
-      declaration->setAttr(
-          "obelisk_sim.constraint_mode_field",
-          addRandomField("__obelisk_constraint_mode",
-                         "__obelisk_constraint_mode"));
+      declaration->setAttr("obelisk_sim.constraint_mode_field",
+                           addRandomField("__obelisk_constraint_mode",
+                                          "__obelisk_constraint_mode"));
     }
   }
 
@@ -393,8 +392,8 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
       if (base == result.semanticClasses.end() ||
           failed(collectRandomVariableReferences(base->second)))
         return failure();
-      llvm::append_range(
-          references, randomVariableReferences.find(base->second)->second);
+      llvm::append_range(references,
+                         randomVariableReferences.find(base->second)->second);
     }
     for (Operation *child : getChildren(classType)) {
       auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(child);
@@ -467,8 +466,17 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
         result.interfaceMethodOrdinals[method] = interfaceMethodOrdinal++;
         continue;
       }
-      if (std::optional<SymbolRefAttr> overridden =
-              method.getOverrideSymbol()) {
+      std::optional<SymbolRefAttr> overridden = method.getOverrideSymbol();
+      // For extern/out-of-block class methods, Slang attaches the override
+      // relationship to the method prototype while getClassMethod() returns
+      // its nested executable subroutine. Preserve the inherited vtable slot
+      // instead of accidentally appending a second, concrete slot and leaving
+      // the pure base entry effective.
+      if (!overridden)
+        if (auto prototype =
+                dyn_cast<semantic::SVMethodPrototypeSymbolOp>(child))
+          overridden = prototype.getOverrideSymbol();
+      if (overridden) {
         auto target = semanticSymbols.find(overridden->getLeafReference());
         if (target == semanticSymbols.end() ||
             !result.virtualMethodSlots.count(target->second)) {
@@ -546,8 +554,8 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
         uint64_t id = nextScopeId++;
         result.ids[body] = id;
         StringAttr interfaceType;
-        if (auto identity =
-                body->getAttrOfType<SymbolRefAttr>("virtual_interface_identity")) {
+        if (auto identity = body->getAttrOfType<SymbolRefAttr>(
+                "virtual_interface_identity")) {
           std::string key;
           llvm::raw_string_ostream stream(key);
           stream << identity;

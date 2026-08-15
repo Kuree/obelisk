@@ -715,7 +715,11 @@ enum {
   OBELISK_RT_DB_INTERFACE_TASK_CALL = 57,
   // Terminator for IEEE process-object kill/suspend/resume. The target is a
   // shared tagged process identity and immediate is the resume continuation.
-  OBELISK_RT_DB_PROCESS_CONTROL = 58
+  OBELISK_RT_DB_PROCESS_CONTROL = 58,
+  // Reinterpret the payload of an IEEE real as an equal-width two-state
+  // integer, or vice versa. Integer register padding is not part of the
+  // payload.
+  OBELISK_RT_DB_BITCAST = 59
 };
 
 // StoreState writes its exact post-resolution transition predicate to the
@@ -2830,8 +2834,9 @@ void obelisk_rt_v1_scheduler_event(obelisk_rt_context *context,
                                    uint64_t stable_id, uint32_t nonblocking);
 // Allocate one fresh named-event synchronization identity. Dynamic event IDs
 // remain valid for the lifetime of the simulation context.
-obelisk_rt_status obelisk_rt_v1_scheduler_event_create(
-    obelisk_rt_context *context, uint64_t *out_stable_id);
+obelisk_rt_status
+obelisk_rt_v1_scheduler_event_create(obelisk_rt_context *context,
+                                     uint64_t *out_stable_id);
 // Trigger immediately, or enqueue a nonblocking named-event occurrence after
 // `delay` design-precision ticks. A nonzero delay with a blocking trigger is
 // invalid and records a scheduler failure.

@@ -275,8 +275,7 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
         ordinalAttr.getValue().isNegative() ||
         ordinalAttr.getValue().getActiveBits() > 32)
       return failure();
-    FailureOr<Type> memberBaseType =
-        getNormalizedSemanticType(members.front());
+    FailureOr<Type> memberBaseType = getNormalizedSemanticType(members.front());
     if (failed(memberBaseType))
       return failure();
     auto unpackedUnion = dyn_cast<sim::UnpackedUnionType>(*memberBaseType);
@@ -284,20 +283,18 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
     if (auto named =
             dyn_cast<semantic::SVNamedValueExpressionOp>(members.front())) {
       if (auto node = named->getAttrOfType<IntegerAttr>("node_id"))
-        frozenReceiver =
-            nodeLvalues.lookup(node.getValue().getZExtValue());
+        frozenReceiver = nodeLvalues.lookup(node.getValue().getZExtValue());
       if (!frozenReceiver)
         frozenReceiver = lvalues.lookup(named.getReferencedPath());
     }
     bool indirectReference =
         frozenReceiver &&
-        isa<sim::ArgumentRefType, sim::ManagedRefType,
-            sim::ReferencePathType>(frozenReceiver.getType());
+        isa<sim::ArgumentRefType, sim::ManagedRefType, sim::ReferencePathType>(
+            frozenReceiver.getType());
     if (isSequentialContainerSubvalue(destination) ||
         sim::isManagedHandleType(*destinationType) || indirectReference ||
         (unpackedUnion && !unpackedUnion.getIsTagged())) {
-      FailureOr<CapturedLValue> base =
-          captureLValue(members.front(), location);
+      FailureOr<CapturedLValue> base = captureLValue(members.front(), location);
       if (failed(base))
         return failure();
       Type baseType = base->type;
@@ -321,8 +318,7 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
           semantic::SVRangeSelectExpressionOp>(destination)) {
     SmallVector<Operation *> selection = getChildren(destination);
     if (!selection.empty()) {
-      FailureOr<Type> baseType =
-          getNormalizedSemanticType(selection.front());
+      FailureOr<Type> baseType = getNormalizedSemanticType(selection.front());
       if (succeeded(baseType) && sim::getPackedWidth(*baseType) &&
           sim::getPackedWidth(*destinationType)) {
         FailureOr<CapturedLValue> base =
@@ -388,9 +384,8 @@ UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
       return failure();
     FailureOr<Value> base =
         loadCapturedLValue(destination.children.front(), location);
-    FailureOr<Value> scalar =
-        succeeded(base) ? toPackedScalar(*base, location)
-                        : FailureOr<Value>(failure());
+    FailureOr<Value> scalar = succeeded(base) ? toPackedScalar(*base, location)
+                                              : FailureOr<Value>(failure());
     Type resultScalarType = sim::getPackedScalarType(destination.type);
     if (failed(scalar) || !resultScalarType)
       return failure();
@@ -419,7 +414,7 @@ UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
       selected = resultType == inputType
                      ? shifted
                      : Value(arith::TruncIOp::create(builder, location,
-                                                    resultType, shifted));
+                                                     resultType, shifted));
     }
     return convert(selected, destination.type, false, location,
                    isSignedNode(destination.semanticNode));
@@ -474,16 +469,15 @@ UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
       return failure();
     if (isa<sim::UnpackedUnionType>((*aggregate).getType())) {
       Value extracted = sim::SimUnionExtractOp::create(
-          builder, location, destination.type, *aggregate,
-          destination.ordinal);
+          builder, location, destination.type, *aggregate, destination.ordinal);
       if (isa<sim::ClassHandleType>(destination.type))
-        extracted = sim::SimClassCastOp::create(
-            builder, location, destination.type, extracted);
+        extracted = sim::SimClassCastOp::create(builder, location,
+                                                destination.type, extracted);
       return extracted;
     }
-    return sim::SimAggregateExtractOp::create(
-               builder, location, destination.type, *aggregate,
-               destination.ordinal)
+    return sim::SimAggregateExtractOp::create(builder, location,
+                                              destination.type, *aggregate,
+                                              destination.ordinal)
         .getResult();
   }
   case CapturedLValue::Kind::AggregateSlice: {
@@ -664,8 +658,8 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
                                      destination.reference, delay,
                                      sim::NBASiteAttr{});
       else {
-        auto store = sim::SimRefStoreOp::create(
-            builder, location, published, destination.reference);
+        auto store = sim::SimRefStoreOp::create(builder, location, published,
+                                                destination.reference);
         if (continuousStore)
           store->setAttr(continuousStoreAttrName, builder.getUnitAttr());
       }
@@ -880,19 +874,18 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
             *replacement, destination.index);
     } else if (isa<sim::LogicType>((*baseScalar).getType())) {
       updated = sim::SimLogicInsertOp::create(
-          builder, location, (*baseScalar).getType(), *baseScalar,
-          *replacement, builder.getI64IntegerAttr(destination.lowBit));
+          builder, location, (*baseScalar).getType(), *baseScalar, *replacement,
+          builder.getI64IntegerAttr(destination.lowBit));
     } else {
       Value low = arith::ConstantOp::create(
           builder, location, builder.getI64Type(),
           builder.getI64IntegerAttr(destination.lowBit));
-      updated = sim::SimBitsDynInsertOp::create(
-          builder, location, (*baseScalar).getType(), *baseScalar,
-          *replacement, low);
+      updated = sim::SimBitsDynInsertOp::create(builder, location,
+                                                (*baseScalar).getType(),
+                                                *baseScalar, *replacement, low);
     }
-    FailureOr<Value> rebuilt =
-        convert(updated, base.type, false, location,
-                isSignedNode(base.semanticNode));
+    FailureOr<Value> rebuilt = convert(updated, base.type, false, location,
+                                       isSignedNode(base.semanticNode));
     if (failed(rebuilt))
       return failure();
     return writeCapturedLValue(base, *rebuilt, false, false, location);
@@ -1187,8 +1180,7 @@ LogicalResult UnitLowering::writeLValue(Operation *destination, Value value,
 LogicalResult UnitLowering::lowerClockingOutputAssignment(
     semantic::SVMemberAccessExpressionOp destination, Value value,
     Location location) {
-  bool synchronizedToCurrentEvent =
-      isCurrentClockingOccurrence(current);
+  bool synchronizedToCurrentEvent = isCurrentClockingOccurrence(current);
   SmallVector<Operation *> children = getChildren(destination);
   if (children.size() != 1)
     return emitError(location) << "clocking output has no interface receiver";
@@ -1245,7 +1237,8 @@ LogicalResult UnitLowering::lowerClockingOutputAssignment(
       double amount = 0;
       if (spelling.getValue().getAsDouble(amount) || !std::isfinite(amount) ||
           amount < 0) {
-        emitError(location) << "clocking output skew is not finite and nonnegative";
+        emitError(location)
+            << "clocking output skew is not finite and nonnegative";
         return failure();
       }
       scaled = std::round(amount * static_cast<long double>(unitFS) /
@@ -1259,8 +1252,8 @@ LogicalResult UnitLowering::lowerClockingOutputAssignment(
       if (!parsed->unknown.isZero() || parsed->value.isNegative())
         scaled = 0;
       else
-        scaled = static_cast<long double>(parsed->value.getZExtValue()) *
-                 unitFS;
+        scaled =
+            static_cast<long double>(parsed->value.getZExtValue()) * unitFS;
     }
     if (scaled > std::numeric_limits<uint64_t>::max()) {
       emitError(location) << "clocking output skew exceeds simulation time";
@@ -1314,14 +1307,13 @@ LogicalResult UnitLowering::lowerClockingOutputAssignment(
           synchronizedToCurrentEvent
               ? sim::EventRegionAttr::get(context, sim::EventRegion::Reactive)
               : function.getHomeRegionAttr()),
-      outlineBuilder.getNamedAttr(
-          "domain", function.getDomainAttr()),
+      outlineBuilder.getNamedAttr("domain", function.getDomainAttr()),
       outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
                                   outlineBuilder.getStringAttr(identity))};
-  sim::SimFuncOp driver = sim::SimFuncOp::create(
-      outlineBuilder, location, identity,
-      FunctionType::get(context, inputs, TypeRange{}), sim::EntryKind::Fork,
-      attributes, argumentAttrs);
+  sim::SimFuncOp driver =
+      sim::SimFuncOp::create(outlineBuilder, location, identity,
+                             FunctionType::get(context, inputs, TypeRange{}),
+                             sim::EntryKind::Fork, attributes, argumentAttrs);
   SymbolTable::setSymbolVisibility(driver, SymbolTable::Visibility::Private);
   Block &entry = driver.getBody().front();
   Block *wait = synchronizedToCurrentEvent ? nullptr : new Block();
@@ -1348,8 +1340,7 @@ LogicalResult UnitLowering::lowerClockingOutputAssignment(
         driveBuilder, location, sim::TimeType::get(context),
         driveBuilder.getI64IntegerAttr(delayTicks));
   sim::SimNBAEnqueueOp::create(driveBuilder, location, entry.getArgument(3),
-                               entry.getArgument(1), delay,
-                               sim::NBASiteAttr{});
+                               entry.getArgument(1), delay, sim::NBASiteAttr{});
   sim::SimReturnOp::create(driveBuilder, location, ValueRange{});
   driver->setAttr(sim::metadata::lowered, builder.getUnitAttr());
   Value processContext = function.getBody().front().getArgument(0);
@@ -1359,9 +1350,9 @@ LogicalResult UnitLowering::lowerClockingOutputAssignment(
   return success();
 }
 
-FailureOr<Value>
-UnitLowering::readBitStreamValue(Value stream, Value start, Type type,
-                                 Location location) {
+FailureOr<Value> UnitLowering::readBitStreamValue(Value stream, Value start,
+                                                  Type type,
+                                                  Location location) {
   Type scalarType = sim::getPackedScalarType(type);
   std::optional<unsigned> width = sim::getPackedWidth(type);
   auto streamType = dyn_cast<sim::QueueType>(stream.getType());
@@ -1381,12 +1372,11 @@ UnitLowering::readBitStreamValue(Value stream, Value start, Type type,
         builder.getIntegerAttr(planeType, 0));
   } else {
     assembled = arith::ConstantOp::create(
-        builder, location, scalarType,
-        builder.getIntegerAttr(scalarType, 0));
+        builder, location, scalarType, builder.getIntegerAttr(scalarType, 0));
   }
   for (unsigned ordinal = 0; ordinal < *width; ++ordinal) {
-    Value sourceIndex = arith::AddIOp::create(
-        builder, location, start, i64Constant(ordinal));
+    Value sourceIndex =
+        arith::AddIOp::create(builder, location, start, i64Constant(ordinal));
     Value bit = sim::SimContainerReadOp::create(
         builder, location, streamType.getElementType(), stream, sourceIndex);
     unsigned low = *width - ordinal - 1;
@@ -1420,8 +1410,7 @@ UnitLowering::readBitStreamValue(Value stream, Value start, Type type,
 }
 
 FailureOr<Value> UnitLowering::lowerStreamingAssignment(
-    semantic::SVStreamingConcatenationExpressionOp destination,
-    Value source) {
+    semantic::SVStreamingConcatenationExpressionOp destination, Value source) {
   Location location = getSemanticLocation(destination);
   ArrayRef<int64_t> withFlags = destination.getStreamWithFlags();
   SmallVector<Operation *> inventory = getChildren(destination);
@@ -1447,8 +1436,8 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
     return failure();
   Value zero = arith::ConstantOp::create(
       builder, location, builder.getI64Type(), builder.getI64IntegerAttr(0));
-  Value one = arith::ConstantOp::create(
-      builder, location, builder.getI64Type(), builder.getI64IntegerAttr(1));
+  Value one = arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                        builder.getI64IntegerAttr(1));
   if (failed(appendToBitStream(source, *generic, zero, fourState, location)))
     return failure();
   FailureOr<Value> reordered =
@@ -1497,8 +1486,7 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
       return emitError(getSemanticLocation(target))
                  << "a streaming with range requires a sequential container",
              failure();
-    infos.push_back(
-        {target, withRange, *type, elementType, *width, dynamic});
+    infos.push_back({target, withRange, *type, elementType, *width, dynamic});
   }
 
   auto i64Constant = [&](uint64_t value) -> Value {
@@ -1517,9 +1505,9 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
     setCurrent(accepted);
     return success();
   };
-  Value enough = arith::CmpIOp::create(
-      builder, location, arith::CmpIPredicate::uge, sourceSize,
-      i64Constant(fixedWidth));
+  Value enough =
+      arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
+                            sourceSize, i64Constant(fixedWidth));
   if (failed(requireRuntime(enough,
                             "streaming assignment source has too few bits")))
     return failure();
@@ -1529,12 +1517,10 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
   for (size_t targetIndex = 0; targetIndex < infos.size(); ++targetIndex) {
     TargetInfo &info = infos[targetIndex];
     if (!info.dynamic) {
-      FailureOr<Value> value =
-          readBitStreamValue(*reordered, cursor, info.type,
-                             getSemanticLocation(info.node));
-      if (failed(value) ||
-          failed(writeLValue(info.node, *value, false, false,
-                             getSemanticLocation(info.node))))
+      FailureOr<Value> value = readBitStreamValue(
+          *reordered, cursor, info.type, getSemanticLocation(info.node));
+      if (failed(value) || failed(writeLValue(info.node, *value, false, false,
+                                              getSemanticLocation(info.node))))
         return failure();
       cursor = arith::AddIOp::create(builder, location, cursor,
                                      i64Constant(info.width));
@@ -1581,8 +1567,7 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
         return failure();
       if (elementRange) {
         count = one;
-        resizeSize =
-            arith::AddIOp::create(builder, location, rangeFirst, one);
+        resizeSize = arith::AddIOp::create(builder, location, rangeFirst, one);
       } else {
         rangeKind = range.getSelectionKind();
         FailureOr<Value> second = lowerRangeIndex(rangeChildren[2]);
@@ -1595,9 +1580,9 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
                   secondNonnegative,
                   "streaming with range has a negative second index")))
             return failure();
-          rangeAscends = arith::CmpIOp::create(
-              builder, location, arith::CmpIPredicate::slt, rangeFirst,
-              *second);
+          rangeAscends = arith::CmpIOp::create(builder, location,
+                                               arith::CmpIPredicate::slt,
+                                               rangeFirst, *second);
           Value high = arith::SelectOp::create(builder, location, rangeAscends,
                                                *second, rangeFirst);
           Value low = arith::SelectOp::create(builder, location, rangeAscends,
@@ -1615,15 +1600,16 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
                   "streaming with indexed range has a nonpositive width")))
             return failure();
           if (rangeKind == semantic::SVRangeSelectionKind::IndexedUp) {
-            resizeSize = arith::AddIOp::create(builder, location, rangeFirst,
-                                               count);
+            resizeSize =
+                arith::AddIOp::create(builder, location, rangeFirst, count);
           } else {
             Value fits = arith::CmpIOp::create(
                 builder, location, arith::CmpIPredicate::uge,
                 arith::AddIOp::create(builder, location, rangeFirst, one),
                 count);
             if (failed(requireRuntime(
-                    fits, "streaming with indexed-down range is out of bounds")))
+                    fits,
+                    "streaming with indexed-down range is out of bounds")))
               return failure();
             resizeSize =
                 arith::AddIOp::create(builder, location, rangeFirst, one);
@@ -1635,8 +1621,8 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
       for (size_t later = targetIndex + 1; later < infos.size(); ++later)
         if (!infos[later].dynamic)
           subsequentFixed += infos[later].width;
-      Value selectedBits = arith::MulIOp::create(
-          builder, location, count, i64Constant(info.width));
+      Value selectedBits = arith::MulIOp::create(builder, location, count,
+                                                 i64Constant(info.width));
       Value consumed = arith::AddIOp::create(
           builder, location, cursor,
           arith::AddIOp::create(builder, location, selectedBits,
@@ -1665,7 +1651,8 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
               divisible,
               "streaming assignment dynamic target has a partial element")))
         return failure();
-      count = arith::DivUIOp::create(builder, location, remaining, elementWidth);
+      count =
+          arith::DivUIOp::create(builder, location, remaining, elementWidth);
       usedGreedy = true;
     }
 
@@ -1691,11 +1678,11 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
       bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
     Value containerSize = count;
     if (info.withRange) {
-      Value needsGrowth = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ult, previousSize,
-          resizeSize);
-      containerSize = arith::SelectOp::create(
-          builder, location, needsGrowth, resizeSize, previousSize);
+      Value needsGrowth =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ult,
+                                previousSize, resizeSize);
+      containerSize = arith::SelectOp::create(builder, location, needsGrowth,
+                                              resizeSize, previousSize);
     }
     Value allocationSize =
         kind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY ? containerSize : zero;
@@ -1721,9 +1708,9 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
                            ValueRange{zero});
       setCurrent(initializeHeader);
       Value initializeIndex = initializeHeader->getArgument(0);
-      Value initializeMore = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ult, initializeIndex,
-          containerSize);
+      Value initializeMore =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ult,
+                                initializeIndex, containerSize);
       cf::CondBranchOp::create(builder, location, initializeMore,
                                initializeBody, ValueRange{}, initializeExit,
                                ValueRange{});
@@ -1745,9 +1732,9 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
       cf::BranchOp::create(builder, location, copyHeader, ValueRange{zero});
       setCurrent(copyHeader);
       Value copyIndex = copyHeader->getArgument(0);
-      Value copyMore = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ult, copyIndex,
-          previousSize);
+      Value copyMore =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ult,
+                                copyIndex, previousSize);
       cf::CondBranchOp::create(builder, location, copyMore, copyBody,
                                ValueRange{}, copyExit, ValueRange{});
       setCurrent(copyBody);
@@ -1755,10 +1742,8 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
           builder, location, info.elementType, previous, copyIndex);
       sim::SimContainerWriteOp::create(builder, location, container, copyIndex,
                                        oldElement);
-      Value copyNext =
-          arith::AddIOp::create(builder, location, copyIndex, one);
-      cf::BranchOp::create(builder, location, copyHeader,
-                           ValueRange{copyNext});
+      Value copyNext = arith::AddIOp::create(builder, location, copyIndex, one);
+      cf::BranchOp::create(builder, location, copyHeader, ValueRange{copyNext});
       setCurrent(copyExit);
     }
 
@@ -1778,21 +1763,21 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
         builder, location, cursor,
         arith::MulIOp::create(builder, location, elementIndex,
                               i64Constant(info.width)));
-    FailureOr<Value> element = readBitStreamValue(
-        *reordered, elementStart, info.elementType,
-        getSemanticLocation(info.node));
+    FailureOr<Value> element =
+        readBitStreamValue(*reordered, elementStart, info.elementType,
+                           getSemanticLocation(info.node));
     if (failed(element))
       return failure();
     Value destinationIndex = elementIndex;
     if (info.withRange) {
-      Value above = arith::AddIOp::create(builder, location, rangeFirst,
-                                          elementIndex);
-      Value below = arith::SubIOp::create(builder, location, rangeFirst,
-                                          elementIndex);
+      Value above =
+          arith::AddIOp::create(builder, location, rangeFirst, elementIndex);
+      Value below =
+          arith::SubIOp::create(builder, location, rangeFirst, elementIndex);
       switch (rangeKind) {
       case semantic::SVRangeSelectionKind::Simple:
-        destinationIndex = arith::SelectOp::create(
-            builder, location, rangeAscends, above, below);
+        destinationIndex = arith::SelectOp::create(builder, location,
+                                                   rangeAscends, above, below);
         break;
       case semantic::SVRangeSelectionKind::IndexedUp:
         destinationIndex = above;
@@ -1804,17 +1789,16 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
     }
     sim::SimContainerWriteOp::create(builder, location, container,
                                      destinationIndex, *element);
-    Value next =
-        arith::AddIOp::create(builder, location, elementIndex, one);
+    Value next = arith::AddIOp::create(builder, location, elementIndex, one);
     cf::BranchOp::create(builder, location, header, ValueRange{next});
     setCurrent(exit);
     if (failed(writeLValue(info.node, container, false, false,
                            getSemanticLocation(info.node))))
       return failure();
-    cursor = arith::AddIOp::create(
-        builder, location, cursor,
-        arith::MulIOp::create(builder, location, count,
-                              i64Constant(info.width)));
+    cursor =
+        arith::AddIOp::create(builder, location, cursor,
+                              arith::MulIOp::create(builder, location, count,
+                                                    i64Constant(info.width)));
   }
   return source;
 }
@@ -1866,8 +1850,8 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
   }
   if (failed(rhs))
     return failure();
-  if (auto streaming =
-          dyn_cast<semantic::SVStreamingConcatenationExpressionOp>(destination)) {
+  if (auto streaming = dyn_cast<semantic::SVStreamingConcatenationExpressionOp>(
+          destination)) {
     if (compound || nonblocking || timed)
       return emitError(location)
                  << "a streaming assignment target requires an untimed "
@@ -1885,8 +1869,8 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
   if (auto member = dyn_cast<semantic::SVMemberAccessExpressionOp>(destination);
       member && member->hasAttr("virtual_interface_clocking")) {
     if (timed) {
-      emitError(location)
-          << "an assignment timing control cannot be combined with a clocking output";
+      emitError(location) << "an assignment timing control cannot be combined "
+                             "with a clocking output";
       return failure();
     }
     if (failed(lowerClockingOutputAssignment(member, *value, location)))
@@ -2051,7 +2035,7 @@ UnitLowering::lowerPortConnection(semantic::SVPortConnectionOp op) {
       return failure();
     if (isa<sim::RefType>(destination.getType())) {
       auto store = sim::SimRefStoreOp::create(builder, location, *converted,
-                                               destination);
+                                              destination);
       if (continuousStore)
         store->setAttr(continuousStoreAttrName, builder.getUnitAttr());
     } else
@@ -2076,8 +2060,8 @@ UnitLowering::lowerPortConnection(semantic::SVPortConnectionOp op) {
     APInt bits = *pull ? APInt::getAllOnes(*width) : APInt(*width, 0);
     Value source;
     if (auto integer = dyn_cast<IntegerType>(scalarType))
-      source = arith::ConstantOp::create(
-          builder, location, integer, builder.getIntegerAttr(integer, bits));
+      source = arith::ConstantOp::create(builder, location, integer,
+                                         builder.getIntegerAttr(integer, bits));
     else {
       auto planeType = IntegerType::get(op->getContext(), *width);
       source = sim::SimLogicConstantOp::create(

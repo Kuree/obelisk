@@ -136,8 +136,8 @@ static void tokenizeCommandFile(StringRef text, StringSaver &saver,
       if (braced)
         ++nameStart;
       const char *scan = nameStart;
-      while (scan != end && (isAlnum(static_cast<unsigned char>(*scan)) ||
-                             *scan == '_'))
+      while (scan != end &&
+             (isAlnum(static_cast<unsigned char>(*scan)) || *scan == '_'))
         ++scan;
       if (scan != nameStart && (!braced || (scan != end && *scan == '}'))) {
         StringRef name(nameStart, scan - nameStart);
@@ -713,6 +713,7 @@ static int executeCompilation(const InputArgList &args) {
     nativeOptions.bytecode = executionTier == "bytecode";
     nativeOptions.optLevel = optLevel;
     nativeOptions.noLTO = args.hasFlag(OPT_fno_lto, OPT_flto, false);
+    nativeOptions.timing = args.hasArg(OPT_mlir_timing);
     nativeOptions.compileThreads = resolvedCompilerThreads;
     nativeOptions.target = targetName == "wasm64"
                                ? obelisk::driver::TargetKind::Wasm
@@ -776,13 +777,13 @@ int main(int argc, char **argv) {
     return 1;
 
   bool parseFailed = false;
-  InputArgList args = optionTable.parseArgs(
-      static_cast<int>(arguments.size()),
-      const_cast<char *const *>(arguments.data()), OPT_UNKNOWN, saver,
-      [&](StringRef msg) {
-        emitDriverError(msg);
-        parseFailed = true;
-      });
+  InputArgList args =
+      optionTable.parseArgs(static_cast<int>(arguments.size()),
+                            const_cast<char *const *>(arguments.data()),
+                            OPT_UNKNOWN, saver, [&](StringRef msg) {
+                              emitDriverError(msg);
+                              parseFailed = true;
+                            });
   if (parseFailed)
     return 1;
 

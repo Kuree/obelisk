@@ -9,71 +9,22 @@
 // CHECK-DAG: obelisk_sim.func private @[[BASE_PRE:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "Base::pre_randomize"
 // CHECK-DAG: obelisk_sim.func private @[[BASE_POST:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "Base::post_randomize"
 // CHECK-DAG: obelisk_sim.func private @[[DERIVED_PRE:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "Derived::pre_randomize"
-// CHECK: %[[OBJECT:.*]] = obelisk_sim.ref.load {{.*}} : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Base>
-// CHECK: %[[IS_DERIVED:.*]] = obelisk_sim.class.is_instance %[[OBJECT]] is @__obelisk_class_s11_Derived
-// CHECK: cf.cond_br %[[IS_DERIVED]], ^[[DERIVED_ENTRY:bb[0-9]+]], ^[[BASE_TEST:bb[0-9]+]]
-// CHECK: ^[[DERIVED_ENTRY]]:
-// CHECK: %[[DERIVED:.*]] = obelisk_sim.class.cast %[[OBJECT]]
-// CHECK-NEXT: obelisk_sim.class.direct_call @[[DERIVED_PRE]] %[[DERIVED]]()
-// CHECK: obelisk_sim.class.field_ref %[[DERIVED]][@__obelisk_class_s3_Base_field_0]
-// CHECK: obelisk_sim.class.field_ref %[[DERIVED]][@__obelisk_class_s11_Derived_field_0]
-// CHECK: ^[[BASE_TEST]]:
-// CHECK: %[[IS_BASE:.*]] = obelisk_sim.class.is_instance %[[OBJECT]] is @__obelisk_class_s3_Base
-// CHECK-NEXT: %[[NULL_RESULT:.*]] = arith.constant {{.*}}0 : i32
-// CHECK-NEXT: cf.cond_br %[[IS_BASE]], ^[[BASE_ENTRY:bb[0-9]+]], {{.*}}(%[[NULL_RESULT]] : i32)
-// CHECK: %[[DERIVED_AS_BASE:.*]] = obelisk_sim.class.cast %[[DERIVED]]
-// CHECK-NEXT: obelisk_sim.class.direct_call @[[BASE_POST]] %[[DERIVED_AS_BASE]]()
-// CHECK: ^[[BASE_ENTRY]]:
-// CHECK-NEXT: obelisk_sim.class.direct_call @[[BASE_PRE]] %[[OBJECT]]({{.*}})
-// CHECK: obelisk_sim.class.field_ref %[[OBJECT]][@__obelisk_class_s3_Base_field_0]
-// CHECK: {{.*}}, %[[BASE_SOLVE_SUCCESS:.*]], {{.*}} = obelisk_sim.random.solve
-// CHECK: %[[BASE_FAILURE:.*]] = arith.constant {{.*}}false
-// CHECK-NEXT: cf.cond_br %[[BASE_SOLVE_SUCCESS]], {{.*}}, ^[[BASE_RESULT:bb[0-9]+]](%[[BASE_FAILURE]] : i1)
-// CHECK: obelisk_sim.class.direct_call @[[BASE_POST]] %[[OBJECT]]()
-// CHECK: ^[[BASE_RESULT]]({{.*}}):
-// CHECK-NOT: obelisk_sim.class.direct_call
-// CHECK: cf.br
-// CHECK: ^[[CHECKER_DONE:bb[0-9]+]](%[[CHECKER_RESULT:.*]]: i32):
-// CHECK-NEXT: obelisk_sim.ref.store %[[CHECKER_RESULT]]
-// CHECK-NEXT: %[[INTERFACE_OBJECT:.*]] = obelisk_sim.ref.load {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s30_I>
-// CHECK-NEXT: %[[IS_INTERFACE_IMPL:.*]] = obelisk_sim.class.is_instance %[[INTERFACE_OBJECT]] is @__obelisk_class_s11_Derived
-// CHECK: ^[[CHECKER_DERIVED:bb[0-9]+]]:
-// CHECK-NEXT: %[[CHECKER_CAST:.*]] = obelisk_sim.class.cast
-// CHECK-NEXT: obelisk_sim.class.direct_call @[[DERIVED_PRE]] %[[CHECKER_CAST]]()
-// CHECK-NEXT: obelisk_sim.class.field_ref %[[CHECKER_CAST]][@__obelisk_class_s3_Base_field_0]
-// CHECK-NEXT: obelisk_sim.class.field_ref %[[CHECKER_CAST]][@__obelisk_class_s11_Derived_field_0]
-// CHECK-NEXT: obelisk_sim.class.field_ref %[[CHECKER_CAST]][@__obelisk_class_s3_Base_field___obelisk_constraint_mode]
+// Repeated ordinary calls share their class plans. The checker calls remain
+// inline in the caller and therefore contain lifecycle and field operations
+// but no solver or persistent object mutation.
+// CHECK-LABEL: obelisk_sim.func private @unit_3(
+// CHECK-DAG: obelisk_sim.class.is_instance {{.*}} is @__obelisk_class_s11_Derived
+// CHECK-DAG: obelisk_sim.class.is_instance {{.*}} is @__obelisk_class_s3_Base
+// CHECK-DAG: obelisk_sim.class.direct_call @[[DERIVED_PLAN:__obelisk_randomize_plan_[A-Za-z0-9_.$]+]]
+// CHECK-DAG: obelisk_sim.class.direct_call @[[BASE_PLAN:__obelisk_randomize_plan_[A-Za-z0-9_.$]+]]
+// CHECK-DAG: obelisk_sim.class.direct_call @[[DERIVED_PRE]]
+// CHECK-DAG: obelisk_sim.class.direct_call @[[BASE_PRE]]
+// CHECK-DAG: obelisk_sim.class.direct_call @[[BASE_POST]]
+// CHECK-DAG: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s3_Base_field_0]
+// CHECK-DAG: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s11_Derived_field_0]
+// CHECK-DAG: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s3_Base_field___obelisk_constraint_mode]
 // CHECK-NOT: obelisk_sim.random.solve
-// CHECK-NOT: __obelisk_rng
-// CHECK-NOT: __obelisk_rand_mode
-// CHECK-NOT: __obelisk_randc
 // CHECK-NOT: obelisk_sim.managed.store
-// CHECK: arith.cmpi eq
-// CHECK: arith.cmpi ult
-// CHECK: arith.andi
-// CHECK: cf.cond_br
-// CHECK: ^[[CHECKER_BASE_TEST:bb[0-9]+]]:
-// CHECK: obelisk_sim.class.is_instance
-// CHECK: ^[[CHECKER_DERIVED_POST:bb[0-9]+]]:
-// CHECK: %[[CHECKER_POST_CAST:.*]] = obelisk_sim.class.cast %[[CHECKER_CAST]]
-// CHECK-NEXT: obelisk_sim.class.direct_call @[[BASE_POST]] %[[CHECKER_POST_CAST]]()
-// CHECK: ^[[CHECKER_BASE:bb[0-9]+]]:
-// CHECK-NEXT: obelisk_sim.class.direct_call @[[BASE_PRE]] %[[CHECKER_BASE_OBJECT:[^( ]+]]({{.*}})
-// CHECK-NEXT: obelisk_sim.class.field_ref %[[CHECKER_BASE_OBJECT]][@__obelisk_class_s3_Base_field_0]
-// CHECK-NEXT: obelisk_sim.class.field_ref %{{.*}}[@__obelisk_class_s3_Base_field___obelisk_constraint_mode]
-// CHECK-NOT: obelisk_sim.random.solve
-// CHECK-NOT: __obelisk_rng
-// CHECK-NOT: __obelisk_rand_mode
-// CHECK-NOT: __obelisk_randc
-// CHECK-NOT: obelisk_sim.managed.store
-// CHECK: cf.cond_br
-// CHECK: obelisk_sim.class.direct_call @[[BASE_POST]] %[[CHECKER_BASE_OBJECT]]()
-// CHECK: cf.br ^[[CHECKER_DONE]]
-// CHECK: ^[[INTERFACE_DONE:bb[0-9]+]]({{.*}}: i32):
-// CHECK: obelisk_sim.return
-// CHECK: ^[[INTERFACE_ENTRY:bb[0-9]+]]:
-// CHECK-NEXT: %[[INTERFACE_CAST:.*]] = obelisk_sim.class.cast %[[INTERFACE_OBJECT]] : !obelisk_sim.class_handle<@__obelisk_class_s30_I> to !obelisk_sim.class_handle<@__obelisk_class_s11_Derived>
-// CHECK-NEXT: obelisk_sim.class.direct_call @[[DERIVED_PRE]] %[[INTERFACE_CAST]]()
 // A context-backed read performed only by Base::pre_randomize remains in the
 // always_comb sensitivity even though it is no longer an ABI capture.
 // CHECK-LABEL: obelisk_sim.func private @unit_4(
@@ -81,6 +32,14 @@
 // CHECK-SAME: %[[HOOK_OBJECT:arg[0-9]+]]: !obelisk_sim.ref<!obelisk_sim.class_handle<@__obelisk_class_s3_Base>>
 // CHECK-SAME: entry_kind = 4 : i32
 // CHECK: obelisk_sim.suspend.any %[[HOOK_OBJECT]], %[[HOOK_LIMIT]]
+// CHECK: obelisk_sim.func private @[[DERIVED_PLAN]]
+// CHECK: obelisk_sim.class.direct_call @[[DERIVED_PRE]]
+// CHECK: obelisk_sim.random.solve
+// CHECK: obelisk_sim.class.direct_call @[[BASE_POST]]
+// CHECK: obelisk_sim.func private @[[BASE_PLAN]]
+// CHECK: obelisk_sim.class.direct_call @[[BASE_PRE]]
+// CHECK: obelisk_sim.random.solve
+// CHECK: obelisk_sim.class.direct_call @[[BASE_POST]]
 
 //--- lifecycle.mlir
 

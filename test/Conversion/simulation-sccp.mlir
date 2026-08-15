@@ -29,6 +29,9 @@ module {
     obelisk_sim.code_unit.decl 9000021 in 0 function hierarchy "test.sccp.unresolved_caller.9000021"
     obelisk_sim.code_unit.decl 9000022 in 0 task hierarchy "test.sccp.task_constant.9000022"
     obelisk_sim.code_unit.decl 9000023 in 0 initial hierarchy "test.sccp.task_caller.9000023"
+    obelisk_sim.code_unit.decl 9000024 in 0 function hierarchy "test.sccp.bottom_recursive.9000024"
+    obelisk_sim.code_unit.decl 9000025 in 0 function hierarchy "test.sccp.bottom_caller.9000025"
+    obelisk_sim.code_unit.decl 9000026 in 0 function hierarchy "test.sccp.bottom_top.9000026"
     obelisk_sim.scope.decl 0 {callback = @address_taken}
 
     // Exact call arguments and results cross both sides of the boundary.
@@ -330,6 +333,58 @@ module {
         attributes {entry_kind = 8 : i32, code_unit_id = 9000021 : i64} {
       %eleven = arith.constant 11 : i32
       %result = obelisk_sim.call @unresolved_external(%ctx, %eleven) : (!obelisk_sim.context, i32) -> i32
+      obelisk_sim.return %result : i32
+    }
+
+    // A recursive callee with no base return leaves its result at optimistic
+    // bottom through the boundary fixed point. Initializing that result to
+    // unknown must refresh its caller before rewriting retained solver state.
+    obelisk_sim.func private @bottom_recursive(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i32
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000024 : i64} {
+      %result = obelisk_sim.call @bottom_recursive(%ctx) :
+          (!obelisk_sim.context) -> i32
+      obelisk_sim.return %result : i32
+    }
+
+    // A stale caller solver joins bottom with one as one. After the callee's
+    // bottom result is initialized to unknown, refreshing the caller instead
+    // keeps the join and its use unknown.
+    // CHECK-LABEL: obelisk_sim.func private @bottom_caller
+    // CHECK: %[[ONE:.*]] = arith.constant 1 : i32
+    // CHECK: %[[BOTTOM:.*]] = obelisk_sim.call @bottom_recursive
+    // CHECK: cf.cond_br %{{.*}}, ^[[BOTTOM_PATH:.*]], ^[[ONE_PATH:.*]]
+    // CHECK: ^[[BOTTOM_PATH]]:
+    // CHECK: cf.br ^[[BOTTOM_JOIN:.*]](%[[BOTTOM]] : i32)
+    // CHECK: ^[[ONE_PATH]]:
+    // CHECK: cf.br ^[[BOTTOM_JOIN]](%[[ONE]] : i32)
+    // CHECK: ^[[BOTTOM_JOIN]](%[[JOINED:.*]]: i32):
+    // CHECK: obelisk_sim.return %[[JOINED]] : i32
+    obelisk_sim.func private @bottom_caller(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %condition: i1 {obelisk_sim.capture_kind = 1 : i32}) -> i32
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000025 : i64} {
+      %result = obelisk_sim.call @bottom_recursive(%ctx) :
+          (!obelisk_sim.context) -> i32
+      cf.cond_br %condition, ^bottom, ^one
+    ^bottom:
+      cf.br ^join(%result : i32)
+    ^one:
+      %one = arith.constant 1 : i32
+      cf.br ^join(%one : i32)
+    ^join(%joined: i32):
+      obelisk_sim.return %joined : i32
+    }
+
+    // CHECK-LABEL: obelisk_sim.func @bottom_top
+    // CHECK: %[[TOP_RESULT:.*]] = obelisk_sim.call @bottom_caller
+    // CHECK: obelisk_sim.return %[[TOP_RESULT]] : i32
+    obelisk_sim.func @bottom_top(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %condition: i1 {obelisk_sim.capture_kind = 1 : i32}) -> i32
+        attributes {entry_kind = 8 : i32, code_unit_id = 9000026 : i64} {
+      %result = obelisk_sim.call @bottom_caller(%ctx, %condition) :
+          (!obelisk_sim.context, i1) -> i32
       obelisk_sim.return %result : i32
     }
 

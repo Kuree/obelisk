@@ -391,17 +391,34 @@ LogicalResult BoundaryEliminator::run() {
   // Complete symbol-use visibility is required before a private ABI can be
   // changed. Only the canonical callee attribute of direct calls and spawns
   // is accepted as an observable use.
+  struct SymbolUseRecord {
+    Operation *user;
+    SymbolRefAttr reference;
+  };
+  SmallVector<SmallVector<SymbolUseRecord>> functionUses(functions.size());
+  std::optional<SymbolTable::UseRange> allUses =
+      SymbolTable::getSymbolUses(&design.getBody());
+  if (!allUses) {
+    for (unsigned index = 0; index != functions.size(); ++index)
+      pin(index, "unresolved symbol uses");
+  } else {
+    for (const SymbolTable::SymbolUse &use : *allUses) {
+      Operation *user = use.getUser();
+      SymbolRefAttr reference = use.getSymbolRef();
+      sim::SimFuncOp function =
+          symbolTables.lookupNearestSymbolFrom<sim::SimFuncOp>(user, reference);
+      if (!function)
+        continue;
+      auto found = functionIndices.find(function.getOperation());
+      if (found != functionIndices.end())
+        functionUses[found->second].push_back({user, reference});
+    }
+  }
   for (auto [index, info] : llvm::enumerate(functions)) {
     if (info.pinned)
       continue;
-    std::optional<SymbolTable::UseRange> uses =
-        SymbolTable::getSymbolUses(info.function, design);
-    if (!uses) {
-      pin(index, "unresolved symbol uses");
-      continue;
-    }
-    for (const SymbolTable::SymbolUse &use : *uses) {
-      Operation *user = use.getUser();
+    for (const SymbolUseRecord &use : functionUses[index]) {
+      Operation *user = use.user;
       auto site = siteIndices.find(user);
       bool direct =
           site != siteIndices.end() && sites[site->second].callee == index;
@@ -410,8 +427,8 @@ LogicalResult BoundaryEliminator::run() {
             isa<sim::SimCallOp>(user)
                 ? cast<sim::SimCallOp>(user).getCalleeAttr()
                 : cast<sim::SimSpawnOp>(user).getCalleeAttr();
-        direct = use.getSymbolRef() == callee &&
-                 countSymbolReferences(user, callee) == 1;
+        direct =
+            use.reference == callee && countSymbolReferences(user, callee) == 1;
       }
       if (!direct) {
         pin(index, "non-direct or address-taken symbol use");

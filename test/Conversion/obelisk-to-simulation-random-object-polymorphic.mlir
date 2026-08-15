@@ -45,6 +45,12 @@ module {
               }
             }
           }
+          obelisk.sv.statement.expression_statement attributes {node_id = 24 : i64} {
+            obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = true, is_super_class = false, is_system_call = true, node_id = 25 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s16.top::@s17.top} {
+              obelisk.sv.expression.named_value attributes {node_id = 26 : i64, referenced_path = "top.p", referenced_symbol = @s1.$root::@s16.top::@s17.top::@s18.p, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s12.Parent>} {
+              }
+            }
+          }
         }
       }
     }
@@ -55,22 +61,28 @@ module {
 // dynamic class. Null selects the parent-only plan; no handle is allocated or
 // replaced. Concrete alternatives include inherited and derived rand fields.
 // CHECK-LABEL: obelisk_sim.func private @{{unit_[0-9]+}}{{.*}}obelisk_sim.hierarchical_name = "top"
-// CHECK: %[[CHILD_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s12_Parent_field_1]
-// CHECK: %[[CHILD:.*]] = obelisk_sim.managed.load %[[CHILD_REF]]
-// CHECK: %[[NULL:.*]] = obelisk_sim.managed.is_null %[[CHILD]]
-// CHECK: cf.cond_br %[[NULL]], ^[[NULL_PLAN:bb[0-9]+]], ^[[DYNAMIC:bb[0-9]+]]
-// The null plan for the first member must still dynamically dispatch the
-// second member. This guards the Cartesian plan selection rather than merely
-// checking that both fields survive lowering.
-// CHECK: %[[CHILD2_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s12_Parent_field_2]
-// CHECK: %[[CHILD2:.*]] = obelisk_sim.managed.load %[[CHILD2_REF]]
-// CHECK: %[[NULL2:.*]] = obelisk_sim.managed.is_null %[[CHILD2]]
-// CHECK: cf.cond_br %[[NULL2]], ^{{bb[0-9]+}}, ^{{bb[0-9]+}}
-// CHECK: obelisk_sim.class.is_instance %[[CHILD]] is @__obelisk_class_s6_DerivedA
-// CHECK: obelisk_sim.class.is_instance %[[CHILD]] is @__obelisk_class_s9_DerivedB
+// CHECK-COUNT-2: obelisk_sim.class.direct_call @[[HELPER:__obelisk_randomize_plan_[A-Za-z0-9_.$]+]]
+// The recursively factored alternatives retain both member dispatches and all
+// concrete property plans before the shared outer helper.
+// CHECK-DAG: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s12_Parent_field_2]
+// CHECK-DAG: obelisk_sim.class.is_instance {{.*}} is @__obelisk_class_s6_DerivedA
+// CHECK-DAG: obelisk_sim.class.is_instance {{.*}} is @__obelisk_class_s9_DerivedB
 // CHECK-DAG: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s12_Parent_field_0]
 // CHECK-DAG: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s6_DerivedA_field_0]
 // CHECK-DAG: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s9_DerivedB_field_0]
 // CHECK-DAG: obelisk_sim.managed.store {{.*}} : i32, !obelisk_sim.managed_ref<i32, @__obelisk_class_s6_DerivedA>
 // CHECK-DAG: obelisk_sim.managed.store {{.*}} : i32, !obelisk_sim.managed_ref<i32, @__obelisk_class_s9_DerivedB>
+// CHECK: obelisk_sim.func private @[[HELPER]]
+// CHECK: %[[CHILD_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s12_Parent_field_1]
+// CHECK-NOT: obelisk_sim.managed.store {{.*}} to %[[CHILD_REF]]
+// CHECK: %[[CHILD:.*]] = obelisk_sim.managed.load %[[CHILD_REF]]
+// CHECK-NOT: obelisk_sim.managed.store {{.*}} to %[[CHILD_REF]]
+// CHECK: %[[NULL:.*]] = obelisk_sim.managed.is_null %[[CHILD]]
+// CHECK-NOT: obelisk_sim.managed.store {{.*}} to %[[CHILD_REF]]
+// CHECK: cf.cond_br %[[NULL]], ^[[NULL_PLAN:bb[0-9]+]], ^[[DYNAMIC:bb[0-9]+]]
+// The null plan for the first member must still dynamically dispatch the
+// second member. This guards the Cartesian plan selection rather than merely
+// checking that both fields survive lowering.
+// CHECK-NOT: obelisk_sim.managed.store {{.*}} to %[[CHILD_REF]]
+// CHECK: obelisk_sim.class.direct_call @__obelisk_randomize_plan_
 // CHECK-NOT: obelisk_sim.managed.store {{.*}} to %[[CHILD_REF]]

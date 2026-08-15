@@ -61,9 +61,9 @@ LLVM::GlobalOp makeByteGlobal(ModuleOp module, StringRef name,
   Type array = LLVM::LLVMArrayType::get(builder.getI8Type(), bytes.size());
   ArrayRef<int8_t> data = bytes.asArrayRef();
   StringRef contents(reinterpret_cast<const char *>(data.data()), data.size());
-  auto global = LLVM::GlobalOp::create(
-      builder, module.getLoc(), array, true, LLVM::Linkage::External, name,
-      builder.getStringAttr(contents), 8);
+  auto global = LLVM::GlobalOp::create(builder, module.getLoc(), array, true,
+                                       LLVM::Linkage::External, name,
+                                       builder.getStringAttr(contents), 8);
   global->setAttr("section", builder.getStringAttr(section));
   return global;
 }
@@ -123,8 +123,9 @@ LogicalResult appendRetentionEntry(ModuleOp module, LLVM::GlobalOp global,
                                    Type pointer, StringRef symbol) {
   auto array = dyn_cast<LLVM::LLVMArrayType>(global.getGlobalType());
   Block *initializer = global.getInitializerBlock();
-  auto returnOp = initializer ? dyn_cast<LLVM::ReturnOp>(initializer->getTerminator())
-                              : LLVM::ReturnOp{};
+  auto returnOp = initializer
+                      ? dyn_cast<LLVM::ReturnOp>(initializer->getTerminator())
+                      : LLVM::ReturnOp{};
   if (!array || array.getElementType() != pointer || !returnOp ||
       returnOp->getNumOperands() != 1 ||
       returnOp->getOperand(0).getType() != array ||
@@ -166,9 +167,8 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
   if (bytecode && failed(checkMagic(module, bytecode, StringRef("OBBCDS1\0", 8),
                                     "embedded bytecode")))
     return failure();
-  if (database &&
-      failed(checkMagic(module, database, StringRef("OBDSGN1\0", 8),
-                        "embedded design database")))
+  if (database && failed(checkMagic(module, database, StringRef("OBDSGN1\0", 8),
+                                    "embedded design database")))
     return failure();
 
   if (bytecode && module.lookupSymbol(kBytecodeName))
@@ -177,8 +177,8 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
            << "'";
   if (database && module.lookupSymbol(kDatabaseName))
     return module.emitError()
-           << "symbol collision for reserved design database '"
-           << kDatabaseName << "'";
+           << "symbol collision for reserved design database '" << kDatabaseName
+           << "'";
 
   if (bytecode)
     makeByteGlobal(module, kBytecodeName, bytecode, ".obelisk.bytecode");
@@ -189,6 +189,11 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = IntegerType::get(context, 32);
   Type i64 = IntegerType::get(context, 64);
+  auto executionFlags =
+      module->getAttrOfType<IntegerAttr>("obelisk.execution.flags");
+  bool bytecodeOnly =
+      executionFlags && (executionFlags.getValue().getZExtValue() &
+                         OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
 
   struct ActivationInfo {
     uint64_t codeUnitID;
@@ -203,24 +208,21 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
     std::optional<int64_t> codeUnitID = function.getCodeUnitId();
     if (!codeUnitID || *codeUnitID <= 0)
       return;
-    auto bytecodeFunction =
-        function->getAttrOfType<IntegerAttr>(kFunctionAttr);
+    auto bytecodeFunction = function->getAttrOfType<IntegerAttr>(kFunctionAttr);
     activations.push_back(
         {static_cast<uint64_t>(*codeUnitID), function.getSymName().str(),
-         bytecodeFunction
-             ? std::optional<uint32_t>(static_cast<uint32_t>(
-                   bytecodeFunction.getValue().getZExtValue()))
-             : std::nullopt});
+         bytecodeFunction ? std::optional<uint32_t>(static_cast<uint32_t>(
+                                bytecodeFunction.getValue().getZExtValue()))
+                          : std::nullopt});
   });
-  llvm::sort(activations, [](const ActivationInfo &lhs,
-                             const ActivationInfo &rhs) {
-    return lhs.codeUnitID < rhs.codeUnitID;
-  });
+  llvm::sort(activations,
+             [](const ActivationInfo &lhs, const ActivationInfo &rhs) {
+               return lhs.codeUnitID < rhs.codeUnitID;
+             });
   for (size_t index = 1; index < activations.size(); ++index)
     if (activations[index - 1].codeUnitID == activations[index].codeUnitID)
-      return module.emitError()
-             << "duplicate activation code-unit ID "
-             << activations[index].codeUnitID;
+      return module.emitError() << "duplicate activation code-unit ID "
+                                << activations[index].codeUnitID;
 
   struct ObserverInfo {
     uint64_t codeUnitID;
@@ -249,20 +251,19 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
             : sim::getPackedWidth(resultType);
     if (!width)
       return;
-    ObserverInfo info{
-        static_cast<uint64_t>(*codeUnitID),
-        function.getSymName().str(),
-        std::nullopt,
-        *width,
-        isa<sim::LogicType>(resultType),
-        resultType.isF32(),
-        resultType.isF64(),
-        {},
-        {}};
+    ObserverInfo info{static_cast<uint64_t>(*codeUnitID),
+                      function.getSymName().str(),
+                      std::nullopt,
+                      *width,
+                      isa<sim::LogicType>(resultType),
+                      resultType.isF32(),
+                      resultType.isF64(),
+                      {},
+                      {}};
     if (auto bytecodeFunction =
             function->getAttrOfType<IntegerAttr>(kFunctionAttr))
-      info.bytecodeFunction = static_cast<uint32_t>(
-          bytecodeFunction.getValue().getZExtValue());
+      info.bytecodeFunction =
+          static_cast<uint32_t>(bytecodeFunction.getValue().getZExtValue());
     for (unsigned index = 1; index < function.getNumArguments(); ++index) {
       Type type = function.getArgumentTypes()[index];
       uint32_t kind = 0;
@@ -286,9 +287,8 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
       else if (sim::isManagedHandleType(type))
         kind = OBELISK_RT_OBSERVER_CAPTURE_MANAGED, captureWidth = 64;
       if (kind == 0 || captureWidth == 0) {
-        function.emitError()
-            << "observer capture #" << index - 1
-            << " is not represented by the stable-handle ABI";
+        function.emitError() << "observer capture #" << index - 1
+                             << " is not represented by the stable-handle ABI";
         invalidObserver = true;
         continue;
       }
@@ -301,20 +301,20 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
   });
   if (invalidObserver)
     return failure();
-  llvm::sort(observers, [](const ObserverInfo &lhs,
-                           const ObserverInfo &rhs) {
+  llvm::sort(observers, [](const ObserverInfo &lhs, const ObserverInfo &rhs) {
     return lhs.codeUnitID < rhs.codeUnitID;
   });
   for (size_t index = 1; index < observers.size(); ++index)
     if (observers[index - 1].codeUnitID == observers[index].codeUnitID)
-      return module.emitError()
-             << "duplicate observer code-unit ID "
-             << observers[index].codeUnitID;
+      return module.emitError() << "duplicate observer code-unit ID "
+                                << observers[index].codeUnitID;
 
   // The immutable descriptor global is materialized before observer bodies are
   // lowered.  Give every uniform native evaluator thunk an LLVM declaration
   // now so address-of verification never depends on a later pass phase.
   for (const ObserverInfo &observer : observers) {
+    if (bytecodeOnly)
+      continue;
     std::string thunkName = observer.symbol + ".__obelisk_observer";
     if (module.lookupSymbol<LLVM::LLVMFuncOp>(thunkName))
       continue;
@@ -337,30 +337,31 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
           Value records =
               LLVM::ZeroOp::create(builder, module.getLoc(), activationArray);
           for (auto [index, activation] : llvm::enumerate(activations)) {
-            Value record = LLVM::ZeroOp::create(
-                builder, module.getLoc(), activationType);
-            record = insertValue(
-                builder, module.getLoc(), record,
-                integerConstant(builder, module.getLoc(), i64,
-                                activation.codeUnitID),
-                0);
-            record = insertValue(
-                builder, module.getLoc(), record,
-                LLVM::AddressOfOp::create(
-                    builder, module.getLoc(), pointer,
-                    activation.symbol + ".__obelisk_process_descriptor"),
-                1);
-            uint32_t flags = kActivationHasNative;
+            Value record =
+                LLVM::ZeroOp::create(builder, module.getLoc(), activationType);
+            record = insertValue(builder, module.getLoc(), record,
+                                 integerConstant(builder, module.getLoc(), i64,
+                                                 activation.codeUnitID),
+                                 0);
+            uint32_t flags = 0;
+            if (!bytecodeOnly) {
+              record = insertValue(
+                  builder, module.getLoc(), record,
+                  LLVM::AddressOfOp::create(
+                      builder, module.getLoc(), pointer,
+                      activation.symbol + ".__obelisk_process_descriptor"),
+                  1);
+              flags |= kActivationHasNative;
+            }
             uint32_t bytecodeFunction = kActivationNoBytecode;
             if (activation.bytecodeFunction) {
               flags |= kActivationHasBytecode;
               bytecodeFunction = *activation.bytecodeFunction;
             }
-            record = insertValue(
-                builder, module.getLoc(), record,
-                integerConstant(builder, module.getLoc(), i32,
-                                bytecodeFunction),
-                2);
+            record = insertValue(builder, module.getLoc(), record,
+                                 integerConstant(builder, module.getLoc(), i32,
+                                                 bytecodeFunction),
+                                 2);
             record = insertValue(
                 builder, module.getLoc(), record,
                 integerConstant(builder, module.getLoc(), i32, flags), 3);
@@ -377,18 +378,16 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
   for (const ObserverInfo &observer : observers) {
     if (observer.captures.empty())
       continue;
-    Type capturesType = LLVM::LLVMArrayType::get(
-        observerCaptureType, observer.captures.size());
+    Type capturesType =
+        LLVM::LLVMArrayType::get(observerCaptureType, observer.captures.size());
     makeAggregateGlobal(
-        module, capturesType, observer.capturesSymbol,
-        LLVM::Linkage::Internal, ".obelisk.execution",
-        [&](OpBuilder &builder) {
+        module, capturesType, observer.capturesSymbol, LLVM::Linkage::Internal,
+        ".obelisk.execution", [&](OpBuilder &builder) {
           Value values =
               LLVM::ZeroOp::create(builder, module.getLoc(), capturesType);
-          for (auto [index, capture] :
-               llvm::enumerate(observer.captures)) {
-            Value value = LLVM::ZeroOp::create(
-                builder, module.getLoc(), observerCaptureType);
+          for (auto [index, capture] : llvm::enumerate(observer.captures)) {
+            Value value = LLVM::ZeroOp::create(builder, module.getLoc(),
+                                               observerCaptureType);
             value = insertValue(
                 builder, module.getLoc(), value,
                 integerConstant(builder, module.getLoc(), i32, capture.first),
@@ -417,53 +416,43 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
           for (auto [index, observer] : llvm::enumerate(observers)) {
             Value record =
                 LLVM::ZeroOp::create(builder, module.getLoc(), observerType);
-            record = insertValue(
-                builder, module.getLoc(), record,
-                integerConstant(builder, module.getLoc(), i64,
-                                observer.codeUnitID),
-                0);
+            record = insertValue(builder, module.getLoc(), record,
+                                 integerConstant(builder, module.getLoc(), i64,
+                                                 observer.codeUnitID),
+                                 0);
             if (!observer.captures.empty())
               record = insertValue(
                   builder, module.getLoc(), record,
-                  LLVM::AddressOfOp::create(
-                      builder, module.getLoc(), pointer,
-                      observer.capturesSymbol),
+                  LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
+                                            observer.capturesSymbol),
                   1);
-            record = insertValue(
-                builder, module.getLoc(), record,
-                integerConstant(builder, module.getLoc(), i32,
-                                observer.captures.size()),
-                2);
-            record = insertValue(
-                builder, module.getLoc(), record,
-                integerConstant(builder, module.getLoc(), i32,
-                                observer.resultWidth),
-                3);
-            record = insertValue(
-                builder, module.getLoc(), record,
-                integerConstant(builder, module.getLoc(), i32,
-                                (observer.fourState
-                                     ? OBELISK_RT_OBSERVER_FOUR_STATE
-                                     : 0) |
-                                    (observer.real32
-                                         ? OBELISK_RT_OBSERVER_REAL32
-                                         : 0) |
-                                    (observer.real64
-                                         ? OBELISK_RT_OBSERVER_REAL64
-                                         : 0)),
-                4);
+            record = insertValue(builder, module.getLoc(), record,
+                                 integerConstant(builder, module.getLoc(), i32,
+                                                 observer.captures.size()),
+                                 2);
+            record = insertValue(builder, module.getLoc(), record,
+                                 integerConstant(builder, module.getLoc(), i32,
+                                                 observer.resultWidth),
+                                 3);
             record = insertValue(
                 builder, module.getLoc(), record,
                 integerConstant(
                     builder, module.getLoc(), i32,
-                    observer.bytecodeFunction.value_or(UINT32_MAX)),
-                5);
+                    (observer.fourState ? OBELISK_RT_OBSERVER_FOUR_STATE : 0) |
+                        (observer.real32 ? OBELISK_RT_OBSERVER_REAL32 : 0) |
+                        (observer.real64 ? OBELISK_RT_OBSERVER_REAL64 : 0)),
+                4);
             record = insertValue(
                 builder, module.getLoc(), record,
-                LLVM::AddressOfOp::create(
-                    builder, module.getLoc(), pointer,
-                    observer.symbol + ".__obelisk_observer"),
-                6);
+                integerConstant(builder, module.getLoc(), i32,
+                                observer.bytecodeFunction.value_or(UINT32_MAX)),
+                5);
+            if (!bytecodeOnly)
+              record = insertValue(builder, module.getLoc(), record,
+                                   LLVM::AddressOfOp::create(
+                                       builder, module.getLoc(), pointer,
+                                       observer.symbol + ".__obelisk_observer"),
+                                   6);
             records = LLVM::InsertValueOp::create(
                 builder, module.getLoc(), records, record,
                 ArrayRef<int64_t>{static_cast<int64_t>(index)});
@@ -489,9 +478,8 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
       if (scope.getId() != index)
         return scope.emitOpError("DPI scope IDs must be dense from zero");
       std::string name =
-          index == 0
-              ? std::string("$root")
-              : scope.getHierarchicalName().value_or(StringRef{}).str();
+          index == 0 ? std::string("$root")
+                     : scope.getHierarchicalName().value_or(StringRef{}).str();
       if (name.empty())
         name = ("scope." + Twine(index)).str();
       dpiScopeNames.push_back(name);
@@ -502,9 +490,8 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
       Type nameType =
           LLVM::LLVMArrayType::get(nameBuilder.getI8Type(), name.size());
       dpiNames.push_back(LLVM::GlobalOp::create(
-          nameBuilder, scope.getLoc(), nameType, true,
-          LLVM::Linkage::Internal, globalName,
-          nameBuilder.getStringAttr(name), 1));
+          nameBuilder, scope.getLoc(), nameType, true, LLVM::Linkage::Internal,
+          globalName, nameBuilder.getStringAttr(name), 1));
     }
     sim::SimDesignOp design;
     module.walk([&](sim::SimDesignOp candidate) {
@@ -516,24 +503,20 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
     auto precisionFs = design.getTimePrecisionFsAttr();
     uint64_t designPrecisionFs =
         precisionFs ? precisionFs.getValue().getZExtValue() : 1'000'000;
-    FailureOr<int32_t> exponent =
-        timeExponent(module, designPrecisionFs);
+    FailureOr<int32_t> exponent = timeExponent(module, designPrecisionFs);
     if (failed(exponent))
       return failure();
     dpiPrecision = *exponent;
     for (sim::SimScopeDeclOp scope : scopes) {
-      auto unitFs =
-          scope->getAttrOfType<IntegerAttr>("dpi_unit_femtoseconds");
+      auto unitFs = scope->getAttrOfType<IntegerAttr>("dpi_unit_femtoseconds");
       auto scopePrecisionFs =
-          scope->getAttrOfType<IntegerAttr>(
-              "dpi_precision_femtoseconds");
-      FailureOr<int32_t> unit = timeExponent(
-          module, unitFs ? unitFs.getValue().getZExtValue()
-                         : designPrecisionFs);
+          scope->getAttrOfType<IntegerAttr>("dpi_precision_femtoseconds");
+      FailureOr<int32_t> unit =
+          timeExponent(module, unitFs ? unitFs.getValue().getZExtValue()
+                                      : designPrecisionFs);
       FailureOr<int32_t> precision = timeExponent(
-          module, scopePrecisionFs
-                      ? scopePrecisionFs.getValue().getZExtValue()
-                      : designPrecisionFs);
+          module, scopePrecisionFs ? scopePrecisionFs.getValue().getZExtValue()
+                                   : designPrecisionFs);
       if (failed(unit) || failed(precision))
         return failure();
       if (*unit < *precision)
@@ -542,39 +525,34 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
       dpiUnits.push_back(*unit);
       dpiPrecisions.push_back(*precision);
     }
-    Type dpiScopeArray =
-        LLVM::LLVMArrayType::get(dpiScopeType, scopes.size());
+    Type dpiScopeArray = LLVM::LLVMArrayType::get(dpiScopeType, scopes.size());
     makeAggregateGlobal(
         module, dpiScopeArray, kDPIScopesName, LLVM::Linkage::Internal,
         ".obelisk.execution", [&](OpBuilder &builder) {
           Value records =
               LLVM::ZeroOp::create(builder, module.getLoc(), dpiScopeArray);
           for (auto [index, scope] : llvm::enumerate(scopes)) {
-            Value record = LLVM::ZeroOp::create(
-                builder, scope.getLoc(), dpiScopeType);
+            Value record =
+                LLVM::ZeroOp::create(builder, scope.getLoc(), dpiScopeType);
             record = insertValue(
                 builder, scope.getLoc(), record,
                 integerConstant(builder, scope.getLoc(), i64, scope.getId()),
                 0);
-            record = insertValue(
-                builder, scope.getLoc(), record,
-                integerConstant(
-                    builder, scope.getLoc(), i64,
-                    scope.getParent()
-                        ? *scope.getParent()
-                        : UINT64_MAX),
-                1);
+            record = insertValue(builder, scope.getLoc(), record,
+                                 integerConstant(builder, scope.getLoc(), i64,
+                                                 scope.getParent()
+                                                     ? *scope.getParent()
+                                                     : UINT64_MAX),
+                                 1);
             record = insertValue(
                 builder, scope.getLoc(), record,
                 LLVM::AddressOfOp::create(builder, scope.getLoc(), pointer,
                                           dpiNames[index].getSymName()),
                 2);
-            record = insertValue(
-                builder, scope.getLoc(), record,
-                integerConstant(
-                    builder, scope.getLoc(), i64,
-                    dpiScopeNames[index].size()),
-                3);
+            record = insertValue(builder, scope.getLoc(), record,
+                                 integerConstant(builder, scope.getLoc(), i64,
+                                                 dpiScopeNames[index].size()),
+                                 3);
             record = insertValue(
                 builder, scope.getLoc(), record,
                 integerConstant(builder, scope.getLoc(), i32,
@@ -583,8 +561,7 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
             record = insertValue(
                 builder, scope.getLoc(), record,
                 integerConstant(builder, scope.getLoc(), i32,
-                                static_cast<uint32_t>(
-                                    dpiPrecisions[index])),
+                                static_cast<uint32_t>(dpiPrecisions[index])),
                 5);
             records = LLVM::InsertValueOp::create(
                 builder, scope.getLoc(), records, record,
@@ -699,46 +676,43 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
   makeAggregateGlobal(
       module, executionType, kExecutionName, LLVM::Linkage::External,
       ".obelisk.execution", [&](OpBuilder &builder) {
-        Value value = LLVM::ZeroOp::create(builder, module.getLoc(),
-                                           executionType);
-        value = insertValue(builder, module.getLoc(), value,
-                            integerConstant(builder, module.getLoc(), i32,
-                                            OBELISK_RT_VERSION),
-                            0);
+        Value value =
+            LLVM::ZeroOp::create(builder, module.getLoc(), executionType);
+        value = insertValue(
+            builder, module.getLoc(), value,
+            integerConstant(builder, module.getLoc(), i32, OBELISK_RT_VERSION),
+            0);
         value = insertValue(
             builder, module.getLoc(), value,
             integerConstant(builder, module.getLoc(), i32, flags), 1);
         if (!sampledRanges.empty()) {
           Value extension = LLVM::AddressOfOp::create(
               builder, module.getLoc(), pointer, kExecutionExtensionName);
-          value = insertValue(
-              builder, module.getLoc(), value,
-              LLVM::PtrToIntOp::create(builder, module.getLoc(), i64,
-                                       extension),
-              2);
+          value = insertValue(builder, module.getLoc(), value,
+                              LLVM::PtrToIntOp::create(builder, module.getLoc(),
+                                                       i64, extension),
+                              2);
         }
         if (bytecode)
-          value = insertValue(
-              builder, module.getLoc(), value,
-              LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
-                                        kBytecodeName),
-              3);
-        value = insertValue(
-            builder, module.getLoc(), value,
-            integerConstant(builder, module.getLoc(), i64,
-                            bytecode ? bytecode.size() : 0),
-            4);
+          value =
+              insertValue(builder, module.getLoc(), value,
+                          LLVM::AddressOfOp::create(builder, module.getLoc(),
+                                                    pointer, kBytecodeName),
+                          3);
+        value = insertValue(builder, module.getLoc(), value,
+                            integerConstant(builder, module.getLoc(), i64,
+                                            bytecode ? bytecode.size() : 0),
+                            4);
         if (database)
-          value = insertValue(
-              builder, module.getLoc(), value,
-              LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
-                                        kDatabaseName),
-              5);
-        value = insertValue(
-            builder, module.getLoc(), value,
-            integerConstant(builder, module.getLoc(), i64,
-                            database ? database.size() : 0),
-            6);
+          value =
+              insertValue(builder, module.getLoc(), value,
+                          LLVM::AddressOfOp::create(builder, module.getLoc(),
+                                                    pointer, kDatabaseName),
+                          5);
+        value = insertValue(builder, module.getLoc(), value,
+                            integerConstant(builder, module.getLoc(), i64,
+                                            database ? database.size() : 0),
+                            6);
         value = insertValue(
             builder, module.getLoc(), value,
             integerConstant(builder, module.getLoc(), i64, stateBits), 7);
@@ -746,43 +720,41 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
             builder, module.getLoc(), value,
             integerConstant(builder, module.getLoc(), i64, checksum), 8);
         if (!scopes.empty()) {
-          value = insertValue(
-              builder, module.getLoc(), value,
-              LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
-                                        kDPIScopesName),
-              9);
+          value =
+              insertValue(builder, module.getLoc(), value,
+                          LLVM::AddressOfOp::create(builder, module.getLoc(),
+                                                    pointer, kDPIScopesName),
+                          9);
           value = insertValue(
               builder, module.getLoc(), value,
               integerConstant(builder, module.getLoc(), i64, scopes.size()),
               10);
-          value = insertValue(
-              builder, module.getLoc(), value,
-              integerConstant(builder, module.getLoc(), i32,
-                              static_cast<uint32_t>(dpiPrecision)),
-              11);
+          value =
+              insertValue(builder, module.getLoc(), value,
+                          integerConstant(builder, module.getLoc(), i32,
+                                          static_cast<uint32_t>(dpiPrecision)),
+                          11);
         }
         if (!activations.empty()) {
-          value = insertValue(
-              builder, module.getLoc(), value,
-              LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
-                                        kActivationsName),
-              13);
-          value = insertValue(
-              builder, module.getLoc(), value,
-              integerConstant(builder, module.getLoc(), i64,
-                              activations.size()),
-              14);
+          value =
+              insertValue(builder, module.getLoc(), value,
+                          LLVM::AddressOfOp::create(builder, module.getLoc(),
+                                                    pointer, kActivationsName),
+                          13);
+          value = insertValue(builder, module.getLoc(), value,
+                              integerConstant(builder, module.getLoc(), i64,
+                                              activations.size()),
+                              14);
         }
         if (!observers.empty()) {
+          value =
+              insertValue(builder, module.getLoc(), value,
+                          LLVM::AddressOfOp::create(builder, module.getLoc(),
+                                                    pointer, kObserversName),
+                          15);
           value = insertValue(
               builder, module.getLoc(), value,
-              LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
-                                        kObserversName),
-              15);
-          value = insertValue(
-              builder, module.getLoc(), value,
-              integerConstant(builder, module.getLoc(), i64,
-                              observers.size()),
+              integerConstant(builder, module.getLoc(), i64, observers.size()),
               16);
         }
         return value;
@@ -793,12 +765,12 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
   SmallVector<std::pair<std::string, uint32_t>> entries;
   module.walk([&](Operation *operation) {
     auto index = operation->getAttrOfType<IntegerAttr>(kFunctionAttr);
-    auto symbol = operation->getAttrOfType<StringAttr>(
-        SymbolTable::getSymbolAttrName());
+    auto symbol =
+        operation->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName());
     if (index && symbol)
-      entries.emplace_back(symbol.getValue().str(),
-                           static_cast<uint32_t>(
-                               index.getValue().getZExtValue()));
+      entries.emplace_back(
+          symbol.getValue().str(),
+          static_cast<uint32_t>(index.getValue().getZExtValue()));
   });
   llvm::sort(entries);
   for (auto indexedEntry : llvm::enumerate(entries)) {
@@ -814,13 +786,13 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
     makeAggregateGlobal(
         module, entryType, name, LLVM::Linkage::Internal, "",
         [&](OpBuilder &builder) {
-          Value value = LLVM::ZeroOp::create(builder, module.getLoc(),
-                                             entryType);
-          value = insertValue(
-              builder, module.getLoc(), value,
-              LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
-                                        kExecutionName),
-              0);
+          Value value =
+              LLVM::ZeroOp::create(builder, module.getLoc(), entryType);
+          value =
+              insertValue(builder, module.getLoc(), value,
+                          LLVM::AddressOfOp::create(builder, module.getLoc(),
+                                                    pointer, kExecutionName),
+                          0);
           return insertValue(
               builder, module.getLoc(), value,
               integerConstant(builder, module.getLoc(), i32, entry.second), 1);
@@ -835,8 +807,8 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
       existing = module.lookupSymbol("llvm.compiler.used");
     if (existing) {
       auto global = dyn_cast<LLVM::GlobalOp>(existing);
-      if (!global || failed(appendRetentionEntry(module, global, pointer,
-                                                 kDatabaseName)))
+      if (!global ||
+          failed(appendRetentionEntry(module, global, pointer, kDatabaseName)))
         return failure();
     } else {
       Type usedType = LLVM::LLVMArrayType::get(pointer, 1);

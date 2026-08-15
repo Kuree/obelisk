@@ -58,8 +58,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         return failure();
       emit({Constant, 0, caseValue, 0, 0, 0, 0,
             addConstant(plan.layouts[caseValue], value)});
-      emit({Compare, OBELISK_RT_DB_CMP_EQ, match,
-            reg(plan, switchOp.getFlag()), caseValue});
+      emit({Compare, OBELISK_RT_DB_CMP_EQ, match, reg(plan, switchOp.getFlag()),
+            caseValue});
       auto mapping = addMap(plan, destination->getArguments(), plan, operands);
       uint64_t branch =
           emit({Branch, 0, match, static_cast<uint32_t>(mapping.first),
@@ -74,6 +74,25 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     plan.branches.push_back({fallback, switchOp.getDefaultDestination()});
     return success();
   }
+  // Calls and returns dominate non-arithmetic UVM code. Handle them before
+  // probing the large families of less-common simulation intrinsics.
+  if (auto call = dyn_cast<sim::SimCallOp>(operation))
+    return encodeCall(plan, call);
+  if (auto call = dyn_cast<sim::SimTaskCallOp>(operation))
+    return encodeTaskCall(plan, call);
+  if (auto call = dyn_cast<sim::SimDPICallOp>(operation))
+    return encodeDPICall(plan, call);
+  if (auto returnOp = dyn_cast<sim::SimReturnOp>(operation))
+    return encodeReturn(plan, returnOp);
+  if (std::optional<LogicalResult> encoded =
+          encodeClassOperation(plan, operation))
+    return *encoded;
+  if (std::optional<LogicalResult> encoded =
+          encodeManagedReferenceOperation(plan, operation))
+    return *encoded;
+  if (std::optional<LogicalResult> encoded =
+          encodeStringOperation(plan, operation))
+    return *encoded;
   if (auto constant = dyn_cast<sim::SimBytesConstantOp>(operation)) {
     ArrayRef<uint8_t> bytes(
         reinterpret_cast<const uint8_t *>(constant.getValue().data()),
@@ -123,10 +142,10 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return emitIntrinsic(plan, kIntrinsicFileGetlineString,
                          {op.getDescriptor()}, {op.getData(), op.getCount()});
   if (auto op = dyn_cast<sim::SimTimeFormatOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicTimeFormat,
-                         {op.getUnits(), op.getFractionDigits(),
-                          op.getSuffix(), op.getWidth()},
-                         {});
+    return emitIntrinsic(
+        plan, kIntrinsicTimeFormat,
+        {op.getUnits(), op.getFractionDigits(), op.getSuffix(), op.getWidth()},
+        {});
   if (auto op = dyn_cast<sim::SimPlusargTestOp>(operation))
     return emitIntrinsic(plan, kIntrinsicPlusargTest, {op.getName()},
                          {op.getFound()});
@@ -154,11 +173,11 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
                          {op.getData(), op.getCount()});
   if (auto op = dyn_cast<sim::SimFileReadMemTokenOp>(operation)) {
     uint32_t radix = emitU64Constant(plan, op.getRadix());
-    return emitIntrinsicRegisters(
-        plan, kIntrinsicFileReadMemToken,
-        {reg(plan, op.getDescriptor()), radix},
-        {reg(plan, op.getData()), reg(plan, op.getKind()),
-         reg(plan, op.getAddress())});
+    return emitIntrinsicRegisters(plan, kIntrinsicFileReadMemToken,
+                                  {reg(plan, op.getDescriptor()), radix},
+                                  {reg(plan, op.getData()),
+                                   reg(plan, op.getKind()),
+                                   reg(plan, op.getAddress())});
   }
   if (auto op = dyn_cast<sim::SimFileEofOp>(operation))
     return emitIntrinsic(plan, kIntrinsicFileEof, {op.getDescriptor()},
@@ -185,10 +204,10 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     if (found->second > OBELISK_RT_INTRINSIC_SPAWN_FUNCTION_MASK)
       return op.emitOpError("spawn target index exceeds bytecode encoding");
     sim::EntryKind entryKind = callee.function.getEntryKind();
-    bool startup = sim::isStartupEntryKind(entryKind) ||
-                   (entryKind == sim::EntryKind::Initial &&
-                    callee.function.getHomeRegion() ==
-                        sim::EventRegion::Active);
+    bool startup =
+        sim::isStartupEntryKind(entryKind) ||
+        (entryKind == sim::EntryKind::Initial &&
+         callee.function.getHomeRegion() == sim::EventRegion::Active);
     bool prioritySignalResume =
         callee.function->hasAttr("obelisk_sim.priority_signal_resume");
     if (prioritySignalResume &&
@@ -200,17 +219,12 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
       return op.emitOpError(
           "priority signal resume is reserved for internal concurrent-disable "
           "observers");
-    uint32_t flags = found->second |
-                     (startup
-                          ? OBELISK_RT_INTRINSIC_SPAWN_STARTUP
-                          : 0) |
-                     (callee.function->hasAttr(
-                          "obelisk_sim.detached_controls")
-                          ? OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS
-                          : 0) |
-                     (prioritySignalResume
-                          ? OBELISK_RT_INTRINSIC_SPAWN_PRIORITY_SIGNAL
-                          : 0);
+    uint32_t flags =
+        found->second | (startup ? OBELISK_RT_INTRINSIC_SPAWN_STARTUP : 0) |
+        (callee.function->hasAttr("obelisk_sim.detached_controls")
+             ? OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS
+             : 0) |
+        (prioritySignalResume ? OBELISK_RT_INTRINSIC_SPAWN_PRIORITY_SIGNAL : 0);
     return emitIntrinsic(plan, kIntrinsicSpawn, captures, {op.getProcess()},
                          flags);
   }
@@ -315,25 +329,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
           encodeContainerOperation(plan, operation))
     return *encoded;
   if (std::optional<LogicalResult> encoded =
-          encodeStringOperation(plan, operation))
-    return *encoded;
-  if (std::optional<LogicalResult> encoded =
-          encodeClassOperation(plan, operation))
-    return *encoded;
-  if (std::optional<LogicalResult> encoded =
           encodeCoverageOperation(plan, operation))
     return *encoded;
-  if (std::optional<LogicalResult> encoded =
-          encodeManagedReferenceOperation(plan, operation))
-    return *encoded;
-  if (auto call = dyn_cast<sim::SimCallOp>(operation))
-    return encodeCall(plan, call);
-  if (auto call = dyn_cast<sim::SimTaskCallOp>(operation))
-    return encodeTaskCall(plan, call);
-  if (auto call = dyn_cast<sim::SimDPICallOp>(operation))
-    return encodeDPICall(plan, call);
-  if (auto returnOp = dyn_cast<sim::SimReturnOp>(operation))
-    return encodeReturn(plan, returnOp);
   if (auto constant = dyn_cast<sim::SimLogicConstantOp>(operation)) {
     APInt unknown = constant.getUnknown();
     return emitConstant(plan, constant.getResult(), constant.getValue(),
@@ -439,8 +436,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
       emit({Not, 0, reg(plan, op.getResult()), reg(plan, op.getInput())});
       break;
     case sim::UnaryKind::LogicalNot:
-      emit({Reduce, OBELISK_RT_DB_REDUCE_LOGICAL_NOT,
-            reg(plan, op.getResult()), reg(plan, op.getInput())});
+      emit({Reduce, OBELISK_RT_DB_REDUCE_LOGICAL_NOT, reg(plan, op.getResult()),
+            reg(plan, op.getInput())});
       break;
     case sim::UnaryKind::Negate: {
       uint32_t zero =
@@ -485,21 +482,18 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   if (auto op = dyn_cast<sim::SimLogicCompareOp>(operation))
     return encodeLogicCompare(plan, op);
   if (auto op = dyn_cast<sim::SimLogicExtractOp>(operation)) {
-    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND,
-          reg(plan, op.getResult()), reg(plan, op.getInput()),
-          kInvalidRegister, 0, 0, op.getLowBit()});
+    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND, reg(plan, op.getResult()),
+          reg(plan, op.getInput()), kInvalidRegister, 0, 0, op.getLowBit()});
     return success();
   }
   if (auto op = dyn_cast<sim::SimLogicDynExtractOp>(operation)) {
-    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND,
-          reg(plan, op.getResult()), reg(plan, op.getInput()),
-          reg(plan, op.getLowBit())});
+    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND, reg(plan, op.getResult()),
+          reg(plan, op.getInput()), reg(plan, op.getLowBit())});
     return success();
   }
   if (auto op = dyn_cast<sim::SimBitsDynExtractOp>(operation)) {
-    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND,
-          reg(plan, op.getResult()), reg(plan, op.getInput()),
-          reg(plan, op.getLowBit())});
+    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND, reg(plan, op.getResult()),
+          reg(plan, op.getInput()), reg(plan, op.getLowBit())});
     return success();
   }
   if (auto op = dyn_cast<sim::SimLogicDynInsertOp>(operation)) {
@@ -612,8 +606,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         inputs.push_back(emitU64Constant(plan, slot.bitOffset));
         inputs.push_back(emitU64Constant(plan, slot.kindMask));
         inputs.push_back(emitU64Constant(
-            plan, slot.conditional ? OBELISK_RT_MANAGED_ROOT_SLOT_CANDIDATE
-                                   : 0));
+            plan,
+            slot.conditional ? OBELISK_RT_MANAGED_ROOT_SLOT_CANDIDATE : 0));
       }
     }
     return emitIntrinsicRegisters(plan, intrinsic, inputs,
@@ -661,8 +655,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         emitU64Constant(plan, static_cast<uint64_t>(op.getId()))};
     if (auto assertionID = op->getAttrOfType<IntegerAttr>(
             "obelisk_sim.assertion_control_target_id"))
-      inputs.push_back(emitU64Constant(
-          plan, assertionID.getValue().getZExtValue()));
+      inputs.push_back(
+          emitU64Constant(plan, assertionID.getValue().getZExtValue()));
     return emitIntrinsicRegisters(plan, kIntrinsicDeferredEnqueue, inputs,
                                   {reg(plan, op.getTicket())});
   }

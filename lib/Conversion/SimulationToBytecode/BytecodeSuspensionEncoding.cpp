@@ -17,8 +17,29 @@ Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
   if (isa<sim::SimObserverBindOp>(operation))
     return success();
   if (auto control = dyn_cast<sim::SimProcessControlOp>(operation)) {
-    if (!plan.frame)
-      return control.emitOpError("process control has no canonical frame");
+    if (!plan.frame) {
+      if (control.getKind() == sim::ProcessControlKind::Suspend)
+        return control.emitOpError(
+            "callable process suspend requires CPS frame lowering");
+      if (!control.getContinuationOperands().empty())
+        return control.emitOpError(
+            "callable process control cannot carry continuation operands");
+      auto continuation =
+          plan.callableControlContinuations.find(control.getContinuation());
+      if (continuation == plan.callableControlContinuations.end()) {
+        if (plan.callableControlContinuations.size() == UINT32_MAX)
+          return control.emitOpError(
+              "callable continuation space is exhausted");
+        continuation =
+            plan.callableControlContinuations
+                .try_emplace(control.getContinuation(),
+                             plan.callableControlContinuations.size() + 1)
+                .first;
+      }
+      emit({ProcessControl, static_cast<uint16_t>(control.getKind()), 0,
+            reg(plan, control.getProcess()), 0, 0, 0, continuation->second});
+      return success();
+    }
     const ProcessSuspension *suspension = plan.frame->getSuspension(control);
     if (!suspension)
       return control.emitOpError("process control is missing frame analysis");
@@ -72,21 +93,19 @@ Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
     SmallVector<uint32_t> edges{static_cast<uint32_t>(suspend.getEdge()),
                                 OBELISK_RT_WAIT_EDGE_NONE};
     SmallVector<Value> watched{suspend.getWatched(), suspend.getCondition()};
-    return encodeWait(plan, suspend.getOperation(),
-                      suspend.getContinuationOperands(),
-                      OBELISK_RT_SUSPEND_EDGE, OBELISK_RT_WAIT_EDGE_IFF, edges,
-                      watched);
+    return encodeWait(
+        plan, suspend.getOperation(), suspend.getContinuationOperands(),
+        OBELISK_RT_SUSPEND_EDGE, OBELISK_RT_WAIT_EDGE_IFF, edges, watched);
   }
   if (auto suspend = dyn_cast<sim::SimSuspendAnyOp>(operation)) {
     SmallVector<uint32_t> edges;
     for (int32_t edge : suspend.getEdges())
       edges.push_back(static_cast<uint32_t>(edge));
     SmallVector<Value> watched(suspend.getWatched());
-    return encodeWait(plan, suspend.getOperation(),
-                      suspend.getContinuationOperands(),
-                      OBELISK_RT_SUSPEND_EDGE,
-                      directSignalWaitFlags(suspend.getOperation()), edges,
-                      watched);
+    return encodeWait(
+        plan, suspend.getOperation(), suspend.getContinuationOperands(),
+        OBELISK_RT_SUSPEND_EDGE, directSignalWaitFlags(suspend.getOperation()),
+        edges, watched);
   }
   if (auto suspend = dyn_cast<sim::SimSuspendEventOp>(operation)) {
     uint32_t edge = OBELISK_RT_WAIT_EDGE_NONE;
@@ -97,11 +116,10 @@ Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
   }
   if (auto suspend = dyn_cast<sim::SimSuspendMailboxOp>(operation)) {
     uint32_t edge = OBELISK_RT_WAIT_EDGE_NONE;
-    return encodeWait(plan, suspend.getOperation(),
-                      suspend.getContinuationOperands(),
-                      OBELISK_RT_SUSPEND_MAILBOX,
-                      static_cast<uint32_t>(suspend.getKind()),
-                      ArrayRef<uint32_t>(&edge, 1), {suspend.getMailbox()});
+    return encodeWait(
+        plan, suspend.getOperation(), suspend.getContinuationOperands(),
+        OBELISK_RT_SUSPEND_MAILBOX, static_cast<uint32_t>(suspend.getKind()),
+        ArrayRef<uint32_t>(&edge, 1), {suspend.getMailbox()});
   }
   if (auto suspend = dyn_cast<sim::SimSuspendSemaphoreOp>(operation)) {
     uint32_t edge = OBELISK_RT_WAIT_EDGE_NONE;
@@ -112,10 +130,9 @@ Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
                       suspend.getKeys());
   }
   if (auto suspend = dyn_cast<sim::SimSuspendForeverOp>(operation))
-    return encodeWait(plan, suspend.getOperation(),
-                      suspend.getContinuationOperands(),
-                      OBELISK_RT_SUSPEND_FOREVER, OBELISK_RT_WAIT_FLAGS_NONE,
-                      {}, {});
+    return encodeWait(
+        plan, suspend.getOperation(), suspend.getContinuationOperands(),
+        OBELISK_RT_SUSPEND_FOREVER, OBELISK_RT_WAIT_FLAGS_NONE, {}, {});
   if (auto suspend = dyn_cast<sim::SimSuspendAwaitOp>(operation)) {
     uint32_t edge = OBELISK_RT_WAIT_EDGE_NONE;
     return encodeWait(plan, suspend.getOperation(),
@@ -127,17 +144,16 @@ Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
     SmallVector<uint32_t> edges(suspend.getProcesses().size(),
                                 OBELISK_RT_WAIT_EDGE_NONE);
     SmallVector<Value> processes(suspend.getProcesses());
-    return encodeWait(
-        plan, suspend.getOperation(), suspend.getContinuationOperands(),
-        OBELISK_RT_SUSPEND_JOIN,
-        static_cast<obelisk_rt_wait_flags>(suspend.getKind()), edges,
-        processes);
-  }
-  if (auto suspend = dyn_cast<sim::SimSuspendChildrenOp>(operation))
     return encodeWait(plan, suspend.getOperation(),
                       suspend.getContinuationOperands(),
-                      OBELISK_RT_SUSPEND_CHILDREN, OBELISK_RT_WAIT_FLAGS_NONE,
-                      {}, {});
+                      OBELISK_RT_SUSPEND_JOIN,
+                      static_cast<obelisk_rt_wait_flags>(suspend.getKind()),
+                      edges, processes);
+  }
+  if (auto suspend = dyn_cast<sim::SimSuspendChildrenOp>(operation))
+    return encodeWait(
+        plan, suspend.getOperation(), suspend.getContinuationOperands(),
+        OBELISK_RT_SUSPEND_CHILDREN, OBELISK_RT_WAIT_FLAGS_NONE, {}, {});
   if (auto suspend = dyn_cast<sim::SimSuspendObserveOp>(operation))
     return encodeObserverWait(plan, suspend);
   return std::nullopt;

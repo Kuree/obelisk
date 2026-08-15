@@ -74,6 +74,7 @@ struct NativeOutputOptions {
   // the prebuilt runtime archive instead, trading peak simulation speed for a
   // link that costs milliseconds rather than seconds.
   bool noLTO = false;
+  bool timing = false;
   uint32_t optLevel = 3;
   uint32_t compileThreads = 1;
 };
@@ -108,7 +109,8 @@ public:
 
   /// Locates the staged target-link support tree relative to the running
   /// driver, or nullopt when it is absent.
-  std::optional<std::string> findSupportTree(llvm::StringRef executablePath) const;
+  std::optional<std::string>
+  findSupportTree(llvm::StringRef executablePath) const;
 };
 
 /// Builds the backend for `target`, or null when this build does not include

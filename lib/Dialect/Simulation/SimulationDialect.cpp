@@ -1,7 +1,7 @@
 //===- SimulationDialect.cpp - Executable simulation dialect ------------===//
 
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "SimulationVerifiers.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -9,12 +9,12 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/InliningUtils.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -83,7 +83,7 @@ uint32_t getWaitEntryCount(Operation *operation) {
 
 namespace {
 
-bool hasLateInlineMetadata(SimDesignOp design) {
+bool containsLateInlineMetadata(SimDesignOp design) {
   if (design.getComputeGraphAttr())
     return true;
   bool found = false;
@@ -172,6 +172,10 @@ bool isRecursive(SimFuncOp function, SimDesignOp design) {
 
 } // namespace
 
+bool hasLateInlineMetadata(SimDesignOp design) {
+  return containsLateInlineMetadata(design);
+}
+
 LogicalResult verifyPostponedReadOnly(SimFuncOp root) {
   SmallVector<SimFuncOp> pending{root};
   llvm::SmallPtrSet<Operation *, 16> visited;
@@ -186,8 +190,8 @@ LogicalResult verifyPostponedReadOnly(SimFuncOp root) {
               SimReferencePathNBAEnqueueOp, SimArgumentRefStoreOp,
               SimRefStoreOp, SimDriverDriveOp, SimDriverDriveChangedOp,
               SimNBAEnqueueOp, SimSpawnOp, SimEventTriggerOp, SimSuspendDelayOp,
-              SimTaskCallOp, SimClassVirtualTaskCallOp,
-              SimProcessControlOp, SimProcessSetRandomStateOp>(operation)) {
+              SimTaskCallOp, SimClassVirtualTaskCallOp, SimProcessControlOp,
+              SimProcessSetRandomStateOp>(operation)) {
         operation->emitOpError(
             "is not permitted in a read-only postponed code unit");
         return WalkResult::interrupt();
@@ -232,20 +236,11 @@ LogicalResult verifyPostponedReadOnly(SimFuncOp root) {
   return success();
 }
 
-InlineLegality getInlineLegality(SimCallOp call, SimFuncOp callee) {
-  SimFuncOp caller = call ? call->getParentOfType<SimFuncOp>() : SimFuncOp{};
-  auto design = caller ? caller->getParentOfType<SimDesignOp>() : SimDesignOp{};
-  // Function entries are zero-time, but process.control is an intentional
-  // control-flow terminator that may be inlined into the calling process CFG.
-  // Legality therefore focuses on recursion and frozen metadata rather than a
-  // second operation-family allowlist.
-  if (!caller || !callee || !design || callee.isExternal() ||
-      callee->getParentOfType<SimDesignOp>() != design ||
-      callee.getEntryKind() != EntryKind::Function)
-    return InlineLegality::NotDefinedFunction;
-  if (hasLateInlineMetadata(design))
+InlineLegality getInlineCalleeLegality(SimFuncOp callee, bool calleeIsRecursive,
+                                       bool designHasLateMetadata) {
+  if (designHasLateMetadata)
     return InlineLegality::LateMetadata;
-  if (isRecursive(callee, design))
+  if (calleeIsRecursive)
     return InlineLegality::Recursive;
   if (hasUnknownInlineMetadata(callee))
     return InlineLegality::UnknownMetadata;
@@ -267,8 +262,23 @@ InlineLegality getInlineLegality(SimCallOp call, SimFuncOp callee) {
     return legality == InlineLegality::Legal ? WalkResult::advance()
                                              : WalkResult::interrupt();
   });
-  if (legality != InlineLegality::Legal)
-    return legality;
+  return legality;
+}
+
+InlineLegality getInlineLegality(SimCallOp call, SimFuncOp callee,
+                                 InlineLegality calleeLegality) {
+  SimFuncOp caller = call ? call->getParentOfType<SimFuncOp>() : SimFuncOp{};
+  auto design = caller ? caller->getParentOfType<SimDesignOp>() : SimDesignOp{};
+  // Function entries are zero-time, but process.control is an intentional
+  // control-flow terminator that may be inlined into the calling process CFG.
+  // Legality therefore focuses on recursion and frozen metadata rather than a
+  // second operation-family allowlist.
+  if (!caller || !callee || !design || callee.isExternal() ||
+      callee->getParentOfType<SimDesignOp>() != design ||
+      callee.getEntryKind() != EntryKind::Function)
+    return InlineLegality::NotDefinedFunction;
+  if (calleeLegality != InlineLegality::Legal)
+    return calleeLegality;
   if (hasUnknownInlineMetadata(call) ||
       hasUnknownInlineBoundaryMetadata(call.getArgAttrsAttr()) ||
       hasUnknownInlineBoundaryMetadata(call.getResAttrsAttr()) ||
@@ -276,6 +286,22 @@ InlineLegality getInlineLegality(SimCallOp call, SimFuncOp callee) {
       hasUnknownInlineBoundaryMetadata(callee.getResAttrsAttr()))
     return InlineLegality::UnknownBoundaryMetadata;
   return InlineLegality::Legal;
+}
+
+InlineLegality getInlineLegality(SimCallOp call, SimFuncOp callee,
+                                 bool calleeIsRecursive) {
+  auto design = callee ? callee->getParentOfType<SimDesignOp>() : SimDesignOp{};
+  InlineLegality calleeLegality =
+      callee && design
+          ? getInlineCalleeLegality(callee, calleeIsRecursive,
+                                    containsLateInlineMetadata(design))
+          : InlineLegality::NotDefinedFunction;
+  return getInlineLegality(call, callee, calleeLegality);
+}
+
+InlineLegality getInlineLegality(SimCallOp call, SimFuncOp callee) {
+  auto design = callee ? callee->getParentOfType<SimDesignOp>() : SimDesignOp{};
+  return getInlineLegality(call, callee, design && isRecursive(callee, design));
 }
 
 StringRef getInlineLegalityReason(InlineLegality legality) {
@@ -298,10 +324,9 @@ StringRef getInlineLegalityReason(InlineLegality legality) {
   llvm_unreachable("unknown simulation inline legality");
 }
 
-LogicalResult normalizeClassDirectCall(SimClassDirectCallOp call) {
+static LogicalResult normalizeClassDirectCallImpl(SimClassDirectCallOp call,
+                                                  SimFuncOp callee) {
   SimFuncOp caller = call->getParentOfType<SimFuncOp>();
-  SimFuncOp callee = SymbolTable::lookupNearestSymbolFrom<SimFuncOp>(
-      call, call.getCalleeAttr());
   if (!caller || caller.getBody().empty() ||
       caller.getBody().front().getNumArguments() == 0 ||
       !isa<ContextType>(caller.getBody().front().getArgument(0).getType()))
@@ -323,11 +348,36 @@ LogicalResult normalizeClassDirectCall(SimClassDirectCallOp call) {
   return success();
 }
 
+LogicalResult normalizeClassDirectCall(SimClassDirectCallOp call) {
+  return normalizeClassDirectCallImpl(
+      call, SymbolTable::lookupNearestSymbolFrom<SimFuncOp>(
+                call, call.getCalleeAttr()));
+}
+
 LogicalResult normalizeClassDirectCalls(Operation *root, uint64_t *count) {
   SmallVector<SimClassDirectCallOp> calls;
-  root->walk([&](SimClassDirectCallOp call) { calls.push_back(call); });
+  DenseMap<Operation *, llvm::StringMap<SimFuncOp>> functionsByDesign;
+  root->walk([&](Operation *operation) {
+    if (auto call = dyn_cast<SimClassDirectCallOp>(operation))
+      calls.push_back(call);
+    else if (auto function = dyn_cast<SimFuncOp>(operation)) {
+      auto design = function->getParentOfType<SimDesignOp>();
+      if (design)
+        functionsByDesign[design.getOperation()][function.getSymName()] =
+            function;
+    }
+  });
   for (SimClassDirectCallOp call : calls) {
-    if (failed(normalizeClassDirectCall(call)))
+    SimFuncOp callee;
+    auto design = call->getParentOfType<SimDesignOp>();
+    auto functions = design ? functionsByDesign.find(design.getOperation())
+                            : functionsByDesign.end();
+    if (functions != functionsByDesign.end()) {
+      auto found = functions->second.find(call.getCallee());
+      if (found != functions->second.end())
+        callee = found->second;
+    }
+    if (failed(normalizeClassDirectCallImpl(call, callee)))
       return failure();
     if (count)
       ++*count;
@@ -345,8 +395,18 @@ struct ObeliskSimulationInlinerInterface final
   bool isLegalToInline(Operation *call, Operation *callable, bool) const final {
     auto callOp = dyn_cast<SimCallOp>(call);
     auto function = dyn_cast<SimFuncOp>(callable);
-    return callOp && function &&
-           getInlineLegality(callOp, function) == InlineLegality::Legal;
+    if (!callOp || !function)
+      return false;
+    if (auto cached =
+            function->getAttrOfType<IntegerAttr>(inlineLegalityCacheAttrName))
+      return getInlineLegality(callOp, function,
+                               static_cast<InlineLegality>(cached.getInt())) ==
+             InlineLegality::Legal;
+    // The generic inliner owns recursive-SCC convergence. Recursive expansion
+    // is a policy rejection, not a semantic illegality of cloning one call.
+    return getInlineLegality(callOp, function,
+                             /*calleeIsRecursive=*/false) ==
+           InlineLegality::Legal;
   }
 
   bool isLegalToInline(Region *dest, Region *src, bool,

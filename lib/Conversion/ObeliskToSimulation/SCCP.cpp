@@ -16,8 +16,8 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/FoldUtils.h"
 
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 
@@ -61,10 +61,10 @@ static bool mergeFact(BoundaryFact &destination,
 /// transfer functions is the boundary state supplied by the design scheduler.
 class BoundarySparseConstantPropagation : public SparseConstantPropagation {
 public:
-  BoundarySparseConstantPropagation(
-      DataFlowSolver &solver,
-      const DenseMap<Value, BoundaryFact> &boundarySeeds)
-      : SparseConstantPropagation(solver), boundarySeeds(boundarySeeds) {}
+  BoundarySparseConstantPropagation(DataFlowSolver &solver,
+                                    DenseMap<Value, BoundaryFact> boundarySeeds)
+      : SparseConstantPropagation(solver),
+        boundarySeeds(std::move(boundarySeeds)) {}
 
   void setToEntryState(Lattice<ConstantValue> *lattice) override {
     auto found = boundarySeeds.find(lattice->getAnchor());
@@ -82,7 +82,7 @@ public:
   }
 
 private:
-  const DenseMap<Value, BoundaryFact> &boundarySeeds;
+  DenseMap<Value, BoundaryFact> boundarySeeds;
 };
 
 enum class BoundarySiteKind { Call, Spawn, Return };
@@ -116,6 +116,7 @@ struct DriveObservation {
 struct FunctionObservation {
   SmallVector<SiteObservation> sites;
   SmallVector<DriveObservation> drives;
+  std::unique_ptr<DataFlowSolver> solver;
 };
 
 static void addNetSeeds(sim::SimFuncOp function,
@@ -192,11 +193,10 @@ static void addBoundarySeeds(ArrayRef<FunctionInfo> functions,
   }
 }
 
-static LogicalResult analyzeFunction(ArrayRef<FunctionInfo> functions,
-                                     unsigned functionIndex,
-                                     const DenseMap<uint64_t, BoundaryFact>
-                                         &netFacts,
-                                     FunctionObservation &observation) {
+static LogicalResult
+analyzeFunction(ArrayRef<FunctionInfo> functions, unsigned functionIndex,
+                const DenseMap<uint64_t, BoundaryFact> &netFacts,
+                FunctionObservation &observation) {
   const FunctionInfo &info = functions[functionIndex];
   sim::SimFuncOp function = info.function;
   if (function.isExternal())
@@ -208,28 +208,28 @@ static LogicalResult analyzeFunction(ArrayRef<FunctionInfo> functions,
 
   DataFlowConfig config;
   config.setInterprocedural(false);
-  DataFlowSolver solver(config);
-  solver.load<DeadCodeAnalysis>();
-  solver.load<BoundarySparseConstantPropagation>(seeds);
-  if (failed(solver.initializeAndRun(function)))
+  auto solver = std::make_unique<DataFlowSolver>(config);
+  solver->load<DeadCodeAnalysis>();
+  solver->load<BoundarySparseConstantPropagation>(std::move(seeds));
+  if (failed(solver->initializeAndRun(function)))
     return failure();
 
   observation.sites.resize(info.sites.size());
   for (auto [site, result] : llvm::zip(info.sites, observation.sites)) {
-    if (!isExecutable(solver, site.operation))
+    if (!isExecutable(*solver, site.operation))
       continue;
     result.executable = true;
     if (isa<sim::SimCallOp, sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp>(
             site.operation)) {
       for (Value operand : getBoundaryOperands(site.operation))
-        result.operands.push_back(getFact(solver, operand));
+        result.operands.push_back(getFact(*solver, operand));
     } else if (auto spawn = dyn_cast<sim::SimSpawnOp>(site.operation)) {
       for (Value operand : spawn.getOperands())
-        result.operands.push_back(getFact(solver, operand));
+        result.operands.push_back(getFact(*solver, operand));
     } else {
       auto returnOp = cast<sim::SimReturnOp>(site.operation);
       for (Value operand : returnOp.getOperands())
-        result.operands.push_back(getFact(solver, operand));
+        result.operands.push_back(getFact(*solver, operand));
     }
   }
 
@@ -237,7 +237,7 @@ static LogicalResult analyzeFunction(ArrayRef<FunctionInfo> functions,
       analysis::deriveDescriptorProvenance(function);
   function.walk([&](Operation *operation) {
     if (!isa<sim::SimDriverDriveOp, sim::SimDriverDriveChangedOp>(operation) ||
-        !isExecutable(solver, operation))
+        !isExecutable(*solver, operation))
       return;
     Value driver;
     Value value;
@@ -255,8 +255,9 @@ static LogicalResult analyzeFunction(ArrayRef<FunctionInfo> functions,
         found->second.width != found->second.rootWidth)
       return;
     observation.drives.push_back(
-        {*found->second.descriptor, getFact(solver, value)});
+        {*found->second.descriptor, getFact(*solver, value)});
   });
+  observation.solver = std::move(solver);
   return success();
 }
 
@@ -326,28 +327,6 @@ static void rewriteFunction(DataFlowSolver &solver, sim::SimFuncOp function) {
   }
 }
 
-static LogicalResult solveAndRewriteFunction(
-    ArrayRef<FunctionInfo> functions, unsigned functionIndex,
-    const DenseMap<uint64_t, BoundaryFact> &netFacts) {
-  const FunctionInfo &info = functions[functionIndex];
-  sim::SimFuncOp function = info.function;
-  if (function.isExternal())
-    return success();
-
-  DenseMap<Value, BoundaryFact> seeds;
-  addBoundarySeeds(functions, functionIndex, seeds);
-  addNetSeeds(function, netFacts, seeds);
-  DataFlowConfig config;
-  config.setInterprocedural(false);
-  DataFlowSolver solver(config);
-  solver.load<DeadCodeAnalysis>();
-  solver.load<BoundarySparseConstantPropagation>(seeds);
-  if (failed(solver.initializeAndRun(function)))
-    return failure();
-  rewriteFunction(solver, function);
-  return success();
-}
-
 class ObeliskSimSCCPPass
     : public impl::ObeliskSimSCCPPassBase<ObeliskSimSCCPPass> {
 public:
@@ -378,6 +357,10 @@ void ObeliskSimSCCPPass::runOnOperation() {
 
   // Index boundary operations in stable IR order and resolve every direct edge
   // before workers begin. No worker consults a mutable symbol table cache.
+  using DispatchKey = std::pair<uint64_t, uint64_t>;
+  DenseMap<Operation *,
+           DenseMap<DispatchKey, SmallVector<sim::SimClassMethodDeclOp>>>
+      compatibleTaskImplementations;
   for (auto indexedInfo : llvm::enumerate(functions)) {
     unsigned functionIndex = indexedInfo.index();
     FunctionInfo &info = indexedInfo.value();
@@ -410,10 +393,19 @@ void ObeliskSimSCCPPass::runOnOperation() {
       if (auto task = dyn_cast<sim::SimClassVirtualTaskCallOp>(operation)) {
         auto staticType =
             cast<sim::ClassHandleType>(task.getReceiver().getType());
-        for (sim::SimClassMethodDeclOp method :
-             classDispatch.compatibleImplementations(
-                 classDispatch.lookup(staticType), task.getSlot(),
-                 task.getSignatureId(), /*isTask=*/true)) {
+        sim::SimClassDeclOp staticClass = classDispatch.lookup(staticType);
+        auto key = std::make_pair(task.getSlot(), task.getSignatureId());
+        auto &byDispatch =
+            compatibleTaskImplementations[staticClass.getOperation()];
+        auto implementations = byDispatch.find(key);
+        if (implementations == byDispatch.end())
+          implementations =
+              byDispatch
+                  .try_emplace(key, classDispatch.compatibleImplementations(
+                                        staticClass, task.getSlot(),
+                                        task.getSignatureId(), /*isTask=*/true))
+                  .first;
+        for (sim::SimClassMethodDeclOp method : implementations->second) {
           auto found = symbolToFunction.find(*method.getImplementation());
           std::optional<unsigned> callee;
           if (found != symbolToFunction.end())
@@ -505,71 +497,96 @@ void ObeliskSimSCCPPass::runOnOperation() {
   });
 
   SmallVector<char> dirty(functions.size(), true);
-  while (llvm::is_contained(dirty, true)) {
-    SmallVector<unsigned> wave;
-    for (unsigned index : deterministicOrder)
-      if (dirty[index]) {
-        dirty[index] = false;
-        wave.push_back(index);
-      }
-
-    std::vector<std::unique_ptr<FunctionObservation>> observations(
-        functions.size());
-    if (failed(failableParallelForEach(
-            design.getContext(), wave, [&](unsigned functionIndex) {
-              auto observation = std::make_unique<FunctionObservation>();
-              static const DenseMap<uint64_t, BoundaryFact> noNetFacts;
-              if (failed(analyzeFunction(functions, functionIndex, noNetFacts,
-                                         *observation)))
-                return failure();
-              observations[functionIndex] = std::move(observation);
-              return success();
-            })))
-      return signalPassFailure();
-
-    // Merge only after the wave has joined. Symbol order followed by each
-    // function's IR order makes the fixed point and diagnostics deterministic.
-    for (unsigned functionIndex : deterministicOrder) {
-      if (!observations[functionIndex])
-        continue;
-      FunctionInfo &info = functions[functionIndex];
-      for (auto [site, observation] :
-           llvm::zip_equal(info.sites, observations[functionIndex]->sites)) {
-        if (!observation.executable)
-          continue;
-        if (site.kind == BoundarySiteKind::Return) {
-          bool changed = false;
-          for (auto [result, contribution] :
-               llvm::zip_equal(info.results, observation.operands))
-            changed |= mergeFact(result, contribution);
-          if (changed)
-            for (unsigned caller : info.callers)
-              dirty[caller] = true;
-          continue;
+  std::vector<std::unique_ptr<DataFlowSolver>> finalSolvers(functions.size());
+  auto runBoundaryFixedPoint = [&]() -> LogicalResult {
+    while (llvm::is_contained(dirty, true)) {
+      SmallVector<unsigned> wave;
+      for (unsigned index : deterministicOrder)
+        if (dirty[index]) {
+          dirty[index] = false;
+          wave.push_back(index);
         }
-        if (!site.callee)
+
+      std::vector<std::unique_ptr<FunctionObservation>> observations(
+          functions.size());
+      if (failed(failableParallelForEach(
+              design.getContext(), wave, [&](unsigned functionIndex) {
+                auto observation = std::make_unique<FunctionObservation>();
+                static const DenseMap<uint64_t, BoundaryFact> noNetFacts;
+                if (failed(analyzeFunction(functions, functionIndex, noNetFacts,
+                                           *observation)))
+                  return failure();
+                observations[functionIndex] = std::move(observation);
+                return success();
+              })))
+        return failure();
+
+      // Merge only after the wave has joined. Symbol order followed by each
+      // function's IR order makes the fixed point and diagnostics
+      // deterministic.
+      for (unsigned functionIndex : deterministicOrder) {
+        if (!observations[functionIndex])
           continue;
-        FunctionInfo &callee = functions[*site.callee];
-        bool changed = false;
-        for (auto [argument, contribution] :
-             llvm::zip_equal(callee.arguments, observation.operands))
-          changed |= mergeFact(argument, contribution);
-        if (changed)
-          dirty[*site.callee] = true;
+        FunctionInfo &info = functions[functionIndex];
+        for (auto [site, observation] :
+             llvm::zip_equal(info.sites, observations[functionIndex]->sites)) {
+          if (!observation.executable)
+            continue;
+          if (site.kind == BoundarySiteKind::Return) {
+            bool changed = false;
+            for (auto [result, contribution] :
+                 llvm::zip_equal(info.results, observation.operands))
+              changed |= mergeFact(result, contribution);
+            if (changed)
+              for (unsigned caller : info.callers)
+                dirty[caller] = true;
+            continue;
+          }
+          if (!site.callee)
+            continue;
+          FunctionInfo &callee = functions[*site.callee];
+          bool changed = false;
+          for (auto [argument, contribution] :
+               llvm::zip_equal(callee.arguments, observation.operands))
+            changed |= mergeFact(argument, contribution);
+          if (changed)
+            dirty[*site.callee] = true;
+        }
+        finalSolvers[functionIndex] =
+            std::move(observations[functionIndex]->solver);
       }
     }
-  }
+    return success();
+  };
+  if (failed(runBoundaryFixedPoint()))
+    return signalPassFailure();
 
   // A bottom that survived the global fixed point has no executable boundary
   // contribution. Make it explicitly unknown before the final local solve so
   // all rewrites are based on initialized, conservative facts.
-  for (FunctionInfo &info : functions) {
+  bool initializedBoundary = false;
+  for (auto [index, info] : llvm::enumerate(functions)) {
     for (BoundaryFact &argument : info.arguments)
-      if (argument.isUninitialized())
+      if (argument.isUninitialized()) {
+        initializedBoundary = true;
         argument = getUnknownFact();
+        dirty[index] = true;
+      }
     for (BoundaryFact &result : info.results)
-      if (result.isUninitialized())
+      if (result.isUninitialized()) {
+        initializedBoundary = true;
         result = getUnknownFact();
+        for (unsigned caller : info.callers)
+          dirty[caller] = true;
+      }
+  }
+  if (initializedBoundary) {
+    // Facts derived while a recursive or unreachable boundary was bottom may
+    // themselves be over-specialized. Re-run the interprocedural fixed point
+    // from functions that consume an initialized argument or result; ordinary
+    // caller/callee propagation expands this dependency closure as needed.
+    if (failed(runBoundaryFixedPoint()))
+      return signalPassFailure();
   }
 
   // Resolved nets are ordinary scheduler state, so most reads are not SCCP
@@ -598,9 +615,9 @@ void ObeliskSimSCCPPass::runOnOperation() {
         std::optional<uint64_t> width = sim::getProvenanceSpan(net.getType());
         if (!width)
           continue;
-        bool visible = net.getObservability() &&
-                       *net.getObservability() !=
-                           sim::ComputeObservabilityKind::Invisible;
+        bool visible =
+            net.getObservability() &&
+            *net.getObservability() != sim::ComputeObservabilityKind::Invisible;
         nets[net.getId()] = {net.getType(), *width, visible};
         connections[net.getId()];
         continue;
@@ -618,8 +635,9 @@ void ObeliskSimSCCPPass::runOnOperation() {
                 ? driver.getDrivenWidthAttr().getValue().getZExtValue()
                 : width.value_or(0);
         hasFullDriver[driver.getNetId()] =
-            net != nets.end() && width && driver.getType() == net->second.type &&
-            low == 0 && drivenWidth == net->second.width;
+            net != nets.end() && width &&
+            driver.getType() == net->second.type && low == 0 &&
+            drivenWidth == net->second.width;
       }
     }
     for (sim::SimNetConnectDeclOp connection :
@@ -641,7 +659,8 @@ void ObeliskSimSCCPPass::runOnOperation() {
       }
     }
     design.walk([&](Operation *operation) {
-      hasOverride |= isa<sim::SimOverrideOp, sim::SimReleaseOverrideOp>(operation);
+      hasOverride |=
+          isa<sim::SimOverrideOp, sim::SimReleaseOverrideOp>(operation);
     });
 
     DenseMap<uint64_t, SmallVector<uint64_t>> components;
@@ -705,8 +724,8 @@ void ObeliskSimSCCPPass::runOnOperation() {
           if (representative == representatives.end())
             continue;
           observedComponents.insert(representative->second);
-          auto [fact, inserted] = componentFacts.try_emplace(
-              representative->second, drive.value);
+          auto [fact, inserted] =
+              componentFacts.try_emplace(representative->second, drive.value);
           if (!inserted)
             mergeFact(fact->second, drive.value);
         }
@@ -717,12 +736,14 @@ void ObeliskSimSCCPPass::runOnOperation() {
         auto fact = componentFacts.find(representative);
         if (fact == componentFacts.end() ||
             !observedComponents.contains(representative) ||
-            fact->second.isUninitialized() ||
-            !fact->second.getConstantValue())
+            fact->second.isUninitialized() || !fact->second.getConstantValue())
           continue;
         for (uint64_t member : members)
           changed |= netFacts.try_emplace(member, fact->second).second;
       }
+      for (unsigned index : deterministicOrder)
+        if (observations[index])
+          finalSolvers[index] = std::move(observations[index]->solver);
       if (!changed)
         break;
     }
@@ -730,7 +751,15 @@ void ObeliskSimSCCPPass::runOnOperation() {
 
   if (failed(failableParallelForEach(
           design.getContext(), deterministicOrder, [&](unsigned index) {
-            return solveAndRewriteFunction(functions, index, netFacts);
+            if (functions[index].function.isExternal())
+              return success();
+            if (!finalSolvers[index]) {
+              functions[index].function.emitError(
+                  "SCCP final solver state is missing");
+              return failure();
+            }
+            rewriteFunction(*finalSolvers[index], functions[index].function);
+            return success();
           })))
     signalPassFailure();
 }

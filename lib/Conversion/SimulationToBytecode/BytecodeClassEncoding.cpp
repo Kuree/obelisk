@@ -19,6 +19,23 @@ LogicalResult Encoder::prepareClassLayouts() {
        layouts->classes) {
     sim::SimClassDeclOp declaration = layout.declaration;
     classIDs[declaration.getSymName()] = declaration.getId();
+    for (const analysis::ManagedClassLayoutAnalysis::Field &field :
+         layout.fields) {
+      sim::SimClassFieldDeclOp fieldDeclaration = field.declaration;
+      classFieldOffsets[fieldDeclaration.getSymName()] = field.offset;
+    }
+  }
+  for (sim::SimClassMethodDeclOp method :
+       design.getBody().front().getOps<sim::SimClassMethodDeclOp>()) {
+    auto owner = classIDs.find(method.getOwner());
+    sim::SimClassDeclOp ownerDeclaration =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+            method, method.getOwnerAttr());
+    if (owner == classIDs.end() || !ownerDeclaration)
+      return method.emitOpError("managed method owner is missing");
+    classMethodDispatch[method.getSymName()] = {
+        owner->second, method.getInterfaceOrdinal().value_or(UINT64_MAX),
+        ownerDeclaration.getIsInterface()};
   }
   return success();
 }
@@ -83,14 +100,10 @@ Encoder::encodeClassOperation(FunctionPlan &plan, Operation *operation) {
                                   {reg(plan, op.getResult())});
   }
   if (auto op = dyn_cast<sim::SimClassFieldRefOp>(operation)) {
-    auto field = SymbolTable::lookupNearestSymbolFrom<sim::SimClassFieldDeclOp>(
-        op, op.getFieldAttr());
-    auto offset =
-        field ? field->getAttrOfType<IntegerAttr>("offset") : IntegerAttr{};
-    if (!field || !offset)
+    auto offset = classFieldOffsets.find(op.getField());
+    if (offset == classFieldOffsets.end())
       return op.emitOpError("managed field has no bytecode layout");
-    uint32_t offsetRegister =
-        emitU64Constant(plan, offset.getValue().getZExtValue());
+    uint32_t offsetRegister = emitU64Constant(plan, offset->second);
     return emitIntrinsicRegisters(plan, kIntrinsicClassFieldRef,
                                   {reg(plan, op.getObject()), offsetRegister},
                                   {reg(plan, op.getResult())});
@@ -141,27 +154,21 @@ LogicalResult Encoder::encodeClassVirtualCall(FunctionPlan &plan,
     return call.emitOpError("virtual call exceeds the bytecode ABI");
   Opcode opcode = VirtualCall;
   uint32_t dispatch = static_cast<uint32_t>(call.getSlot());
-  auto method =
-      SymbolTable::lookupNearestSymbolFrom<sim::SimClassMethodDeclOp>(
-          call, call.getMethodAttr());
-  auto owner =
-      method ? SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-                   method, method.getOwnerAttr())
-             : sim::SimClassDeclOp{};
-  if (!method || !owner)
+  auto method = classMethodDispatch.find(call.getMethod());
+  if (method == classMethodDispatch.end())
     return call.emitOpError("virtual method descriptor is missing");
-  if (owner.getIsInterface()) {
-    if (!method.getInterfaceOrdinalAttr())
+  if (method->second.isInterface) {
+    if (method->second.interfaceOrdinal == UINT64_MAX)
       return call.emitOpError("interface method has no dispatch ordinal");
-    if (owner.getId() > UINT32_MAX ||
-        *method.getInterfaceOrdinal() > UINT32_MAX ||
+    if (method->second.ownerID > UINT32_MAX ||
+        method->second.interfaceOrdinal > UINT32_MAX ||
         operandMaps.size() >= UINT32_MAX)
       return call.emitOpError("interface dispatch exceeds the bytecode ABI");
     opcode = InterfaceCall;
     dispatch = static_cast<uint32_t>(operandMaps.size());
     operandMaps.push_back(
-        {static_cast<uint32_t>(owner.getId()),
-         static_cast<uint32_t>(*method.getInterfaceOrdinal())});
+        {static_cast<uint32_t>(method->second.ownerID),
+         static_cast<uint32_t>(method->second.interfaceOrdinal)});
   }
   SmallVector<Value> arguments{plan.function.getBody().front().getArgument(0),
                                call.getReceiver()};
@@ -212,27 +219,21 @@ Encoder::encodeClassVirtualTaskCall(FunctionPlan &plan,
     return call.emitOpError("virtual task call exceeds the bytecode ABI");
   Opcode opcode = VirtualTaskCall;
   uint32_t dispatch = static_cast<uint32_t>(call.getSlot());
-  auto method =
-      SymbolTable::lookupNearestSymbolFrom<sim::SimClassMethodDeclOp>(
-          call, call.getMethodAttr());
-  auto owner =
-      method ? SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-                   method, method.getOwnerAttr())
-             : sim::SimClassDeclOp{};
-  if (!method || !owner)
+  auto method = classMethodDispatch.find(call.getMethod());
+  if (method == classMethodDispatch.end())
     return call.emitOpError("virtual task descriptor is missing");
-  if (owner.getIsInterface()) {
-    if (!method.getInterfaceOrdinalAttr())
+  if (method->second.isInterface) {
+    if (method->second.interfaceOrdinal == UINT64_MAX)
       return call.emitOpError("interface task has no dispatch ordinal");
-    if (owner.getId() > UINT32_MAX ||
-        *method.getInterfaceOrdinal() > UINT32_MAX ||
+    if (method->second.ownerID > UINT32_MAX ||
+        method->second.interfaceOrdinal > UINT32_MAX ||
         operandMaps.size() >= UINT32_MAX)
       return call.emitOpError("interface dispatch exceeds the bytecode ABI");
     opcode = InterfaceTaskCall;
     dispatch = static_cast<uint32_t>(operandMaps.size());
     operandMaps.push_back(
-        {static_cast<uint32_t>(owner.getId()),
-         static_cast<uint32_t>(*method.getInterfaceOrdinal())});
+        {static_cast<uint32_t>(method->second.ownerID),
+         static_cast<uint32_t>(method->second.interfaceOrdinal)});
   }
   SmallVector<Value> arguments{plan.function.getBody().front().getArgument(0),
                                call.getReceiver()};

@@ -164,6 +164,7 @@ CaptureRecord captureAt(const Image &image, uint64_t index);
 ConnectivityRecord connectivityAt(const Image &image, uint64_t index);
 std::pair<uint32_t, uint32_t> operandAt(const Image &image, uint64_t index);
 bool compatible(const Layout &left, const Layout &right);
+bool bitcastCompatible(const Layout &left, const Layout &right);
 bool validRegister(const Function &function, uint32_t index);
 bool validMap(const Image &image, const Function &source,
               const Function &destination, uint64_t first, uint64_t count);

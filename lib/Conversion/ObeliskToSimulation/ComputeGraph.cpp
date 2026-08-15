@@ -599,12 +599,19 @@ ProgramAnalysis analyzeProgram(sim::SimDesignOp design) {
   }
 
   SmallVector<SmallVector<unsigned>> callsFrom(analysis.functions.size());
-  for (unsigned caller = 0; caller != analysis.functions.size(); ++caller)
+  for (unsigned caller = 0; caller != analysis.functions.size(); ++caller) {
     for (sim::SimCallOp call : analysis.functions[caller].calls) {
       auto callee = analysis.functionIndex.find(call.getCallee());
       if (callee != analysis.functionIndex.end())
         callsFrom[caller].push_back(callee->second);
     }
+    for (sim::SimObserverBindOp binding :
+         analysis.functions[caller].observerBindings) {
+      auto evaluator = analysis.functionIndex.find(binding.getEvaluator());
+      if (evaluator != analysis.functionIndex.end())
+        callsFrom[caller].push_back(evaluator->second);
+    }
+  }
 
   SmallVector<unsigned> callNodes;
   DenseMap<unsigned, SmallVector<unsigned>> callAdjacency;
@@ -624,69 +631,123 @@ ProgramAnalysis analyzeProgram(sim::SimDesignOp design) {
     for (unsigned member : members)
       callComponent[member] = static_cast<int>(component);
 
-  // Publish a deterministic monotone fixed point. Calls within a recursive
-  // component and unresolved external calls conservatively touch all state.
-  // Spawn sets propagate through every call because they are finite symbol
-  // sets, so recursion needs no extra conservatism there.
+  // Publish summaries in callee-before-caller order over the SCC condensation
+  // graph. The old whole-program fixed point revisited and re-sorted every
+  // function for every level of a long call chain, which made class-heavy UVM
+  // designs quadratic. Only a genuinely recursive component needs iteration.
+  // Calls within such a component and unresolved external calls
+  // conservatively touch all state. Spawn sets remain an exact finite-symbol
+  // fixed point inside the component.
+  SmallVector<SmallVector<unsigned>> directSpawns(analysis.functions.size());
   for (unsigned index = 0; index != analysis.functions.size(); ++index)
     analysis.functions[index].function.walk([&](sim::SimSpawnOp spawn) {
       auto callee = analysis.functionIndex.find(spawn.getCallee());
       if (callee != analysis.functionIndex.end())
-        analysis.functions[index].spawns.push_back(callee->second);
+        directSpawns[index].push_back(callee->second);
     });
-  while (true) {
-    bool changed = false;
-    for (unsigned caller = 0; caller != analysis.functions.size(); ++caller) {
-      FunctionInfo &info = analysis.functions[caller];
-      SmallVector<ComputeEffect> nextEffects = info.baseEffects;
-      SmallVector<unsigned> nextSpawns = info.spawns;
-      for (sim::SimCallOp call : info.calls) {
-        auto callee = analysis.functionIndex.find(call.getCallee());
-        if (callee == analysis.functionIndex.end() ||
-            callComponent[callee->second] == callComponent[caller]) {
-          nextEffects.push_back({sim::ComputeEffectKind::Read});
-          nextEffects.push_back({sim::ComputeEffectKind::Write});
-          if (callee == analysis.functionIndex.end())
-            continue;
-        } else {
-          for (const ComputeEffect &effect :
-               analysis.functions[callee->second].summary)
-            nextEffects.push_back(substituteEffect(effect, call, info));
-        }
-        llvm::append_range(nextSpawns,
-                           analysis.functions[callee->second].spawns);
-      }
-      for (sim::SimObserverBindOp binding : info.observerBindings) {
-        auto evaluator = analysis.functionIndex.find(binding.getEvaluator());
-        if (evaluator == analysis.functionIndex.end()) {
-          nextEffects.push_back({sim::ComputeEffectKind::Read});
-          nextEffects.push_back({sim::ComputeEffectKind::Write});
-          continue;
-        }
-        for (const ComputeEffect &effect :
-             analysis.functions[evaluator->second].summary)
-          nextEffects.push_back(
-              substituteObserverEffect(effect, binding, info));
-        llvm::append_range(nextSpawns,
-                           analysis.functions[evaluator->second].spawns);
-      }
-      analysis.expandConnectivity(nextEffects);
-      normalizeEffects(nextEffects);
-      llvm::sort(nextSpawns);
-      nextSpawns.erase(std::unique(nextSpawns.begin(), nextSpawns.end()),
-                       nextSpawns.end());
-      if (nextEffects != info.summary) {
-        info.summary = std::move(nextEffects);
-        changed = true;
-      }
-      if (nextSpawns != info.spawns) {
-        info.spawns = std::move(nextSpawns);
-        changed = true;
-      }
+
+  SmallVector<SmallVector<unsigned>> componentDependencies(
+      callComponents.size());
+  SmallVector<SmallVector<unsigned>> componentCallers(callComponents.size());
+  for (unsigned caller = 0; caller != analysis.functions.size(); ++caller) {
+    unsigned callerComponent = callComponent[caller];
+    for (unsigned callee : callsFrom[caller]) {
+      unsigned calleeComponent = callComponent[callee];
+      if (callerComponent != calleeComponent)
+        componentDependencies[callerComponent].push_back(calleeComponent);
     }
-    if (!changed)
-      break;
   }
+  for (SmallVector<unsigned> &dependencies : componentDependencies) {
+    llvm::sort(dependencies);
+    dependencies.erase(std::unique(dependencies.begin(), dependencies.end()),
+                       dependencies.end());
+  }
+  for (auto [caller, dependencies] : llvm::enumerate(componentDependencies))
+    for (unsigned callee : dependencies)
+      componentCallers[callee].push_back(static_cast<unsigned>(caller));
+
+  SmallVector<unsigned> pendingDependencies;
+  pendingDependencies.reserve(callComponents.size());
+  std::priority_queue<unsigned, SmallVector<unsigned>, std::greater<unsigned>>
+      ready;
+  for (auto [component, dependencies] :
+       llvm::enumerate(componentDependencies)) {
+    pendingDependencies.push_back(static_cast<unsigned>(dependencies.size()));
+    if (dependencies.empty())
+      ready.push(static_cast<unsigned>(component));
+  }
+
+  unsigned processedComponents = 0;
+  while (!ready.empty()) {
+    unsigned component = ready.top();
+    ready.pop();
+    ++processedComponents;
+
+    bool hasInternalDependency = callComponents[component].size() > 1;
+    if (!hasInternalDependency) {
+      unsigned function = callComponents[component].front();
+      hasInternalDependency = llvm::is_contained(callsFrom[function], function);
+    }
+
+    bool changed;
+    do {
+      changed = false;
+      for (unsigned caller : callComponents[component]) {
+        FunctionInfo &info = analysis.functions[caller];
+        SmallVector<ComputeEffect> nextEffects = info.baseEffects;
+        SmallVector<unsigned> nextSpawns = directSpawns[caller];
+        for (sim::SimCallOp call : info.calls) {
+          auto callee = analysis.functionIndex.find(call.getCallee());
+          if (callee == analysis.functionIndex.end() ||
+              callComponent[callee->second] == callComponent[caller]) {
+            nextEffects.push_back({sim::ComputeEffectKind::Read});
+            nextEffects.push_back({sim::ComputeEffectKind::Write});
+            if (callee == analysis.functionIndex.end())
+              continue;
+          } else {
+            for (const ComputeEffect &effect :
+                 analysis.functions[callee->second].summary)
+              nextEffects.push_back(substituteEffect(effect, call, info));
+          }
+          llvm::append_range(nextSpawns,
+                             analysis.functions[callee->second].spawns);
+        }
+        for (sim::SimObserverBindOp binding : info.observerBindings) {
+          auto evaluator = analysis.functionIndex.find(binding.getEvaluator());
+          if (evaluator == analysis.functionIndex.end()) {
+            nextEffects.push_back({sim::ComputeEffectKind::Read});
+            nextEffects.push_back({sim::ComputeEffectKind::Write});
+            continue;
+          }
+          for (const ComputeEffect &effect :
+               analysis.functions[evaluator->second].summary)
+            nextEffects.push_back(
+                substituteObserverEffect(effect, binding, info));
+          llvm::append_range(nextSpawns,
+                             analysis.functions[evaluator->second].spawns);
+        }
+        analysis.expandConnectivity(nextEffects);
+        normalizeEffects(nextEffects);
+        llvm::sort(nextSpawns);
+        nextSpawns.erase(std::unique(nextSpawns.begin(), nextSpawns.end()),
+                         nextSpawns.end());
+        if (nextEffects != info.summary) {
+          info.summary = std::move(nextEffects);
+          changed = true;
+        }
+        if (nextSpawns != info.spawns) {
+          info.spawns = std::move(nextSpawns);
+          changed = true;
+        }
+      }
+    } while (hasInternalDependency && changed);
+
+    for (unsigned caller : componentCallers[component])
+      if (--pendingDependencies[caller] == 0)
+        ready.push(caller);
+  }
+  assert(processedComponents == callComponents.size() &&
+         "SCC condensation graph must be acyclic");
   return analysis;
 }
 
@@ -1185,6 +1246,9 @@ void ComputeGraphBuilder::buildControlEdges() {
   auto fragmentID = [&](Block *block) {
     return fragmentForBlock.lookup(skipObserverCaptureBridges(block));
   };
+  using DispatchKey = std::pair<uint64_t, uint64_t>;
+  DenseMap<Operation *, DenseMap<DispatchKey, SmallVector<unsigned>>>
+      compatibleTaskImplementations;
   for (Fragment &fragment : fragments) {
     Operation *terminator = fragment.block->getTerminator();
     auto addTaskEdges = [&](unsigned callee, Block *continuationBlock) {
@@ -1207,18 +1271,28 @@ void ComputeGraphBuilder::buildControlEdges() {
                    dyn_cast<sim::SimClassVirtualTaskCallOp>(terminator)) {
       auto staticType =
           cast<sim::ClassHandleType>(taskCall.getReceiver().getType());
-      DenseSet<unsigned> callees;
-      for (sim::SimClassMethodDeclOp method :
-           analysis.classDispatch.compatibleImplementations(
-               analysis.classDispatch.lookup(staticType), taskCall.getSlot(),
-               taskCall.getSignatureId(), /*isTask=*/true)) {
-        auto callee = analysis.functionIndex.find(*method.getImplementation());
-        if (callee != analysis.functionIndex.end())
-          callees.insert(callee->second);
+      sim::SimClassDeclOp staticClass =
+          analysis.classDispatch.lookup(staticType);
+      auto key = std::make_pair(taskCall.getSlot(), taskCall.getSignatureId());
+      auto &byDispatch =
+          compatibleTaskImplementations[staticClass.getOperation()];
+      auto implementations = byDispatch.find(key);
+      if (implementations == byDispatch.end()) {
+        DenseSet<unsigned> unique;
+        for (sim::SimClassMethodDeclOp method :
+             analysis.classDispatch.compatibleImplementations(
+                 staticClass, taskCall.getSlot(), taskCall.getSignatureId(),
+                 /*isTask=*/true)) {
+          auto callee =
+              analysis.functionIndex.find(*method.getImplementation());
+          if (callee != analysis.functionIndex.end())
+            unique.insert(callee->second);
+        }
+        SmallVector<unsigned> ordered(unique.begin(), unique.end());
+        llvm::sort(ordered);
+        implementations = byDispatch.try_emplace(key, std::move(ordered)).first;
       }
-      SmallVector<unsigned> ordered(callees.begin(), callees.end());
-      llvm::sort(ordered);
-      for (unsigned callee : ordered)
+      for (unsigned callee : implementations->second)
         addTaskEdges(callee, taskCall.getContinuation());
     } else {
       sim::ComputeEdgeKind controlKind =
@@ -1317,20 +1391,54 @@ void ComputeGraphBuilder::buildDataEdges() {
       if (effect.kind != sim::ComputeEffectKind::Watch &&
           effect.kind != sim::ComputeEffectKind::NBA)
         activeEffects.add(fragment, effect);
-  DenseMap<uint32_t, SmallVector<uint32_t>> processSuccessors;
+  SmallVector<sim::ComputeEdgeAttr> processEdges;
   for (sim::ComputeEdgeAttr edge : edges)
     if (edge.getKind() == sim::ComputeEdgeKind::ProcessOrder)
-      processSuccessors[edge.getSource()].push_back(edge.getTarget());
-  SmallVector<DenseSet<uint32_t>> processReachability(fragments.size());
-  for (Fragment &origin : fragments) {
-    SmallVector<uint32_t> pending{origin.id};
-    while (!pending.empty()) {
-      uint32_t source = pending.pop_back_val();
-      for (uint32_t target : processSuccessors[source])
-        if (processReachability[origin.id].insert(target).second)
-          pending.push_back(target);
+      processEdges.push_back(edge);
+  SmallVector<uint32_t> fragmentIds;
+  fragmentIds.reserve(fragments.size());
+  for (Fragment &fragment : fragments)
+    fragmentIds.push_back(fragment.id);
+  SmallVector<SmallVector<uint32_t>> controlGroups =
+      computeSCCSchedule(fragmentIds, processEdges, [&](uint32_t id) {
+        return isSettlingEntryKind(fragments[id].function.getEntryKind()) ? 0u
+                                                                          : 1u;
+      });
+  SmallVector<unsigned> controlGroupForFragment(fragments.size());
+  for (auto [group, members] : llvm::enumerate(controlGroups))
+    for (uint32_t member : members)
+      controlGroupForFragment[member] = static_cast<unsigned>(group);
+
+  // Conflict edges only need to impose an order, not encode the complete
+  // pairwise relation. Union control components connected by a conflict, then
+  // chain each resulting set in the deterministic process-topological order
+  // above. Every original conflict is ordered transitively, existing process
+  // order cannot be reversed, and disconnected sets remain independent for
+  // multi-worker scheduling.
+  SmallVector<unsigned> conflictParent(controlGroups.size());
+  SmallVector<bool> participatesInConflict(controlGroups.size(), false);
+  for (unsigned group = 0; group != conflictParent.size(); ++group)
+    conflictParent[group] = group;
+  auto findConflictRoot = [&](unsigned group) {
+    unsigned root = group;
+    while (conflictParent[root] != root)
+      root = conflictParent[root];
+    while (conflictParent[group] != group) {
+      unsigned parent = conflictParent[group];
+      conflictParent[group] = root;
+      group = parent;
     }
-  }
+    return root;
+  };
+  auto uniteConflicts = [&](unsigned lhs, unsigned rhs) {
+    lhs = findConflictRoot(lhs);
+    rhs = findConflictRoot(rhs);
+    if (lhs == rhs)
+      return;
+    if (rhs < lhs)
+      std::swap(lhs, rhs);
+    conflictParent[rhs] = lhs;
+  };
   for (unsigned lhs = 0; lhs != fragments.size(); ++lhs)
     for (const ComputeEffect &left : fragments[lhs].effects) {
       if (left.kind == sim::ComputeEffectKind::Watch ||
@@ -1339,22 +1447,32 @@ void ComputeGraphBuilder::buildDataEdges() {
       activeEffects.forEachAlias(left.target, [&](IndexedEffect right) {
         if (right.owner <= lhs ||
             fragments[right.owner].function == fragments[lhs].function ||
-            processReachability[fragments[lhs].id].contains(
-                fragments[right.owner].id) ||
-            processReachability[fragments[right.owner].id].contains(
-                fragments[lhs].id) ||
             !activeEffectsConflict(left, *right.effect))
           return;
-        uint32_t source = fragments[lhs].id;
-        uint32_t target = fragments[right.owner].id;
-        if (isSettlingEntryKind(
-                fragments[right.owner].function.getEntryKind()) &&
-            !isSettlingEntryKind(fragments[lhs].function.getEntryKind()))
-          std::swap(source, target);
-        addEdge(source, target, sim::ComputeEdgeKind::Conflict,
-                effectAttr(isActiveProducer(left) ? left : *right.effect));
+        unsigned leftGroup = controlGroupForFragment[lhs];
+        unsigned rightGroup = controlGroupForFragment[right.owner];
+        if (leftGroup == rightGroup)
+          return;
+        participatesInConflict[leftGroup] = true;
+        participatesInConflict[rightGroup] = true;
+        uniteConflicts(leftGroup, rightGroup);
       });
     }
+  llvm::MapVector<unsigned, SmallVector<unsigned>> conflictSets;
+  for (unsigned group = 0; group != controlGroups.size(); ++group)
+    if (participatesInConflict[group])
+      conflictSets[findConflictRoot(group)].push_back(group);
+  ComputeEffect mergedConflict{sim::ComputeEffectKind::Write};
+  for (auto &[root, groups] : conflictSets) {
+    (void)root;
+    for (auto pair : llvm::zip(groups, llvm::drop_begin(groups))) {
+      unsigned sourceGroup = std::get<0>(pair);
+      unsigned targetGroup = std::get<1>(pair);
+      addEdge(controlGroups[sourceGroup].front(),
+              controlGroups[targetGroup].front(),
+              sim::ComputeEdgeKind::Conflict, effectAttr(mergedConflict));
+    }
+  }
 
   // Staged updates reach their consumers through a commit node instead of
   // activating them in the active region.
@@ -1408,6 +1526,9 @@ LogicalResult ComputeGraphBuilder::buildSites(ComputeGraphResult &result) {
     auto walkResult =
         info.getFunction().walk([&](Operation *operation) -> WalkResult {
           if (isSuspensionTerminator(operation)) {
+            if (info.getFunction().getEntryKind() == sim::EntryKind::Function &&
+                isa<sim::SimProcessControlOp>(operation))
+              return WalkResult::advance();
             Block *continuation =
                 skipObserverCaptureBridges(operation->getSuccessor(0));
             auto found = fragmentForBlock.find(continuation);
@@ -1873,7 +1994,8 @@ FailureOr<ComputeGraphResult> deriveComputeGraph(sim::SimDesignOp design,
       StateDomainAnalysis::compute(design, /*proveInductiveRoots=*/true);
   if (failed(stateDomains))
     return failure();
-  return ComputeGraphBuilder(design, options, *stateDomains).derive();
+  ComputeGraphBuilder builder(design, options, *stateDomains);
+  return builder.derive();
 }
 
 } // namespace obelisk::simlowering

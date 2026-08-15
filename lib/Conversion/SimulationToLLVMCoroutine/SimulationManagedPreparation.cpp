@@ -97,10 +97,9 @@ LogicalResult collectManagedTraceSlots(
     if (!slot.conditional && !kind)
       return failure();
     slots.push_back(
-        {absolute / 8,
-         slot.conditional
-             ? OBELISK_RT_MANAGED_SLOT_CANDIDATE | slot.kindMask
-             : *kind});
+        {absolute / 8, slot.conditional
+                           ? OBELISK_RT_MANAGED_SLOT_CANDIDATE | slot.kindMask
+                           : *kind});
   }
   return success();
 }
@@ -137,13 +136,54 @@ prepareManagedClassInventory(ModuleOp module,
       sim::SimClassFieldDeclOp declaration = field.declaration;
       fieldOffsets[declaration.getSymName()] = field.offset;
     }
-  for (const analysis::ManagedClassLayoutAnalysis::Class &shared :
-       analyzed->classes) {
+
+  // ManagedClassLayout inherits the complete trace and vtable inventories of
+  // its base. The shared layout analysis is deterministic but does not promise
+  // declaration order, so establish the dependency order explicitly instead
+  // of default-constructing an empty base entry when a derived class appears
+  // first (as happens in the UVM factory hierarchy).
+  using SharedClass = analysis::ManagedClassLayoutAnalysis::Class;
+  llvm::StringMap<SharedClass *> sharedByName;
+  for (SharedClass &shared : analyzed->classes)
+    sharedByName[shared.declaration.getSymName()] = &shared;
+  SmallVector<SharedClass *> orderedClasses;
+  llvm::SmallPtrSet<Operation *, 32> ordered;
+  llvm::SmallPtrSet<Operation *, 32> ordering;
+  std::function<LogicalResult(SharedClass &)> orderClass =
+      [&](SharedClass &shared) -> LogicalResult {
+    Operation *operation = shared.declaration.getOperation();
+    if (ordered.contains(operation))
+      return success();
+    if (!ordering.insert(operation).second)
+      return shared.declaration.emitError(
+          "managed class inheritance contains a cycle");
+    if (auto base = shared.declaration.getBase()) {
+      auto found = sharedByName.find(*base);
+      if (found == sharedByName.end())
+        return shared.declaration.emitError(
+            "managed base layout analysis is missing");
+      if (failed(orderClass(*found->second)))
+        return failure();
+    }
+    ordering.erase(operation);
+    ordered.insert(operation);
+    orderedClasses.push_back(&shared);
+    return success();
+  };
+  for (SharedClass &shared : analyzed->classes)
+    if (failed(orderClass(shared)))
+      return failure();
+
+  for (SharedClass *sharedPtr : orderedClasses) {
+    SharedClass &shared = *sharedPtr;
     sim::SimClassDeclOp declaration = shared.declaration;
     ManagedClassLayout layout;
     layout.declaration = declaration;
     if (auto baseName = declaration.getBase()) {
-      const ManagedClassLayout &baseLayout = layouts[*baseName];
+      auto base = layouts.find(*baseName);
+      if (base == layouts.end())
+        return declaration.emitError("managed base layout is missing");
+      const ManagedClassLayout &baseLayout = base->second;
       layout.tracedFields = baseLayout.tracedFields;
       layout.methods = baseLayout.methods;
     }
@@ -153,9 +193,9 @@ prepareManagedClassInventory(ModuleOp module,
       layout.tracedFields.push_back(
           {*shared.weakReferentOffset, true, OBELISK_RT_MANAGED_SLOT_CLASS});
 
-    auto getModeOffset = [&](sim::SimClassFieldDeclOp field,
-                             IntegerAttr modeIndex)
-        -> FailureOr<std::pair<uint64_t, uint64_t>> {
+    auto getModeOffset =
+        [&](sim::SimClassFieldDeclOp field,
+            IntegerAttr modeIndex) -> FailureOr<std::pair<uint64_t, uint64_t>> {
       if (!modeIndex || modeIndex.getValue().isNegative() ||
           modeIndex.getValue().getActiveBits() > 6) {
         field.emitError(
@@ -212,8 +252,8 @@ prepareManagedClassInventory(ModuleOp module,
         FailureOr<std::pair<uint64_t, uint64_t>> mode =
             getModeOffset(field, modeIndex);
         std::optional<unsigned> width = sim::getPackedWidth(field.getType());
-        auto signedness = field->getAttrOfType<BoolAttr>(
-            sim::metadata::randomVariableSigned);
+        auto signedness =
+            field->getAttrOfType<BoolAttr>(sim::metadata::randomVariableSigned);
         if (failed(mode))
           return failure();
         if (!width || !signedness)
@@ -234,8 +274,8 @@ prepareManagedClassInventory(ModuleOp module,
               sim::metadata::randomCycleKeyField);
           auto position = field->getAttrOfType<FlatSymbolRefAttr>(
               sim::metadata::randomCyclePositionField);
-          auto keyOffset = key ? fieldOffsets.find(key.getValue())
-                               : fieldOffsets.end();
+          auto keyOffset =
+              key ? fieldOffsets.find(key.getValue()) : fieldOffsets.end();
           auto positionOffset = position
                                     ? fieldOffsets.find(position.getValue())
                                     : fieldOffsets.end();
@@ -385,6 +425,18 @@ prepareManagedClassInventory(ModuleOp module,
   Type classType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i64, i64, i64, pointer, pointer, i64, pointer,
                 pointer, i64, pointer, i64, pointer});
+  auto executionFlags =
+      module->getAttrOfType<IntegerAttr>("obelisk.execution.flags");
+  bool bytecodeOnly =
+      executionFlags && (executionFlags.getValue().getZExtValue() &
+                         OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
+  llvm::StringMap<uint32_t> bytecodeFunctions;
+  module.walk([&](sim::SimFuncOp function) {
+    if (auto index =
+            function->getAttrOfType<IntegerAttr>("obelisk.bytecode.function"))
+      bytecodeFunctions[function.getSymName()] =
+          static_cast<uint32_t>(index.getValue().getZExtValue());
+  });
 
   // Base descriptors must exist before derived initializers take their
   // addresses. Repeatedly materialize classes whose base is ready.
@@ -402,8 +454,7 @@ prepareManagedClassInventory(ModuleOp module,
       std::string entriesName = prefix + ".__obelisk_trace_entries";
       std::string traceName = prefix + ".__obelisk_trace_layout";
       std::string randomEdgesName = prefix + ".__obelisk_random_edges";
-      std::string randomVariablesName =
-          prefix + ".__obelisk_random_variables";
+      std::string randomVariablesName = prefix + ".__obelisk_random_variables";
       std::string randomLayoutName = prefix + ".__obelisk_random_layout";
       std::string methodsName = prefix + ".__obelisk_methods";
       std::string interfacesName = prefix + ".__obelisk_interfaces";
@@ -506,36 +557,30 @@ prepareManagedClassInventory(ModuleOp module,
                   LLVM::ZeroOp::create(builder, location, randomVariablesType);
               for (auto [index, variable] :
                    llvm::enumerate(layout.randomVariables)) {
-                Value record = LLVM::ZeroOp::create(builder, location,
-                                                    randomVariableType);
+                Value record =
+                    LLVM::ZeroOp::create(builder, location, randomVariableType);
                 record = insertValue(
                     builder, location, record,
-                    llvmConstant(builder, location, i64,
-                                 variable.valueOffset),
+                    llvmConstant(builder, location, i64, variable.valueOffset),
                     0);
                 record = insertValue(
                     builder, location, record,
-                    llvmConstant(builder, location, i64,
-                                 variable.modeOffset),
+                    llvmConstant(builder, location, i64, variable.modeOffset),
                     1);
                 record = insertValue(
                     builder, location, record,
-                    llvmConstant(builder, location, i64, variable.modeMask),
-                    2);
+                    llvmConstant(builder, location, i64, variable.modeMask), 2);
+                record = insertValue(builder, location, record,
+                                     llvmConstant(builder, location, i64,
+                                                  variable.randcKeyOffset),
+                                     3);
+                record = insertValue(builder, location, record,
+                                     llvmConstant(builder, location, i64,
+                                                  variable.randcPositionOffset),
+                                     4);
                 record = insertValue(
                     builder, location, record,
-                    llvmConstant(builder, location, i64,
-                                 variable.randcKeyOffset),
-                    3);
-                record = insertValue(
-                    builder, location, record,
-                    llvmConstant(builder, location, i64,
-                                 variable.randcPositionOffset),
-                    4);
-                record = insertValue(
-                    builder, location, record,
-                    llvmConstant(builder, location, i32, variable.bitWidth),
-                    5);
+                    llvmConstant(builder, location, i32, variable.bitWidth), 5);
                 record = insertValue(
                     builder, location, record,
                     llvmConstant(builder, location, i32, variable.flags), 6);
@@ -570,11 +615,10 @@ prepareManagedClassInventory(ModuleOp module,
                     LLVM::AddressOfOp::create(builder, location, pointer,
                                               randomVariablesName),
                     4);
-              random = insertValue(
-                  builder, location, random,
-                  llvmConstant(builder, location, i64,
-                               layout.randomVariables.size()),
-                  5);
+              random = insertValue(builder, location, random,
+                                   llvmConstant(builder, location, i64,
+                                                layout.randomVariables.size()),
+                                   5);
               return random;
             });
 
@@ -607,21 +651,17 @@ prepareManagedClassInventory(ModuleOp module,
                     llvmConstant(
                         builder, location, i32,
                         [&] {
-                          if (method.getImplementation()) {
-                            if (auto function =
-                                    SymbolTable::lookupNearestSymbolFrom<
-                                        sim::SimFuncOp>(
-                                        method, method.getImplementationAttr()))
-                              if (auto index =
-                                      function->getAttrOfType<IntegerAttr>(
-                                          "obelisk.bytecode.function"))
-                                return static_cast<uint32_t>(
-                                    index.getValue().getZExtValue());
+                          if (auto implementation =
+                                  method.getImplementation()) {
+                            auto found =
+                                bytecodeFunctions.find(*implementation);
+                            if (found != bytecodeFunctions.end())
+                              return found->second;
                           }
                           return uint32_t{OBELISK_RT_METHOD_NO_BYTECODE};
                         }()),
                     2);
-                if (!method.getIsPure())
+                if (!method.getIsPure() && !bytecodeOnly)
                   entry = insertValue(
                       builder, location, entry,
                       LLVM::AddressOfOp::create(
@@ -819,8 +859,16 @@ void expandManagedSelectsToCFG(ModuleOp module) {
 LogicalResult prepareManagedLowering(ModuleOp module,
                                      const llvm::DataLayout &dataLayout) {
   llvm::StringMap<ManagedClassLayout> layouts;
-  if (failed(prepareManagedClassInventory(module, dataLayout, layouts)) ||
-      failed(sim::normalizeClassDirectCalls(module)))
+  if (failed(prepareManagedClassInventory(module, dataLayout, layouts)))
+    return failure();
+  auto executionFlags =
+      module->getAttrOfType<IntegerAttr>("obelisk.execution.flags");
+  bool bytecodeOnly =
+      executionFlags && (executionFlags.getValue().getZExtValue() &
+                         OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
+  if (bytecodeOnly)
+    return success();
+  if (failed(sim::normalizeClassDirectCalls(module)))
     return failure();
   expandManagedSelectsToCFG(module);
   return success();

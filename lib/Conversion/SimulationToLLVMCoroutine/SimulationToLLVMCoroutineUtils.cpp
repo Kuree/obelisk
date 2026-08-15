@@ -265,19 +265,13 @@ LLVM::GlobalOp makeByteArrayGlobal(ModuleOp module, Location location,
   Type type = LLVM::LLVMArrayType::get(i8, bytes.size());
   OpBuilder builder(context);
   builder.setInsertionPointToStart(module.getBody());
-  auto global =
-      LLVM::GlobalOp::create(builder, location, type, true,
-                             LLVM::Linkage::Internal, name, Attribute{}, 1);
-  Block *block = new Block;
-  global.getInitializerRegion().push_back(block);
-  builder.setInsertionPointToStart(block);
-  Value value = LLVM::ZeroOp::create(builder, location, type);
-  for (auto [index, byte] : llvm::enumerate(bytes.bytes()))
-    value = LLVM::InsertValueOp::create(
-        builder, location, value, llvmConstant(builder, location, i8, byte),
-        ArrayRef<int64_t>{static_cast<int64_t>(index)});
-  LLVM::ReturnOp::create(builder, location, value);
-  return global;
+  // LLVM globals accept a StringAttr as the direct initializer for an i8
+  // array. Emitting one insertvalue per byte makes construction proportional
+  // to every character in every class debug name and creates IR which the
+  // translator immediately folds back into the same byte string.
+  return LLVM::GlobalOp::create(builder, location, type, true,
+                                LLVM::Linkage::Internal, name,
+                                builder.getStringAttr(bytes), 1);
 }
 
 LLVM::GlobalOp

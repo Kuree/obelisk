@@ -4,12 +4,13 @@
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
+#include "mlir/IR/Dominance.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Pass/Pass.h"
 
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallPtrSet.h"
 
 using namespace mlir;
 
@@ -22,6 +23,12 @@ namespace detail {
 
 LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
   if (function.getBody().empty())
+    return success();
+  // Zero-time callable and observer entries never leave their interpreter or
+  // native call frame. In particular, process.control transfers synchronously
+  // to its successor and deliberately has no canonical-frame operands.
+  if (function.getEntryKind() == sim::EntryKind::Function ||
+      function.getEntryKind() == sim::EntryKind::Observer)
     return success();
   Block *entry = &function.getBody().front();
 
@@ -91,55 +98,82 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
   }
 
   DenseMap<Block *, DenseMap<Value, BlockArgument>> threadedValues;
+  DenseMap<Value, Value> threadedRoots;
+  auto rootOf = [&](Value value) {
+    while (Value root = threadedRoots.lookup(value))
+      value = root;
+    return value;
+  };
   // Suspension lowering may already have made some values explicit successor
   // operands. Record those lanes before finding external uses so a value does
   // not acquire a second continuation argument when it is also live through a
   // later ordinary CFG edge.
-  for (Block &block : llvm::drop_begin(function.getBody())) {
-    for (auto [argumentIndex, argument] :
-         llvm::enumerate(block.getArguments())) {
-      Value incomingValue;
-      bool commonIncoming = true;
-      bool sawIncoming = false;
-      for (Block &predecessor : function.getBody()) {
-        auto branch = dyn_cast<BranchOpInterface>(predecessor.getTerminator());
-        if (!branch)
+  // Resolve these roots to a fixed point. A loop header can receive the
+  // original value on its entry edge and a restored continuation argument on
+  // its backedge; the restored argument itself may be declared later in the
+  // region. Both lanes still represent the same semantic value.
+  bool discoveredRoot;
+  do {
+    discoveredRoot = false;
+    for (Block &block : llvm::drop_begin(function.getBody())) {
+      for (auto [argumentIndex, argument] :
+           llvm::enumerate(block.getArguments())) {
+        if (threadedRoots.count(argument))
           continue;
-        for (auto [successorIndex, successor] :
-             llvm::enumerate(predecessor.getSuccessors())) {
-          if (successor != &block)
+        Value commonRoot;
+        bool commonIncoming = true;
+        bool sawIncoming = false;
+        for (Block &predecessor : function.getBody()) {
+          auto branch =
+              dyn_cast<BranchOpInterface>(predecessor.getTerminator());
+          if (!branch)
             continue;
-          SuccessorOperands operands =
-              branch.getSuccessorOperands(successorIndex);
-          if (argumentIndex >= operands.size() ||
-              operands.isOperandProduced(argumentIndex)) {
-            commonIncoming = false;
-            break;
+          for (auto [successorIndex, successor] :
+               llvm::enumerate(predecessor.getSuccessors())) {
+            if (successor != &block)
+              continue;
+            SuccessorOperands operands =
+                branch.getSuccessorOperands(successorIndex);
+            if (argumentIndex >= operands.size() ||
+                operands.isOperandProduced(argumentIndex)) {
+              commonIncoming = false;
+              break;
+            }
+            Value root = rootOf(operands[argumentIndex]);
+            // A loop-carried argument can feed itself on a backedge. That
+            // edge adds no root information; use the concrete entry or
+            // continuation edge to identify the semantic value instead.
+            if (root == argument)
+              continue;
+            if (!sawIncoming) {
+              commonRoot = root;
+              sawIncoming = true;
+            } else if (commonRoot != root) {
+              commonIncoming = false;
+              break;
+            }
           }
-          Value value = operands[argumentIndex];
-          if (!sawIncoming) {
-            incomingValue = value;
-            sawIncoming = true;
-          } else if (incomingValue != value) {
-            commonIncoming = false;
+          if (!commonIncoming)
             break;
-          }
         }
-        if (!commonIncoming)
-          break;
+        if (!sawIncoming || !commonIncoming)
+          continue;
+        threadedRoots.try_emplace(argument, commonRoot);
+        threadedValues[&block].try_emplace(commonRoot, argument);
+        discoveredRoot = true;
       }
-      if (sawIncoming && commonIncoming)
-        threadedValues[&block].try_emplace(incomingValue, argument);
     }
-  }
+  } while (discoveredRoot);
 
+  DominanceInfo dominance(function);
   bool changed;
   do {
     changed = false;
+    Operation *unresolvedUse = nullptr;
     for (Block &block : function.getBody()) {
       if (&block == entry)
         continue;
-      llvm::SetVector<Value> externalValues;
+      llvm::SetVector<Value> externalRoots;
       for (Operation &operation : block)
         for (Value value : operation.getOperands()) {
           if (value.getParentBlock() == &block)
@@ -147,33 +181,35 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
           if (auto argument = dyn_cast<BlockArgument>(value);
               argument && argument.getOwner() == entry)
             continue;
-          externalValues.insert(value);
+          externalRoots.insert(rootOf(value));
         }
-      for (Value value : externalValues) {
+      for (Value root : externalRoots) {
         auto &threaded = threadedValues[&block];
-        auto existing = threaded.find(value);
-        if (existing != threaded.end()) {
+        auto replaceExternalUses = [&](Value replacement) {
           for (Operation &operation : block)
-            for (OpOperand &operand : operation.getOpOperands())
-              if (operand.get() == value)
-                operand.set(existing->second);
+            for (OpOperand &operand : operation.getOpOperands()) {
+              Value value = operand.get();
+              if (value.getParentBlock() != &block && rootOf(value) == root)
+                operand.set(replacement);
+            }
+        };
+        auto existing = threaded.find(root);
+        if (existing != threaded.end()) {
+          replaceExternalUses(existing->second);
           continue;
         }
-        BlockArgument argument =
-            block.addArgument(value.getType(), value.getLoc());
-        threaded.insert({value, argument});
-        SmallVector<OpOperand *> uses;
-        for (Operation &operation : block)
-          for (OpOperand &operand : operation.getOpOperands())
-            if (operand.get() == value)
-              uses.push_back(&operand);
-        for (OpOperand *use : uses)
-          use->set(argument);
 
         // Block::getPredecessors() visits predecessor edges, so a cond_br with
         // both destinations equal yields the same block twice. Update every
         // successor edge during one visit to each predecessor; otherwise each
         // edge receives the threaded operand twice.
+        struct IncomingEdge {
+          BranchOpInterface branch;
+          unsigned successorIndex;
+          Value value;
+        };
+        SmallVector<IncomingEdge> incomingEdges;
+        bool unavailable = false;
         llvm::SmallPtrSet<Block *, 4> seenPredecessors;
         for (Block *predecessor : block.getPredecessors()) {
           if (!seenPredecessors.insert(predecessor).second)
@@ -184,21 +220,59 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
             return predecessor->getTerminator()->emitError(
                 "cannot thread suspension-live state through a non-branch "
                 "terminator");
+          Value incoming;
+          Block *incomingBlock = nullptr;
+          for (auto &[candidateBlock, candidates] : threadedValues) {
+            auto found = candidates.find(root);
+            if (found == candidates.end() ||
+                !dominance.dominates(candidateBlock, predecessor))
+              continue;
+            if (!incomingBlock ||
+                dominance.dominates(incomingBlock, candidateBlock)) {
+              incoming = found->second;
+              incomingBlock = candidateBlock;
+            }
+          }
+          if (!incoming &&
+              dominance.dominates(root, predecessor->getTerminator()))
+            incoming = root;
+          if (!incoming) {
+            unavailable = true;
+            break;
+          }
           bool found = false;
           for (auto [index, successor] :
                llvm::enumerate(predecessor->getSuccessors())) {
             if (successor != &block)
               continue;
-            branch.getSuccessorOperands(index).append(value);
+            incomingEdges.push_back(
+                {branch, static_cast<unsigned>(index), incoming});
             found = true;
           }
           if (!found)
             return predecessor->getTerminator()->emitError(
                 "predecessor is missing its CFG successor");
         }
+        if (unavailable || incomingEdges.empty()) {
+          if (!block.hasNoPredecessors())
+            unresolvedUse = &block.front();
+          continue;
+        }
+
+        BlockArgument argument =
+            block.addArgument(root.getType(), root.getLoc());
+        threaded.insert({root, argument});
+        threadedRoots.try_emplace(argument, root);
+        replaceExternalUses(argument);
+        for (IncomingEdge &incoming : incomingEdges)
+          incoming.branch.getSuccessorOperands(incoming.successorIndex)
+              .append(incoming.value);
         changed = true;
       }
     }
+    if (!changed && unresolvedUse)
+      return unresolvedUse->emitError(
+          "cannot reconstruct suspension-live state on every predecessor");
   } while (changed);
   return success();
 }

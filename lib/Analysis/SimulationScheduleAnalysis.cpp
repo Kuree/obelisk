@@ -4,6 +4,8 @@
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
+#include "llvm/ADT/StringMap.h"
+
 #include <limits>
 
 using namespace mlir;
@@ -49,17 +51,25 @@ SimulationScheduleAnalysis::compute(ModuleOp module) {
 FailureOr<SimulationScheduleAnalysis>
 SimulationScheduleAnalysis::compute(sim::SimDesignOp design) {
   SimulationScheduleAnalysis result;
+  llvm::StringMap<sim::SimFuncOp> functions;
+  llvm::DenseMap<Operation *, SmallVector<Block *>> graphBlocks;
   uint32_t fallback = 0;
-  design.walk([&](sim::SimFuncOp function) {
+  for (sim::SimFuncOp function : design.getBody().getOps<sim::SimFuncOp>()) {
+    functions[function.getSymName()] = function;
+    SmallVector<Block *> &blocks = graphBlocks[function.getOperation()];
+    blocks.reserve(function.getBody().getBlocks().size());
+    for (Block &block : function.getBody())
+      if (!isObserverCaptureBridge(block))
+        blocks.push_back(&block);
     if (function.getEntryKind() == sim::EntryKind::Function ||
         function.getEntryKind() == sim::EntryKind::Observer)
-      return;
+      continue;
     result.entryRanks[function.getOperation()] = fallback;
     for (Block &block : function.getBody())
       result.blockRanks[&block] = fallback;
     if (fallback != std::numeric_limits<uint32_t>::max())
       ++fallback;
-  });
+  }
 
   sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
   if (!graph)
@@ -81,14 +91,18 @@ SimulationScheduleAnalysis::compute(sim::SimDesignOp design) {
             nodes[static_cast<size_t>(member)]);
         if (!fragment)
           continue;
-        sim::SimFuncOp function = design.lookupSymbol<sim::SimFuncOp>(
-            fragment.getFunction().getValue());
+        sim::SimFuncOp function =
+            functions.lookup(fragment.getFunction().getValue());
         if (!function)
           continue;
-        Block *block = lookupComputeGraphBlock(function, fragment.getBlock());
-        if (!block)
+        auto blocksIt = graphBlocks.find(function.getOperation());
+        if (blocksIt == graphBlocks.end())
+          continue;
+        ArrayRef<Block *> blocks = blocksIt->second;
+        if (fragment.getBlock() >= blocks.size())
           return function.emitOpError(
               "compute-graph fragment block is out of range");
+        Block *block = blocks[fragment.getBlock()];
         result.blockRanks[block] = rank;
         if (fragment.getBlock() == 0)
           result.entryRanks[function.getOperation()] = rank;

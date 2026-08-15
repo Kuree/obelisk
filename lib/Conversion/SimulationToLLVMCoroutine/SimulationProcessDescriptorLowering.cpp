@@ -49,6 +49,14 @@ makeProcessDescriptor(ModuleOp module, Location location, StringRef baseName,
   constexpr StringLiteral executionName = "__obelisk_execution_descriptor_v1";
   bool hasExecution = module.lookupSymbol(executionName) != nullptr;
   bool hasDesignBytecode = module.lookupSymbol(designBytecodeName) != nullptr;
+  auto executionFlags =
+      module->getAttrOfType<IntegerAttr>("obelisk.execution.flags");
+  bool bytecodeOnly =
+      executionFlags && (executionFlags.getValue().getZExtValue() &
+                         OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
+  if (bytecodeOnly && !hasDesignBytecode)
+    return module.emitError(
+        "bytecode-only process descriptor has no encoded entry");
 
   makeConstantGlobal(
       module, location, fieldsType, fieldsName, LLVM::Linkage::Internal, 8,
@@ -141,31 +149,39 @@ makeProcessDescriptor(ModuleOp module, Location location, StringRef baseName,
         descriptor = insertValue(
             builder, location, descriptor,
             llvmConstant(builder, location, i32, OBELISK_RT_VERSION), 1);
+        uint32_t availableTiers =
+            bytecodeOnly
+                ? OBELISK_RT_TIER_MASK_BYTECODE
+                : (hasDesignBytecode ? OBELISK_RT_TIER_MASK_NATIVE |
+                                           OBELISK_RT_TIER_MASK_BYTECODE
+                                     : OBELISK_RT_TIER_MASK_NATIVE);
         descriptor = insertValue(
             builder, location, descriptor,
-            llvmConstant(builder, location, i32, hasDesignBytecode ? 3 : 1), 3);
+            llvmConstant(builder, location, i32, availableTiers), 3);
         descriptor = insertValue(
             builder, location, descriptor,
             LLVM::AddressOfOp::create(builder, location, pointer, layoutName),
             5);
-        descriptor = insertValue(
-            builder, location, descriptor,
-            LLVM::AddressOfOp::create(
-                builder, location, pointer,
-                (baseName + ".__obelisk_native_requirements").str()),
-            6);
-        descriptor =
-            insertValue(builder, location, descriptor,
-                        LLVM::AddressOfOp::create(
-                            builder, location, pointer,
-                            (baseName + ".__obelisk_native_execute").str()),
-                        7);
-        descriptor =
-            insertValue(builder, location, descriptor,
-                        LLVM::AddressOfOp::create(
-                            builder, location, pointer,
-                            (baseName + ".__obelisk_native_destroy").str()),
-                        8);
+        if (!bytecodeOnly) {
+          descriptor = insertValue(
+              builder, location, descriptor,
+              LLVM::AddressOfOp::create(
+                  builder, location, pointer,
+                  (baseName + ".__obelisk_native_requirements").str()),
+              6);
+          descriptor =
+              insertValue(builder, location, descriptor,
+                          LLVM::AddressOfOp::create(
+                              builder, location, pointer,
+                              (baseName + ".__obelisk_native_execute").str()),
+                          7);
+          descriptor =
+              insertValue(builder, location, descriptor,
+                          LLVM::AddressOfOp::create(
+                              builder, location, pointer,
+                              (baseName + ".__obelisk_native_destroy").str()),
+                          8);
+        }
         if (hasExecution)
           descriptor =
               insertValue(builder, location, descriptor,

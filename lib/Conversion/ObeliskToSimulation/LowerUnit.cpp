@@ -226,61 +226,6 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
     : function(function), builder(function.getContext()),
       current(&function.getBody().front()) {
   builder.setInsertionPointToStart(current);
-  ModuleOp module = function->getParentOfType<ModuleOp>();
-  sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
-  DenseMap<uint64_t, StringAttr> interfaceScopes;
-  bool hasCovergroupDeclarations = false;
-  // Unit-lowering passes may run concurrently for sibling functions.  The
-  // design declarations are immutable here, but recursively walking the whole
-  // design would also traverse function bodies while sibling passes rewrite
-  // them.  Inventory only the declaration operations in the design body.
-  for (Operation &operation : design.getBody().front()) {
-    hasCovergroupDeclarations |= isa<sim::SimCovergroupDeclOp>(operation);
-    if (auto scope = dyn_cast<sim::SimScopeDeclOp>(operation)) {
-      if (std::optional<StringRef> hierarchy = scope.getHierarchicalName())
-        scopeIDs[*hierarchy] = scope.getId();
-      if (StringAttr identity = scope.getInterfaceTypeAttr())
-        interfaceScopes[scope.getId()] = identity;
-    }
-  }
-  auto memberKey = [](StringRef identity, StringRef member) {
-    return (Twine(identity) + "\n" + member).str();
-  };
-  for (Operation &operation : design.getBody().front())
-    if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
-      virtualInterfaceStorageTypes[storage.getId()] = storage.getType();
-      auto scope = interfaceScopes.find(storage.getScopeId());
-      StringAttr member = storage->getAttrOfType<StringAttr>(
-          "obelisk_sim.virtual_interface_member");
-      if (scope != interfaceScopes.end() && member)
-        virtualInterfaceStorageMembers[memberKey(scope->second.getValue(),
-                                                 member.getValue())]
-            .push_back({storage.getScopeId(), storage.getId()});
-    }
-  for (Operation &operation : design.getBody().front())
-    if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
-      virtualInterfaceNetTypes[net.getId()] = net.getType();
-      auto scope = interfaceScopes.find(net.getScopeId());
-      StringAttr member = net->getAttrOfType<StringAttr>(
-          "obelisk_sim.virtual_interface_member");
-      if (scope != interfaceScopes.end() && member)
-        virtualInterfaceNetMembers[memberKey(scope->second.getValue(),
-                                             member.getValue())]
-            .push_back({net.getScopeId(), net.getId()});
-    }
-  for (Operation &topLevel : module.getBody()->getOperations()) {
-    if (auto definition = dyn_cast<semantic::SVDefinitionSymbolOp>(topLevel))
-      if (auto name = definition.getName())
-        coverageDefinitionNames.insert(*name);
-    if (!hasCovergroupDeclarations)
-      continue;
-    auto root = dyn_cast<semantic::SVRootSymbolOp>(topLevel);
-    if (!root)
-      continue;
-    root->walk([&](semantic::SVCovergroupTypeOp covergroup) {
-      semanticCovergroups[covergroup.getSymName()] = covergroup;
-    });
-  }
   if (auto argument =
           function->getAttrOfType<IntegerAttr>(sim::metadata::thisArgument)) {
     uint64_t index = argument.getValue().getZExtValue();
@@ -430,6 +375,78 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
   }
 }
 
+void UnitLowering::ensureVirtualInterfaceInventory() {
+  if (virtualInterfaceInventoryReady)
+    return;
+  virtualInterfaceInventoryReady = true;
+
+  sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
+  DenseMap<uint64_t, StringAttr> interfaceScopes;
+  // Unit-lowering passes may run concurrently for sibling functions. The
+  // design declarations are immutable here, but recursively walking the whole
+  // design would also traverse bodies while sibling passes rewrite them.
+  for (Operation &operation : design.getBody().front())
+    if (auto scope = dyn_cast<sim::SimScopeDeclOp>(operation)) {
+      if (std::optional<StringRef> hierarchy = scope.getHierarchicalName())
+        scopeIDs[*hierarchy] = scope.getId();
+      if (StringAttr identity = scope.getInterfaceTypeAttr())
+        interfaceScopes[scope.getId()] = identity;
+    }
+
+  auto memberKey = [](StringRef identity, StringRef member) {
+    return (Twine(identity) + "\n" + member).str();
+  };
+  for (Operation &operation : design.getBody().front()) {
+    if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
+      virtualInterfaceStorageTypes[storage.getId()] = storage.getType();
+      auto scope = interfaceScopes.find(storage.getScopeId());
+      StringAttr member = storage->getAttrOfType<StringAttr>(
+          "obelisk_sim.virtual_interface_member");
+      if (scope != interfaceScopes.end() && member)
+        virtualInterfaceStorageMembers[memberKey(scope->second.getValue(),
+                                                 member.getValue())]
+            .push_back({storage.getScopeId(), storage.getId()});
+      continue;
+    }
+    if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
+      virtualInterfaceNetTypes[net.getId()] = net.getType();
+      auto scope = interfaceScopes.find(net.getScopeId());
+      StringAttr member = net->getAttrOfType<StringAttr>(
+          "obelisk_sim.virtual_interface_member");
+      if (scope != interfaceScopes.end() && member)
+        virtualInterfaceNetMembers[memberKey(scope->second.getValue(),
+                                             member.getValue())]
+            .push_back({net.getScopeId(), net.getId()});
+    }
+  }
+}
+
+void UnitLowering::ensureCoverageInventory() {
+  if (coverageInventoryReady)
+    return;
+  coverageInventoryReady = true;
+
+  sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
+  bool hasCovergroupDeclarations =
+      llvm::any_of(design.getBody().front(), [](Operation &operation) {
+        return isa<sim::SimCovergroupDeclOp>(operation);
+      });
+  ModuleOp module = function->getParentOfType<ModuleOp>();
+  for (Operation &topLevel : module.getBody()->getOperations()) {
+    if (auto definition = dyn_cast<semantic::SVDefinitionSymbolOp>(topLevel))
+      if (auto name = definition.getName())
+        coverageDefinitionNames.insert(*name);
+    if (!hasCovergroupDeclarations)
+      continue;
+    auto root = dyn_cast<semantic::SVRootSymbolOp>(topLevel);
+    if (!root)
+      continue;
+    root->walk([&](semantic::SVCovergroupTypeOp covergroup) {
+      semanticCovergroups[covergroup.getSymName()] = covergroup;
+    });
+  }
+}
+
 Block *UnitLowering::addBlock() {
   Block *block = new Block();
   function.getBody().push_back(block);
@@ -557,11 +574,11 @@ FailureOr<Value> UnitLowering::createAssocArray(sim::AssocArrayType type,
     return failure();
   }
   uint32_t keyKind =
-      stringKey ? OBELISK_RT_ASSOC_KEY_STRING
-      : classKey ? OBELISK_RT_ASSOC_KEY_CLASS
+      stringKey    ? OBELISK_RT_ASSOC_KEY_STRING
+      : classKey   ? OBELISK_RT_ASSOC_KEY_CLASS
       : processKey ? OBELISK_RT_ASSOC_KEY_PROCESS
-                 : (type.getSignedKey() ? OBELISK_RT_ASSOC_KEY_SIGNED
-                                        : OBELISK_RT_ASSOC_KEY_UNSIGNED);
+                   : (type.getSignedKey() ? OBELISK_RT_ASSOC_KEY_SIGNED
+                                          : OBELISK_RT_ASSOC_KEY_UNSIGNED);
   return sim::SimAssocCreateOp::create(
              builder, location, type, descriptor->typeID, descriptor->kind,
              descriptor->flags, descriptor->valueSize, descriptor->alignment,
@@ -738,8 +755,7 @@ void UnitLowering::recordSensitivity(Value value) {
 }
 
 void UnitLowering::recordManagedRead(Value reference, Location location) {
-  if (!observedDependencies ||
-      !isa<sim::ManagedRefType>(reference.getType()))
+  if (!observedDependencies || !isa<sim::ManagedRefType>(reference.getType()))
     return;
   Value watch = sim::SimManagedWatchOp::create(
       builder, location, sim::ManagedWatchType::get(function.getContext()),
@@ -747,8 +763,7 @@ void UnitLowering::recordManagedRead(Value reference, Location location) {
   recordSensitivity(watch);
 }
 
-void UnitLowering::recordContainerSizeRead(Value container,
-                                           Location location) {
+void UnitLowering::recordContainerSizeRead(Value container, Location location) {
   if (!observedDependencies ||
       !isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
           container.getType()))
@@ -787,9 +802,8 @@ void UnitLowering::recordImplicitWrite(Value value) {
     observedWrites->insert(value);
 }
 
-FailureOr<Value>
-UnitLowering::bindObserver(Operation *expression,
-                          ValueRange dynamicDependencies) {
+FailureOr<Value> UnitLowering::bindObserver(Operation *expression,
+                                            ValueRange dynamicDependencies) {
   Location location = getSemanticLocation(expression);
   auto evaluator =
       expression->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.observer");
@@ -1262,8 +1276,7 @@ FailureOr<Value> UnitLowering::truthValue(Value value, Location location) {
         sim::SimChandleEqualOp::create(builder, location, value, null);
     return arith::XOrIOp::create(
                builder, location, isNull,
-               arith::ConstantOp::create(builder, location,
-                                         builder.getI1Type(),
+               arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                          builder.getBoolAttr(true)))
         .getResult();
   }
@@ -1502,8 +1515,8 @@ FailureOr<Value> UnitLowering::lowerContextDeterminedExpression(Operation *op) {
   FailureOr<Type> target = getNormalizedSemanticType(op);
   if (failed(target) || !sim::getPackedScalarType(*target))
     return lowerExpression(op);
-  if (auto streaming = dyn_cast<
-          semantic::SVStreamingConcatenationExpressionOp>(children.front()))
+  if (auto streaming = dyn_cast<semantic::SVStreamingConcatenationExpressionOp>(
+          children.front()))
     return lowerStreaming(streaming, *target);
   FailureOr<Value> input = lowerExpression(children.front());
   if (failed(input))
@@ -1571,6 +1584,7 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
     auto virtualType = succeeded(type)
                            ? dyn_cast<sim::VirtualInterfaceType>(*type)
                            : sim::VirtualInterfaceType{};
+    ensureVirtualInterfaceInventory();
     auto scope = scopeIDs.find(interface.getReferencedPath());
     if (!virtualType || scope == scopeIDs.end() || scope->second == 0) {
       emitError(getSemanticLocation(op))
@@ -1651,8 +1665,9 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
         return sim::SimChandleNullOp::create(builder, getSemanticLocation(op))
             .getResult();
     }
-    if (auto streaming = dyn_cast<
-            semantic::SVStreamingConcatenationExpressionOp>(children.front()))
+    if (auto streaming =
+            dyn_cast<semantic::SVStreamingConcatenationExpressionOp>(
+                children.front()))
       return lowerStreaming(streaming, *target);
     FailureOr<Value> input = lowerExpression(children.front());
     if (failed(input))
@@ -2495,7 +2510,6 @@ public:
     for (Operation &op : entry)
       if (isSemanticOp(&op))
         sourceRoots.push_back(&op);
-
     // Drop the placeholder terminator before its producer so no operation is
     // erased while it still has a live SSA use.
     for (Operation &op : llvm::make_early_inc_range(entry))

@@ -2,6 +2,11 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | %python %S/Inputs/dump-bytecode-instructions.py | FileCheck %s --check-prefix=INSTRUCTIONS
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=BYTECODE-SHELL
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | opt -passes=verify -disable-output
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' -o %t.first
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' -o %t.second
+// RUN: cmp %t.first %t.second
 
 !tagged = !obelisk_sim.unpacked_union<fields = [
   #obelisk_sim.field<name = "object", type = !obelisk_sim.class_handle<@Node>, ordinal = 0, packedOffset = 0>,
@@ -39,9 +44,12 @@ module attributes {
 
       %object_arm = obelisk_sim.union.construct %node as 0 :
           (!obelisk_sim.class_handle<@Node>) -> !tagged
+      // Keep a tagged aggregate containing a class handle live across a
+      // collection point. The bytecode encoder must extract its conditional
+      // managed root into a shadow before executing the safepoint.
+      obelisk_sim.gc.safepoint %ctx : !obelisk_sim.context
       obelisk_sim.managed.store %object_arm to %field :
           !tagged, !obelisk_sim.managed_ref<!tagged, @Holder>
-      obelisk_sim.gc.safepoint %ctx : !obelisk_sim.context
       %loaded = obelisk_sim.managed.load %field :
           !obelisk_sim.managed_ref<!tagged, @Holder> -> !tagged
       %active = obelisk_sim.union.is_active %loaded[0] : !tagged
@@ -61,8 +69,8 @@ module attributes {
 
 // SIM: obelisk_sim.class.field @Holder_value
 // SIM: %[[OBJECT_ARM:.*]] = obelisk_sim.union.construct %{{.*}} as 0
-// SIM: obelisk_sim.managed.store %[[OBJECT_ARM]]
 // SIM: obelisk_sim.gc.safepoint
+// SIM: obelisk_sim.managed.store %[[OBJECT_ARM]]
 // SIM: obelisk_sim.union.extract %{{.*}}[0]
 // SIM: %[[BITS_ARM:.*]] = obelisk_sim.union.construct %{{.*}} as 1
 // SIM: obelisk_sim.managed.store %[[BITS_ARM]]
@@ -73,9 +81,9 @@ module attributes {
 // NATIVE-LABEL: llvm.func @root(
 // NATIVE: llvm.call @obelisk_rt_v1_object_allocate
 // NATIVE: llvm.call @obelisk_rt_v1_object_allocate
+// NATIVE: llvm.call @obelisk_rt_v1_gc_safepoint
 // NATIVE: %[[STORE_SIZE:.*]] = llvm.mlir.constant(17 : i64)
 // NATIVE-NEXT: %{{.*}} = llvm.call @obelisk_rt_v1_object_write({{.*}}, %[[STORE_SIZE]])
-// NATIVE: llvm.call @obelisk_rt_v1_gc_safepoint
 // NATIVE: %[[LOAD_SIZE:.*]] = llvm.mlir.constant(17 : i64)
 // NATIVE-NEXT: %{{.*}} = llvm.call @obelisk_rt_v1_object_read({{.*}}, %[[LOAD_SIZE]])
 // NATIVE: llvm.lshr
@@ -92,10 +100,20 @@ module attributes {
 // validated by the serialized-image verifier during this pass.
 // BYTECODE: obelisk.bytecode.image = array<i8:
 // BYTECODE: obelisk_sim.class.field @Holder_value
-// BYTECODE: obelisk.bytecode.scratch_size = 304 : i64
+// BYTECODE: obelisk.bytecode.scratch_size = 312 : i64
 
 // Managed insertion of arm 0 remains at offset zero. Arm 1 construction and
 // extraction are ordinary numeric INSERT/EXTRACT records at bit offset 64.
 // INSTRUCTIONS: opcode=22 flags=2 {{.*}} imm=0
 // INSTRUCTIONS: opcode=21 flags=0 {{.*}} imm=64
 // INSTRUCTIONS: opcode=22 flags=0 {{.*}} imm=64
+// Tagged construction zeros inactive storage, so its live object slot is an
+// exact managed root rather than a candidate word.
+// INSTRUCTIONS: intrinsic {{.*}}id=0x00010411 inputs=2 outputs=1 flags=0
+
+// A bytecode-only native shell derives the root and spawn symbols from the
+// RootInitializer entry kind, so the noncanonical @root name remains valid.
+// BYTECODE-SHELL: llvm.func @root.__obelisk_spawn
+// BYTECODE-SHELL: llvm.call @root.__obelisk_spawn
+// BYTECODE-SHELL-NOT: obelisk_sim.design
+// BYTECODE-SHELL-NOT: llvm.func @root(

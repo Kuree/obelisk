@@ -77,6 +77,7 @@ struct FunctionPlan {
   llvm::DenseMap<mlir::Block *, uint64_t> blockPCs;
   llvm::SmallVector<std::pair<uint64_t, mlir::Block *>> branches;
   llvm::SmallVector<Continuation> continuations;
+  llvm::DenseMap<mlir::Block *, uint32_t> callableControlContinuations;
   std::unique_ptr<SimulationProcessFrameAnalysis> frame;
   uint64_t firstInstruction = 0;
   uint64_t instructionCount = 0;

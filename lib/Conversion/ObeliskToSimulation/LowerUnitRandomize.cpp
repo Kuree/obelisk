@@ -29,20 +29,73 @@
 using namespace mlir;
 
 namespace obelisk::simlowering {
-FailureOr<Value>
-UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
-                             Value receiverOverride) {
+FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
+                                              Value receiverOverride) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
+  if (!receiverOverride && op->hasAttr(randomizeHelperReceiverAttrName)) {
+    Block &entry = function.getBody().front();
+    if (entry.getNumArguments() < 2 ||
+        !isa<sim::ClassHandleType>(entry.getArgument(1).getType())) {
+      emitError(location)
+          << "shared randomize helper has no class receiver argument";
+      return failure();
+    }
+    receiverOverride = entry.getArgument(1);
+  }
+  auto lowerSharedHelper = [&](semantic::SVCallExpressionOp alternative,
+                               Value receiver,
+                               Type resultType) -> FailureOr<Value> {
+    auto helper =
+        alternative->getAttrOfType<FlatSymbolRefAttr>(randomizeHelperAttrName);
+    auto planClass = alternative->getAttrOfType<FlatSymbolRefAttr>(
+        randomizePlanClassAttrName);
+    if (!helper || !planClass)
+      return failure();
+    llvm::StringSet<> readCaptures;
+    if (auto reads = alternative->getAttrOfType<ArrayAttr>(
+            randomizeHelperReadCapturesAttrName))
+      for (Attribute read : reads)
+        readCaptures.insert(cast<StringAttr>(read).getValue());
+    for (const auto &read : readCaptures) {
+      Value capture = values.lookup(read.getKey());
+      if (!capture)
+        capture = lvalues.lookup(read.getKey());
+      if (capture)
+        recordSensitivity(capture);
+    }
+    SmallVector<Value> arguments;
+    if (auto captures = alternative->getAttrOfType<ArrayAttr>(
+            randomizeHelperCapturesAttrName))
+      for (Attribute captureAttr : captures) {
+        StringRef path = cast<StringAttr>(captureAttr).getValue();
+        Value capture = values.lookup(path);
+        if (!capture) {
+          emitError(location)
+              << "shared randomize helper capture has no local binding: "
+              << path;
+          return failure();
+        }
+        arguments.push_back(capture);
+      }
+    Type receiverType =
+        sim::ClassHandleType::get(function.getContext(), planClass);
+    if (receiver.getType() != receiverType)
+      receiver = sim::SimClassCastOp::create(builder, location, receiverType,
+                                             receiver);
+    auto invocation = sim::SimClassDirectCallOp::create(
+        builder, location, TypeRange{resultType}, helper, receiver, arguments);
+    return invocation.getResult(0);
+  };
   if (op->hasAttr(randomizeNestedDispatchAttrName)) {
     auto receiverIndexAttr =
         op->getAttrOfType<IntegerAttr>(randomReceiverIndexAttrName);
     auto field = op->getAttrOfType<FlatSymbolRefAttr>(
         randomizeNestedDispatchFieldAttrName);
-    auto storageTypeAttr = op->getAttrOfType<TypeAttr>(
-        randomizeNestedDispatchStorageAttrName);
-    auto dispatchPath = op->getAttrOfType<ArrayAttr>(
-        randomizeNestedDispatchPathAttrName);
+    auto storageTypeAttr =
+        op->getAttrOfType<TypeAttr>(randomizeNestedDispatchStorageAttrName);
+    auto dispatchPath =
+        op->getAttrOfType<ArrayAttr>(randomizeNestedDispatchPathAttrName);
     auto dispatchSelectionPath = op->getAttrOfType<ArrayAttr>(
         randomizeNestedDispatchSelectionPathAttrName);
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
@@ -55,8 +108,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
          static_cast<bool>(dispatchSelectionPath)) ||
         (dispatchPath &&
          (dispatchPath.empty() || dispatchSelectionPath.empty()))) {
-      emitError(location)
-          << "nested randomize dispatch has malformed metadata";
+      emitError(location) << "nested randomize dispatch has malformed metadata";
       return failure();
     }
     unsigned receiverIndex =
@@ -70,8 +122,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           << "nested randomize dispatch receiver is not a class object";
       return failure();
     }
-    if (auto planClass = op->getAttrOfType<FlatSymbolRefAttr>(
-            randomizePlanClassAttrName)) {
+    if (auto planClass =
+            op->getAttrOfType<FlatSymbolRefAttr>(randomizePlanClassAttrName)) {
       Type targetType =
           sim::ClassHandleType::get(function.getContext(), planClass);
       if ((*loweredReceiver).getType() != targetType)
@@ -92,8 +144,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         for (Attribute selectedAttr : selectedPlans)
           if (auto selected = dyn_cast<DictionaryAttr>(selectedAttr)) {
             if (dispatchSelectionPath) {
-              if (selected.getAs<ArrayAttr>("path") ==
-                  dispatchSelectionPath)
+              if (selected.getAs<ArrayAttr>("path") == dispatchSelectionPath)
                 return selected;
             } else if (!selected.get("path") &&
                        selected.getAs<FlatSymbolRefAttr>("field") == field) {
@@ -131,9 +182,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       auto ownerType = receiverType;
       for (auto [index, elementAttr] : llvm::enumerate(dispatchPath)) {
         auto element = dyn_cast<DictionaryAttr>(elementAttr);
-        auto pathField =
-            element ? element.getAs<FlatSymbolRefAttr>("field")
-                    : FlatSymbolRefAttr{};
+        auto pathField = element ? element.getAs<FlatSymbolRefAttr>("field")
+                                 : FlatSymbolRefAttr{};
         auto pathStorageType =
             element ? element.getAs<TypeAttr>("storage_type") : TypeAttr{};
         auto pathConcreteType =
@@ -148,8 +198,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             (index == 0 &&
              (pathField != field ||
               pathStorageType.getValue() != storageTypeAttr.getValue()))) {
-          emitError(location)
-              << "nested randomize dispatch path is malformed";
+          emitError(location) << "nested randomize dispatch path is malformed";
           return failure();
         }
         Type referenceType = sim::ManagedRefType::get(
@@ -191,13 +240,15 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       emitError(location) << "nested randomize dispatch path has no target";
       return failure();
     }
-    Value isNull = sim::SimManagedIsNullOp::create(
-        builder, location, builder.getI1Type(), object);
-    cf::CondBranchOp::create(builder, location, isNull, nullBlock,
-                             ValueRange{}, nonNullBlock, ValueRange{});
+    Value isNull = sim::SimManagedIsNullOp::create(builder, location,
+                                                   builder.getI1Type(), object);
+    cf::CondBranchOp::create(builder, location, isNull, nullBlock, ValueRange{},
+                             nonNullBlock, ValueRange{});
     setCurrent(nullBlock);
     FailureOr<Value> nullResult =
-        lowerRandomize(nullAlternative, *loweredReceiver);
+        nullAlternative->hasAttr(randomizeHelperAttrName)
+            ? lowerSharedHelper(nullAlternative, *loweredReceiver, *resultType)
+            : lowerRandomize(nullAlternative, *loweredReceiver);
     if (failed(nullResult))
       return failure();
     cf::BranchOp::create(builder, location, done, ValueRange{*nullResult});
@@ -212,15 +263,17 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             << "nested randomize alternative has no target class";
         return failure();
       }
-      Value matches = sim::SimClassIsInstanceOp::create(
-          builder, location, object, planClass);
+      Value matches = sim::SimClassIsInstanceOp::create(builder, location,
+                                                        object, planClass);
       Block *selected = addBlock();
       Block *next = addBlock();
       cf::CondBranchOp::create(builder, location, matches, selected,
                                ValueRange{}, next, ValueRange{});
       setCurrent(selected);
       FailureOr<Value> result =
-          lowerRandomize(alternative, *loweredReceiver);
+          alternative->hasAttr(randomizeHelperAttrName)
+              ? lowerSharedHelper(alternative, *loweredReceiver, *resultType)
+              : lowerRandomize(alternative, *loweredReceiver);
       if (failed(result))
         return failure();
       cf::BranchOp::create(builder, location, done, ValueRange{*result});
@@ -249,21 +302,20 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     unsigned receiverIndex =
         static_cast<unsigned>(receiverIndexAttr.getValue().getZExtValue());
-    FailureOr<Value> loweredReceiver = receiverOverride
-                                           ? FailureOr<Value>(receiverOverride)
-                                           : lowerExpression(
-                                                 children[receiverIndex]);
+    FailureOr<Value> loweredReceiver =
+        receiverOverride ? FailureOr<Value>(receiverOverride)
+                         : lowerExpression(children[receiverIndex]);
     if (failed(loweredReceiver) ||
         !isa<sim::ClassHandleType>((*loweredReceiver).getType())) {
-      emitError(location) << "randomize dispatch receiver is not a class object";
+      emitError(location)
+          << "randomize dispatch receiver is not a class object";
       return failure();
     }
 
     SmallVector<semantic::SVCallExpressionOp> alternatives;
     for (Operation *child : children)
       if (auto alternative = dyn_cast<semantic::SVCallExpressionOp>(child);
-          alternative &&
-          alternative->hasAttr(randomizePlanClassAttrName) &&
+          alternative && alternative->hasAttr(randomizePlanClassAttrName) &&
           (alternative->hasAttr(randomizeAttrName) ||
            alternative->hasAttr(randomizeNestedDispatchAttrName)))
         alternatives.push_back(alternative);
@@ -284,7 +336,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       cf::CondBranchOp::create(builder, location, matches, selected,
                                ValueRange{}, next, ValueRange{});
       setCurrent(selected);
-      FailureOr<Value> result = lowerRandomize(alternative, *loweredReceiver);
+      FailureOr<Value> result =
+          alternative->hasAttr(randomizeHelperAttrName)
+              ? lowerSharedHelper(alternative, *loweredReceiver, *resultType)
+              : lowerRandomize(alternative, *loweredReceiver);
       if (failed(result))
         return failure();
       cf::BranchOp::create(builder, location, done, ValueRange{*result});
@@ -320,11 +375,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   auto constraintTemplateAttr =
       op->getAttrOfType<FlatSymbolRefAttr>(randomizeConstraintTemplateAttrName);
   if (children.empty() || !properties || !containerProperties ||
-      !nestedConstraintModes ||
-      !nestedHooks ||
-      !recursiveAliasGuards ||
-      !totalWidthAttr ||
-      !receiverIndexAttr || !constraintCountAttr) {
+      !nestedConstraintModes || !nestedHooks || !recursiveAliasGuards ||
+      !totalWidthAttr || !receiverIndexAttr || !constraintCountAttr) {
     emitError(location) << "randomize call has no frozen constraint plan";
     return failure();
   }
@@ -361,8 +413,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       receiverOverride ? FailureOr<Value>(receiverOverride)
                        : lowerExpression(children[receiverIndex]);
   if (receiverOverride) {
-    auto planClass = op->getAttrOfType<FlatSymbolRefAttr>(
-        randomizePlanClassAttrName);
+    auto planClass =
+        op->getAttrOfType<FlatSymbolRefAttr>(randomizePlanClassAttrName);
     if (!planClass) {
       emitError(location) << "randomize receiver override has no target class";
       return failure();
@@ -434,8 +486,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
   }
 
-  auto callLifecycleHook = [&](StringRef calleeAttr,
-                               StringRef ownerAttr, StringRef capturesAttr,
+  auto callLifecycleHook = [&](StringRef calleeAttr, StringRef ownerAttr,
+                               StringRef capturesAttr,
                                StringRef readsAttr) -> LogicalResult {
     auto callee = op->getAttrOfType<FlatSymbolRefAttr>(calleeAttr);
     auto owner = op->getAttrOfType<FlatSymbolRefAttr>(ownerAttr);
@@ -448,8 +500,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Type ownerType = sim::ClassHandleType::get(function.getContext(), owner);
     Value hookReceiver = receiver;
     if (hookReceiver.getType() != ownerType)
-      hookReceiver = sim::SimClassCastOp::create(
-          builder, location, ownerType, hookReceiver);
+      hookReceiver = sim::SimClassCastOp::create(builder, location, ownerType,
+                                                 hookReceiver);
     llvm::StringSet<> readCaptures;
     if (auto reads = op->getAttrOfType<ArrayAttr>(readsAttr))
       for (Attribute read : reads)
@@ -544,9 +596,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           element ? element.getAs<TypeAttr>("concrete_type") : TypeAttr{};
       auto storageTypeAttr =
           element ? element.getAs<TypeAttr>("storage_type") : TypeAttr{};
-      auto modeIndexAttr =
-          element ? element.getAs<IntegerAttr>("rand_mode_index")
-                  : IntegerAttr{};
+      auto modeIndexAttr = element
+                               ? element.getAs<IntegerAttr>("rand_mode_index")
+                               : IntegerAttr{};
       if (!field || !concreteTypeAttr || !storageTypeAttr || !modeIndexAttr ||
           !isa<sim::ClassHandleType>(concreteTypeAttr.getValue()) ||
           !isa<sim::ClassHandleType>(storageTypeAttr.getValue()) ||
@@ -568,11 +620,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
             function, declaration.getBaseAttr());
       }
-      auto modeField =
-          declaration
-              ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                    "obelisk_sim.random_mode_field")
-              : FlatSymbolRefAttr{};
+      auto modeField = declaration
+                           ? declaration->getAttrOfType<FlatSymbolRefAttr>(
+                                 "obelisk_sim.random_mode_field")
+                           : FlatSymbolRefAttr{};
       if (!modeField) {
         emitError(location)
             << "nested random-object path has no rand_mode field";
@@ -595,10 +646,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     auto typeAttr = property ? property.getAs<TypeAttr>("type") : TypeAttr{};
     auto widthAttr =
         property ? property.getAs<IntegerAttr>("width") : IntegerAttr{};
-    auto modeIndexAttr = property
-                             ? property.getAs<IntegerAttr>(
-                                   randomPropertyModeIndexAttrName)
-                             : IntegerAttr{};
+    auto modeIndexAttr =
+        property ? property.getAs<IntegerAttr>(randomPropertyModeIndexAttrName)
+                 : IntegerAttr{};
     auto signedAttr =
         property ? property.getAs<BoolAttr>("is_signed") : BoolAttr{};
     auto randcAttr =
@@ -607,8 +657,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         property
             ? property.getAs<IntegerAttr>(randomPropertyModeStorageAttrName)
             : IntegerAttr{};
-    bool isContainerSize = property &&
-                           property.contains(randomContainerSizeAttrName);
+    bool isContainerSize =
+        property && property.contains(randomContainerSizeAttrName);
     auto containerTypeAttr =
         property ? property.getAs<TypeAttr>(randomContainerTypeAttrName)
                  : TypeAttr{};
@@ -619,9 +669,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         property ? property.getAs<BoolAttr>("unconditional_size_constraint")
                  : BoolAttr{};
     auto nestedObjectField =
-        property ? property.getAs<FlatSymbolRefAttr>(
-                       randomNestedObjectFieldAttrName)
-                 : FlatSymbolRefAttr{};
+        property
+            ? property.getAs<FlatSymbolRefAttr>(randomNestedObjectFieldAttrName)
+            : FlatSymbolRefAttr{};
     auto nestedObjectTypeAttr =
         property ? property.getAs<TypeAttr>(randomNestedObjectTypeAttrName)
                  : TypeAttr{};
@@ -702,8 +752,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return failure();
       }
     } else if (field) {
-      Type referencedType = isContainerSize ? containerTypeAttr.getValue()
-                                            : type;
+      Type referencedType =
+          isContainerSize ? containerTypeAttr.getValue() : type;
       Type referenceType = sim::ManagedRefType::get(
           function.getContext(), referencedType, objectType.getClassName());
       reference = sim::SimClassFieldRefOp::create(
@@ -878,8 +928,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
     }
     SmallVector<ObjectPathElement> nestedObjectPath;
-    if (failed(parseNestedObjectPath(nestedObjectPathAttr,
-                                     nestedObjectPath)))
+    if (failed(parseNestedObjectPath(nestedObjectPathAttr, nestedObjectPath)))
       return failure();
     planned.push_back(
         {field,
@@ -943,16 +992,14 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     auto elementTypeAttr =
         property ? property.getAs<TypeAttr>("element_type") : TypeAttr{};
     auto elementWidthAttr =
-        property ? property.getAs<IntegerAttr>("element_width")
+        property ? property.getAs<IntegerAttr>("element_width") : IntegerAttr{};
+    auto modeIndexAttr =
+        property ? property.getAs<IntegerAttr>(randomPropertyModeIndexAttrName)
                  : IntegerAttr{};
-    auto modeIndexAttr = property
-                             ? property.getAs<IntegerAttr>(
-                                   randomPropertyModeIndexAttrName)
-                             : IntegerAttr{};
     auto nestedObjectField =
-        property ? property.getAs<FlatSymbolRefAttr>(
-                       randomNestedObjectFieldAttrName)
-                 : FlatSymbolRefAttr{};
+        property
+            ? property.getAs<FlatSymbolRefAttr>(randomNestedObjectFieldAttrName)
+            : FlatSymbolRefAttr{};
     auto nestedObjectTypeAttr =
         property ? property.getAs<TypeAttr>(randomNestedObjectTypeAttrName)
                  : TypeAttr{};
@@ -969,12 +1016,12 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     bool inertClassHandles =
         property && property.contains("inert_class_handles");
     bool isNestedObject = static_cast<bool>(nestedObjectField);
-    bool hasCompleteNestedObject =
-        nestedObjectField && nestedObjectTypeAttr &&
-        nestedObjectStorageTypeAttr && nestedModeIndexAttr;
-    bool hasAnyNestedObject =
-        nestedObjectField || nestedObjectTypeAttr ||
-        nestedObjectStorageTypeAttr || nestedModeIndexAttr;
+    bool hasCompleteNestedObject = nestedObjectField && nestedObjectTypeAttr &&
+                                   nestedObjectStorageTypeAttr &&
+                                   nestedModeIndexAttr;
+    bool hasAnyNestedObject = nestedObjectField || nestedObjectTypeAttr ||
+                              nestedObjectStorageTypeAttr ||
+                              nestedModeIndexAttr;
     if (!field || !typeAttr || !elementTypeAttr || !elementWidthAttr ||
         !modeIndexAttr || elementWidthAttr.getValue().isNegative() ||
         (!inertClassHandles && elementWidthAttr.getValue().isZero()) ||
@@ -1040,32 +1087,27 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return failure();
       }
     } else {
-      Type referenceType = sim::ManagedRefType::get(
-          function.getContext(), typeAttr.getValue(),
-          objectType.getClassName());
+      Type referenceType =
+          sim::ManagedRefType::get(function.getContext(), typeAttr.getValue(),
+                                   objectType.getClassName());
       reference = sim::SimClassFieldRefOp::create(
           builder, location, referenceType, receiver, field);
     }
     SmallVector<ObjectPathElement> nestedObjectPath;
     if ((!isNestedObject && nestedObjectPathAttr) ||
-        failed(parseNestedObjectPath(nestedObjectPathAttr,
-                                     nestedObjectPath)))
+        failed(parseNestedObjectPath(nestedObjectPathAttr, nestedObjectPath)))
       return failure();
     plannedContainers.push_back(
         {typeAttr.getValue(), elementTypeAttr.getValue(),
          static_cast<unsigned>(elementWidth),
          static_cast<unsigned>(modeIndexAttr.getValue().getZExtValue()),
-         reference,
-         nestedObjectReference,
-         nestedObjectTypeAttr ? nestedObjectTypeAttr.getValue() : Type{},
-         field,
+         reference, nestedObjectReference,
+         nestedObjectTypeAttr ? nestedObjectTypeAttr.getValue() : Type{}, field,
          nestedModeIndexAttr
              ? static_cast<unsigned>(
                    nestedModeIndexAttr.getValue().getZExtValue())
              : 0,
-         nestedModeField,
-         std::move(nestedObjectPath),
-         inertClassHandles,
+         nestedModeField, std::move(nestedObjectPath), inertClassHandles,
          nestedObjectField});
   }
   SmallVector<bool> containerNeedsIdentity(plannedContainers.size(), false);
@@ -1074,12 +1116,11 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (left.nestedObjectRootField != right.nestedObjectRootField ||
         left.nestedObjectPath.size() != right.nestedObjectPath.size())
       return false;
-    return llvm::equal(
-        left.nestedObjectPath, right.nestedObjectPath,
-        [](const ObjectPathElement &leftElement,
-           const ObjectPathElement &rightElement) {
-          return leftElement.field == rightElement.field;
-        });
+    return llvm::equal(left.nestedObjectPath, right.nestedObjectPath,
+                       [](const ObjectPathElement &leftElement,
+                          const ObjectPathElement &rightElement) {
+                         return leftElement.field == rightElement.field;
+                       });
   };
   auto containerOwnerType = [](const ContainerProperty &property) {
     return property.nestedObjectPath.empty()
@@ -1150,8 +1191,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       sim::SimManagedLoadOp::create(builder, location, i64, incrementReference);
   Value mode =
       sim::SimManagedLoadOp::create(builder, location, i64, modeReference);
-  Value constraintMode = sim::SimManagedLoadOp::create(
-      builder, location, i64, constraintModeReference);
+  Value constraintMode = sim::SimManagedLoadOp::create(builder, location, i64,
+                                                       constraintModeReference);
 
   auto constant64 = [&](uint64_t value) -> Value {
     return arith::ConstantOp::create(
@@ -1165,8 +1206,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   };
   for (Attribute guardAttr : recursiveAliasGuards) {
     auto guard = dyn_cast<DictionaryAttr>(guardAttr);
-    auto field = guard ? guard.getAs<FlatSymbolRefAttr>("field")
-                       : FlatSymbolRefAttr{};
+    auto field =
+        guard ? guard.getAs<FlatSymbolRefAttr>("field") : FlatSymbolRefAttr{};
     auto concreteTypeAttr =
         guard ? guard.getAs<TypeAttr>("concrete_type") : TypeAttr{};
     auto storageTypeAttr =
@@ -1206,10 +1247,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
               function, rootDeclaration.getBaseAttr());
     }
     auto rootModeField =
-        rootDeclaration
-            ? rootDeclaration->getAttrOfType<FlatSymbolRefAttr>(
-                  "obelisk_sim.random_mode_field")
-            : FlatSymbolRefAttr{};
+        rootDeclaration ? rootDeclaration->getAttrOfType<FlatSymbolRefAttr>(
+                              "obelisk_sim.random_mode_field")
+                        : FlatSymbolRefAttr{};
     if (!rootModeField) {
       emitError(location)
           << "recursive random-object root has no rand_mode field";
@@ -1226,19 +1266,18 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return failure();
     Value rootNull = sim::SimManagedIsNullOp::create(
         builder, location, builder.getI1Type(), *loadedRoot);
-    uint64_t outerModeIndex =
-        outerModeIndexAttr.getValue().getZExtValue();
+    uint64_t outerModeIndex = outerModeIndexAttr.getValue().getZExtValue();
     Value outerModeBit = arith::AndIOp::create(
         builder, location, mode, constant64(uint64_t{1} << outerModeIndex));
-    Value outerEnabled = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, outerModeBit,
-        constant64(0));
+    Value outerEnabled =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                              outerModeBit, constant64(0));
     Value rootNonNull = arith::XOrIOp::create(
         builder, location, rootNull,
         arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                   builder.getBoolAttr(true)));
-    Value rootActive = arith::AndIOp::create(builder, location, outerEnabled,
-                                             rootNonNull);
+    Value rootActive =
+        arith::AndIOp::create(builder, location, outerEnabled, rootNonNull);
     Block *continueBlock = addBlock();
     Block *rootPresentBlock = addBlock();
     cf::CondBranchOp::create(builder, location, rootActive, rootPresentBlock,
@@ -1255,20 +1294,20 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     for (const ObjectPathElement &element : path) {
       Type modeReferenceType = sim::ManagedRefType::get(
           function.getContext(), i64, currentType.getClassName());
-      Value currentModeReference = sim::SimClassFieldRefOp::create(
-          builder, location, modeReferenceType, currentObject,
-          currentModeField);
-      Value currentMode = sim::SimManagedLoadOp::create(
-          builder, location, i64, currentModeReference);
-      Value edgeModeBit = arith::AndIOp::create(
-          builder, location, currentMode,
-          constant64(uint64_t{1} << element.modeIndex));
-      Value edgeEnabled = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::eq, edgeModeBit,
-          constant64(0));
-      Type edgeReferenceType = sim::ManagedRefType::get(
-          function.getContext(), element.storageType,
-          currentType.getClassName());
+      Value currentModeReference =
+          sim::SimClassFieldRefOp::create(builder, location, modeReferenceType,
+                                          currentObject, currentModeField);
+      Value currentMode = sim::SimManagedLoadOp::create(builder, location, i64,
+                                                        currentModeReference);
+      Value edgeModeBit =
+          arith::AndIOp::create(builder, location, currentMode,
+                                constant64(uint64_t{1} << element.modeIndex));
+      Value edgeEnabled =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                edgeModeBit, constant64(0));
+      Type edgeReferenceType =
+          sim::ManagedRefType::get(function.getContext(), element.storageType,
+                                   currentType.getClassName());
       Value edgeReference = sim::SimClassFieldRefOp::create(
           builder, location, edgeReferenceType, currentObject, element.field);
       FailureOr<Value> loadedEdge = loadReference(edgeReference, location);
@@ -1280,8 +1319,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           builder, location, edgeNull,
           arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                     builder.getBoolAttr(true)));
-      Value edgeActive = arith::AndIOp::create(builder, location, edgeEnabled,
-                                               edgeNonNull);
+      Value edgeActive =
+          arith::AndIOp::create(builder, location, edgeEnabled, edgeNonNull);
       Block *edgePresentBlock = addBlock();
       cf::CondBranchOp::create(builder, location, edgeActive, edgePresentBlock,
                                ValueRange{}, continueBlock, ValueRange{});
@@ -1299,8 +1338,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         static_cast<unsigned>(aliasDepthAttr.getValue().getZExtValue());
     Value targetID =
         sim::SimClassIdOp::create(builder, location, activeObjects.back());
-    Value ancestorID = sim::SimClassIdOp::create(
-        builder, location, activeObjects[aliasDepth]);
+    Value ancestorID =
+        sim::SimClassIdOp::create(builder, location, activeObjects[aliasDepth]);
     Value closesCycle = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, targetID, ancestorID);
     Block *unsupportedBlock = addBlock();
@@ -1366,8 +1405,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   };
   for (Attribute hookAttr : nestedHooks) {
     auto hook = dyn_cast<DictionaryAttr>(hookAttr);
-    auto field = hook ? hook.getAs<FlatSymbolRefAttr>("field")
-                      : FlatSymbolRefAttr{};
+    auto field =
+        hook ? hook.getAs<FlatSymbolRefAttr>("field") : FlatSymbolRefAttr{};
     auto concreteTypeAttr =
         hook ? hook.getAs<TypeAttr>("concrete_type") : TypeAttr{};
     auto storageTypeAttr =
@@ -1396,23 +1435,23 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (failed(loadedObject))
       return failure();
     Value object = *loadedObject;
-    Value isNull = sim::SimManagedIsNullOp::create(
-        builder, location, builder.getI1Type(), object);
+    Value isNull = sim::SimManagedIsNullOp::create(builder, location,
+                                                   builder.getI1Type(), object);
     uint64_t outerModeIndex = outerModeIndexAttr.getValue().getZExtValue();
     Value outerModeBit = arith::AndIOp::create(
         builder, location, mode, constant64(uint64_t{1} << outerModeIndex));
-    Value outerEnabled = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, outerModeBit,
-        constant64(0));
+    Value outerEnabled =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                              outerModeBit, constant64(0));
     Value nonNull = arith::XOrIOp::create(
         builder, location, isNull,
         arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                   builder.getBoolAttr(true)));
-    Value enabled = arith::AndIOp::create(builder, location, outerEnabled,
-                                          nonNull);
+    Value enabled =
+        arith::AndIOp::create(builder, location, outerEnabled, nonNull);
     if (object.getType() != concreteTypeAttr.getValue())
-      object = sim::SimClassCastOp::create(
-          builder, location, concreteTypeAttr.getValue(), object);
+      object = sim::SimClassCastOp::create(builder, location,
+                                           concreteTypeAttr.getValue(), object);
     if (!path.empty()) {
       Type targetType = path.back().concreteType;
       Block *missingBlock = addBlock();
@@ -1433,7 +1472,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                            ValueRange{missingObject, falseValue});
 
       setCurrent(rootPresentBlock);
-      auto currentType = cast<sim::ClassHandleType>(concreteTypeAttr.getValue());
+      auto currentType =
+          cast<sim::ClassHandleType>(concreteTypeAttr.getValue());
       for (const ObjectPathElement &element : path) {
         sim::SimClassDeclOp currentDeclaration =
             SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
@@ -1452,8 +1492,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                       "obelisk_sim.random_mode_field")
                 : FlatSymbolRefAttr{};
         if (!currentModeField) {
-          emitError(location)
-              << "nested hook path has no rand_mode field";
+          emitError(location) << "nested hook path has no rand_mode field";
           return failure();
         }
         Type modeReferenceType = sim::ManagedRefType::get(
@@ -1462,15 +1501,15 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             builder, location, modeReferenceType, object, currentModeField);
         Value currentMode = sim::SimManagedLoadOp::create(
             builder, location, i64, currentModeReference);
-        Value edgeModeBit = arith::AndIOp::create(
-            builder, location, currentMode,
-            constant64(uint64_t{1} << element.modeIndex));
-        Value edgeEnabled = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::eq, edgeModeBit,
-            constant64(0));
-        Type edgeReferenceType = sim::ManagedRefType::get(
-            function.getContext(), element.storageType,
-            currentType.getClassName());
+        Value edgeModeBit =
+            arith::AndIOp::create(builder, location, currentMode,
+                                  constant64(uint64_t{1} << element.modeIndex));
+        Value edgeEnabled =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                  edgeModeBit, constant64(0));
+        Type edgeReferenceType =
+            sim::ManagedRefType::get(function.getContext(), element.storageType,
+                                     currentType.getClassName());
         Value edgeReference = sim::SimClassFieldRefOp::create(
             builder, location, edgeReferenceType, object, element.field);
         FailureOr<Value> loadedEdge = loadReference(edgeReference, location);
@@ -1482,8 +1521,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             builder, location, edgeNull,
             arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                       builder.getBoolAttr(true)));
-        Value edgeActive = arith::AndIOp::create(
-            builder, location, edgeEnabled, edgeNonNull);
+        Value edgeActive =
+            arith::AndIOp::create(builder, location, edgeEnabled, edgeNonNull);
         Block *edgePresentBlock = addBlock();
         cf::CondBranchOp::create(builder, location, edgeActive,
                                  edgePresentBlock, ValueRange{}, missingBlock,
@@ -1491,8 +1530,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         setCurrent(edgePresentBlock);
         object = *loadedEdge;
         if (object.getType() != element.concreteType)
-          object = sim::SimClassCastOp::create(
-              builder, location, element.concreteType, object);
+          object = sim::SimClassCastOp::create(builder, location,
+                                               element.concreteType, object);
         currentType = cast<sim::ClassHandleType>(element.concreteType);
       }
       Value trueValue = arith::ConstantOp::create(
@@ -1507,11 +1546,11 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value alreadyVisited = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(false));
     for (const NestedHookRuntime &previous : nestedHookRuntimes) {
-      Value sameID = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::eq, objectID,
-          previous.objectID);
-      Value previousMatch = arith::AndIOp::create(
-          builder, location, previous.enabled, sameID);
+      Value sameID =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                objectID, previous.objectID);
+      Value previousMatch =
+          arith::AndIOp::create(builder, location, previous.enabled, sameID);
       alreadyVisited = arith::OrIOp::create(builder, location, alreadyVisited,
                                             previousMatch);
     }
@@ -1535,15 +1574,15 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   Value nullNestedConstraintMask = constant64(0);
   for (Attribute nestedAttr : nestedConstraintModes) {
     auto nested = dyn_cast<DictionaryAttr>(nestedAttr);
-    auto field = nested ? nested.getAs<FlatSymbolRefAttr>("field")
-                        : FlatSymbolRefAttr{};
+    auto field =
+        nested ? nested.getAs<FlatSymbolRefAttr>("field") : FlatSymbolRefAttr{};
     auto concreteTypeAttr =
         nested ? nested.getAs<TypeAttr>("concrete_type") : TypeAttr{};
     auto storageTypeAttr =
         nested ? nested.getAs<TypeAttr>("storage_type") : TypeAttr{};
-    auto globalIndices =
-        nested ? nested.getAs<DenseI64ArrayAttr>("global_indices")
-               : DenseI64ArrayAttr{};
+    auto globalIndices = nested
+                             ? nested.getAs<DenseI64ArrayAttr>("global_indices")
+                             : DenseI64ArrayAttr{};
     auto outerModeIndexAttr =
         nested ? nested.getAs<IntegerAttr>("outer_mode_index") : IntegerAttr{};
     auto pathAttr = nested ? nested.getAs<ArrayAttr>("path") : ArrayAttr{};
@@ -1561,8 +1600,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     for (int64_t index : globalIndices.asArrayRef()) {
       if (index < 0 || static_cast<uint64_t>(index) >= constraintCount ||
           (globalMask & (uint64_t{1} << index)) != 0) {
-        emitError(location)
-            << "nested constraint-mode index is malformed";
+        emitError(location) << "nested constraint-mode index is malformed";
         return failure();
       }
       globalMask |= uint64_t{1} << index;
@@ -1583,11 +1621,11 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     uint64_t outerModeIndex = outerModeIndexAttr.getValue().getZExtValue();
     Value outerModeBit = arith::AndIOp::create(
         builder, location, mode, constant64(uint64_t{1} << outerModeIndex));
-    Value outerDisabled = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ne, outerModeBit,
-        constant64(0));
-    Value rootInactive = arith::OrIOp::create(builder, location, isNull,
-                                              outerDisabled);
+    Value outerDisabled =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                              outerModeBit, constant64(0));
+    Value rootInactive =
+        arith::OrIOp::create(builder, location, isNull, outerDisabled);
     Block *disabledBlock = addBlock();
     Block *objectBlock = addBlock();
     Block *mergeBlock = addBlock();
@@ -1597,8 +1635,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                              ValueRange{}, objectBlock, ValueRange{});
 
     setCurrent(disabledBlock);
-    Value disabledMode = arith::OrIOp::create(
-        builder, location, constraintMode, constant64(globalMask));
+    Value disabledMode = arith::OrIOp::create(builder, location, constraintMode,
+                                              constant64(globalMask));
     Value trueValue = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(true));
     cf::BranchOp::create(builder, location, mergeBlock,
@@ -1607,10 +1645,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     setCurrent(objectBlock);
     Value object = *loadedObject;
     if (object.getType() != concreteTypeAttr.getValue())
-      object = sim::SimClassCastOp::create(
-          builder, location, concreteTypeAttr.getValue(), object);
-    auto concreteType =
-        cast<sim::ClassHandleType>(concreteTypeAttr.getValue());
+      object = sim::SimClassCastOp::create(builder, location,
+                                           concreteTypeAttr.getValue(), object);
+    auto concreteType = cast<sim::ClassHandleType>(concreteTypeAttr.getValue());
     for (const ObjectPathElement &element : path) {
       sim::SimClassDeclOp currentDeclaration =
           SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
@@ -1629,25 +1666,24 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                     "obelisk_sim.random_mode_field")
               : FlatSymbolRefAttr{};
       if (!currentModeField) {
-        emitError(location)
-            << "nested constraint path has no rand_mode field";
+        emitError(location) << "nested constraint path has no rand_mode field";
         return failure();
       }
       Type modeReferenceType = sim::ManagedRefType::get(
           function.getContext(), i64, concreteType.getClassName());
       Value modeReference = sim::SimClassFieldRefOp::create(
           builder, location, modeReferenceType, object, currentModeField);
-      Value objectMode = sim::SimManagedLoadOp::create(
-          builder, location, i64, modeReference);
-      Value edgeModeBit = arith::AndIOp::create(
-          builder, location, objectMode,
-          constant64(uint64_t{1} << element.modeIndex));
-      Value edgeDisabled = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ne, edgeModeBit,
-          constant64(0));
-      Type edgeReferenceType = sim::ManagedRefType::get(
-          function.getContext(), element.storageType,
-          concreteType.getClassName());
+      Value objectMode =
+          sim::SimManagedLoadOp::create(builder, location, i64, modeReference);
+      Value edgeModeBit =
+          arith::AndIOp::create(builder, location, objectMode,
+                                constant64(uint64_t{1} << element.modeIndex));
+      Value edgeDisabled =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                edgeModeBit, constant64(0));
+      Type edgeReferenceType =
+          sim::ManagedRefType::get(function.getContext(), element.storageType,
+                                   concreteType.getClassName());
       Value edgeReference = sim::SimClassFieldRefOp::create(
           builder, location, edgeReferenceType, object, element.field);
       FailureOr<Value> loadedEdge = loadReference(edgeReference, location);
@@ -1655,16 +1691,16 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return failure();
       Value edgeNull = sim::SimManagedIsNullOp::create(
           builder, location, builder.getI1Type(), *loadedEdge);
-      Value edgeInactive = arith::OrIOp::create(
-          builder, location, edgeDisabled, edgeNull);
+      Value edgeInactive =
+          arith::OrIOp::create(builder, location, edgeDisabled, edgeNull);
       Block *nextObjectBlock = addBlock();
       cf::CondBranchOp::create(builder, location, edgeInactive, disabledBlock,
                                ValueRange{}, nextObjectBlock, ValueRange{});
       setCurrent(nextObjectBlock);
       object = *loadedEdge;
       if (object.getType() != element.concreteType)
-        object = sim::SimClassCastOp::create(
-            builder, location, element.concreteType, object);
+        object = sim::SimClassCastOp::create(builder, location,
+                                             element.concreteType, object);
       concreteType = cast<sim::ClassHandleType>(element.concreteType);
     }
     sim::SimClassDeclOp nestedDeclaration =
@@ -1679,23 +1715,21 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
               function, nestedDeclaration.getBaseAttr());
     }
     auto nestedModeField =
-        nestedDeclaration
-            ? nestedDeclaration->getAttrOfType<FlatSymbolRefAttr>(
-                  "obelisk_sim.constraint_mode_field")
-            : FlatSymbolRefAttr{};
+        nestedDeclaration ? nestedDeclaration->getAttrOfType<FlatSymbolRefAttr>(
+                                "obelisk_sim.constraint_mode_field")
+                          : FlatSymbolRefAttr{};
     if (!nestedModeField) {
-      emitError(location)
-          << "nested rand object has no constraint_mode field";
+      emitError(location) << "nested rand object has no constraint_mode field";
       return failure();
     }
     Type nestedModeReferenceType = sim::ManagedRefType::get(
         function.getContext(), i64, concreteType.getClassName());
     Value nestedModeReference = sim::SimClassFieldRefOp::create(
         builder, location, nestedModeReferenceType, object, nestedModeField);
-    Value nestedMode = sim::SimManagedLoadOp::create(
-        builder, location, i64, nestedModeReference);
-    Value mappedMode = arith::AndIOp::create(
-        builder, location, constraintMode, constant64(~globalMask));
+    Value nestedMode = sim::SimManagedLoadOp::create(builder, location, i64,
+                                                     nestedModeReference);
+    Value mappedMode = arith::AndIOp::create(builder, location, constraintMode,
+                                             constant64(~globalMask));
     for (auto [localIndex, globalIndex] :
          llvm::enumerate(globalIndices.asArrayRef())) {
       Value localBit = arith::AndIOp::create(
@@ -1717,9 +1751,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                          ValueRange{mappedMode, falseValue});
     setCurrent(mergeBlock);
     constraintMode = mergeBlock->getArgument(0);
-    Value inactiveMask = arith::SelectOp::create(
-        builder, location, mergeBlock->getArgument(1),
-        constant64(globalMask), constant64(0));
+    Value inactiveMask =
+        arith::SelectOp::create(builder, location, mergeBlock->getArgument(1),
+                                constant64(globalMask), constant64(0));
     nullNestedConstraintMask = arith::OrIOp::create(
         builder, location, nullNestedConstraintMask, inactiveMask);
   }
@@ -1731,18 +1765,18 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       if (storage < 0)
         continue;
       uint64_t bit = uint64_t{1} << index;
-      constraintMode = arith::AndIOp::create(
-          builder, location, constraintMode, constant64(~bit));
+      constraintMode = arith::AndIOp::create(builder, location, constraintMode,
+                                             constant64(~bit));
       Value reference = sim::SimContextStorageOp::create(
           builder, location, referenceType, context,
           builder.getI64IntegerAttr(storage));
       Value staticMode =
           sim::SimRefLoadOp::create(builder, location, i64, reference);
-      Value disabled = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ne, staticMode,
-          constant64(0));
+      Value disabled =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                staticMode, constant64(0));
       Value selected = arith::SelectOp::create(builder, location, disabled,
-                                                constant64(bit), constant64(0));
+                                               constant64(bit), constant64(0));
       constraintMode =
           arith::OrIOp::create(builder, location, constraintMode, selected);
     }
@@ -1751,10 +1785,11 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   // no variables or constraints in this randomize call. Apply null gating
   // after shared static modes so a globally enabled block cannot resurrect a
   // constraint belonging to an absent child.
-  constraintMode = arith::OrIOp::create(
-      builder, location, constraintMode, nullNestedConstraintMask);
+  constraintMode = arith::OrIOp::create(builder, location, constraintMode,
+                                        nullNestedConstraintMask);
   unsigned assignmentWidth = std::max<uint64_t>(64, totalWidth);
-  auto assignmentType = IntegerType::get(function.getContext(), assignmentWidth);
+  auto assignmentType =
+      IntegerType::get(function.getContext(), assignmentWidth);
   auto constantAssignment = [&](const APInt &value) -> Value {
     APInt resized = value.zextOrTrunc(assignmentWidth);
     return arith::ConstantOp::create(
@@ -1796,11 +1831,11 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           builder.getI64IntegerAttr(*property.randomModeStorage));
       Value staticMode =
           sim::SimRefLoadOp::create(builder, location, i64, reference);
-      Value disabled = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ne, staticMode,
-          constant64(0));
+      Value disabled =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                staticMode, constant64(0));
       Value selected = arith::SelectOp::create(builder, location, disabled,
-                                                constant64(bit), constant64(0));
+                                               constant64(bit), constant64(0));
       relevantMode =
           arith::OrIOp::create(builder, location, relevantMode, selected);
     }
@@ -1811,13 +1846,12 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
                             relevantMode, constant64(propertyModeMask));
   uint64_t constraintModeMask =
-      constraintCount == 64 ? UINT64_MAX
-                            : (uint64_t{1} << constraintCount) - 1;
+      constraintCount == 64 ? UINT64_MAX : (uint64_t{1} << constraintCount) - 1;
   Value relevantConstraintMode = arith::AndIOp::create(
       builder, location, constraintMode, constant64(constraintModeMask));
-  Value allConstraintsEnabled = arith::CmpIOp::create(
-      builder, location, arith::CmpIPredicate::eq, relevantConstraintMode,
-      constant64(0));
+  Value allConstraintsEnabled =
+      arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                            relevantConstraintMode, constant64(0));
 
   auto next32 = [&](Value &streamState) -> Value {
     Value old = streamState;
@@ -1873,7 +1907,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           chunk = arith::AndIOp::create(
               builder, location, chunk,
               constant64(APInt::getLowBitsSet(64, chunkWidth).getZExtValue()));
-        chunk = arith::ExtUIOp::create(builder, location, assignmentType, chunk);
+        chunk =
+            arith::ExtUIOp::create(builder, location, assignmentType, chunk);
         uint64_t offset = propertyOffset + fieldOffset;
         if (offset != 0)
           chunk = arith::ShLIOp::create(builder, location, chunk,
@@ -2045,9 +2080,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         cf::BranchOp::create(
             builder, location, mergeBlock,
             ValueRange{createDefaultValue(builder, location, property.type),
-                       arith::ConstantOp::create(
-                           builder, location, builder.getI1Type(),
-                           builder.getBoolAttr(false)),
+                       arith::ConstantOp::create(builder, location,
+                                                 builder.getI1Type(),
+                                                 builder.getBoolAttr(false)),
                        constant64(0)});
 
         setCurrent(objectBlock);
@@ -2055,21 +2090,22 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         if (object.getType() != property.nestedObjectType)
           object = sim::SimClassCastOp::create(
               builder, location, property.nestedObjectType, object);
-        auto concreteType = cast<sim::ClassHandleType>(property.nestedObjectType);
+        auto concreteType =
+            cast<sim::ClassHandleType>(property.nestedObjectType);
         FlatSymbolRefAttr objectModeField = property.nestedModeField;
         for (const ObjectPathElement &element : property.nestedObjectPath) {
           Type modeReferenceType = sim::ManagedRefType::get(
               function.getContext(), i64, concreteType.getClassName());
           Value modeReference = sim::SimClassFieldRefOp::create(
               builder, location, modeReferenceType, object, objectModeField);
-          Value objectMode = sim::SimManagedLoadOp::create(
-              builder, location, i64, modeReference);
+          Value objectMode = sim::SimManagedLoadOp::create(builder, location,
+                                                           i64, modeReference);
           Value edgeModeBit = arith::AndIOp::create(
               builder, location, objectMode,
               constant64(uint64_t{1} << element.modeIndex));
-          Value edgeEnabled = arith::CmpIOp::create(
-              builder, location, arith::CmpIPredicate::eq, edgeModeBit,
-              constant64(0));
+          Value edgeEnabled =
+              arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                    edgeModeBit, constant64(0));
           Type edgeReferenceType = sim::ManagedRefType::get(
               function.getContext(), element.storageType,
               concreteType.getClassName());
@@ -2082,28 +2118,26 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
               builder, location, builder.getI1Type(), *loadedEdge);
           Value edgeNonNull = arith::XOrIOp::create(
               builder, location, edgeNull,
-              arith::ConstantOp::create(builder, location,
-                                        builder.getI1Type(),
+              arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                         builder.getBoolAttr(true)));
-          Value edgeActive = arith::AndIOp::create(
-              builder, location, edgeEnabled, edgeNonNull);
+          Value edgeActive = arith::AndIOp::create(builder, location,
+                                                   edgeEnabled, edgeNonNull);
           Block *edgeBlock = addBlock();
           cf::CondBranchOp::create(builder, location, edgeActive, edgeBlock,
                                    ValueRange{}, nullBlock, ValueRange{});
           setCurrent(edgeBlock);
           object = *loadedEdge;
           if (object.getType() != element.concreteType)
-            object = sim::SimClassCastOp::create(
-                builder, location, element.concreteType, object);
+            object = sim::SimClassCastOp::create(builder, location,
+                                                 element.concreteType, object);
           concreteType = cast<sim::ClassHandleType>(element.concreteType);
           objectModeField = element.modeField;
         }
-        Type nestedFieldType = property.isContainerSize
-                                   ? property.containerType
-                                   : property.type;
-        Type fieldReferenceType = sim::ManagedRefType::get(
-            function.getContext(), nestedFieldType,
-            concreteType.getClassName());
+        Type nestedFieldType =
+            property.isContainerSize ? property.containerType : property.type;
+        Type fieldReferenceType =
+            sim::ManagedRefType::get(function.getContext(), nestedFieldType,
+                                     concreteType.getClassName());
         Value fieldReference = sim::SimClassFieldRefOp::create(
             builder, location, fieldReferenceType, object,
             property.nestedField);
@@ -2111,29 +2145,28 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         Type modeReferenceType = sim::ManagedRefType::get(
             function.getContext(), i64, concreteType.getClassName());
         Value childModeReference = sim::SimClassFieldRefOp::create(
-            builder, location, modeReferenceType, object,
-            objectModeField);
-        Value childMode = sim::SimManagedLoadOp::create(
-            builder, location, i64, childModeReference);
+            builder, location, modeReferenceType, object, objectModeField);
+        Value childMode = sim::SimManagedLoadOp::create(builder, location, i64,
+                                                        childModeReference);
         Value childModeBit = arith::AndIOp::create(
             builder, location, childMode,
             constant64(uint64_t{1} << property.nestedModeIndex));
-        Value childEnabled = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::eq, childModeBit,
-            constant64(0));
+        Value childEnabled =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                  childModeBit, constant64(0));
         if (failed(value))
           return failure();
         if (property.isContainerSize) {
-          Value size = sim::SimContainerSizeOp::create(builder, location, i64,
-                                                       *value);
-          value = arith::TruncIOp::create(builder, location, property.type,
-                                          size)
-                      .getResult();
+          Value size =
+              sim::SimContainerSizeOp::create(builder, location, i64, *value);
+          value =
+              arith::TruncIOp::create(builder, location, property.type, size)
+                  .getResult();
         }
-        cf::BranchOp::create(builder, location, mergeBlock,
-                             ValueRange{*value, childEnabled,
-                                        sim::SimClassIdOp::create(
-                                            builder, location, object)});
+        cf::BranchOp::create(
+            builder, location, mergeBlock,
+            ValueRange{*value, childEnabled,
+                       sim::SimClassIdOp::create(builder, location, object)});
         setCurrent(mergeBlock);
         nestedEnabled = mergeBlock->getArgument(1);
         property.nestedObjectID = mergeBlock->getArgument(2);
@@ -2144,8 +2177,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       FailureOr<Value> container = loadReference(property.reference, location);
       if (failed(container))
         return failure();
-      Value size = sim::SimContainerSizeOp::create(builder, location, i64,
-                                                   *container);
+      Value size =
+          sim::SimContainerSizeOp::create(builder, location, i64, *container);
       return arith::TruncIOp::create(builder, location, property.type, size)
           .getResult();
     }();
@@ -2153,46 +2186,41 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return failure();
     FailureOr<Value> scalar = toPackedScalar(*current, location);
     FailureOr<Value> extended =
-        succeeded(scalar)
-            ? convert(*scalar, assignmentType, property.isSigned, location,
-                      false)
-            : FailureOr<Value>(failure());
+        succeeded(scalar) ? convert(*scalar, assignmentType, property.isSigned,
+                                    location, false)
+                          : FailureOr<Value>(failure());
     if (failed(extended))
       return failure();
-    APInt valueMask =
-        APInt::getLowBitsSet(assignmentWidth, property.width);
+    APInt valueMask = APInt::getLowBitsSet(assignmentWidth, property.width);
     Value bits = arith::AndIOp::create(builder, location, *extended,
                                        constantAssignment(valueMask));
 
-    Value propertyMode = arith::AndIOp::create(
-        builder, location, relevantMode,
-        constant64(uint64_t{1} << property.modeIndex));
+    Value propertyMode =
+        arith::AndIOp::create(builder, location, relevantMode,
+                              constant64(uint64_t{1} << property.modeIndex));
     Value enabled =
         checkerOnly
             ? arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                         builder.getBoolAttr(false))
                   .getResult()
-            : arith::CmpIOp::create(builder, location,
-                                    arith::CmpIPredicate::eq, propertyMode,
-                                    constant64(0))
+            : arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                    propertyMode, constant64(0))
                   .getResult();
     if (nestedEnabled)
-      enabled = arith::AndIOp::create(builder, location, enabled,
-                                      nestedEnabled);
-    if (property.isContainerSize &&
-        !property.hasUnconditionalSizeConstraint) {
-      Value disabledSizeConstraints = arith::AndIOp::create(
-          builder, location, relevantConstraintMode,
-          constant64(property.sizeConstraintMask));
+      enabled =
+          arith::AndIOp::create(builder, location, enabled, nestedEnabled);
+    if (property.isContainerSize && !property.hasUnconditionalSizeConstraint) {
+      Value disabledSizeConstraints =
+          arith::AndIOp::create(builder, location, relevantConstraintMode,
+                                constant64(property.sizeConstraintMask));
       Value allSizeConstraintsDisabled = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::eq,
-          disabledSizeConstraints, constant64(property.sizeConstraintMask));
+          builder, location, arith::CmpIPredicate::eq, disabledSizeConstraints,
+          constant64(property.sizeConstraintMask));
       enabled = arith::AndIOp::create(
           builder, location, enabled,
           arith::XOrIOp::create(
               builder, location, allSizeConstraintsDisabled,
-              arith::ConstantOp::create(builder, location,
-                                        builder.getI1Type(),
+              arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                         builder.getBoolAttr(true))));
     }
     propertyEnabled.push_back(enabled);
@@ -2232,8 +2260,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                 ? constant64(0)
                 : materializePropertyDomainIndex(property, constant64(0));
         if (assignmentType != i64)
-          value = arith::ExtUIOp::create(builder, location, assignmentType,
-                                         value);
+          value =
+              arith::ExtUIOp::create(builder, location, assignmentType, value);
         cf::BranchOp::create(builder, location, mergeBlock,
                              ValueRange{state, value, *key, *position});
       } else {
@@ -2279,8 +2307,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                 ? cycle.getValue()
                 : materializePropertyDomainIndex(property, cycle.getValue());
         if (assignmentType != i64)
-          semanticValue = arith::ExtUIOp::create(
-              builder, location, assignmentType, semanticValue);
+          semanticValue = arith::ExtUIOp::create(builder, location,
+                                                 assignmentType, semanticValue);
         cf::CondBranchOp::create(
             builder, location, valid, mergeBlock,
             ValueRange{activeState, semanticValue, activeKey,
@@ -2322,17 +2350,15 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value active;
   };
   SmallVector<AliasEquality> aliasEqualities;
-  auto sameObjectOccurrence = [](const Property &left,
-                                 const Property &right) {
+  auto sameObjectOccurrence = [](const Property &left, const Property &right) {
     if (left.nestedObjectRootField != right.nestedObjectRootField ||
         left.nestedObjectPath.size() != right.nestedObjectPath.size())
       return false;
-    return llvm::equal(
-        left.nestedObjectPath, right.nestedObjectPath,
-        [](const ObjectPathElement &leftElement,
-           const ObjectPathElement &rightElement) {
-          return leftElement.field == rightElement.field;
-        });
+    return llvm::equal(left.nestedObjectPath, right.nestedObjectPath,
+                       [](const ObjectPathElement &leftElement,
+                          const ObjectPathElement &rightElement) {
+                         return leftElement.field == rightElement.field;
+                       });
   };
   auto objectOwnerType = [](const Property &property) {
     return property.nestedObjectPath.empty()
@@ -2355,12 +2381,12 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             << "aliased random-object field plans have inconsistent types";
         return failure();
       }
-      Value bothEnabled = arith::AndIOp::create(
-          builder, location, propertyEnabled[leftIndex],
-          propertyEnabled[rightIndex]);
-      Value sameID = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::eq, left.nestedObjectID,
-          right.nestedObjectID);
+      Value bothEnabled =
+          arith::AndIOp::create(builder, location, propertyEnabled[leftIndex],
+                                propertyEnabled[rightIndex]);
+      Value sameID =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                left.nestedObjectID, right.nestedObjectID);
       aliasEqualities.push_back(
           {propertyOffsets[leftIndex], propertyOffsets[rightIndex], left.width,
            arith::AndIOp::create(builder, location, bothEnabled, sameID)});
@@ -2392,8 +2418,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     uint32_t constraintBlock;
 
     bool operator==(const SolveBeforeEdge &other) const {
-      return beforeMask == other.beforeMask &&
-             afterMask == other.afterMask &&
+      return beforeMask == other.beforeMask && afterMask == other.afterMask &&
              constraintBlock == other.constraintBlock;
     }
   };
@@ -2412,9 +2437,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   }
   SmallVector<SolveBeforeEdge> solveBeforeEdges;
   SmallVector<uint64_t> solveBeforeLayerMasks;
-  uint64_t randomAssignmentMask =
-      totalWidth == 64 ? UINT64_MAX
-                       : totalWidth < 64 ? (uint64_t{1} << totalWidth) - 1 : 0;
+  uint64_t randomAssignmentMask = totalWidth == 64 ? UINT64_MAX
+                                  : totalWidth < 64
+                                      ? (uint64_t{1} << totalWidth) - 1
+                                      : 0;
   bool hasSolveBefore = false;
   auto randomPropertyMask = [&](Operation *expression) -> FailureOr<uint64_t> {
     if (totalWidth > 64) {
@@ -2449,8 +2475,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       solveConstraintBlock = static_cast<uint32_t>(value.getZExtValue());
     }
-    if (auto order =
-            root->getAttrOfType<DenseI64ArrayAttr>(randomFunctionOrderAttrName)) {
+    if (auto order = root->getAttrOfType<DenseI64ArrayAttr>(
+            randomFunctionOrderAttrName)) {
       ArrayRef<int64_t> pairs = order.asArrayRef();
       if (pairs.size() % 2 != 0) {
         emitError(getSemanticLocation(root))
@@ -2564,8 +2590,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return failure();
       }
       solveBeforeLayerMasks.push_back(layer);
-      llvm::erase_if(nodes,
-                     [&](uint64_t node) { return (node & layer) != 0; });
+      llvm::erase_if(nodes, [&](uint64_t node) { return (node & layer) != 0; });
     }
   }
   if (hasRuntimeForeachConstraint && hasSolveBefore) {
@@ -3046,17 +3071,16 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   std::function<LogicalResult(Operation *)> emitProgramExpression;
   emitProgramExpression = [&](Operation *expression) -> LogicalResult {
     if (auto dist = dyn_cast<semantic::SVDistExpressionOp>(expression)) {
-      if (llvm::is_contained(llvm::map_range(
-                                 distPlans,
-                                 [](const DistPlan &plan) { return plan.source; }),
-                             expression)) {
+      if (llvm::is_contained(
+              llvm::map_range(distPlans,
+                              [](const DistPlan &plan) { return plan.source; }),
+              expression)) {
         emitError(getSemanticLocation(expression))
             << "distribution expression was encoded more than once";
         return failure();
       }
       SmallVector<Operation *> nested = getChildren(expression);
-      auto itemCountAttr =
-          expression->getAttrOfType<IntegerAttr>("item_count");
+      auto itemCountAttr = expression->getAttrOfType<IntegerAttr>("item_count");
       auto itemHasWeight =
           expression->getAttrOfType<DenseI64ArrayAttr>("item_has_weight");
       auto itemWeightKinds =
@@ -3091,7 +3115,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           break;
         target = converted.front();
       }
-      auto variable = target->getAttrOfType<IntegerAttr>(randomVariableAttrName);
+      auto variable =
+          target->getAttrOfType<IntegerAttr>(randomVariableAttrName);
       if (!variable || variable.getValue().isNegative() ||
           variable.getValue().getActiveBits() > 64 ||
           variable.getValue().getZExtValue() >= planned.size()) {
@@ -3145,8 +3170,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             return failure();
           weight = nested[childIndex++];
         }
-        rawItems.push_back(
-            {value, weight, itemWeightKinds[index] != 0});
+        rawItems.push_back({value, weight, itemWeightKinds[index] != 0});
       }
       Operation *defaultWeight = nullptr;
       if (hasDefaultWeight.getValue()) {
@@ -3222,7 +3246,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             return failure();
           }
         } else {
-          APInt maximum = APInt::getLowBitsSet(*comparisonWidth, property.width);
+          APInt maximum =
+              APInt::getLowBitsSet(*comparisonWidth, property.width);
           if (bits.ugt(maximum)) {
             emitError(getSemanticLocation(value))
                 << "dist endpoint is outside the rand property domain";
@@ -3289,9 +3314,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         llvm::sort(explicitIntervals);
         SmallVector<std::pair<uint64_t, uint64_t>> merged;
         for (auto interval : explicitIntervals) {
-          if (merged.empty() ||
-              (merged.back().second != UINT64_MAX &&
-               interval.first > merged.back().second + 1)) {
+          if (merged.empty() || (merged.back().second != UINT64_MAX &&
+                                 interval.first > merged.back().second + 1)) {
             merged.push_back(interval);
           } else {
             merged.back().second =
@@ -3393,8 +3417,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 
       llvm::DenseMap<Operation *, std::pair<uint32_t, Value>> weights;
       std::optional<std::pair<uint32_t, Value>> implicitWeight;
-      auto materializeWeight = [&](Operation *weight,
-                                   bool &isSigned) -> FailureOr<std::pair<uint32_t, Value>> {
+      auto materializeWeight =
+          [&](Operation *weight,
+              bool &isSigned) -> FailureOr<std::pair<uint32_t, Value>> {
         if (weight) {
           if (dependsOnCandidate(weight)) {
             emitError(getSemanticLocation(weight))
@@ -3436,8 +3461,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return *implicitWeight;
       };
 
-      DistPlan plan{expression, propertyIndex, 0,
-                    activeProgramConstraintBlock, {}};
+      DistPlan plan{
+          expression, propertyIndex, 0, activeProgramConstraintBlock, {}};
       for (unsigned index = 0; index != propertyIndex; ++index)
         plan.propertyOffset += planned[index].width;
       for (const PendingRange &range : pending) {
@@ -3490,25 +3515,21 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             return failure();
           if (*first > *second)
             std::swap(endpoints[0], endpoints[1]);
-          if (
-              failed(emitProgramExpression(nested.front())) ||
+          if (failed(emitProgramExpression(nested.front())) ||
               failed(emitProgramExpression(endpoints[0])))
             return failure();
-          instruction(OBELISK_RT_RANDOM_GE_V1, 1,
-                      isSignedNode(nested.front()));
+          instruction(OBELISK_RT_RANDOM_GE_V1, 1, isSignedNode(nested.front()));
           if (failed(emitProgramExpression(nested.front())) ||
               failed(emitProgramExpression(endpoints[1])))
             return failure();
-          instruction(OBELISK_RT_RANDOM_LE_V1, 1,
-                      isSignedNode(nested.front()));
+          instruction(OBELISK_RT_RANDOM_LE_V1, 1, isSignedNode(nested.front()));
           instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
           return success();
         }
         if (failed(emitProgramExpression(nested.front())) ||
             failed(emitProgramExpression(value)))
           return failure();
-        instruction(OBELISK_RT_RANDOM_EQ_V1, 1,
-                    isSignedNode(nested.front()));
+        instruction(OBELISK_RT_RANDOM_EQ_V1, 1, isSignedNode(nested.front()));
         return success();
       };
 
@@ -3606,13 +3627,11 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       // Preserve the scalar runtime ABI for captures that fit in one word.
       // Wider v2 captures retain their source width for compile-time-assisted
       // materialization (and for the wide runtime ABI added separately).
-      Type captureType = *width <= 64
-                             ? Type(i64)
-                             : Type(IntegerType::get(function.getContext(),
-                                                     *width));
-      FailureOr<Value> extended =
-          convert(*scalar, captureType, false, getSemanticLocation(expression),
-                  false);
+      Type captureType =
+          *width <= 64 ? Type(i64)
+                       : Type(IntegerType::get(function.getContext(), *width));
+      FailureOr<Value> extended = convert(
+          *scalar, captureType, false, getSemanticLocation(expression), false);
       if (failed(extended))
         return failure();
       uint32_t capture = static_cast<uint32_t>(programCaptures.size());
@@ -3825,8 +3844,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       for (Operation *input : nested) {
         FailureOr<unsigned> inputWidth = expressionWidth(input);
         if (failed(inputWidth) ||
-            combinedWidth > std::numeric_limits<unsigned>::max() -
-                                *inputWidth)
+            combinedWidth > std::numeric_limits<unsigned>::max() - *inputWidth)
           return failure();
         combinedWidth += *inputWidth;
         inputWidths.push_back(*inputWidth);
@@ -3982,8 +4000,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     if (auto expression =
             dyn_cast<semantic::SVExpressionConstraintOp>(constraint)) {
-      bool selected = softTarget ? softTarget == constraint
-                                 : !expression.getIsSoft();
+      bool selected =
+          softTarget ? softTarget == constraint : !expression.getIsSoft();
       if (!selected) {
         emitLiteral(true);
         return success();
@@ -4150,8 +4168,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         activeProgramConstraintBlock = constraintBlock;
         if (failed(emitProgramConstraint(item, /*softTarget=*/nullptr)))
           return failure();
-        instruction(OBELISK_RT_RANDOM_END_HARD_V1, 1, false,
-                    constraintBlock);
+        instruction(OBELISK_RT_RANDOM_END_HARD_V1, 1, false, constraintBlock);
         emittedHard = true;
       }
       for (semantic::SVExpressionConstraintOp soft : softConstraints) {
@@ -4242,11 +4259,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   }
   if (hasFiniteDomains)
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS;
-  bool wideProgram = totalWidth > 64 || llvm::any_of(
-                                                programInstructions,
-                                                [](const EncodedInstruction &op) {
-                                                  return op.width > 64;
-                                                });
+  bool wideProgram =
+      totalWidth > 64 ||
+      llvm::any_of(programInstructions,
+                   [](const EncodedInstruction &op) { return op.width > 64; });
   append32(OBELISK_RT_RANDOM_PROGRAM_MAGIC);
   append16(wideProgram ? OBELISK_RT_RANDOM_PROGRAM_VERSION_V2
                        : OBELISK_RT_RANDOM_PROGRAM_VERSION_V1);
@@ -4262,8 +4278,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     for (const EncodedInstruction &encoded : programInstructions) {
       uint32_t auxiliary = 0;
       if (encoded.opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1) {
-        APInt literal = encoded.literal.value_or(
-            APInt(encoded.width, encoded.immediate));
+        APInt literal =
+            encoded.literal.value_or(APInt(encoded.width, encoded.immediate));
         uint64_t words = literal.getNumWords();
         if (literalWords.size() > UINT32_MAX ||
             words > UINT32_MAX - literalWords.size()) {
@@ -4271,8 +4287,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           return failure();
         }
         auxiliary = static_cast<uint32_t>(literalWords.size());
-        literalWords.append(literal.getRawData(),
-                            literal.getRawData() + words);
+        literalWords.append(literal.getRawData(), literal.getRawData() + words);
       } else if (encoded.opcode == OBELISK_RT_RANDOM_END_SOFT_V1) {
         if (encoded.immediate > UINT32_MAX) {
           emitError(location) << "random soft priority exceeds 32 bits";
@@ -4414,8 +4429,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                (analysis.assignmentTable.size() - 1)) == 0;
   if (validAssignmentTable)
     for (const APInt &assignment : analysis.assignmentTable)
-      proposalAssignments.push_back(
-          assignment.zextOrTrunc(assignmentWidth));
+      proposalAssignments.push_back(assignment.zextOrTrunc(assignmentWidth));
 
   struct SolveBeforeTableNode {
     SmallVector<unsigned> children;
@@ -4503,8 +4517,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     proposalAssignmentTableMask |= normalizedMask;
     SmallVector<APInt> normalizedAssignments;
     for (const APInt &assignment : table.assignments)
-      normalizedAssignments.push_back(
-          assignment.zextOrTrunc(assignmentWidth));
+      normalizedAssignments.push_back(assignment.zextOrTrunc(assignmentWidth));
     proposalAssignmentTables.push_back(
         {normalizedMask, std::move(normalizedAssignments)});
   }
@@ -4559,15 +4572,13 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   SmallVector<ProposalDefinition> proposalDefinitions;
   uint32_t propertyOffset = 0;
   for (const Property &property : planned) {
-    APInt propertyMask =
-        APInt::getLowBitsSet(assignmentWidth, property.width)
-            .shl(propertyOffset);
+    APInt propertyMask = APInt::getLowBitsSet(assignmentWidth, property.width)
+                             .shl(propertyOffset);
     if (!property.domains.empty()) {
       if (!property.isRandC && !validAssignmentTable &&
           (proposalAssignmentTableMask & propertyMask) != propertyMask)
-        proposalFiniteDomains.push_back({propertyOffset,
-                                         &property,
-                                         propertyDomainCardinality(property)});
+        proposalFiniteDomains.push_back(
+            {propertyOffset, &property, propertyDomainCardinality(property)});
       propertyOffset += property.width;
       continue;
     }
@@ -4588,12 +4599,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       uint64_t distance = upper - lower;
       uint64_t cardinality = distance + 1;
       if (upper <= fullMaximum && cardinality != 0)
-        proposalDomains.push_back({propertyOffset,
-                                   property.width,
-                                   lower,
-                                   cardinality,
-                                   (cardinality & (cardinality - 1)) == 0,
-                                   found->isSigned});
+        proposalDomains.push_back(
+            {propertyOffset, property.width, lower, cardinality,
+             (cardinality & (cardinality - 1)) == 0, found->isSigned});
     }
     propertyOffset += property.width;
   }
@@ -4844,16 +4852,16 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   }
 
   auto selectAssignmentTable = [&](ArrayRef<APInt> assignments,
-                                    Value index) -> Value {
+                                   Value index) -> Value {
     Value assignment = constantAssignment(assignments.front());
     for (auto [tableIndex, tableAssignment] :
          llvm::enumerate(llvm::drop_begin(assignments))) {
       Value selected =
           arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
                                 index, constantLike(index, tableIndex + 1));
-      assignment = arith::SelectOp::create(
-          builder, location, selected, constantAssignment(tableAssignment),
-          assignment);
+      assignment = arith::SelectOp::create(builder, location, selected,
+                                           constantAssignment(tableAssignment),
+                                           assignment);
     }
     return assignment;
   };
@@ -4876,9 +4884,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                     builder, location, rawAssignment,
                     constantAssignment64(proposalAssignments.size() - 1))
                     .getResult()
-              : arith::RemUIOp::create(builder, location, rawAssignment,
-                                       constantAssignment64(
-                                           proposalAssignments.size()))
+              : arith::RemUIOp::create(
+                    builder, location, rawAssignment,
+                    constantAssignment64(proposalAssignments.size()))
                     .getResult();
       return selectAssignmentTable(proposalAssignments, index);
     }
@@ -4886,31 +4894,32 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (sampledComponentAssignment)
       assignment = arith::OrIOp::create(
           builder, location,
-          arith::AndIOp::create(builder, location, assignment,
-                                constantAssignment(
-                                    ~proposalAssignmentTableMask)),
+          arith::AndIOp::create(
+              builder, location, assignment,
+              constantAssignment(~proposalAssignmentTableMask)),
           sampledComponentAssignment);
     for (const ProposalDomain &domain : proposalDomains) {
       Value fieldBits;
       if (domain.powerOfTwo) {
         fieldBits = rawAssignment;
         if (domain.offset != 0)
-          fieldBits = arith::ShRUIOp::create(builder, location, fieldBits,
-                                             constantAssignment64(domain.offset));
-        fieldBits = arith::AndIOp::create(builder, location, fieldBits,
-                                          constantAssignment64(
-                                              domain.cardinality - 1));
+          fieldBits =
+              arith::ShRUIOp::create(builder, location, fieldBits,
+                                     constantAssignment64(domain.offset));
+        fieldBits =
+            arith::AndIOp::create(builder, location, fieldBits,
+                                  constantAssignment64(domain.cardinality - 1));
       } else {
         fieldBits = sampledDomainIndices[sampledDomainIndex++];
       }
       if (domain.lower != 0)
-        fieldBits = arith::AddIOp::create(builder, location, fieldBits,
-                                          constantLike(fieldBits, domain.lower));
+        fieldBits =
+            arith::AddIOp::create(builder, location, fieldBits,
+                                  constantLike(fieldBits, domain.lower));
       if (domain.isSigned)
         fieldBits = arith::XOrIOp::create(
             builder, location, fieldBits,
-            constantLike(fieldBits,
-                         uint64_t{1} << (domain.width - 1)));
+            constantLike(fieldBits, uint64_t{1} << (domain.width - 1)));
       if (fieldBits.getType() != assignmentType)
         fieldBits = arith::ExtUIOp::create(builder, location, assignmentType,
                                            fieldBits);
@@ -4958,8 +4967,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       if (bound.offset != 0)
         fieldBits = arith::ShLIOp::create(builder, location, fieldBits,
                                           constantAssignment64(bound.offset));
-      APInt fieldMask = APInt::getLowBitsSet(assignmentWidth, bound.width)
-                            .shl(bound.offset);
+      APInt fieldMask =
+          APInt::getLowBitsSet(assignmentWidth, bound.width).shl(bound.offset);
       assignment = arith::OrIOp::create(
           builder, location,
           arith::AndIOp::create(builder, location, assignment,
@@ -4976,9 +4985,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       if (assignmentWidth <= 64) {
         if (width == 64)
           return bits;
-        return arith::AndIOp::create(
-                   builder, location, bits,
-                   constant64((uint64_t{1} << width) - 1))
+        return arith::AndIOp::create(builder, location, bits,
+                                     constant64((uint64_t{1} << width) - 1))
             .getResult();
       }
       auto inputType = cast<IntegerType>(bits.getType());
@@ -4997,8 +5005,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         Value bits = input.bits;
         if (input.width < width && signExtend) {
           unsigned shift = 64 - input.width;
-          bits = arith::ShLIOp::create(builder, location, bits,
-                                       constant64(shift));
+          bits =
+              arith::ShLIOp::create(builder, location, bits, constant64(shift));
           bits = arith::ShRSIOp::create(builder, location, bits,
                                         constant64(shift));
         }
@@ -5008,7 +5016,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return input.bits;
       auto outputType = IntegerType::get(function.getContext(), width);
       if (input.width > width)
-        return arith::TruncIOp::create(builder, location, outputType, input.bits)
+        return arith::TruncIOp::create(builder, location, outputType,
+                                       input.bits)
             .getResult();
       if (signExtend)
         return arith::ExtSIOp::create(builder, location, outputType, input.bits)
@@ -5017,10 +5026,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           .getResult();
     };
     auto definitionTruth = [&](Value bits) {
-      return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
-                                   bits, assignmentWidth <= 64
-                                             ? constant64(0)
-                                             : constantLike(bits, 0))
+      return arith::CmpIOp::create(
+                 builder, location, arith::CmpIPredicate::ne, bits,
+                 assignmentWidth <= 64 ? constant64(0) : constantLike(bits, 0))
           .getResult();
     };
     auto definitionBooleanBits = [&](Value condition) {
@@ -5064,10 +5072,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           continue;
         }
         if (encoded.opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1) {
-          APInt literal = encoded.literal.value_or(
-              APInt(encoded.width, encoded.immediate));
-          stack.push_back({definitionConstant(encoded.width, literal),
-                           encoded.width});
+          APInt literal =
+              encoded.literal.value_or(APInt(encoded.width, encoded.immediate));
+          stack.push_back(
+              {definitionConstant(encoded.width, literal), encoded.width});
           continue;
         }
         if (encoded.opcode == OBELISK_RT_RANDOM_SELECT_V1) {
@@ -5093,9 +5101,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           if (encoded.opcode <= OBELISK_RT_RANDOM_BIT_NOT_V1)
             bits = resizeDefinitionValue(input, encoded.width, signedOperation);
           if (encoded.opcode == OBELISK_RT_RANDOM_NEG_V1)
-            bits =
-                arith::SubIOp::create(builder, location, constantLike(bits, 0),
-                                      bits);
+            bits = arith::SubIOp::create(builder, location,
+                                         constantLike(bits, 0), bits);
           else if (encoded.opcode == OBELISK_RT_RANDOM_BIT_NOT_V1)
             bits = arith::XOrIOp::create(
                 builder, location, bits,
@@ -5103,8 +5110,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                    APInt::getAllOnes(encoded.width)));
           else if (encoded.opcode == OBELISK_RT_RANDOM_REDUCE_AND_V1 ||
                    encoded.opcode == OBELISK_RT_RANDOM_REDUCE_NAND_V1) {
-            Value allOnes = definitionConstant(
-                input.width, APInt::getAllOnes(input.width));
+            Value allOnes =
+                definitionConstant(input.width, APInt::getAllOnes(input.width));
             arith::CmpIPredicate predicate =
                 encoded.opcode == OBELISK_RT_RANDOM_REDUCE_AND_V1
                     ? arith::CmpIPredicate::eq
@@ -5117,9 +5124,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                      encoded.opcode == OBELISK_RT_RANDOM_REDUCE_XNOR_V1) {
             bits = assignmentWidth <= 64
                        ? constant64(0)
-                       : arith::ConstantOp::create(
-                             builder, location, builder.getI1Type(),
-                             builder.getBoolAttr(false))
+                       : arith::ConstantOp::create(builder, location,
+                                                   builder.getI1Type(),
+                                                   builder.getBoolAttr(false))
                              .getResult();
             for (unsigned bit = 0; bit != input.width; ++bit) {
               Value current = input.bits;
@@ -5128,8 +5135,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                                  constantLike(current, bit));
               current = arith::AndIOp::create(builder, location, current,
                                               constantLike(current, 1));
-              bits = arith::XOrIOp::create(
-                  builder, location, bits, definitionTruth(current));
+              bits = arith::XOrIOp::create(builder, location, bits,
+                                           definitionTruth(current));
             }
             if (encoded.opcode == OBELISK_RT_RANDOM_REDUCE_XNOR_V1)
               bits = arith::XOrIOp::create(
@@ -5160,8 +5167,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           bool arithmeticRight =
               encoded.opcode == OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1;
           unsigned operationWidth = std::max(encoded.width, rhs.width);
-          Value left = resizeDefinitionValue(lhs, operationWidth,
-                                             arithmeticRight);
+          Value left =
+              resizeDefinitionValue(lhs, operationWidth, arithmeticRight);
           Value right =
               resizeDefinitionValue(rhs, operationWidth, /*signExtend=*/false);
           Value oversized = arith::CmpIOp::create(
@@ -5183,8 +5190,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           if (arithmeticRight) {
             Value negative = arith::CmpIOp::create(builder, location,
                                                    arith::CmpIPredicate::slt,
-                                                   left,
-                                                   constantLike(left, 0));
+                                                   left, constantLike(left, 0));
             oversizedResult = arith::SelectOp::create(
                 builder, location, negative,
                 definitionConstant(operationWidth,
@@ -5200,13 +5206,14 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         if (encoded.opcode == OBELISK_RT_RANDOM_POWER_V1) {
           Value base =
               resizeDefinitionValue(lhs, encoded.width, signedOperation);
-          Value bits = definitionConstant(encoded.width, APInt(encoded.width, 1));
+          Value bits =
+              definitionConstant(encoded.width, APInt(encoded.width, 1));
           for (unsigned bit = 0; bit != rhs.width; ++bit) {
             Value exponentBit = rhs.bits;
             if (bit != 0)
-              exponentBit = arith::ShRUIOp::create(
-                  builder, location, exponentBit,
-                  constantLike(exponentBit, bit));
+              exponentBit =
+                  arith::ShRUIOp::create(builder, location, exponentBit,
+                                         constantLike(exponentBit, bit));
             exponentBit = arith::AndIOp::create(builder, location, exponentBit,
                                                 constantLike(exponentBit, 1));
             Value multiplied =
@@ -5253,24 +5260,21 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           if (signedOperation) {
             Value overflow = arith::AndIOp::create(
                 builder, location,
-                arith::CmpIOp::create(builder, location,
-                                      arith::CmpIPredicate::eq, left,
-                                      definitionConstant(
-                                          operandWidth,
-                                          APInt::getSignedMinValue(
-                                              operandWidth))),
-                arith::CmpIOp::create(builder, location,
-                                      arith::CmpIPredicate::eq, right,
-                                      definitionConstant(
-                                          operandWidth,
-                                          APInt::getAllOnes(operandWidth))));
+                arith::CmpIOp::create(
+                    builder, location, arith::CmpIPredicate::eq, left,
+                    definitionConstant(operandWidth,
+                                       APInt::getSignedMinValue(operandWidth))),
+                arith::CmpIOp::create(
+                    builder, location, arith::CmpIPredicate::eq, right,
+                    definitionConstant(operandWidth,
+                                       APInt::getAllOnes(operandWidth))));
             Value safeRight = arith::SelectOp::create(
                 builder, location, overflow, constantLike(right, 1), right);
             if (encoded.opcode == OBELISK_RT_RANDOM_DIV_V1) {
               Value quotient =
                   arith::DivSIOp::create(builder, location, left, safeRight);
-              bits = arith::SelectOp::create(builder, location, overflow,
-                                             left, quotient);
+              bits = arith::SelectOp::create(builder, location, overflow, left,
+                                             quotient);
             } else {
               Value remainder =
                   arith::RemSIOp::create(builder, location, left, safeRight);
@@ -5332,8 +5336,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           default:
             return failure();
           }
-          bits = definitionBooleanBits(arith::CmpIOp::create(
-              builder, location, predicate, left, right));
+          bits = definitionBooleanBits(
+              arith::CmpIOp::create(builder, location, predicate, left, right));
           break;
         }
         case OBELISK_RT_RANDOM_LOGICAL_AND_V1:
@@ -5350,10 +5354,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             predicate =
                 arith::OrIOp::create(builder, location, leftTruth, rightTruth);
           else if (encoded.opcode == OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1) {
-            Value leftFalse = arith::CmpIOp::create(builder, location,
-                                                    arith::CmpIPredicate::eq,
-                                                    lhs.bits,
-                                                    constantLike(lhs.bits, 0));
+            Value leftFalse = arith::CmpIOp::create(
+                builder, location, arith::CmpIPredicate::eq, lhs.bits,
+                constantLike(lhs.bits, 0));
             predicate =
                 arith::OrIOp::create(builder, location, leftFalse, rightTruth);
           } else {
@@ -5377,12 +5380,11 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         fieldBits = arith::ExtUIOp::create(builder, location, assignmentType,
                                            fieldBits);
       if (definition.targetOffset != 0)
-        fieldBits = arith::ShLIOp::create(builder, location, fieldBits,
-                                          constantAssignment64(
-                                              definition.targetOffset));
-      APInt targetMask =
-          APInt::getLowBitsSet(assignmentWidth, definition.width)
-              .shl(definition.targetOffset);
+        fieldBits = arith::ShLIOp::create(
+            builder, location, fieldBits,
+            constantAssignment64(definition.targetOffset));
+      APInt targetMask = APInt::getLowBitsSet(assignmentWidth, definition.width)
+                             .shl(definition.targetOffset);
       assignment = arith::OrIOp::create(
           builder, location,
           arith::AndIOp::create(builder, location, assignment,
@@ -5401,9 +5403,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       } else {
         sourceBits = assignment;
         if (alias.sourceOffset != 0)
-          sourceBits = arith::ShRUIOp::create(builder, location, sourceBits,
-                                              constantAssignment64(
-                                                  alias.sourceOffset));
+          sourceBits =
+              arith::ShRUIOp::create(builder, location, sourceBits,
+                                     constantAssignment64(alias.sourceOffset));
         sourceBits = maskDefinitionValue(sourceBits, alias.width);
         aliasSources.emplace_back(alias.sourceOffset, alias.width, sourceBits);
       }
@@ -5411,9 +5413,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         sourceBits = arith::ExtUIOp::create(builder, location, assignmentType,
                                             sourceBits);
       if (alias.targetOffset != 0)
-        sourceBits = arith::ShLIOp::create(builder, location, sourceBits,
-                                           constantAssignment64(
-                                               alias.targetOffset));
+        sourceBits =
+            arith::ShLIOp::create(builder, location, sourceBits,
+                                  constantAssignment64(alias.targetOffset));
       APInt targetMask = APInt::getLowBitsSet(assignmentWidth, alias.width)
                              .shl(alias.targetOffset);
       assignment = arith::OrIOp::create(
@@ -5426,8 +5428,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       assignment = arith::OrIOp::create(
           builder, location,
           arith::AndIOp::create(builder, location, assignment,
-                                constantAssignment(
-                                    ~sampledDistMask)),
+                                constantAssignment(~sampledDistMask)),
           sampledDistAssignment);
     return assignment;
   };
@@ -5503,9 +5504,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                 materializedCaptureBounds == analysis.captureBounds.size() &&
                 proposalAliases.size() == analysis.aliases.size() &&
                 proposalDefinitions.size() == analysis.definitions.size();
-  bool exactProposal = !hasRuntimeForeachConstraint &&
-                       analysis.proposalExact && softProposalExact &&
-                       !hasRandC && distPlans.empty() &&
+  bool exactProposal = !hasRuntimeForeachConstraint && analysis.proposalExact &&
+                       softProposalExact && !hasRandC && distPlans.empty() &&
                        !overwritesProposalDomain &&
                        materializesCompleteProposal;
 
@@ -5545,9 +5545,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   }
 
   auto structuralProposalFollowsSolveOrder = [&]() {
-    auto propertyIndexForField = [&](uint32_t fieldOffset,
-                                     unsigned fieldWidth)
-        -> std::optional<unsigned> {
+    auto propertyIndexForField =
+        [&](uint32_t fieldOffset,
+            unsigned fieldWidth) -> std::optional<unsigned> {
       uint32_t offset = 0;
       for (auto [index, property] : llvm::enumerate(planned)) {
         if (offset == fieldOffset && property.width == fieldWidth)
@@ -5810,46 +5810,47 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   SmallVector<MaterializedDistPlan> materializedDistPlans;
   Value distWeightsValid;
   auto requireValidDistWeights = [&](Value valid) {
-    distWeightsValid = distWeightsValid
-                           ? arith::AndIOp::create(builder, location,
-                                                   distWeightsValid, valid)
-                                 .getResult()
-                           : valid;
+    distWeightsValid =
+        distWeightsValid
+            ? arith::AndIOp::create(builder, location, distWeightsValid, valid)
+                  .getResult()
+            : valid;
   };
   for (const DistPlan &plan : distPlans) {
     MaterializedDistPlan materialized{&plan, {}, constant64(0)};
     for (const DistRangePlan &range : plan.ranges) {
       if (range.weightSigned)
-        requireValidDistWeights(arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::sge, range.weight,
-            constant64(0)));
-      Value zero = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::eq, range.weight,
-          constant64(0));
-      Value safeWeight = arith::SelectOp::create(
-          builder, location, zero, constant64(1), range.weight);
-      Value scaled = arith::MulIOp::create(
-          builder, location, range.weight,
-          constant64(range.selectionCoefficient));
-      Value recovered = arith::DivUIOp::create(builder, location, scaled,
-                                                safeWeight);
+        requireValidDistWeights(
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::sge,
+                                  range.weight, constant64(0)));
+      Value zero =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                range.weight, constant64(0));
+      Value safeWeight = arith::SelectOp::create(builder, location, zero,
+                                                 constant64(1), range.weight);
+      Value scaled =
+          arith::MulIOp::create(builder, location, range.weight,
+                                constant64(range.selectionCoefficient));
+      Value recovered =
+          arith::DivUIOp::create(builder, location, scaled, safeWeight);
       Value productValid = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::eq, recovered,
           constant64(range.selectionCoefficient));
-      productValid = arith::OrIOp::create(builder, location, zero, productValid);
+      productValid =
+          arith::OrIOp::create(builder, location, zero, productValid);
       requireValidDistWeights(productValid);
       Value updated = arith::AddIOp::create(builder, location,
-                                             materialized.totalWeight, scaled);
-      Value sumValid = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::uge, updated,
-          materialized.totalWeight);
+                                            materialized.totalWeight, scaled);
+      Value sumValid =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
+                                updated, materialized.totalWeight);
       requireValidDistWeights(sumValid);
       materialized.totalWeight = updated;
       materialized.weights.push_back(scaled);
     }
-    requireValidDistWeights(arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ne,
-        materialized.totalWeight, constant64(0)));
+    requireValidDistWeights(
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                              materialized.totalWeight, constant64(0)));
     materializedDistPlans.push_back(std::move(materialized));
   }
 
@@ -5868,8 +5869,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   if (!materializedDistPlans.empty()) {
     sampledDistAssignment = constantAssignment64(0);
     for (const MaterializedDistPlan &materialized : materializedDistPlans) {
-      Value choice = sampleDynamicBoundedIndex(
-          materialized.totalWeight, next64(state), state);
+      Value choice = sampleDynamicBoundedIndex(materialized.totalWeight,
+                                               next64(state), state);
       const DistRangePlan *first = &materialized.plan->ranges.front();
       Value selectedLower = constant64(first->lower);
       Value selectedCardinality = constant64(first->cardinality);
@@ -5879,21 +5880,19 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         const DistRangePlan &range = materialized.plan->ranges[index];
         Value selected = arith::CmpIOp::create(
             builder, location, arith::CmpIPredicate::uge, choice, cumulative);
-        selectedLower = arith::SelectOp::create(
-            builder, location, selected, constant64(range.lower),
-            selectedLower);
+        selectedLower =
+            arith::SelectOp::create(builder, location, selected,
+                                    constant64(range.lower), selectedLower);
         selectedCardinality = arith::SelectOp::create(
             builder, location, selected, constant64(range.cardinality),
             selectedCardinality);
-        cumulative = arith::AddIOp::create(
-            builder, location, cumulative, materialized.weights[index]);
+        cumulative = arith::AddIOp::create(builder, location, cumulative,
+                                           materialized.weights[index]);
       }
       Value field = arith::AddIOp::create(
           builder, location, selectedLower,
-          sampleDynamicBoundedIndex(selectedCardinality, next64(state),
-                                    state));
-      const Property &property =
-          planned[materialized.plan->propertyIndex];
+          sampleDynamicBoundedIndex(selectedCardinality, next64(state), state));
+      const Property &property = planned[materialized.plan->propertyIndex];
       if (property.isSigned)
         field = arith::XOrIOp::create(
             builder, location, field,
@@ -5904,7 +5903,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       field = arith::AndIOp::create(builder, location, field,
                                     constant64(localFieldMask));
       if (field.getType() != assignmentType)
-        field = arith::ExtUIOp::create(builder, location, assignmentType, field);
+        field =
+            arith::ExtUIOp::create(builder, location, assignmentType, field);
       if (materialized.plan->propertyOffset != 0) {
         field = arith::ShLIOp::create(
             builder, location, field,
@@ -5912,8 +5912,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       APInt fieldMask = APInt::getLowBitsSet(assignmentWidth, property.width)
                             .shl(materialized.plan->propertyOffset);
-      sampledDistAssignment = arith::OrIOp::create(
-          builder, location, sampledDistAssignment, field);
+      sampledDistAssignment =
+          arith::OrIOp::create(builder, location, sampledDistAssignment, field);
       sampledDistMask |= fieldMask;
     }
   }
@@ -6001,8 +6001,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         if (node.assignments.size() == 1)
           return constantAssignment(node.assignments.front());
         Value draw = availableDraw ? *availableDraw : next64(state);
-        Value index =
-            sampleBoundedIndex(node.assignments.size(), draw, state);
+        Value index = sampleBoundedIndex(node.assignments.size(), draw, state);
         return selectAssignmentTable(node.assignments, index);
       }
       if (node.children.size() == 1)
@@ -6101,13 +6100,12 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     for (const ProposalCaptureDomain &bound : proposalCaptureDomains) {
       Value draw = next64(streamState);
-      sampledIndices.push_back(sampleDynamicBoundedIndex(
-          bound.cardinality, draw, streamState));
+      sampledIndices.push_back(
+          sampleDynamicBoundedIndex(bound.cardinality, draw, streamState));
     }
     return sampledIndices;
   };
-  SmallVector<Value> sampledDomainIndices =
-      sampleProposalDomainIndices(state);
+  SmallVector<Value> sampledDomainIndices = sampleProposalDomainIndices(state);
   sim::SimManagedStoreOp::create(builder, location, state, stateReference);
 
   Block *dispatchBlock = current;
@@ -6163,9 +6161,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     for (const Property &property : planned) {
       Value bits = assignment;
       if (offset != 0)
-        bits =
-            arith::ShRUIOp::create(builder, location, bits,
-                                   constantAssignment64(offset));
+        bits = arith::ShRUIOp::create(builder, location, bits,
+                                      constantAssignment64(offset));
       Type integerType =
           IntegerType::get(function.getContext(), property.width);
       if (property.width != assignmentWidth)
@@ -6205,8 +6202,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           builder, location, builder.getI1Type(), builder.getBoolAttr(true));
 
     std::function<FailureOr<Value>(Operation *, Operation *)> lowerConstraint =
-        [&](Operation *constraint,
-            Operation *softTarget) -> FailureOr<Value> {
+        [&](Operation *constraint, Operation *softTarget) -> FailureOr<Value> {
       SmallVector<Operation *> nested = getChildren(constraint);
       if (isa<semantic::SVConstraintListOp>(constraint)) {
         Value result = arith::ConstantOp::create(
@@ -6228,8 +6224,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             .getResult();
       if (auto expression =
               dyn_cast<semantic::SVExpressionConstraintOp>(constraint)) {
-        bool selected = softTarget ? softTarget == constraint
-                                   : !expression.getIsSoft();
+        bool selected =
+            softTarget ? softTarget == constraint : !expression.getIsSoft();
         if (!selected)
           return arith::ConstantOp::create(
                      builder, getSemanticLocation(constraint),
@@ -6251,9 +6247,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             return failure();
           }
           const Property &property = planned[plan->propertyIndex];
-          FailureOr<Value> scalar = toPackedScalar(
-              randomizeCandidateValues[plan->propertyIndex],
-              getSemanticLocation(nested.front()));
+          FailureOr<Value> scalar =
+              toPackedScalar(randomizeCandidateValues[plan->propertyIndex],
+                             getSemanticLocation(nested.front()));
           FailureOr<Value> extended =
               succeeded(scalar)
                   ? convert(*scalar, i64, false,
@@ -6271,36 +6267,37 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             field = arith::XOrIOp::create(
                 builder, location, field,
                 constant64(uint64_t{1} << (property.width - 1)));
-          Value supported = arith::ConstantOp::create(
-              builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+          Value supported =
+              arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                        builder.getBoolAttr(false));
           for (const DistRangePlan &range : plan->ranges) {
             Value matches;
             if (range.cardinality == 0) {
-              matches = arith::ConstantOp::create(
-                  builder, location, builder.getI1Type(),
-                  builder.getBoolAttr(true));
+              matches = arith::ConstantOp::create(builder, location,
+                                                  builder.getI1Type(),
+                                                  builder.getBoolAttr(true));
             } else {
               Value atOrAbove = arith::CmpIOp::create(
                   builder, location, arith::CmpIPredicate::uge, field,
                   constant64(range.lower));
-              Value distance = arith::SubIOp::create(
-                  builder, location, field, constant64(range.lower));
+              Value distance = arith::SubIOp::create(builder, location, field,
+                                                     constant64(range.lower));
               Value belowEnd = arith::CmpIOp::create(
                   builder, location, arith::CmpIPredicate::ult, distance,
                   constant64(range.cardinality));
-              matches = arith::AndIOp::create(builder, location, atOrAbove,
-                                               belowEnd);
+              matches =
+                  arith::AndIOp::create(builder, location, atOrAbove, belowEnd);
             }
             arith::CmpIPredicate positivePredicate =
                 range.weightSigned ? arith::CmpIPredicate::sgt
                                    : arith::CmpIPredicate::ugt;
-            Value positive = arith::CmpIOp::create(
-                builder, location, positivePredicate, range.weight,
-                constant64(0));
+            Value positive =
+                arith::CmpIOp::create(builder, location, positivePredicate,
+                                      range.weight, constant64(0));
             Value active =
                 arith::AndIOp::create(builder, location, matches, positive);
-            supported = arith::OrIOp::create(builder, location, supported,
-                                              active);
+            supported =
+                arith::OrIOp::create(builder, location, supported, active);
           }
           return supported;
         }
@@ -6320,8 +6317,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           return failure();
         }
         FailureOr<Value> predicateValue = lowerExpression(nested.front());
-        FailureOr<Value> body =
-            lowerConstraint(nested.back(), softTarget);
+        FailureOr<Value> body = lowerConstraint(nested.back(), softTarget);
         if (failed(predicateValue) || failed(body))
           return failure();
         FailureOr<Value> predicate =
@@ -6356,8 +6352,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           return failure();
         Value elseValue;
         if (conditional.getHasElse()) {
-          FailureOr<Value> loweredElse =
-              lowerConstraint(nested[2], softTarget);
+          FailureOr<Value> loweredElse = lowerConstraint(nested[2], softTarget);
           if (failed(loweredElse))
             return failure();
           elseValue = *loweredElse;
@@ -6425,21 +6420,20 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         }
         auto dimension = dyn_cast<DictionaryAttr>(metadata[0]);
         auto hasIterator =
-            dimension ? dimension.getAs<BoolAttr>(
-                            foreach_metadata::hasIterator)
+            dimension ? dimension.getAs<BoolAttr>(foreach_metadata::hasIterator)
                       : BoolAttr{};
         auto hasStaticRange =
-            dimension ? dimension.getAs<BoolAttr>(
-                            foreach_metadata::hasStaticRange)
-                      : BoolAttr{};
+            dimension
+                ? dimension.getAs<BoolAttr>(foreach_metadata::hasStaticRange)
+                : BoolAttr{};
         auto iteratorPath =
-            dimension ? dimension.getAs<StringAttr>(
-                            foreach_metadata::iteratorPath)
-                      : StringAttr{};
+            dimension
+                ? dimension.getAs<StringAttr>(foreach_metadata::iteratorPath)
+                : StringAttr{};
         auto semanticIteratorType =
-            dimension ? dimension.getAs<TypeAttr>(
-                            foreach_metadata::iteratorType)
-                      : TypeAttr{};
+            dimension
+                ? dimension.getAs<TypeAttr>(foreach_metadata::iteratorType)
+                : TypeAttr{};
         if (!dimension || !hasIterator || !hasIterator.getValue() ||
             !hasStaticRange || hasStaticRange.getValue() || !iteratorPath ||
             !semanticIteratorType) {
@@ -6463,15 +6457,14 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         Location foreachLocation = getSemanticLocation(constraint);
         Type indexType = builder.getI64Type();
         auto indexConstant = [&](uint64_t value) -> Value {
-          return arith::ConstantOp::create(
-              builder, foreachLocation, indexType,
-              builder.getI64IntegerAttr(value));
+          return arith::ConstantOp::create(builder, foreachLocation, indexType,
+                                           builder.getI64IntegerAttr(value));
         };
-        Value trueValue = arith::ConstantOp::create(
-            builder, foreachLocation, builder.getI1Type(),
-            builder.getBoolAttr(true));
-        Value count = sim::SimContainerSizeOp::create(
-            builder, foreachLocation, indexType, *collection);
+        Value trueValue = arith::ConstantOp::create(builder, foreachLocation,
+                                                    builder.getI1Type(),
+                                                    builder.getBoolAttr(true));
+        Value count = sim::SimContainerSizeOp::create(builder, foreachLocation,
+                                                      indexType, *collection);
         Block *header = addBlock();
         Value ordinal = header->addArgument(indexType, foreachLocation);
         Value accumulated =
@@ -6482,12 +6475,11 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         cf::BranchOp::create(builder, foreachLocation, header,
                              ValueRange{indexConstant(0), trueValue});
         setCurrent(header);
-        Value more = arith::CmpIOp::create(
-            builder, foreachLocation, arith::CmpIPredicate::ult, ordinal,
-            count);
+        Value more =
+            arith::CmpIOp::create(builder, foreachLocation,
+                                  arith::CmpIPredicate::ult, ordinal, count);
         cf::CondBranchOp::create(builder, foreachLocation, more, body,
-                                 ValueRange{}, exit,
-                                 ValueRange{accumulated});
+                                 ValueRange{}, exit, ValueRange{accumulated});
 
         setCurrent(body);
         auto previous = values.find(iteratorPath.getValue());
@@ -6505,10 +6497,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           values.erase(iteratorPath.getValue());
         if (failed(item))
           return failure();
-        Value nextResult = arith::AndIOp::create(
-            builder, foreachLocation, accumulated, *item);
-        Value nextOrdinal = arith::AddIOp::create(
-            builder, foreachLocation, ordinal, indexConstant(1));
+        Value nextResult =
+            arith::AndIOp::create(builder, foreachLocation, accumulated, *item);
+        Value nextOrdinal = arith::AddIOp::create(builder, foreachLocation,
+                                                  ordinal, indexConstant(1));
         cf::BranchOp::create(builder, foreachLocation, header,
                              ValueRange{nextOrdinal, nextResult});
         setCurrent(exit);
@@ -6536,13 +6528,11 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         Value member = arith::ConstantOp::create(
             builder, location, builder.getI1Type(), builder.getBoolAttr(false));
         for (const DomainPattern &pattern : domain.patterns) {
-          Value masked = arith::AndIOp::create(builder, location, field,
-                                               constantAssignment64(
-                                                   pattern.mask));
-          Value matches =
-              arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
-                                    masked,
-                                    constantAssignment64(pattern.value));
+          Value masked = arith::AndIOp::create(
+              builder, location, field, constantAssignment64(pattern.mask));
+          Value matches = arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::eq, masked,
+              constantAssignment64(pattern.value));
           member = arith::OrIOp::create(builder, location, member, matches);
         }
         Value mutableField = mutableMask;
@@ -6702,13 +6692,12 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         }
       });
       FailureOr<Value> hard =
-          hasHard
-              ? lowerConstraint(constraint, /*softTarget=*/nullptr)
-              : FailureOr<Value>(arith::ConstantOp::create(
-                                     builder, getSemanticLocation(constraint),
-                                     builder.getI1Type(),
-                                     builder.getBoolAttr(true))
-                                     .getResult());
+          hasHard ? lowerConstraint(constraint, /*softTarget=*/nullptr)
+                  : FailureOr<Value>(
+                        arith::ConstantOp::create(
+                            builder, getSemanticLocation(constraint),
+                            builder.getI1Type(), builder.getBoolAttr(true))
+                            .getResult());
       if (failed(hard))
         return failure();
       SmallVector<Value> softValues;
@@ -6729,24 +6718,23 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         }
         uint64_t blockBit = uint64_t{1} << blockIndex.getZExtValue();
         Value selected = arith::AndIOp::create(
-            builder, location, relevantConstraintMode,
-            constant64(blockBit));
-        Value disabled = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::ne, selected,
-            constant64(0));
+            builder, location, relevantConstraintMode, constant64(blockBit));
+        Value disabled =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                  selected, constant64(0));
         Value trueValue = arith::ConstantOp::create(
             builder, location, builder.getI1Type(), builder.getBoolAttr(true));
         hard = arith::SelectOp::create(builder, location, disabled, trueValue,
                                        *hard)
                    .getResult();
         for (Value &soft : softValues)
-          soft = arith::SelectOp::create(builder, location, disabled,
-                                         trueValue, soft);
+          soft = arith::SelectOp::create(builder, location, disabled, trueValue,
+                                         soft);
       }
       satisfied = arith::AndIOp::create(builder, location, satisfied, *hard);
       for (Value soft : softValues)
-        softSatisfied = arith::AndIOp::create(builder, location, softSatisfied,
-                                              soft);
+        softSatisfied =
+            arith::AndIOp::create(builder, location, softSatisfied, soft);
     }
     thisObject = savedThis;
     randomizeCandidateValues = std::move(savedCandidates);
@@ -6781,17 +6769,14 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value randcFreshCycle =
         singleRandCLoop->addArgument(builder.getI1Type(), location);
     Value advanceKey = singleRandCAdvance->addArgument(i64, location);
-    Value advancePosition =
-        singleRandCAdvance->addArgument(i64, location);
-    Value advanceRemaining =
-        singleRandCAdvance->addArgument(i64, location);
+    Value advancePosition = singleRandCAdvance->addArgument(i64, location);
+    Value advanceRemaining = singleRandCAdvance->addArgument(i64, location);
     Value advanceFreshCycle =
         singleRandCAdvance->addArgument(builder.getI1Type(), location);
     Value commitCandidate =
         singleRandCCommit->addArgument(assignmentType, location);
     Value commitKey = singleRandCCommit->addArgument(i64, location);
-    Value commitPosition =
-        singleRandCCommit->addArgument(i64, location);
+    Value commitPosition = singleRandCCommit->addArgument(i64, location);
 
     setCurrent(singleRandCLoop);
     FailureOr<ConstraintCheck> randcCheck =
@@ -6800,10 +6785,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return failure();
     cf::CondBranchOp::create(
         builder, location, randcCheck->preferred, singleRandCCommit,
-        ValueRange{randcCandidate, randcKey, randcPosition},
-        singleRandCAdvance,
-        ValueRange{randcKey, randcPosition, randcRemaining,
-                   randcFreshCycle});
+        ValueRange{randcCandidate, randcKey, randcPosition}, singleRandCAdvance,
+        ValueRange{randcKey, randcPosition, randcRemaining, randcFreshCycle});
 
     setCurrent(singleRandCAdvance);
     Value nextRemaining = arith::SubIOp::create(
@@ -6811,9 +6794,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (semanticCardinality == 1) {
       cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
     } else {
-      Value exhausted = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::eq, nextRemaining,
-          constant64(0));
+      Value exhausted =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                nextRemaining, constant64(0));
       exhausted = arith::AndIOp::create(builder, location, exhausted,
                                         advanceFreshCycle);
       Block *candidateEntry = addBlock();
@@ -6835,27 +6818,25 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                           nextRemaining, advanceFreshCycle});
 
       setCurrent(candidateEntry);
-      Value needsRekey = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::eq, entryPosition,
-          constant64(0));
-      cf::CondBranchOp::create(builder, location, needsRekey, rekeyBlock,
-                               ValueRange{}, cycleBlock,
-                               ValueRange{entryKey, entryPosition,
-                                          entryRemaining, entryFreshCycle});
+      Value needsRekey =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                entryPosition, constant64(0));
+      cf::CondBranchOp::create(
+          builder, location, needsRekey, rekeyBlock, ValueRange{}, cycleBlock,
+          ValueRange{entryKey, entryPosition, entryRemaining, entryFreshCycle});
 
       setCurrent(rekeyBlock);
-      Value rekeyState = sim::SimManagedLoadOp::create(
-          builder, location, i64, stateReference);
+      Value rekeyState =
+          sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
       Value newKey = next64(rekeyState);
       sim::SimManagedStoreOp::create(builder, location, rekeyState,
                                      stateReference);
-      cf::BranchOp::create(builder, location, cycleBlock,
-                           ValueRange{newKey, entryPosition,
-                                      constant64(semanticCardinality),
-                                      arith::ConstantOp::create(
-                                          builder, location,
-                                          builder.getI1Type(),
-                                          builder.getBoolAttr(true))});
+      cf::BranchOp::create(
+          builder, location, cycleBlock,
+          ValueRange{newKey, entryPosition, constant64(semanticCardinality),
+                     arith::ConstantOp::create(builder, location,
+                                               builder.getI1Type(),
+                                               builder.getBoolAttr(true))});
 
       setCurrent(cycleBlock);
       unsigned cycleWidth = llvm::Log2_64_Ceil(semanticCardinality);
@@ -6870,15 +6851,15 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
               ? cycle.getValue()
               : materializePropertyDomainIndex(property, cycle.getValue());
       if (assignmentType != i64)
-        semanticValue = arith::ExtUIOp::create(
-            builder, location, assignmentType, semanticValue);
-      cf::CondBranchOp::create(
-          builder, location, valid, singleRandCLoop,
-          ValueRange{semanticValue, activeKey, cycle.getNextPosition(),
-                     activeRemaining, activeFreshCycle},
-          candidateEntry,
-          ValueRange{activeKey, cycle.getNextPosition(), activeRemaining,
-                     activeFreshCycle});
+        semanticValue = arith::ExtUIOp::create(builder, location,
+                                               assignmentType, semanticValue);
+      cf::CondBranchOp::create(builder, location, valid, singleRandCLoop,
+                               ValueRange{semanticValue, activeKey,
+                                          cycle.getNextPosition(),
+                                          activeRemaining, activeFreshCycle},
+                               candidateEntry,
+                               ValueRange{activeKey, cycle.getNextPosition(),
+                                          activeRemaining, activeFreshCycle});
     }
 
     setCurrent(singleRandCCommit);
@@ -6888,8 +6869,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return failure();
     if (failed(storeReference(property.reference, candidates->front(),
                               location)) ||
-        failed(storeReference(property.randcKeyReference, commitKey,
-                              location)) ||
+        failed(
+            storeReference(property.randcKeyReference, commitKey, location)) ||
         failed(storeReference(property.randcPositionReference, commitPosition,
                               location)))
       return failure();
@@ -6954,8 +6935,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     nextSampledDomainIndices.assign(loopSampledDomainIndices.begin(),
                                     loopSampledDomainIndices.end());
   } else {
-    Value retryState = sim::SimManagedLoadOp::create(
-        builder, location, i64, stateReference);
+    Value retryState =
+        sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
     next = nextAssignment(retryState);
     nextSampledDomainIndices = sampleProposalDomainIndices(retryState);
     sim::SimManagedStoreOp::create(builder, location, retryState,
@@ -6967,12 +6948,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       fixedAssignment);
   Value nextAttempt =
       arith::AddIOp::create(builder, location, attempt, constant64(1));
-  Value exhausted =
-      arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
-                            nextAttempt,
-                            constant64(hasRuntimeForeachConstraint
-                                           ? fallbackAttempts
-                                           : 64));
+  Value exhausted = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::uge, nextAttempt,
+      constant64(hasRuntimeForeachConstraint ? fallbackAttempts : 64));
   SmallVector<Value> retryArguments{next, nextAttempt};
   llvm::append_range(retryArguments, nextSampledDomainIndices);
   if (hasRuntimeForeachConstraint)
@@ -6989,13 +6967,12 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         << analysis.backend << ")";
     cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
   } else if (wideProgram) {
-    Value fallbackState = sim::SimManagedLoadOp::create(
-        builder, location, i64, stateReference);
+    Value fallbackState =
+        sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
     auto fallback = sim::SimRandomSolveWideOp::create(
         builder, location, function.getBody().front().getArgument(0),
         fallbackStart, mutableMask, relevantConstraintMode,
-        constant64(fallbackAttempts), fallbackState, increment,
-        programCaptures,
+        constant64(fallbackAttempts), fallbackState, increment, programCaptures,
         builder.getStringAttr(StringRef(
             reinterpret_cast<const char *>(program.data()), program.size())));
     sim::SimManagedStoreOp::create(builder, location,
@@ -7004,13 +6981,12 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                              ValueRange{fallback.getAssignment()}, failedBlock,
                              ValueRange{});
   } else {
-    Value fallbackState = sim::SimManagedLoadOp::create(
-        builder, location, i64, stateReference);
+    Value fallbackState =
+        sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
     auto fallback = sim::SimRandomSolveOp::create(
         builder, location, function.getBody().front().getArgument(0),
         fallbackStart, mutableMask, relevantConstraintMode,
-        constant64(fallbackAttempts), fallbackState, increment,
-        programCaptures,
+        constant64(fallbackAttempts), fallbackState, increment, programCaptures,
         builder.getStringAttr(StringRef(
             reinterpret_cast<const char *>(program.data()), program.size())));
     sim::SimManagedStoreOp::create(builder, location,
@@ -7040,11 +7016,11 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   setCurrent(modeAdvance);
   Value modeNext;
   if (hasRuntimeForeachConstraint) {
-    modeNext = arith::AddIOp::create(builder, location, modeCounter,
-                                     constant64(1));
+    modeNext =
+        arith::AddIOp::create(builder, location, modeCounter, constant64(1));
   } else {
-    Value modeRetryState = sim::SimManagedLoadOp::create(
-        builder, location, i64, stateReference);
+    Value modeRetryState =
+        sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
     modeNext = nextAssignment(modeRetryState);
     sim::SimManagedStoreOp::create(builder, location, modeRetryState,
                                    stateReference);
@@ -7055,12 +7031,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       fixedAssignment);
   Value modeNextAttempt =
       arith::AddIOp::create(builder, location, modeAttempt, constant64(1));
-  Value modeExhausted =
-      arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
-                            modeNextAttempt,
-                            constant64(hasRuntimeForeachConstraint
-                                           ? fallbackAttempts
-                                           : 64));
+  Value modeExhausted = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::uge, modeNextAttempt,
+      constant64(hasRuntimeForeachConstraint ? fallbackAttempts : 64));
   if (hasRuntimeForeachConstraint)
     cf::CondBranchOp::create(builder, location, modeExhausted, failedBlock,
                              ValueRange{}, modeLoop,
@@ -7072,36 +7045,32 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 
   setCurrent(modeFallbackBlock);
   if (wideProgram) {
-    Value fallbackState = sim::SimManagedLoadOp::create(
-        builder, location, i64, stateReference);
+    Value fallbackState =
+        sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
     auto modeFallback = sim::SimRandomSolveWideOp::create(
         builder, location, function.getBody().front().getArgument(0),
         modeFallbackStart, mutableMask, relevantConstraintMode,
-        constant64(fallbackAttempts), fallbackState, increment,
-        programCaptures,
+        constant64(fallbackAttempts), fallbackState, increment, programCaptures,
         builder.getStringAttr(StringRef(
             reinterpret_cast<const char *>(program.data()), program.size())));
     sim::SimManagedStoreOp::create(
         builder, location, modeFallback.getNextRngState(), stateReference);
     cf::CondBranchOp::create(builder, location, modeFallback.getSuccess(),
-                             commit,
-                             ValueRange{modeFallback.getAssignment()},
+                             commit, ValueRange{modeFallback.getAssignment()},
                              failedBlock, ValueRange{});
   } else {
-    Value fallbackState = sim::SimManagedLoadOp::create(
-        builder, location, i64, stateReference);
+    Value fallbackState =
+        sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
     auto modeFallback = sim::SimRandomSolveOp::create(
         builder, location, function.getBody().front().getArgument(0),
         modeFallbackStart, mutableMask, relevantConstraintMode,
-        constant64(fallbackAttempts), fallbackState, increment,
-        programCaptures,
+        constant64(fallbackAttempts), fallbackState, increment, programCaptures,
         builder.getStringAttr(StringRef(
             reinterpret_cast<const char *>(program.data()), program.size())));
     sim::SimManagedStoreOp::create(
         builder, location, modeFallback.getNextRngState(), stateReference);
     cf::CondBranchOp::create(builder, location, modeFallback.getSuccess(),
-                             commit,
-                             ValueRange{modeFallback.getAssignment()},
+                             commit, ValueRange{modeFallback.getAssignment()},
                              failedBlock, ValueRange{});
   }
 
@@ -7151,13 +7120,13 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return failure();
       Value object = *loadedObject;
       if (object.getType() != property.nestedObjectType)
-        object = sim::SimClassCastOp::create(
-            builder, location, property.nestedObjectType, object);
+        object = sim::SimClassCastOp::create(builder, location,
+                                             property.nestedObjectType, object);
       auto concreteType = cast<sim::ClassHandleType>(property.nestedObjectType);
       for (const ObjectPathElement &element : property.nestedObjectPath) {
-        Type edgeReferenceType = sim::ManagedRefType::get(
-            function.getContext(), element.storageType,
-            concreteType.getClassName());
+        Type edgeReferenceType =
+            sim::ManagedRefType::get(function.getContext(), element.storageType,
+                                     concreteType.getClassName());
         Value edgeReference = sim::SimClassFieldRefOp::create(
             builder, location, edgeReferenceType, object, element.field);
         FailureOr<Value> loadedEdge = loadReference(edgeReference, location);
@@ -7165,17 +7134,16 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           return failure();
         object = *loadedEdge;
         if (object.getType() != element.concreteType)
-          object = sim::SimClassCastOp::create(
-              builder, location, element.concreteType, object);
+          object = sim::SimClassCastOp::create(builder, location,
+                                               element.concreteType, object);
         concreteType = cast<sim::ClassHandleType>(element.concreteType);
       }
-      Type nestedFieldType = property.isContainerSize ? property.containerType
-                                                      : property.type;
+      Type nestedFieldType =
+          property.isContainerSize ? property.containerType : property.type;
       Type fieldReferenceType = sim::ManagedRefType::get(
           function.getContext(), nestedFieldType, concreteType.getClassName());
       Value fieldReference = sim::SimClassFieldRefOp::create(
-          builder, location, fieldReferenceType, object,
-          property.nestedField);
+          builder, location, fieldReferenceType, object, property.nestedField);
       if (property.isContainerSize) {
         FailureOr<Value> oldContainer = loadReference(fieldReference, location);
         FailureOr<Value> scalarSize = toPackedScalar(candidate, location);
@@ -7229,25 +7197,23 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value active;
   };
   SmallVector<NestedContainerRuntime> nestedContainerRuntimes;
-  for (auto [containerIndex, property] :
-       llvm::enumerate(plannedContainers)) {
+  for (auto [containerIndex, property] : llvm::enumerate(plannedContainers)) {
     if (property.inertClassHandles)
       continue;
     Block *entryBlock = addBlock();
     Block *header = addBlock();
     Block *body = addBlock();
     Block *nextProperty = addBlock();
-    Value propertyMode = arith::AndIOp::create(
-        builder, location, relevantMode,
-        constant64(uint64_t{1} << property.modeIndex));
+    Value propertyMode =
+        arith::AndIOp::create(builder, location, relevantMode,
+                              constant64(uint64_t{1} << property.modeIndex));
     Value enabled =
         checkerOnly
             ? arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                         builder.getBoolAttr(false))
                   .getResult()
-            : arith::CmpIOp::create(builder, location,
-                                    arith::CmpIPredicate::eq, propertyMode,
-                                    constant64(0))
+            : arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                    propertyMode, constant64(0))
                   .getResult();
     Value container;
     Block *randomizeBlock;
@@ -7269,8 +7235,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       setCurrent(objectBlock);
       Value object = *loadedObject;
       if (object.getType() != property.nestedObjectType)
-        object = sim::SimClassCastOp::create(
-            builder, location, property.nestedObjectType, object);
+        object = sim::SimClassCastOp::create(builder, location,
+                                             property.nestedObjectType, object);
       auto concreteType = cast<sim::ClassHandleType>(property.nestedObjectType);
       FlatSymbolRefAttr objectModeField = property.nestedModeField;
       for (const ObjectPathElement &element : property.nestedObjectPath) {
@@ -7278,17 +7244,17 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             function.getContext(), i64, concreteType.getClassName());
         Value modeReference = sim::SimClassFieldRefOp::create(
             builder, location, modeReferenceType, object, objectModeField);
-        Value objectMode = sim::SimManagedLoadOp::create(
-            builder, location, i64, modeReference);
-        Value edgeModeBit = arith::AndIOp::create(
-            builder, location, objectMode,
-            constant64(uint64_t{1} << element.modeIndex));
-        Value edgeEnabled = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::eq, edgeModeBit,
-            constant64(0));
-        Type edgeReferenceType = sim::ManagedRefType::get(
-            function.getContext(), element.storageType,
-            concreteType.getClassName());
+        Value objectMode = sim::SimManagedLoadOp::create(builder, location, i64,
+                                                         modeReference);
+        Value edgeModeBit =
+            arith::AndIOp::create(builder, location, objectMode,
+                                  constant64(uint64_t{1} << element.modeIndex));
+        Value edgeEnabled =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                  edgeModeBit, constant64(0));
+        Type edgeReferenceType =
+            sim::ManagedRefType::get(function.getContext(), element.storageType,
+                                     concreteType.getClassName());
         Value edgeReference = sim::SimClassFieldRefOp::create(
             builder, location, edgeReferenceType, object, element.field);
         FailureOr<Value> loadedEdge = loadReference(edgeReference, location);
@@ -7300,16 +7266,16 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             builder, location, edgeNull,
             arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                       builder.getBoolAttr(true)));
-        Value edgeActive = arith::AndIOp::create(
-            builder, location, edgeEnabled, edgeNonNull);
+        Value edgeActive =
+            arith::AndIOp::create(builder, location, edgeEnabled, edgeNonNull);
         Block *edgeBlock = addBlock();
         cf::CondBranchOp::create(builder, location, edgeActive, edgeBlock,
                                  ValueRange{}, inactiveBlock, ValueRange{});
         setCurrent(edgeBlock);
         object = *loadedEdge;
         if (object.getType() != element.concreteType)
-          object = sim::SimClassCastOp::create(
-              builder, location, element.concreteType, object);
+          object = sim::SimClassCastOp::create(builder, location,
+                                               element.concreteType, object);
         concreteType = cast<sim::ClassHandleType>(element.concreteType);
         objectModeField = element.modeField;
       }
@@ -7317,14 +7283,14 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           function.getContext(), i64, concreteType.getClassName());
       Value childModeReference = sim::SimClassFieldRefOp::create(
           builder, location, modeReferenceType, object, objectModeField);
-      Value childMode = sim::SimManagedLoadOp::create(
-          builder, location, i64, childModeReference);
+      Value childMode = sim::SimManagedLoadOp::create(builder, location, i64,
+                                                      childModeReference);
       Value childModeBit = arith::AndIOp::create(
           builder, location, childMode,
           constant64(uint64_t{1} << property.nestedModeIndex));
-      Value childEnabled = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::eq, childModeBit,
-          constant64(0));
+      Value childEnabled =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                childModeBit, constant64(0));
       Block *childActiveBlock = addBlock();
       cf::CondBranchOp::create(builder, location, childEnabled,
                                childActiveBlock, ValueRange{}, inactiveBlock,
@@ -7333,8 +7299,7 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       Type fieldReferenceType = sim::ManagedRefType::get(
           function.getContext(), property.type, concreteType.getClassName());
       Value containerReference = sim::SimClassFieldRefOp::create(
-          builder, location, fieldReferenceType, object,
-          property.nestedField);
+          builder, location, fieldReferenceType, object, property.nestedField);
       container = sim::SimManagedLoadOp::create(
           builder, location, property.type, containerReference);
       randomizeBlock = childActiveBlock;
@@ -7344,12 +7309,12 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         resolvedBlock->addArgument(i64, location);
         resolvedBlock->addArgument(builder.getI1Type(), location);
         Value objectID = sim::SimClassIdOp::create(builder, location, object);
-        cf::BranchOp::create(builder, location, resolvedBlock,
-                             ValueRange{container, objectID,
-                                        arith::ConstantOp::create(
-                                            builder, location,
-                                            builder.getI1Type(),
-                                            builder.getBoolAttr(true))});
+        cf::BranchOp::create(
+            builder, location, resolvedBlock,
+            ValueRange{container, objectID,
+                       arith::ConstantOp::create(builder, location,
+                                                 builder.getI1Type(),
+                                                 builder.getBoolAttr(true))});
 
         setCurrent(inactiveBlock);
         Value missingContainer =
@@ -7359,9 +7324,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         cf::BranchOp::create(
             builder, location, resolvedBlock,
             ValueRange{missingContainer, constant64(0),
-                       arith::ConstantOp::create(
-                           builder, location, builder.getI1Type(),
-                           builder.getBoolAttr(false))});
+                       arith::ConstantOp::create(builder, location,
+                                                 builder.getI1Type(),
+                                                 builder.getBoolAttr(false))});
 
         setCurrent(resolvedBlock);
         container = resolvedBlock->getArgument(0);
@@ -7374,13 +7339,13 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           if (previous.ownerType != ownerType ||
               previous.field != property.nestedField)
             continue;
-          Value sameID = arith::CmpIOp::create(
-              builder, location, arith::CmpIPredicate::eq, objectID,
-              previous.objectID);
-          Value previousMatch = arith::AndIOp::create(
-              builder, location, previous.active, sameID);
-          alreadyVisited = arith::OrIOp::create(
-              builder, location, alreadyVisited, previousMatch);
+          Value sameID =
+              arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                    objectID, previous.objectID);
+          Value previousMatch =
+              arith::AndIOp::create(builder, location, previous.active, sameID);
+          alreadyVisited = arith::OrIOp::create(builder, location,
+                                                alreadyVisited, previousMatch);
         }
         nestedContainerRuntimes.push_back(
             {ownerType, property.nestedField, objectID, active});
@@ -7403,10 +7368,10 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       container = sim::SimManagedLoadOp::create(
           builder, location, property.type, property.reference);
     }
-    Value size = sim::SimContainerSizeOp::create(
-        builder, location, i64, container);
-    Value containerState = sim::SimManagedLoadOp::create(
-        builder, location, i64, stateReference);
+    Value size =
+        sim::SimContainerSizeOp::create(builder, location, i64, container);
+    Value containerState =
+        sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
     header->addArgument(i64, location);
     header->addArgument(i64, location);
     cf::BranchOp::create(builder, location, header,
@@ -7415,16 +7380,16 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     setCurrent(header);
     Value index = header->getArgument(0);
     Value loopState = header->getArgument(1);
-    Value more = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ult, index, size);
+    Value more = arith::CmpIOp::create(builder, location,
+                                       arith::CmpIPredicate::ult, index, size);
     cf::CondBranchOp::create(builder, location, more, body, ValueRange{},
                              nextProperty, ValueRange{});
 
     setCurrent(body);
     Value nextState = loopState;
     Value bits = next64(nextState);
-    Type scalarType = IntegerType::get(function.getContext(),
-                                       property.elementWidth);
+    Type scalarType =
+        IntegerType::get(function.getContext(), property.elementWidth);
     if (property.elementWidth != 64)
       bits = arith::TruncIOp::create(builder, location, scalarType, bits);
     FailureOr<Value> element =
@@ -7435,8 +7400,8 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                      *element);
     sim::SimManagedStoreOp::create(builder, location, nextState,
                                    stateReference);
-    Value nextIndex = arith::AddIOp::create(builder, location, index,
-                                            constant64(1));
+    Value nextIndex =
+        arith::AddIOp::create(builder, location, index, constant64(1));
     cf::BranchOp::create(builder, location, header,
                          ValueRange{nextIndex, nextState});
     setCurrent(nextProperty);
@@ -7444,10 +7409,9 @@ UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   cf::BranchOp::create(builder, location, postBlock);
 
   setCurrent(postBlock);
-  if (failed(callLifecycleHook(randomPostHookAttrName,
-                               randomPostHookOwnerAttrName,
-                               randomPostHookCapturesAttrName,
-                               randomPostHookReadCapturesAttrName)))
+  if (failed(callLifecycleHook(
+          randomPostHookAttrName, randomPostHookOwnerAttrName,
+          randomPostHookCapturesAttrName, randomPostHookReadCapturesAttrName)))
     return failure();
   for (const NestedHookRuntime &runtime : nestedHookRuntimes) {
     if (!runtime.plan.getAs<FlatSymbolRefAttr>("post_callee"))

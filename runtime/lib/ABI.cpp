@@ -631,6 +631,7 @@ static_assert(OBELISK_RT_PROCESS_CONTROL_CONTINUE == 0);
 static_assert(OBELISK_RT_PROCESS_CONTROL_SUSPEND_CURRENT == 1);
 static_assert(OBELISK_RT_PROCESS_CONTROL_KILL_CURRENT == 2);
 static_assert(OBELISK_RT_DB_PROCESS_CONTROL == 58);
+static_assert(OBELISK_RT_DB_BITCAST == 59);
 static_assert(OBELISK_RT_FRAGMENT_NATIVE == 0);
 static_assert(OBELISK_RT_FRAGMENT_BYTECODE == 1);
 static_assert(OBELISK_RT_BC_TYPE_NONE == 0);
@@ -1249,21 +1250,20 @@ ABI_FUNCTION(obelisk_rt_v1_random_graph_object,
              obelisk_rt_object_v1 *(*)(const obelisk_rt_random_graph_v1 *,
                                        uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_random_graph_object_descriptor,
-             const obelisk_rt_class_descriptor_v1 *(*) (
-                 const obelisk_rt_random_graph_v1 *, uint64_t));
+             const obelisk_rt_class_descriptor_v1
+                 *(*)(const obelisk_rt_random_graph_v1 *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_random_graph_variable_count,
              uint64_t (*)(const obelisk_rt_random_graph_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_random_graph_variable,
-             obelisk_rt_status (*)(
-                 const obelisk_rt_random_graph_v1 *, uint64_t,
-                 obelisk_rt_object_v1 **,
-                 const obelisk_rt_random_variable_v1 **));
-ABI_FUNCTION(obelisk_rt_v1_random_graph_resolve_variable,
-             obelisk_rt_status (*)(
-                 const obelisk_rt_random_graph_v1 *, uint64_t,
-                 const obelisk_rt_random_variable_reference_v1 *,
-                 obelisk_rt_object_v1 **,
-                 const obelisk_rt_random_variable_v1 **, uint64_t *));
+             obelisk_rt_status (*)(const obelisk_rt_random_graph_v1 *, uint64_t,
+                                   obelisk_rt_object_v1 **,
+                                   const obelisk_rt_random_variable_v1 **));
+ABI_FUNCTION(
+    obelisk_rt_v1_random_graph_resolve_variable,
+    obelisk_rt_status (*)(const obelisk_rt_random_graph_v1 *, uint64_t,
+                          const obelisk_rt_random_variable_reference_v1 *,
+                          obelisk_rt_object_v1 **,
+                          const obelisk_rt_random_variable_v1 **, uint64_t *));
 ABI_FUNCTION(obelisk_rt_v1_element_type_validate,
              obelisk_rt_status (*)(const obelisk_rt_element_type_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_element_type_register,
@@ -1311,8 +1311,8 @@ ABI_FUNCTION(obelisk_rt_v1_object_cast,
 ABI_FUNCTION(obelisk_rt_v1_object_id,
              uint64_t (*)(const obelisk_rt_object_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_managed_watch,
-             uint64_t (*)(obelisk_rt_object_v1 *,
-                          obelisk_rt_managed_watch_kind, uint64_t));
+             uint64_t (*)(obelisk_rt_object_v1 *, obelisk_rt_managed_watch_kind,
+                          uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_string_create,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *, const char *,
                                    uint64_t, obelisk_rt_string_v1 *));

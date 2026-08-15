@@ -477,16 +477,16 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
           << "sampled-value expressions currently require packed storage";
       return failure();
     }
-    return sim::SimSampledReadOp::create(builder, location, resultType,
-                                         context, *source)
+    return sim::SimSampledReadOp::create(builder, location, resultType, context,
+                                         *source)
         .getResult();
   };
   auto sampledSiteID = [&]() {
     auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
     uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
-    return stableCodeUnitID((function.getSymName() + ".$sampled." +
-                             Twine(node) + "." + Twine(name))
-                                .str());
+    return stableCodeUnitID(
+        (function.getSymName() + ".$sampled." + Twine(node) + "." + Twine(name))
+            .str());
   };
   auto sampledHistory = [&](Value current, Value gate,
                             uint64_t depth) -> Value {
@@ -698,32 +698,31 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       Value previousIsTarget = sim::SimLogicCompareOp::create(
           builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
           previousBit, targetBit);
-      Value notPrevious = arith::XOrIOp::create(
-          builder, location, previousIsTarget,
-          constant(builder.getI1Type(), 1));
-      return convertResult(arith::AndIOp::create(
-          builder, location, currentIsTarget, notPrevious));
+      Value notPrevious =
+          arith::XOrIOp::create(builder, location, previousIsTarget,
+                                constant(builder.getI1Type(), 1));
+      return convertResult(arith::AndIOp::create(builder, location,
+                                                 currentIsTarget, notPrevious));
     }
     auto integer = cast<IntegerType>((*currentScalar).getType());
     auto bit = [&](Value value) -> Value {
       if (integer.getWidth() == 1)
         return value;
       return arith::TruncIOp::create(builder, location, builder.getI1Type(),
-                                    value);
+                                     value);
     };
     currentBit = bit(*currentScalar);
     previousBit = bit(*previousScalar);
-    Value transition = name == "$rose"
-                           ? arith::AndIOp::create(
-                                 builder, location, currentBit,
-                                 arith::XOrIOp::create(
-                                     builder, location, previousBit,
-                                     constant(builder.getI1Type(), 1)))
-                           : arith::AndIOp::create(
-                                 builder, location, previousBit,
-                                 arith::XOrIOp::create(
-                                     builder, location, currentBit,
-                                     constant(builder.getI1Type(), 1)));
+    Value transition =
+        name == "$rose"
+            ? arith::AndIOp::create(
+                  builder, location, currentBit,
+                  arith::XOrIOp::create(builder, location, previousBit,
+                                        constant(builder.getI1Type(), 1)))
+            : arith::AndIOp::create(
+                  builder, location, previousBit,
+                  arith::XOrIOp::create(builder, location, currentBit,
+                                        constant(builder.getI1Type(), 1)));
     return convertResult(transition);
   }
 
@@ -812,11 +811,11 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
           FlatSymbolRefAttr::get(
               function.getContext(),
               targetClass.getClassName().getRootReference()));
-      Value sourceID = sim::SimClassIdOp::create(
-          builder, location, builder.getI64Type(), source);
-      Value isNull = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::eq, sourceID,
-          constant(builder.getI64Type(), 0));
+      Value sourceID = sim::SimClassIdOp::create(builder, location,
+                                                 builder.getI64Type(), source);
+      Value isNull =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                sourceID, constant(builder.getI64Type(), 0));
       succeeded = arith::OrIOp::create(builder, location, instance, isNull);
       conditionalStore = true;
       break;
@@ -841,23 +840,20 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
           destinationScalar ? sim::getPackedWidth(destinationScalar)
                             : std::nullopt;
       if (!sourceWidth || !destinationWidth) {
-        emitError(location)
-            << "enum $cast requires packed integral operands";
+        emitError(location) << "enum $cast requires packed integral operands";
         return failure();
       }
       unsigned comparisonWidth = std::max(*sourceWidth, *destinationWidth);
       Type comparisonType =
           isa<sim::LogicType>(sourceScalar) ||
                   isa<sim::LogicType>(destinationScalar)
-              ? Type(sim::LogicType::get(function.getContext(),
-                                         comparisonWidth))
-              : Type(IntegerType::get(function.getContext(),
-                                      comparisonWidth));
-      bool comparisonSigned = isSignedNode(children[1]) &&
-                              isSignedNode(destination);
-      FailureOr<Value> comparisonSource =
-          convert(source, comparisonType, comparisonSigned, location,
-                  comparisonSigned);
+              ? Type(
+                    sim::LogicType::get(function.getContext(), comparisonWidth))
+              : Type(IntegerType::get(function.getContext(), comparisonWidth));
+      bool comparisonSigned =
+          isSignedNode(children[1]) && isSignedNode(destination);
+      FailureOr<Value> comparisonSource = convert(
+          source, comparisonType, comparisonSigned, location, comparisonSigned);
       if (failed(comparisonSource))
         return failure();
       ArrayAttr enumValues =
@@ -869,13 +865,12 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       succeeded = constant(builder.getI1Type(), 0);
       for (Attribute attribute : enumValues) {
         auto frozen = dyn_cast<sim::FrozenConstantAttr>(attribute);
-        FailureOr<Value> member = frozen && frozen.getType() == destinationType
-                                      ? sim::materializeFrozenConstant(
-                                            builder, location, frozen)
-                                      : FailureOr<Value>(failure());
+        FailureOr<Value> member =
+            frozen && frozen.getType() == destinationType
+                ? sim::materializeFrozenConstant(builder, location, frozen)
+                : FailureOr<Value>(failure());
         if (failed(member)) {
-          emitError(location)
-              << "enum $cast has malformed frozen membership";
+          emitError(location) << "enum $cast has malformed frozen membership";
           return failure();
         }
         FailureOr<Value> comparisonMember =
@@ -888,8 +883,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
             /*caseEquality=*/true);
         if (failed(equal))
           return failure();
-        succeeded =
-            arith::OrIOp::create(builder, location, succeeded, *equal);
+        succeeded = arith::OrIOp::create(builder, location, succeeded, *equal);
       }
       conditionalStore = true;
       break;
@@ -908,8 +902,8 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       emitBranch(resume);
       if (taskForm) {
         setCurrent(failedCast);
-        if (failed(emitRuntimeFatal(location,
-                                    "$cast failed when used as a task")))
+        if (failed(
+                emitRuntimeFatal(location, "$cast failed when used as a task")))
           return failure();
       }
       setCurrent(resume);
@@ -998,8 +992,8 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     // `$typename` is an inquiry function; only its elaborated operand type is
     // observed. Materialize the spelling directly as a simulation string.
     Type resultType = sim::StringType::get(function.getContext());
-    Value result = sim::SimStringLiteralOp::create(
-        builder, location, resultType, spelling);
+    Value result = sim::SimStringLiteralOp::create(builder, location,
+                                                   resultType, spelling);
     return convertResult(result);
   }
 
@@ -1010,8 +1004,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     }
     auto semanticType =
         children.front()->getAttrOfType<TypeAttr>("semantic_type");
-    ArrayAttr values =
-        op->getAttrOfType<ArrayAttr>(enumMethodValuesAttrName);
+    ArrayAttr values = op->getAttrOfType<ArrayAttr>(enumMethodValuesAttrName);
     ArrayAttr names = op->getAttrOfType<ArrayAttr>(enumMethodNamesAttrName);
     if (!semanticType || !isa<semantic::EnumType>(semanticType.getValue()) ||
         !values || values.empty() || !names || values.size() != names.size()) {
@@ -1039,15 +1032,15 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         emitError(location) << "enum name() has malformed frozen inventory";
         return failure();
       }
-      FailureOr<Value> equal = conditionalEqual(
-          *receiver, *member, (*receiver).getType(), location,
-          /*caseEquality=*/true);
+      FailureOr<Value> equal =
+          conditionalEqual(*receiver, *member, (*receiver).getType(), location,
+                           /*caseEquality=*/true);
       if (failed(equal))
         return failure();
-      Value candidate = sim::SimStringLiteralOp::create(
-          builder, location, stringType, spelling);
-      result = arith::SelectOp::create(builder, location, *equal, candidate,
-                                       result);
+      Value candidate = sim::SimStringLiteralOp::create(builder, location,
+                                                        stringType, spelling);
+      result =
+          arith::SelectOp::create(builder, location, *equal, candidate, result);
     }
     return convertResult(result);
   }
@@ -1380,7 +1373,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
                   "$writeb",    "$writeo",     "$writeh",         "$fdisplay",
                   "$fdisplayb", "$fdisplayo",  "$fdisplayh",      "$fwrite",
                   "$fwriteb",   "$fwriteo",    "$fwriteh",        "$info",
-                  "$warning",   "$error",      "$fatal",         "$swrite",
+                  "$warning",   "$error",      "$fatal",          "$swrite",
                   "$swriteb",   "$swriteo",    "$swriteh"},
                  true)
           .Default(false);
@@ -1422,6 +1415,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
                  true)
           .Default(false);
   if (coverageCall) {
+    ensureCoverageInventory();
     // IEEE 1800-2017 40.3.2 explicitly represents an implementation with no
     // assertion, FSM, statement, or toggle coverage by SV_COV_NOCOV. Obelisk
     // does not instrument those four code-coverage classes, so model that

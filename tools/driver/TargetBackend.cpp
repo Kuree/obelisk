@@ -166,7 +166,7 @@ LogicalResult addMinimalMain(ModuleOp module) {
 LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
                           StringRef triple, bool bytecode, StringRef vpi,
                           obelisk::sim::NativeSchedulerMode nativeScheduler,
-                          bool &requiresStateSync) {
+                          bool timing, bool &requiresStateSync) {
   if (bytecode && nativeScheduler == obelisk::sim::NativeSchedulerMode::Auto)
     nativeScheduler = obelisk::sim::NativeSchedulerMode::Generic;
   module->setAttr("llvm.target_triple",
@@ -177,6 +177,8 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
           module.getContext(),
           targetMachine.createDataLayout().getStringRepresentation()));
   mlir::PassManager manager(module.getContext());
+  if (timing)
+    manager.enableTiming();
   bool hasLanguageOverride = false;
   module.walk([&](mlir::Operation *operation) {
     if (mlir::isa<obelisk::sim::SimOverrideOp,
@@ -196,9 +198,8 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
   bool needsHybridBytecode =
       nativeScheduler != obelisk::sim::NativeSchedulerMode::Generic;
   bool needsSampledStatePlan = false;
-  module.walk([&](obelisk::sim::SimSampledReadOp) {
-    needsSampledStatePlan = true;
-  });
+  module.walk(
+      [&](obelisk::sim::SimSampledReadOp) { needsSampledStatePlan = true; });
   bool needsWaveformMetadata = false;
   module.walk([&](mlir::Operation *operation) {
     needsWaveformMetadata |=
@@ -209,20 +210,24 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
                   obelisk::sim::SimDumpLimitOp, obelisk::sim::SimDumpFlushOp>(
             operation);
   });
-  bool needsDesignEncoding =
-      bytecode || needsHybridBytecode || vpi != "off" || hasLanguageOverride ||
-      needsWaveformMetadata;
+  bool needsDesignEncoding = bytecode || needsHybridBytecode || vpi != "off" ||
+                             hasLanguageOverride || needsWaveformMetadata;
   requiresStateSync |= needsSampledStatePlan && !needsDesignEncoding;
   if (needsDesignEncoding) {
+    // Bytecode and native lowering must observe the same suspension-safe SSA
+    // shape. The coroutine pass also runs this canonicalization for native
+    // lowering, but bytecode is frozen before that pass starts.
+    OpPassManager &designManager = manager.nest<obelisk::sim::SimDesignOp>();
+    designManager.nest<obelisk::sim::SimFuncOp>().addPass(
+        createObeliskSimThreadProcessCFGPass());
     EncodeObeliskSimToBytecodePassOptions options;
     options.vpi = vpi.str();
     options.requireBytecode = bytecode;
     manager.addPass(createEncodeObeliskSimToBytecodePass(options));
   } else if (needsSampledStatePlan) {
     SmallVector<obelisk::sim::SimDesignOp> designs;
-    module.walk([&](obelisk::sim::SimDesignOp design) {
-      designs.push_back(design);
-    });
+    module.walk(
+        [&](obelisk::sim::SimDesignOp design) { designs.push_back(design); });
     if (designs.size() != 1)
       return module.emitError(
           "sampled-state planning requires exactly one simulation design");
@@ -474,8 +479,16 @@ LogicalResult emitTargetOutput(ModuleOp module,
   }
 
   std::string targetError;
+  // A forced-bytecode executable uses native code only for scheduler glue,
+  // runtime entry points, and optional foreign-call thunks. The SystemVerilog
+  // bodies have already gone through the requested simulation optimization
+  // pipeline before being frozen into bytecode. Running LLVM's aggressive
+  // optimizer over their unreachable native fallback copies dominates large
+  // library builds without changing bytecode execution, so keep the host
+  // shell deliberately cheap.
+  uint32_t hostOptLevel = options.bytecode ? 0 : options.optLevel;
   std::unique_ptr<TargetMachine> targetMachine =
-      backend->createTargetMachine(targetError, options.optLevel);
+      backend->createTargetMachine(targetError, hostOptLevel);
   if (!targetMachine) {
     errs() << "obelisk: error: could not create " << backend->getDescription()
            << " target: " << targetError << '\n';
@@ -507,7 +520,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
   }
   if (failed(lowerToLLVM(module, *targetMachine, backend->getTriple(),
                          options.bytecode, options.vpi, *nativeScheduler,
-                         requiresStateSync)))
+                         options.timing, requiresStateSync)))
     return failure();
 
   registerLLVMDialectTranslation(*module.getContext());
@@ -525,11 +538,12 @@ LogicalResult emitTargetOutput(ModuleOp module,
                                     options.sharedLibraryInputs,
                                     requiresStateSync)))
     return failure();
-  if (failed(optimizeLLVMModule(*llvmModule, *targetMachine, options.optLevel)))
+  if (failed(optimizeLLVMModule(*llvmModule, *targetMachine, hostOptLevel)))
     return failure();
 
   bool fullLTO = options.kind == NativeOutputKind::Executable &&
-                 !options.noLTO && backend->usesFullLTO(options.optLevel);
+                 !options.bytecode && !options.noLTO &&
+                 backend->usesFullLTO(options.optLevel);
   if (fullLTO) {
     // LLD's explicit --lto=full mode selects LLVM's unified LTO pipeline.
     // Match Clang -flto=full -funified-lto bitcode so every module in the

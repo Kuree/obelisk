@@ -119,11 +119,8 @@ module attributes {
 
 // Candidate class roots retain the high candidate bit in the public trace
 // record, and reference paths retain their distinct exact slot kind.
-// NATIVE: llvm.mlir.global internal constant @__obelisk_element_trace_100
-// NATIVE: llvm.mlir.constant(4 : i8)
-// NATIVE: llvm.mlir.global internal constant @__obelisk_element_trace_99
-// NATIVE: llvm.mlir.constant(1 : i8)
-// NATIVE: llvm.mlir.constant(-128 : i8)
+// NATIVE: llvm.mlir.global internal constant @__obelisk_element_trace_100("\00\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00")
+// NATIVE: llvm.mlir.global internal constant @__obelisk_element_trace_99("\00\00\00\00\00\00\00\00\01\00\00\80\00\00\00\00")
 // NATIVE: llvm.call @obelisk_rt_v1_container_size
 // NATIVE: llvm.call @obelisk_rt_v1_container_create_like
 // NATIVE: llvm.call @obelisk_rt_v1_container_read

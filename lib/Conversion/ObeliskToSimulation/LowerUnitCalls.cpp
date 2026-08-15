@@ -89,8 +89,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       Value success = sim::SimSemaphoreTryGetOp::create(
           builder, location, attempt->getArgument(0), attempt->getArgument(1));
       cf::CondBranchOp::create(builder, location, success, done, ValueRange{},
-                               wait,
-                               attempt->getArguments());
+                               wait, attempt->getArguments());
       setCurrent(wait);
       sim::SimSuspendSemaphoreOp::create(
           builder, location, wait->getArgument(0), wait->getArgument(1),
@@ -463,7 +462,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       return dummyResult();
     }
   }
-  if (op->hasAttr(randomizeAttrName) || op->hasAttr(randomizeDispatchAttrName))
+  if (op->hasAttr(randomizeAttrName) ||
+      op->hasAttr(randomizeDispatchAttrName) ||
+      op->hasAttr(randomizeNestedDispatchAttrName))
     return lowerRandomize(op);
   StringRef covergroupMethod = op.getCalleeName();
   if ((covergroupMethod == "sample" || covergroupMethod == "start" ||
@@ -556,10 +557,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return failure();
       loweredReceiver = *receiver;
     }
-    auto objectType = loweredReceiver
-                          ? dyn_cast<sim::ClassHandleType>(
-                                loweredReceiver.getType())
-                          : sim::ClassHandleType{};
+    auto objectType =
+        loweredReceiver
+            ? dyn_cast<sim::ClassHandleType>(loweredReceiver.getType())
+            : sim::ClassHandleType{};
     if ((receiverNode || implicitThisProperty) && !objectType) {
       emitError(location) << "rand_mode receiver is not a class object";
       return failure();

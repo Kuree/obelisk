@@ -60,8 +60,7 @@ public:
     });
     for (OpResult constant : constants) {
       Operation *definition = constant.getOwner();
-      for (OpOperand &use :
-           llvm::make_early_inc_range(constant.getUses())) {
+      for (OpOperand &use : llvm::make_early_inc_range(constant.getUses())) {
         Operation *consumer = use.getOwner();
         if (consumer->getBlock() == definition->getBlock())
           continue;
@@ -74,7 +73,11 @@ public:
 
     SmallVector<Operation *> suspensions;
     function.walk([&](Operation *op) {
-      if (isSuspensionTerminator(op))
+      // Callable kill/resume executes synchronously or unwinds the bytecode
+      // call stack; neither re-enters this function through a canonical frame.
+      if (isSuspensionTerminator(op) &&
+          !(function.getEntryKind() == sim::EntryKind::Function &&
+            isa<sim::SimProcessControlOp>(op)))
         suspensions.push_back(op);
     });
     if (suspensions.empty())

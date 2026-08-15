@@ -5,6 +5,8 @@
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
+#include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringMap.h"
 
 #include <cstddef>
@@ -29,8 +31,7 @@ public:
   /// Ordinary dispatch selects `slot`; interface dispatch selects the lowest
   /// effective slot carrying `signatureId`, matching the runtime table scan.
   sim::SimClassMethodDeclOp resolve(sim::SimClassDeclOp dynamicClass,
-                                    uint64_t slot,
-                                    uint64_t signatureId) const;
+                                    uint64_t slot, uint64_t signatureId) const;
 
   /// Return every non-abstract, non-interface class compatible with the
   /// receiver's static class, ordered by class ID and then symbol name.
@@ -54,6 +55,10 @@ private:
   mlir::SmallVector<sim::SimClassDeclOp> classes;
   llvm::StringMap<size_t> classIndices;
   llvm::StringMap<mlir::SmallVector<sim::SimClassMethodDeclOp>> methods;
+  mlir::SmallVector<llvm::BitVector> ancestors;
+  mlir::SmallVector<mlir::SmallVector<sim::SimClassDeclOp>> compatibleConcrete;
+  mlir::SmallVector<llvm::DenseMap<uint64_t, sim::SimClassMethodDeclOp>>
+      effectiveMethods;
 };
 
 } // namespace obelisk::analysis

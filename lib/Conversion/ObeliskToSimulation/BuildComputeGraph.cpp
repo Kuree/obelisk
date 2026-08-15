@@ -30,17 +30,25 @@ class ObeliskSimBuildComputeGraphPass
     : public impl::ObeliskSimBuildComputeGraphPassBase<
           ObeliskSimBuildComputeGraphPass> {
 public:
-  using Base::Base;
+  ObeliskSimBuildComputeGraphPass() = default;
+  explicit ObeliskSimBuildComputeGraphPass(
+      ObeliskSimBuildComputeGraphPassOptions options,
+      bool reuseKnownCurrentGraph = false)
+      : Base(std::move(options)),
+        reuseKnownCurrentGraph(reuseKnownCurrentGraph) {}
+  ObeliskSimBuildComputeGraphPass(const ObeliskSimBuildComputeGraphPass &other)
+      : Base(other), reuseKnownCurrentGraph(other.reuseKnownCurrentGraph) {}
   void runOnOperation() override;
+
+private:
+  bool reuseKnownCurrentGraph = false;
 };
 
 static bool isProceduralProcess(sim::EntryKind kind) {
   return kind == sim::EntryKind::Initial || kind == sim::EntryKind::Final ||
-         kind == sim::EntryKind::Always ||
-         kind == sim::EntryKind::AlwaysComb ||
+         kind == sim::EntryKind::Always || kind == sim::EntryKind::AlwaysComb ||
          kind == sim::EntryKind::AlwaysFF ||
-         kind == sim::EntryKind::AlwaysLatch ||
-         kind == sim::EntryKind::Fork;
+         kind == sim::EntryKind::AlwaysLatch || kind == sim::EntryKind::Fork;
 }
 
 /// Whether two writes to one descriptor can reach the same bits. Distinct
@@ -77,16 +85,15 @@ findOverlap(ArrayRef<DescriptorWrite> candidates,
   return std::nullopt;
 }
 
-static LogicalResult verifyVariableWriters(
-    sim::SimDesignOp design,
-    const simlowering::ComputeGraphResult &derived) {
+static LogicalResult
+verifyVariableWriters(sim::SimDesignOp design,
+                      const simlowering::ComputeGraphResult &derived) {
   llvm::MapVector<uint64_t, SmallVector<DescriptorWrite>> continuousWrites;
   llvm::MapVector<uint64_t, SmallVector<DescriptorWrite>> proceduralWrites;
 
   for (auto [operation, summary] : derived.effectSummaries) {
     auto function = cast<sim::SimFuncOp>(operation);
-    bool continuous =
-        function.getEntryKind() == sim::EntryKind::Continuous;
+    bool continuous = function.getEntryKind() == sim::EntryKind::Continuous;
     bool procedural = isProceduralProcess(function.getEntryKind());
     if (!continuous && !procedural)
       continue;
@@ -158,14 +165,24 @@ void ObeliskSimBuildComputeGraphPass::runOnOperation() {
     return signalPassFailure();
   }
   options.vpi = *vpiMode;
+  if (reuseKnownCurrentGraph) {
+    sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
+    if (graph && graph.getWorkers() == options.workers &&
+        graph.getVpi() == options.vpi) {
+      if (failed(simlowering::validateComputeGraphStructure(design, graph)))
+        signalPassFailure();
+      return;
+    }
+  }
   if (analysis::SimulationVPIAnalysis::forMode(*vpiMode).allowsRead()) {
     bool unsupportedContainer = false;
     for (sim::SimStorageDeclOp storage :
          design.getBody().front().getOps<sim::SimStorageDeclOp>()) {
       bool dynamic = false;
       storage.getType().walk([&](Type type) {
-        dynamic |= isa<sim::DynamicArrayType, sim::QueueType,
-                       sim::AssocArrayType>(type);
+        dynamic |=
+            isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
+                type);
       });
       if (!dynamic)
         continue;
@@ -209,4 +226,10 @@ void ObeliskSimBuildComputeGraphPass::runOnOperation() {
 }
 
 } // namespace
+
+std::unique_ptr<mlir::Pass> createObeliskSimBuildCurrentComputeGraphPass(
+    ObeliskSimBuildComputeGraphPassOptions options) {
+  return std::make_unique<ObeliskSimBuildComputeGraphPass>(std::move(options),
+                                                           true);
+}
 } // namespace obelisk

@@ -9,6 +9,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <limits>
@@ -32,11 +33,18 @@ constexpr uint64_t kContinuationSize = 24;
 constexpr uint64_t kIntrinsicSize = 16;
 constexpr uint64_t kConnectivitySize = 32;
 
+static bool validationDiagnosticsEnabled() {
+  static const bool enabled =
+      std::getenv("OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS") != nullptr;
+  return enabled;
+}
+
 static bool rejectImage(unsigned line, const char *reason,
                         uint64_t functionIndex = UINT64_MAX,
                         uint64_t pc = UINT64_MAX,
                         uint32_t opcode = UINT32_MAX) {
-#ifdef OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
+  if (!validationDiagnosticsEnabled())
+    return false;
   if (functionIndex == UINT64_MAX) {
     std::fprintf(stderr,
                  "obelisk-bytecode-validation: rejected image: %s "
@@ -55,13 +63,6 @@ static bool rejectImage(unsigned line, const char *reason,
                  reason, static_cast<unsigned long long>(functionIndex),
                  static_cast<unsigned long long>(pc), opcode, line);
   }
-#else
-  (void)line;
-  (void)reason;
-  (void)functionIndex;
-  (void)pc;
-  (void)opcode;
-#endif
   return false;
 }
 
@@ -317,6 +318,21 @@ bool compatible(const Layout &left, const Layout &right) {
          left.auxiliary == right.auxiliary;
 }
 
+bool bitcastCompatible(const Layout &left, const Layout &right) {
+  auto floatingWidth = [](const Layout &layout) -> uint32_t {
+    if (layout.kind == OBELISK_RT_DBREG_REAL32)
+      return 32;
+    if (layout.kind == OBELISK_RT_DBREG_REAL64)
+      return 64;
+    return 0;
+  };
+  if (left.kind == OBELISK_RT_DBREG_BITS)
+    return left.width == floatingWidth(right);
+  if (right.kind == OBELISK_RT_DBREG_BITS)
+    return right.width == floatingWidth(left);
+  return false;
+}
+
 bool validRegister(const Function &function, uint32_t index) {
   return index < function.layoutCount;
 }
@@ -424,8 +440,8 @@ bool validIntrinsic(const Image &image, const Function &function,
            string(layout) || handle(layout);
   };
   auto assocKey = [&](const std::optional<Layout> &layout) {
-    return string(layout) ||
-           (numeric(layout) && layout->width >= 1 && layout->width <= 64);
+    return string(layout) || managed(layout) ||
+           (numeric(layout) && layout->width >= 1);
   };
   auto cursor = [&](const std::optional<Layout> &layout) {
     return bits(layout, 64);
@@ -483,7 +499,8 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC_TYPED:
     if (signature.flags != 0 || site.inputCount < 4 ||
         ((site.inputCount - 1) % 3) != 0 || site.outputCount != 1 ||
-        (!numeric(input(0)) && !floating(input(0))) || !handle(output(0)))
+        (!numeric(input(0)) && !floating(input(0)) && !string(input(0))) ||
+        !handle(output(0)))
       return false;
     for (uint32_t index = 1; index != site.inputCount; ++index)
       if (!twoStateBits(input(index), 64))
@@ -1189,16 +1206,22 @@ bool validateInitialization(const Image &image, const Function &function,
     return true;
   };
   State seed(stateWords);
-  if ((function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0)
+  bool process = (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0;
+  if (!process)
     for (uint32_t argument = 0; argument != function.argumentCount; ++argument)
       if (!setInitialized(seed, argument))
         return false;
   for (uint64_t index = 0; index != function.continuationCount; ++index) {
+    // Callable continuation IDs are internal synchronous branch targets, not
+    // independent scheduler entries. Their incoming state is propagated from
+    // process.control below. Process continuations are true resumptions and
+    // begin with only the registers reconstructed by their entry shim.
+    if (!process && index != 0)
+      continue;
     Continuation entry =
         continuationAt(image, function.firstContinuation + index);
     State entryState = seed;
-    if (index != 0 ||
-        (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0)
+    if (process)
       std::fill(entryState.begin(), entryState.end(), uint64_t{0});
     if (!merge(entry.instruction, entryState))
       return false;
@@ -1223,6 +1246,7 @@ bool validateInitialization(const Image &image, const Function &function,
     switch (instruction.opcode) {
     case OBELISK_RT_DB_CONSTANT:
     case OBELISK_RT_DB_MOVE:
+    case OBELISK_RT_DB_BITCAST:
     case OBELISK_RT_DB_NOT:
     case OBELISK_RT_DB_AND:
     case OBELISK_RT_DB_OR:
@@ -1304,12 +1328,29 @@ bool validateInitialization(const Image &image, const Function &function,
     }
     case OBELISK_RT_DB_RETURN:
     case OBELISK_RT_DB_CONTINUE:
-    case OBELISK_RT_DB_PROCESS_CONTROL:
     case OBELISK_RT_DB_SUSPEND:
     case OBELISK_RT_DB_TERMINATE:
     case OBELISK_RT_DB_TASK_CALL:
     case OBELISK_RT_DB_VIRTUAL_TASK_CALL:
     case OBELISK_RT_DB_INTERFACE_TASK_CALL:
+      fallthrough = false;
+      break;
+    case OBELISK_RT_DB_PROCESS_CONTROL:
+      if (!process) {
+        bool found = false;
+        for (uint64_t index = 0; index != function.continuationCount; ++index) {
+          Continuation continuation =
+              continuationAt(image, function.firstContinuation + index);
+          if (continuation.id != instruction.immediate)
+            continue;
+          if (!merge(continuation.instruction, state))
+            return false;
+          found = true;
+          break;
+        }
+        if (!found)
+          return false;
+      }
       fallthrough = false;
       break;
     default:
@@ -1353,6 +1394,7 @@ bool validateInitialization(const Image &image, const Function &function,
     bool valid = true;
     switch (instruction.opcode) {
     case OBELISK_RT_DB_MOVE:
+    case OBELISK_RT_DB_BITCAST:
     case OBELISK_RT_DB_NOT:
     case OBELISK_RT_DB_REDUCE:
     case OBELISK_RT_DB_STORE_FRAME:
@@ -1451,16 +1493,15 @@ bool validateInitialization(const Image &image, const Function &function,
       break;
     }
     if (!valid) {
-#ifdef OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
-      std::fprintf(stderr,
-                   "obelisk-bytecode-validation: rejected image: "
-                   "instruction reads uninitialized register %u; "
-                   "function=%u pc=%llu opcode=%u "
-                   "(DesignBytecodeImage.cpp:%u)\n",
-                   uninitializedRegister, functionIndex,
-                   static_cast<unsigned long long>(begin + offset),
-                   instruction.opcode, __LINE__);
-#endif
+      if (validationDiagnosticsEnabled())
+        std::fprintf(stderr,
+                     "obelisk-bytecode-validation: rejected image: "
+                     "instruction reads uninitialized register %u; "
+                     "function=%u pc=%llu opcode=%u "
+                     "(DesignBytecodeImage.cpp:%u)\n",
+                     uninitializedRegister, functionIndex,
+                     static_cast<unsigned long long>(begin + offset),
+                     instruction.opcode, __LINE__);
       return false;
     }
   }
@@ -1893,6 +1934,16 @@ bool validateImage(const Image &image) {
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
+      case OBELISK_RT_DB_BITCAST:
+        if (instruction.flags || instruction.source1 || instruction.source2 ||
+            instruction.auxiliary || instruction.immediate ||
+            !reg(instruction.destination) || !reg(instruction.source0) ||
+            !bitcastCompatible(
+                layoutAt(image, function, instruction.destination),
+                layoutAt(image, function, instruction.source0)))
+          return reject(__LINE__, "invalid instruction encoding or operands",
+                        functionIndex, pc, instruction.opcode);
+        break;
       case OBELISK_RT_DB_NOT:
         if (instruction.flags || instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
@@ -2088,8 +2139,7 @@ bool validateImage(const Image &image) {
         break;
       }
       case OBELISK_RT_DB_INSERT: {
-        if (instruction.auxiliary ||
-            !numeric(instruction.destination) ||
+        if (instruction.auxiliary || !numeric(instruction.destination) ||
             !numeric(instruction.source0) ||
             !compatible(layoutAt(image, function, instruction.destination),
                         layoutAt(image, function, instruction.source0)))
@@ -2438,7 +2488,8 @@ bool validateImage(const Image &image) {
         if (instruction.flags > OBELISK_RT_PROCESS_CONTROL_RESUME ||
             instruction.destination || instruction.source1 ||
             instruction.source2 || instruction.auxiliary ||
-            (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
+            ((function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 &&
+             instruction.flags == OBELISK_RT_PROCESS_CONTROL_SUSPEND) ||
             !hasContinuation(instruction.immediate) ||
             !reg(instruction.source0) ||
             layoutAt(image, function, instruction.source0).kind !=
@@ -2587,12 +2638,22 @@ static bool matchesActivationBytecodeInventory(
         result.width != observer.result_width || result.kind != expectedKind)
       return rejectImage(__LINE__,
                          "observer layout does not match bytecode function");
-    for (uint32_t capture = 0; capture != observer.capture_count; ++capture)
-      if (layoutAt(image, function, capture + 1).kind !=
-              OBELISK_RT_DBREG_HANDLE ||
-          layoutAt(image, function, capture + 1).size != 32)
+    for (uint32_t capture = 0; capture != observer.capture_count; ++capture) {
+      Layout captureLayout = layoutAt(image, function, capture + 1);
+      const obelisk_rt_observer_capture_abi_v1 &abi =
+          observer.capture_abi[capture];
+      if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_MANAGED) {
+        if (captureLayout.kind != OBELISK_RT_DBREG_MANAGED ||
+            captureLayout.size != 8)
+          return rejectImage(__LINE__,
+                             "managed observer capture layout is not a handle");
+        continue;
+      }
+      if (captureLayout.kind != OBELISK_RT_DBREG_HANDLE ||
+          captureLayout.size != 32)
         return rejectImage(__LINE__,
-                           "observer capture layout is not a 32-bit handle");
+                           "observer capture layout is not a 32-byte handle");
+    }
   }
   return true;
 }

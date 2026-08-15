@@ -541,6 +541,16 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                         instruction.destination))
         return OBELISK_RT_INVALID_BYTECODE;
       break;
+    case OBELISK_RT_DB_BITCAST: {
+      Layout source = layout(instruction.source0);
+      Layout destination = layout(instruction.destination);
+      if (!bitcastCompatible(destination, source))
+        return OBELISK_RT_INVALID_BYTECODE;
+      std::memset(frame.data + destination.offset, 0, destination.size);
+      std::memcpy(frame.data + destination.offset, frame.data + source.offset,
+                  std::min(source.size, destination.size));
+      break;
+    }
     case OBELISK_RT_DB_NOT: {
       Logic input = read(instruction.source0);
       for (size_t index = 0; index != input.value.size(); ++index)
@@ -1349,8 +1359,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         // silently drops the unknown plane, turning x and z into 0 across a
         // suspension.
         uint64_t registerPlane = value.kind == OBELISK_RT_DBREG_LOGIC
-                ? limbCount(value.width) * sizeof(uint64_t)
-                : 0;
+                                     ? limbCount(value.width) * sizeof(uint64_t)
+                                     : 0;
         uint64_t framePlane =
             registerPlane != 0 ? transferSize / 2 : transferSize;
         if (registerPlane != 0 &&
@@ -2220,6 +2230,9 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         --state.callDepth;
         return OBELISK_RT_INVALID_BYTECODE;
       }
+      obelisk_rt_fragment_action_v1 callerAction = *action;
+      *action = {
+          OBELISK_RT_FRAGMENT_CONTINUE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
       obelisk_rt_status status =
           executeFunction(image, callee, context, canonicalFrame,
                           canonicalFrameSize, calleeFunction.firstInstruction,
@@ -2228,6 +2241,9 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       --state.callDepth;
       if (status != OBELISK_RT_OK)
         return status;
+      if (action->kind != OBELISK_RT_FRAGMENT_CONTINUE)
+        return OBELISK_RT_OK;
+      *action = callerAction;
       break;
     }
     case OBELISK_RT_DB_VIRTUAL_CALL:
@@ -2281,6 +2297,9 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         --state.callDepth;
         return OBELISK_RT_INVALID_BYTECODE;
       }
+      obelisk_rt_fragment_action_v1 callerAction = *action;
+      *action = {
+          OBELISK_RT_FRAGMENT_CONTINUE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
       status = executeFunction(
           image, callee, context, canonicalFrame, canonicalFrameSize,
           calleeFunction.firstInstruction, budget, action, state,
@@ -2288,6 +2307,9 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       --state.callDepth;
       if (status != OBELISK_RT_OK)
         return status;
+      if (action->kind != OBELISK_RT_FRAGMENT_CONTINUE)
+        return OBELISK_RT_OK;
+      *action = callerAction;
       break;
     }
     case OBELISK_RT_DB_RETURN:
@@ -2845,7 +2867,7 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
         if (!process.instance || !contains(token) || token == preservedActive)
           continue;
         context->terminatedNativeProcesses.insert(process.token,
-                                                   process.random);
+                                                  process.random);
         context->killedNativeProcesses.insert(process.token);
         if (!process.started)
           obelisk_rt_unregister_unstarted_actor(context, process.phase, token);
@@ -3113,12 +3135,11 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
           context->terminatedNativeProcesses.rangeCount(), nativeTaskCount));
       context->terminatedDesignTasks.reserveRanges(checkedSizeSum(
           context->terminatedDesignTasks.rangeCount(), designTaskCount));
-      context->terminatedNativeProcesses.reserveRandomStates(checkedSizeSum(
-          context->terminatedNativeProcesses.randomStateCount(),
-          nativeTaskCount));
+      context->terminatedNativeProcesses.reserveRandomStates(
+          checkedSizeSum(context->terminatedNativeProcesses.randomStateCount(),
+                         nativeTaskCount));
       context->terminatedDesignTasks.reserveRandomStates(checkedSizeSum(
-          context->terminatedDesignTasks.randomStateCount(),
-          designTaskCount));
+          context->terminatedDesignTasks.randomStateCount(), designTaskCount));
       context->killedNativeProcesses.reserveRanges(checkedSizeSum(
           context->killedNativeProcesses.rangeCount(), nativeTaskCount));
       context->killedDesignTasks.reserveRanges(checkedSizeSum(
@@ -3363,12 +3384,11 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
           context->terminatedNativeProcesses.rangeCount(), nativeTaskCount));
       context->terminatedDesignTasks.reserveRanges(checkedSizeSum(
           context->terminatedDesignTasks.rangeCount(), designTaskCount));
-      context->terminatedNativeProcesses.reserveRandomStates(checkedSizeSum(
-          context->terminatedNativeProcesses.randomStateCount(),
-          nativeTaskCount));
+      context->terminatedNativeProcesses.reserveRandomStates(
+          checkedSizeSum(context->terminatedNativeProcesses.randomStateCount(),
+                         nativeTaskCount));
       context->terminatedDesignTasks.reserveRandomStates(checkedSizeSum(
-          context->terminatedDesignTasks.randomStateCount(),
-          designTaskCount));
+          context->terminatedDesignTasks.randomStateCount(), designTaskCount));
       context->killedNativeProcesses.reserveRanges(checkedSizeSum(
           context->killedNativeProcesses.rangeCount(), nativeTaskCount));
       context->killedDesignTasks.reserveRanges(checkedSizeSum(
@@ -3679,7 +3699,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
             }
           } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_AWAIT)
             awaited = wait->count == 1 && obelisk_rt_logical_process_terminated(
-                          context, entries[0].stable_id);
+                                              context, entries[0].stable_id);
           else if (wait->count != 0) {
             awaited = wait->flags == 0;
             if (wait->flags == 0)
@@ -3725,7 +3745,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
             iterator->prioritySignal && signalTriggered
                 ? std::tuple{iterator->queuedRegion, uint32_t{0}, uint64_t{0}}
                 : std::tuple{iterator->queuedRegion, iterator->scheduleRank,
-                                    iterator->insertionSequence};
+                             iterator->insertionSequence};
         auto selectedKey =
             std::tuple{selectedRegion, selectedRank, selectedInsertionSequence};
         if (runnable && iterator->urgent) {

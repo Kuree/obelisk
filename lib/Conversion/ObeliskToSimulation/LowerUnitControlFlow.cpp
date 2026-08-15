@@ -250,20 +250,18 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
     };
 
     std::function<LogicalResult(unsigned, Value, Block *, ValueRange)>
-        emitDimension =
-        [&](unsigned dimensionIndex, Value currentCollection,
-            Block *parentStep,
-            ValueRange parentStepOperands) -> LogicalResult {
+        emitDimension = [&](unsigned dimensionIndex, Value currentCollection,
+                            Block *parentStep,
+                            ValueRange parentStepOperands) -> LogicalResult {
       if (dimensionIndex == dimensions.size()) {
         if (!parentStep) {
           emitError(location) << "runtime foreach has no iterated dimension";
           return failure();
         }
-        loopTargets.push_back(
-            {exit, parentStep,
-             SmallVector<Value>(parentStepOperands.begin(),
-                                parentStepOperands.end()),
-             controlScopes.size()});
+        loopTargets.push_back({exit, parentStep,
+                               SmallVector<Value>(parentStepOperands.begin(),
+                                                  parentStepOperands.end()),
+                               controlScopes.size()});
         LogicalResult status = lowerStatement(children[1]);
         loopTargets.pop_back();
         return status;
@@ -933,8 +931,7 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
     outlinedThisArgument = inputs.size();
     inputs.push_back(thisObject.getType());
     captures.push_back(thisObject);
-    argumentAttrs.push_back(
-        captureMetadata(builder, sim::CaptureKind::Formal));
+    argumentAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Formal));
     // Preserve the receiver's frozen path as an alias of the distinguished
     // `this` argument. Observer and callee capture inventories resolve by
     // path, while ordinary implicit member accesses use thisArgument.

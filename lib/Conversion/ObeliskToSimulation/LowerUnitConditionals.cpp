@@ -103,11 +103,10 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
         builder, location, actionState,
         arith::ConstantOp::create(builder, location, builder.getI32Type(),
                                   builder.getI32IntegerAttr(mask)));
-    Value zero = arith::ConstantOp::create(builder, location,
-                                           builder.getI32Type(),
-                                           builder.getI32IntegerAttr(0));
+    Value zero = arith::ConstantOp::create(
+        builder, location, builder.getI32Type(), builder.getI32IntegerAttr(0));
     return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
-                                selected, zero);
+                                 selected, zero);
   };
 
   if (op.getIsDeferred()) {
@@ -281,7 +280,7 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
           entryBuilder, location, entryBuilder.getI1Type(), reportTicket);
       if (capturedActionEnabled)
         current = arith::AndIOp::create(entryBuilder, location, current,
-                                       capturedActionEnabled);
+                                        capturedActionEnabled);
       cf::CondBranchOp::create(entryBuilder, location, current, body, stale);
       OpBuilder staleBuilder = OpBuilder::atBlockEnd(stale);
       sim::SimReturnOp::create(staleBuilder, location, ValueRange{});
@@ -1327,9 +1326,8 @@ LogicalResult UnitLowering::lowerRandCase(semantic::SVRandCaseStatementOp op) {
     // A weight is a count, so a negative one contributes nothing. Clamping
     // keeps it from reappearing as a dominant unsigned magnitude.
     if (isSigned) {
-      Value negative =
-          arith::CmpIOp::create(builder, weightLocation,
-                                arith::CmpIPredicate::slt, *weight, zero);
+      Value negative = arith::CmpIOp::create(
+          builder, weightLocation, arith::CmpIPredicate::slt, *weight, zero);
       weight = arith::SelectOp::create(builder, weightLocation, negative, zero,
                                        *weight)
                    .getResult();
@@ -1351,14 +1349,13 @@ LogicalResult UnitLowering::lowerRandCase(semantic::SVRandCaseStatementOp op) {
   // lands in [0, total), so it always falls inside the final item's bound and
   // that item needs no test of its own.
   Value context = function.getBody().front().getArgument(0);
-  Value draw = sim::SimRandomBoundedOp::create(builder, location, i64, context,
-                                               total);
+  Value draw =
+      sim::SimRandomBoundedOp::create(builder, location, i64, context, total);
   for (size_t item = 0; item + 1 < itemCount; ++item) {
     Block *itemBlock = addBlock();
     Block *nextItemBlock = addBlock();
-    Value selected =
-        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ult,
-                              draw, bounds[item]);
+    Value selected = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ult, draw, bounds[item]);
     cf::CondBranchOp::create(builder, location, selected, itemBlock,
                              ValueRange{}, nextItemBlock, ValueRange{});
     setCurrent(itemBlock);
@@ -1382,8 +1379,7 @@ UnitLowering::lowerRandSequence(semantic::SVRandSequenceStatementOp op) {
   context.breakTarget = addBlock();
   context.controlDepth = controlScopes.size();
   for (Operation *child : children) {
-    auto production =
-        dyn_cast<semantic::SVFrozenRandSeqProductionOp>(child);
+    auto production = dyn_cast<semantic::SVFrozenRandSeqProductionOp>(child);
     if (!production) {
       emitError(getSemanticLocation(child))
           << "randsequence contains a non-production child";
@@ -1436,8 +1432,7 @@ UnitLowering::lowerRandSequence(semantic::SVRandSequenceStatementOp op) {
           context.productions.find(reference.getLeafReference().getValue());
       if (target == context.productions.end()) {
         emitError(getSemanticLocation(item))
-            << "randsequence references unknown production "
-            << reference;
+            << "randsequence references unknown production " << reference;
         return WalkResult::interrupt();
       }
       if (failed(visit(target->getKey())))
@@ -1502,9 +1497,9 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
   size_t nextChild = 0;
   for (auto [index, attribute] : llvm::enumerate(formals)) {
     auto formal = dyn_cast<DictionaryAttr>(attribute);
-    auto defaultCount =
-        formal ? formal.getAs<IntegerAttr>("default_operand_count")
-               : IntegerAttr{};
+    auto defaultCount = formal
+                            ? formal.getAs<IntegerAttr>("default_operand_count")
+                            : IntegerAttr{};
     if (!formal || !defaultCount || defaultCount.getInt() < 0 ||
         defaultCount.getInt() > 1 ||
         nextChild + defaultCount.getInt() > children.size()) {
@@ -1550,8 +1545,8 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     auto path = formal.getAs<StringAttr>("referenced_path");
     auto semanticType = formal.getAs<TypeAttr>("semantic_type");
     if (!direction ||
-        direction.getInt() != static_cast<int64_t>(
-                                  semantic::SVArgumentDirection::In) ||
+        direction.getInt() !=
+            static_cast<int64_t>(semantic::SVArgumentDirection::In) ||
         !path || !semanticType) {
       emitError(location)
           << "randsequence currently requires typed input formals";
@@ -1582,13 +1577,12 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     if (failed(converted))
       return failure();
     std::string bindingPath = path.getValue().str();
-    savedBindings.push_back({bindingPath, values.lookup(bindingPath),
-                             lvalues.lookup(bindingPath),
-                             values.count(bindingPath) != 0,
-                             lvalues.count(bindingPath) != 0});
+    savedBindings.push_back(
+        {bindingPath, values.lookup(bindingPath), lvalues.lookup(bindingPath),
+         values.count(bindingPath) != 0, lvalues.count(bindingPath) != 0});
     Value reference = sim::SimRefAllocOp::create(
-        builder, location,
-        sim::RefType::get(function.getContext(), *type), *converted);
+        builder, location, sim::RefType::get(function.getContext(), *type),
+        *converted);
     values[bindingPath] = reference;
     lvalues[bindingPath] = reference;
   }
@@ -1621,8 +1615,7 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
   for (size_t index = 0; index < ruleCount; ++index) {
     if (itemCounts[index] < 0 ||
         (hasWeights[index] != 0 && hasWeights[index] != 1) ||
-        (hasWeightCodeBlocks[index] != 0 &&
-         hasWeightCodeBlocks[index] != 1) ||
+        (hasWeightCodeBlocks[index] != 0 && hasWeightCodeBlocks[index] != 1) ||
         (isRandJoin[index] != 0 && isRandJoin[index] != 1) ||
         (hasRandJoinExpressions[index] != 0 &&
          hasRandJoinExpressions[index] != 1)) {
@@ -1645,14 +1638,12 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
       emitError(location) << "truncated randsequence production list";
       return failure();
     }
-    llvm::append_range(
-        rule.items,
-        ArrayRef<Operation *>(children).slice(nextChild, itemCounts[index]));
+    llvm::append_range(rule.items, ArrayRef<Operation *>(children).slice(
+                                       nextChild, itemCounts[index]));
     nextChild += itemCounts[index];
     if (hasWeightCodeBlocks[index]) {
       if (nextChild == children.size())
-        return emitError(location)
-               << "missing randsequence weight code block";
+        return emitError(location) << "missing randsequence weight code block";
       rule.weightCodeBlock = children[nextChild++];
     }
     rules.push_back(std::move(rule));
@@ -1665,8 +1656,7 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
   Block *productionReturn = addBlock();
   randSequenceProductionReturns.push_back(
       {productionReturn, controlScopes.size()});
-  llvm::scope_exit popReturn(
-      [&] { randSequenceProductionReturns.pop_back(); });
+  llvm::scope_exit popReturn([&] { randSequenceProductionReturns.pop_back(); });
   auto lowerRandJoin = [&](const Rule &rule) -> LogicalResult {
     if (rule.items.size() < 2)
       return emitError(location)
@@ -1676,13 +1666,11 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     streams.reserve(rule.items.size());
     for (Operation *operand : rule.items) {
       auto item = dyn_cast<semantic::SVProdItemOp>(operand);
-      auto targetRef = item
-                           ? item->getAttrOfType<SymbolRefAttr>("target")
-                           : SymbolRefAttr{};
-      auto target = targetRef
-                        ? randSequenceContexts.back().productions.find(
-                              targetRef.getLeafReference())
-                        : randSequenceContexts.back().productions.end();
+      auto targetRef =
+          item ? item->getAttrOfType<SymbolRefAttr>("target") : SymbolRefAttr{};
+      auto target = targetRef ? randSequenceContexts.back().productions.find(
+                                    targetRef.getLeafReference())
+                              : randSequenceContexts.back().productions.end();
       auto argumentCount =
           item ? item->getAttrOfType<IntegerAttr>("argument_count")
                : IntegerAttr{};
@@ -1726,10 +1714,9 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
       FailureOr<Value> lowered = lowerExpression(rule.randJoinBias);
       if (failed(lowered))
         return failure();
-      FailureOr<Value> bias =
-          convert(*lowered, builder.getF64Type(),
-                  isSignedNode(rule.randJoinBias),
-                  getSemanticLocation(rule.randJoinBias));
+      FailureOr<Value> bias = convert(*lowered, builder.getF64Type(),
+                                      isSignedNode(rule.randJoinBias),
+                                      getSemanticLocation(rule.randJoinBias));
       if (failed(bias))
         return failure();
       Value zero = arith::ConstantOp::create(
@@ -1738,20 +1725,19 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
       Value one = arith::ConstantOp::create(
           builder, getSemanticLocation(rule.randJoinBias),
           builder.getF64FloatAttr(1.0));
-      Value atLeastZero = arith::CmpFOp::create(
-          builder, getSemanticLocation(rule.randJoinBias),
-          arith::CmpFPredicate::OGE, *bias, zero);
-      Value atMostOne = arith::CmpFOp::create(
-          builder, getSemanticLocation(rule.randJoinBias),
-          arith::CmpFPredicate::OLE, *bias, one);
-      Value valid = arith::AndIOp::create(
-          builder, getSemanticLocation(rule.randJoinBias), atLeastZero,
-          atMostOne);
+      Value atLeastZero =
+          arith::CmpFOp::create(builder, getSemanticLocation(rule.randJoinBias),
+                                arith::CmpFPredicate::OGE, *bias, zero);
+      Value atMostOne =
+          arith::CmpFOp::create(builder, getSemanticLocation(rule.randJoinBias),
+                                arith::CmpFPredicate::OLE, *bias, one);
+      Value valid =
+          arith::AndIOp::create(builder, getSemanticLocation(rule.randJoinBias),
+                                atLeastZero, atMostOne);
       Block *accepted = addBlock();
       Block *invalid = addBlock();
-      cf::CondBranchOp::create(builder,
-                               getSemanticLocation(rule.randJoinBias), valid,
-                               accepted, invalid);
+      cf::CondBranchOp::create(builder, getSemanticLocation(rule.randJoinBias),
+                               valid, accepted, invalid);
       setCurrent(invalid);
       if (failed(emitRuntimeFatal(
               getSemanticLocation(rule.randJoinBias),
@@ -1768,13 +1754,11 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     header->addArgument(i64, location);
     Block *dispatch = addBlock();
     Block *exit = addBlock();
-    SmallVector<Value> initial(streams.size(),
-                               arith::ConstantOp::create(
-                                   builder, location, i1,
-                                   builder.getBoolAttr(true)));
+    SmallVector<Value> initial(
+        streams.size(), arith::ConstantOp::create(builder, location, i1,
+                                                  builder.getBoolAttr(true)));
     initial.push_back(arith::ConstantOp::create(
-        builder, location, i64,
-        builder.getI64IntegerAttr(streams.size())));
+        builder, location, i64, builder.getI64IntegerAttr(streams.size())));
     cf::BranchOp::create(builder, location, header, initial);
 
     setCurrent(header);
@@ -1793,8 +1777,8 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     Block *randomize = addBlock();
     Block *choose = addBlock();
     choose->addArgument(i64, location);
-    cf::CondBranchOp::create(builder, location, last, choose,
-                             ValueRange{zero}, randomize, ValueRange{});
+    cf::CondBranchOp::create(builder, location, last, choose, ValueRange{zero},
+                             randomize, ValueRange{});
 
     setCurrent(randomize);
     Value context = function.getBody().front().getArgument(0);
@@ -1832,11 +1816,10 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
       SmallVector<Value> nextActive;
       nextActive.reserve(streams.size() + 1);
       for (size_t operand = 0; operand < streams.size(); ++operand)
-        nextActive.push_back(
-            operand == index
-                ? Value(arith::ConstantOp::create(
-                      builder, location, i1, builder.getBoolAttr(false)))
-                : header->getArgument(operand));
+        nextActive.push_back(operand == index ? Value(arith::ConstantOp::create(
+                                                    builder, location, i1,
+                                                    builder.getBoolAttr(false)))
+                                              : header->getArgument(operand));
       nextActive.push_back(nextRemaining);
       cf::BranchOp::create(builder, location, header, nextActive);
 
@@ -1884,9 +1867,9 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     if (failed(converted))
       return failure();
     if (isSignedNode(node)) {
-      Value negative = arith::CmpIOp::create(
-          builder, getSemanticLocation(node), arith::CmpIPredicate::slt,
-          *converted, zero);
+      Value negative =
+          arith::CmpIOp::create(builder, getSemanticLocation(node),
+                                arith::CmpIPredicate::slt, *converted, zero);
       Block *invalid = addBlock();
       Block *valid = addBlock();
       cf::CondBranchOp::create(builder, getSemanticLocation(node), negative,
@@ -1937,8 +1920,8 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
       Block *valid = addBlock();
       cf::CondBranchOp::create(builder, location, overflow, invalid, valid);
       setCurrent(invalid);
-      if (failed(emitRuntimeFatal(location,
-                                  "randsequence weight sum overflowed 64 bits")))
+      if (failed(emitRuntimeFatal(
+              location, "randsequence weight sum overflowed 64 bits")))
         return failure();
       setCurrent(valid);
       total = next;
@@ -1947,12 +1930,11 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     Block *select = addBlock();
     Value any = arith::CmpIOp::create(builder, location,
                                       arith::CmpIPredicate::ne, total, zero);
-    cf::CondBranchOp::create(builder, location, any, select,
-                             productionReturn);
+    cf::CondBranchOp::create(builder, location, any, select, productionReturn);
     setCurrent(select);
     Value context = function.getBody().front().getArgument(0);
-    Value draw = sim::SimRandomBoundedOp::create(builder, location, i64,
-                                                 context, total);
+    Value draw =
+        sim::SimRandomBoundedOp::create(builder, location, i64, context, total);
     for (size_t index = 0; index + 1 < rules.size(); ++index) {
       Block *selected = addBlock();
       Block *nextRule = addBlock();
@@ -1971,8 +1953,8 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
   return success();
 }
 
-LogicalResult UnitLowering::lowerRandSequenceProductionItem(
-    semantic::SVProdItemOp item) {
+LogicalResult
+UnitLowering::lowerRandSequenceProductionItem(semantic::SVProdItemOp item) {
   if (randSequenceContexts.empty())
     return emitError(getSemanticLocation(item))
            << "randsequence production item has no active grammar";
@@ -1980,8 +1962,8 @@ LogicalResult UnitLowering::lowerRandSequenceProductionItem(
   if (!target)
     return emitError(getSemanticLocation(item))
            << "randsequence production item has no target";
-  auto found = randSequenceContexts.back().productions.find(
-      target.getLeafReference());
+  auto found =
+      randSequenceContexts.back().productions.find(target.getLeafReference());
   if (found == randSequenceContexts.back().productions.end())
     return emitError(getSemanticLocation(item))
            << "randsequence cannot resolve production " << target;
@@ -2010,8 +1992,7 @@ LogicalResult UnitLowering::lowerRandSequenceNode(Operation *node) {
     if (!hasElse || children.size() != 2u + unsigned(hasElse.getValue()))
       return emitError(location) << "malformed randsequence if production";
     if (!isa<semantic::SVProdItemOp>(children[1]) ||
-        (hasElse.getValue() &&
-         !isa<semantic::SVProdItemOp>(children[2])))
+        (hasElse.getValue() && !isa<semantic::SVProdItemOp>(children[2])))
       return emitError(location) << "malformed randsequence if production";
     FailureOr<Value> condition = lowerExpression(children.front());
     if (failed(condition))
@@ -2029,9 +2010,8 @@ LogicalResult UnitLowering::lowerRandSequenceNode(Operation *node) {
       return failure();
     emitBranch(merge);
     setCurrent(elseBlock);
-    if (hasElse.getValue() &&
-        failed(lowerRandSequenceProductionItem(
-            cast<semantic::SVProdItemOp>(children[2]))))
+    if (hasElse.getValue() && failed(lowerRandSequenceProductionItem(
+                                  cast<semantic::SVProdItemOp>(children[2]))))
       return failure();
     emitBranch(merge);
     setCurrent(merge);
@@ -2052,8 +2032,8 @@ LogicalResult UnitLowering::lowerRandSequenceNode(Operation *node) {
     if (failed(lowered))
       return failure();
     Type i64 = builder.getI64Type();
-    FailureOr<Value> count = convert(*lowered, i64,
-                                     isSignedNode(children.front()), location);
+    FailureOr<Value> count =
+        convert(*lowered, i64, isSignedNode(children.front()), location);
     if (failed(count))
       return failure();
     Value zero = arith::ConstantOp::create(builder, location, i64,
@@ -2078,8 +2058,8 @@ LogicalResult UnitLowering::lowerRandSequenceNode(Operation *node) {
     cf::BranchOp::create(builder, location, header, ValueRange{zero});
     setCurrent(header);
     Value index = header->getArgument(0);
-    Value more = arith::CmpIOp::create(builder, location,
-                                       arith::CmpIPredicate::ult, index, *count);
+    Value more = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ult, index, *count);
     cf::CondBranchOp::create(builder, location, more, body, exit);
     setCurrent(body);
     if (failed(lowerRandSequenceProductionItem(
@@ -2099,9 +2079,9 @@ LogicalResult UnitLowering::lowerRandSequenceNode(Operation *node) {
             "item_expression_counts");
     auto itemCount = caseProduction->getAttrOfType<IntegerAttr>("item_count");
     auto hasDefault = caseProduction->getAttrOfType<BoolAttr>("has_default");
-    ArrayRef<int64_t> expressionCounts =
-        expressionCountsAttr ? expressionCountsAttr.asArrayRef()
-                             : ArrayRef<int64_t>{};
+    ArrayRef<int64_t> expressionCounts = expressionCountsAttr
+                                             ? expressionCountsAttr.asArrayRef()
+                                             : ArrayRef<int64_t>{};
     if (!expressionCountsAttr || !itemCount || itemCount.getInt() < 0 ||
         !hasDefault ||
         expressionCounts.size() != static_cast<uint64_t>(itemCount.getInt()) ||
@@ -2117,8 +2097,7 @@ LogicalResult UnitLowering::lowerRandSequenceNode(Operation *node) {
     size_t next = 1;
     Block *merge = addBlock();
     for (int64_t expressionCount : expressionCounts) {
-      if (expressionCount <= 0 ||
-          next + expressionCount >= children.size())
+      if (expressionCount <= 0 || next + expressionCount >= children.size())
         return emitError(location)
                << "malformed randsequence case item inventory";
       SmallVector<Operation *> labels;
@@ -2129,9 +2108,9 @@ LogicalResult UnitLowering::lowerRandSequenceNode(Operation *node) {
         return emitError(location)
                << "randsequence case item has no production";
       for (Operation *label : labels) {
-        FailureOr<Value> matches = lowerCaseLabel(
-            *selector, *selectorType, selectorNode, label,
-            semantic::SVCaseCondition::Normal);
+        FailureOr<Value> matches =
+            lowerCaseLabel(*selector, *selectorType, selectorNode, label,
+                           semantic::SVCaseCondition::Normal);
         if (failed(matches))
           return failure();
         Block *selected = addBlock();
@@ -2161,8 +2140,8 @@ LogicalResult UnitLowering::lowerRandSequenceNode(Operation *node) {
     setCurrent(merge);
     return success();
   }
-  return emitError(location) << "unsupported randsequence production node "
-                             << node->getName();
+  return emitError(location)
+         << "unsupported randsequence production node " << node->getName();
 }
 
 LogicalResult

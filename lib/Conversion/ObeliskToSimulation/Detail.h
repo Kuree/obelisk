@@ -169,6 +169,14 @@ inline constexpr ::mlir::StringLiteral randomizeAttrName =
     "obelisk_sim.randomize";
 inline constexpr ::mlir::StringLiteral randomizeDispatchAttrName =
     "obelisk_sim.randomize_dispatch";
+inline constexpr ::mlir::StringLiteral randomizeHelperAttrName =
+    "obelisk_sim.randomize_helper";
+inline constexpr ::mlir::StringLiteral randomizeHelperCapturesAttrName =
+    "obelisk_sim.randomize_helper_captures";
+inline constexpr ::mlir::StringLiteral randomizeHelperReadCapturesAttrName =
+    "obelisk_sim.randomize_helper_read_captures";
+inline constexpr ::mlir::StringLiteral randomizeHelperReceiverAttrName =
+    "obelisk_sim.randomize_helper_receiver";
 inline constexpr ::mlir::StringLiteral randomizeNestedDispatchAttrName =
     "obelisk_sim.randomize_nested_dispatch";
 inline constexpr ::mlir::StringLiteral randomizeNestedDispatchFieldAttrName =

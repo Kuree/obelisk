@@ -14,6 +14,18 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @unknown_base {
+    obelisk_sim.scope.decl 0
+    // expected-error @below {{references an unknown base class}}
+    obelisk_sim.class.decl @C id 1 extends @Missing {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @unknown_random_constraint_template {
     obelisk_sim.scope.decl 0
     // expected-error @below {{random constraint template references an unknown template}}

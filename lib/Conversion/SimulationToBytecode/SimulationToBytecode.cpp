@@ -17,6 +17,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SparseBitVector.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/Support/Error.h"
 
@@ -58,9 +59,9 @@ static bool needsWaveformMetadata(sim::SimDesignOp design) {
   bool needed = false;
   design.walk([&](Operation *operation) {
     if (isa<sim::SimDumpOpenOp, sim::SimDumpOpenStringOp,
-            sim::SimDumpTimescaleOp, sim::SimDumpVarsOp,
-            sim::SimDumpAllOp, sim::SimDumpControlOp,
-            sim::SimDumpLimitOp, sim::SimDumpFlushOp>(operation))
+            sim::SimDumpTimescaleOp, sim::SimDumpVarsOp, sim::SimDumpAllOp,
+            sim::SimDumpControlOp, sim::SimDumpLimitOp, sim::SimDumpFlushOp>(
+            operation))
       needed = true;
   });
   return needed;
@@ -136,8 +137,9 @@ Encoder::Encoder(sim::SimDesignOp design,
     : design(design), options(options), dataLayout(dataLayout) {}
 
 FailureOr<EncodedSimulationDesign> Encoder::encode() {
-  if (failed(prepareClassLayouts()) ||
-      failed(prepareStaticSpecializationSites()))
+  if (failed(prepareClassLayouts()))
+    return failure();
+  if (failed(prepareStaticSpecializationSites()))
     return failure();
   FailureOr<StateLayout> builtState = buildStateLayout(design);
   if (failed(builtState))
@@ -147,8 +149,13 @@ FailureOr<EncodedSimulationDesign> Encoder::encode() {
       planSampledRanges(design, state);
   if (failed(sampledRanges))
     return failure();
-  if (failed(planTwoStateRegisters()) || failed(planFunctions()) ||
-      failed(planScheduleRanks()) || failed(encodeFunctions()))
+  if (failed(planTwoStateRegisters()))
+    return failure();
+  if (failed(planFunctions()))
+    return failure();
+  if (failed(planScheduleRanks()))
+    return failure();
+  if (failed(encodeFunctions()))
     return failure();
   EncodedSimulationDesign result;
   result.bytecode = serializeBytecode();
@@ -267,12 +274,16 @@ uint64_t Encoder::addBytesConstant(ArrayRef<uint8_t> bytes) {
 
 uint32_t Encoder::addIntrinsicSignature(uint32_t id, uint32_t inputCount,
                                         uint32_t outputCount, uint32_t flags) {
-  for (auto [index, signature] : llvm::enumerate(intrinsicSignatures))
-    if (signature.id == id && signature.inputCount == inputCount &&
-        signature.outputCount == outputCount && signature.flags == flags)
-      return static_cast<uint32_t>(index);
+  std::pair<uint64_t, uint64_t> key{(static_cast<uint64_t>(id) << 32) | flags,
+                                    (static_cast<uint64_t>(inputCount) << 32) |
+                                        outputCount};
+  auto found = intrinsicSignatureIndices.find(key);
+  if (found != intrinsicSignatureIndices.end())
+    return found->second;
+  uint32_t index = intrinsicSignatures.size();
   intrinsicSignatures.push_back({id, inputCount, outputCount, flags});
-  return intrinsicSignatures.size() - 1;
+  intrinsicSignatureIndices.try_emplace(key, index);
+  return index;
 }
 
 LogicalResult Encoder::emitIntrinsicRegisters(FunctionPlan &plan, uint32_t id,
@@ -410,17 +421,185 @@ Encoder::addRegistersMap(ArrayRef<uint32_t> destinations,
 
 LogicalResult Encoder::encodeFunctions() {
   for (FunctionPlan &plan : plans) {
+    using RootSet = llvm::SparseBitVector<>;
+    auto isManagedRoot = [&](uint32_t reg) {
+      if (reg >= plan.layouts.size())
+        return false;
+      uint8_t kind = plan.layouts[reg].kind;
+      return kind == Managed || kind == ManagedRef || kind == ArgumentRef ||
+             kind == String;
+    };
+    auto addRoot = [&](RootSet &roots, Value value) {
+      uint32_t valueRegister = reg(plan, value);
+      if (isManagedRoot(valueRegister))
+        roots.set(valueRegister);
+    };
+
+    // Plan embedded aggregate roots once per SSA value. The previous encoder
+    // rediscovered every managed slot by scanning every register at every
+    // collection point, then linearly searched the accumulated shadows. That
+    // is quadratic for large UVM dispatchers and also emitted a redundant zero
+    // for every dead aggregate slot at every safepoint.
+    DenseMap<Value, SmallVector<uint32_t, 2>> aggregateShadows;
+    DenseMap<uint32_t, unsigned> shadowIndices;
+    SmallVector<std::pair<Value, uint32_t>> aggregateValues;
+    aggregateValues.reserve(plan.registers.size());
+    for (const auto &[value, source] : plan.registers)
+      aggregateValues.emplace_back(value, source);
+    llvm::sort(aggregateValues, [](const auto &lhs, const auto &rhs) {
+      return lhs.second < rhs.second;
+    });
+    for (const auto &[value, source] : aggregateValues) {
+      SmallVector<sim::ManagedHandleSlot, 2> slots;
+      if (!sim::getManagedHandleSlots(value.getType(), slots))
+        return plan.function.emitOpError(
+            "value has no fixed bytecode managed root layout");
+      if (slots.empty() || isManagedRoot(source))
+        continue;
+      SmallVector<uint32_t, 2> &valueShadows = aggregateShadows[value];
+      valueShadows.reserve(slots.size());
+      for (const sim::ManagedHandleSlot &slot : slots) {
+        Layout layout;
+        layout.kind = Managed;
+        layout.width = 64;
+        layout.size = 8;
+        layout.offset = llvm::alignTo(plan.scratchSize, uint64_t{8});
+        plan.scratchSize = layout.offset + layout.size;
+        plan.layouts.push_back(layout);
+        uint32_t shadow = plan.layouts.size() - 1;
+        shadowIndices[shadow] = plan.managedRootShadows.size();
+        plan.managedRootShadows.push_back(
+            {value, slot.bitOffset, slot.kindMask, slot.conditional, shadow});
+        valueShadows.push_back(shadow);
+      }
+    }
+    auto addAggregateRoots = [&](RootSet &roots, Value value) {
+      auto found = aggregateShadows.find(value);
+      if (found == aggregateShadows.end())
+        return;
+      for (uint32_t shadow : found->second)
+        roots.set(shadow);
+    };
+
+    // Scratch storage starts zeroed, so a register only needs clearing after
+    // it may have acquired a root on the current CFG path. Compute that state
+    // once and intersect it with SSA liveness at each collection point. The
+    // former scheme cleared every dead root at every point, producing
+    // quadratic bytecode for large randomization dispatchers.
+    DenseMap<Operation *, RootSet> liveRoots;
+    DenseMap<Operation *, RootSet> liveAggregateRoots;
+    for (Block &block : plan.function.getBody()) {
+      const LivenessBlockInfo *blockInfo = plan.liveness->getLiveness(&block);
+      if (!blockInfo)
+        continue;
+      // LivenessBlockInfo::currentlyLiveValues recomputes the live range of
+      // every value in the block for every queried operation. Large UVM
+      // dispatch functions contain many allocation/call safepoints, making
+      // that convenience API quadratic. A single backwards transfer gives
+      // the same pre-operation set: discard definitions, then add operands.
+      Liveness::ValueSetT live(blockInfo->out());
+      for (Operation &operation : llvm::reverse(block)) {
+        for (Value result : operation.getResults())
+          live.erase(result);
+        for (Value operand : operation.getOperands())
+          live.insert(operand);
+        if (mayCollect(&operation)) {
+          RootSet &roots = liveRoots[&operation];
+          for (Value value : live) {
+            addRoot(roots, value);
+            addAggregateRoots(liveAggregateRoots[&operation], value);
+          }
+        }
+      }
+    }
+    DenseMap<Block *, RootSet> entryRoots;
+    DenseMap<Block *, RootSet> exitRoots;
+    DenseMap<Block *, RootSet> entryAggregateRoots;
+    DenseMap<Block *, RootSet> exitAggregateRoots;
+    SmallVector<Block *> worklist;
+    llvm::DenseSet<Block *> queued;
+    llvm::DenseSet<Block *> computed;
+    Block *entry = &plan.function.getBody().front();
+    worklist.push_back(entry);
+    queued.insert(entry);
+    while (!worklist.empty()) {
+      Block *block = worklist.pop_back_val();
+      queued.erase(block);
+      RootSet roots = entryRoots.lookup(block);
+      RootSet aggregateRoots = entryAggregateRoots.lookup(block);
+      for (BlockArgument argument : block->getArguments())
+        addRoot(roots, argument);
+      for (Operation &operation : *block) {
+        if (mayCollect(&operation)) {
+          roots &= liveRoots.lookup(&operation);
+          aggregateRoots = liveAggregateRoots.lookup(&operation);
+        }
+        for (Value result : operation.getResults())
+          addRoot(roots, result);
+      }
+      bool firstComputation = computed.insert(block).second;
+      if (!firstComputation && exitRoots.lookup(block) == roots &&
+          exitAggregateRoots.lookup(block) == aggregateRoots)
+        continue;
+      exitRoots[block] = roots;
+      exitAggregateRoots[block] = aggregateRoots;
+      for (Block *successor : block->getSuccessors()) {
+        bool changed = entryRoots[successor] |= roots;
+        changed |= entryAggregateRoots[successor] |= aggregateRoots;
+        if ((changed || !computed.contains(successor)) &&
+            queued.insert(successor).second)
+          worklist.push_back(successor);
+      }
+    }
     plan.firstInstruction = instructions.size();
     for (Block &block : plan.function.getBody()) {
       plan.blockPCs[&block] = instructions.size();
+      RootSet roots = entryRoots.lookup(&block);
+      RootSet aggregateRoots = entryAggregateRoots.lookup(&block);
+      for (BlockArgument argument : block.getArguments())
+        addRoot(roots, argument);
       for (Operation &operation : block) {
         if (mayCollect(&operation)) {
-          if (failed(emitAggregateManagedRoots(plan, &operation)))
-            return failure();
-          emitDeadManagedClears(plan, &operation);
+          RootSet dead = roots;
+          dead.intersectWithComplement(liveRoots.lookup(&operation));
+          SmallVector<uint32_t> deadRegisters;
+          for (unsigned deadRegister : dead)
+            deadRegisters.push_back(deadRegister);
+          emitDeadManagedClears(plan, deadRegisters);
+          roots &= liveRoots.lookup(&operation);
+
+          RootSet liveShadows = liveAggregateRoots.lookup(&operation);
+          RootSet deadShadows = aggregateRoots;
+          deadShadows.intersectWithComplement(liveShadows);
+          deadRegisters.clear();
+          for (unsigned deadShadow : deadShadows)
+            deadRegisters.push_back(deadShadow);
+          emitDeadManagedClears(plan, deadRegisters);
+          for (unsigned liveShadow : liveShadows) {
+            auto found = shadowIndices.find(liveShadow);
+            if (found == shadowIndices.end())
+              return operation.emitOpError(
+                  "aggregate root shadow is not planned");
+            const FunctionPlan::ManagedRootShadow &shadow =
+                plan.managedRootShadows[found->second];
+            SmallVector<uint32_t> inputs{
+                reg(plan, shadow.value),
+                emitU64Constant(plan, shadow.bitOffset)};
+            uint32_t intrinsic = kIntrinsicManagedRootExtract;
+            if (shadow.conditional) {
+              intrinsic = kIntrinsicManagedCandidateRoot;
+              inputs.push_back(emitU64Constant(plan, shadow.kindMask));
+            }
+            if (failed(emitIntrinsicRegisters(plan, intrinsic, inputs,
+                                              {shadow.reg})))
+              return failure();
+          }
+          aggregateRoots = liveShadows;
         }
         if (failed(encodeOperation(plan, &operation)))
           return failure();
+        for (Value result : operation.getResults())
+          addRoot(roots, result);
       }
     }
     for (auto [instruction, target] : plan.branches) {
@@ -438,103 +617,31 @@ LogicalResult Encoder::encodeFunctions() {
 }
 
 bool Encoder::mayCollect(Operation *operation) {
-  return isa<
-      sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimWeakCreateOp,
-      sim::SimReferencePathIndexOp, sim::SimReferencePathAssocOp,
-      sim::SimContainerCreateLikeOp, sim::SimContainerCreateOp,
-      sim::SimContainerCloneOp, sim::SimContainerWriteOp, sim::SimQueueInsertOp,
-      sim::SimMailboxCreateOp, sim::SimMailboxTryPutOp,
-      sim::SimSemaphoreCreateOp, sim::SimAssocCreateOp, sim::SimAssocWriteOp,
-      sim::SimAssocSetDefaultOp, sim::SimAssocTraverseOp,
-      sim::SimArgumentRefStoreOp, sim::SimReferencePathNBAEnqueueOp,
-      sim::SimGCSafepointOp, sim::SimStringLiteralOp,
-      sim::SimStringFromPackedOp, sim::SimStringConcatOp,
-      sim::SimStringRepeatOp, sim::SimStringPutcOp, sim::SimStringSubstrOp,
-      sim::SimStringCaseConvertOp, sim::SimStringFormatIntegerOp,
-      sim::SimStringFormatRealOp, sim::SimStringOutputFormatOp,
-      sim::SimStringScanFieldOp,
-      sim::SimFileGetlineStringOp, sim::SimFileScanFieldOp,
-      sim::SimFileErrorStringOp,
-      sim::SimPlusargValueOp, sim::SimCallOp,
-      sim::SimClassDirectCallOp,
-      sim::SimClassVirtualCallOp, sim::SimClassVirtualTaskCallOp,
-      sim::SimDPICallOp>(operation);
+  return isa<sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimWeakCreateOp,
+             sim::SimReferencePathIndexOp, sim::SimReferencePathAssocOp,
+             sim::SimContainerCreateLikeOp, sim::SimContainerCreateOp,
+             sim::SimContainerCloneOp, sim::SimContainerWriteOp,
+             sim::SimQueueInsertOp, sim::SimMailboxCreateOp,
+             sim::SimMailboxTryPutOp, sim::SimSemaphoreCreateOp,
+             sim::SimAssocCreateOp, sim::SimAssocWriteOp,
+             sim::SimAssocSetDefaultOp, sim::SimAssocTraverseOp,
+             sim::SimArgumentRefStoreOp, sim::SimReferencePathNBAEnqueueOp,
+             sim::SimGCSafepointOp, sim::SimStringLiteralOp,
+             sim::SimStringFromPackedOp, sim::SimStringConcatOp,
+             sim::SimStringRepeatOp, sim::SimStringPutcOp,
+             sim::SimStringSubstrOp, sim::SimStringCaseConvertOp,
+             sim::SimStringFormatIntegerOp, sim::SimStringFormatRealOp,
+             sim::SimStringOutputFormatOp, sim::SimStringScanFieldOp,
+             sim::SimFileGetlineStringOp, sim::SimFileScanFieldOp,
+             sim::SimFileErrorStringOp, sim::SimPlusargValueOp, sim::SimCallOp,
+             sim::SimClassDirectCallOp, sim::SimClassVirtualCallOp,
+             sim::SimClassVirtualTaskCallOp, sim::SimDPICallOp>(operation);
 }
 
-LogicalResult Encoder::emitAggregateManagedRoots(FunctionPlan &plan,
-                                                 Operation *operation) {
-  const LivenessBlockInfo *blockInfo =
-      plan.liveness->getLiveness(operation->getBlock());
-  if (!blockInfo)
-    return success();
-  Liveness::ValueSetT live = blockInfo->currentlyLiveValues(operation);
-  for (const auto &registerEntry : plan.registers) {
-    Value value = registerEntry.first;
-    uint32_t source = registerEntry.second;
-    SmallVector<sim::ManagedHandleSlot, 2> slots;
-    if (!sim::getManagedHandleSlots(value.getType(), slots))
-      return operation->emitError(
-          "value has no fixed bytecode managed root layout");
-    // Scalar managed registers and tagged string words are enumerated
-    // directly from the live bytecode frame. Only aggregate payloads need
-    // object-pointer shadows for their embedded managed slots.
-    if (slots.empty() || plan.layouts[source].kind == Managed ||
-        plan.layouts[source].kind == String)
-      continue;
-    for (const sim::ManagedHandleSlot &slot : slots) {
-      auto found = llvm::find_if(
-          plan.managedRootShadows,
-          [&](const FunctionPlan::ManagedRootShadow &shadow) {
-            return shadow.value == value &&
-                   shadow.bitOffset == slot.bitOffset;
-          });
-      uint32_t shadow;
-      if (found == plan.managedRootShadows.end()) {
-        Layout layout;
-        layout.kind = Managed;
-        layout.width = 64;
-        layout.size = 8;
-        layout.offset = llvm::alignTo(plan.scratchSize, uint64_t{8});
-        plan.scratchSize = layout.offset + layout.size;
-        plan.layouts.push_back(layout);
-        shadow = plan.layouts.size() - 1;
-        plan.managedRootShadows.push_back(
-            {value, slot.bitOffset, slot.kindMask, slot.conditional, shadow});
-      } else {
-        shadow = found->reg;
-      }
-      if (!live.contains(value) || value.getDefiningOp() == operation) {
-        emit({Constant, 0, shadow, 0, 0, 0, 0,
-              addZeroConstant(plan.layouts[shadow])});
-        continue;
-      }
-      SmallVector<uint32_t> inputs{source,
-                                   emitU64Constant(plan, slot.bitOffset)};
-      uint32_t intrinsic = kIntrinsicManagedRootExtract;
-      if (slot.conditional) {
-        intrinsic = kIntrinsicManagedCandidateRoot;
-        inputs.push_back(emitU64Constant(plan, slot.kindMask));
-      }
-      if (failed(emitIntrinsicRegisters(plan, intrinsic, inputs, {shadow})))
-        return failure();
-    }
-  }
-  return success();
-}
-
-void Encoder::emitDeadManagedClears(FunctionPlan &plan, Operation *operation) {
-  const LivenessBlockInfo *blockInfo =
-      plan.liveness->getLiveness(operation->getBlock());
-  if (!blockInfo)
-    return;
-  Liveness::ValueSetT live = blockInfo->currentlyLiveValues(operation);
-  for (auto [value, reg] : plan.registers) {
+void Encoder::emitDeadManagedClears(FunctionPlan &plan,
+                                    ArrayRef<uint32_t> registers) {
+  for (uint32_t reg : registers) {
     const Layout &layout = plan.layouts[reg];
-    if (layout.kind != Managed && layout.kind != ManagedRef &&
-        layout.kind != ArgumentRef)
-      continue;
-    if (live.contains(value) && value.getDefiningOp() != operation)
-      continue;
     emit({Constant, 0, reg, 0, 0, 0, 0, addZeroConstant(layout)});
   }
 }
@@ -592,8 +699,7 @@ LogicalResult Encoder::emitContinuationEntries(FunctionPlan &plan) {
       for (const ProcessFrameValue &slot : plan.frame->getEntryCaptureLayout())
         if (slot.valueOffset != UINT64_MAX)
           for (const sim::ManagedHandleSlot &root : slot.managedRootSlots)
-            emit({FrameRoot,
-                  static_cast<uint16_t>(root.conditional ? 1 : 0),
+            emit({FrameRoot, static_cast<uint16_t>(root.conditional ? 1 : 0),
                   root.conditional ? root.kindMask : 0, 0, 0, 0, 0,
                   slot.valueOffset + root.bitOffset});
     uint64_t jump = emit({Jump});
@@ -609,6 +715,13 @@ LogicalResult Encoder::emitContinuationEntries(FunctionPlan &plan) {
   if (!plan.frame) {
     plan.continuations.push_back(
         {plan.index, 0, plan.blockPCs.lookup(entry), UINT32_MAX});
+    for (auto [block, id] : plan.callableControlContinuations)
+      plan.continuations.push_back(
+          {plan.index, id, plan.blockPCs.lookup(block), UINT32_MAX});
+    llvm::sort(plan.continuations,
+               [](const Continuation &left, const Continuation &right) {
+                 return left.id < right.id;
+               });
     return success();
   }
   if (failed(emitEntry(0, entry, plan.frame->getEntryCaptureLayout())))

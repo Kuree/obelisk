@@ -13,16 +13,22 @@ module attributes {
     obelisk_sim.class.decl @I id 1 {
       is_abstract = true, is_final = false, is_interface = true
     }
-    obelisk_sim.class.decl @Base id 2 {
-      is_abstract = false, is_final = false, is_interface = false
-    }
     obelisk_sim.class.decl @J id 4 implements [@I] {
       is_abstract = true, is_final = false, is_interface = true
     }
+    // Deliberately precede the base declaration. Native descriptor emission
+    // must still flatten the base's managed trace slots into this layout.
     obelisk_sim.class.decl @Derived id 3 extends @Base implements [@J] {
       is_abstract = false, is_final = true, is_interface = false
     }
+    obelisk_sim.class.decl @Base id 2 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
     obelisk_sim.class.field @Base_value of @Base at 0 : i64 {
+      is_static = false, is_weak = false
+    }
+    obelisk_sim.class.field @Base_next of @Base at 1 :
+        !obelisk_sim.class_handle<@Base> {
       is_static = false, is_weak = false
     }
     obelisk_sim.class.method @I_get of @I slot 4294967295 signature_id 17
@@ -128,6 +134,8 @@ module attributes {
 // CHECK: llvm.mlir.constant(1 : i32)
 // CHECK-LABEL: llvm.mlir.global internal constant @Derived.__obelisk_interface_0_slots
 // CHECK: llvm.mlir.constant(0 : i32)
+// CHECK-LABEL: llvm.mlir.global internal constant @Derived.__obelisk_trace_entries
+// CHECK: llvm.mlir.constant(16 : i64)
 // CHECK-LABEL: llvm.mlir.global internal constant @Base.__obelisk_class_descriptor
 // CHECK-LABEL: llvm.func internal @Base_get.__obelisk_native_thunk
 // CHECK-LABEL: llvm.func @root(

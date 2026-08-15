@@ -12,10 +12,12 @@
 #include "llvm/ADT/StringRef.h"
 
 #include <cstdint>
+#include <memory>
 
 namespace mlir {
 class OpPassManager;
-}
+class Pass;
+} // namespace mlir
 
 namespace obelisk {
 
@@ -77,6 +79,12 @@ void buildObeliskToSimulationPipeline(mlir::OpPassManager &manager,
 
 /// Register the aggregate serial/parallel/serial lowering pipeline.
 void registerObeliskToSimulationPipeline();
+
+/// Build the graph pass for the pipeline's post-fusion stage. The existing
+/// graph is known current when body fusion retained it; this internal factory
+/// avoids exposing unsafe graph reuse as a textual pass option.
+std::unique_ptr<mlir::Pass> createObeliskSimBuildCurrentComputeGraphPass(
+    ObeliskSimBuildComputeGraphPassOptions options);
 
 } // namespace obelisk
 

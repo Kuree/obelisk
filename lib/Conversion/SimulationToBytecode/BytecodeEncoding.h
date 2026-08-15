@@ -25,8 +25,7 @@ constexpr uint32_t kIntrinsicError = OBELISK_RT_INTRINSIC_V1_ERROR;
 constexpr uint32_t kIntrinsicTerminationRequested =
     OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED;
 constexpr uint32_t kIntrinsicTimeNow = OBELISK_RT_INTRINSIC_V1_TIME_NOW;
-constexpr uint32_t kIntrinsicSampledRead =
-    OBELISK_RT_INTRINSIC_V1_SAMPLED_READ;
+constexpr uint32_t kIntrinsicSampledRead = OBELISK_RT_INTRINSIC_V1_SAMPLED_READ;
 constexpr uint32_t kIntrinsicSampledHistory =
     OBELISK_RT_INTRINSIC_V1_SAMPLED_HISTORY;
 constexpr uint32_t kIntrinsicClockedSampleUpdate =
@@ -251,8 +250,7 @@ constexpr uint32_t kIntrinsicSemaphorePut =
     OBELISK_RT_INTRINSIC_V1_SEMAPHORE_PUT;
 constexpr uint32_t kIntrinsicSemaphoreTryGet =
     OBELISK_RT_INTRINSIC_V1_SEMAPHORE_TRY_GET;
-constexpr uint32_t kIntrinsicEventCreate =
-    OBELISK_RT_INTRINSIC_V1_EVENT_CREATE;
+constexpr uint32_t kIntrinsicEventCreate = OBELISK_RT_INTRINSIC_V1_EVENT_CREATE;
 constexpr uint32_t kIntrinsicAssocCreate = OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE;
 constexpr uint32_t kIntrinsicAssocRead = OBELISK_RT_INTRINSIC_V1_ASSOC_READ;
 constexpr uint32_t kIntrinsicAssocWrite = OBELISK_RT_INTRINSIC_V1_ASSOC_WRITE;
@@ -325,6 +323,7 @@ enum Opcode : uint16_t {
   InterfaceCall = OBELISK_RT_DB_INTERFACE_CALL,
   InterfaceTaskCall = OBELISK_RT_DB_INTERFACE_TASK_CALL,
   ProcessControl = OBELISK_RT_DB_PROCESS_CONTROL,
+  Bitcast = OBELISK_RT_DB_BITCAST,
 };
 
 } // namespace obelisk::bytecode

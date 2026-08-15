@@ -13,7 +13,8 @@ using namespace mlir;
 namespace obelisk::simlowering {
 
 semantic::SVCovergroupTypeOp
-UnitLowering::findSemanticCovergroup(Operation *operation) const {
+UnitLowering::findSemanticCovergroup(Operation *operation) {
+  ensureCoverageInventory();
   SmallVector<StringRef> candidateNames;
   auto semanticType = operation->getAttrOfType<TypeAttr>("semantic_type");
   if (semanticType)

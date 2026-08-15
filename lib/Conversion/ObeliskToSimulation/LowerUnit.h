@@ -104,25 +104,25 @@ private:
                  ::mlir::Type assignmentType = {});
   bool streamContainsFourState(::mlir::Type type) const;
   bool streamNodeContainsFourState(::mlir::Operation *node) const;
+  ::mlir::FailureOr<::mlir::Value> createBitStream(bool fourState,
+                                                   ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value> appendToBitStream(::mlir::Value value,
+                                                     ::mlir::Value stream,
+                                                     ::mlir::Value outputIndex,
+                                                     bool fourState,
+                                                     ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value> reorderBitStream(::mlir::Value stream,
+                                                    uint64_t slice,
+                                                    ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
-  createBitStream(bool fourState, ::mlir::Location location);
-  ::mlir::FailureOr<::mlir::Value>
-  appendToBitStream(::mlir::Value value, ::mlir::Value stream,
-                    ::mlir::Value outputIndex, bool fourState,
-                    ::mlir::Location location);
-  ::mlir::FailureOr<::mlir::Value>
-  reorderBitStream(::mlir::Value stream, uint64_t slice,
-                   ::mlir::Location location);
-  ::mlir::FailureOr<::mlir::Value>
-  sliceStreamingContainer(::mlir::Value container,
-                          ::mlir::Operation *withRange,
+  sliceStreamingContainer(::mlir::Value container, ::mlir::Operation *withRange,
                           ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   lowerMember(semantic::SVMemberAccessExpressionOp op, bool lvalue);
   ::mlir::FailureOr<::mlir::Value>
   lowerVirtualInterfaceMember(semantic::SVMemberAccessExpressionOp op,
-                              ::mlir::Value interface,
-                              ::mlir::Type elementType, bool lvalue);
+                              ::mlir::Value interface, ::mlir::Type elementType,
+                              bool lvalue);
   ::mlir::FailureOr<::mlir::Value>
   lowerVirtualInterfaceClock(semantic::SVMemberAccessExpressionOp op,
                              ::mlir::Value interface);
@@ -201,7 +201,7 @@ private:
                         semantic::SVCovergroupTypeOp covergroup,
                         ::mlir::Value handle, ::mlir::Value classOwner = {});
   semantic::SVCovergroupTypeOp
-  findSemanticCovergroup(::mlir::Operation *operation) const;
+  findSemanticCovergroup(::mlir::Operation *operation);
   ::mlir::FailureOr<::mlir::Value>
   lowerArrayMethod(semantic::SVCallExpressionOp op,
                    ::mlir::Value receiverOverride = {},
@@ -219,10 +219,11 @@ private:
       ::mlir::Operation *expression, ::mlir::Operation *gateExpression,
       semantic::SVSignalEventControlOp clock, uint64_t depth, uint64_t age,
       ::mlir::Location location);
-  ::mlir::FailureOr<::mlir::Value> lowerClockingInputSample(
-      ::mlir::Value source, uint64_t sourceDescriptor, ::mlir::Value clock,
-      uint64_t clockDescriptor, sim::EdgeKind edge, bool oneStep,
-      ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value>
+  lowerClockingInputSample(::mlir::Value source, uint64_t sourceDescriptor,
+                           ::mlir::Value clock, uint64_t clockDescriptor,
+                           sim::EdgeKind edge, bool oneStep,
+                           ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
@@ -274,11 +275,11 @@ private:
   ::mlir::LogicalResult lowerRandCase(semantic::SVRandCaseStatementOp op);
   ::mlir::LogicalResult
   lowerRandSequence(semantic::SVRandSequenceStatementOp op);
-  ::mlir::LogicalResult lowerRandSequenceProduction(
-      semantic::SVFrozenRandSeqProductionOp production,
-      ::mlir::ArrayRef<::mlir::Operation *> actuals);
-  ::mlir::LogicalResult lowerRandSequenceProductionItem(
-      semantic::SVProdItemOp item);
+  ::mlir::LogicalResult
+  lowerRandSequenceProduction(semantic::SVFrozenRandSeqProductionOp production,
+                              ::mlir::ArrayRef<::mlir::Operation *> actuals);
+  ::mlir::LogicalResult
+  lowerRandSequenceProductionItem(semantic::SVProdItemOp item);
   ::mlir::LogicalResult lowerRandSequenceNode(::mlir::Operation *node);
   ::mlir::FailureOr<::mlir::Value>
   lowerPattern(::mlir::Value input, ::mlir::Operation *pattern,
@@ -375,6 +376,8 @@ private:
   void emitControlLeaves(size_t first, ::mlir::Location location);
   ::mlir::InFlightDiagnostic unsupported(::mlir::Operation *op);
   void recordImplicitWrite(::mlir::Value value);
+  void ensureVirtualInterfaceInventory();
+  void ensureCoverageInventory();
 
   static bool isSignedNode(::mlir::Operation *op) {
     if (auto isSigned = op->getAttrOfType<::mlir::BoolAttr>("is_signed"))
@@ -396,6 +399,7 @@ private:
   ::llvm::StringSet<> automaticLocals;
   ::llvm::StringMap<::mlir::Value> copyOutDestinations;
   ::llvm::StringMap<::mlir::Value> iteratorIndices;
+  bool virtualInterfaceInventoryReady = false;
   ::llvm::StringMap<uint64_t> scopeIDs;
   using VirtualMemberTargets =
       ::mlir::SmallVector<std::pair<uint64_t, uint64_t>>;
@@ -409,6 +413,7 @@ private:
   ::llvm::SetVector<::mlir::Value> virtualInterfaceWrittenSensitivity;
   ::llvm::DenseSet<::mlir::Block *> clockingEventContinuations;
   ::llvm::DenseSet<::mlir::Block *> timingBoundaryContinuations;
+  bool coverageInventoryReady = false;
   ::llvm::StringMap<semantic::SVCovergroupTypeOp> semanticCovergroups;
   ::llvm::StringSet<> coverageDefinitionNames;
   ::mlir::Value thisObject;

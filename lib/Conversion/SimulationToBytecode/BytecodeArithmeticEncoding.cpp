@@ -135,18 +135,18 @@ Encoder::encodeArithmeticOperation(FunctionPlan &plan, Operation *operation) {
     return success();
   }
   if (auto op = dyn_cast<arith::ExtUIOp>(operation)) {
-    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND,
-          reg(plan, op.getResult()), reg(plan, op.getIn()), kInvalidRegister});
+    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND, reg(plan, op.getResult()),
+          reg(plan, op.getIn()), kInvalidRegister});
     return success();
   }
   if (auto op = dyn_cast<arith::ExtSIOp>(operation)) {
-    emit({Extract, OBELISK_RT_DB_EXTRACT_SIGN_EXTEND,
-          reg(plan, op.getResult()), reg(plan, op.getIn()), kInvalidRegister});
+    emit({Extract, OBELISK_RT_DB_EXTRACT_SIGN_EXTEND, reg(plan, op.getResult()),
+          reg(plan, op.getIn()), kInvalidRegister});
     return success();
   }
   if (auto op = dyn_cast<arith::TruncIOp>(operation)) {
-    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND,
-          reg(plan, op.getResult()), reg(plan, op.getIn()), kInvalidRegister});
+    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND, reg(plan, op.getResult()),
+          reg(plan, op.getIn()), kInvalidRegister});
     return success();
   }
   if (auto op = dyn_cast<arith::ExtFOp>(operation)) {
@@ -157,11 +157,26 @@ Encoder::encodeArithmeticOperation(FunctionPlan &plan, Operation *operation) {
     emit({FTrunc, 0, reg(plan, op.getResult()), reg(plan, op.getIn())});
     return success();
   }
+  if (auto op = dyn_cast<arith::BitcastOp>(operation)) {
+    Type inputType = op.getIn().getType();
+    Type resultType = op.getResult().getType();
+    auto inputInteger = dyn_cast<IntegerType>(inputType);
+    auto resultInteger = dyn_cast<IntegerType>(resultType);
+    bool supported =
+        ((inputInteger && (resultType.isF32() || resultType.isF64())) ||
+         (resultInteger && (inputType.isF32() || inputType.isF64()))) &&
+        inputType.getIntOrFloatBitWidth() == resultType.getIntOrFloatBitWidth();
+    if (!supported)
+      return op.emitOpError(
+          "bytecode supports only equal-width scalar integer/float bitcasts");
+    emit({Bitcast, 0, reg(plan, op.getResult()), reg(plan, op.getIn())});
+    return success();
+  }
   if (auto op = dyn_cast<math::PowFOp>(operation))
     return binary(FPow, op.getResult(), op.getLhs(), op.getRhs());
   if (auto op = dyn_cast<arith::IndexCastOp>(operation)) {
-    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND,
-          reg(plan, op.getResult()), reg(plan, op.getIn()), kInvalidRegister});
+    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND, reg(plan, op.getResult()),
+          reg(plan, op.getIn()), kInvalidRegister});
     return success();
   }
   return std::nullopt;

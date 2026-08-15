@@ -30,6 +30,18 @@ if constant_offset > len(image) or constant_size > len(image) - constant_offset:
 constant_data = image[constant_offset : constant_offset + constant_size]
 print(f"constants: {constant_data.hex()}")
 
+operand_offset = struct.unpack_from("<Q", image, 88)[0]
+operand_count = struct.unpack_from("<Q", image, 96)[0]
+operand_size = 8
+if operand_offset > len(image) or operand_count > (
+    len(image) - operand_offset
+) // operand_size:
+    raise SystemExit("invalid Obelisk design-bytecode operand range")
+operands = [
+    struct.unpack_from("<II", image, operand_offset + index * operand_size)
+    for index in range(operand_count)
+]
+
 for index in range(instruction_count):
     offset = code_offset + index * instruction_size
     opcode, flags, destination, source0, source1, source2, auxiliary, immediate = (
@@ -39,6 +51,24 @@ for index in range(instruction_count):
         f"{index}: opcode={opcode} flags={flags} dst={destination} "
         f"src0={source0} src1={source1} src2={source2} "
         f"aux={auxiliary} imm={immediate}"
+    )
+
+continuation_offset = struct.unpack_from("<Q", image, 120)[0]
+continuation_count = struct.unpack_from("<Q", image, 128)[0]
+continuation_size = 24
+if continuation_offset > len(image) or continuation_count > (
+    len(image) - continuation_offset
+) // continuation_size:
+    raise SystemExit("invalid Obelisk design-bytecode continuation range")
+
+for index in range(continuation_count):
+    offset = continuation_offset + index * continuation_size
+    function, continuation, instruction, rank, reserved = struct.unpack_from(
+        "<IIQII", image, offset
+    )
+    print(
+        f"continuation {index}: function={function} id={continuation} "
+        f"instruction={instruction} rank={rank} reserved={reserved}"
     )
 
 intrinsic_offset = struct.unpack_from("<Q", image, 136)[0]
@@ -55,4 +85,32 @@ for index in range(intrinsic_count):
     print(
         f"intrinsic {index}: id=0x{intrinsic:08x} "
         f"inputs={inputs} outputs={outputs} flags={flags}"
+    )
+
+site_offset = struct.unpack_from("<Q", image, 152)[0]
+site_count = struct.unpack_from("<Q", image, 160)[0]
+site_size = 16
+if site_offset > len(image) or site_count > (len(image) - site_offset) // site_size:
+    raise SystemExit("invalid Obelisk design-bytecode intrinsic-site range")
+
+for index in range(site_count):
+    offset = site_offset + index * site_size
+    signature, first_operand, input_count, output_count = struct.unpack_from(
+        "<IIII", image, offset
+    )
+    if signature >= intrinsic_count or first_operand > operand_count or (
+        input_count + output_count > operand_count - first_operand
+    ):
+        raise SystemExit("invalid Obelisk design-bytecode intrinsic site")
+    site_operands = operands[
+        first_operand : first_operand + input_count + output_count
+    ]
+    inputs = [source for _, source in site_operands[:input_count]]
+    outputs = [destination for destination, _ in site_operands[input_count:]]
+    intrinsic = struct.unpack_from(
+        "<I", image, intrinsic_offset + signature * intrinsic_size
+    )[0]
+    print(
+        f"site {index}: signature={signature} id=0x{intrinsic:08x} "
+        f"inputs={inputs} outputs={outputs}"
     )

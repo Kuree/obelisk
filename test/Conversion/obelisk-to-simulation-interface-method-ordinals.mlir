@@ -115,6 +115,94 @@ module {
             sym_name = "s16.this"} {
         }
       }
+      // Pure virtual methods commonly use a prototype wrapper. An extern
+      // concrete override carries override_symbol on that wrapper rather than
+      // on the nested executable subroutine.
+      obelisk.sv.type.class_type attributes {bitstream_width = 0 : i64,
+          declared_interfaces = [], generic_parameter_paths = [],
+          generic_parameter_symbols = [], has_base_constructor_call = false,
+          has_cycles = false, hierarchical_name = "Base",
+          implemented_interfaces = [], is_abstract = true, is_final = false,
+          is_interface = false, is_uninstantiated = false, name = "Base",
+          node_id = 20 : i64,
+          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s20.Base>,
+          sym_name = "s20.Base", this_variable_path = "Base::this",
+          this_variable_symbol = @s1.$root::@s2::@s20.Base::@s24.this} {
+        obelisk.sv.symbol.method_prototype attributes {
+            extern_implementation_count = 0 : i64,
+            extern_implementation_paths = [], extern_implementation_symbols = [],
+            hierarchical_name = "Base::f", is_declared_virtual, is_pure,
+            is_virtual, name = "f", node_id = 21 : i64,
+            semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>,
+            subroutine_kind = 0 : i32, subroutine_path = "Base::f",
+            subroutine_symbol = @s1.$root::@s2::@s20.Base::@s21.f::@s22.f,
+            sym_name = "s21.f"} {
+          obelisk.sv.symbol.subroutine attributes {hierarchical_name = "Base::f",
+              is_declared_virtual, is_pure, is_virtual, name = "f",
+              node_id = 22 : i64, prototype_path = "Base::f",
+              prototype_symbol = @s1.$root::@s2::@s20.Base::@s21.f,
+              semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>,
+              subroutine_kind = 0 : i32, sym_name = "s22.f",
+              time_precision_fs = 1000000 : i64,
+              time_unit_fs = 1000000 : i64} {
+            obelisk.sv.statement.list attributes {node_id = 23 : i64} {
+            }
+          }
+        }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "Base::this",
+            is_compiler_generated, is_const, name = "this", node_id = 24 : i64,
+            semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s20.Base>,
+            sym_name = "s24.this"} {
+        }
+      }
+      obelisk.sv.type.class_type attributes {
+          base_class = !obelisk.class_handle<@s1.$root::@s2::@s20.Base>,
+          bitstream_width = 0 : i64, declared_interfaces = [],
+          generic_parameter_paths = [], generic_parameter_symbols = [],
+          has_base_constructor_call = false, has_cycles = false,
+          hierarchical_name = "Derived", implemented_interfaces = [],
+          is_abstract = false, is_final = false, is_interface = false,
+          is_uninstantiated = false, name = "Derived", node_id = 25 : i64,
+          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s25.Derived>,
+          sym_name = "s25.Derived", this_variable_path = "Derived::this",
+          this_variable_symbol = @s1.$root::@s2::@s25.Derived::@s29.this} {
+        obelisk.sv.symbol.method_prototype attributes {
+            extern_implementation_count = 0 : i64,
+            extern_implementation_paths = [], extern_implementation_symbols = [],
+            hierarchical_name = "Derived::f", is_declared_virtual, is_virtual,
+            name = "f", node_id = 26 : i64, override_path = "Base::f",
+            override_symbol = @s1.$root::@s2::@s20.Base::@s21.f::@s22.f,
+            semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>,
+            subroutine_kind = 0 : i32, subroutine_path = "Derived::f",
+            subroutine_symbol = @s1.$root::@s2::@s25.Derived::@s26.f::@s27.f,
+            sym_name = "s26.f"} {
+          obelisk.sv.symbol.subroutine attributes {
+              hierarchical_name = "Derived::f", is_declared_virtual,
+              is_virtual, name = "f", node_id = 27 : i64,
+              prototype_path = "Derived::f",
+              prototype_symbol = @s1.$root::@s2::@s25.Derived::@s26.f,
+              semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>,
+              subroutine_kind = 0 : i32, sym_name = "s27.f",
+              this_variable_path = "Derived::f.this",
+              this_variable_symbol = @s1.$root::@s2::@s25.Derived::@s26.f::@s27.f::@s30.this,
+              time_precision_fs = 1000000 : i64,
+              time_unit_fs = 1000000 : i64} {
+            obelisk.sv.statement.list attributes {node_id = 28 : i64} {
+            }
+            obelisk.sv.symbol.variable attributes {
+                hierarchical_name = "Derived::f.this", is_compiler_generated,
+                is_const, name = "this", node_id = 30 : i64,
+                semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s25.Derived>,
+                sym_name = "s30.this"} {
+            }
+          }
+        }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "Derived::this",
+            is_compiler_generated, is_const, name = "this", node_id = 29 : i64,
+            semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s25.Derived>,
+            sym_name = "s29.this"} {
+        }
+      }
     }
   }
 }
@@ -122,6 +210,12 @@ module {
 // CHECK: obelisk_sim.class.decl @__obelisk_class_s3_I
 // CHECK: obelisk_sim.class.decl @__obelisk_class_s11_J
 // CHECK-SAME: implements [@__obelisk_class_s3_I]
+// CHECK: obelisk_sim.class.method @__obelisk_class_s20_Base_method_0
+// CHECK-SAME: slot 0
+// CHECK-SAME: is_pure = true
+// CHECK: obelisk_sim.class.method @__obelisk_class_s25_Derived_method_0
+// CHECK-SAME: slot 0
+// CHECK-SAME: is_pure = false
 // CHECK: obelisk_sim.class.method @__obelisk_class_s3_I_method_0
 // CHECK-SAME: slot 4294967295
 // CHECK-SAME: interface_ordinal 0

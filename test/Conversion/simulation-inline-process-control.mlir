@@ -88,15 +88,14 @@ module {
   }
 }
 
-// Mandatory process-control propagation runs even at O0, including through
-// the transitive @outer boundary. The unrelated safe call remains outlined.
+// Mandatory suspend propagation runs even at O0, including through the
+// transitive @outer boundary. Resume is safe at a bytecode callable boundary,
+// and the unrelated safe call remains outlined.
 // O0-LABEL: obelisk_sim.func @actor(
-// O0-NOT: obelisk_sim.class.direct_call @class_control
 // O0-NOT: obelisk_sim.call @class_control
 // O0-NOT: obelisk_sim.call @outer
 // O0-NOT: obelisk_sim.call @control
-// O0: obelisk_sim.process.control resume %{{.*}} to ^[[METHOD_CONT:[a-zA-Z0-9_]+]]
-// O0: ^[[METHOD_CONT]]
+// O0: %[[METHOD:.*]] = obelisk_sim.class.direct_call @class_control
 // O0: obelisk_sim.process.control suspend %{{.*}} to ^[[CONT:[a-zA-Z0-9_]+]]
 // O0: ^[[CONT]]
 // O0: %[[SAFE:.*]] = obelisk_sim.call @safe

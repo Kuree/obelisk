@@ -219,8 +219,7 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   designManager.addPass(createSymbolDCEPass());
   ObeliskSimSCCPPassOptions firstSCCPOptions;
   firstSCCPOptions.vpi = vpiMode.str();
-  designManager.addPass(
-      createObeliskSimSCCPPass(std::move(firstSCCPOptions)));
+  designManager.addPass(createObeliskSimSCCPPass(std::move(firstSCCPOptions)));
   {
     OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
     functionManager.addPass(createCanonicalizerPass());
@@ -241,8 +240,7 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     designManager.addPass(createObeliskSimDevirtualizeClassCallsPass());
   ObeliskSimSCCPPassOptions secondSCCPOptions;
   secondSCCPOptions.vpi = vpiMode.str();
-  designManager.addPass(
-      createObeliskSimSCCPPass(std::move(secondSCCPOptions)));
+  designManager.addPass(createObeliskSimSCCPPass(std::move(secondSCCPOptions)));
   {
     OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
     functionManager.addPass(createCanonicalizerPass());
@@ -270,7 +268,6 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   graphOptions.vpi = vpiMode.str();
   designManager.addPass(
       createObeliskSimBuildComputeGraphPass(std::move(graphOptions)));
-  designManager.addPass(createObeliskSimVerifyComputeGraphPass());
   if (optLevel > 0) {
     ObeliskSimFuseComputeFragmentsPassOptions bodyFusionOptions;
     bodyFusionOptions.bodyFusion = true;
@@ -298,9 +295,11 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     ObeliskSimBuildComputeGraphPassOptions fusedGraphOptions;
     fusedGraphOptions.workers = workers;
     fusedGraphOptions.vpi = vpiMode.str();
-    designManager.addPass(
-        createObeliskSimBuildComputeGraphPass(std::move(fusedGraphOptions)));
-    designManager.addPass(createObeliskSimVerifyComputeGraphPass());
+    // Body fusion removes the graph exactly when it changes executable CFG.
+    // If no candidate materialized, the late inliner is also a no-op and the
+    // already verified graph remains authoritative.
+    designManager.addPass(createObeliskSimBuildCurrentComputeGraphPass(
+        std::move(fusedGraphOptions)));
     designManager.addPass(createObeliskSimMaterializeGraphRegionsPass());
     designManager.addPass(createObeliskSimFuseComputeFragmentsPass());
   }

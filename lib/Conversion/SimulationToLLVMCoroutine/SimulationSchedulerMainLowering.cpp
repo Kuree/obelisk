@@ -20,12 +20,20 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   if (module.lookupSymbol("main"))
     return success();
   sim::SimFuncOp root;
+  bool multipleRoots = false;
   module.walk([&](sim::SimFuncOp function) {
-    if (function.getSymName() == "__obelisk_root")
+    if (function.getEntryKind() != sim::EntryKind::RootInitializer)
+      return;
+    multipleRoots |= static_cast<bool>(root);
+    if (!root)
       root = function;
   });
+  if (multipleRoots)
+    return module.emitError("design has multiple root processes");
   if (!root)
     return success();
+  std::string rootSpawnName = root.getSymName().str();
+  rootSpawnName += ".__obelisk_spawn";
   MLIRContext *context = module.getContext();
   OpBuilder builder(context);
   builder.setInsertionPointToEnd(module.getBody());
@@ -196,10 +204,9 @@ LogicalResult makeSchedulerMain(ModuleOp module,
           ValueRange{runtimeContext, rootStatus});
       if (hasDesignBytecode) {
         SmallVector<Value> designRootArguments{
-            runtimeContext, llvmConstant(builder, location, i64,
-                                         bound.offset + rootOffset)};
-        StringRef designRootFunction =
-            "obelisk_rt_v1_gc_design_root_register";
+            runtimeContext,
+            llvmConstant(builder, location, i64, bound.offset + rootOffset)};
+        StringRef designRootFunction = "obelisk_rt_v1_gc_design_root_register";
         if (root.conditional) {
           designRootFunction =
               "obelisk_rt_v1_gc_design_candidate_root_register";
@@ -233,10 +240,9 @@ LogicalResult makeSchedulerMain(ModuleOp module,
         SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
         ValueRange{runtimeContext, installStatus});
   }
-  LLVM::CallOp::create(
-      builder, location, TypeRange{i64},
-      SymbolRefAttr::get(context, "__obelisk_root.__obelisk_spawn"),
-      runtimeContext);
+  LLVM::CallOp::create(builder, location, TypeRange{i64},
+                       SymbolRefAttr::get(context, rootSpawnName),
+                       runtimeContext);
   auto run = LLVM::CallOp::create(
       builder, location, TypeRange{i32},
       SymbolRefAttr::get(context, useAOT ? "obelisk_rt_v1_scheduler_run_aot"
@@ -262,14 +268,14 @@ LogicalResult makeSchedulerMain(ModuleOp module,
                            i32, {pointer, i32, i64, i64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_static_root_register", i32,
                            {pointer, pointer});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_gc_candidate_static_root_register", i32,
-      {pointer, pointer, i32});
+  getOrDeclareLLVMFunction(module,
+                           "obelisk_rt_v1_gc_candidate_static_root_register",
+                           i32, {pointer, pointer, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_design_root_register", i32,
                            {pointer, i64});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_gc_design_candidate_root_register", i32,
-      {pointer, i64, i32});
+  getOrDeclareLLVMFunction(module,
+                           "obelisk_rt_v1_gc_design_candidate_root_register",
+                           i32, {pointer, i64, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_class_register", i32,
                            {pointer, pointer});
   getOrDeclareLLVMFunction(module,

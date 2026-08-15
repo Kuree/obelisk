@@ -40,6 +40,12 @@ public:
   mlir::FailureOr<EncodedSimulationDesign> encode();
 
 private:
+  struct ClassMethodDispatch {
+    uint64_t ownerID = 0;
+    uint64_t interfaceOrdinal = UINT64_MAX;
+    bool isInterface = false;
+  };
+
   mlir::LogicalResult prepareStaticSpecializationSites();
   mlir::LogicalResult prepareClassLayouts();
   mlir::FailureOr<uint64_t> classID(mlir::SymbolRefAttr symbol,
@@ -83,9 +89,8 @@ private:
                              sim::SimClassVirtualTaskCallOp call);
   std::optional<mlir::LogicalResult>
   encodeClassOperation(FunctionPlan &plan, mlir::Operation *operation);
-  mlir::LogicalResult
-  encodeStringOutputFormat(FunctionPlan &plan,
-                           sim::SimStringOutputFormatOp op);
+  mlir::LogicalResult encodeStringOutputFormat(FunctionPlan &plan,
+                                               sim::SimStringOutputFormatOp op);
   mlir::LogicalResult encodeDisplay(FunctionPlan &plan, sim::SimDisplayOp op);
   uint64_t emit(Instruction instruction);
   std::pair<uint64_t, uint64_t> addMap(FunctionPlan &destinationPlan,
@@ -98,9 +103,8 @@ private:
 
   mlir::LogicalResult encodeFunctions();
   static bool mayCollect(mlir::Operation *operation);
-  mlir::LogicalResult emitAggregateManagedRoots(FunctionPlan &plan,
-                                                mlir::Operation *operation);
-  void emitDeadManagedClears(FunctionPlan &plan, mlir::Operation *operation);
+  void emitDeadManagedClears(FunctionPlan &plan,
+                             llvm::ArrayRef<uint32_t> registers);
   mlir::LogicalResult emitContinuationEntries(FunctionPlan &plan);
   mlir::LogicalResult emitConstant(FunctionPlan &plan, mlir::Value result,
                                    const llvm::APInt &value,
@@ -193,6 +197,8 @@ private:
   llvm::SmallVector<FunctionPlan, 0> plans;
   llvm::StringMap<uint32_t> indices;
   llvm::StringMap<uint64_t> classIDs;
+  llvm::StringMap<uint64_t> classFieldOffsets;
+  llvm::StringMap<ClassMethodDispatch> classMethodDispatch;
   llvm::StringMap<sim::SimFuncOp> externalFunctions;
   llvm::DenseMap<uint32_t, std::string> importSymbols;
   llvm::SmallVector<Instruction> instructions;
@@ -200,6 +206,8 @@ private:
   llvm::SmallVector<uint8_t> constants;
   llvm::DenseMap<uint64_t, uint64_t> zeroConstants;
   llvm::SmallVector<IntrinsicSignature> intrinsicSignatures;
+  llvm::DenseMap<std::pair<uint64_t, uint64_t>, uint32_t>
+      intrinsicSignatureIndices;
   llvm::SmallVector<IntrinsicSite> intrinsicSites;
   llvm::SmallVector<CaptureRecord> captureRecords;
 };

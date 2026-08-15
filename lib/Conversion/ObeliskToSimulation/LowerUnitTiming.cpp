@@ -193,20 +193,20 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
                         ValueRange operands, sim::EventRegionAttr resume = {}) {
     if (isa<sim::EventType>(watched.getType()))
       sim::SimSuspendEventOp::create(builder, location, watched, operands,
-                                     sim::ContinuationSiteAttr{},
-                                     resume, successor);
+                                     sim::ContinuationSiteAttr{}, resume,
+                                     successor);
     else if (edge == sim::EdgeKind::Change)
       sim::SimSuspendChangeOp::create(builder, location, watched, operands,
-                                      sim::ContinuationSiteAttr{},
-                                      resume, successor);
+                                      sim::ContinuationSiteAttr{}, resume,
+                                      successor);
     else
       sim::SimSuspendEdgeOp::create(builder, location, edge, watched, operands,
-                                    sim::ContinuationSiteAttr{},
-                                    resume, successor);
+                                    sim::ContinuationSiteAttr{}, resume,
+                                    successor);
   };
-  auto evaluateInitial = [&](Operation *expression,
-                             SmallVectorImpl<Value> &dynamicDependencies)
-      -> FailureOr<Value> {
+  auto evaluateInitial =
+      [&](Operation *expression,
+          SmallVectorImpl<Value> &dynamicDependencies) -> FailureOr<Value> {
     FailureOr<Value> value = lowerExpression(expression);
     if (failed(value))
       return failure();
@@ -297,8 +297,8 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
         return success();
       }
     }
-    bool clockingBlockEvent = children.front()->hasAttr(
-        "virtual_interface_clocking_block_event");
+    bool clockingBlockEvent =
+        children.front()->hasAttr("virtual_interface_clocking_block_event");
     if (clockingBlockEvent &&
         children.front()->hasAttr("virtual_interface_clock_event_has_iff")) {
       emitError(location)
@@ -322,11 +322,11 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
     if (failed(handle))
       return failure();
     auto edge = static_cast<sim::EdgeKind>(event.getEdgeKind());
-    if (auto clockingEdge = children.front()->getAttrOfType<semantic::EdgeKindAttr>(
-            "virtual_interface_clock_event_edge"))
+    if (auto clockingEdge =
+            children.front()->getAttrOfType<semantic::EdgeKindAttr>(
+                "virtual_interface_clock_event_edge"))
       edge = static_cast<sim::EdgeKind>(clockingEdge.getValue());
-    if (!event.getHasIff() &&
-        isa<sim::ManagedRefType>((*handle).getType())) {
+    if (!event.getHasIff() && isa<sim::ManagedRefType>((*handle).getType())) {
       // IEEE 1800-2017 9.4.2 permits event controls on object members. A
       // managed reference cannot survive a suspension as an interior pointer,
       // so bind the already outlined value observer to the field's stable
@@ -349,9 +349,8 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       llvm::append_range(values, continuationOperands);
       sim::SimSuspendObserveOp::create(
           builder, location, values, 0,
-          ArrayRef<int32_t>{static_cast<int32_t>(edge)},
-          ArrayRef<int32_t>{-1}, sim::ContinuationSiteAttr{},
-          sim::EventRegionAttr{}, continuation);
+          ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{-1},
+          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
       return success();
     }
     if (!event.getHasIff()) {
@@ -638,9 +637,9 @@ LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
       FailureOr<Value> object = rematerializeManagedInput(field.getObject());
       if (failed(object))
         return failure();
-      return sim::SimClassFieldRefOp::create(
-                 builder, field.getLoc(), field.getResult().getType(), *object,
-                 field.getFieldAttr())
+      return sim::SimClassFieldRefOp::create(builder, field.getLoc(),
+                                             field.getResult().getType(),
+                                             *object, field.getFieldAttr())
           .getResult();
     }
     if (auto load = value.getDefiningOp<sim::SimManagedLoadOp>()) {
@@ -648,14 +647,12 @@ LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
           rematerializeManagedInput(load.getReference());
       if (failed(reference))
         return failure();
-      return sim::SimManagedLoadOp::create(builder, load.getLoc(),
-                                           load.getResult().getType(),
-                                           *reference)
+      return sim::SimManagedLoadOp::create(
+                 builder, load.getLoc(), load.getResult().getType(), *reference)
           .getResult();
     }
     if (auto load = value.getDefiningOp<sim::SimRefLoadOp>()) {
-      FailureOr<Value> input =
-          rematerializeManagedInput(load.getReference());
+      FailureOr<Value> input = rematerializeManagedInput(load.getReference());
       if (failed(input))
         return failure();
       return sim::SimRefLoadOp::create(builder, load.getLoc(),
@@ -725,8 +722,7 @@ LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
     for (Value dependency : stableDependencies)
       if (isa<sim::ManagedWatchType>(dependency.getType()))
         managedDependencies.push_back(dependency);
-    FailureOr<Value> observer =
-        bindObserver(children[0], managedDependencies);
+    FailureOr<Value> observer = bindObserver(children[0], managedDependencies);
     if (failed(observer))
       return failure();
     SmallVector<Value> values{*observer, *condition};
