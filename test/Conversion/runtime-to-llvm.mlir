@@ -50,6 +50,9 @@
 // CHECK-LABEL: func.func @managed_object_argument
 // CHECK: llvm.mlir.constant(7 : i32) : i32
 // CHECK: llvm.insertvalue
+// CHECK-LABEL: func.func @virtual_interface_argument
+// CHECK: llvm.mlir.constant(8 : i32) : i32
+// CHECK: llvm.insertvalue
 // CHECK-LABEL: func.func @runtime_calls
 // CHECK-DAG: llvm.alloca {{.*}} x !llvm.ptr {alignment = 8 : i64}
 // CHECK-DAG: llvm.alloca {{.*}} x i8 {alignment = 1 : i64}

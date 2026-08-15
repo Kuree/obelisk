@@ -2770,6 +2770,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           return OBELISK_RT_INVALID_BYTECODE;
         arguments.push_back({OBELISK_RT_ARG_MANAGED_OBJECT, 0, 0,
                              frame.data + layout.offset, nullptr});
+      } else if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_VIRTUAL_INTERFACE) != 0) {
+        if (itemFlags != OBELISK_RT_OUTPUT_ITEM_VIRTUAL_INTERFACE ||
+            layout.kind != OBELISK_RT_DBREG_BITS || layout.width != 64 ||
+            layout.size != 8)
+          return OBELISK_RT_INVALID_BYTECODE;
+        arguments.push_back({OBELISK_RT_ARG_VIRTUAL_INTERFACE, 0, 0,
+                             frame.data + layout.offset, nullptr});
       } else if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_REAL) != 0) {
         if (itemFlags != OBELISK_RT_OUTPUT_ITEM_REAL)
           return OBELISK_RT_INVALID_BYTECODE;

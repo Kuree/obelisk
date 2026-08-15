@@ -308,6 +308,7 @@ enum class RuntimeMaterializer {
   ArgumentManagedString,
   ArgumentManagedContainer,
   ArgumentManagedObject,
+  ArgumentVirtualInterface,
   ArgumentArray,
   FormatEnvironment,
   DescriptorFromBits,
@@ -583,10 +584,28 @@ public:
       LLVM::StoreOp::create(rewriter, location, operands[0], *data,
                             abi.alignments.i64);
       Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
+      argument =
+          insertStructValue(rewriter, location, argument,
+                            llvmIntegerConstant(rewriter, location, abi.i32,
+                                                OBELISK_RT_ARG_MANAGED_OBJECT),
+                            0);
+      argument = insertStructValue(rewriter, location, argument, *data, 3);
+      rewriter.replaceOp(operation, argument);
+      return success();
+    }
+    case RuntimeMaterializer::ArgumentVirtualInterface: {
+      FailureOr<Value> data =
+          allocateAtFunctionEntry(operation, rewriter, abi,
+                                  operands[0].getType(), 1, abi.alignments.i64);
+      if (failed(data))
+        return failure();
+      LLVM::StoreOp::create(rewriter, location, operands[0], *data,
+                            abi.alignments.i64);
+      Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
       argument = insertStructValue(
           rewriter, location, argument,
           llvmIntegerConstant(rewriter, location, abi.i32,
-                              OBELISK_RT_ARG_MANAGED_OBJECT),
+                              OBELISK_RT_ARG_VIRTUAL_INTERFACE),
           0);
       argument = insertStructValue(rewriter, location, argument, *data, 3);
       rewriter.replaceOp(operation, argument);
@@ -996,6 +1015,8 @@ void populateRuntimePatterns(const TypeConverter &converter,
                                ArgumentManagedContainer);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentManagedObjectOp,
                                ArgumentManagedObject);
+  OBELISK_RUNTIME_MATERIALIZER(RTArgumentVirtualInterfaceOp,
+                               ArgumentVirtualInterface);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentArrayOp, ArgumentArray);
   OBELISK_RUNTIME_MATERIALIZER(RTFormatEnvironmentOp, FormatEnvironment);
   OBELISK_RUNTIME_MATERIALIZER(RTFileDescriptorFromBitsOp, DescriptorFromBits);

@@ -1676,8 +1676,8 @@ def SimDisplayOp : SimOp<"display", [
     marks a managed string; bit 4 marks a managed container. Bit 5 designates
     the literal or managed-string format that owns all remaining items on
     `string.output_format`; bit 6 marks a managed class handle; bit 7 marks a
-    managed string as a non-designated output-list format. `scope` and
-    `library_cell` carry the elaborated call-site
+    managed string as a non-designated output-list format; bit 8 marks a
+    virtual-interface handle. `scope` and `library_cell` carry the elaborated call-site
     information used by `%m` and `%l`. `time_multiplier` converts a numeric
     `%t` argument from the invoking scope's time unit to the design precision
     used by the runtime clock.

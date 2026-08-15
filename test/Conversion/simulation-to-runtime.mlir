@@ -81,6 +81,15 @@ module {
     return %result :
         !obelisk_sim.packed_array<79 : 0 x !obelisk_sim.logic<1>>
   }
+
+  func.func @virtual_interface_io(
+      %ctx: !obelisk_sim.context,
+      %vif: !obelisk_sim.virtual_interface<"@bus", "">) {
+    %fd = arith.constant 1 : i32
+    obelisk_sim.display %ctx to %fd(%vif) newline = false radix = 10
+        flags = [256] : !obelisk_sim.virtual_interface<"@bus", "">
+    return
+  }
 }
 
 // CHECK-LABEL: func.func @io(
@@ -184,3 +193,8 @@ module {
 // CHECK: obelisk_rt.display
 // CHECK: obelisk_rt.file.read
 // CHECK-NOT: obelisk_sim.packed.
+
+// CHECK-LABEL: func.func @virtual_interface_io(
+// CHECK: %[[VIF_ID:.*]] = obelisk_sim.virtual_interface.scope %{{.*}}
+// CHECK: obelisk_rt.argument.virtual_interface %[[VIF_ID]]
+// CHECK: obelisk_rt.display

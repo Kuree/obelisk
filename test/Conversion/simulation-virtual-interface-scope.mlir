@@ -22,6 +22,13 @@ module attributes {
       %descriptor = arith.constant 0 : i32
       obelisk_sim.display %ctx to %descriptor(%scope) newline = false radix = 10
           flags = [0] : i64
+      %format = obelisk_sim.bytes.constant "%p"
+      %formatted = obelisk_sim.string.output_format %ctx(%format, %handle)
+          radix = 10 flags = [32, 256] : !obelisk_sim.bytes,
+          !obelisk_sim.virtual_interface<"@bus", "">
+      obelisk_sim.display %ctx to %descriptor(%handle) newline = false
+          radix = 10 flags = [256] :
+          !obelisk_sim.virtual_interface<"@bus", "">
       obelisk_sim.return
     }
   }
@@ -29,6 +36,11 @@ module attributes {
 
 // NATIVE-LABEL: llvm.func @scope
 // NATIVE: llvm.mlir.constant(1 : i64)
+// NATIVE: %[[VIF_KIND:.*]] = llvm.mlir.constant(8 : i32) : i32
+// NATIVE: llvm.insertvalue %[[VIF_KIND]], %{{.*}}[0]
+// NATIVE: llvm.call @obelisk_rt_v1_string_output_format
+// NATIVE: llvm.mlir.constant(8 : i32) : i32
+// NATIVE: llvm.call @obelisk_rt_v1_display
 // NATIVE-NOT: obelisk_sim.virtual_interface
 
 // The bind is a constant and scope projection is a representation-preserving

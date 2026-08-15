@@ -145,6 +145,13 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
       // instead of pretending it is a packed integer.
       output.items.push_back(*value);
       output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_CLASS);
+    } else if (isa<sim::VirtualInterfaceType>((*value).getType())) {
+      // Preserve the typed handle through formatted output. Its runtime
+      // representation is a stable elaborated scope identity, but treating
+      // that identity as a packed vector would give the handle integer
+      // assignment-pattern semantics rather than handle semantics for %p.
+      output.items.push_back(*value);
+      output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_VIRTUAL_INTERFACE);
     } else if (auto unionType =
                    dyn_cast<sim::UnpackedUnionType>((*value).getType());
                unionType && unionType.getIsTagged()) {

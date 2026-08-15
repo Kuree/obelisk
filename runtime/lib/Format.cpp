@@ -650,6 +650,19 @@ obelisk_rt_status formatArgument(std::string &output,
       std::string value = "class@" + std::to_string(identity);
       return formatStringValue(output, std::move(value), options);
     }
+    if (argument.kind == OBELISK_RT_ARG_VIRTUAL_INTERFACE) {
+      if (argument.size != 0 || !argument.data || argument.unknown)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      uint64_t identity = 0;
+      std::memcpy(&identity, argument.data, sizeof(identity));
+      if (identity == 0)
+        return formatStringValue(output, "null", options);
+      // A virtual interface is represented by the stable identity of its
+      // elaborated interface scope. Avoid host addresses so native and
+      // bytecode execution produce the same deterministic rendering.
+      std::string value = "virtual_interface@" + std::to_string(identity);
+      return formatStringValue(output, std::move(value), options);
+    }
     std::string value = scalarPattern(argument);
     if (value.empty() && argument.kind != OBELISK_RT_ARG_STRING &&
         argument.kind != OBELISK_RT_ARG_MANAGED_STRING)
@@ -830,6 +843,7 @@ char defaultSpecifier(const obelisk_rt_arg_v1 &argument,
   case OBELISK_RT_ARG_MANAGED_CONTAINER:
     return 'p';
   case OBELISK_RT_ARG_MANAGED_OBJECT:
+  case OBELISK_RT_ARG_VIRTUAL_INTERFACE:
     return 'p';
   default:
     return 0;

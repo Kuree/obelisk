@@ -150,6 +150,26 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
           converted.front()));
       continue;
     }
+    if (isa<sim::VirtualInterfaceType>(sourceType)) {
+      if (converted.size() != 1)
+        return rewriter.notifyMatchFailure(
+            op, "virtual-interface output item did not convert 1:1");
+      Value identity = converted.front();
+      // The standalone I/O conversion intentionally keeps most simulation
+      // value types stable. Project a still-typed handle to its stable scope
+      // identity here; the full native pipeline has already converted it to
+      // i64 and takes the other path.
+      if (isa<sim::VirtualInterfaceType>(identity.getType()))
+        identity = sim::SimVirtualInterfaceScopeOp::create(
+            rewriter, loc, rewriter.getI64Type(), identity);
+      if (!identity.getType().isInteger(64))
+        return rewriter.notifyMatchFailure(
+            op, "virtual-interface output item did not convert to i64");
+      arguments.push_back(runtime::RTArgumentVirtualInterfaceOp::create(
+          rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
+          identity));
+      continue;
+    }
     if (sourceType.isF64()) {
       if (converted.size() != 1)
         return rewriter.notifyMatchFailure(

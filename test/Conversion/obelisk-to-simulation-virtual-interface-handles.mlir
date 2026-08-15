@@ -35,6 +35,31 @@ module {
                   obelisk.sv.expression.arbitrary_symbol attributes {is_signed = false, node_id = 15 : i64, referenced_path = "top.bus", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.bus, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s9.bus_if, "">} {}
                 }
               }
+              obelisk.sv.statement.expression_statement attributes {node_id = 85 : i64} {
+                obelisk.sv.expression.call attributes {
+                  argument_count = 2 : i64, callee_name = "$sformatf",
+                  constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>,
+                  has_inline_constraints = false, has_iterator_expression = false,
+                  has_output_arguments = false, has_this_class = false,
+                  is_signed = false, is_super_class = false,
+                  is_system_call = true, node_id = 86 : i64,
+                  semantic_type = !obelisk.string, subroutine_kind = 0 : i32,
+                  system_library_cell = "work.top", system_scope_path = "top",
+                  system_scope_symbol = @s2.$root::@s4.top::@s5.top
+                } {
+                  obelisk.sv.expression.string_literal attributes {
+                    constant_value = "%p", is_signed = false,
+                    node_id = 87 : i64,
+                    semantic_type = !obelisk.ranged_packed_array<15 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>
+                  } {}
+                  obelisk.sv.expression.named_value attributes {
+                    is_signed = false, node_id = 88 : i64,
+                    referenced_path = "top.vif",
+                    referenced_symbol = @s2.$root::@s4.top::@s5.top::@s8.vif,
+                    semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s9.bus_if, "">
+                  } {}
+                }
+              }
               obelisk.sv.statement.expression_statement attributes {node_id = 25 : i64} {
                 obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 26 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                   obelisk.sv.expression.member_access attributes {is_signed = false, member_name = "signal", node_id = 27 : i64, referenced_path = "top.bus_if.signal", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.bus::@s7.bus_if::@s12.signal, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -88,6 +113,26 @@ module {
                   }
                 }
               }
+              obelisk.sv.statement.timed attributes {node_id = 89 : i64} {
+                obelisk.sv.timing.signal_event attributes {
+                  edge_kind = 0 : i32, has_iff = false, node_id = 90 : i64
+                } {
+                  obelisk.sv.expression.member_access attributes {
+                    is_signed = false, member_name = "signal", node_id = 91 : i64,
+                    referenced_path = "top.bus_if.signal",
+                    referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.bus::@s7.bus_if::@s12.signal,
+                    semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+                  } {
+                    obelisk.sv.expression.named_value attributes {
+                      is_signed = false, node_id = 92 : i64,
+                      referenced_path = "top.vif",
+                      referenced_symbol = @s2.$root::@s4.top::@s5.top::@s8.vif,
+                      semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s9.bus_if, "">
+                    } {}
+                  }
+                }
+                obelisk.sv.statement.empty attributes {node_id = 93 : i64} {}
+              }
             }
           }
         }
@@ -121,6 +166,9 @@ module {
 // CHECK-DAG: obelisk_sim.net.decl [[OTHER_READY:[0-9]+]] in [[OTHER]] : !obelisk_sim.logic<1> design hierarchy "top.other.ready"
 // CHECK-DAG: obelisk_sim.storage.decl [[OTHER_CLK:[0-9]+]] in [[OTHER]] : !obelisk_sim.logic<1> design hierarchy "top.other.clk"
 // CHECK: obelisk_sim.storage.decl {{[0-9]+}} in 1 : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s9.bus_if", ""> design hierarchy "top.vif"
+// The value-returning observer exercises the typed fatal-path return while
+// per-pass verification is active; it is inlined into the timed process later.
+// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in 1 observer hierarchy "top.$code_unit_9.$observer.91.primary"
 // Each elaborated input has an Observed-region sampler.
 // CHECK: obelisk_sim.assert.sampled_read
 // CHECK: obelisk_sim.assert.clocked_sample_update
@@ -136,6 +184,7 @@ module {
 // CHECK-NOT: obelisk_sim.suspend.edge
 // CHECK: obelisk_sim.nba.enqueue
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK-DAG: obelisk_sim.string.output_format {{.*}} flags = [32, 256] {{.*}} !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s9.bus_if", "">
 // CHECK-DAG: obelisk_sim.virtual_interface.scope
 // CHECK-DAG: obelisk_sim.context.storage %arg0{{.*}}[[SIGNAL]]
 // CHECK-DAG: obelisk_sim.context.storage %arg0{{.*}}[[OTHER_SIGNAL]]

@@ -1689,6 +1689,39 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @virtual_interface_flag_on_integer {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.virtual_interface_flag_on_integer.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %fd = arith.constant 1 : i32
+      %value = arith.constant 0 : i64
+      // expected-error @+1 {{virtual-interface display flags require a virtual-interface operand}}
+      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [256] : i64
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @unmarked_virtual_interface {
+    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.unmarked_virtual_interface.bad.9000001"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.scope.decl 1 parent 0 interface "@bus"
+    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %fd = arith.constant 1 : i32
+      %value = obelisk_sim.virtual_interface.null : !obelisk_sim.virtual_interface<"@bus", "">
+      // expected-error @+1 {{virtual-interface items require only the virtual-interface flag}}
+      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [0] : !obelisk_sim.virtual_interface<"@bus", "">
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @designated_literal_display {
     obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.designated_literal_display.bad.9000001"
     obelisk_sim.scope.decl 0

@@ -3053,7 +3053,11 @@ enum {
   OBELISK_RT_ARG_MANAGED_CONTAINER = 6,
   // data points to one obelisk_rt_object_v1 pointer word naming a class
   // object; size must be zero. This representation is accepted by %p.
-  OBELISK_RT_ARG_MANAGED_OBJECT = 7
+  OBELISK_RT_ARG_MANAGED_OBJECT = 7,
+  // data points to one uint64_t stable scope identity; size must be zero.
+  // Zero is the null virtual-interface handle. This representation is
+  // accepted by %p.
+  OBELISK_RT_ARG_VIRTUAL_INTERFACE = 8
 };
 
 typedef uint32_t obelisk_rt_arg_flags;

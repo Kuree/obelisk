@@ -1475,7 +1475,22 @@ LogicalResult UnitLowering::emitRuntimeFatal(Location location,
   Value verbosity = arith::ConstantOp::create(
       builder, location, builder.getI32Type(), builder.getI32IntegerAttr(1));
   sim::SimFatalOp::create(builder, location, context, verbosity);
-  return emitFunctionReturn(location, std::nullopt, false);
+  // Fatal requests design-wide termination, but the current block still has
+  // to satisfy the enclosing function's SSA signature. In particular,
+  // timing observers are value-returning code units rather than semantic
+  // functions, so emitFunctionReturn would otherwise choose a void return.
+  SmallVector<Value> defaults;
+  for (Type type : function.getFunctionType().getResults()) {
+    Value value = createDefaultValue(builder, location, type);
+    if (!value) {
+      function.emitError() << "cannot materialize fatal-path result for type "
+                           << type;
+      return failure();
+    }
+    defaults.push_back(value);
+  }
+  sim::SimReturnOp::create(builder, location, defaults);
+  return success();
 }
 
 // Unsized numeric literals whose most-significant four-state bit is unknown
