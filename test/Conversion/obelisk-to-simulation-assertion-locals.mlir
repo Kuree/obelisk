@@ -98,7 +98,7 @@ module {
                     obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 43 : i64, referenced_path = "t.rst", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s8.rst, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                     }
                     obelisk.sv.assertion.binary attributes {node_id = 44 : i64, operator_kind = 11 : i32} {
-                      obelisk.sv.assertion.sequence_with_match attributes {has_repetition = false, match_item_count = 1 : i64, node_id = 45 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.assertion.sequence_with_match attributes {has_repetition = false, match_item_count = 2 : i64, node_id = 45 : i64, repetition_is_unbounded = false} {
                         obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 46 : i64, repetition_is_unbounded = false} {
                           obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 47 : i64, referenced_path = "t.a", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                           }
@@ -109,6 +109,10 @@ module {
                           obelisk.sv.expression.unary_op attributes {is_signed = false, node_id = 50 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                             obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 51 : i64, referenced_path = "t.a", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                             }
+                          }
+                        }
+                        obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "$display", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 72 : i64, semantic_type = !obelisk.void, subroutine_kind = 1 : i32, system_library_cell = "work.t", system_scope_path = "t", system_scope_symbol = @s1.$root::@s3.t::@s4.t} {
+                          obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 73 : i64, referenced_path = "t.p.x", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p::@s13.x, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                           }
                         }
                       }
@@ -154,6 +158,15 @@ module {
 // PREPARE: local_variable_count = 2 : i64
 // PREPARE-SAME: obelisk_sim.assertion_local_types = [!obelisk_sim.logic<1>, !obelisk_sim.logic<1>]
 
+// Match-call arguments are captured after preceding local assignments, while
+// the call itself executes in a detached Reactive callback.
+// LOWER: obelisk_sim.func private @[[MATCH_CALL:[^(]+]](%arg0: !obelisk_sim.context {{.*}}, %arg1: !obelisk_sim.logic<1>
+// LOWER-SAME: domain = 0 : i32
+// LOWER-SAME: home_region = 10 : i32
+// LOWER-SAME: obelisk_sim.concurrent_match_call
+// LOWER-SAME: obelisk_sim.detached_controls
+// LOWER: obelisk_sim.display %arg0 {{.*}}(%arg1)
+
 // Each of the two locals owns a cell at every one of the three sequence ages.
 // LOWER-LABEL: obelisk_sim.func private @unit_0(
 // LOWER: %[[STATE:.*]] = obelisk_sim.ref.alloc {{.*}} -> !obelisk_sim.ref<i64>
@@ -178,6 +191,8 @@ module {
 // LOWER: %[[ANTECEDENT:.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg2
 // LOWER: %[[MATCH_SOURCE:.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg2
 // LOWER: %[[MATCH_X:.*]] = obelisk_sim.logic.unary logical_not %[[MATCH_SOURCE]]
+// LOWER-NOT: obelisk_sim.display
+// LOWER: obelisk_sim.spawn @[[MATCH_CALL]](%arg0, %[[MATCH_X]])
 // LOWER: obelisk_sim.ref.store %[[MATCH_X]] to %[[X_AGE1:.*]]
 // LOWER-NEXT: obelisk_sim.ref.store %[[INIT_X]] to %[[Y_AGE1:.*]]
 // LOWER-NOT: obelisk.sv.

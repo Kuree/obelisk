@@ -1023,10 +1023,94 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     auto applyMatchItems =
         [&](ArrayRef<Operation *> items,
             SmallVector<Value> localValues) -> FailureOr<SmallVector<Value>> {
+      Operation *secondCall = nullptr;
+      unsigned callCount = 0;
+      for (Operation *item : items)
+        if (isa<semantic::SVCallExpressionOp>(item) && ++callCount == 2) {
+          secondCall = item;
+          break;
+        }
+      if (secondCall)
+        return emitError(getSemanticLocation(secondCall))
+                   << "bounded assertion local flow supports at most one "
+                      "subroutine-call match item per endpoint",
+               failure();
       for (Operation *item : items) {
         auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(item);
         SmallVector<Operation *> operands = getChildren(item);
-        if (!assignment || assignment.getHasTimingControl() ||
+        if (!assignment) {
+          auto call = dyn_cast<semantic::SVCallExpressionOp>(item);
+          if (!call)
+            return emitError(getSemanticLocation(item))
+                       << "bounded assertion local flow supports assignment "
+                          "and subroutine-call match items",
+                   failure();
+          if (call.getHasOutputArguments() || call.getHasThisClass())
+            return emitError(getSemanticLocation(item))
+                       << "bounded assertion match calls require value-only "
+                          "arguments and no implicit receiver",
+                   failure();
+          bool unsupportedArgument = false;
+          call->walk([&](Operation *nested) {
+            StringRef path;
+            if (auto named =
+                    dyn_cast<semantic::SVNamedValueExpressionOp>(nested))
+              path = named.getReferencedPath();
+            else if (auto hierarchical = dyn_cast<
+                         semantic::SVHierarchicalValueExpressionOp>(nested))
+              path = hierarchical.getReferencedPath();
+            else if (auto member =
+                         dyn_cast<semantic::SVMemberAccessExpressionOp>(nested))
+              path = member.getReferencedPath();
+            if (!path.empty() && !localIndices.contains(path))
+              unsupportedArgument = true;
+          });
+          if (unsupportedArgument)
+            return emitError(getSemanticLocation(item))
+                       << "bounded assertion match-call value arguments may "
+                          "reference only assertion locals",
+                   failure();
+          bindLocals(localValues);
+          auto itemNode = item->getAttrOfType<IntegerAttr>("node_id");
+          uint64_t itemID = itemNode ? itemNode.getValue().getZExtValue() : 0;
+          uint64_t occurrence = nextForkOrdinal;
+          std::string identity =
+              (function.getSymName() + ".$concurrent_match_call." +
+               Twine(node) + "." + Twine(itemID) + "." +
+               Twine(occurrence))
+                  .str();
+          Attribute previousCodeUnit =
+              item->getAttr("obelisk_sim.fork_code_unit_id");
+          item->setAttr("obelisk_sim.fork_code_unit_id",
+                        builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+          FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
+              outlineForkBranch(item, node,
+                                3 + static_cast<unsigned>(occurrence),
+                                /*captureReferences=*/false);
+          if (previousCodeUnit)
+            item->setAttr("obelisk_sim.fork_code_unit_id", previousCodeUnit);
+          else
+            item->removeAttr("obelisk_sim.fork_code_unit_id");
+          if (failed(callback))
+            return failure();
+          callback->first->setAttr(
+              "home_region",
+              sim::EventRegionAttr::get(function.getContext(),
+                                        sim::EventRegion::Reactive));
+          callback->first->setAttr(
+              "domain",
+              sim::ExecutionDomainAttr::get(
+                  function.getContext(), sim::ExecutionDomain::Design));
+          callback->first->setAttr("obelisk_sim.concurrent_match_call",
+                                   builder.getUnitAttr());
+          callback->first->setAttr("obelisk_sim.detached_controls",
+                                   builder.getUnitAttr());
+          sim::SimSpawnOp::create(builder, getSemanticLocation(item),
+                                  callback->first.getSymNameAttr(),
+                                  callback->second, ArrayAttr{}, ArrayAttr{});
+          continue;
+        }
+        if (assignment.getHasTimingControl() ||
             assignment.getOperatorKind() ||
             assignment.getAssignmentKind() !=
                 semantic::SVAssignmentKind::Blocking ||
