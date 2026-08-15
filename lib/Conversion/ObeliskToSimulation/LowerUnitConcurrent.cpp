@@ -35,6 +35,27 @@ struct FixedSequence {
   SmallVector<FixedSequenceAge, 8> ages;
 };
 
+using FixedSequenceAlternatives = SmallVector<FixedSequence, 4>;
+
+static constexpr size_t maxFixedSequenceAlternatives = 256;
+
+static bool areEquivalentDirectClocks(Operation *left, Operation *right) {
+  auto lhs = dyn_cast_or_null<semantic::SVSignalEventControlOp>(left);
+  auto rhs = dyn_cast_or_null<semantic::SVSignalEventControlOp>(right);
+  if (!lhs || !rhs || lhs.getHasIff() || rhs.getHasIff() ||
+      lhs.getEdgeKind() != rhs.getEdgeKind())
+    return false;
+  SmallVector<Operation *> lhsChildren = getChildren(lhs);
+  SmallVector<Operation *> rhsChildren = getChildren(rhs);
+  if (lhsChildren.size() != 1 || rhsChildren.size() != 1)
+    return false;
+  auto lhsPath = lhsChildren.front()->getAttrOfType<StringAttr>(
+      "referenced_path");
+  auto rhsPath = rhsChildren.front()->getAttrOfType<StringAttr>(
+      "referenced_path");
+  return lhsPath && rhsPath && lhsPath == rhsPath;
+}
+
 /// Return the substituted body of a nonrecursive assertion invocation. The
 /// remaining children are the source actual/default and local-initializer
 /// inventory retained for semantic tooling; they are deliberately not
@@ -153,6 +174,178 @@ static FailureOr<FixedSequence> compileFixedSequence(Operation *operation) {
   }
 
   return failure();
+}
+
+static LogicalResult appendFixedSequence(FixedSequence &result,
+                                         const FixedSequence &nested,
+                                         uint64_t offset) {
+  if (nested.ages.empty())
+    return failure();
+  if (result.ages.empty())
+    result.ages.resize(1);
+  if (offset == 0 && !result.ages.back().matchItems.empty())
+    return failure();
+  uint64_t start = result.ages.size() - 1 + offset;
+  uint64_t required = start + nested.ages.size();
+  if (required > 63)
+    return failure();
+  result.ages.resize(std::max<uint64_t>(result.ages.size(), required));
+  for (auto [age, nestedAge] : llvm::enumerate(nested.ages)) {
+    llvm::append_range(result.ages[start + age].predicates,
+                       nestedAge.predicates);
+    llvm::append_range(result.ages[start + age].matchItems,
+                       nestedAge.matchItems);
+  }
+  return success();
+}
+
+/// Compile the bounded branching sequence forms into a finite set of exact
+/// traces. The runtime monitor below shares sampled predicate values and keeps
+/// one compact attempt-age word per trace. This deliberately caps expansion:
+/// it is a compile-time representation for small static SVA ranges, not a
+/// general temporal interpreter.
+static FailureOr<FixedSequenceAlternatives>
+compileFixedSequenceAlternatives(Operation *operation,
+                                 Operation *resolvedClock = nullptr) {
+  if (FailureOr<FixedSequence> exact = compileFixedSequence(operation);
+      succeeded(exact))
+    return FixedSequenceAlternatives{std::move(*exact)};
+
+  if (auto instance =
+          dyn_cast<semantic::SVAssertionInstanceExpressionOp>(operation)) {
+    FailureOr<Operation *> body = getExpandedAssertionBody(instance);
+    if (failed(body))
+      return failure();
+    return compileFixedSequenceAlternatives(*body, resolvedClock);
+  }
+
+  if (auto simple = dyn_cast<semantic::SVSimpleAssertionExprOp>(operation)) {
+    SmallVector<Operation *> children = getChildren(simple);
+    if (!simple.getIsNull() && !simple.getHasRepetition() &&
+        children.size() == 1 &&
+        isa<semantic::SVAssertionInstanceExpressionOp>(children.front()))
+      return compileFixedSequenceAlternatives(children.front(), resolvedClock);
+  }
+
+  if (auto clocking =
+          dyn_cast<semantic::SVClockingAssertionExprOp>(operation)) {
+    SmallVector<Operation *> children = getChildren(clocking);
+    if (children.size() != 2 || !resolvedClock ||
+        !areEquivalentDirectClocks(resolvedClock, children.front()))
+      return failure();
+    return compileFixedSequenceAlternatives(children.back(), resolvedClock);
+  }
+
+  if (auto concat = dyn_cast<semantic::SVSequenceConcatExprOp>(operation)) {
+    SmallVector<Operation *> children = getChildren(concat);
+    ArrayAttr delays = concat.getDelays();
+    if (children.empty() || delays.size() != children.size())
+      return failure();
+    FixedSequenceAlternatives results(1);
+    for (auto [index, child] : llvm::enumerate(children)) {
+      auto delay = dyn_cast<DictionaryAttr>(delays[index]);
+      auto minimum = delay ? delay.getAs<IntegerAttr>("min") : IntegerAttr{};
+      auto maximum = delay ? delay.getAs<IntegerAttr>("max") : IntegerAttr{};
+      auto unbounded =
+          delay ? delay.getAs<BoolAttr>("is_unbounded") : BoolAttr{};
+      if (!minimum || !maximum || !unbounded || unbounded.getValue() ||
+          minimum.getInt() < 0 || maximum.getInt() < minimum.getInt())
+        return failure();
+      FailureOr<FixedSequenceAlternatives> nested =
+          compileFixedSequenceAlternatives(child, resolvedClock);
+      if (failed(nested))
+        return failure();
+      uint64_t offsets = static_cast<uint64_t>(maximum.getInt() -
+                                               minimum.getInt()) +
+                         1;
+      if (nested->empty() ||
+          results.size() > maxFixedSequenceAlternatives / nested->size() ||
+          results.size() * nested->size() >
+              maxFixedSequenceAlternatives / offsets)
+        return failure();
+      FixedSequenceAlternatives expanded;
+      expanded.reserve(results.size() * nested->size() * offsets);
+      for (const FixedSequence &prefix : results)
+        for (const FixedSequence &suffix : *nested)
+          for (int64_t offset = minimum.getInt();
+               offset <= maximum.getInt(); ++offset) {
+            FixedSequence combined = prefix;
+            if (failed(appendFixedSequence(
+                    combined, suffix, static_cast<uint64_t>(offset))))
+              return failure();
+            expanded.push_back(std::move(combined));
+          }
+      results = std::move(expanded);
+    }
+    return results;
+  }
+
+  auto binary = dyn_cast<semantic::SVBinaryAssertionExprOp>(operation);
+  SmallVector<Operation *> operands =
+      binary ? getChildren(binary) : SmallVector<Operation *>{};
+  if (!binary || operands.size() != 2)
+    return failure();
+  FailureOr<FixedSequenceAlternatives> lhs =
+      compileFixedSequenceAlternatives(operands.front(), resolvedClock);
+  FailureOr<FixedSequenceAlternatives> rhs =
+      compileFixedSequenceAlternatives(operands.back(), resolvedClock);
+  if (failed(lhs) || failed(rhs) || lhs->empty() || rhs->empty())
+    return failure();
+
+  auto hasMatchItems = [](const FixedSequence &sequence) {
+    return llvm::any_of(sequence.ages, [](const FixedSequenceAge &age) {
+      return !age.matchItems.empty();
+    });
+  };
+  if (llvm::any_of(*lhs, hasMatchItems) || llvm::any_of(*rhs, hasMatchItems))
+    return failure();
+
+  switch (binary.getOperatorKind()) {
+  case semantic::SVAssertionBinaryOperator::Or: {
+    if (lhs->size() > maxFixedSequenceAlternatives - rhs->size())
+      return failure();
+    llvm::append_range(*lhs, std::move(*rhs));
+    return std::move(*lhs);
+  }
+  case semantic::SVAssertionBinaryOperator::And:
+  case semantic::SVAssertionBinaryOperator::Intersect: {
+    if (lhs->size() > maxFixedSequenceAlternatives / rhs->size())
+      return failure();
+    FixedSequenceAlternatives results;
+    results.reserve(lhs->size() * rhs->size());
+    bool intersect = binary.getOperatorKind() ==
+                     semantic::SVAssertionBinaryOperator::Intersect;
+    for (const FixedSequence &left : *lhs) {
+      for (const FixedSequence &right : *rhs) {
+        if (intersect && left.ages.size() != right.ages.size())
+          continue;
+        FixedSequence combined;
+        combined.ages.resize(std::max(left.ages.size(), right.ages.size()));
+        for (auto [age, value] : llvm::enumerate(left.ages))
+          llvm::append_range(combined.ages[age].predicates,
+                             value.predicates);
+        for (auto [age, value] : llvm::enumerate(right.ages))
+          llvm::append_range(combined.ages[age].predicates,
+                             value.predicates);
+        results.push_back(std::move(combined));
+      }
+    }
+    if (results.empty())
+      return failure();
+    return results;
+  }
+  case semantic::SVAssertionBinaryOperator::Throughout: {
+    if (lhs->size() != 1 || lhs->front().ages.size() != 1)
+      return failure();
+    ArrayRef<Operation *> guard = lhs->front().ages.front().predicates;
+    for (FixedSequence &sequence : *rhs)
+      for (FixedSequenceAge &age : sequence.ages)
+        llvm::append_range(age.predicates, guard);
+    return std::move(*rhs);
+  }
+  default:
+    return failure();
+  }
 }
 
 static Operation *unwrapAssertionInstance(Operation *operation) {
@@ -582,6 +775,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
   semantic::SVBinaryAssertionExprOp implication;
   FixedSequence sequence;
+  FixedSequenceAlternatives sequenceAlternatives;
   Operation *antecedent = nullptr;
   SmallVector<Operation *> antecedentMatchItems;
   bool nonoverlapped = false;
@@ -611,17 +805,52 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         binary.getOperatorKind() ==
         semantic::SVAssertionBinaryOperator::NonOverlappedImplication;
   } else {
-    FailureOr<FixedSequence> compiled = compileFixedSequence(property);
-    if (failed(compiled))
+    FailureOr<FixedSequenceAlternatives> compiled =
+        compileFixedSequenceAlternatives(property, clock);
+    if (failed(compiled) || compiled->empty())
       return emitError(getSemanticLocation(property))
                  << "AOT concurrent monitors currently support boolean "
-                    "terms, fixed ## delays, and fixed consecutive "
-                    "repetition up to 63 cycles",
+                    "terms, bounded ## delays, bounded and/or/intersect/"
+                    "throughout composition, and fixed consecutive "
+                    "repetition",
              failure();
-    sequence = std::move(*compiled);
+    if (compiled->size() == 1)
+      sequence = std::move(compiled->front());
+    else
+      sequenceAlternatives = std::move(*compiled);
   }
-  if (sequence.ages.empty() || sequence.ages.size() > 63)
+  bool branchingSequence = !sequenceAlternatives.empty();
+  if ((!branchingSequence && sequence.ages.empty()) ||
+      llvm::any_of(sequenceAlternatives, [](const FixedSequence &alternative) {
+        return alternative.ages.empty() || alternative.ages.size() > 63;
+      }) ||
+      sequence.ages.size() > 63)
     return op.emitError("concurrent monitor horizon must be 1..63 cycles"),
+           failure();
+  if (branchingSequence && (localInstance || implication || disable ||
+                            expectMonitor))
+    return emitError(getSemanticLocation(property))
+               << "branching bounded sequences currently require a plain "
+                  "concurrent directive without locals, implication, "
+                  "disable iff, or expect",
+           failure();
+  if (branchingSequence &&
+      llvm::any_of(sequenceAlternatives,
+                   [](const FixedSequence &alternative) {
+        return llvm::any_of(alternative.ages,
+                            [](const FixedSequenceAge &age) {
+          return !age.matchItems.empty();
+        });
+      }))
+    return emitError(getSemanticLocation(property))
+               << "branching bounded sequences do not yet support match "
+                  "items",
+           failure();
+  if (branchingSequence &&
+      op.getAssertionKind() == semantic::SVAssertionKind::CoverSequence)
+    return emitError(getSemanticLocation(property))
+               << "branching cover sequence requires per-match endpoint "
+                  "accounting that is not executable yet",
            failure();
   if (!localInstance &&
       llvm::any_of(sequence.ages, [](const FixedSequenceAge &age) {
@@ -729,7 +958,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   Value zero = arith::ConstantOp::create(builder, location, stateType,
                                          builder.getI64IntegerAttr(0));
   bool needsState =
-      disable || sequence.ages.size() > 1 || (implication && nonoverlapped);
+      disable || (!branchingSequence && sequence.ages.size() > 1) ||
+      (implication && nonoverlapped);
   Value stateStorage;
   if (needsState)
     stateStorage = sim::SimRefAllocOp::create(
@@ -1092,6 +1322,193 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     setCurrent(evaluateSample);
     return success();
   };
+
+  if (branchingSequence) {
+    function->setAttr("obelisk_sim.branching_sequence_monitor",
+                      builder.getUnitAttr());
+    function->setAttr(
+        "obelisk_sim.branching_sequence_alternatives",
+        builder.getI64IntegerAttr(sequenceAlternatives.size()));
+    SmallVector<Value> alternativeStates;
+    alternativeStates.reserve(sequenceAlternatives.size());
+    for (const FixedSequence &alternative : sequenceAlternatives) {
+      if (alternative.ages.size() == 1) {
+        alternativeStates.push_back(Value{});
+        continue;
+      }
+      alternativeStates.push_back(sim::SimRefAllocOp::create(
+          builder, location,
+          sim::RefType::get(function.getContext(), stateType), zero));
+    }
+
+    Block *wait = addBlock();
+    Block *sample = addBlock();
+    emitBranch(wait);
+    setCurrent(wait);
+    if (failed(emitEventSuspend(clock, sample)))
+      return failure();
+    wait->getTerminator()->setAttr(
+        "resume_region", sim::EventRegionAttr::get(function.getContext(),
+                                                   sim::EventRegion::Observed));
+    setCurrent(sample);
+
+    bool savedSampleAssertionValues = sampleAssertionValues;
+    sampleAssertionValues = true;
+    Operation *savedSampledClock = activeSampledClock;
+    activeSampledClock = clock;
+    llvm::scope_exit restoreSampling([&] {
+      sampleAssertionValues = savedSampleAssertionValues;
+      activeSampledClock = savedSampledClock;
+    });
+
+    Value falseValue = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+    Value trueValue = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    size_t horizon = 0;
+    for (const FixedSequence &alternative : sequenceAlternatives)
+      horizon = std::max(horizon, alternative.ages.size());
+    SmallVector<Value> activeAny(horizon, falseValue);
+    SmallVector<Value> successAny(horizon, falseValue);
+    SmallVector<Value> continueAny(horizon, falseValue);
+    SmallVector<SmallVector<Value>> survives(sequenceAlternatives.size());
+    SmallVector<Value> starts(sequenceAlternatives.size(), falseValue);
+    SmallVector<Value> nextStates(sequenceAlternatives.size(), zero);
+    llvm::DenseMap<Operation *, Value> predicateCache;
+    auto evaluateAge =
+        [&](ArrayRef<Operation *> predicates) -> FailureOr<Value> {
+      Value result = trueValue;
+      for (Operation *predicate : predicates) {
+        Value truth;
+        if (auto found = predicateCache.find(predicate);
+            found != predicateCache.end()) {
+          truth = found->second;
+        } else {
+          FailureOr<Value> value = lowerExpression(predicate);
+          if (failed(value))
+            return failure();
+          FailureOr<Value> converted =
+              truthValue(*value, getSemanticLocation(predicate));
+          if (failed(converted))
+            return failure();
+          truth = *converted;
+          predicateCache[predicate] = truth;
+        }
+        result = arith::AndIOp::create(builder, location, result, truth);
+      }
+      return result;
+    };
+
+    for (auto [alternativeIndex, alternative] :
+         llvm::enumerate(sequenceAlternatives)) {
+      survives[alternativeIndex].resize(alternative.ages.size(), falseValue);
+      FailureOr<Value> start = evaluateAge(alternative.ages.front().predicates);
+      if (failed(start))
+        return failure();
+      starts[alternativeIndex] = *start;
+      if (alternative.ages.size() == 1)
+        successAny[0] = arith::OrIOp::create(builder, location, successAny[0],
+                                             *start);
+      else
+        continueAny[0] = arith::OrIOp::create(
+            builder, location, continueAny[0], *start);
+
+      if (alternative.ages.size() == 1)
+        continue;
+      Value state = sim::SimRefLoadOp::create(
+          builder, location, stateType,
+          alternativeStates[alternativeIndex]);
+      for (uint64_t age = 1; age < alternative.ages.size(); ++age) {
+        Value mask = arith::ConstantOp::create(
+            builder, location, stateType,
+            builder.getI64IntegerAttr(uint64_t{1} << age));
+        Value presentBits =
+            arith::AndIOp::create(builder, location, state, mask);
+        Value active = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, presentBits, zero);
+        activeAny[age] = arith::OrIOp::create(builder, location,
+                                              activeAny[age], active);
+        FailureOr<Value> matches =
+            evaluateAge(alternative.ages[age].predicates);
+        if (failed(matches))
+          return failure();
+        Value advances =
+            arith::AndIOp::create(builder, location, active, *matches);
+        survives[alternativeIndex][age] = advances;
+        if (age + 1 == alternative.ages.size())
+          successAny[age] = arith::OrIOp::create(
+              builder, location, successAny[age], advances);
+        else
+          continueAny[age] = arith::OrIOp::create(
+              builder, location, continueAny[age], advances);
+      }
+    }
+
+    for (auto [alternativeIndex, alternative] :
+         llvm::enumerate(sequenceAlternatives)) {
+      if (alternative.ages.size() == 1)
+        continue;
+      Value nextState = zero;
+      Value startEnabled = arith::AndIOp::create(
+          builder, location, starts[alternativeIndex],
+          arith::XOrIOp::create(builder, location, successAny[0], trueValue));
+      Value firstMask = arith::ConstantOp::create(
+          builder, location, stateType, builder.getI64IntegerAttr(2));
+      nextState = arith::OrIOp::create(
+          builder, location, nextState,
+          arith::SelectOp::create(builder, location, startEnabled, firstMask,
+                                  zero));
+      for (uint64_t age = 1; age + 1 < alternative.ages.size(); ++age) {
+        Value enabled = arith::AndIOp::create(
+            builder, location, survives[alternativeIndex][age],
+            arith::XOrIOp::create(builder, location, successAny[age],
+                                  trueValue));
+        Value nextMask = arith::ConstantOp::create(
+            builder, location, stateType,
+            builder.getI64IntegerAttr(uint64_t{1} << (age + 1)));
+        nextState = arith::OrIOp::create(
+            builder, location, nextState,
+            arith::SelectOp::create(builder, location, enabled, nextMask,
+                                    zero));
+      }
+      nextStates[alternativeIndex] = nextState;
+    }
+
+    auto reportWhen = [&](Value condition, bool passed) {
+      if (!observable)
+        return;
+      Block *report = addBlock();
+      Block *continuation = addBlock();
+      cf::CondBranchOp::create(builder, location, condition, report,
+                               ValueRange{}, continuation, ValueRange{});
+      setCurrent(report);
+      scheduleResult(passed);
+      emitBranch(continuation);
+      setCurrent(continuation);
+    };
+    for (size_t age = 1; age < horizon; ++age) {
+      reportWhen(successAny[age], true);
+      Value finished = arith::OrIOp::create(
+          builder, location, successAny[age], continueAny[age]);
+      Value failedAttempt = arith::AndIOp::create(
+          builder, location, activeAny[age],
+          arith::XOrIOp::create(builder, location, finished, trueValue));
+      reportWhen(failedAttempt, false);
+    }
+    reportWhen(successAny[0], true);
+    Value startFinished =
+        arith::OrIOp::create(builder, location, successAny[0], continueAny[0]);
+    reportWhen(arith::XOrIOp::create(builder, location, startFinished,
+                                     trueValue),
+               false);
+
+    for (auto [state, nextState] :
+         llvm::zip_equal(alternativeStates, nextStates))
+      if (state)
+        sim::SimRefStoreOp::create(builder, location, nextState, state);
+    cf::BranchOp::create(builder, location, wait);
+    return success();
+  }
 
   if (localInstance) {
     struct LocalState {
