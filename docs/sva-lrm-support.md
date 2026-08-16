@@ -32,7 +32,7 @@ functions.  The standard is available through the IEEE GET program:
 | Boolean sequence terms | Executable subset | Four-state sampled terms are converted to assertion truth in generated SSA. | Support arbitrary legal sequence expressions, formal arguments, local variables, and match items. |
 | Cycle delay `##` | Executable subset | Fixed nonnegative `##N` and small bounded `##[M:N]` ranges are compiled AOT with a total horizon of at most 63 samples. Branching expansion is capped at 256 exact traces. | Add unbounded delays, larger endpoint sets without trace expansion, dynamic delay extensions if supported by policy, and unbounded/end-of-simulation behavior. |
 | Repetition | Executable subset | Fixed and finite positive consecutive `[*N]` / `[*M:N]` repetition within the 63-sample horizon and 256-trace cap is compiled AOT. | Add `[*0]`, unbounded repetition, nonconsecutive `[=]`, goto `[->]`, and their endpoint semantics. |
-| Sequence composition | Executable subset | Bounded `and`, `or`, `intersect`, `throughout`, and `within` compile to at most 256 exact traces for plain concurrent directives without locals, implication, `disable iff`, or `expect`. Top-level bounded `first_match` uses earliest-success suppression without match items. Branching `cover sequence` retains every live alternative and schedules its action once per successful endpoint. Equivalent direct clocks flow through named sequence expansion. | Replace trace expansion with compact thread merging, add nested `first_match` continuation priority, persistent cover counters, match-item/local flow, and operator-specific empty-match rules. |
+| Sequence composition | Executable subset | Bounded `and`, `or`, `intersect`, `throughout`, and `within` compile to at most 256 exact traces for plain concurrent directives without locals, implication, `disable iff`, or `expect`. One bounded `first_match` priority group may be top-level or precede an ordinary bounded continuation; the earliest successful endpoint cancels its later alternatives. Branching `cover sequence` retains every live alternative and schedules its action once per successful endpoint. Equivalent direct clocks flow through named sequence expansion. | Replace trace expansion with compact thread merging, compose multiple nested/independent `first_match` scopes, add persistent cover counters, match-item/local flow, and operator-specific empty-match rules. |
 | Property implication | Executable subset | `|->` and `|=>` work for an atomic antecedent and a bounded fixed consequent. Overlapping attempts use compiler-generated bitset state. False antecedents produce vacuous assertion success but never a cover hit. | Add arbitrary antecedent endpoint sets, vacuity control/accounting, followed-by forms, and composition with all property operators. |
 | Other property operators | Semantic IR; rejected | IR preserves `not`, `and`, `or`, `iff`, `implies`, `until`, `s_until`, `until_with`, `s_until_with`, `nexttime`, `s_nexttime`, `always`, `s_always`, `eventually`, and `s_eventually`. | Implement weak/strong termination, finite-simulation completion, vacuity, and the precise attempt/thread semantics of each operator. |
 | `strong` / `weak` | Semantic IR; rejected | Strength is preserved. | Implement end-of-simulation success/failure and composition rules. |
@@ -51,8 +51,9 @@ functions.  The standard is available through the IEEE GET program:
 The remaining work has semantic dependencies and should not be implemented as
 independent syntax cases:
 
-1. Finish the bounded monitor surface: nested `first_match`, arbitrary bounded
-   implication antecedents, empty-match rules, and branching match-item flow.
+1. Finish the bounded monitor surface: multiple `first_match` scopes, arbitrary
+   bounded implication antecedents, empty-match rules, and branching
+   match-item flow.
 2. Add a runtime representation for unbounded live attempts and explicit
    end-of-simulation completion. This unlocks unbounded delay/repetition,
    `until`/`eventually`/`always`, and correct `strong`/`weak` behavior.
