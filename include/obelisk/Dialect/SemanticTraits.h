@@ -234,7 +234,7 @@ public:
     return verifySequenceRange(
         op, "range", concrete.getHasRange(), concrete.getRangeIsUnbounded(),
         concrete.getRangeMin().has_value(), concrete.getRangeMax().has_value(),
-        /*hasRequiredMetadata=*/true);
+        /*hasRequiredMetadata=*/concrete.getHasRange());
   }
 };
 

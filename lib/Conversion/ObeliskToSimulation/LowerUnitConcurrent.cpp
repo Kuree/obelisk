@@ -28,6 +28,7 @@ namespace {
 /// expressions that must all hold at that age. Empty ages represent ## gaps.
 struct FixedSequenceAge {
   SmallVector<Operation *, 2> predicates;
+  SmallVector<Operation *, 2> negatedPredicates;
   SmallVector<Operation *, 2> matchItems;
 };
 
@@ -64,6 +65,21 @@ struct MultiClockSequence {
 using FixedSequenceAlternatives = SmallVector<FixedSequence, 4>;
 
 static constexpr size_t maxFixedSequenceAlternatives = 256;
+
+static bool isSingleBooleanAge(const FixedSequence &sequence) {
+  return sequence.ages.size() == 1 &&
+         sequence.ages.front().matchItems.empty() &&
+         sequence.ages.front().predicates.size() +
+                 sequence.ages.front().negatedPredicates.size() ==
+             1;
+}
+
+static FixedSequence negateSingleBooleanSequence(FixedSequence sequence) {
+  assert(isSingleBooleanAge(sequence));
+  std::swap(sequence.ages.front().predicates,
+            sequence.ages.front().negatedPredicates);
+  return sequence;
+}
 
 /// Diagnose SVA forms that the bounded monitor compiler intentionally leaves
 /// unsupported. Keep these messages tied to the semantic construct instead of
@@ -130,11 +146,16 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
     if (auto first = dyn_cast<semantic::SVFirstMatchAssertionExprOp>(current);
         first && first.getMatchItemCount() != 0)
       return diagnose("bounded first_match does not yet support match items");
-    if (auto unary = dyn_cast<semantic::SVUnaryAssertionExprOp>(current))
+    if (auto unary = dyn_cast<semantic::SVUnaryAssertionExprOp>(current)) {
+      if (unary.getOperatorKind() == semantic::SVAssertionUnaryOperator::Not)
+        return diagnose(
+            "SVA property operator 'not' currently requires one "
+            "deterministic one-cycle boolean operand without match items");
       return diagnose(
           Twine("SVA property operator '") +
           semantic::stringifySVAssertionUnaryOperator(unary.getOperatorKind()) +
           "' is not executable yet");
+    }
     if (auto binary = dyn_cast<semantic::SVBinaryAssertionExprOp>(current)) {
       switch (binary.getOperatorKind()) {
       case semantic::SVAssertionBinaryOperator::And:
@@ -151,6 +172,14 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
               "implication is currently supported only as the outermost "
               "property operator");
         break;
+      case semantic::SVAssertionBinaryOperator::Iff:
+      case semantic::SVAssertionBinaryOperator::Implies:
+        return diagnose(
+            Twine("SVA property operator '") +
+            semantic::stringifySVAssertionBinaryOperator(
+                binary.getOperatorKind()) +
+            "' currently requires deterministic one-cycle boolean operands "
+            "without match items");
       default:
         return diagnose(Twine("SVA property operator '") +
                         semantic::stringifySVAssertionBinaryOperator(
@@ -318,6 +347,8 @@ static FailureOr<FixedSequence> compileFixedSequence(Operation *operation) {
       for (auto [age, nestedAge] : llvm::enumerate(nested->ages)) {
         llvm::append_range(result.ages[start + age].predicates,
                            nestedAge.predicates);
+        llvm::append_range(result.ages[start + age].negatedPredicates,
+                           nestedAge.negatedPredicates);
         llvm::append_range(result.ages[start + age].matchItems,
                            nestedAge.matchItems);
       }
@@ -336,6 +367,17 @@ static FailureOr<FixedSequence> compileFixedSequence(Operation *operation) {
     llvm::append_range(nested->ages.back().matchItems,
                        ArrayRef<Operation *>(children).drop_front());
     return nested;
+  }
+
+  if (auto unary = dyn_cast<semantic::SVUnaryAssertionExprOp>(operation)) {
+    SmallVector<Operation *> children = getChildren(unary);
+    if (unary.getOperatorKind() != semantic::SVAssertionUnaryOperator::Not ||
+        unary.getHasRange() || children.size() != 1)
+      return failure();
+    FailureOr<FixedSequence> nested = compileFixedSequence(children.front());
+    if (failed(nested) || !isSingleBooleanAge(*nested))
+      return failure();
+    return negateSingleBooleanSequence(std::move(*nested));
   }
 
   return failure();
@@ -438,6 +480,8 @@ static LogicalResult appendFixedSequence(FixedSequence &result,
   for (auto [age, nestedAge] : llvm::enumerate(nested.ages)) {
     llvm::append_range(result.ages[start + age].predicates,
                        nestedAge.predicates);
+    llvm::append_range(result.ages[start + age].negatedPredicates,
+                       nestedAge.negatedPredicates);
     llvm::append_range(result.ages[start + age].matchItems,
                        nestedAge.matchItems);
   }
@@ -648,10 +692,16 @@ compileFixedSequenceAlternatives(Operation *operation,
           continue;
         FixedSequence combined;
         combined.ages.resize(std::max(left.ages.size(), right.ages.size()));
-        for (auto [age, value] : llvm::enumerate(left.ages))
+        for (auto [age, value] : llvm::enumerate(left.ages)) {
           llvm::append_range(combined.ages[age].predicates, value.predicates);
-        for (auto [age, value] : llvm::enumerate(right.ages))
+          llvm::append_range(combined.ages[age].negatedPredicates,
+                             value.negatedPredicates);
+        }
+        for (auto [age, value] : llvm::enumerate(right.ages)) {
           llvm::append_range(combined.ages[age].predicates, value.predicates);
+          llvm::append_range(combined.ages[age].negatedPredicates,
+                             value.negatedPredicates);
+        }
         if (!left.firstMatchBoundaries.empty() &&
             !right.firstMatchBoundaries.empty())
           return failure();
@@ -671,10 +721,13 @@ compileFixedSequenceAlternatives(Operation *operation,
       return failure();
     if (!lhs->front().firstMatchBoundaries.empty())
       return failure();
-    ArrayRef<Operation *> guard = lhs->front().ages.front().predicates;
-    for (FixedSequence &sequence : *rhs)
-      for (FixedSequenceAge &age : sequence.ages)
-        llvm::append_range(age.predicates, guard);
+    const FixedSequenceAge &guard = lhs->front().ages.front();
+    for (FixedSequence &sequence : *rhs) {
+      for (FixedSequenceAge &age : sequence.ages) {
+        llvm::append_range(age.predicates, guard.predicates);
+        llvm::append_range(age.negatedPredicates, guard.negatedPredicates);
+      }
+    }
     return std::move(*rhs);
   }
   case semantic::SVAssertionBinaryOperator::Within: {
@@ -689,9 +742,12 @@ compileFixedSequenceAlternatives(Operation *operation,
           return failure();
         for (size_t offset = 0; offset < placements; ++offset) {
           FixedSequence combined = outer;
-          for (auto [age, value] : llvm::enumerate(inner.ages))
+          for (auto [age, value] : llvm::enumerate(inner.ages)) {
             llvm::append_range(combined.ages[offset + age].predicates,
                                value.predicates);
+            llvm::append_range(combined.ages[offset + age].negatedPredicates,
+                               value.negatedPredicates);
+          }
           if (!combined.firstMatchBoundaries.empty() &&
               !inner.firstMatchBoundaries.empty())
             return failure();
@@ -706,6 +762,34 @@ compileFixedSequenceAlternatives(Operation *operation,
     if (results.empty())
       return failure();
     return results;
+  }
+  case semantic::SVAssertionBinaryOperator::Iff: {
+    if (lhs->size() != 1 || rhs->size() != 1 ||
+        !isSingleBooleanAge(lhs->front()) || !isSingleBooleanAge(rhs->front()))
+      return failure();
+    FixedSequence bothTrue = lhs->front();
+    llvm::append_range(bothTrue.ages.front().predicates,
+                       rhs->front().ages.front().predicates);
+    llvm::append_range(bothTrue.ages.front().negatedPredicates,
+                       rhs->front().ages.front().negatedPredicates);
+    FixedSequence bothFalse =
+        negateSingleBooleanSequence(std::move(lhs->front()));
+    FixedSequence negatedRight =
+        negateSingleBooleanSequence(std::move(rhs->front()));
+    llvm::append_range(bothFalse.ages.front().predicates,
+                       negatedRight.ages.front().predicates);
+    llvm::append_range(bothFalse.ages.front().negatedPredicates,
+                       negatedRight.ages.front().negatedPredicates);
+    return FixedSequenceAlternatives{std::move(bothTrue), std::move(bothFalse)};
+  }
+  case semantic::SVAssertionBinaryOperator::Implies: {
+    if (lhs->size() != 1 || rhs->size() != 1 ||
+        !isSingleBooleanAge(lhs->front()) || !isSingleBooleanAge(rhs->front()))
+      return failure();
+    FixedSequence antecedentFalse =
+        negateSingleBooleanSequence(std::move(lhs->front()));
+    return FixedSequenceAlternatives{std::move(antecedentFalse),
+                                     std::move(rhs->front())};
   }
   default:
     return failure();
@@ -831,10 +915,10 @@ UnitLowering::lowerSequenceEndpointMonitor(ArrayRef<Operation *> roots) {
   });
 
   llvm::DenseMap<Operation *, Value> predicateCache;
-  auto evaluateAge = [&](ArrayRef<Operation *> predicates) -> FailureOr<Value> {
+  auto evaluateAge = [&](const FixedSequenceAge &age) -> FailureOr<Value> {
     Value result = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(true));
-    for (Operation *predicate : predicates) {
+    auto evaluatePredicate = [&](Operation *predicate) -> FailureOr<Value> {
       Value truth;
       if (auto found = predicateCache.find(predicate);
           found != predicateCache.end()) {
@@ -850,7 +934,23 @@ UnitLowering::lowerSequenceEndpointMonitor(ArrayRef<Operation *> roots) {
         truth = *converted;
         predicateCache[predicate] = truth;
       }
-      result = arith::AndIOp::create(builder, location, result, truth);
+      return truth;
+    };
+    for (Operation *predicate : age.predicates) {
+      FailureOr<Value> truth = evaluatePredicate(predicate);
+      if (failed(truth))
+        return failure();
+      result = arith::AndIOp::create(builder, location, result, *truth);
+    }
+    for (Operation *predicate : age.negatedPredicates) {
+      FailureOr<Value> truth = evaluatePredicate(predicate);
+      if (failed(truth))
+        return failure();
+      Value negated = arith::XOrIOp::create(
+          builder, location, *truth,
+          arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                    builder.getBoolAttr(true)));
+      result = arith::AndIOp::create(builder, location, result, negated);
     }
     return result;
   };
@@ -878,7 +978,7 @@ UnitLowering::lowerSequenceEndpointMonitor(ArrayRef<Operation *> roots) {
     Value presentBits = arith::AndIOp::create(builder, location, state, mask);
     Value active = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::ne, presentBits, zero);
-    FailureOr<Value> matches = evaluateAge(compiled->ages[age].predicates);
+    FailureOr<Value> matches = evaluateAge(compiled->ages[age]);
     if (failed(matches))
       return failure();
     Value advances = arith::AndIOp::create(builder, location, active, *matches);
@@ -895,7 +995,7 @@ UnitLowering::lowerSequenceEndpointMonitor(ArrayRef<Operation *> roots) {
     }
   }
 
-  FailureOr<Value> starts = evaluateAge(compiled->ages.front().predicates);
+  FailureOr<Value> starts = evaluateAge(compiled->ages.front());
   if (failed(starts))
     return failure();
   if (compiled->ages.size() == 1) {
@@ -1427,6 +1527,20 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           return failure();
         matches = arith::AndIOp::create(builder, location, matches, *truth);
       }
+      for (Operation *predicate : sequenceAge.negatedPredicates) {
+        FailureOr<Value> value = lowerExpression(predicate);
+        if (failed(value))
+          return failure();
+        FailureOr<Value> truth =
+            truthValue(*value, getSemanticLocation(predicate));
+        if (failed(truth))
+          return failure();
+        Value negated = arith::XOrIOp::create(
+            builder, location, *truth,
+            arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                      builder.getBoolAttr(true)));
+        matches = arith::AndIOp::create(builder, location, matches, negated);
+      }
       Block *matched =
           age + 1 == sequence.ages.size() ? successBlock : addBlock();
       cf::CondBranchOp::create(builder, location, matches, matched,
@@ -1943,10 +2057,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     SmallVector<Value> starts(sequenceAlternatives.size(), falseValue);
     SmallVector<Value> nextStates(sequenceAlternatives.size(), zero);
     llvm::DenseMap<Operation *, Value> predicateCache;
-    auto evaluateAge =
-        [&](ArrayRef<Operation *> predicates) -> FailureOr<Value> {
+    auto evaluateAge = [&](const FixedSequenceAge &age) -> FailureOr<Value> {
       Value result = trueValue;
-      for (Operation *predicate : predicates) {
+      auto evaluatePredicate = [&](Operation *predicate) -> FailureOr<Value> {
         Value truth;
         if (auto found = predicateCache.find(predicate);
             found != predicateCache.end()) {
@@ -1962,7 +2075,21 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           truth = *converted;
           predicateCache[predicate] = truth;
         }
-        result = arith::AndIOp::create(builder, location, result, truth);
+        return truth;
+      };
+      for (Operation *predicate : age.predicates) {
+        FailureOr<Value> truth = evaluatePredicate(predicate);
+        if (failed(truth))
+          return failure();
+        result = arith::AndIOp::create(builder, location, result, *truth);
+      }
+      for (Operation *predicate : age.negatedPredicates) {
+        FailureOr<Value> truth = evaluatePredicate(predicate);
+        if (failed(truth))
+          return failure();
+        Value negated =
+            arith::XOrIOp::create(builder, location, *truth, trueValue);
+        result = arith::AndIOp::create(builder, location, result, negated);
       }
       return result;
     };
@@ -1970,7 +2097,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     for (auto [alternativeIndex, alternative] :
          llvm::enumerate(sequenceAlternatives)) {
       survives[alternativeIndex].resize(alternative.ages.size(), falseValue);
-      FailureOr<Value> start = evaluateAge(alternative.ages.front().predicates);
+      FailureOr<Value> start = evaluateAge(alternative.ages.front());
       if (failed(start))
         return failure();
       starts[alternativeIndex] = *start;
@@ -1995,8 +2122,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             builder, location, arith::CmpIPredicate::ne, presentBits, zero);
         activeAny[age] =
             arith::OrIOp::create(builder, location, activeAny[age], active);
-        FailureOr<Value> matches =
-            evaluateAge(alternative.ages[age].predicates);
+        FailureOr<Value> matches = evaluateAge(alternative.ages[age]);
         if (failed(matches))
           return failure();
         Value advances =
@@ -2246,20 +2372,32 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         sim::SimRefStoreOp::create(builder, location, value, local.ages[age]);
     };
     auto evaluatePredicates =
-        [&](ArrayRef<Operation *> predicates,
+        [&](const FixedSequenceAge &age,
             ArrayRef<Value> localValues) -> FailureOr<Value> {
       bindLocals(localValues);
       Value result = arith::ConstantOp::create(
           builder, location, builder.getI1Type(), builder.getBoolAttr(true));
-      for (Operation *predicate : predicates) {
+      auto evaluatePredicate = [&](Operation *predicate) -> FailureOr<Value> {
         FailureOr<Value> value = lowerExpression(predicate);
         if (failed(value))
           return failure();
-        FailureOr<Value> truth =
-            truthValue(*value, getSemanticLocation(predicate));
+        return truthValue(*value, getSemanticLocation(predicate));
+      };
+      for (Operation *predicate : age.predicates) {
+        FailureOr<Value> truth = evaluatePredicate(predicate);
         if (failed(truth))
           return failure();
         result = arith::AndIOp::create(builder, location, result, *truth);
+      }
+      for (Operation *predicate : age.negatedPredicates) {
+        FailureOr<Value> truth = evaluatePredicate(predicate);
+        if (failed(truth))
+          return failure();
+        Value negated = arith::XOrIOp::create(
+            builder, location, *truth,
+            arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                      builder.getBoolAttr(true)));
+        result = arith::AndIOp::create(builder, location, result, negated);
       }
       return result;
     };
@@ -2443,7 +2581,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           builder, location, arith::CmpIPredicate::ne, presentBits, zero);
       SmallVector<Value> ageLocals = loadLocals(age);
       FailureOr<Value> matches =
-          evaluatePredicates(sequence.ages[age].predicates, ageLocals);
+          evaluatePredicates(sequence.ages[age], ageLocals);
       if (failed(matches) || failed(reportFailure(active, *matches)))
         return failure();
       Value advances =
@@ -2478,11 +2616,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (failed(initialLocals))
       return failure();
     FailureOr<Value> starts =
-        implication
-            ? evaluatePredicates(antecedentSequence.ages.front().predicates,
-                                 *initialLocals)
-            : evaluatePredicates(sequence.ages.front().predicates,
-                                 *initialLocals);
+        implication ? evaluatePredicates(antecedentSequence.ages.front(),
+                                         *initialLocals)
+                    : evaluatePredicates(sequence.ages.front(), *initialLocals);
     if (failed(starts))
       return failure();
     Value one = arith::ConstantOp::create(
@@ -2525,8 +2661,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                            ValueRange{updatedState});
     } else {
       FailureOr<Value> first =
-          implication ? evaluatePredicates(sequence.ages.front().predicates,
-                                           startLocals)
+          implication ? evaluatePredicates(sequence.ages.front(), startLocals)
                       : FailureOr<Value>(*starts);
       if (failed(first) || (implication && failed(reportFailure(one, *first))))
         return failure();
@@ -2608,10 +2743,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     setCurrent(continuation);
     return success();
   };
-  auto evaluateAge = [&](ArrayRef<Operation *> predicates) -> FailureOr<Value> {
+  auto evaluateAge = [&](const FixedSequenceAge &age) -> FailureOr<Value> {
     Value result = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(true));
-    for (Operation *predicate : predicates) {
+    auto evaluatePredicate = [&](Operation *predicate) -> FailureOr<Value> {
       Value truth;
       auto found = predicateCache.find(predicate);
       if (found != predicateCache.end()) {
@@ -2627,7 +2762,23 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         truth = *converted;
         predicateCache[predicate] = truth;
       }
-      result = arith::AndIOp::create(builder, location, result, truth);
+      return truth;
+    };
+    for (Operation *predicate : age.predicates) {
+      FailureOr<Value> truth = evaluatePredicate(predicate);
+      if (failed(truth))
+        return failure();
+      result = arith::AndIOp::create(builder, location, result, *truth);
+    }
+    for (Operation *predicate : age.negatedPredicates) {
+      FailureOr<Value> truth = evaluatePredicate(predicate);
+      if (failed(truth))
+        return failure();
+      Value negated = arith::XOrIOp::create(
+          builder, location, *truth,
+          arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                    builder.getBoolAttr(true)));
+      result = arith::AndIOp::create(builder, location, result, negated);
     }
     return result;
   };
@@ -2641,7 +2792,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Value presentBits = arith::AndIOp::create(builder, location, state, mask);
     Value active = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::ne, presentBits, zero);
-    FailureOr<Value> matches = evaluateAge(sequence.ages[age].predicates);
+    FailureOr<Value> matches = evaluateAge(sequence.ages[age]);
     if (failed(matches))
       return failure();
     Value fails = arith::AndIOp::create(
@@ -2677,7 +2828,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       return success();
     }
 
-    FailureOr<Value> first = evaluateAge(sequence.ages.front().predicates);
+    FailureOr<Value> first = evaluateAge(sequence.ages.front());
     if (failed(first))
       return failure();
     Value matched = arith::AndIOp::create(builder, location, triggered, *first);
@@ -2708,8 +2859,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       Value presentBits = arith::AndIOp::create(builder, location, state, mask);
       Value active = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::ne, presentBits, zero);
-      FailureOr<Value> matches =
-          evaluateAge(antecedentSequence.ages[age].predicates);
+      FailureOr<Value> matches = evaluateAge(antecedentSequence.ages[age]);
       if (failed(matches))
         return failure();
       Value advances =
@@ -2742,9 +2892,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     }
   }
 
-  FailureOr<Value> starts =
-      implication ? evaluateAge(antecedentSequence.ages.front().predicates)
-                  : evaluateAge(sequence.ages.front().predicates);
+  FailureOr<Value> starts = implication
+                                ? evaluateAge(antecedentSequence.ages.front())
+                                : evaluateAge(sequence.ages.front());
   if (failed(starts))
     return failure();
 
