@@ -42,19 +42,30 @@ struct FixedSequenceAge {
   SmallVector<Operation *, 2> matchItems;
 };
 
+struct FirstMatchGroupComponent {
+  Operation *operation = nullptr;
+  uint64_t activation = 0;
+
+  bool operator==(const FirstMatchGroupComponent &other) const {
+    return operation == other.operation && activation == other.activation;
+  }
+};
+
 /// A successful trace crossing `age` selects this first_match group and
-/// cancels the group's alternatives that would end later. The initial bounded
-/// implementation admits one such boundary per trace; that covers a
-/// first_match sequence followed by an ordinary bounded continuation without
-/// conflating independent or nested priority scopes.
+/// cancels the group's alternatives that would end later. `groupPath` starts
+/// with the first_match operation, records enclosing expanded assertion
+/// invocation sites, and adds deterministic Cartesian activation components
+/// when a ranged prefix can start the same suffix more than once. This keeps
+/// both distinct syntax scopes and distinct dynamic activations independent
+/// without relying on allocator ordering or runtime temporal objects.
 struct FirstMatchBoundary {
-  Operation *group = nullptr;
+  SmallVector<FirstMatchGroupComponent, 4> groupPath;
   uint64_t age = 0;
 };
 
 struct FixedSequence {
   SmallVector<FixedSequenceAge, 8> ages;
-  SmallVector<FirstMatchBoundary, 1> firstMatchBoundaries;
+  SmallVector<FirstMatchBoundary, 2> firstMatchBoundaries;
   /// This trace matches over zero clock ticks. It may participate in the
   /// positive-delay concatenation rewrites from IEEE 1800 empty-match rules,
   /// but it cannot itself be promoted to a property.
@@ -347,6 +358,15 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
         simple && simple.getHasRepetition()) {
       if (!simple.getRepetitionKind())
         return diagnose("sequence repetition is missing its repetition kind");
+      bool repeatsFirstMatch = false;
+      simple->walk([&](semantic::SVFirstMatchAssertionExprOp) {
+        repeatsFirstMatch = true;
+      });
+      if (repeatsFirstMatch)
+        return diagnose(
+            "repetition of a sequence containing first_match is not "
+            "executable yet; each repetition occurrence requires an "
+            "independent priority scope");
       WalkResult result = diagnoseRepetition(*simple.getRepetitionKind(),
                                              simple.getRepetitionIsUnbounded(),
                                              simple.getRepetitionMin());
@@ -357,6 +377,15 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
         matched && matched.getHasRepetition()) {
       if (!matched.getRepetitionKind())
         return diagnose("sequence repetition is missing its repetition kind");
+      bool repeatsFirstMatch = false;
+      matched->walk([&](semantic::SVFirstMatchAssertionExprOp) {
+        repeatsFirstMatch = true;
+      });
+      if (repeatsFirstMatch)
+        return diagnose(
+            "repetition of a sequence containing first_match is not "
+            "executable yet; each repetition occurrence requires an "
+            "independent priority scope");
       WalkResult result = diagnoseRepetition(*matched.getRepetitionKind(),
                                              matched.getRepetitionIsUnbounded(),
                                              matched.getRepetitionMin());
@@ -965,18 +994,23 @@ static LogicalResult appendFixedSequence(FixedSequence &result,
     llvm::append_range(result.ages[start + age].matchItems,
                        nestedAge.matchItems);
   }
-  // Multiple independent priority scopes require an explicit nesting/order
-  // model. Keep this first executable slice exact by accepting one boundary
-  // per trace and rejecting compositions that would conflate scopes.
-  if (!result.firstMatchBoundaries.empty() &&
-      !nested.firstMatchBoundaries.empty())
-    return failure();
   for (FirstMatchBoundary boundary : nested.firstMatchBoundaries) {
     boundary.age += start;
     result.firstMatchBoundaries.push_back(boundary);
   }
   result.vacuousSuccess |= nested.vacuousSuccess;
   return success();
+}
+
+/// Give every first_match scope in `sequence` a deterministic identity for
+/// one Cartesian activation. Alternatives belonging to the same activation
+/// receive the same component, while a ranged prefix or placement receives a
+/// different component. The source operation keeps unrelated composition
+/// sites disjoint.
+static void qualifyFirstMatchGroups(FixedSequence &sequence, Operation *owner,
+                                    uint64_t activation) {
+  for (FirstMatchBoundary &boundary : sequence.firstMatchBoundaries)
+    boundary.groupPath.push_back({owner, activation});
 }
 
 /// Conjoin a bounded trace at an absolute clock age. This is used for finite
@@ -987,7 +1021,7 @@ static LogicalResult mergeFixedSequenceAt(FixedSequence &result,
                                           const FixedSequence &nested,
                                           uint64_t start) {
   if (nested.ages.empty() || start + nested.ages.size() > 63 ||
-      !nested.firstMatchBoundaries.empty() || nested.vacuousSuccess)
+      nested.vacuousSuccess)
     return failure();
   result.ages.resize(
       std::max<uint64_t>(result.ages.size(), start + nested.ages.size()));
@@ -1000,6 +1034,10 @@ static LogicalResult mergeFixedSequenceAt(FixedSequence &result,
                        nestedAge.negatedPredicates);
     llvm::append_range(result.ages[start + age].caseGuards,
                        nestedAge.caseGuards);
+  }
+  for (FirstMatchBoundary boundary : nested.firstMatchBoundaries) {
+    boundary.age += start;
+    result.firstMatchBoundaries.push_back(std::move(boundary));
   }
   return success();
 }
@@ -1150,7 +1188,14 @@ compileFixedSequenceAlternatives(Operation *operation,
     FailureOr<Operation *> body = getExpandedAssertionBody(instance);
     if (failed(body))
       return failure();
-    return compileFixedSequenceAlternatives(*body, resolvedClock);
+    FailureOr<FixedSequenceAlternatives> nested =
+        compileFixedSequenceAlternatives(*body, resolvedClock);
+    if (failed(nested))
+      return failure();
+    for (FixedSequence &alternative : *nested)
+      for (FirstMatchBoundary &boundary : alternative.firstMatchBoundaries)
+        boundary.groupPath.push_back({instance.getOperation(), 0});
+    return nested;
   }
 
   if (auto first = dyn_cast<semantic::SVFirstMatchAssertionExprOp>(operation)) {
@@ -1162,10 +1207,10 @@ compileFixedSequenceAlternatives(Operation *operation,
     if (failed(nested) || nested->empty())
       return failure();
     for (FixedSequence &alternative : *nested) {
-      if (alternative.ages.empty() || !alternative.firstMatchBoundaries.empty())
+      if (alternative.ages.empty())
         return failure();
       alternative.firstMatchBoundaries.push_back(
-          {first.getOperation(), alternative.ages.size() - 1});
+          {{{first.getOperation(), 0}}, alternative.ages.size() - 1});
     }
     return nested;
   }
@@ -1202,7 +1247,8 @@ compileFixedSequenceAlternatives(Operation *operation,
       }
       if (nested.empty() ||
           llvm::any_of(nested, [](const FixedSequence &alternative) {
-            return alternative.emptyMatch || alternative.ages.empty();
+            return alternative.emptyMatch || alternative.ages.empty() ||
+                   !alternative.firstMatchBoundaries.empty();
           }))
         return failure();
 
@@ -1277,12 +1323,18 @@ compileFixedSequenceAlternatives(Operation *operation,
         return failure();
       FixedSequenceAlternatives expanded;
       expanded.reserve(results.size() * nested->size() * offsets);
-      for (const FixedSequence &prefix : results)
+      for (auto [prefixIndex, prefix] : llvm::enumerate(results))
         for (const FixedSequence &suffix : *nested)
           for (int64_t offset = minimum.getInt(); offset <= maximum.getInt();
                ++offset) {
+            FixedSequence qualifiedSuffix = suffix;
+            uint64_t activation =
+                static_cast<uint64_t>(prefixIndex) * offsets +
+                static_cast<uint64_t>(offset - minimum.getInt()) + 1;
+            qualifyFirstMatchGroups(qualifiedSuffix, concat.getOperation(),
+                                    activation);
             FixedSequence combined = prefix;
-            if (failed(appendFixedSequence(combined, suffix,
+            if (failed(appendFixedSequence(combined, qualifiedSuffix,
                                            static_cast<uint64_t>(offset))))
               return failure();
             expanded.push_back(std::move(combined));
@@ -1468,8 +1520,11 @@ compileFixedSequenceAlternatives(Operation *operation,
       results.reserve(nested->size() * offsets);
       for (int64_t delay = minimum; delay <= maximum; ++delay) {
         for (const FixedSequence &alternative : *nested) {
+          FixedSequence qualifiedAlternative = alternative;
+          qualifyFirstMatchGroups(qualifiedAlternative, unary.getOperation(),
+                                  static_cast<uint64_t>(delay - minimum) + 1);
           FixedSequence shifted;
-          if (failed(appendFixedSequence(shifted, alternative,
+          if (failed(appendFixedSequence(shifted, qualifiedAlternative,
                                          static_cast<uint64_t>(delay))))
             return failure();
           results.push_back(std::move(shifted));
@@ -1486,8 +1541,11 @@ compileFixedSequenceAlternatives(Operation *operation,
       expanded.reserve(results.size() * nested->size());
       for (const FixedSequence &prefix : results) {
         for (const FixedSequence &alternative : *nested) {
+          FixedSequence qualifiedAlternative = alternative;
+          qualifyFirstMatchGroups(qualifiedAlternative, unary.getOperation(),
+                                  static_cast<uint64_t>(delay - minimum) + 1);
           FixedSequence combined = prefix;
-          if (failed(mergeFixedSequenceAt(combined, alternative,
+          if (failed(mergeFixedSequenceAt(combined, qualifiedAlternative,
                                           static_cast<uint64_t>(delay))))
             return failure();
           expanded.push_back(std::move(combined));
@@ -1558,9 +1616,6 @@ compileFixedSequenceAlternatives(Operation *operation,
                              value.negatedPredicates);
           llvm::append_range(combined.ages[age].caseGuards, value.caseGuards);
         }
-        if (!left.firstMatchBoundaries.empty() &&
-            !right.firstMatchBoundaries.empty())
-          return failure();
         llvm::append_range(combined.firstMatchBoundaries,
                            left.firstMatchBoundaries);
         llvm::append_range(combined.firstMatchBoundaries,
@@ -1591,7 +1646,7 @@ compileFixedSequenceAlternatives(Operation *operation,
   case semantic::SVAssertionBinaryOperator::Within: {
     FixedSequenceAlternatives results;
     for (const FixedSequence &inner : *lhs) {
-      for (const FixedSequence &outer : *rhs) {
+      for (auto [outerIndex, outer] : llvm::enumerate(*rhs)) {
         if (inner.ages.size() > outer.ages.size())
           continue;
         size_t placements = outer.ages.size() - inner.ages.size() + 1;
@@ -1609,10 +1664,10 @@ compileFixedSequenceAlternatives(Operation *operation,
             llvm::append_range(combined.ages[offset + age].caseGuards,
                                value.caseGuards);
           }
-          if (!combined.firstMatchBoundaries.empty() &&
-              !inner.firstMatchBoundaries.empty())
-            return failure();
           for (FirstMatchBoundary boundary : inner.firstMatchBoundaries) {
+            boundary.groupPath.push_back(
+                {binary.getOperation(),
+                 static_cast<uint64_t>(outerIndex) * 64 + offset + 1});
             boundary.age += offset;
             combined.firstMatchBoundaries.push_back(boundary);
           }
@@ -5532,21 +5587,37 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       }
     }
 
-    llvm::DenseMap<Operation *, SmallVector<Value>> firstMatchSuccess;
+    struct FirstMatchGroupState {
+      SmallVector<FirstMatchGroupComponent, 4> path;
+      SmallVector<Value> success;
+    };
+    SmallVector<FirstMatchGroupState> firstMatchGroups;
+    auto getFirstMatchSuccess =
+        [&](ArrayRef<FirstMatchGroupComponent> path) -> SmallVector<Value> & {
+      for (FirstMatchGroupState &group : firstMatchGroups)
+        if (ArrayRef<FirstMatchGroupComponent>(group.path) == path)
+          return group.success;
+      FirstMatchGroupState group;
+      llvm::append_range(group.path, path);
+      group.success.assign(horizon, falseValue);
+      firstMatchGroups.push_back(std::move(group));
+      return firstMatchGroups.back().success;
+    };
     for (auto [alternativeIndex, alternative] :
          llvm::enumerate(sequenceAlternatives)) {
       for (const FirstMatchBoundary &boundary :
            alternative.firstMatchBoundaries) {
-        auto [entry, inserted] =
-            firstMatchSuccess.try_emplace(boundary.group, horizon, falseValue);
-        (void)inserted;
+        SmallVector<Value> &success = getFirstMatchSuccess(boundary.groupPath);
         Value matched = boundary.age == 0
                             ? starts[alternativeIndex]
                             : survives[alternativeIndex][boundary.age];
-        entry->second[boundary.age] = arith::OrIOp::create(
-            builder, location, entry->second[boundary.age], matched);
+        success[boundary.age] = arith::OrIOp::create(
+            builder, location, success[boundary.age], matched);
       }
     }
+    if (!firstMatchGroups.empty())
+      function->setAttr("obelisk_sim.first_match_priority_groups",
+                        builder.getI64IntegerAttr(firstMatchGroups.size()));
 
     auto applyFirstMatchPriority = [&](Value enabled, size_t alternativeIndex,
                                        uint64_t age) -> Value {
@@ -5555,7 +5626,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
            alternative.firstMatchBoundaries) {
         if (boundary.age < age)
           continue;
-        Value groupMatched = firstMatchSuccess[boundary.group][age];
+        Value groupMatched = getFirstMatchSuccess(boundary.groupPath)[age];
         Value selected = falseValue;
         if (boundary.age == age)
           selected = age == 0 ? starts[alternativeIndex]

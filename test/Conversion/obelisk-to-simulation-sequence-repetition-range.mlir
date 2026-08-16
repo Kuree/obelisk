@@ -162,6 +162,160 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 100 : i64, procedure_kind = 2 : i32, sym_name = "s100", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 101 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 102 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 103 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 104 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.first_match attributes {match_item_count = 0 : i64, node_id = 105 : i64} {
+                obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}, {is_unbounded = false, max = 2 : i64, min = 1 : i64}], node_id = 106 : i64} {
+                  obelisk.sv.assertion.first_match attributes {match_item_count = 0 : i64, node_id = 107 : i64} {
+                    obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 1 : i64}], node_id = 108 : i64} {
+                      obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 109 : i64, repetition_is_unbounded = false} {
+                        obelisk.sv.expression.named_value attributes {node_id = 110 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                        }
+                      }
+                      obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 111 : i64, repetition_is_unbounded = false} {
+                        obelisk.sv.expression.named_value attributes {node_id = 112 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s14.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                        }
+                      }
+                    }
+                  }
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 113 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 114 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 115 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 116 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s14.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 120 : i64, procedure_kind = 2 : i32, sym_name = "s120", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 121 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 122 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 123 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 124 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}], node_id = 125 : i64} {
+                obelisk.sv.assertion.first_match attributes {match_item_count = 0 : i64, node_id = 126 : i64} {
+                  obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 1 : i64}], node_id = 127 : i64} {
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 128 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 129 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 130 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 131 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s14.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                  }
+                }
+                obelisk.sv.assertion.first_match attributes {match_item_count = 0 : i64, node_id = 132 : i64} {
+                  obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 1 : i64}], node_id = 133 : i64} {
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 134 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 135 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 136 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 137 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s14.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 140 : i64, procedure_kind = 2 : i32, sym_name = "s140", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 141 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 142 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 143 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 144 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 1 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}], node_id = 145 : i64} {
+                obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 146 : i64, repetition_is_unbounded = false} {
+                  obelisk.sv.expression.named_value attributes {node_id = 147 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                }
+                obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 148 : i64, repetition_is_unbounded = false} {
+                  obelisk.sv.expression.named_value attributes {node_id = 149 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s14.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                }
+                obelisk.sv.assertion.first_match attributes {match_item_count = 0 : i64, node_id = 150 : i64} {
+                  obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 1 : i64}], node_id = 151 : i64} {
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 152 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 153 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 154 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 155 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s14.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                  }
+                }
+                obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 156 : i64, repetition_is_unbounded = false} {
+                  obelisk.sv.expression.named_value attributes {node_id = 157 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                }
+              }
+            }
+          }
+        }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 160 : i64, procedure_kind = 2 : i32, sym_name = "s160", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 161 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 162 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 163 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 164 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.unary attributes {has_range = true, node_id = 165 : i64, operator_kind = 5 : i32, range_is_unbounded = false, range_max = 2 : i64, range_min = 1 : i64} {
+                obelisk.sv.assertion.first_match attributes {match_item_count = 0 : i64, node_id = 166 : i64} {
+                  obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 1 : i64}], node_id = 167 : i64} {
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 168 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 169 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 170 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 171 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s14.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 180 : i64, procedure_kind = 2 : i32, sym_name = "s180", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 181 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 182 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 183 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 184 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.unary attributes {has_range = true, node_id = 185 : i64, operator_kind = 3 : i32, range_is_unbounded = false, range_max = 2 : i64, range_min = 1 : i64} {
+                obelisk.sv.assertion.first_match attributes {match_item_count = 0 : i64, node_id = 186 : i64} {
+                  obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 1 : i64}], node_id = 187 : i64} {
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 188 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 189 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 190 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 191 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s14.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -199,6 +353,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 3 : i64
 // CHECK-SAME: obelisk_sim.branching_sequence_monitor
 // CHECK-SAME: obelisk_sim.first_match_monitor
+// CHECK-SAME: obelisk_sim.first_match_priority_groups = 1 : i64
 // CHECK: obelisk_sim.suspend.edge posedge
 // CHECK-SAME: resume_region = 8 : i32
 // CHECK-COUNT-2: obelisk_sim.assert.sampled_read
@@ -213,6 +368,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
 // CHECK-SAME: obelisk_sim.branching_sequence_monitor
 // CHECK-SAME: obelisk_sim.first_match_monitor
+// CHECK-SAME: obelisk_sim.first_match_priority_groups = 1 : i64
 // CHECK: obelisk_sim.suspend.edge posedge
 // CHECK-SAME: resume_region = 8 : i32
 // CHECK: arith.andi {{.*}}obelisk_sim.first_match_priority
@@ -237,4 +393,41 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-SAME: obelisk_sim.bounded_antecedent_horizon = 2 : i64
 // CHECK: arith.andi {{.*}}obelisk_sim.implication_antecedent
 // CHECK-NEXT: arith.extui
+
+// Nested first_match scopes retain independent inner and outer priority
+// groups across all four exact endpoint combinations.
+// CHECK-LABEL: obelisk_sim.func private @unit_6(
+// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 4 : i64
+// CHECK-SAME: obelisk_sim.first_match_monitor
+// CHECK-SAME: obelisk_sim.first_match_priority_groups = 2 : i64
+// CHECK-COUNT-10: obelisk_sim.first_match_priority}
+
+// Two first_match terms concatenated at distinct syntax sites retain one
+// scope for the first and two independently activated scopes for the second.
+// Success in one activation cannot cancel another activation.
+// CHECK-LABEL: obelisk_sim.func private @unit_7(
+// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 4 : i64
+// CHECK-SAME: obelisk_sim.first_match_monitor
+// CHECK-SAME: obelisk_sim.first_match_priority_groups = 3 : i64
+// CHECK-COUNT-8: obelisk_sim.first_match_priority}
+
+// A ranged prefix starts the same suffix first_match twice. Those activations
+// must have separate priority state so an early completion whose continuation
+// fails cannot suppress the later activation and its continuation.
+// CHECK-LABEL: obelisk_sim.func private @unit_8(
+// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 4 : i64
+// CHECK-SAME: obelisk_sim.first_match_monitor
+// CHECK-SAME: obelisk_sim.first_match_priority_groups = 2 : i64
+
+// Each finite eventually offset starts an independent operand activation.
+// CHECK-LABEL: obelisk_sim.func private @unit_9(
+// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 4 : i64
+// CHECK-SAME: obelisk_sim.first_match_monitor
+// CHECK-SAME: obelisk_sim.first_match_priority_groups = 2 : i64
+
+// Finite always likewise keeps each required operand activation independent.
+// CHECK-LABEL: obelisk_sim.func private @unit_10(
+// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 4 : i64
+// CHECK-SAME: obelisk_sim.first_match_monitor
+// CHECK-SAME: obelisk_sim.first_match_priority_groups = 2 : i64
 // CHECK-NOT: obelisk.sv.assertion
