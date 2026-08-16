@@ -2244,6 +2244,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
              failure();
     FailureOr<FixedSequence> lhs = compileFixedSequence(operands.front());
     FailureOr<FixedSequence> rhs = compileFixedSequence(operands.back());
+    FailureOr<PersistentDelaySequence> delayedRhs =
+        compilePersistentDelay(operands.back());
     if (succeeded(lhs) && lhs->emptyMatch)
       return emitError(getSemanticLocation(operands.front()))
                  << "empty-match implication/followed-by antecedents are not "
@@ -2266,7 +2268,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                  "horizon"),
              failure();
     }
-    if (failed(rhs) || rhs->ages.empty()) {
+    if ((failed(rhs) || rhs->ages.empty()) && failed(delayedRhs)) {
       if (diagnoseUnsupportedConcurrentFeature(operands.back(),
                                                /*nested=*/true))
         return failure();
@@ -2278,7 +2280,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     }
     implication = binary;
     antecedentSequence = std::move(*lhs);
-    sequence = std::move(*rhs);
+    if (succeeded(delayedRhs)) {
+      persistentDelay = std::move(*delayedRhs);
+      hasPersistentDelay = true;
+      // The compact implication path below admits the high-frequency
+      // a |-> ##[M:$] b shape. More general consequent prefixes require an
+      // activation-aware bounded-prefix bitset and remain diagnosed below.
+      sequence.ages.resize(1);
+    } else {
+      sequence = std::move(*rhs);
+    }
     nonoverlapped =
         binary.getOperatorKind() ==
             semantic::SVAssertionBinaryOperator::NonOverlappedImplication ||
@@ -2409,13 +2420,24 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                << "implication/followed-by antecedent match items require "
                   "assertion local flow",
            failure();
-  if (hasPersistentDelay && (localInstance || implication || disable || abort ||
-                             expectMonitor || firstMatch))
+  if (hasPersistentDelay &&
+      (localInstance || disable || abort || expectMonitor || firstMatch))
     return emitError(getSemanticLocation(property))
                << "unbounded sequence delay ##[M:$] currently requires one "
-                  "outermost deterministic sequence without locals, "
-                  "implication/followed-by, disable iff, abort, "
-                  "first_match, or expect",
+                  "deterministic sequence without locals, disable iff, "
+                  "abort, first_match, or expect",
+           failure();
+  if (hasPersistentDelay && implication &&
+      (antecedentSequence.ages.size() != 1 ||
+       !antecedentSequence.ages.front().matchItems.empty() ||
+       !antecedentSequence.ages.front().caseGuards.empty() ||
+       persistentDelay.prefix.ages.size() != 1 ||
+       !persistentDelay.prefix.ages.front().predicates.empty() ||
+       !persistentDelay.prefix.ages.front().negatedPredicates.empty()))
+    return emitError(getSemanticLocation(implication))
+               << "unbounded implication/followed-by delay currently "
+                  "requires one Boolean antecedent and a leading "
+                  "##[M:$] Boolean consequent without an explicit prefix",
            failure();
   if (hasPersistentRepetition && (localInstance || implication || disable ||
                                   expectMonitor || firstMatch || coverSequence))
@@ -2623,10 +2645,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   Type stateType = builder.getI64Type();
   Value zero = arith::ConstantOp::create(builder, location, stateType,
                                          builder.getI64IntegerAttr(0));
-  bool needsState =
-      disable || (abort && !abort.getIsSynchronous()) ||
-      (!branchingSequence && sequence.ages.size() > 1) ||
-      (implication && (nonoverlapped || antecedentSequence.ages.size() > 1));
+  bool needsState = disable || (abort && !abort.getIsSynchronous()) ||
+                    (!branchingSequence && sequence.ages.size() > 1) ||
+                    (implication && !hasPersistentDelay &&
+                     (nonoverlapped || antecedentSequence.ages.size() > 1));
   if (implication && antecedentSequence.ages.size() > 1)
     function->setAttr(
         "obelisk_sim.bounded_antecedent_horizon",
@@ -3723,6 +3745,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                       builder.getUnitAttr());
     function->setAttr("obelisk_sim.sva_transition_normal_form",
                       builder.getStringAttr("canonical-minimal"));
+    if (implication) {
+      function->setAttr("obelisk_sim.persistent_delay_implication",
+                        builder.getUnitAttr());
+      if (nonoverlapped)
+        function->setAttr("obelisk_sim.persistent_delay_nonoverlapped",
+                          builder.getUnitAttr());
+    }
     if (coverSequence)
       function->setAttr("obelisk_sim.persistent_delay_all_matches",
                         builder.getUnitAttr());
@@ -3735,6 +3764,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Value warmupStorage;
     if (persistentDelay.minimum != 0)
       warmupStorage = sim::SimRefAllocOp::create(
+          builder, location,
+          sim::RefType::get(function.getContext(), stateType), zero);
+    Value delayedActivationStorage;
+    if (implication && nonoverlapped)
+      delayedActivationStorage = sim::SimRefAllocOp::create(
           builder, location,
           sim::RefType::get(function.getContext(), stateType), zero);
     Value eligibleStorage = sim::SimRefAllocOp::create(
@@ -3755,6 +3789,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         endBitsets.push_back(prefixStateStorage);
       if (warmupStorage)
         endBitsets.push_back(warmupStorage);
+      if (delayedActivationStorage)
+        endBitsets.push_back(delayedActivationStorage);
     }
     StringRef completionTag = weakCompletion ? "delay_weak" : "delay_strong";
     Operation *completionSource =
@@ -3838,52 +3874,74 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Value nextPrefixState = zero;
     Value completedPrefix = zero;
     Value failedPrefix = zero;
-    for (uint64_t age = 1; age < persistentDelay.prefix.ages.size(); ++age) {
-      Value mask = arith::ConstantOp::create(
-          builder, location, stateType,
-          builder.getI64IntegerAttr(uint64_t{1} << age));
-      Value present =
-          arith::AndIOp::create(builder, location, prefixState, mask);
-      Value active = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ne, present, zero);
-      FailureOr<Value> matches = evaluateAge(persistentDelay.prefix.ages[age]);
-      if (failed(matches))
+    Value antecedentResultCount = zero;
+    if (implication) {
+      FailureOr<Value> antecedent =
+          evaluateAge(antecedentSequence.ages.front());
+      if (failed(antecedent))
         return failure();
-      Value advances =
-          arith::AndIOp::create(builder, location, active, *matches);
-      Value notMatches =
-          arith::XOrIOp::create(builder, location, *matches, trueValue);
-      Value fails =
-          arith::AndIOp::create(builder, location, active, notMatches);
-      addCount(failedPrefix, selectCount(fails, one));
-      if (age + 1 == persistentDelay.prefix.ages.size()) {
-        addCount(completedPrefix, selectCount(advances, one));
+      Value antecedentFails =
+          arith::XOrIOp::create(builder, location, *antecedent, trueValue);
+      antecedentResultCount = selectCount(antecedentFails, one);
+      Value triggered = selectCount(*antecedent, one);
+      if (delayedActivationStorage) {
+        completedPrefix = sim::SimRefLoadOp::create(
+            builder, location, stateType, delayedActivationStorage);
+        sim::SimRefStoreOp::create(builder, location, triggered,
+                                   delayedActivationStorage);
       } else {
-        Value nextMask = arith::ConstantOp::create(
-            builder, location, stateType,
-            builder.getI64IntegerAttr(uint64_t{1} << (age + 1)));
-        Value advanced = selectCount(advances, nextMask);
-        nextPrefixState =
-            arith::OrIOp::create(builder, location, nextPrefixState, advanced);
+        completedPrefix = triggered;
       }
-    }
-
-    FailureOr<Value> starts = evaluateAge(persistentDelay.prefix.ages.front());
-    if (failed(starts))
-      return failure();
-    Value failedStart =
-        arith::XOrIOp::create(builder, location, *starts, trueValue);
-    addCount(failedPrefix, selectCount(failedStart, one));
-    if (persistentDelay.prefix.ages.size() == 1) {
-      addCount(completedPrefix, selectCount(*starts, one));
     } else {
-      Value firstMask = arith::ConstantOp::create(builder, location, stateType,
-                                                  builder.getI64IntegerAttr(2));
-      Value started = selectCount(*starts, firstMask);
-      nextPrefixState =
-          arith::OrIOp::create(builder, location, nextPrefixState, started);
-      sim::SimRefStoreOp::create(builder, location, nextPrefixState,
-                                 prefixStateStorage);
+      for (uint64_t age = 1; age < persistentDelay.prefix.ages.size(); ++age) {
+        Value mask = arith::ConstantOp::create(
+            builder, location, stateType,
+            builder.getI64IntegerAttr(uint64_t{1} << age));
+        Value present =
+            arith::AndIOp::create(builder, location, prefixState, mask);
+        Value active = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, present, zero);
+        FailureOr<Value> matches =
+            evaluateAge(persistentDelay.prefix.ages[age]);
+        if (failed(matches))
+          return failure();
+        Value advances =
+            arith::AndIOp::create(builder, location, active, *matches);
+        Value notMatches =
+            arith::XOrIOp::create(builder, location, *matches, trueValue);
+        Value fails =
+            arith::AndIOp::create(builder, location, active, notMatches);
+        addCount(failedPrefix, selectCount(fails, one));
+        if (age + 1 == persistentDelay.prefix.ages.size()) {
+          addCount(completedPrefix, selectCount(advances, one));
+        } else {
+          Value nextMask = arith::ConstantOp::create(
+              builder, location, stateType,
+              builder.getI64IntegerAttr(uint64_t{1} << (age + 1)));
+          Value advanced = selectCount(advances, nextMask);
+          nextPrefixState = arith::OrIOp::create(builder, location,
+                                                 nextPrefixState, advanced);
+        }
+      }
+
+      FailureOr<Value> starts =
+          evaluateAge(persistentDelay.prefix.ages.front());
+      if (failed(starts))
+        return failure();
+      Value failedStart =
+          arith::XOrIOp::create(builder, location, *starts, trueValue);
+      addCount(failedPrefix, selectCount(failedStart, one));
+      if (persistentDelay.prefix.ages.size() == 1) {
+        addCount(completedPrefix, selectCount(*starts, one));
+      } else {
+        Value firstMask = arith::ConstantOp::create(
+            builder, location, stateType, builder.getI64IntegerAttr(2));
+        Value started = selectCount(*starts, firstMask);
+        nextPrefixState =
+            arith::OrIOp::create(builder, location, nextPrefixState, started);
+        sim::SimRefStoreOp::create(builder, location, nextPrefixState,
+                                   prefixStateStorage);
+      }
     }
 
     Value matured = completedPrefix;
@@ -3930,7 +3988,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     sim::SimRefStoreOp::create(builder, location, nextEligible,
                                eligibleStorage);
     scheduleCount(successCount, true);
-    scheduleCount(failedPrefix, false);
+    if (implication) {
+      if (!cover)
+        scheduleCount(antecedentResultCount, !followedBy);
+    } else {
+      scheduleCount(failedPrefix, false);
+    }
     cf::BranchOp::create(builder, location, wait);
     return success();
   }
