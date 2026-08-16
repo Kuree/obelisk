@@ -264,7 +264,8 @@ serializeComputedObserverWait(Operation *operation, Value wait,
   llvm::append_range(observerBindings, uniqueBindings);
 
   bool levelTrue =
-      operation->hasAttr("obelisk_sim.concurrent_cancel_level_true");
+      operation->hasAttr("obelisk_sim.concurrent_cancel_level_true") ||
+      operation->hasAttr("obelisk_sim.concurrent_abort_level_true");
 
   for (uint32_t index = 0; index != primaryCount; ++index) {
     uint64_t clause =

@@ -210,15 +210,17 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
          callee.function.getHomeRegion() == sim::EventRegion::Active);
     bool prioritySignalResume =
         callee.function->hasAttr("obelisk_sim.priority_signal_resume");
+    bool concurrentSignalObserver =
+        callee.function->hasAttr("obelisk_sim.concurrent_cancel") ||
+        callee.function->hasAttr("obelisk_sim.concurrent_abort");
     if (prioritySignalResume &&
-        (!callee.function->hasAttr("internal") ||
-         !callee.function->hasAttr("obelisk_sim.concurrent_cancel") ||
+        (!callee.function->hasAttr("internal") || !concurrentSignalObserver ||
          !callee.function->hasAttr("obelisk_sim.detached_controls") ||
          entryKind != sim::EntryKind::Fork ||
          callee.function.getHomeRegion() != sim::EventRegion::Reactive))
       return op.emitOpError(
-          "priority signal resume is reserved for internal concurrent-disable "
-          "observers");
+          "priority signal resume is reserved for internal concurrent "
+          "cancellation or abort observers");
     uint32_t flags =
         found->second | (startup ? OBELISK_RT_INTRINSIC_SPAWN_STARTUP : 0) |
         (callee.function->hasAttr("obelisk_sim.detached_controls")

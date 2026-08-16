@@ -2111,6 +2111,42 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @suspend_observe_abort_level_true_contract {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.storage.decl 0 in 0 : i1 design
+    obelisk_sim.code_unit.decl 9000001 in 0 observer hierarchy "test.suspend_observe_abort_level_true_contract.evaluator"
+    obelisk_sim.code_unit.decl 9000002 in 0 fork hierarchy "test.suspend_observe_abort_level_true_contract.bad"
+    obelisk_sim.func private @evaluator(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %ref: !obelisk_sim.ref<i1> {obelisk_sim.capture_kind = 2 : i32}) -> i1
+        attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
+      %false = arith.constant false
+      obelisk_sim.return %false : i1
+    }
+    obelisk_sim.func private @bad(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {
+          entry_kind = 13 : i32,
+          code_unit_id = 9000002 : i64,
+          home_region = 10 : i32,
+          internal,
+          obelisk_sim.concurrent_abort,
+          obelisk_sim.detached_controls
+        } {
+      %ref = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i1>
+      %bound = obelisk_sim.observer.bind @evaluator values(%ref, %ref : !obelisk_sim.ref<i1>, !obelisk_sim.ref<i1>) captures 1 : !obelisk_sim.observer<i1>
+      %false = arith.constant false
+      // expected-error @+1 {{concurrent abort level-true suspension requires an internal detached priority concurrent-abort fork in the reactive region}}
+      obelisk_sim.suspend.observe %bound, %false conditions 0 edges [1] indices [-1] to ^resume {obelisk_sim.concurrent_abort_level_true} : !obelisk_sim.observer<i1>, i1
+    ^resume:
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @suspend_observe_cancel_level_true_empty {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 9000001 in 0 fork hierarchy "test.suspend_observe_cancel_level_true_empty.bad"

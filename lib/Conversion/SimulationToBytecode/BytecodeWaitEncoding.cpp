@@ -155,7 +155,8 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
       previousCursor += (uint64_t{widths[index]} + 63) / 64;
   }
   bool levelTrue =
-      operation->hasAttr("obelisk_sim.concurrent_cancel_level_true");
+      operation->hasAttr("obelisk_sim.concurrent_cancel_level_true") ||
+      operation->hasAttr("obelisk_sim.concurrent_abort_level_true");
   for (uint32_t index = 0; index != primaryCount; ++index) {
     uint64_t clause =
         clausesOffset + uint64_t{index} * sizeof(obelisk_rt_computed_clause_v1);

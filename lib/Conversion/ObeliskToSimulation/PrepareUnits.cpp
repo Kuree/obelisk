@@ -370,6 +370,13 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
                                         "disable", unit.id, unit.hierarchy});
         return;
       }
+      if (auto abort = dyn_cast<semantic::SVAbortAssertionExprOp>(nested)) {
+        SmallVector<Operation *> children = getChildren(abort);
+        if (!abort.getIsSynchronous() && !children.empty())
+          observerCandidates.push_back({children.front(), ObserverResult::Truth,
+                                        "abort", unit.id, unit.hierarchy});
+        return;
+      }
       if (auto wait = dyn_cast<semantic::SVWaitStatementOp>(nested)) {
         SmallVector<Operation *> children = getChildren(wait);
         if (children.size() == 2 &&

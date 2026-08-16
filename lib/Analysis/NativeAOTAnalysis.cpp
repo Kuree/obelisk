@@ -64,7 +64,15 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
             function->hasAttr("obelisk_sim.priority_signal_resume") &&
             function.getEntryKind() == sim::EntryKind::Fork &&
             function.getHomeRegion() == sim::EventRegion::Reactive) ||
+           (function->hasAttr("obelisk_sim.concurrent_abort") &&
+            function->hasAttr("obelisk_sim.detached_controls") &&
+            function->hasAttr("obelisk_sim.priority_signal_resume") &&
+            function.getEntryKind() == sim::EntryKind::Fork &&
+            function.getHomeRegion() == sim::EventRegion::Reactive) ||
            (function->hasAttr("obelisk_sim.concurrent_cancel_observer") &&
+            function->hasAttr("obelisk_sim.detached_controls") &&
+            function.getEntryKind() == sim::EntryKind::Observer) ||
+           (function->hasAttr("obelisk_sim.concurrent_abort_observer") &&
             function->hasAttr("obelisk_sim.detached_controls") &&
             function.getEntryKind() == sim::EntryKind::Observer);
   };
