@@ -1,6 +1,6 @@
 // RUN: not obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s
 
-// CHECK: error: SVA 'strong' end-of-simulation qualification currently requires one outermost deterministic bounded property without implication/followed-by, branching composition, persistent repetition/until, first_match, expect, or cover-sequence per-match accounting
+// CHECK: error: SVA 'strong' end-of-simulation qualification currently requires one outermost deterministic bounded property without implication/followed-by, branching composition, persistent until, first_match, expect, or cover-sequence per-match accounting
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

@@ -128,25 +128,35 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
+// Weak until vacuously completes every still-live attempt at EOS.
+// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_count.11.until_weak(
+// CHECK-SAME: obelisk_sim.concurrent_eos_counted
+// CHECK: obelisk_sim.ref.load
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
 // CHECK-SAME: obelisk_sim.persistent_until_aggregate_tokens
 // CHECK-SAME: obelisk_sim.persistent_until_kind = "until"
 // CHECK-SAME: obelisk_sim.persistent_until_monitor
 // CHECK-SAME: obelisk_sim.sva_transition_normal_form = "canonical-minimal"
-// The local aggregate counter is promoted across the suspension as one i64
-// block argument, rather than allocating one process or bit per live attempt.
-// CHECK: cf.br ^[[WAIT:bb[0-9]+]]({{%.*}} : i64)
-// CHECK: ^[[WAIT]]({{%.*}}: i64):
-// CHECK: obelisk_sim.suspend.edge {{.*}} to ^[[SAMPLE:bb[0-9]+]]({{%.*}} : i64)
-// CHECK: ^[[SAMPLE]]([[LIVE:%.*]]: i64):
+// One shared aggregate counter is captured by the EOS coordinator and carried
+// across suspension; no per-attempt process or bitset is allocated.
+// CHECK: [[LIVE_REF:%.*]] = obelisk_sim.ref.alloc
+// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos_count.11.until_weak
+// CHECK: cf.br ^[[WAIT:bb[0-9]+]]([[LIVE_REF]] : !obelisk_sim.ref<i64>)
+// CHECK: ^[[WAIT]]({{%.*}}: !obelisk_sim.ref<i64>):
+// CHECK: obelisk_sim.suspend.edge {{.*}} to ^[[SAMPLE:bb[0-9]+]]({{%.*}} : !obelisk_sim.ref<i64>)
+// CHECK: ^[[SAMPLE]]([[LIVE_REF_ARG:%.*]]: !obelisk_sim.ref<i64>):
 // CHECK: [[A:%.*]] = obelisk_sim.assert.sampled_read
 // CHECK: [[B:%.*]] = obelisk_sim.assert.sampled_read
+// CHECK: [[LIVE:%.*]] = obelisk_sim.ref.load [[LIVE_REF_ARG]]
 // CHECK: [[ATTEMPTS:%.*]] = arith.addi [[LIVE]],
 // CHECK: [[NEXT:%.*]] = arith.select {{%.*}}, [[ATTEMPTS]], {{%.*}} : i64
+// CHECK: obelisk_sim.ref.store [[NEXT]] to [[LIVE_REF_ARG]]
 // CHECK: arith.subi
-// CHECK: cf.cond_br {{%.*}}, {{.*}}, ^[[WAIT]]([[NEXT]] : i64)
+// CHECK: cf.cond_br {{%.*}}, {{.*}}, ^[[WAIT]]([[LIVE_REF_ARG]] : !obelisk_sim.ref<i64>)
 // CHECK: arith.subi
 
+// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_count.31.until_strong(
+// CHECK-SAME: obelisk_sim.concurrent_eos_counted
 // CHECK-LABEL: obelisk_sim.func private @unit_1(
 // CHECK-SAME: obelisk_sim.persistent_until_kind = "s_until"
 // CHECK-SAME: obelisk_sim.persistent_until_strong
@@ -155,6 +165,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-SAME: obelisk_sim.persistent_until_inclusive
 // CHECK-SAME: obelisk_sim.persistent_until_kind = "until_with"
 
+// CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos_count.51.until_strong(
+// CHECK-SAME: obelisk_sim.concurrent_eos_counted
 // CHECK-LABEL: obelisk_sim.func private @unit_3(
 // CHECK-SAME: obelisk_sim.persistent_until_inclusive
 // CHECK-SAME: obelisk_sim.persistent_until_kind = "s_until_with"
