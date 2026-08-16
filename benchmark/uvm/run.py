@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -19,7 +20,22 @@ DEFAULT_UVM = REPO_ROOT / "build/_deps/obelisk_uvm-src/src"
 SMOKE = Path(__file__).with_name("smoke.sv")
 
 
-def parse_args() -> argparse.Namespace:
+def available_cpu_count() -> int:
+    process_count = getattr(os, "process_cpu_count", None)
+    if process_count is not None:
+        count = process_count()
+        if count:
+            return count
+    get_affinity = getattr(os, "sched_getaffinity", None)
+    if get_affinity is not None:
+        try:
+            return max(1, len(get_affinity(0)))
+        except OSError:
+            pass
+    return max(1, os.cpu_count() or 1)
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--obelisk", type=Path, default=DEFAULT_OBELISK)
     parser.add_argument("--uvm-root", type=Path, default=DEFAULT_UVM)
@@ -36,7 +52,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--compile-timeout", type=float, default=60.0)
     parser.add_argument("--simulation-timeout", type=float, default=10.0)
-    return parser.parse_args()
+    parser.add_argument(
+        "--compile-threads",
+        type=int,
+        default=max(1, available_cpu_count() // 2),
+        help="compiler threads (default: half the CPUs available to this process)",
+    )
+    return parser.parse_args(argv)
 
 
 def timed_run(
@@ -51,6 +73,9 @@ def timed_run(
 
 def main() -> int:
     args = parse_args()
+    if args.compile_threads < 1:
+        print("error: --compile-threads must be at least 1", file=sys.stderr)
+        return 2
     compiler = args.obelisk.resolve()
     uvm_root = args.uvm_root.resolve()
     uvm_package = uvm_root / "uvm_pkg.sv"
@@ -73,6 +98,7 @@ def main() -> int:
             "--std=1800-2017",
             "-O3",
             f"--execution-tier={args.execution_tier}",
+            f"--compile-threads={args.compile_threads}",
         ]
         if not args.lto:
             command.append("-fno-lto")
@@ -82,6 +108,7 @@ def main() -> int:
         print(f"uvm_root={uvm_root}")
         print(f"execution_tier={args.execution_tier}")
         print(f"lto={'on' if args.lto else 'off'}")
+        print(f"compile_threads={args.compile_threads}")
         try:
             compiled, compile_seconds = timed_run(command, args.compile_timeout)
         except subprocess.TimeoutExpired:

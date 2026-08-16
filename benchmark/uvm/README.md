@@ -17,5 +17,7 @@ measure native lowering, `--lto` to include the default native LTO path
 (ThinLTO for partitioned UVM-sized designs), and
 `--keep-binary PATH` to retain the generated executable. The UVM source tree
 defaults to the CMake-fetched checkout and can be overridden with `--uvm-root`.
+Compilation defaults to half of the CPUs available to the process; use
+`--compile-threads N` to select an explicit budget.
 Compilation is capped at 60 seconds by default, matching the performance gate;
 override it with `--compile-timeout` for diagnostic native measurements.
