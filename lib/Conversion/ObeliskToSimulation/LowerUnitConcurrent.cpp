@@ -372,11 +372,13 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
         break;
       case semantic::SVAssertionBinaryOperator::OverlappedImplication:
       case semantic::SVAssertionBinaryOperator::NonOverlappedImplication:
+      case semantic::SVAssertionBinaryOperator::OverlappedFollowedBy:
+      case semantic::SVAssertionBinaryOperator::NonOverlappedFollowedBy:
         if (nested || current != operation)
           return diagnose(
-              "nested SVA implication is not executable yet; bounded "
-              "implication is currently supported only as the outermost "
-              "property operator");
+              "nested SVA implication/followed-by is not executable yet; "
+              "bounded antecedent operators are currently supported only as "
+              "the outermost property operator");
         break;
       case semantic::SVAssertionBinaryOperator::Iff:
       case semantic::SVAssertionBinaryOperator::Implies:
@@ -1922,6 +1924,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   PersistentRepetitionSequence persistentRepetition;
   bool hasPersistentRepetition = false;
   bool nonoverlapped = false;
+  bool followedBy = false;
   if (multiClockAttempt) {
     // The staged actor below owns temporal evaluation. Keep the ordinary
     // validation path structurally nonempty without constructing bitset
@@ -1933,10 +1936,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
              (binary.getOperatorKind() ==
                   semantic::SVAssertionBinaryOperator::OverlappedImplication ||
               binary.getOperatorKind() == semantic::SVAssertionBinaryOperator::
-                                              NonOverlappedImplication)) {
+                                              NonOverlappedImplication ||
+              binary.getOperatorKind() ==
+                  semantic::SVAssertionBinaryOperator::OverlappedFollowedBy ||
+              binary.getOperatorKind() == semantic::SVAssertionBinaryOperator::
+                                              NonOverlappedFollowedBy)) {
     SmallVector<Operation *> operands = getChildren(binary);
     if (operands.size() != 2)
-      return binary.emitError("malformed implication"), failure();
+      return binary.emitError("malformed implication/followed-by property"),
+             failure();
     FailureOr<FixedSequence> lhs = compileFixedSequence(operands.front());
     FailureOr<FixedSequence> rhs = compileFixedSequence(operands.back());
     if (failed(lhs) || lhs->ages.empty()) {
@@ -1944,8 +1952,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                                /*nested=*/true))
         return failure();
       return binary.emitError(
-                 "AOT implication antecedent must be one deterministic "
-                 "bounded sequence within the 63-cycle horizon"),
+                 "AOT implication/followed-by antecedent must be one "
+                 "deterministic bounded sequence within the 63-cycle "
+                 "horizon"),
              failure();
     }
     if (failed(rhs) || rhs->ages.empty()) {
@@ -1953,8 +1962,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                                /*nested=*/true))
         return failure();
       return binary.emitError(
-                 "AOT implication consequent must be one deterministic "
-                 "bounded sequence within the 63-cycle horizon"),
+                 "AOT implication/followed-by consequent must be one "
+                 "deterministic bounded sequence within the 63-cycle "
+                 "horizon"),
              failure();
     }
     implication = binary;
@@ -1962,7 +1972,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     sequence = std::move(*rhs);
     nonoverlapped =
         binary.getOperatorKind() ==
-        semantic::SVAssertionBinaryOperator::NonOverlappedImplication;
+            semantic::SVAssertionBinaryOperator::NonOverlappedImplication ||
+        binary.getOperatorKind() ==
+            semantic::SVAssertionBinaryOperator::NonOverlappedFollowedBy;
+    followedBy =
+        binary.getOperatorKind() ==
+            semantic::SVAssertionBinaryOperator::OverlappedFollowedBy ||
+        binary.getOperatorKind() ==
+            semantic::SVAssertionBinaryOperator::NonOverlappedFollowedBy;
+    if (followedBy)
+      function->setAttr("obelisk_sim.followed_by_monitor",
+                        builder.getUnitAttr());
   } else {
     if (FailureOr<PersistentRepetitionSequence> persistent =
             compilePersistentRepetition(property);
@@ -2030,21 +2050,21 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
            failure();
   if (implication && antecedentSequence.ages.size() + sequence.ages.size() > 63)
     return op.emitError(
-               "combined implication antecedent/consequent state exceeds "
-               "the 63-cycle bounded monitor horizon"),
+               "combined implication/followed-by antecedent/consequent state "
+               "exceeds the 63-cycle bounded monitor horizon"),
            failure();
   if (implication && localInstance && antecedentSequence.ages.size() != 1)
     return emitError(getSemanticLocation(implication))
-               << "multi-cycle implication antecedents do not yet compose "
-                  "with assertion locals",
+               << "multi-cycle implication/followed-by antecedents do not yet "
+                  "compose with assertion locals",
            failure();
   if (implication && !localInstance &&
       llvm::any_of(antecedentSequence.ages, [](const FixedSequenceAge &age) {
         return !age.matchItems.empty();
       }))
     return emitError(getSemanticLocation(implication))
-               << "implication antecedent match items require assertion "
-                  "local flow",
+               << "implication/followed-by antecedent match items require "
+                  "assertion local flow",
            failure();
   if (hasPersistentRepetition && (localInstance || implication || disable ||
                                   expectMonitor || firstMatch || coverSequence))
@@ -3597,15 +3617,20 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (!implication && failed(reportFailure(one, *starts)))
       return failure();
     if (implication && !cover) {
-      Value vacuous = arith::XOrIOp::create(builder, location, *starts, one);
-      Block *report = addBlock();
-      Block *continued = addBlock();
-      cf::CondBranchOp::create(builder, location, vacuous, report, ValueRange{},
-                               continued, ValueRange{});
-      setCurrent(report);
-      reportSuccess();
-      emitBranch(continued);
-      setCurrent(continued);
+      if (followedBy) {
+        if (failed(reportFailure(one, *starts)))
+          return failure();
+      } else {
+        Value vacuous = arith::XOrIOp::create(builder, location, *starts, one);
+        Block *report = addBlock();
+        Block *continued = addBlock();
+        cf::CondBranchOp::create(builder, location, vacuous, report,
+                                 ValueRange{}, continued, ValueRange{});
+        setCurrent(report);
+        reportSuccess();
+        emitBranch(continued);
+        setCurrent(continued);
+      }
     }
 
     Block *startMatched = addBlock();
@@ -3845,7 +3870,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           arith::AndIOp::create(builder, location, active, notMatches);
       vacuous.getDefiningOp()->setAttr(
           "obelisk_sim.implication_antecedent_failure", builder.getUnitAttr());
-      if (!cover && failed(conditionalResult(vacuous, true)))
+      if (!cover && failed(conditionalResult(vacuous, !followedBy)))
         return failure();
       if (age + 1 == antecedentSequence.ages.size()) {
         if (failed(launchConsequent(advances)))
@@ -3874,9 +3899,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         builder, location, *starts,
         arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                   builder.getBoolAttr(true)));
-    // A property assertion succeeds vacuously when its antecedent is false,
-    // but a cover directive records only a nonvacuous match.
-    if (!cover && failed(conditionalResult(vacuous, true)))
+    // Implication succeeds vacuously when its antecedent is false. Followed-by
+    // instead requires an antecedent match and therefore fails. A cover
+    // directive records neither case as a hit.
+    if (!cover && failed(conditionalResult(vacuous, !followedBy)))
       return failure();
     if (antecedentSequence.ages.size() == 1) {
       if (failed(launchConsequent(*starts)))
