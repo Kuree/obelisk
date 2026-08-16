@@ -81,6 +81,21 @@ struct MultiClockSequence {
   bool hasLeadingDelay = false;
 };
 
+/// A common persistent repetition shape compiled to an aggregate token DFA.
+/// `entry` is the deterministic bounded prefix ending at the first clock where
+/// `term` is sampled. A terminal term, when present, is sampled one clock after
+/// each eligible goto/nonconsecutive endpoint.
+struct PersistentRepetitionSequence {
+  FixedSequence entry;
+  FixedSequenceAge term;
+  FixedSequenceAge terminal;
+  semantic::SVSequenceRepetitionKind kind =
+      semantic::SVSequenceRepetitionKind::Consecutive;
+  uint64_t minimum = 0;
+  uint64_t maximum = 0;
+  bool hasTerminal = false;
+};
+
 using FixedSequenceAlternatives = SmallVector<FixedSequence, 4>;
 
 static constexpr size_t maxFixedSequenceAlternatives = 256;
@@ -88,6 +103,7 @@ static constexpr size_t maxFixedSequenceAlternatives = 256;
 static bool isSingleBooleanAge(const FixedSequence &sequence) {
   return sequence.ages.size() == 1 &&
          sequence.ages.front().matchItems.empty() &&
+         sequence.ages.front().caseGuards.empty() &&
          sequence.ages.front().predicates.size() +
                  sequence.ages.front().negatedPredicates.size() ==
              1;
@@ -232,11 +248,30 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
     auto diagnoseRepetition = [&](semantic::SVSequenceRepetitionKind kind,
                                   bool unbounded,
                                   std::optional<int64_t> minimum) {
-      if (kind == semantic::SVSequenceRepetitionKind::Nonconsecutive)
+      if (kind == semantic::SVSequenceRepetitionKind::Nonconsecutive) {
+        if (nested) {
+          return diagnose(
+              "nonconsecutive sequence repetition [=] does not yet compose "
+              "with an implication antecedent or consequent");
+        }
         return diagnose(
-            "nonconsecutive sequence repetition [=] is not executable yet");
-      if (kind == semantic::SVSequenceRepetitionKind::GoTo)
-        return diagnose("goto sequence repetition [->] is not executable yet");
+            "nonconsecutive sequence repetition [=] currently requires a "
+            "positive finite range no greater than 63 on one boolean term, "
+            "optionally preceded by a deterministic bounded prefix and "
+            "followed by ##1 plus one boolean term");
+      }
+      if (kind == semantic::SVSequenceRepetitionKind::GoTo) {
+        if (nested) {
+          return diagnose(
+              "goto sequence repetition [->] does not yet compose with an "
+              "implication antecedent or consequent");
+        }
+        return diagnose(
+            "goto sequence repetition [->] currently requires a positive "
+            "finite range no greater than 63 on one boolean term, optionally "
+            "preceded by a deterministic bounded prefix and followed by ##1 "
+            "plus one boolean term");
+      }
       if (unbounded)
         return diagnose(
             "unbounded consecutive sequence repetition [*...:$] is not "
@@ -276,9 +311,23 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
                           "yet");
       }
     }
-    if (auto first = dyn_cast<semantic::SVFirstMatchAssertionExprOp>(current);
-        first && first.getMatchItemCount() != 0)
-      return diagnose("bounded first_match does not yet support match items");
+    if (auto first = dyn_cast<semantic::SVFirstMatchAssertionExprOp>(current)) {
+      if (first.getMatchItemCount() != 0)
+        return diagnose("bounded first_match does not yet support match items");
+      bool persistent = false;
+      first->walk([&](semantic::SVSimpleAssertionExprOp simple) {
+        persistent |= simple.getHasRepetition() && simple.getRepetitionKind() &&
+                      (*simple.getRepetitionKind() ==
+                           semantic::SVSequenceRepetitionKind::Nonconsecutive ||
+                       *simple.getRepetitionKind() ==
+                           semantic::SVSequenceRepetitionKind::GoTo);
+      });
+      if (persistent)
+        return diagnose(
+            "first_match over persistent [->]/[=] repetition is not "
+            "executable yet; the aggregate token monitor currently applies "
+            "property-level earliest-success semantics");
+    }
     if (auto unary = dyn_cast<semantic::SVUnaryAssertionExprOp>(current)) {
       if (unary.getOperatorKind() == semantic::SVAssertionUnaryOperator::Not)
         return diagnose(
@@ -687,6 +736,118 @@ static LogicalResult mergeFixedSequenceAt(FixedSequence &result,
                        nestedAge.caseGuards);
   }
   return success();
+}
+
+/// Recognize the high-frequency persistent repetition forms without expanding
+/// their unbounded inter-occurrence waits into a finite horizon:
+///
+///   fixed-prefix ##N boolean[->M:N] [##1 boolean]
+///   fixed-prefix ##N boolean[=M:N]  [##1 boolean]
+///
+/// The generated monitor below keeps aggregate token counts per DFA state, so
+/// runtime memory is bounded by N rather than by the number or age of live
+/// attempts. Locals, match items, branching terms, and longer continuations
+/// require per-token data/correlation and remain deliberately outside this
+/// compact representation.
+static FailureOr<PersistentRepetitionSequence>
+compilePersistentRepetition(Operation *operation) {
+  SmallVector<Operation *> children;
+  ArrayAttr delays;
+  if (auto concat = dyn_cast<semantic::SVSequenceConcatExprOp>(operation)) {
+    children = getChildren(concat);
+    delays = concat.getDelays();
+    if (children.empty() || delays.size() != children.size())
+      return failure();
+  } else {
+    children.push_back(operation);
+  }
+
+  auto getFixedDelay = [&](size_t index) -> std::optional<uint64_t> {
+    if (!delays)
+      return index == 0 ? std::optional<uint64_t>(0) : std::nullopt;
+    auto delay = dyn_cast<DictionaryAttr>(delays[index]);
+    auto minimum = delay ? delay.getAs<IntegerAttr>("min") : IntegerAttr{};
+    auto maximum = delay ? delay.getAs<IntegerAttr>("max") : IntegerAttr{};
+    auto unbounded = delay ? delay.getAs<BoolAttr>("is_unbounded") : BoolAttr{};
+    if (!minimum || !maximum || !unbounded || unbounded.getValue() ||
+        minimum.getInt() < 0 || minimum.getInt() != maximum.getInt())
+      return std::nullopt;
+    return static_cast<uint64_t>(minimum.getInt());
+  };
+
+  size_t repetitionIndex = children.size();
+  semantic::SVSimpleAssertionExprOp repetition;
+  for (auto [index, child] : llvm::enumerate(children)) {
+    auto simple = dyn_cast<semantic::SVSimpleAssertionExprOp>(child);
+    if (!simple || !simple.getHasRepetition() ||
+        (simple.getRepetitionKind() !=
+             semantic::SVSequenceRepetitionKind::Nonconsecutive &&
+         simple.getRepetitionKind() !=
+             semantic::SVSequenceRepetitionKind::GoTo))
+      continue;
+    if (repetition)
+      return failure();
+    repetition = simple;
+    repetitionIndex = index;
+  }
+  if (!repetition || repetition.getRepetitionIsUnbounded() ||
+      !repetition.getRepetitionMin() || !repetition.getRepetitionMax() ||
+      *repetition.getRepetitionMin() <= 0 ||
+      *repetition.getRepetitionMax() < *repetition.getRepetitionMin() ||
+      *repetition.getRepetitionMax() > 63)
+    return failure();
+
+  PersistentRepetitionSequence result;
+  result.kind = *repetition.getRepetitionKind();
+  result.minimum = static_cast<uint64_t>(*repetition.getRepetitionMin());
+  result.maximum = static_cast<uint64_t>(*repetition.getRepetitionMax());
+
+  SmallVector<Operation *> repeatedChildren = getChildren(repetition);
+  if (repeatedChildren.size() != 1)
+    return failure();
+  if (isa<semantic::SVAssertionInstanceExpressionOp>(
+          repeatedChildren.front())) {
+    FailureOr<FixedSequence> nested =
+        compileFixedSequence(repeatedChildren.front());
+    if (failed(nested) || !isSingleBooleanAge(*nested))
+      return failure();
+    result.term = nested->ages.front();
+  } else {
+    result.term.predicates.push_back(repeatedChildren.front());
+  }
+
+  for (size_t index = 0; index < repetitionIndex; ++index) {
+    std::optional<uint64_t> delay = getFixedDelay(index);
+    FailureOr<FixedSequence> prefix = compileFixedSequence(children[index]);
+    if (!delay || failed(prefix) || prefix->ages.empty() ||
+        llvm::any_of(prefix->ages,
+                     [](const FixedSequenceAge &age) {
+                       return !age.matchItems.empty();
+                     }) ||
+        failed(appendFixedSequence(result.entry, *prefix, *delay)))
+      return failure();
+  }
+
+  std::optional<uint64_t> repetitionDelay = getFixedDelay(repetitionIndex);
+  FixedSequence entryPoint;
+  entryPoint.ages.resize(1);
+  if (!repetitionDelay ||
+      failed(appendFixedSequence(result.entry, entryPoint, *repetitionDelay)))
+    return failure();
+
+  if (repetitionIndex + 1 == children.size())
+    return result;
+  if (repetitionIndex + 2 != children.size())
+    return failure();
+  std::optional<uint64_t> terminalDelay = getFixedDelay(repetitionIndex + 1);
+  FailureOr<FixedSequence> terminal =
+      compileFixedSequence(children[repetitionIndex + 1]);
+  if (!terminalDelay || *terminalDelay != 1 || failed(terminal) ||
+      !isSingleBooleanAge(*terminal))
+    return failure();
+  result.terminal = terminal->ages.front();
+  result.hasTerminal = true;
+  return result;
 }
 
 /// Compile the bounded branching sequence forms into a finite set of exact
@@ -1758,6 +1919,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   FixedSequence sequence;
   FixedSequence antecedentSequence;
   FixedSequenceAlternatives sequenceAlternatives;
+  PersistentRepetitionSequence persistentRepetition;
+  bool hasPersistentRepetition = false;
   bool nonoverlapped = false;
   if (multiClockAttempt) {
     // The staged actor below owns temporal evaluation. Keep the ordinary
@@ -1801,39 +1964,52 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         binary.getOperatorKind() ==
         semantic::SVAssertionBinaryOperator::NonOverlappedImplication;
   } else {
-    FailureOr<FixedSequenceAlternatives> compiled =
-        compileFixedSequenceAlternatives(property, clock);
-    if (failed(compiled) || compiled->empty()) {
-      if (diagnoseUnsupportedConcurrentFeature(property))
-        return failure();
-      return emitError(getSemanticLocation(property))
-                 << "bounded AOT sequence compilation failed: the property "
-                    "either exceeds the 63-cycle or 256-alternative limit, "
-                    "or combines bounded operators in a form whose endpoint "
-                    "ordering is not executable yet",
-             failure();
-    }
-    if (!cover) {
-      if (std::optional<BooleanMinimizationStats> stats =
-              minimizeBooleanAlternatives(*compiled)) {
-        function->setAttr("obelisk_sim.sva_boolean_solver",
-                          builder.getStringAttr(stats->backend));
-        function->setAttr("obelisk_sim.sva_boolean_solver_queries",
-                          builder.getI64IntegerAttr(stats->solverQueries));
-        function->setAttr("obelisk_sim.sva_boolean_alternatives_before",
-                          builder.getI64IntegerAttr(stats->alternativesBefore));
-        function->setAttr("obelisk_sim.sva_boolean_alternatives_after",
-                          builder.getI64IntegerAttr(stats->alternativesAfter));
-        function->setAttr("obelisk_sim.sva_boolean_literals_before",
-                          builder.getI64IntegerAttr(stats->literalsBefore));
-        function->setAttr("obelisk_sim.sva_boolean_literals_after",
-                          builder.getI64IntegerAttr(stats->literalsAfter));
+    if (FailureOr<PersistentRepetitionSequence> persistent =
+            compilePersistentRepetition(property);
+        succeeded(persistent)) {
+      persistentRepetition = std::move(*persistent);
+      hasPersistentRepetition = true;
+      // The persistent monitor owns its own token state below. Keep ordinary
+      // bounded validation structurally nonempty without allocating the fixed
+      // age bitset.
+      sequence.ages.resize(1);
+    } else {
+      FailureOr<FixedSequenceAlternatives> compiled =
+          compileFixedSequenceAlternatives(property, clock);
+      if (failed(compiled) || compiled->empty()) {
+        if (diagnoseUnsupportedConcurrentFeature(property))
+          return failure();
+        return emitError(getSemanticLocation(property))
+                   << "bounded AOT sequence compilation failed: the property "
+                      "either exceeds the 63-cycle or 256-alternative limit, "
+                      "or combines bounded operators in a form whose endpoint "
+                      "ordering is not executable yet",
+               failure();
       }
+      if (!cover) {
+        if (std::optional<BooleanMinimizationStats> stats =
+                minimizeBooleanAlternatives(*compiled)) {
+          function->setAttr("obelisk_sim.sva_boolean_solver",
+                            builder.getStringAttr(stats->backend));
+          function->setAttr("obelisk_sim.sva_boolean_solver_queries",
+                            builder.getI64IntegerAttr(stats->solverQueries));
+          function->setAttr(
+              "obelisk_sim.sva_boolean_alternatives_before",
+              builder.getI64IntegerAttr(stats->alternativesBefore));
+          function->setAttr(
+              "obelisk_sim.sva_boolean_alternatives_after",
+              builder.getI64IntegerAttr(stats->alternativesAfter));
+          function->setAttr("obelisk_sim.sva_boolean_literals_before",
+                            builder.getI64IntegerAttr(stats->literalsBefore));
+          function->setAttr("obelisk_sim.sva_boolean_literals_after",
+                            builder.getI64IntegerAttr(stats->literalsAfter));
+        }
+      }
+      if (compiled->size() == 1)
+        sequence = std::move(compiled->front());
+      else
+        sequenceAlternatives = std::move(*compiled);
     }
-    if (compiled->size() == 1)
-      sequence = std::move(compiled->front());
-    else
-      sequenceAlternatives = std::move(*compiled);
   }
   bool branchingSequence = !sequenceAlternatives.empty();
   bool boundedFirstMatch =
@@ -1869,6 +2045,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return emitError(getSemanticLocation(implication))
                << "implication antecedent match items require assertion "
                   "local flow",
+           failure();
+  if (hasPersistentRepetition && (localInstance || implication || disable ||
+                                  expectMonitor || firstMatch || coverSequence))
+    return emitError(getSemanticLocation(property))
+               << "persistent [->]/[=] repetition currently requires a plain "
+                  "assert, assume, cover-property, or restrict directive "
+                  "without locals, implication, disable iff, first_match, "
+                  "expect, or cover-sequence per-match accounting",
            failure();
   if (branchingSequence &&
       (localInstance || implication || disable || expectMonitor))
@@ -2340,6 +2524,313 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                             report->function.getSymNameAttr(), captures,
                             ArrayAttr{}, ArrayAttr{});
   };
+
+  if (hasPersistentRepetition) {
+    function->setAttr("obelisk_sim.persistent_repetition_monitor",
+                      builder.getUnitAttr());
+    function->setAttr(
+        "obelisk_sim.persistent_repetition_kind",
+        builder.getStringAttr(semantic::stringifySVSequenceRepetitionKind(
+            persistentRepetition.kind)));
+    function->setAttr("obelisk_sim.persistent_repetition_min",
+                      builder.getI64IntegerAttr(persistentRepetition.minimum));
+    function->setAttr("obelisk_sim.persistent_repetition_max",
+                      builder.getI64IntegerAttr(persistentRepetition.maximum));
+    function->setAttr("obelisk_sim.persistent_repetition_dfa",
+                      builder.getUnitAttr());
+
+    struct TokenState {
+      uint64_t occurrences = 0;
+      bool pending = false;
+      Value storage;
+    };
+    SmallVector<TokenState> tokenStates;
+    DenseMap<std::pair<uint64_t, uint8_t>, unsigned> tokenStateIndices;
+    auto addTokenState = [&](uint64_t occurrences, bool pending) {
+      unsigned index = tokenStates.size();
+      tokenStateIndices.try_emplace(
+          std::pair<uint64_t, uint8_t>{occurrences,
+                                       static_cast<uint8_t>(pending)},
+          index);
+      tokenStates.push_back(
+          {occurrences, pending,
+           sim::SimRefAllocOp::create(
+               builder, location,
+               sim::RefType::get(function.getContext(), stateType), zero)});
+    };
+    if (!persistentRepetition.hasTerminal) {
+      for (uint64_t count = 0; count < persistentRepetition.minimum; ++count)
+        addTokenState(count, false);
+    } else if (persistentRepetition.kind ==
+               semantic::SVSequenceRepetitionKind::Nonconsecutive) {
+      for (uint64_t count = 0; count <= persistentRepetition.maximum; ++count)
+        addTokenState(count, false);
+    } else {
+      for (uint64_t count = 0; count < persistentRepetition.maximum; ++count)
+        addTokenState(count, false);
+      for (uint64_t count = persistentRepetition.minimum;
+           count <= persistentRepetition.maximum; ++count)
+        addTokenState(count, true);
+    }
+    function->setAttr("obelisk_sim.persistent_repetition_states",
+                      builder.getI64IntegerAttr(tokenStates.size()));
+    auto findTokenState = [&](uint64_t occurrences, bool pending) {
+      auto found =
+          tokenStateIndices.find({occurrences, static_cast<uint8_t>(pending)});
+      assert(found != tokenStateIndices.end() &&
+             "persistent repetition DFA destination must exist");
+      return found->second;
+    };
+
+    Value prefixStateStorage;
+    if (persistentRepetition.entry.ages.size() > 1)
+      prefixStateStorage = sim::SimRefAllocOp::create(
+          builder, location,
+          sim::RefType::get(function.getContext(), stateType), zero);
+
+    Block *wait = addBlock();
+    Block *sample = addBlock();
+    emitBranch(wait);
+    setCurrent(wait);
+    if (failed(emitEventSuspend(clock, sample)))
+      return failure();
+    wait->getTerminator()->setAttr(
+        "resume_region", sim::EventRegionAttr::get(function.getContext(),
+                                                   sim::EventRegion::Observed));
+    setCurrent(sample);
+
+    bool savedSampleAssertionValues = sampleAssertionValues;
+    sampleAssertionValues = true;
+    Operation *savedSampledClock = activeSampledClock;
+    activeSampledClock = clock;
+    llvm::scope_exit restoreSampling([&] {
+      sampleAssertionValues = savedSampleAssertionValues;
+      activeSampledClock = savedSampledClock;
+    });
+
+    Value falseValue = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+    Value trueValue = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    Value one = arith::ConstantOp::create(builder, location, stateType,
+                                          builder.getI64IntegerAttr(1));
+    DenseMap<Operation *, Value> predicateCache;
+    auto evaluateAge = [&](const FixedSequenceAge &age) -> FailureOr<Value> {
+      Value result = trueValue;
+      auto evaluatePredicate = [&](Operation *predicate) -> FailureOr<Value> {
+        if (auto found = predicateCache.find(predicate);
+            found != predicateCache.end())
+          return found->second;
+        FailureOr<Value> value = lowerExpression(predicate);
+        if (failed(value))
+          return failure();
+        FailureOr<Value> truth =
+            truthValue(*value, getSemanticLocation(predicate));
+        if (failed(truth))
+          return failure();
+        predicateCache[predicate] = *truth;
+        return *truth;
+      };
+      for (Operation *predicate : age.predicates) {
+        FailureOr<Value> truth = evaluatePredicate(predicate);
+        if (failed(truth))
+          return failure();
+        result = arith::AndIOp::create(builder, location, result, *truth);
+      }
+      for (Operation *predicate : age.negatedPredicates) {
+        FailureOr<Value> truth = evaluatePredicate(predicate);
+        if (failed(truth))
+          return failure();
+        Value negated =
+            arith::XOrIOp::create(builder, location, *truth, trueValue);
+        result = arith::AndIOp::create(builder, location, result, negated);
+      }
+      return result;
+    };
+    auto negate = [&](Value value) {
+      return arith::XOrIOp::create(builder, location, value, trueValue)
+          .getResult();
+    };
+    auto selectCount = [&](Value condition, Value count) {
+      return arith::SelectOp::create(builder, location, condition, count, zero)
+          .getResult();
+    };
+    auto addCount = [&](Value &target, Value count) {
+      target = arith::AddIOp::create(builder, location, target, count);
+    };
+
+    Value prefixState =
+        prefixStateStorage
+            ? sim::SimRefLoadOp::create(builder, location, stateType,
+                                        prefixStateStorage)
+                  .getResult()
+            : zero;
+    Value nextPrefixState = zero;
+    Value entryCount = zero;
+    Value failureCount = zero;
+    for (uint64_t age = 1; age < persistentRepetition.entry.ages.size();
+         ++age) {
+      Value mask = arith::ConstantOp::create(
+          builder, location, stateType,
+          builder.getI64IntegerAttr(uint64_t{1} << age));
+      Value activeBits =
+          arith::AndIOp::create(builder, location, prefixState, mask);
+      Value active = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, activeBits, zero);
+      FailureOr<Value> matches =
+          evaluateAge(persistentRepetition.entry.ages[age]);
+      if (failed(matches))
+        return failure();
+      Value advances =
+          arith::AndIOp::create(builder, location, active, *matches);
+      Value fails =
+          arith::AndIOp::create(builder, location, active, negate(*matches));
+      addCount(failureCount, selectCount(fails, one));
+      if (age + 1 == persistentRepetition.entry.ages.size()) {
+        addCount(entryCount, selectCount(advances, one));
+      } else {
+        Value nextMask = arith::ConstantOp::create(
+            builder, location, stateType,
+            builder.getI64IntegerAttr(uint64_t{1} << (age + 1)));
+        nextPrefixState = arith::OrIOp::create(
+            builder, location, nextPrefixState,
+            arith::SelectOp::create(builder, location, advances, nextMask,
+                                    zero));
+      }
+    }
+    FailureOr<Value> starts =
+        evaluateAge(persistentRepetition.entry.ages.front());
+    if (failed(starts))
+      return failure();
+    addCount(failureCount, selectCount(negate(*starts), one));
+    if (persistentRepetition.entry.ages.size() == 1) {
+      addCount(entryCount, selectCount(*starts, one));
+    } else {
+      Value nextMask = arith::ConstantOp::create(builder, location, stateType,
+                                                 builder.getI64IntegerAttr(2));
+      nextPrefixState = arith::OrIOp::create(
+          builder, location, nextPrefixState,
+          arith::SelectOp::create(builder, location, *starts, nextMask, zero));
+    }
+    if (prefixStateStorage)
+      sim::SimRefStoreOp::create(builder, location, nextPrefixState,
+                                 prefixStateStorage);
+
+    SmallVector<Value> amounts;
+    SmallVector<Value> nextAmounts(tokenStates.size(), zero);
+    amounts.reserve(tokenStates.size());
+    for (const TokenState &state : tokenStates)
+      amounts.push_back(sim::SimRefLoadOp::create(builder, location, stateType,
+                                                  state.storage));
+    addCount(amounts[findTokenState(0, false)], entryCount);
+
+    FailureOr<Value> repeated = evaluateAge(persistentRepetition.term);
+    if (failed(repeated))
+      return failure();
+    Value notRepeated = negate(*repeated);
+    Value terminal = trueValue;
+    Value notTerminal = falseValue;
+    if (persistentRepetition.hasTerminal) {
+      FailureOr<Value> evaluated = evaluateAge(persistentRepetition.terminal);
+      if (failed(evaluated))
+        return failure();
+      terminal = *evaluated;
+      notTerminal = negate(terminal);
+    }
+
+    Value successCount = zero;
+    auto route = [&](unsigned destination, Value amount, Value condition) {
+      addCount(nextAmounts[destination], selectCount(condition, amount));
+    };
+    auto succeed = [&](Value amount, Value condition) {
+      addCount(successCount, selectCount(condition, amount));
+    };
+    auto fail = [&](Value amount, Value condition) {
+      addCount(failureCount, selectCount(condition, amount));
+    };
+
+    for (auto [index, state] : llvm::enumerate(tokenStates)) {
+      Value amount = amounts[index];
+      if (!persistentRepetition.hasTerminal) {
+        if (state.occurrences + 1 >= persistentRepetition.minimum) {
+          succeed(amount, *repeated);
+        } else {
+          route(findTokenState(state.occurrences + 1, false), amount,
+                *repeated);
+        }
+        route(index, amount, notRepeated);
+        continue;
+      }
+
+      if (persistentRepetition.kind ==
+          semantic::SVSequenceRepetitionKind::Nonconsecutive) {
+        Value remaining = trueValue;
+        if (state.occurrences >= persistentRepetition.minimum) {
+          succeed(amount, terminal);
+          remaining = notTerminal;
+        }
+        Value consumes =
+            arith::AndIOp::create(builder, location, remaining, *repeated);
+        Value waits =
+            arith::AndIOp::create(builder, location, remaining, notRepeated);
+        if (state.occurrences == persistentRepetition.maximum)
+          fail(amount, consumes);
+        else
+          route(findTokenState(state.occurrences + 1, false), amount, consumes);
+        route(index, amount, waits);
+        continue;
+      }
+
+      if (!state.pending) {
+        uint64_t nextCount = state.occurrences + 1;
+        bool nextPending = nextCount >= persistentRepetition.minimum;
+        route(findTokenState(nextCount, nextPending), amount, *repeated);
+        route(index, amount, notRepeated);
+        continue;
+      }
+
+      succeed(amount, terminal);
+      if (state.occurrences == persistentRepetition.maximum) {
+        fail(amount, notTerminal);
+        continue;
+      }
+      Value consumes =
+          arith::AndIOp::create(builder, location, notTerminal, *repeated);
+      Value waits =
+          arith::AndIOp::create(builder, location, notTerminal, notRepeated);
+      route(findTokenState(state.occurrences + 1, true), amount, consumes);
+      route(findTokenState(state.occurrences, false), amount, waits);
+    }
+
+    for (auto [state, nextAmount] : llvm::zip_equal(tokenStates, nextAmounts))
+      sim::SimRefStoreOp::create(builder, location, nextAmount, state.storage);
+
+    auto scheduleCount = [&](Value count, bool passed) {
+      std::optional<ReportCallback> &report = passed ? passReport : failReport;
+      if (!report)
+        return;
+      Block *loop = addBlock();
+      Block *body = addBlock();
+      Block *done = addBlock();
+      loop->addArgument(stateType, location);
+      cf::BranchOp::create(builder, location, loop, ValueRange{count});
+      setCurrent(loop);
+      Value remaining = loop->getArgument(0);
+      Value nonzero = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, remaining, zero);
+      cf::CondBranchOp::create(builder, location, nonzero, body, ValueRange{},
+                               done, ValueRange{});
+      setCurrent(body);
+      scheduleResult(passed);
+      Value next = arith::SubIOp::create(builder, location, remaining, one);
+      cf::BranchOp::create(builder, location, loop, ValueRange{next});
+      setCurrent(done);
+    };
+    scheduleCount(successCount, true);
+    scheduleCount(failureCount, false);
+    cf::BranchOp::create(builder, location, wait);
+    return success();
+  }
 
   if (multiClockAttempt) {
     function->setAttr("home_region",
