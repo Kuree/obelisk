@@ -48,6 +48,14 @@ class SvTestsHelpersTest(unittest.TestCase):
         )
         self.assertEqual(svtests._mode({}), "elaboration")
 
+    def test_compile_threads_are_divided_across_active_tests(self):
+        with mock.patch.object(
+                svtests.runner, "available_cpu_count", return_value=24):
+            self.assertEqual(svtests._compile_threads_per_test(24, 1027), 1)
+            self.assertEqual(svtests._compile_threads_per_test(6, 1027), 4)
+            self.assertEqual(svtests._compile_threads_per_test(24, 2), 12)
+            self.assertEqual(svtests._compile_threads_per_test(1, 1), 24)
+
     def test_assertion_output_is_checked_without_arbitrary_python(self):
         self.assertEqual(
             svtests._assertions_pass(
@@ -105,7 +113,29 @@ class SvTestsHelpersTest(unittest.TestCase):
                 ],
             )
             self.assertEqual(includes, [str(core / "include")])
-            self.assertEqual(defines, ["ENABLE=1"])
+        self.assertEqual(defines, ["ENABLE=1"])
+
+    def test_design_compile_forwards_its_thread_budget(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            core = root / "third_party" / "cores" / "example"
+            core.mkdir(parents=True)
+            (core / "design.sv").write_text(
+                "module design; endmodule\n", encoding="utf-8")
+            (core / "compile.f").write_text(
+                "design.sv\n", encoding="utf-8")
+            with mock.patch.object(
+                    svtests.runner,
+                    "compile_frontend",
+                    return_value=runner.CompileResult(True, ""),
+            ) as compile_frontend:
+                name, outcome = svtests._compile_design(
+                    "obelisk", root, "example", 60, 3)
+
+            self.assertEqual(name, "example")
+            self.assertEqual(outcome.status, model.PASS)
+            flags = compile_frontend.call_args.args[3]
+            self.assertEqual(flags.count("--compile-threads=3"), 1)
 
 
 class SvTestsJudgeTest(unittest.TestCase):
@@ -284,6 +314,19 @@ class SvTestsJudgeTest(unittest.TestCase):
         self.assertNotIn("--execution-tier=bytecode", flags)
         self.assertNotIn("-fno-lto", flags)
 
+    def test_parallel_compile_budget_is_forwarded_to_driver(self):
+        self.write_test(":type: simulation")
+        build, compile_design, execute = self.native_patches(
+            runner.ExecResult(True, "", False, returncode=0))
+        with build, compile_design as compile_mock, execute:
+            _, outcome = svtests.judge_one(
+                "obelisk", self.root, self.test, 60, 10,
+                compile_threads=3)
+
+        self.assertEqual(outcome.status, model.PASS)
+        flags = compile_mock.call_args.args[3]
+        self.assertEqual(flags.count("--compile-threads=3"), 1)
+
     def test_uvm_simulation_without_run_uses_bytecode_policy(self):
         self.write_test(":type: simulation_without_run\n:tags: uvm")
         build, compile_design, execute = self.native_patches(
@@ -313,13 +356,15 @@ class SvTestsJudgeTest(unittest.TestCase):
             ) as compile_frontend,
         ):
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10)
+                "obelisk", self.root, self.test, 60, 10,
+                compile_threads=2)
 
         self.assertEqual(outcome.status, model.PASS)
         flags = compile_frontend.call_args.args[3]
         self.assertIn("UVM_NO_DPI", flags)
         self.assertNotIn("--execution-tier=bytecode", flags)
         self.assertNotIn("-fno-lto", flags)
+        self.assertEqual(flags.count("--compile-threads=2"), 1)
 
     def test_parsing_test_stops_after_frontend(self):
         self.write_test(":type: parsing")
@@ -409,6 +454,16 @@ class SvTestsJudgeTest(unittest.TestCase):
 
 
 class BenchmarkRunnerTest(unittest.TestCase):
+    def test_available_cpu_count_prefers_process_affinity(self):
+        with (
+            mock.patch.object(
+                runner.os, "process_cpu_count", None, create=True),
+            mock.patch.object(
+                runner.os, "sched_getaffinity", return_value={2, 4, 6}),
+            mock.patch.object(runner.os, "cpu_count", return_value=24),
+        ):
+            self.assertEqual(runner.available_cpu_count(), 3)
+
     def test_execute_preserves_process_returncode(self):
         completed = subprocess.CompletedProcess(
             args=[], returncode=19, stdout="diagnostic\n", stderr="")

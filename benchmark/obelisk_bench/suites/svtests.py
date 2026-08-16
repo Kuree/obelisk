@@ -292,6 +292,13 @@ def _test_timeout(values: dict[str, str], default: float) -> float:
         raise ValueError(f"invalid test timeout: {spelling!r}") from error
 
 
+def _compile_threads_per_test(jobs: int, task_count: int) -> int:
+    """Divide the host thread budget across concurrently compiled tests."""
+    hardware_threads = runner.available_cpu_count()
+    active_tests = max(1, min(jobs, task_count))
+    return max(1, hardware_threads // active_tests)
+
+
 def _expected_failure(
         rel: str, compiled: runner.CompileResult,
 ) -> tuple[str, model.Outcome] | None:
@@ -310,6 +317,7 @@ def judge_one(
         run_timeout: float,
         vpi_code: tuple[str, ...] = (),
         vpi_mode: str | None = None,
+        compile_threads: int | None = None,
 ) -> tuple[str, model.Outcome]:
     """Compile, optionally run, and judge one sv-tests test."""
     rel = str(test.relative_to(root / "tests"))
@@ -356,6 +364,8 @@ def judge_one(
     top = values.get("top_module", "")
     if top:
         flags.append("--top=" + top)
+    if compile_threads is not None:
+        flags.append(f"--compile-threads={compile_threads}")
 
     try:
         timeout = _test_timeout(values, run_timeout)
@@ -556,6 +566,7 @@ def _compile_design(
         root: Path,
         design: str,
         compile_timeout: float,
+        compile_threads: int,
 ) -> tuple[str, model.Outcome]:
     core_dir = root / "third_party" / "cores" / design
     if not core_dir.is_dir():
@@ -575,6 +586,7 @@ def _compile_design(
         flags += ["-I", include]
     for define in defines:
         flags += ["-D", define]
+    flags.append(f"--compile-threads={compile_threads}")
     with tempfile.TemporaryDirectory(prefix="obelisk-dgn-") as tmp:
         compiled = runner.compile_frontend(
             obelisk,
@@ -616,8 +628,10 @@ def run(root: Path, args) -> dict[str, model.Outcome]:
             )
         print(f"Compiling {len(designs)} sv-tests designs with "
               f"-j{args.jobs} ...")
+        compile_threads = _compile_threads_per_test(args.jobs, len(designs))
+        print(f"Using {compile_threads} Obelisk compile thread(s) per design")
         tasks = [
-            (obelisk, root, name, compile_timeout)
+            (obelisk, root, name, compile_timeout, compile_threads)
             for name in designs
         ]
         if not tasks:
@@ -635,11 +649,13 @@ def run(root: Path, args) -> dict[str, model.Outcome]:
     vpi_code = tuple(
         str(Path(path).resolve()) for path in getattr(args, "vpi_code", []))
     vpi_mode = getattr(args, "vpi", None)
+    compile_threads = _compile_threads_per_test(args.jobs, len(tests))
     print(f"Running {len(tests)} sv-tests tests with -j{args.jobs} ...")
+    print(f"Using {compile_threads} Obelisk compile thread(s) per test")
 
     tasks = [
         (obelisk, root, test, compile_timeout, args.timeout,
-         vpi_code, vpi_mode)
+         vpi_code, vpi_mode, compile_threads)
         for test in tests
     ]
     if not tasks:

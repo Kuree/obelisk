@@ -332,3 +332,21 @@ def execute(binary: str, timeout: float, args: list[str] | None = None,
                 continue
             return ExecResult(ok=False, stdout=f"cannot execute {binary}: {error}",
                               timed_out=False)
+
+
+def available_cpu_count() -> int:
+    """Return CPUs available to this process, respecting affinity/cpusets."""
+    process_cpu_count = getattr(os, "process_cpu_count", None)
+    if process_cpu_count is not None:
+        count = process_cpu_count()
+        if count:
+            return count
+    get_affinity = getattr(os, "sched_getaffinity", None)
+    if get_affinity is not None:
+        try:
+            count = len(get_affinity(0))
+            if count:
+                return count
+        except OSError:
+            pass
+    return os.cpu_count() or 1

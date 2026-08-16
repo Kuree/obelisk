@@ -65,11 +65,15 @@ python3 benchmark/run.py report --history verilator
 python3 benchmark/run.py verilator --suite-root /path/to/verilator --greedy
 ```
 
-Useful flags: `-j` (parallel workers, default all cores), `--timeout` (per-test
-execution timeout, default 10s), `--obelisk PATH` (driver binary),
+Useful flags: `-j` (parallel workers, default all CPUs available to the
+process), `--timeout` (per-test execution timeout, default 10s), `--obelisk
+PATH` (driver binary),
 `--vpi-code PATH` (repeatable native module components), and
 `--vpi=off|read|full`. VPI defaults to `full` when code is supplied and `off`
 otherwise. `CC` and `CXX` select the native compilers used to form a VPI DSO.
+The sv-tests runner divides that same affinity-aware CPU budget across active
+tests, preventing each compiler process from creating another full-size thread
+pool.
 The Obelisk binary is otherwise resolved from `OBELISK_BENCH_COMPILER`, then
 the repo-relative `build/tools/driver/obelisk`. A suite checkout is resolved
 from `--suite-root`, then `OBELISK_BENCH_<SUITE>_ROOT`, then

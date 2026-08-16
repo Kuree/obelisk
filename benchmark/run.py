@@ -16,13 +16,12 @@ Examples:
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from obelisk_bench import classify, history, locate, model  # noqa: E402
+from obelisk_bench import classify, history, locate, model, runner  # noqa: E402
 from obelisk_bench.suites import REGISTRY  # noqa: E402
 
 
@@ -35,6 +34,20 @@ def _print_summary(summary: dict) -> None:
           f"{summary['skipped']} skipped")
 
 
+def _print_failures(outcomes: dict[str, model.Outcome]) -> None:
+    failures = [
+        (name, outcome)
+        for name, outcome in sorted(outcomes.items())
+        if outcome.status in (model.COMPILE_FAIL, model.RUN_FAIL)
+    ]
+    if not failures:
+        return
+    print("\nFailure details:")
+    for name, outcome in failures:
+        print(f"\n[{outcome.status}] {name}")
+        print(outcome.log.rstrip() or "(no diagnostic output)")
+
+
 def command_run(args) -> int:
     suite = REGISTRY[args.suite]
     args.obelisk_binary = str(locate.resolve_compiler(args.obelisk))
@@ -45,6 +58,8 @@ def command_run(args) -> int:
 
     summary = model.summarize(outcomes)
     _print_summary(summary)
+    if args.show_failures:
+        _print_failures(outcomes)
 
     # Only compile-failure diagnostics feed the blocker table: those name a
     # missing feature. A run-fail carries program stdout, not a diagnostic, so
@@ -94,7 +109,8 @@ def build_parser() -> argparse.ArgumentParser:
             "--vpi-code", action="append", default=[], metavar="PATH",
             help="C/C++/native VPI module input to attach to every test "
                  "(repeatable)")
-        sub.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 1,
+        sub.add_argument("-j", "--jobs", type=int,
+                         default=runner.available_cpu_count(),
                          help="parallel workers (default: all cores)")
         sub.add_argument("--timeout", type=float, default=10.0,
                          help="per-test execution timeout in seconds (default: 10)")
@@ -102,6 +118,8 @@ def build_parser() -> argparse.ArgumentParser:
                          help="append this run to the suite's history")
         sub.add_argument("--greedy", action="store_true",
                          help="also print the greedy unblock ordering")
+        sub.add_argument("--show-failures", action="store_true",
+                         help="print each compile/run failure diagnostic")
         sub.add_argument("--lists", nargs="*", default=None,
                          help="ivtest list files to run (ivtest only)")
         if name == "svtests":
