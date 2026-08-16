@@ -284,6 +284,30 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
         return diagnose(
             "SVA property operator 'not' currently requires one "
             "deterministic one-cycle boolean operand without match items");
+      if (unary.getOperatorKind() ==
+              semantic::SVAssertionUnaryOperator::NextTime ||
+          unary.getOperatorKind() ==
+              semantic::SVAssertionUnaryOperator::SNextTime)
+        return diagnose(
+            Twine("SVA property operator '") +
+            semantic::stringifySVAssertionUnaryOperator(
+                unary.getOperatorKind()) +
+            "' currently requires one fixed nonnegative delay and a bounded "
+            "operand within the 63-cycle horizon");
+      if (unary.getOperatorKind() ==
+              semantic::SVAssertionUnaryOperator::Always ||
+          unary.getOperatorKind() ==
+              semantic::SVAssertionUnaryOperator::SAlways ||
+          unary.getOperatorKind() ==
+              semantic::SVAssertionUnaryOperator::Eventually ||
+          unary.getOperatorKind() ==
+              semantic::SVAssertionUnaryOperator::SEventually)
+        return diagnose(
+            Twine("SVA property operator '") +
+            semantic::stringifySVAssertionUnaryOperator(
+                unary.getOperatorKind()) +
+            "' currently requires an explicit finite nonnegative range and "
+            "bounded branches without match items");
       return diagnose(
           Twine("SVA property operator '") +
           semantic::stringifySVAssertionUnaryOperator(unary.getOperatorKind()) +
@@ -640,6 +664,31 @@ static LogicalResult appendFixedSequence(FixedSequence &result,
   return success();
 }
 
+/// Conjoin a bounded trace at an absolute clock age. This is used for finite
+/// `always` ranges, where one property attempt starts at every age in the
+/// range and all of those attempts must succeed. Unlike concatenation, the
+/// insertion age is independent of the current endpoint.
+static LogicalResult mergeFixedSequenceAt(FixedSequence &result,
+                                          const FixedSequence &nested,
+                                          uint64_t start) {
+  if (nested.ages.empty() || start + nested.ages.size() > 63 ||
+      !nested.firstMatchBoundaries.empty() || nested.vacuousSuccess)
+    return failure();
+  result.ages.resize(
+      std::max<uint64_t>(result.ages.size(), start + nested.ages.size()));
+  for (auto [age, nestedAge] : llvm::enumerate(nested.ages)) {
+    if (!nestedAge.matchItems.empty())
+      return failure();
+    llvm::append_range(result.ages[start + age].predicates,
+                       nestedAge.predicates);
+    llvm::append_range(result.ages[start + age].negatedPredicates,
+                       nestedAge.negatedPredicates);
+    llvm::append_range(result.ages[start + age].caseGuards,
+                       nestedAge.caseGuards);
+  }
+  return success();
+}
+
 /// Compile the bounded branching sequence forms into a finite set of exact
 /// traces. The runtime monitor below shares sampled predicate values and keeps
 /// one compact attempt-age word per trace. This deliberately caps expansion:
@@ -904,6 +953,99 @@ compileFixedSequenceAlternatives(Operation *operation,
     }
     llvm::append_range(*thenAlternatives, std::move(elseAlternatives));
     return std::move(*thenAlternatives);
+  }
+
+  if (auto unary = dyn_cast<semantic::SVUnaryAssertionExprOp>(operation)) {
+    SmallVector<Operation *> children = getChildren(unary);
+    if (children.size() != 1 ||
+        unary.getOperatorKind() == semantic::SVAssertionUnaryOperator::Not)
+      return failure();
+
+    int64_t minimum = 0;
+    int64_t maximum = 0;
+    bool nextTime = unary.getOperatorKind() ==
+                        semantic::SVAssertionUnaryOperator::NextTime ||
+                    unary.getOperatorKind() ==
+                        semantic::SVAssertionUnaryOperator::SNextTime;
+    bool always =
+        unary.getOperatorKind() == semantic::SVAssertionUnaryOperator::Always ||
+        unary.getOperatorKind() == semantic::SVAssertionUnaryOperator::SAlways;
+    bool eventually = unary.getOperatorKind() ==
+                          semantic::SVAssertionUnaryOperator::Eventually ||
+                      unary.getOperatorKind() ==
+                          semantic::SVAssertionUnaryOperator::SEventually;
+    if (!nextTime && !always && !eventually)
+      return failure();
+
+    if (!unary.getHasRange()) {
+      if (!nextTime)
+        return failure();
+      minimum = maximum = 1;
+    } else {
+      if (unary.getRangeIsUnbounded() || !unary.getRangeMin() ||
+          !unary.getRangeMax())
+        return failure();
+      minimum = *unary.getRangeMin();
+      maximum = *unary.getRangeMax();
+    }
+    if (minimum < 0 || maximum < minimum || maximum > 62 ||
+        (nextTime && minimum != maximum))
+      return failure();
+
+    FailureOr<FixedSequenceAlternatives> nested =
+        compileFixedSequenceAlternatives(children.front(), resolvedClock);
+    if (failed(nested) || nested->empty())
+      return failure();
+
+    if (nextTime) {
+      FixedSequenceAlternatives results;
+      results.reserve(nested->size());
+      for (const FixedSequence &alternative : *nested) {
+        FixedSequence shifted;
+        if (failed(appendFixedSequence(shifted, alternative,
+                                       static_cast<uint64_t>(minimum))))
+          return failure();
+        results.push_back(std::move(shifted));
+      }
+      return results;
+    }
+
+    uint64_t offsets = static_cast<uint64_t>(maximum - minimum) + 1;
+    if (eventually) {
+      if (nested->size() > maxFixedSequenceAlternatives / offsets)
+        return failure();
+      FixedSequenceAlternatives results;
+      results.reserve(nested->size() * offsets);
+      for (int64_t delay = minimum; delay <= maximum; ++delay) {
+        for (const FixedSequence &alternative : *nested) {
+          FixedSequence shifted;
+          if (failed(appendFixedSequence(shifted, alternative,
+                                         static_cast<uint64_t>(delay))))
+            return failure();
+          results.push_back(std::move(shifted));
+        }
+      }
+      return results;
+    }
+
+    FixedSequenceAlternatives results(1);
+    for (int64_t delay = minimum; delay <= maximum; ++delay) {
+      if (results.size() > maxFixedSequenceAlternatives / nested->size())
+        return failure();
+      FixedSequenceAlternatives expanded;
+      expanded.reserve(results.size() * nested->size());
+      for (const FixedSequence &prefix : results) {
+        for (const FixedSequence &alternative : *nested) {
+          FixedSequence combined = prefix;
+          if (failed(mergeFixedSequenceAt(combined, alternative,
+                                          static_cast<uint64_t>(delay))))
+            return failure();
+          expanded.push_back(std::move(combined));
+        }
+      }
+      results = std::move(expanded);
+    }
+    return results;
   }
 
   auto binary = dyn_cast<semantic::SVBinaryAssertionExprOp>(operation);
