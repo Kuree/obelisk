@@ -4,12 +4,14 @@
 // RUN: not obelisk-opt %t/always.mlir '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s --check-prefix=ALWAYS
 // RUN: not obelisk-opt %t/until.mlir '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNTIL
 // RUN: not obelisk-opt %t/empty-property.mlir '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s --check-prefix=EMPTY
+// RUN: not obelisk-opt %t/unbounded-zero-repetition.mlir '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNBOUNDED-ZERO
 
 // DELAY: error: unbounded sequence delay ##[M:$] currently requires one final delay with M no greater than 63, a deterministic bounded prefix, and one Boolean terminal without locals or match items
 // NONCONSECUTIVE: error: nonconsecutive sequence repetition [=] currently requires a positive finite range no greater than 63 on one boolean term, optionally preceded by a deterministic bounded prefix and followed by ##1 plus one boolean term
 // ALWAYS: error: SVA property operator 'always' currently requires its unbounded/no-range form over one deterministic one-cycle Boolean operand without locals or match items
 // UNTIL: error: SVA property operator 'until' currently requires two deterministic one-cycle boolean operands without locals, match items, disable iff, or nested property composition
 // EMPTY: error: a sequence used as a property cannot admit an empty match; use positive-delay concatenation to eliminate the empty endpoint
+// UNBOUNDED-ZERO: error: unbounded sequence repetition [*] currently requires a positive minimum no greater than 63 on one Boolean term, optionally preceded by a deterministic bounded prefix and followed by ##1 plus one Boolean term
 
 //--- unbounded-delay.mlir
 
@@ -79,6 +81,39 @@ module {
               }
               obelisk.sv.assertion.simple attributes {has_repetition = true, is_null = false, node_id = 112 : i64, repetition_is_unbounded = false, repetition_kind = 0 : i32, repetition_max = 0 : i64, repetition_min = 0 : i64} {
                 obelisk.sv.expression.named_value attributes {node_id = 113 : i64, referenced_path = "top.a", referenced_symbol = @e1.$root::@e3.top::@e4.top::@e6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+//--- unbounded-zero-repetition.mlir
+
+module {
+  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 200 : i64, sym_name = "u0.top"} {
+  }
+  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 201 : i64, sym_name = "u1.$root"} {
+    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 202 : i64, sym_name = "u2"} {
+    }
+    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 203 : i64, referenced_path = "top", referenced_symbol = @u0.top, sym_name = "u3.top"} {
+      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 204 : i64, sym_name = "u4.top"} {
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.clk", lifetime = 1 : i32, name = "clk", node_id = 205 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "u5.clk"} {
+        }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.a", lifetime = 1 : i32, name = "a", node_id = 206 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "u6.a"} {
+        }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 207 : i64, procedure_kind = 2 : i32, sym_name = "u7", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 208 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 209 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 210 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 211 : i64, referenced_path = "top.clk", referenced_symbol = @u1.$root::@u3.top::@u4.top::@u5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.simple attributes {has_repetition = true, is_null = false, node_id = 212 : i64, repetition_is_unbounded = true, repetition_kind = 0 : i32, repetition_min = 0 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 213 : i64, referenced_path = "top.a", referenced_symbol = @u1.$root::@u3.top::@u4.top::@u6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                 }
               }
             }

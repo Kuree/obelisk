@@ -98,6 +98,7 @@ struct PersistentRepetitionSequence {
       semantic::SVSequenceRepetitionKind::Consecutive;
   uint64_t minimum = 0;
   uint64_t maximum = 0;
+  bool unbounded = false;
   bool hasTerminal = false;
 };
 
@@ -293,12 +294,33 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
     auto diagnoseRepetition = [&](semantic::SVSequenceRepetitionKind kind,
                                   bool unbounded,
                                   std::optional<int64_t> minimum) {
+      StringRef spelling;
+      switch (kind) {
+      case semantic::SVSequenceRepetitionKind::Consecutive:
+        spelling = "[*]";
+        break;
+      case semantic::SVSequenceRepetitionKind::Nonconsecutive:
+        spelling = "[=]";
+        break;
+      case semantic::SVSequenceRepetitionKind::GoTo:
+        spelling = "[->]";
+        break;
+      }
+      if (nested && (unbounded ||
+                     kind != semantic::SVSequenceRepetitionKind::Consecutive)) {
+        return diagnose(
+            Twine("persistent sequence repetition ") + spelling +
+            " does not yet compose with an implication antecedent or "
+            "consequent");
+      }
+      if (unbounded) {
+        return diagnose(
+            Twine("unbounded sequence repetition ") + spelling +
+            " currently requires a positive minimum no greater than 63 "
+            "on one Boolean term, optionally preceded by a deterministic "
+            "bounded prefix and followed by ##1 plus one Boolean term");
+      }
       if (kind == semantic::SVSequenceRepetitionKind::Nonconsecutive) {
-        if (nested) {
-          return diagnose(
-              "nonconsecutive sequence repetition [=] does not yet compose "
-              "with an implication antecedent or consequent");
-        }
         return diagnose(
             "nonconsecutive sequence repetition [=] currently requires a "
             "positive finite range no greater than 63 on one boolean term, "
@@ -306,21 +328,12 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
             "followed by ##1 plus one boolean term");
       }
       if (kind == semantic::SVSequenceRepetitionKind::GoTo) {
-        if (nested) {
-          return diagnose(
-              "goto sequence repetition [->] does not yet compose with an "
-              "implication antecedent or consequent");
-        }
         return diagnose(
             "goto sequence repetition [->] currently requires a positive "
             "finite range no greater than 63 on one boolean term, optionally "
             "preceded by a deterministic bounded prefix and followed by ##1 "
             "plus one boolean term");
       }
-      if (unbounded)
-        return diagnose(
-            "unbounded consecutive sequence repetition [*...:$] is not "
-            "executable yet");
       if (minimum && *minimum == 0)
         return diagnose(
             "empty consecutive repetition [*0...] currently requires "
@@ -994,8 +1007,14 @@ static LogicalResult mergeFixedSequenceAt(FixedSequence &result,
 /// Recognize the high-frequency persistent repetition forms without expanding
 /// their unbounded inter-occurrence waits into a finite horizon:
 ///
+///   fixed-prefix ##N boolean[*M:$]  [##1 boolean]
 ///   fixed-prefix ##N boolean[->M:N] [##1 boolean]
 ///   fixed-prefix ##N boolean[=M:N]  [##1 boolean]
+///
+/// The goto/nonconsecutive upper bound may also be `$`. An unbounded DFA
+/// saturates its occurrence count at M: once the lower bound is met, larger
+/// counts have identical future behavior. Consecutive repetition uses the
+/// same saturation for its eligible run. This keeps runtime state O(M).
 ///
 /// The generated monitor below keeps aggregate token counts per DFA state, so
 /// runtime memory is bounded by N rather than by the number or age of live
@@ -1032,28 +1051,39 @@ compilePersistentRepetition(Operation *operation) {
   semantic::SVSimpleAssertionExprOp repetition;
   for (auto [index, child] : llvm::enumerate(children)) {
     auto simple = dyn_cast<semantic::SVSimpleAssertionExprOp>(child);
-    if (!simple || !simple.getHasRepetition() ||
-        (simple.getRepetitionKind() !=
-             semantic::SVSequenceRepetitionKind::Nonconsecutive &&
-         simple.getRepetitionKind() !=
-             semantic::SVSequenceRepetitionKind::GoTo))
+    if (!simple || !simple.getHasRepetition() || !simple.getRepetitionKind())
+      continue;
+    bool persistentKind =
+        simple.getRepetitionIsUnbounded() ||
+        *simple.getRepetitionKind() ==
+            semantic::SVSequenceRepetitionKind::Nonconsecutive ||
+        *simple.getRepetitionKind() == semantic::SVSequenceRepetitionKind::GoTo;
+    if (!persistentKind)
       continue;
     if (repetition)
       return failure();
     repetition = simple;
     repetitionIndex = index;
   }
-  if (!repetition || repetition.getRepetitionIsUnbounded() ||
-      !repetition.getRepetitionMin() || !repetition.getRepetitionMax() ||
+  if (!repetition || !repetition.getRepetitionMin() ||
       *repetition.getRepetitionMin() <= 0 ||
-      *repetition.getRepetitionMax() < *repetition.getRepetitionMin() ||
-      *repetition.getRepetitionMax() > 63)
+      *repetition.getRepetitionMin() > 63)
+    return failure();
+
+  bool unbounded = repetition.getRepetitionIsUnbounded();
+  if (!unbounded &&
+      (!repetition.getRepetitionMax() ||
+       *repetition.getRepetitionMax() < *repetition.getRepetitionMin() ||
+       *repetition.getRepetitionMax() > 63))
     return failure();
 
   PersistentRepetitionSequence result;
   result.kind = *repetition.getRepetitionKind();
   result.minimum = static_cast<uint64_t>(*repetition.getRepetitionMin());
-  result.maximum = static_cast<uint64_t>(*repetition.getRepetitionMax());
+  result.unbounded = unbounded;
+  result.maximum = unbounded
+                       ? result.minimum
+                       : static_cast<uint64_t>(*repetition.getRepetitionMax());
 
   SmallVector<Operation *> repeatedChildren = getChildren(repetition);
   if (repeatedChildren.size() != 1)
@@ -2442,7 +2472,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   if (hasPersistentRepetition && (localInstance || implication || disable ||
                                   expectMonitor || firstMatch || coverSequence))
     return emitError(getSemanticLocation(property))
-               << "persistent [->]/[=] repetition currently requires a plain "
+               << "persistent [*]/[->]/[=] repetition currently requires a "
+                  "plain "
                   "assert, assume, cover-property, or restrict directive "
                   "without locals, implication, disable iff, first_match, "
                   "expect, or cover-sequence per-match accounting",
@@ -2506,9 +2537,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                   "disable iff, or expect",
            failure();
   if (endStrength &&
-      (implication || branchingSequence || hasPersistentRepetition ||
-       hasPersistentUntil || hasPersistentUnary || firstMatch ||
-       expectMonitor || coverSequence))
+      (implication || branchingSequence || hasPersistentUntil ||
+       hasPersistentUnary || firstMatch || expectMonitor || coverSequence))
     return emitError(getSemanticLocation(endStrength))
                << "SVA '"
                << semantic::stringifySVAssertionStrength(
@@ -2516,7 +2546,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                << "' end-of-simulation qualification currently requires "
                   "one outermost deterministic bounded property without "
                   "implication/followed-by, branching composition, "
-                  "persistent repetition/until, first_match, expect, or "
+                  "persistent until, first_match, expect, or "
                   "cover-sequence per-match accounting",
            failure();
   if (branchingSequence &&
@@ -4254,10 +4284,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             persistentRepetition.kind)));
     function->setAttr("obelisk_sim.persistent_repetition_min",
                       builder.getI64IntegerAttr(persistentRepetition.minimum));
-    function->setAttr("obelisk_sim.persistent_repetition_max",
-                      builder.getI64IntegerAttr(persistentRepetition.maximum));
+    if (persistentRepetition.unbounded)
+      function->setAttr("obelisk_sim.persistent_repetition_unbounded",
+                        builder.getUnitAttr());
+    else
+      function->setAttr(
+          "obelisk_sim.persistent_repetition_max",
+          builder.getI64IntegerAttr(persistentRepetition.maximum));
     function->setAttr("obelisk_sim.persistent_repetition_dfa",
                       builder.getUnitAttr());
+    function->setAttr("obelisk_sim.sva_transition_normal_form",
+                      builder.getStringAttr("canonical-minimal"));
 
     struct TokenState {
       uint64_t occurrences = 0;
@@ -4278,7 +4315,25 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                builder, location,
                sim::RefType::get(function.getContext(), stateType), zero)});
     };
-    if (!persistentRepetition.hasTerminal) {
+    if (persistentRepetition.unbounded && persistentRepetition.hasTerminal) {
+      switch (persistentRepetition.kind) {
+      case semantic::SVSequenceRepetitionKind::Consecutive:
+        for (uint64_t count = 0; count < persistentRepetition.minimum; ++count)
+          addTokenState(count, false);
+        addTokenState(persistentRepetition.minimum, true);
+        break;
+      case semantic::SVSequenceRepetitionKind::GoTo:
+        for (uint64_t count = 0; count < persistentRepetition.minimum; ++count)
+          addTokenState(count, false);
+        addTokenState(persistentRepetition.minimum, false);
+        addTokenState(persistentRepetition.minimum, true);
+        break;
+      case semantic::SVSequenceRepetitionKind::Nonconsecutive:
+        for (uint64_t count = 0; count <= persistentRepetition.minimum; ++count)
+          addTokenState(count, false);
+        break;
+      }
+    } else if (!persistentRepetition.hasTerminal) {
       for (uint64_t count = 0; count < persistentRepetition.minimum; ++count)
         addTokenState(count, false);
     } else if (persistentRepetition.kind ==
@@ -4307,6 +4362,26 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       prefixStateStorage = sim::SimRefAllocOp::create(
           builder, location,
           sim::RefType::get(function.getContext(), stateType), zero);
+
+    bool weakCompletion = endStrength ? endStrength.getStrength() ==
+                                            semantic::SVAssertionStrength::Weak
+                                      : assertion;
+    SmallVector<Value> endCounts;
+    SmallVector<Value> endBitsets;
+    if (!weakCompletion || !cover) {
+      for (const TokenState &state : tokenStates)
+        endCounts.push_back(state.storage);
+      if (prefixStateStorage)
+        endBitsets.push_back(prefixStateStorage);
+    }
+    StringRef completionTag =
+        weakCompletion ? "repetition_weak" : "repetition_strong";
+    Operation *completionSource =
+        endStrength ? endStrength.getOperation() : property;
+    if (failed(outlineCountedEndOfSimulation(endCounts, endBitsets,
+                                             weakCompletion, completionTag,
+                                             completionSource)))
+      return failure();
 
     Block *wait = addBlock();
     Block *sample = addBlock();
@@ -4478,7 +4553,66 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           route(findTokenState(state.occurrences + 1, false), amount,
                 *repeated);
         }
-        route(index, amount, notRepeated);
+        if (persistentRepetition.kind ==
+            semantic::SVSequenceRepetitionKind::Consecutive)
+          fail(amount, notRepeated);
+        else
+          route(index, amount, notRepeated);
+        continue;
+      }
+
+      if (persistentRepetition.unbounded) {
+        switch (persistentRepetition.kind) {
+        case semantic::SVSequenceRepetitionKind::Consecutive: {
+          if (!state.pending) {
+            uint64_t nextCount = state.occurrences + 1;
+            route(findTokenState(nextCount,
+                                 nextCount >= persistentRepetition.minimum),
+                  amount, *repeated);
+            fail(amount, notRepeated);
+            break;
+          }
+          succeed(amount, terminal);
+          Value continues =
+              arith::AndIOp::create(builder, location, notTerminal, *repeated);
+          Value stops = arith::AndIOp::create(builder, location, notTerminal,
+                                              notRepeated);
+          route(index, amount, continues);
+          fail(amount, stops);
+          break;
+        }
+        case semantic::SVSequenceRepetitionKind::GoTo: {
+          if (state.pending) {
+            succeed(amount, terminal);
+            Value consumes = arith::AndIOp::create(builder, location,
+                                                   notTerminal, *repeated);
+            Value waits = arith::AndIOp::create(builder, location, notTerminal,
+                                                notRepeated);
+            route(index, amount, consumes);
+            route(findTokenState(persistentRepetition.minimum, false), amount,
+                  waits);
+            break;
+          }
+          uint64_t nextCount =
+              std::min(state.occurrences + 1, persistentRepetition.minimum);
+          route(findTokenState(nextCount,
+                               nextCount >= persistentRepetition.minimum),
+                amount, *repeated);
+          route(index, amount, notRepeated);
+          break;
+        }
+        case semantic::SVSequenceRepetitionKind::Nonconsecutive: {
+          if (state.occurrences >= persistentRepetition.minimum) {
+            succeed(amount, terminal);
+            route(index, amount, notTerminal);
+            break;
+          }
+          route(findTokenState(state.occurrences + 1, false), amount,
+                *repeated);
+          route(index, amount, notRepeated);
+          break;
+        }
+        }
         continue;
       }
 
