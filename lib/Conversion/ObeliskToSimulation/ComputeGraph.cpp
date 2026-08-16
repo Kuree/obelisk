@@ -1678,7 +1678,10 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
   SmallVector<uint32_t> postponedIds;
   SmallVector<SmallVector<uint32_t>> postponedGroups;
   for (Fragment &fragment : fragments) {
-    if (fragment.function.getEntryKind() == sim::EntryKind::Final)
+    bool assertionEndOfSimulationCoordinator =
+        fragment.function->hasAttr("obelisk_sim.concurrent_eos_coordinator");
+    if (fragment.function.getEntryKind() == sim::EntryKind::Final &&
+        !assertionEndOfSimulationCoordinator)
       postponedGroups.push_back({fragment.id});
     else if (fragment.function.getHomeRegion() == sim::EventRegion::Active)
       activeIds.push_back(fragment.id);
@@ -1745,7 +1748,10 @@ FailureOr<ComputeGraphResult> ComputeGraphBuilder::derive() {
   DenseMap<Operation *, SmallVector<int64_t>> functionFragments;
   for (Fragment &fragment : fragments) {
     sim::ComputeRegionKind region = sim::ComputeRegionKind::Active;
-    if (fragment.function.getEntryKind() == sim::EntryKind::Final ||
+    bool assertionEndOfSimulationCoordinator =
+        fragment.function->hasAttr("obelisk_sim.concurrent_eos_coordinator");
+    if ((fragment.function.getEntryKind() == sim::EntryKind::Final &&
+         !assertionEndOfSimulationCoordinator) ||
         fragment.function.getHomeRegion() == sim::EventRegion::Postponed)
       region = sim::ComputeRegionKind::Postponed;
     else if (fragment.function.getHomeRegion() == sim::EventRegion::Observed)

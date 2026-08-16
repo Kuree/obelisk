@@ -435,8 +435,11 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
       return diagnose(
           Twine("SVA '") +
           semantic::stringifySVAssertionStrength(strong.getStrength()) +
-          "' end-of-simulation qualification is not executable "
-          "yet");
+          "' end-of-simulation qualification currently requires one "
+          "outermost deterministic bounded property without "
+          "implication/followed-by, branching composition, persistent "
+          "operators, first_match, expect, or cover-sequence per-match "
+          "accounting");
     if (auto abort = dyn_cast<semantic::SVAbortAssertionExprOp>(current)) {
       std::string spelling =
           (Twine(abort.getIsSynchronous() ? "sync_" : "") +
@@ -590,8 +593,8 @@ static FailureOr<FixedSequence> compileFixedSequence(Operation *operation) {
         return failure();
       FailureOr<FixedSequence> nested = compileFixedSequence(child);
       if (failed(nested) ||
-          failed(appendFixedSequence(
-              result, *nested, static_cast<uint64_t>(minimum.getInt()))))
+          failed(appendFixedSequence(result, *nested,
+                                     static_cast<uint64_t>(minimum.getInt()))))
         return failure();
     }
     return result;
@@ -1893,8 +1896,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   auto clockEvent = dyn_cast<semantic::SVSignalEventControlOp>(clock);
   SmallVector<Operation *> clockChildren =
       clockEvent ? getChildren(clockEvent) : SmallVector<Operation *>{};
-  size_t expectedClockChildren =
-      clockEvent && clockEvent.getHasIff() ? 2 : 1;
+  size_t expectedClockChildren = clockEvent && clockEvent.getHasIff() ? 2 : 1;
   if (!clockEvent || clockChildren.size() != expectedClockChildren ||
       !isAddressableExpression(clockChildren.front()))
     return emitError(getSemanticLocation(clock))
@@ -1929,6 +1931,20 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (!property)
       return candidate.emitError(
                  "property abort wraps an unsupported assertion instance"),
+             failure();
+  }
+
+  semantic::SVStrongWeakAssertionExprOp endStrength;
+  if (auto candidate =
+          dyn_cast_or_null<semantic::SVStrongWeakAssertionExprOp>(property)) {
+    SmallVector<Operation *> nested = getChildren(candidate);
+    if (nested.size() != 1)
+      return candidate.emitError("malformed strong/weak property"), failure();
+    endStrength = candidate;
+    property = unwrapAssertionInstance(nested.front());
+    if (!property)
+      return candidate.emitError(
+                 "strong/weak wraps an unsupported assertion instance"),
              failure();
   }
 
@@ -2272,6 +2288,19 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                << "branching bounded sequences currently require a plain "
                   "concurrent directive without locals, implication, "
                   "disable iff, or expect",
+           failure();
+  if (endStrength &&
+      (implication || branchingSequence || hasPersistentRepetition ||
+       hasPersistentUntil || firstMatch || expectMonitor || coverSequence))
+    return emitError(getSemanticLocation(endStrength))
+               << "SVA '"
+               << semantic::stringifySVAssertionStrength(
+                      endStrength.getStrength())
+               << "' end-of-simulation qualification currently requires "
+                  "one outermost deterministic bounded property without "
+                  "implication/followed-by, branching composition, "
+                  "persistent repetition/until, first_match, expect, or "
+                  "cover-sequence per-match accounting",
            failure();
   if (branchingSequence &&
       llvm::any_of(sequenceAlternatives, [](const FixedSequence &alternative) {
@@ -2760,6 +2789,243 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     cf::BranchOp::create(builder, location, loop, ValueRange{next});
     setCurrent(done);
   };
+
+  if (endStrength) {
+    bool strong =
+        endStrength.getStrength() == semantic::SVAssertionStrength::Strong;
+    function->setAttr("obelisk_sim.strong_weak_monitor", builder.getUnitAttr());
+    function->setAttr(
+        "obelisk_sim.end_of_simulation_strength",
+        builder.getStringAttr(
+            semantic::stringifySVAssertionStrength(endStrength.getStrength())));
+
+    // A one-cycle property has no incomplete attempt at end of simulation.
+    // For longer deterministic traces every live bit is one distinct attempt.
+    // A final-phase coordinator inspects those bits oldest-first and schedules
+    // one final-phase Reactive action for each strong failure or weak vacuous
+    // success. Weak completion is intentionally invisible to cover-property
+    // hit accounting.
+    std::optional<ReportCallback> *selectedReport =
+        strong ? &failReport : (cover ? nullptr : &passReport);
+    if (sequence.ages.size() > 1 && selectedReport && *selectedReport) {
+      auto design = function->getParentOfType<sim::SimDesignOp>();
+      if (!design)
+        return function.emitError(
+                   "strong/weak finalization requires a simulation design"),
+               failure();
+
+      uint64_t scopeID = 0;
+      std::string parentHierarchy = function.getSymName().str();
+      uint64_t parentID = function.getCodeUnitId().value_or(0);
+      for (sim::SimCodeUnitDeclOp declaration :
+           design.getBody().front().getOps<sim::SimCodeUnitDeclOp>()) {
+        if (declaration.getId() != parentID)
+          continue;
+        scopeID = declaration.getScopeId();
+        parentHierarchy = declaration.getHierarchicalName().str();
+        break;
+      }
+
+      ReportCallback &report = **selectedReport;
+      StringRef spelling =
+          semantic::stringifySVAssertionStrength(endStrength.getStrength());
+      std::string reportSymbol =
+          (function.getSymName() + ".$concurrent_eos_report." + Twine(node) +
+           "." + spelling)
+              .str();
+      std::string reportIdentity =
+          (function.getSymName() + ".$concurrent_eos_report_identity." +
+           Twine(node) + "." + spelling)
+              .str();
+      uint64_t reportCodeUnitID = stableCodeUnitID(reportIdentity);
+      std::string reportHierarchy =
+          (Twine(parentHierarchy) + ".$concurrent_eos_report." + Twine(node) +
+           "." + spelling)
+              .str();
+
+      OpBuilder outlineBuilder(function);
+      outlineBuilder.setInsertionPoint(function);
+      sim::SimCodeUnitDeclOp::create(
+          outlineBuilder, getSemanticLocation(endStrength), reportCodeUnitID,
+          scopeID, sim::EntryKind::Fork,
+          outlineBuilder.getStringAttr(reportHierarchy),
+          outlineBuilder.getStringAttr(
+              "concurrent assertion end-of-simulation report"),
+          outlineBuilder.getUnitAttr());
+      Operation *clonedReport = report.function->clone();
+      auto finalReport = cast<sim::SimFuncOp>(clonedReport);
+      finalReport.setSymName(reportSymbol);
+      finalReport->setAttr(
+          "entry_kind",
+          sim::EntryKindAttr::get(function.getContext(), sim::EntryKind::Fork));
+      finalReport->setAttr(
+          "home_region", sim::EventRegionAttr::get(function.getContext(),
+                                                   sim::EventRegion::Reactive));
+      finalReport->setAttr(
+          "domain", sim::ExecutionDomainAttr::get(
+                        function.getContext(), sim::ExecutionDomain::Design));
+      finalReport->setAttr("code_unit_id",
+                           outlineBuilder.getI64IntegerAttr(reportCodeUnitID));
+      finalReport->setAttr(sim::metadata::hierarchicalName,
+                           outlineBuilder.getStringAttr(reportHierarchy));
+      finalReport->setAttr("obelisk_sim.concurrent_eos_report",
+                           outlineBuilder.getUnitAttr());
+      outlineBuilder.insert(clonedReport);
+
+      Value context = function.getBody().front().getArgument(0);
+      SmallVector<Value> captures{context, stateStorage};
+      DenseMap<Value, unsigned> captureIndices;
+      captureIndices.try_emplace(context, 0);
+      captureIndices.try_emplace(stateStorage, 1);
+      SmallVector<unsigned> reportCaptureIndices;
+      reportCaptureIndices.reserve(report.captures.size());
+      for (Value capture : report.captures) {
+        auto [entry, inserted] =
+            captureIndices.try_emplace(capture, captures.size());
+        if (inserted)
+          captures.push_back(capture);
+        reportCaptureIndices.push_back(entry->second);
+      }
+      std::optional<unsigned> disableEpochCaptureIndex;
+      if (disableEpoch) {
+        auto found = captureIndices.find(disableEpoch);
+        if (found == captureIndices.end())
+          return function.emitError(
+                     "strong/weak report is missing its disable epoch"),
+                 failure();
+        disableEpochCaptureIndex = found->second;
+      }
+
+      SmallVector<Type> inputs;
+      SmallVector<DictionaryAttr> argumentAttrs;
+      for (auto [index, capture] : llvm::enumerate(captures)) {
+        inputs.push_back(capture.getType());
+        SmallVector<NamedAttribute> metadata;
+        if (auto argument = dyn_cast<BlockArgument>(capture);
+            argument && argument.getOwner() == &function.getBody().front()) {
+          if (DictionaryAttr source =
+                  function.getArgAttrDict(argument.getArgNumber()))
+            llvm::append_range(metadata, source);
+        }
+        if (metadata.empty())
+          metadata.push_back(builder.getNamedAttr(
+              "obelisk_sim.capture_kind",
+              sim::CaptureKindAttr::get(function.getContext(),
+                                        index == 0
+                                            ? sim::CaptureKind::Context
+                                            : sim::CaptureKind::Formal)));
+        if (isa<sim::RefType>(capture.getType()) &&
+            !isStaticallyAllocatedOverrideTarget(capture))
+          metadata.push_back(
+              builder.getNamedAttr("obelisk_sim.automatic_reference_capture",
+                                   builder.getUnitAttr()));
+        argumentAttrs.push_back(builder.getDictionaryAttr(metadata));
+      }
+
+      std::string coordinatorSymbol =
+          (function.getSymName() + ".$concurrent_eos." + Twine(node) + "." +
+           spelling)
+              .str();
+      std::string coordinatorIdentity =
+          (function.getSymName() + ".$concurrent_eos_identity." + Twine(node) +
+           "." + spelling)
+              .str();
+      uint64_t coordinatorCodeUnitID = stableCodeUnitID(coordinatorIdentity);
+      std::string coordinatorHierarchy =
+          (Twine(parentHierarchy) + ".$concurrent_eos." + Twine(node) + "." +
+           spelling)
+              .str();
+      sim::SimCodeUnitDeclOp::create(
+          outlineBuilder, getSemanticLocation(endStrength),
+          coordinatorCodeUnitID, scopeID, sim::EntryKind::Final,
+          outlineBuilder.getStringAttr(coordinatorHierarchy),
+          outlineBuilder.getStringAttr(
+              "concurrent assertion end-of-simulation coordinator"),
+          outlineBuilder.getUnitAttr());
+      SmallVector<NamedAttribute> attributes{
+          outlineBuilder.getNamedAttr(bindingsAttrName,
+                                      outlineBuilder.getArrayAttr({})),
+          outlineBuilder.getNamedAttr(
+              "code_unit_id",
+              outlineBuilder.getI64IntegerAttr(coordinatorCodeUnitID)),
+          outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
+          outlineBuilder.getNamedAttr(
+              "home_region",
+              sim::EventRegionAttr::get(function.getContext(),
+                                        sim::EventRegion::Active)),
+          outlineBuilder.getNamedAttr(
+              "domain",
+              sim::ExecutionDomainAttr::get(function.getContext(),
+                                            sim::ExecutionDomain::Design)),
+          outlineBuilder.getNamedAttr(
+              sim::metadata::hierarchicalName,
+              outlineBuilder.getStringAttr(coordinatorHierarchy)),
+      };
+      sim::SimFuncOp coordinator = sim::SimFuncOp::create(
+          outlineBuilder, getSemanticLocation(endStrength), coordinatorSymbol,
+          FunctionType::get(function.getContext(), inputs, TypeRange{}),
+          sim::EntryKind::Final, attributes, argumentAttrs);
+      SymbolTable::setSymbolVisibility(coordinator,
+                                       SymbolTable::Visibility::Private);
+      coordinator->setAttr("obelisk_sim.concurrent_eos_coordinator",
+                           builder.getUnitAttr());
+      coordinator->setAttr("obelisk_sim.detached_controls",
+                           builder.getUnitAttr());
+
+      Block *current = &coordinator.getBody().front();
+      OpBuilder coordinatorBuilder = OpBuilder::atBlockEnd(current);
+      Value live = sim::SimRefLoadOp::create(
+          coordinatorBuilder, getSemanticLocation(endStrength), stateType,
+          current->getArgument(1));
+      Value finalZero = arith::ConstantOp::create(
+          coordinatorBuilder, getSemanticLocation(endStrength), stateType,
+          coordinatorBuilder.getI64IntegerAttr(0));
+      for (uint64_t age = sequence.ages.size(); age-- > 1;) {
+        Block *reportBlock = new Block;
+        Block *continuation = new Block;
+        coordinator.getBody().push_back(reportBlock);
+        coordinator.getBody().push_back(continuation);
+        coordinatorBuilder.setInsertionPointToEnd(current);
+        Value mask = arith::ConstantOp::create(
+            coordinatorBuilder, getSemanticLocation(endStrength), stateType,
+            coordinatorBuilder.getI64IntegerAttr(uint64_t{1} << age));
+        Value present = arith::AndIOp::create(
+            coordinatorBuilder, getSemanticLocation(endStrength), live, mask);
+        Value active = arith::CmpIOp::create(
+            coordinatorBuilder, getSemanticLocation(endStrength),
+            arith::CmpIPredicate::ne, present, finalZero);
+        cf::CondBranchOp::create(
+            coordinatorBuilder, getSemanticLocation(endStrength), active,
+            reportBlock, ValueRange{}, continuation, ValueRange{});
+
+        OpBuilder reportBuilder = OpBuilder::atBlockEnd(reportBlock);
+        SmallVector<Value> reportOperands;
+        reportOperands.reserve(reportCaptureIndices.size() +
+                               static_cast<size_t>(disableEpoch != nullptr));
+        for (unsigned index : reportCaptureIndices)
+          reportOperands.push_back(
+              coordinator.getBody().front().getArgument(index));
+        if (disableEpochCaptureIndex)
+          reportOperands.push_back(sim::SimRefLoadOp::create(
+              reportBuilder, report.location, stateType,
+              coordinator.getBody().front().getArgument(
+                  *disableEpochCaptureIndex)));
+        sim::SimSpawnOp::create(reportBuilder, report.location,
+                                finalReport.getSymNameAttr(), reportOperands,
+                                ArrayAttr{}, ArrayAttr{});
+        cf::BranchOp::create(reportBuilder, getSemanticLocation(endStrength),
+                             continuation);
+        current = continuation;
+      }
+      OpBuilder returnBuilder = OpBuilder::atBlockEnd(current);
+      sim::SimReturnOp::create(returnBuilder, getSemanticLocation(endStrength),
+                               ValueRange{});
+
+      sim::SimSpawnOp::create(builder, getSemanticLocation(endStrength),
+                              coordinator.getSymNameAttr(), captures,
+                              ArrayAttr{}, ArrayAttr{});
+    }
+  }
 
   if (abort && !abort.getIsSynchronous()) {
     // Asynchronous aborts need a persistent observer in addition to the
