@@ -2307,6 +2307,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   FixedSequence sequence;
   FixedSequence antecedentSequence;
   FixedSequenceAlternatives antecedentAlternatives;
+  FixedSequenceAlternatives consequentAlternatives;
   FixedSequenceAlternatives sequenceAlternatives;
   PersistentRepetitionSequence persistentRepetition;
   bool hasPersistentRepetition = false;
@@ -2318,6 +2319,20 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   bool hasPersistentDelay = false;
   bool nonoverlapped = false;
   bool followedBy = false;
+  auto recordBooleanMinimization = [&](const BooleanMinimizationStats &stats) {
+    function->setAttr("obelisk_sim.sva_boolean_solver",
+                      builder.getStringAttr(stats.backend));
+    function->setAttr("obelisk_sim.sva_boolean_solver_queries",
+                      builder.getI64IntegerAttr(stats.solverQueries));
+    function->setAttr("obelisk_sim.sva_boolean_alternatives_before",
+                      builder.getI64IntegerAttr(stats.alternativesBefore));
+    function->setAttr("obelisk_sim.sva_boolean_alternatives_after",
+                      builder.getI64IntegerAttr(stats.alternativesAfter));
+    function->setAttr("obelisk_sim.sva_boolean_literals_before",
+                      builder.getI64IntegerAttr(stats.literalsBefore));
+    function->setAttr("obelisk_sim.sva_boolean_literals_after",
+                      builder.getI64IntegerAttr(stats.literalsAfter));
+  };
   if (multiClockAttempt) {
     // The staged actor below owns temporal evaluation. Keep the ordinary
     // validation path structurally nonempty without constructing bitset
@@ -2340,7 +2355,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
              failure();
     FailureOr<FixedSequenceAlternatives> lhs =
         compileFixedSequenceAlternatives(operands.front(), clock);
-    FailureOr<FixedSequence> rhs = compileFixedSequence(operands.back());
+    FailureOr<FixedSequenceAlternatives> rhs =
+        compileFixedSequenceAlternatives(operands.back(), clock);
     FailureOr<PersistentDelaySequence> delayedRhs =
         compilePersistentDelay(operands.back());
     if (succeeded(lhs) && llvm::any_of(*lhs, [](const FixedSequence &value) {
@@ -2352,7 +2368,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                     "nondegenerate antecedent and nonoverlapping empty "
                     "antecedents require their distinct LRM start semantics",
              failure();
-    if (succeeded(rhs) && rhs->emptyMatch)
+    if (succeeded(rhs) && llvm::any_of(*rhs, [](const FixedSequence &value) {
+          return value.emptyMatch;
+        }))
       return emitError(getSemanticLocation(operands.back()))
                  << "an empty-match sequence cannot be used as an "
                     "implication/followed-by consequent property",
@@ -2370,16 +2388,24 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                  "horizon"),
              failure();
     }
-    if ((failed(rhs) || rhs->ages.empty()) && failed(delayedRhs)) {
+    if ((failed(rhs) || rhs->empty() ||
+         llvm::any_of(*rhs, [](const FixedSequence &value) {
+           return value.ages.empty();
+         })) &&
+        failed(delayedRhs)) {
       if (diagnoseUnsupportedConcurrentFeature(operands.back(),
                                                /*nested=*/true))
         return failure();
       return binary.emitError(
-                 "AOT implication/followed-by consequent must be one "
-                 "deterministic bounded sequence within the 63-cycle "
+                 "AOT implication/followed-by consequent must expand to at "
+                 "most 256 bounded alternatives within the 63-cycle "
                  "horizon"),
              failure();
     }
+    if (!cover && succeeded(rhs))
+      if (std::optional<BooleanMinimizationStats> stats =
+              minimizeBooleanAlternatives(*rhs))
+        recordBooleanMinimization(*stats);
     implication = binary;
     if (lhs->size() == 1)
       antecedentSequence = std::move(lhs->front());
@@ -2393,7 +2419,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       // activation-aware bounded-prefix bitset and remain diagnosed below.
       sequence.ages.resize(1);
     } else {
-      sequence = std::move(*rhs);
+      if (rhs->size() == 1)
+        sequence = std::move(rhs->front());
+      else
+        consequentAlternatives = std::move(*rhs);
     }
     nonoverlapped =
         binary.getOperatorKind() ==
@@ -2467,22 +2496,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                failure();
       if (!cover) {
         if (std::optional<BooleanMinimizationStats> stats =
-                minimizeBooleanAlternatives(*compiled)) {
-          function->setAttr("obelisk_sim.sva_boolean_solver",
-                            builder.getStringAttr(stats->backend));
-          function->setAttr("obelisk_sim.sva_boolean_solver_queries",
-                            builder.getI64IntegerAttr(stats->solverQueries));
-          function->setAttr(
-              "obelisk_sim.sva_boolean_alternatives_before",
-              builder.getI64IntegerAttr(stats->alternativesBefore));
-          function->setAttr(
-              "obelisk_sim.sva_boolean_alternatives_after",
-              builder.getI64IntegerAttr(stats->alternativesAfter));
-          function->setAttr("obelisk_sim.sva_boolean_literals_before",
-                            builder.getI64IntegerAttr(stats->literalsBefore));
-          function->setAttr("obelisk_sim.sva_boolean_literals_after",
-                            builder.getI64IntegerAttr(stats->literalsAfter));
-        }
+                minimizeBooleanAlternatives(*compiled))
+          recordBooleanMinimization(*stats);
       }
       if (compiled->size() == 1)
         sequence = std::move(compiled->front());
@@ -2492,6 +2507,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   }
   bool branchingSequence = !sequenceAlternatives.empty();
   bool branchingAntecedent = !antecedentAlternatives.empty();
+  bool branchingConsequent = !consequentAlternatives.empty();
   bool boundedFirstMatch =
       firstMatch ||
       llvm::any_of(sequenceAlternatives,
@@ -2501,10 +2517,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       llvm::any_of(antecedentAlternatives,
                    [](const FixedSequence &alternative) {
                      return !alternative.firstMatchBoundaries.empty();
+                   }) ||
+      llvm::any_of(consequentAlternatives,
+                   [](const FixedSequence &alternative) {
+                     return !alternative.firstMatchBoundaries.empty();
                    });
   if (boundedFirstMatch)
     function->setAttr("obelisk_sim.first_match_monitor", builder.getUnitAttr());
-  if ((!branchingSequence && sequence.ages.empty()) ||
+  if ((!branchingSequence && !branchingConsequent && sequence.ages.empty()) ||
       llvm::any_of(sequenceAlternatives,
                    [](const FixedSequence &alternative) {
                      return alternative.ages.empty() ||
@@ -2516,7 +2536,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   size_t antecedentHorizon = antecedentSequence.ages.size();
   for (const FixedSequence &alternative : antecedentAlternatives)
     antecedentHorizon = std::max(antecedentHorizon, alternative.ages.size());
-  if (implication && antecedentHorizon + sequence.ages.size() > 63)
+  size_t consequentHorizon = sequence.ages.size();
+  for (const FixedSequence &alternative : consequentAlternatives)
+    consequentHorizon = std::max(consequentHorizon, alternative.ages.size());
+  if (implication && antecedentHorizon + consequentHorizon > 63)
     return op.emitError(
                "combined implication/followed-by antecedent/consequent state "
                "exceeds the 63-cycle bounded monitor horizon"),
@@ -2571,6 +2594,21 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return emitError(getSemanticLocation(implication))
                << "branching implication/followed-by antecedents cannot "
                   "contain vacuous property alternatives",
+           failure();
+  if (branchingConsequent &&
+      (branchingAntecedent || antecedentSequence.ages.size() != 1 ||
+       localInstance || disable || expectMonitor || endStrength))
+    return emitError(getSemanticLocation(implication))
+               << "branching implication/followed-by consequents currently "
+                  "require one Boolean antecedent in a plain concurrent "
+                  "directive without locals, disable iff, expect, or outer "
+                  "strong/weak qualification",
+           failure();
+  if (branchingConsequent &&
+      llvm::any_of(consequentAlternatives, hasMatchItems))
+    return emitError(getSemanticLocation(implication))
+               << "branching implication/followed-by consequents do not yet "
+                  "support match items or assertion-local flow",
            failure();
   if (hasPersistentRepetition && (localInstance || implication ||
                                   expectMonitor || firstMatch || coverSequence))
@@ -2782,7 +2820,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       (disable && !persistentStateOwner) ||
       (abort && !abort.getIsSynchronous() && !persistentStateOwner) ||
       (!branchingSequence && sequence.ages.size() > 1) ||
-      (implication && !branchingAntecedent && !hasPersistentDelay &&
+      (implication && !branchingAntecedent && !branchingConsequent &&
+       !hasPersistentDelay &&
        (nonoverlapped || antecedentSequence.ages.size() > 1));
   if (implication && antecedentHorizon > 1)
     function->setAttr("obelisk_sim.bounded_antecedent_horizon",
@@ -5839,23 +5878,34 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return success();
   }
 
-  if (branchingSequence) {
+  if (branchingSequence || branchingConsequent) {
+    ArrayRef<FixedSequence> alternatives =
+        branchingConsequent ? ArrayRef<FixedSequence>(consequentAlternatives)
+                            : ArrayRef<FixedSequence>(sequenceAlternatives);
     bool perMatchCover = coverSequence;
-    function->setAttr("obelisk_sim.branching_sequence_monitor",
+    function->setAttr(branchingConsequent
+                          ? "obelisk_sim.branching_consequent_monitor"
+                          : "obelisk_sim.branching_sequence_monitor",
                       builder.getUnitAttr());
-    function->setAttr("obelisk_sim.branching_sequence_alternatives",
-                      builder.getI64IntegerAttr(sequenceAlternatives.size()));
+    function->setAttr(branchingConsequent
+                          ? "obelisk_sim.branching_consequent_alternatives"
+                          : "obelisk_sim.branching_sequence_alternatives",
+                      builder.getI64IntegerAttr(alternatives.size()));
+    if (branchingConsequent && nonoverlapped)
+      function->setAttr("obelisk_sim.branching_consequent_nonoverlapped",
+                        builder.getUnitAttr());
     size_t vacuousAlternatives = llvm::count_if(
-        sequenceAlternatives, [](const FixedSequence &alternative) {
+        alternatives, [](const FixedSequence &alternative) {
           return alternative.vacuousSuccess;
         });
     if (vacuousAlternatives != 0)
       function->setAttr("obelisk_sim.vacuous_sequence_alternatives",
                         builder.getI64IntegerAttr(vacuousAlternatives));
     SmallVector<Value> alternativeStates;
-    alternativeStates.reserve(sequenceAlternatives.size());
-    for (const FixedSequence &alternative : sequenceAlternatives) {
-      if (alternative.ages.size() == 1) {
+    alternativeStates.reserve(alternatives.size());
+    for (const FixedSequence &alternative : alternatives) {
+      if (alternative.ages.size() == 1 &&
+          !(branchingConsequent && nonoverlapped)) {
         alternativeStates.push_back(Value{});
         continue;
       }
@@ -5889,15 +5939,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Value trueValue = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(true));
     size_t horizon = 0;
-    for (const FixedSequence &alternative : sequenceAlternatives)
+    for (const FixedSequence &alternative : alternatives)
       horizon = std::max(horizon, alternative.ages.size());
     SmallVector<Value> activeAny(horizon, falseValue);
     SmallVector<Value> successAny(horizon, falseValue);
     SmallVector<Value> nonvacuousSuccessAny(horizon, falseValue);
     SmallVector<Value> continueAny(horizon, falseValue);
-    SmallVector<SmallVector<Value>> survives(sequenceAlternatives.size());
-    SmallVector<Value> starts(sequenceAlternatives.size(), falseValue);
-    SmallVector<Value> nextStates(sequenceAlternatives.size(), zero);
+    SmallVector<SmallVector<Value>> survives(alternatives.size());
+    SmallVector<Value> starts(alternatives.size(), falseValue);
+    SmallVector<Value> nextStates(alternatives.size(), zero);
     llvm::DenseMap<Operation *, Value> predicateCache;
     llvm::DenseMap<std::pair<Operation *, Operation *>, Value> caseGuardCache;
     llvm::DenseMap<Operation *, Value> caseSelectorCache;
@@ -5969,28 +6019,50 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       return result;
     };
 
-    for (auto [alternativeIndex, alternative] :
-         llvm::enumerate(sequenceAlternatives)) {
-      survives[alternativeIndex].resize(alternative.ages.size(), falseValue);
-      FailureOr<Value> start = evaluateAge(alternative.ages.front());
-      if (failed(start))
+    Value antecedentTrigger = trueValue;
+    if (branchingConsequent) {
+      FailureOr<Value> trigger =
+          evaluateAge(antecedentSequence.ages.front());
+      if (failed(trigger))
         return failure();
-      starts[alternativeIndex] = *start;
-      if (alternative.ages.size() == 1) {
-        successAny[0] =
-            arith::OrIOp::create(builder, location, successAny[0], *start);
-        if (!alternative.vacuousSuccess)
-          nonvacuousSuccessAny[0] = arith::OrIOp::create(
-              builder, location, nonvacuousSuccessAny[0], *start);
-      } else
-        continueAny[0] =
-            arith::OrIOp::create(builder, location, continueAny[0], *start);
+      antecedentTrigger = *trigger;
+    }
 
-      if (alternative.ages.size() == 1)
+    for (auto [alternativeIndex, alternative] :
+         llvm::enumerate(alternatives)) {
+      survives[alternativeIndex].resize(alternative.ages.size(), falseValue);
+      uint64_t firstActiveAge =
+          branchingConsequent && nonoverlapped ? 0 : 1;
+      if (!(branchingConsequent && nonoverlapped)) {
+        FailureOr<Value> start = evaluateAge(alternative.ages.front());
+        if (failed(start))
+          return failure();
+        Value enabled = *start;
+        if (branchingConsequent) {
+          auto gated = arith::AndIOp::create(builder, location,
+                                             antecedentTrigger, enabled);
+          gated->setAttr("obelisk_sim.branching_consequent_trigger",
+                         builder.getUnitAttr());
+          enabled = gated;
+        }
+        starts[alternativeIndex] = enabled;
+        if (alternative.ages.size() == 1) {
+          successAny[0] = arith::OrIOp::create(
+              builder, location, successAny[0], enabled);
+          if (!alternative.vacuousSuccess)
+            nonvacuousSuccessAny[0] = arith::OrIOp::create(
+                builder, location, nonvacuousSuccessAny[0], enabled);
+        } else
+          continueAny[0] = arith::OrIOp::create(
+              builder, location, continueAny[0], enabled);
+      }
+
+      if (alternative.ages.size() == 1 && firstActiveAge != 0)
         continue;
       Value state = sim::SimRefLoadOp::create(
           builder, location, stateType, alternativeStates[alternativeIndex]);
-      for (uint64_t age = 1; age < alternative.ages.size(); ++age) {
+      for (uint64_t age = firstActiveAge; age < alternative.ages.size();
+           ++age) {
         Value mask = arith::ConstantOp::create(
             builder, location, stateType,
             builder.getI64IntegerAttr(uint64_t{1} << age));
@@ -6034,14 +6106,18 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       firstMatchGroups.push_back(std::move(group));
       return firstMatchGroups.back().success;
     };
+    auto matchAt = [&](size_t alternativeIndex, uint64_t age) -> Value {
+      if (branchingConsequent && nonoverlapped)
+        return survives[alternativeIndex][age];
+      return age == 0 ? starts[alternativeIndex]
+                      : survives[alternativeIndex][age];
+    };
     for (auto [alternativeIndex, alternative] :
-         llvm::enumerate(sequenceAlternatives)) {
+         llvm::enumerate(alternatives)) {
       for (const FirstMatchBoundary &boundary :
            alternative.firstMatchBoundaries) {
         SmallVector<Value> &success = getFirstMatchSuccess(boundary.groupPath);
-        Value matched = boundary.age == 0
-                            ? starts[alternativeIndex]
-                            : survives[alternativeIndex][boundary.age];
+        Value matched = matchAt(alternativeIndex, boundary.age);
         success[boundary.age] = arith::OrIOp::create(
             builder, location, success[boundary.age], matched);
       }
@@ -6052,7 +6128,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
     auto applyFirstMatchPriority = [&](Value enabled, size_t alternativeIndex,
                                        uint64_t age) -> Value {
-      const FixedSequence &alternative = sequenceAlternatives[alternativeIndex];
+      const FixedSequence &alternative = alternatives[alternativeIndex];
       for (const FirstMatchBoundary &boundary :
            alternative.firstMatchBoundaries) {
         if (boundary.age < age)
@@ -6060,8 +6136,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         Value groupMatched = getFirstMatchSuccess(boundary.groupPath)[age];
         Value selected = falseValue;
         if (boundary.age == age)
-          selected = age == 0 ? starts[alternativeIndex]
-                              : survives[alternativeIndex][age];
+          selected = matchAt(alternativeIndex, age);
         Value allowed = arith::OrIOp::create(
             builder, location,
             arith::XOrIOp::create(builder, location, groupMatched, trueValue),
@@ -6075,7 +6150,34 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     };
 
     for (auto [alternativeIndex, alternative] :
-         llvm::enumerate(sequenceAlternatives)) {
+         llvm::enumerate(alternatives)) {
+      if (branchingConsequent && nonoverlapped) {
+        Value firstMask = arith::ConstantOp::create(
+            builder, location, stateType, builder.getI64IntegerAttr(1));
+        auto launch = arith::SelectOp::create(
+            builder, location, antecedentTrigger, firstMask, zero);
+        launch->setAttr("obelisk_sim.branching_consequent_trigger",
+                        builder.getUnitAttr());
+        Value nextState = launch;
+        for (uint64_t age = 0; age + 1 < alternative.ages.size(); ++age) {
+          Value enabled = applyFirstMatchPriority(
+              survives[alternativeIndex][age], alternativeIndex, age);
+          if (!perMatchCover)
+            enabled = arith::AndIOp::create(
+                builder, location, enabled,
+                arith::XOrIOp::create(builder, location, successAny[age],
+                                      trueValue));
+          Value nextMask = arith::ConstantOp::create(
+              builder, location, stateType,
+              builder.getI64IntegerAttr(uint64_t{1} << (age + 1)));
+          nextState = arith::OrIOp::create(
+              builder, location, nextState,
+              arith::SelectOp::create(builder, location, enabled, nextMask,
+                                      zero));
+        }
+        nextStates[alternativeIndex] = nextState;
+        continue;
+      }
       if (alternative.ages.size() == 1)
         continue;
       Value nextState = zero;
@@ -6126,13 +6228,18 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       function->setAttr("obelisk_sim.cover_sequence_per_match",
                         builder.getUnitAttr());
       for (auto [alternativeIndex, alternative] :
-           llvm::enumerate(sequenceAlternatives)) {
+           llvm::enumerate(alternatives)) {
         Value matched = alternative.ages.size() == 1
                             ? starts[alternativeIndex]
                             : survives[alternativeIndex].back();
         reportWhen(matched, true);
       }
     } else {
+      if (branchingConsequent && !cover) {
+        Value noAntecedent = arith::XOrIOp::create(
+            builder, location, antecedentTrigger, trueValue);
+        reportWhen(noAntecedent, !followedBy);
+      }
       for (size_t age = 1; age < horizon; ++age) {
         reportWhen(cover ? nonvacuousSuccessAny[age] : successAny[age], true);
         Value finished = arith::OrIOp::create(
@@ -6145,16 +6252,24 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       reportWhen(cover ? nonvacuousSuccessAny[0] : successAny[0], true);
       Value startFinished = arith::OrIOp::create(builder, location,
                                                  successAny[0], continueAny[0]);
-      reportWhen(
-          arith::XOrIOp::create(builder, location, startFinished, trueValue),
-          false);
+      Value startActive =
+          branchingConsequent
+              ? (nonoverlapped ? activeAny[0] : antecedentTrigger)
+              : trueValue;
+      Value startFailed = arith::AndIOp::create(
+          builder, location, startActive,
+          arith::XOrIOp::create(builder, location, startFinished, trueValue));
+      reportWhen(startFailed, false);
     }
 
     for (auto [state, nextState] :
          llvm::zip_equal(alternativeStates, nextStates))
       if (state)
         sim::SimRefStoreOp::create(builder, location, nextState, state);
-    cf::BranchOp::create(builder, location, wait);
+    auto backedge = cf::BranchOp::create(builder, location, wait);
+    if (branchingConsequent)
+      backedge->setAttr("obelisk_sim.branching_consequent_backedge",
+                        builder.getUnitAttr());
     return success();
   }
 
