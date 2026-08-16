@@ -65,6 +65,124 @@ using FixedSequenceAlternatives = SmallVector<FixedSequence, 4>;
 
 static constexpr size_t maxFixedSequenceAlternatives = 256;
 
+/// Diagnose SVA forms that the bounded monitor compiler intentionally leaves
+/// unsupported. Keep these messages tied to the semantic construct instead of
+/// reporting the generic fixed-trace compilation failure: users need to know
+/// whether a property is malformed, exceeds a bounded implementation limit,
+/// or requires a temporal semantic that has not been implemented yet.
+static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
+                                                 bool nested = false) {
+  bool diagnosed = false;
+  operation->walk([&](Operation *current) -> WalkResult {
+    auto diagnose = [&](const Twine &message) {
+      emitError(getSemanticLocation(current)) << message;
+      diagnosed = true;
+      return WalkResult::interrupt();
+    };
+
+    auto diagnoseRepetition = [&](semantic::SVSequenceRepetitionKind kind,
+                                  bool unbounded,
+                                  std::optional<int64_t> minimum) {
+      if (kind == semantic::SVSequenceRepetitionKind::Nonconsecutive)
+        return diagnose(
+            "nonconsecutive sequence repetition [=] is not executable yet");
+      if (kind == semantic::SVSequenceRepetitionKind::GoTo)
+        return diagnose("goto sequence repetition [->] is not executable yet");
+      if (unbounded)
+        return diagnose(
+            "unbounded consecutive sequence repetition [*...:$] is not "
+            "executable yet");
+      if (minimum && *minimum == 0)
+        return diagnose("empty consecutive sequence repetition [*0...] is not "
+                        "executable yet");
+      return WalkResult::advance();
+    };
+
+    if (auto simple = dyn_cast<semantic::SVSimpleAssertionExprOp>(current);
+        simple && simple.getHasRepetition()) {
+      if (!simple.getRepetitionKind())
+        return diagnose("sequence repetition is missing its repetition kind");
+      WalkResult result = diagnoseRepetition(*simple.getRepetitionKind(),
+                                             simple.getRepetitionIsUnbounded(),
+                                             simple.getRepetitionMin());
+      if (result.wasInterrupted())
+        return result;
+    }
+    if (auto matched = dyn_cast<semantic::SVSequenceWithMatchExprOp>(current);
+        matched && matched.getHasRepetition()) {
+      if (!matched.getRepetitionKind())
+        return diagnose("sequence repetition is missing its repetition kind");
+      WalkResult result = diagnoseRepetition(*matched.getRepetitionKind(),
+                                             matched.getRepetitionIsUnbounded(),
+                                             matched.getRepetitionMin());
+      if (result.wasInterrupted())
+        return result;
+    }
+    if (auto concat = dyn_cast<semantic::SVSequenceConcatExprOp>(current)) {
+      for (Attribute delayAttr : concat.getDelays()) {
+        auto delay = dyn_cast<DictionaryAttr>(delayAttr);
+        if (delay && delay.getAs<BoolAttr>("is_unbounded") &&
+            delay.getAs<BoolAttr>("is_unbounded").getValue())
+          return diagnose("unbounded sequence delay ##[...] is not executable "
+                          "yet");
+      }
+    }
+    if (auto first = dyn_cast<semantic::SVFirstMatchAssertionExprOp>(current);
+        first && first.getMatchItemCount() != 0)
+      return diagnose("bounded first_match does not yet support match items");
+    if (auto unary = dyn_cast<semantic::SVUnaryAssertionExprOp>(current))
+      return diagnose(
+          Twine("SVA property operator '") +
+          semantic::stringifySVAssertionUnaryOperator(unary.getOperatorKind()) +
+          "' is not executable yet");
+    if (auto binary = dyn_cast<semantic::SVBinaryAssertionExprOp>(current)) {
+      switch (binary.getOperatorKind()) {
+      case semantic::SVAssertionBinaryOperator::And:
+      case semantic::SVAssertionBinaryOperator::Or:
+      case semantic::SVAssertionBinaryOperator::Intersect:
+      case semantic::SVAssertionBinaryOperator::Throughout:
+      case semantic::SVAssertionBinaryOperator::Within:
+        break;
+      case semantic::SVAssertionBinaryOperator::OverlappedImplication:
+      case semantic::SVAssertionBinaryOperator::NonOverlappedImplication:
+        if (nested || current != operation)
+          return diagnose(
+              "nested SVA implication is not executable yet; bounded "
+              "implication is currently supported only as the outermost "
+              "property operator");
+        break;
+      default:
+        return diagnose(Twine("SVA property operator '") +
+                        semantic::stringifySVAssertionBinaryOperator(
+                            binary.getOperatorKind()) +
+                        "' is not executable yet");
+      }
+    }
+    if (auto strong = dyn_cast<semantic::SVStrongWeakAssertionExprOp>(current))
+      return diagnose(
+          Twine("SVA '") +
+          semantic::stringifySVAssertionStrength(strong.getStrength()) +
+          "' end-of-simulation qualification is not executable "
+          "yet");
+    if (auto abort = dyn_cast<semantic::SVAbortAssertionExprOp>(current))
+      return diagnose(
+          Twine("SVA property operator '") +
+          (abort.getIsSynchronous() ? "sync_" : "") +
+          semantic::stringifySVAssertionAbortAction(abort.getAction()) +
+          "_on' is not executable yet");
+    if (isa<semantic::SVConditionalAssertionExprOp>(current))
+      return diagnose("conditional SVA property expressions are not "
+                      "executable yet");
+    if (isa<semantic::SVCaseAssertionExprOp>(current))
+      return diagnose("case SVA property expressions are not executable yet");
+    if (isa<semantic::SVDisableIffAssertionExprOp>(current))
+      return diagnose("nested disable iff is not executable yet; disable iff "
+                      "is currently supported only at the outermost property");
+    return WalkResult::advance();
+  });
+  return diagnosed;
+}
+
 static bool areEquivalentDirectClocks(Operation *left, Operation *right) {
   auto lhs = dyn_cast_or_null<semantic::SVSignalEventControlOp>(left);
   auto rhs = dyn_cast_or_null<semantic::SVSignalEventControlOp>(right);
@@ -304,8 +422,8 @@ compileMultiClockSequence(Operation *operation, Operation *inheritedClock) {
 }
 
 static LogicalResult appendFixedSequence(FixedSequence &result,
-                                          const FixedSequence &nested,
-                                          uint64_t offset) {
+                                         const FixedSequence &nested,
+                                         uint64_t offset) {
   if (nested.ages.empty())
     return failure();
   if (result.ages.empty())
@@ -321,7 +439,7 @@ static LogicalResult appendFixedSequence(FixedSequence &result,
     llvm::append_range(result.ages[start + age].predicates,
                        nestedAge.predicates);
     llvm::append_range(result.ages[start + age].matchItems,
-                           nestedAge.matchItems);
+                       nestedAge.matchItems);
   }
   // Multiple independent priority scopes require an explicit nesting/order
   // model. Keep this first executable slice exact by accepting one boundary
@@ -356,8 +474,7 @@ compileFixedSequenceAlternatives(Operation *operation,
     return compileFixedSequenceAlternatives(*body, resolvedClock);
   }
 
-  if (auto first =
-          dyn_cast<semantic::SVFirstMatchAssertionExprOp>(operation)) {
+  if (auto first = dyn_cast<semantic::SVFirstMatchAssertionExprOp>(operation)) {
     SmallVector<Operation *> children = getChildren(first);
     if (first.getMatchItemCount() != 0 || children.size() != 1)
       return failure();
@@ -366,8 +483,7 @@ compileFixedSequenceAlternatives(Operation *operation,
     if (failed(nested) || nested->empty())
       return failure();
     for (FixedSequence &alternative : *nested) {
-      if (alternative.ages.empty() ||
-          !alternative.firstMatchBoundaries.empty())
+      if (alternative.ages.empty() || !alternative.firstMatchBoundaries.empty())
         return failure();
       alternative.firstMatchBoundaries.push_back(
           {first.getOperation(), alternative.ages.size() - 1});
@@ -1030,11 +1146,18 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   bool multiClockAttempt =
       op->hasAttr("obelisk_sim.multiclock_sequence_attempt");
   MultiClockSequence multiClockSequence;
-  if (FailureOr<MultiClockSequence> compiled =
-          compileMultiClockSequence(property, clock);
-      succeeded(compiled) && compiled->changesClock &&
-      compiled->hasLeadingDelay) {
-    multiClockSequence = std::move(*compiled);
+  FailureOr<MultiClockSequence> compiledMultiClock =
+      compileMultiClockSequence(property, clock);
+  if (succeeded(compiledMultiClock) && compiledMultiClock->changesClock &&
+      !compiledMultiClock->hasLeadingDelay)
+    return emitError(getSemanticLocation(property))
+               << "immediate cross-clock sequence terms are not executable "
+                  "yet; the supported multi-clock handoff requires a "
+                  "leading ##1",
+           failure();
+  if (succeeded(compiledMultiClock) && compiledMultiClock->changesClock &&
+      compiledMultiClock->hasLeadingDelay) {
+    multiClockSequence = std::move(*compiledMultiClock);
     if (localInstance || disable || expectMonitor || firstMatch ||
         op.getAssertionKind() == semantic::SVAssertionKind::CoverSequence)
       return emitError(getSemanticLocation(property))
@@ -1117,9 +1240,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
   semantic::SVBinaryAssertionExprOp implication;
   FixedSequence sequence;
+  FixedSequence antecedentSequence;
   FixedSequenceAlternatives sequenceAlternatives;
-  Operation *antecedent = nullptr;
-  SmallVector<Operation *> antecedentMatchItems;
   bool nonoverlapped = false;
   if (multiClockAttempt) {
     // The staged actor below owns temporal evaluation. Keep the ordinary
@@ -1138,15 +1260,26 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       return binary.emitError("malformed implication"), failure();
     FailureOr<FixedSequence> lhs = compileFixedSequence(operands.front());
     FailureOr<FixedSequence> rhs = compileFixedSequence(operands.back());
-    if (failed(lhs) || lhs->ages.size() != 1 ||
-        lhs->ages.front().predicates.size() != 1 || failed(rhs))
+    if (failed(lhs) || lhs->ages.empty()) {
+      if (diagnoseUnsupportedConcurrentFeature(operands.front(),
+                                               /*nested=*/true))
+        return failure();
       return binary.emitError(
-                 "AOT implication antecedents must be one boolean term and "
-                 "consequents must have bounded fixed delays"),
+                 "AOT implication antecedent must be one deterministic "
+                 "bounded sequence within the 63-cycle horizon"),
              failure();
+    }
+    if (failed(rhs) || rhs->ages.empty()) {
+      if (diagnoseUnsupportedConcurrentFeature(operands.back(),
+                                               /*nested=*/true))
+        return failure();
+      return binary.emitError(
+                 "AOT implication consequent must be one deterministic "
+                 "bounded sequence within the 63-cycle horizon"),
+             failure();
+    }
     implication = binary;
-    antecedent = lhs->ages.front().predicates.front();
-    llvm::append_range(antecedentMatchItems, lhs->ages.front().matchItems);
+    antecedentSequence = std::move(*lhs);
     sequence = std::move(*rhs);
     nonoverlapped =
         binary.getOperatorKind() ==
@@ -1154,13 +1287,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   } else {
     FailureOr<FixedSequenceAlternatives> compiled =
         compileFixedSequenceAlternatives(property, clock);
-    if (failed(compiled) || compiled->empty())
+    if (failed(compiled) || compiled->empty()) {
+      if (diagnoseUnsupportedConcurrentFeature(property))
+        return failure();
       return emitError(getSemanticLocation(property))
-                 << "AOT concurrent monitors currently support boolean "
-                    "terms, bounded ## delays, bounded and/or/intersect/"
-                    "throughout/within composition, bounded first_match, "
-                    "and bounded positive consecutive repetition",
+                 << "bounded AOT sequence compilation failed: the property "
+                    "either exceeds the 63-cycle or 256-alternative limit, "
+                    "or combines bounded operators in a form whose endpoint "
+                    "ordering is not executable yet",
              failure();
+    }
     if (compiled->size() == 1)
       sequence = std::move(compiled->front());
     else
@@ -1182,6 +1318,24 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                    }) ||
       sequence.ages.size() > 63)
     return op.emitError("concurrent monitor horizon must be 1..63 cycles"),
+           failure();
+  if (implication && antecedentSequence.ages.size() + sequence.ages.size() > 63)
+    return op.emitError(
+               "combined implication antecedent/consequent state exceeds "
+               "the 63-cycle bounded monitor horizon"),
+           failure();
+  if (implication && localInstance && antecedentSequence.ages.size() != 1)
+    return emitError(getSemanticLocation(implication))
+               << "multi-cycle implication antecedents do not yet compose "
+                  "with assertion locals",
+           failure();
+  if (implication && !localInstance &&
+      llvm::any_of(antecedentSequence.ages, [](const FixedSequenceAge &age) {
+        return !age.matchItems.empty();
+      }))
+    return emitError(getSemanticLocation(implication))
+               << "implication antecedent match items require assertion "
+                  "local flow",
            failure();
   if (branchingSequence &&
       (localInstance || implication || disable || expectMonitor))
@@ -1302,9 +1456,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   Type stateType = builder.getI64Type();
   Value zero = arith::ConstantOp::create(builder, location, stateType,
                                          builder.getI64IntegerAttr(0));
-  bool needsState = disable ||
-                    (!branchingSequence && sequence.ages.size() > 1) ||
-                    (implication && nonoverlapped);
+  bool needsState =
+      disable || (!branchingSequence && sequence.ages.size() > 1) ||
+      (implication && (nonoverlapped || antecedentSequence.ages.size() > 1));
+  if (implication && antecedentSequence.ages.size() > 1)
+    function->setAttr(
+        "obelisk_sim.bounded_antecedent_horizon",
+        builder.getI64IntegerAttr(antecedentSequence.ages.size()));
   Value stateStorage;
   if (needsState)
     stateStorage = sim::SimRefAllocOp::create(
@@ -1858,8 +2016,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
          llvm::enumerate(sequenceAlternatives)) {
       for (const FirstMatchBoundary &boundary :
            alternative.firstMatchBoundaries) {
-        auto [entry, inserted] = firstMatchSuccess.try_emplace(
-            boundary.group, horizon, falseValue);
+        auto [entry, inserted] =
+            firstMatchSuccess.try_emplace(boundary.group, horizon, falseValue);
         (void)inserted;
         Value matched = boundary.age == 0
                             ? starts[alternativeIndex]
@@ -1869,10 +2027,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       }
     }
 
-    auto applyFirstMatchPriority =
-        [&](Value enabled, size_t alternativeIndex, uint64_t age) -> Value {
-      const FixedSequence &alternative =
-          sequenceAlternatives[alternativeIndex];
+    auto applyFirstMatchPriority = [&](Value enabled, size_t alternativeIndex,
+                                       uint64_t age) -> Value {
+      const FixedSequence &alternative = sequenceAlternatives[alternativeIndex];
       for (const FirstMatchBoundary &boundary :
            alternative.firstMatchBoundaries) {
         if (boundary.age < age)
@@ -1886,8 +2043,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             builder, location,
             arith::XOrIOp::create(builder, location, groupMatched, trueValue),
             selected);
-        auto gated =
-            arith::AndIOp::create(builder, location, enabled, allowed);
+        auto gated = arith::AndIOp::create(builder, location, enabled, allowed);
         gated->setAttr("obelisk_sim.first_match_priority",
                        builder.getUnitAttr());
         enabled = gated;
@@ -1900,13 +2056,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       if (alternative.ages.size() == 1)
         continue;
       Value nextState = zero;
-      Value startEnabled = applyFirstMatchPriority(
-          starts[alternativeIndex], alternativeIndex, 0);
+      Value startEnabled = applyFirstMatchPriority(starts[alternativeIndex],
+                                                   alternativeIndex, 0);
       if (!perMatchCover)
         startEnabled = arith::AndIOp::create(
             builder, location, startEnabled,
-            arith::XOrIOp::create(builder, location, successAny[0],
-                                  trueValue));
+            arith::XOrIOp::create(builder, location, successAny[0], trueValue));
       Value firstMask = arith::ConstantOp::create(builder, location, stateType,
                                                   builder.getI64IntegerAttr(2));
       nextState = arith::OrIOp::create(
@@ -1914,8 +2069,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           arith::SelectOp::create(builder, location, startEnabled, firstMask,
                                   zero));
       for (uint64_t age = 1; age + 1 < alternative.ages.size(); ++age) {
-        Value enabled = applyFirstMatchPriority(
-            survives[alternativeIndex][age], alternativeIndex, age);
+        Value enabled = applyFirstMatchPriority(survives[alternativeIndex][age],
+                                                alternativeIndex, age);
         if (!perMatchCover)
           enabled = arith::AndIOp::create(
               builder, location, enabled,
@@ -1965,8 +2120,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         reportWhen(failedAttempt, false);
       }
       reportWhen(successAny[0], true);
-      Value startFinished = arith::OrIOp::create(
-          builder, location, successAny[0], continueAny[0]);
+      Value startFinished = arith::OrIOp::create(builder, location,
+                                                 successAny[0], continueAny[0]);
       reportWhen(
           arith::XOrIOp::create(builder, location, startFinished, trueValue),
           false);
@@ -2323,9 +2478,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (failed(initialLocals))
       return failure();
     FailureOr<Value> starts =
-        implication ? evaluatePredicates({antecedent}, *initialLocals)
-                    : evaluatePredicates(sequence.ages.front().predicates,
-                                         *initialLocals);
+        implication
+            ? evaluatePredicates(antecedentSequence.ages.front().predicates,
+                                 *initialLocals)
+            : evaluatePredicates(sequence.ages.front().predicates,
+                                 *initialLocals);
     if (failed(starts))
       return failure();
     Value one = arith::ConstantOp::create(
@@ -2352,8 +2509,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     setCurrent(startMatched);
     SmallVector<Value> startLocals = *initialLocals;
     if (implication) {
-      FailureOr<SmallVector<Value>> updated =
-          applyMatchItems(antecedentMatchItems, startLocals);
+      FailureOr<SmallVector<Value>> updated = applyMatchItems(
+          antecedentSequence.ages.front().matchItems, startLocals);
       if (failed(updated))
         return failure();
       startLocals = std::move(*updated);
@@ -2510,13 +2667,84 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     }
   }
 
-  FailureOr<Value> starts = implication ? [&]() -> FailureOr<Value> {
-    FailureOr<Value> value = lowerExpression(antecedent);
-    if (failed(value))
+  auto launchConsequent = [&](Value triggered) -> LogicalResult {
+    if (nonoverlapped) {
+      Value firstMask = arith::ConstantOp::create(builder, location, stateType,
+                                                  builder.getI64IntegerAttr(1));
+      Value started = arith::SelectOp::create(builder, location, triggered,
+                                              firstMask, zero);
+      nextState = arith::OrIOp::create(builder, location, nextState, started);
+      return success();
+    }
+
+    FailureOr<Value> first = evaluateAge(sequence.ages.front().predicates);
+    if (failed(first))
       return failure();
-    return truthValue(*value, getSemanticLocation(antecedent));
-  }()
-      : evaluateAge(sequence.ages.front().predicates);
+    Value matched = arith::AndIOp::create(builder, location, triggered, *first);
+    Value failedStart = arith::AndIOp::create(
+        builder, location, triggered,
+        arith::XOrIOp::create(
+            builder, location, *first,
+            arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                      builder.getBoolAttr(true))));
+    if (failed(conditionalResult(failedStart, false)))
+      return failure();
+    if (sequence.ages.size() == 1)
+      return conditionalResult(matched, true);
+    Value nextMask = arith::ConstantOp::create(builder, location, stateType,
+                                               builder.getI64IntegerAttr(2));
+    Value started =
+        arith::SelectOp::create(builder, location, matched, nextMask, zero);
+    nextState = arith::OrIOp::create(builder, location, nextState, started);
+    return success();
+  };
+
+  if (implication && antecedentSequence.ages.size() > 1) {
+    uint64_t antecedentBase = sequence.ages.size();
+    for (uint64_t age = 1; age < antecedentSequence.ages.size(); ++age) {
+      Value mask = arith::ConstantOp::create(
+          builder, location, stateType,
+          builder.getI64IntegerAttr(uint64_t{1} << (antecedentBase + age)));
+      Value presentBits = arith::AndIOp::create(builder, location, state, mask);
+      Value active = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, presentBits, zero);
+      FailureOr<Value> matches =
+          evaluateAge(antecedentSequence.ages[age].predicates);
+      if (failed(matches))
+        return failure();
+      Value advances =
+          arith::AndIOp::create(builder, location, active, *matches);
+      advances.getDefiningOp()->setAttr("obelisk_sim.implication_antecedent",
+                                        builder.getUnitAttr());
+      Value notMatches = arith::XOrIOp::create(
+          builder, location, *matches,
+          arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                    builder.getBoolAttr(true)));
+      Value vacuous =
+          arith::AndIOp::create(builder, location, active, notMatches);
+      vacuous.getDefiningOp()->setAttr(
+          "obelisk_sim.implication_antecedent_failure", builder.getUnitAttr());
+      if (!cover && failed(conditionalResult(vacuous, true)))
+        return failure();
+      if (age + 1 == antecedentSequence.ages.size()) {
+        if (failed(launchConsequent(advances)))
+          return failure();
+      } else {
+        Value nextMask = arith::ConstantOp::create(
+            builder, location, stateType,
+            builder.getI64IntegerAttr(uint64_t{1}
+                                      << (antecedentBase + age + 1)));
+        Value advancedBit = arith::SelectOp::create(builder, location, advances,
+                                                    nextMask, zero);
+        nextState =
+            arith::OrIOp::create(builder, location, nextState, advancedBit);
+      }
+    }
+  }
+
+  FailureOr<Value> starts =
+      implication ? evaluateAge(antecedentSequence.ages.front().predicates)
+                  : evaluateAge(sequence.ages.front().predicates);
   if (failed(starts))
     return failure();
 
@@ -2529,35 +2757,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     // but a cover directive records only a nonvacuous match.
     if (!cover && failed(conditionalResult(vacuous, true)))
       return failure();
-    if (nonoverlapped) {
-      Value firstMask = arith::ConstantOp::create(builder, location, stateType,
-                                                  builder.getI64IntegerAttr(1));
+    if (antecedentSequence.ages.size() == 1) {
+      if (failed(launchConsequent(*starts)))
+        return failure();
+    } else {
+      uint64_t firstAntecedentAge = sequence.ages.size() + 1;
+      Value firstMask = arith::ConstantOp::create(
+          builder, location, stateType,
+          builder.getI64IntegerAttr(uint64_t{1} << firstAntecedentAge));
       Value started =
           arith::SelectOp::create(builder, location, *starts, firstMask, zero);
       nextState = arith::OrIOp::create(builder, location, nextState, started);
-    } else {
-      FailureOr<Value> first = evaluateAge(sequence.ages.front().predicates);
-      if (failed(first))
-        return failure();
-      Value matched = arith::AndIOp::create(builder, location, *starts, *first);
-      Value failedStart = arith::AndIOp::create(
-          builder, location, *starts,
-          arith::XOrIOp::create(
-              builder, location, *first,
-              arith::ConstantOp::create(builder, location, builder.getI1Type(),
-                                        builder.getBoolAttr(true))));
-      if (failed(conditionalResult(failedStart, false)))
-        return failure();
-      if (sequence.ages.size() == 1) {
-        if (failed(conditionalResult(matched, true)))
-          return failure();
-      } else {
-        Value nextMask = arith::ConstantOp::create(
-            builder, location, stateType, builder.getI64IntegerAttr(2));
-        Value started =
-            arith::SelectOp::create(builder, location, matched, nextMask, zero);
-        nextState = arith::OrIOp::create(builder, location, nextState, started);
-      }
     }
   } else {
     // The age-zero attempt is evaluated directly every clock. Older attempts
