@@ -1891,12 +1891,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return op.emitError("concurrent assertion has no resolved clock"),
            failure();
   auto clockEvent = dyn_cast<semantic::SVSignalEventControlOp>(clock);
-  if (!clockEvent || clockEvent.getHasIff() ||
-      getChildren(clockEvent).size() != 1 ||
-      !isAddressableExpression(getChildren(clockEvent).front()))
+  SmallVector<Operation *> clockChildren =
+      clockEvent ? getChildren(clockEvent) : SmallVector<Operation *>{};
+  size_t expectedClockChildren =
+      clockEvent && clockEvent.getHasIff() ? 2 : 1;
+  if (!clockEvent || clockChildren.size() != expectedClockChildren ||
+      !isAddressableExpression(clockChildren.front()))
     return emitError(getSemanticLocation(clock))
                << "AOT concurrent monitors currently require one direct "
-                  "signal edge clock without iff",
+                  "signal edge clock with an optional executable iff "
+                  "condition",
            failure();
 
   if (auto disabled =
