@@ -426,12 +426,24 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
           semantic::stringifySVAssertionStrength(strong.getStrength()) +
           "' end-of-simulation qualification is not executable "
           "yet");
-    if (auto abort = dyn_cast<semantic::SVAbortAssertionExprOp>(current))
-      return diagnose(
-          Twine("SVA property operator '") +
-          (abort.getIsSynchronous() ? "sync_" : "") +
-          semantic::stringifySVAssertionAbortAction(abort.getAction()) +
-          "_on' is not executable yet");
+    if (auto abort = dyn_cast<semantic::SVAbortAssertionExprOp>(current)) {
+      std::string spelling =
+          (Twine(abort.getIsSynchronous() ? "sync_" : "") +
+           semantic::stringifySVAssertionAbortAction(abort.getAction()) + "_on")
+              .str();
+      if (!abort.getIsSynchronous())
+        return diagnose(Twine("SVA property operator '") + spelling +
+                        "' requires asynchronous attempt completion, which "
+                        "is not executable yet; sampled sync_accept_on and "
+                        "sync_reject_on are supported for plain deterministic "
+                        "bounded properties");
+      return diagnose(Twine("SVA property operator '") + spelling +
+                      "' currently requires one outermost abort around a "
+                      "plain deterministic bounded property without locals, "
+                      "match items, implication/followed-by, disable iff, "
+                      "first_match, expect, or cover-sequence per-match "
+                      "accounting");
+    }
     if (isa<semantic::SVConditionalAssertionExprOp>(current))
       return diagnose(
           "conditional SVA properties currently require bounded branches "
@@ -1879,6 +1891,23 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return op.emitError("disable iff wraps an unsupported assertion instance"),
            failure();
 
+  semantic::SVAbortAssertionExprOp abort;
+  Operation *abortCondition = nullptr;
+  if (auto candidate =
+          dyn_cast_or_null<semantic::SVAbortAssertionExprOp>(property)) {
+    SmallVector<Operation *> nested = getChildren(candidate);
+    if (nested.size() != 2)
+      return candidate.emitError("malformed property abort expression"),
+             failure();
+    abort = candidate;
+    abortCondition = nested.front();
+    property = unwrapAssertionInstance(nested.back());
+    if (!property)
+      return candidate.emitError(
+                 "property abort wraps an unsupported assertion instance"),
+             failure();
+  }
+
   bool firstMatch = false;
   if (auto first = dyn_cast<semantic::SVFirstMatchAssertionExprOp>(property)) {
     SmallVector<Operation *> nested = getChildren(first);
@@ -2160,6 +2189,41 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                   "first_match, expect, or cover-sequence per-match "
                   "accounting",
            failure();
+  if (abort) {
+    std::string spelling =
+        (Twine(abort.getIsSynchronous() ? "sync_" : "") +
+         semantic::stringifySVAssertionAbortAction(abort.getAction()) + "_on")
+            .str();
+    if (!abort.getIsSynchronous())
+      return emitError(getSemanticLocation(abort))
+                 << "SVA property operator '" << spelling
+                 << "' requires asynchronous attempt completion, which is "
+                    "not executable yet; sampled sync_accept_on and "
+                    "sync_reject_on are supported for plain deterministic "
+                    "bounded properties",
+             failure();
+    bool matchItems =
+        llvm::any_of(sequence.ages, [](const FixedSequenceAge &age) {
+          return !age.matchItems.empty();
+        });
+    if (localInstance || implication || disable || expectMonitor ||
+        firstMatch || coverSequence || branchingSequence ||
+        hasPersistentRepetition || hasPersistentUntil || matchItems)
+      return emitError(getSemanticLocation(abort))
+                 << "SVA property operator '" << spelling
+                 << "' currently requires one outermost abort around a plain "
+                    "deterministic bounded property without locals, match "
+                    "items, implication/followed-by, disable iff, "
+                    "first_match, persistent operators, expect, or "
+                    "cover-sequence per-match accounting",
+             failure();
+    function->setAttr("obelisk_sim.synchronous_property_abort",
+                      builder.getUnitAttr());
+    function->setAttr(
+        "obelisk_sim.property_abort_action",
+        builder.getStringAttr(
+            semantic::stringifySVAssertionAbortAction(abort.getAction())));
+  }
   if (branchingSequence &&
       (localInstance || implication || disable || expectMonitor))
     return emitError(getSemanticLocation(property))
@@ -3987,6 +4051,47 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     }
     return result;
   };
+
+  if (abort) {
+    FailureOr<Value> condition = lowerExpression(abortCondition);
+    if (failed(condition))
+      return failure();
+    FailureOr<Value> aborts =
+        truthValue(*condition, getSemanticLocation(abortCondition));
+    if (failed(aborts))
+      return failure();
+    bool accepted =
+        abort.getAction() == semantic::SVAssertionAbortAction::Accept;
+    Block *aborted = addBlock();
+    Block *evaluate = addBlock();
+    cf::CondBranchOp::create(builder, location, *aborts, aborted, ValueRange{},
+                             evaluate, ValueRange{});
+    setCurrent(aborted);
+    // Every live state bit represents one independent property attempt. Abort
+    // each exactly once, then include the attempt that starts on this clock.
+    // An accepted abort is vacuous, so it does not create a cover-property hit.
+    if (!(accepted && cover)) {
+      for (uint64_t age = 1; age < sequence.ages.size(); ++age) {
+        Value mask = arith::ConstantOp::create(
+            builder, location, stateType,
+            builder.getI64IntegerAttr(uint64_t{1} << age));
+        Value presentBits =
+            arith::AndIOp::create(builder, location, state, mask);
+        Value active = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, presentBits, zero);
+        if (failed(conditionalResult(active, accepted)))
+          return failure();
+      }
+      Value current = arith::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+      if (failed(conditionalResult(current, accepted)))
+        return failure();
+    }
+    if (stateStorage)
+      sim::SimRefStoreOp::create(builder, location, zero, stateStorage);
+    cf::BranchOp::create(builder, location, wait);
+    setCurrent(evaluate);
+  }
 
   Value nextState = zero;
   uint64_t firstActiveAge = implication && nonoverlapped ? 0 : 1;
