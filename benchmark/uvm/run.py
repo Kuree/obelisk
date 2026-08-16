@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--lto",
         action="store_true",
-        help="enable full LTO instead of the fast runtime link",
+        help="enable the compiler's default LTO path (ThinLTO for large native designs)",
     )
     parser.add_argument(
         "--keep-binary", type=Path, help="retain the generated simulator at this path"

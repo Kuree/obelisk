@@ -3340,6 +3340,50 @@ protected:
   obelisk_rt_gc_lane_v1 *lane = nullptr;
 };
 
+TEST_F(ManagedHeapTest, NarrowBitInsertPreservesPackedStorageAndHandles) {
+  obelisk_rt_object_v1 *object = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &planeDescriptor, &object),
+            OBELISK_RT_OK);
+
+  std::array<uint8_t, 16> bytes{};
+  ASSERT_EQ(obelisk_rt_v1_object_bits_insert(
+                object, sizeof(void *), 128, 4, 1, UINT64_C(0xa5), 8),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_read(object, sizeof(void *), bytes.data(),
+                                      bytes.size()),
+            OBELISK_RT_OK);
+  EXPECT_EQ(bytes[0], 0x50);
+  EXPECT_EQ(bytes[1], 0x0a);
+
+  bytes.fill(0);
+  ASSERT_EQ(obelisk_rt_v1_object_write(object, sizeof(void *), bytes.data(),
+                                       bytes.size()),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_bits_insert(
+                object, sizeof(void *), 128, -3, 1, UINT64_MAX, 8),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_read(object, sizeof(void *), bytes.data(),
+                                      bytes.size()),
+            OBELISK_RT_OK);
+  EXPECT_EQ(bytes[0], 0x1f);
+
+  std::array<uint8_t, 16> before = bytes;
+  EXPECT_EQ(obelisk_rt_v1_object_bits_insert(
+                object, sizeof(void *), 128, INT64_MAX, 0, 0, 8),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_read(object, sizeof(void *), bytes.data(),
+                                      bytes.size()),
+            OBELISK_RT_OK);
+  EXPECT_EQ(bytes, before);
+
+  obelisk_rt_object_v1 *node = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &node),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_object_bits_insert(
+                node, kNodeLinkOffset, 64, 0, 1, UINT64_C(1), 1),
+            OBELISK_RT_INVALID_ARGUMENT);
+}
+
 TEST_F(RuntimeTest, DesignatedFormatWarnsAndContinuesOnArgumentMismatch) {
   TempDirectory temporary;
   uint32_t descriptor = open(temporary.file("designated-format.bin"), "w+b");

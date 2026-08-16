@@ -13,7 +13,8 @@ python3 benchmark/uvm/run.py
 
 The default is `-O3 --execution-tier=bytecode -fno-lto`, the fast production
 configuration for library-heavy UVM designs. Use `--execution-tier=native` to
-measure native lowering, `--lto` to include full runtime LTO, and
+measure native lowering, `--lto` to include the default native LTO path
+(ThinLTO for partitioned UVM-sized designs), and
 `--keep-binary PATH` to retain the generated executable. The UVM source tree
 defaults to the CMake-fetched checkout and can be overridden with `--uvm-root`.
 Compilation is capped at 60 seconds by default, matching the performance gate;

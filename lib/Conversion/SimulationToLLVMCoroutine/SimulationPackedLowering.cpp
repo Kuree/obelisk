@@ -26,6 +26,7 @@
 #include "llvm/ADT/StringSet.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/LLVMContext.h"
+#include <chrono>
 #include <cstring>
 #include <limits>
 
@@ -90,6 +91,63 @@ uint64_t appendStableHash(uint64_t hash, uint64_t value, unsigned bytes) {
   return hash;
 }
 
+void fuseWideManagedBitStores(ModuleOp module) {
+  SmallVector<sim::SimManagedStoreOp> stores;
+  module.walk([&](sim::SimManagedStoreOp store) { stores.push_back(store); });
+  IRRewriter rewriter(module.getContext());
+  for (sim::SimManagedStoreOp store : stores) {
+    auto unflatten =
+        store.getValue().getDefiningOp<sim::SimPackedUnflattenOp>();
+    auto insert =
+        unflatten
+            ? unflatten.getInput().getDefiningOp<sim::SimBitsDynInsertOp>()
+            : sim::SimBitsDynInsertOp{};
+    auto flatten =
+        insert ? insert.getInput().getDefiningOp<sim::SimPackedFlattenOp>()
+               : sim::SimPackedFlattenOp{};
+    auto load = flatten
+                    ? flatten.getInput().getDefiningOp<sim::SimManagedLoadOp>()
+                    : sim::SimManagedLoadOp{};
+    auto inputType = insert ? dyn_cast<IntegerType>(insert.getInput().getType())
+                            : IntegerType{};
+    auto replacementType =
+        insert ? dyn_cast<IntegerType>(insert.getReplacement().getType())
+               : IntegerType{};
+    auto lowType = insert ? dyn_cast<IntegerType>(insert.getLowBit().getType())
+                          : IntegerType{};
+    if (!unflatten || !insert || !flatten || !load || !inputType ||
+        !replacementType || !lowType || inputType.getWidth() <= 256 ||
+        replacementType.getWidth() > 64 ||
+        load.getReference() != store.getReference() ||
+        !unflatten->hasOneUse() || !insert->hasOneUse() ||
+        !flatten->hasOneUse() || !load->hasOneUse())
+      continue;
+    if (load->getBlock() != store->getBlock())
+      continue;
+    bool uninterrupted = false;
+    for (Operation *operation = load->getNextNode(); operation;
+         operation = operation->getNextNode()) {
+      if (operation == store.getOperation()) {
+        uninterrupted = true;
+        break;
+      }
+      if (!isMemoryEffectFree(operation) || !isSpeculatable(operation))
+        break;
+    }
+    if (!uninterrupted)
+      continue;
+    rewriter.setInsertionPoint(store);
+    sim::SimManagedBitsDynStoreOp::create(
+        rewriter, store.getLoc(), insert.getReplacement(), store.getReference(),
+        insert.getLowBit());
+    rewriter.eraseOp(store);
+    rewriter.eraseOp(unflatten);
+    rewriter.eraseOp(insert);
+    rewriter.eraseOp(flatten);
+    rewriter.eraseOp(load);
+  }
+}
+
 } // namespace
 
 LogicalResult lowerPackedSimulationOperations(
@@ -98,6 +156,22 @@ LogicalResult lowerPackedSimulationOperations(
     const NativeStaticNBAPlan *staticNBAPlan, bool vpiAllowsWrite,
     bool experimentalTwoState) {
   MLIRContext *context = module.getContext();
+  bool detailedTiming = module->hasAttr("obelisk.debug.native_timing");
+  auto lastTiming = std::chrono::steady_clock::now();
+  auto markTiming = [&](StringRef name) {
+    if (!detailedTiming)
+      return;
+    auto now = std::chrono::steady_clock::now();
+    double seconds = std::chrono::duration<double>(now - lastTiming).count();
+    llvm::errs() << "obelisk packed timing: " << name << ": " << seconds
+                 << " s\n";
+    lastTiming = now;
+  };
+  // Avoid lowering a narrow update of a wide managed packed field into one
+  // enormous LLVM integer. Besides copying the whole field, i32k shifts make
+  // SelectionDAG instruction selection superlinear. Bytecode has already been
+  // frozen before this native-only rewrite.
+  fuseWideManagedBitStores(module);
   // Consume the whole-design X/Z proof in the AOT path after suspension
   // threading has reached its final SSA shape. Signatures and canonical frames
   // remain two-plane ABI objects, but proven block arguments, call results,
@@ -235,6 +309,7 @@ LogicalResult lowerPackedSimulationOperations(
   });
   if (stateDomainsComputed.wasInterrupted())
     return failure();
+  markTiming("state-domain analysis");
   for (Value value : nativeTwoStateValues) {
     auto result = dyn_cast<OpResult>(value);
     if (!result || result.getOwner()->getNumResults() != 1)
@@ -256,9 +331,12 @@ LogicalResult lowerPackedSimulationOperations(
   uint64_t scanPrefixOrdinal = 0;
   uint64_t fileScanPrefixOrdinal = 0;
   llvm::StringSet<> reservedSymbols;
+  llvm::StringMap<Operation *> existingSymbols;
   for (Operation &operation : *module.getBody())
-    if (StringAttr symbol = SymbolTable::getSymbolName(&operation))
+    if (StringAttr symbol = SymbolTable::getSymbolName(&operation)) {
       reservedSymbols.insert(symbol.getValue());
+      existingSymbols.try_emplace(symbol.getValue(), &operation);
+    }
   auto allocateGlobalName = [&](StringRef base, uint64_t &ordinal) {
     std::string name;
     do {
@@ -375,8 +453,13 @@ LogicalResult lowerPackedSimulationOperations(
   if (globalInventory.wasInterrupted())
     return failure();
   for (const ByteGlobal &global : byteGlobals) {
-    if (LLVM::GlobalOp existing =
-            module.lookupSymbol<LLVM::GlobalOp>(global.name)) {
+    auto existingIt = existingSymbols.find(global.name);
+    if (existingIt != existingSymbols.end()) {
+      auto existing = dyn_cast<LLVM::GlobalOp>(existingIt->second);
+      if (!existing)
+        return emitError(global.location)
+               << "native byte global @" << global.name
+               << " conflicts with a pre-existing symbol";
       Type expectedType = LLVM::LLVMArrayType::get(IntegerType::get(context, 8),
                                                    global.bytes.size());
       auto value = existing->getAttrOfType<StringAttr>("value");
@@ -388,9 +471,12 @@ LogicalResult lowerPackedSimulationOperations(
                << "native byte global @" << global.name
                << " conflicts with a pre-existing symbol";
     } else {
-      makeByteArrayGlobal(module, global.location, global.name, global.bytes);
+      LLVM::GlobalOp created = makeByteArrayGlobal(module, global.location,
+                                                   global.name, global.bytes);
+      existingSymbols.try_emplace(global.name, created.getOperation());
     }
   }
+  markTiming("byte-global inventory and materialization");
 
   auto configurePackedConverter = [&](SimulationToStandardTypeConverter &c) {
     addSimulationPackedAggregateTypeConversions(c);
@@ -517,6 +603,7 @@ LogicalResult lowerPackedSimulationOperations(
   });
   if (lifetimeInputs.wasInterrupted())
     return failure();
+  markTiming("managed lifetime inventory");
   // This is transaction-local metadata produced only by the AOT signature
   // pattern below. Never consume a same-named source attribute.
   module.walk([](sim::SimFuncOp function) {
@@ -612,14 +699,14 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimClassIsInstanceOp,
         sim::SimClassIdOp, sim::SimClassCastOp, sim::SimClassFieldRefOp,
         sim::SimManagedWatchOp, sim::SimClassRootBindOp, sim::SimManagedLoadOp,
-        sim::SimManagedStoreOp, sim::SimManagedNBAEnqueueOp,
-        sim::SimReferencePathNBAEnqueueOp, sim::SimArgumentRefFromRefOp,
-        sim::SimArgumentRefFromManagedOp, sim::SimReferencePathIndexOp,
-        sim::SimReferencePathAssocOp, sim::SimArgumentRefFromPathOp,
-        sim::SimArgumentRefLoadOp, sim::SimArgumentRefStoreOp,
-        sim::SimClassDirectCallOp, sim::SimClassVirtualCallOp,
-        sim::SimWeakCreateOp, sim::SimWeakGetOp, sim::SimWeakClearOp,
-        sim::SimGCSafepointOp>();
+        sim::SimManagedStoreOp, sim::SimManagedBitsDynStoreOp,
+        sim::SimManagedNBAEnqueueOp, sim::SimReferencePathNBAEnqueueOp,
+        sim::SimArgumentRefFromRefOp, sim::SimArgumentRefFromManagedOp,
+        sim::SimReferencePathIndexOp, sim::SimReferencePathAssocOp,
+        sim::SimArgumentRefFromPathOp, sim::SimArgumentRefLoadOp,
+        sim::SimArgumentRefStoreOp, sim::SimClassDirectCallOp,
+        sim::SimClassVirtualCallOp, sim::SimWeakCreateOp, sim::SimWeakGetOp,
+        sim::SimWeakClearOp, sim::SimGCSafepointOp>();
     target
         .addIllegalOp<sim::SimAggregateDefaultOp, sim::SimAggregateConstructOp,
                       sim::SimAggregateExtractOp, sim::SimAggregateInsertOp,
@@ -677,6 +764,7 @@ LogicalResult lowerPackedSimulationOperations(
             return applyFullConversion(functions, workerTarget, workerFrozen);
           })))
     return failure();
+  markTiming("parallel function conversion");
   SmallVector<Operation *> nonFunctionRoots;
   for (Operation &operation : *module.getBody()) {
     if (auto design = dyn_cast<sim::SimDesignOp>(operation)) {
@@ -693,6 +781,7 @@ LogicalResult lowerPackedSimulationOperations(
     return failure();
   if (failed(materializeDPIThunks(module)))
     return failure();
+  markTiming("non-function conversion and DPI thunks");
 
   // Region signature conversion records the physical unknown-plane block
   // arguments that the whole-design proof made redundant. Replace them only
@@ -746,12 +835,16 @@ LogicalResult lowerPackedSimulationOperations(
       });
   if (specializedBlockArguments.wasInterrupted())
     return failure();
+  markTiming("two-state block specialization");
   if (failed(threadRuntimeStatuses(module)))
     return failure();
+  markTiming("runtime status threading");
   if (failed(releaseNativeAutomaticState(module, referenceArguments)))
     return failure();
+  markTiming("automatic-state release");
   if (failed(validateRuntimeToLLVMPreconditions(module, dataLayout)))
     return failure();
+  markTiming("runtime precondition validation");
   return success();
 }
 

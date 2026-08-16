@@ -34,6 +34,7 @@
 #include <concepts>
 #include <functional>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -768,13 +769,34 @@ public:
     // Materialize that transitive closure beneath the real semantic parent so
     // every SymbolRefAttr remains both resolvable and hierarchically accurate.
     llvm::SmallPtrSet<const slang::ast::Symbol *, 32> scheduled;
-    SmallVector<const slang::ast::Symbol *, 32> worklist;
+    std::multimap<std::string, const slang::ast::Symbol *> worklist;
     size_t nextPending = 0;
     size_t nextDependency = 0;
     auto schedule = [&](const slang::ast::Symbol *symbol) {
       if (!emittedSymbolPaths.contains(symbol) &&
-          scheduled.insert(symbol).second)
-        worklist.push_back(symbol);
+          scheduled.insert(symbol).second) {
+        std::string key;
+        llvm::raw_string_ostream stream(key);
+        // Resolve the importer path before ordering. This gives distinct,
+        // deterministic shadow suffixes to Slang's synthesized foreach and
+        // block variables that otherwise share name, kind, and source loc.
+        stream << getSymbolPath(*symbol) << '\0'
+               << static_cast<uint32_t>(symbol->kind) << '\0' << symbol->name
+               << '\0';
+        slang::SourceLocation location =
+            sourceManager.getFullyExpandedLoc(symbol->location);
+        if (location.valid() && sourceManager.isFileLoc(location))
+          stream << sourceManager.getFileName(location) << ':'
+                 << sourceManager.getLineNumber(location) << ':'
+                 << sourceManager.getColumnNumber(location);
+        else
+          stream << location.buffer().getId() << ':' << location.offset();
+        // Multiple synthesized semantic symbols can intentionally share this
+        // complete visible key (foreach iterators are the common case).
+        // std::multimap keeps their already-deterministic discovery order
+        // within the equal-key range instead of dropping dependencies.
+        worklist.emplace(std::move(key), symbol);
+      }
     };
 
     // Imports append more references and type dependencies. Consume those
@@ -789,7 +811,9 @@ public:
       if (worklist.empty())
         continue;
 
-      const slang::ast::Symbol *symbol = worklist.pop_back_val();
+      auto next = worklist.begin();
+      const slang::ast::Symbol *symbol = next->second;
+      worklist.erase(next);
       if (emittedSymbolPaths.contains(symbol))
         continue;
       importReferencedSymbol(*symbol);
@@ -1042,6 +1066,75 @@ private:
         return typeConverter.convert(declaredType->getType());
     }
     return std::nullopt;
+  }
+
+  void appendStableTypeIdentity(
+      llvm::raw_ostream &stream, const slang::ast::Type &type,
+      llvm::SmallPtrSetImpl<const slang::ast::Type *> &active) {
+    const slang::ast::Type &canonical = type.getCanonicalType();
+    std::string path = canonical.getHierarchicalPath();
+    std::string spelling = canonical.toString();
+    stream << static_cast<uint32_t>(canonical.kind) << ':' << path.size() << ':'
+           << path << ':' << spelling.size() << ':' << spelling;
+    if (!active.insert(&canonical).second)
+      return;
+    if (const slang::ast::Type *element = canonical.getArrayElementType()) {
+      stream << "[element:";
+      appendStableTypeIdentity(stream, *element, active);
+      stream << ']';
+    }
+    if (const slang::ast::Type *index = canonical.getAssociativeIndexType()) {
+      stream << "[index:";
+      appendStableTypeIdentity(stream, *index, active);
+      stream << ']';
+    }
+    if (canonical.kind == slang::ast::SymbolKind::ClassType) {
+      const auto &classType = canonical.as<slang::ast::ClassType>();
+      for (const slang::ast::Symbol *parameter : classType.genericParameters) {
+        stream << "[parameter:" << static_cast<uint32_t>(parameter->kind)
+               << ':';
+        if (parameter->kind == slang::ast::SymbolKind::Parameter) {
+          const auto &value = parameter->as<slang::ast::ParameterSymbol>();
+          std::string valueString = value.getValue().toString(
+              std::numeric_limits<slang::bitwidth_t>::max(), true, true);
+          stream << valueString.size() << ':' << valueString;
+        } else if (parameter->kind ==
+                   slang::ast::SymbolKind::TypeParameter) {
+          const auto &typeParameter =
+              parameter->as<slang::ast::TypeParameterSymbol>();
+          appendStableTypeIdentity(stream,
+                                   typeParameter.targetType.getType(), active);
+        }
+        stream << ']';
+      }
+    }
+    active.erase(&canonical);
+  }
+
+  std::string
+  getStableSpecializationKey(const slang::ast::ClassType &specialization) {
+    std::string key;
+    llvm::raw_string_ostream stream(key);
+    if (specialization.genericClass)
+      stream << specialization.genericClass->getHierarchicalPath();
+    llvm::SmallPtrSet<const slang::ast::Type *, 8> active;
+    for (const slang::ast::Symbol *parameter :
+         specialization.genericParameters) {
+      stream << '\0' << static_cast<uint32_t>(parameter->kind) << ':';
+      if (parameter->kind == slang::ast::SymbolKind::Parameter) {
+        const auto &value = parameter->as<slang::ast::ParameterSymbol>();
+        std::string valueString = value.getValue().toString(
+            std::numeric_limits<slang::bitwidth_t>::max(), true, true);
+        stream << valueString.size() << ':' << valueString;
+      } else if (parameter->kind ==
+                 slang::ast::SymbolKind::TypeParameter) {
+        const auto &typeParameter =
+            parameter->as<slang::ast::TypeParameterSymbol>();
+        appendStableTypeIdentity(stream, typeParameter.targetType.getType(),
+                                 active);
+      }
+    }
+    return key;
   }
 
   std::string getSymbolPath(const slang::ast::Symbol &symbol) {
@@ -1400,8 +1493,8 @@ private:
                   builder.getBoolAttr(node.defaultSetter != nullptr));
     }
 
-    if constexpr (std::same_as<
-                      T, slang::ast::StreamingConcatenationExpression>) {
+    if constexpr (std::same_as<T,
+                               slang::ast::StreamingConcatenationExpression>) {
       SET_OP_ATTR(SliceSize, builder.getI64IntegerAttr(node.getSliceSize()));
       SET_OP_ATTR(BitstreamWidth,
                   builder.getI64IntegerAttr(node.getBitstreamWidth()));
@@ -1411,8 +1504,7 @@ private:
       withFlags.reserve(node.streams().size());
       for (const auto &stream : node.streams())
         withFlags.push_back(stream.withExpr != nullptr);
-      SET_OP_ATTR(StreamWithFlags,
-                  builder.getDenseI64ArrayAttr(withFlags));
+      SET_OP_ATTR(StreamWithFlags, builder.getDenseI64ArrayAttr(withFlags));
       SET_OP_ATTR(IsFixedSize, builder.getBoolAttr(node.isFixedSize()));
     }
 
@@ -1663,7 +1755,8 @@ private:
           node.arguments().size() == 1) {
         slang::ast::TypePrinter printer;
         printer.append(*node.arguments().front()->type);
-        SET_OP_ATTR(TypenameSpelling, builder.getStringAttr(printer.toString()));
+        SET_OP_ATTR(TypenameSpelling,
+                    builder.getStringAttr(printer.toString()));
       }
       bool enumMethod =
           node.isSystemCall() &&
@@ -2412,8 +2505,7 @@ private:
       SET_OP_ATTR(HasDefault, builder.getBoolAttr(node.defaultCase != nullptr));
     } else if constexpr (std::same_as<T, slang::ast::RandCaseStatement>) {
       SET_OP_ATTR(ItemCount, builder.getI64IntegerAttr(node.items.size()));
-    } else if constexpr (std::same_as<T,
-                                      slang::ast::RandSequenceStatement>) {
+    } else if constexpr (std::same_as<T, slang::ast::RandSequenceStatement>) {
       attrs.set("production_count",
                 builder.getI64IntegerAttr(node.productions.size()));
       attrs.set("has_first_production",
@@ -2424,8 +2516,7 @@ private:
         currentPendingReferences.push_back(
             {node.firstProduction, builder.getStringAttr("first_production")});
       }
-    } else if constexpr (std::same_as<
-                             T, slang::ast::RandSeqProductionSymbol>) {
+    } else if constexpr (std::same_as<T, slang::ast::RandSeqProductionSymbol>) {
       SmallVector<int64_t> itemCounts;
       SmallVector<int64_t> hasWeights;
       SmallVector<int64_t> hasWeightCodeBlocks;
@@ -2444,21 +2535,17 @@ private:
                 builder.getI64IntegerAttr(node.arguments.size()));
       attrs.set("rule_count",
                 builder.getI64IntegerAttr(node.getRules().size()));
-      attrs.set("rule_item_counts",
-                builder.getDenseI64ArrayAttr(itemCounts));
-      attrs.set("rule_has_weights",
-                builder.getDenseI64ArrayAttr(hasWeights));
+      attrs.set("rule_item_counts", builder.getDenseI64ArrayAttr(itemCounts));
+      attrs.set("rule_has_weights", builder.getDenseI64ArrayAttr(hasWeights));
       attrs.set("rule_has_weight_code_blocks",
                 builder.getDenseI64ArrayAttr(hasWeightCodeBlocks));
-      attrs.set("rule_is_rand_join",
-                builder.getDenseI64ArrayAttr(isRandJoin));
+      attrs.set("rule_is_rand_join", builder.getDenseI64ArrayAttr(isRandJoin));
       attrs.set("rule_has_rand_join_expressions",
                 builder.getDenseI64ArrayAttr(hasRandJoinExpressions));
       currentPendingReferenceArrays.push_back(
           {std::move(ruleBlocks), builder.getStringAttr("rule_blocks")});
     } else if constexpr (std::same_as<T, slang::ast::ProdItem>) {
-      attrs.set("argument_count",
-                builder.getI64IntegerAttr(node.args.size()));
+      attrs.set("argument_count", builder.getI64IntegerAttr(node.args.size()));
       attrs.set("has_target", builder.getBoolAttr(node.target != nullptr));
       if (node.target) {
         attrs.set("target_path",
@@ -2467,7 +2554,8 @@ private:
             {node.target, builder.getStringAttr("target")});
       }
     } else if constexpr (std::same_as<T, slang::ast::CodeBlockProd>) {
-      attrs.set("block_path", builder.getStringAttr(getSymbolPath(*node.block)));
+      attrs.set("block_path",
+                builder.getStringAttr(getSymbolPath(*node.block)));
       currentPendingReferences.push_back(
           {node.block, builder.getStringAttr("block")});
     } else if constexpr (std::same_as<T, slang::ast::IfElseProd>) {
@@ -2830,7 +2918,25 @@ private:
     using T = std::remove_cvref_t<Node>;
     if constexpr (std::derived_from<Node, slang::ast::Scope>)
       currentScopes.push_back(&node);
-    if constexpr (std::same_as<T, slang::ast::ClassType>) {
+    if constexpr (std::same_as<T, slang::ast::GenericClassDefSymbol>) {
+      // Slang stores specializations in a hash map. Importing that iteration
+      // order directly makes semantic symbol and node IDs depend on allocator
+      // layout, invalidating deterministic native partitions and ThinLTO cache
+      // keys between identical builds.
+      SmallVector<std::pair<std::string, const slang::ast::ClassType *>>
+          specializations;
+      for (const slang::ast::Type &specialization : node.specializations()) {
+        const auto &classType = specialization.as<slang::ast::ClassType>();
+        specializations.emplace_back(getStableSpecializationKey(classType),
+                                     &classType);
+      }
+      llvm::sort(specializations,
+                 [](const auto &lhs, const auto &rhs) {
+                   return lhs.first < rhs.first;
+                 });
+      for (const auto &entry : specializations)
+        entry.second->visit(*this);
+    } else if constexpr (std::same_as<T, slang::ast::ClassType>) {
       this->visitDefault(node);
       if (const auto *baseConstructorCall = node.getBaseConstructorCall())
         baseConstructorCall->visit(*this);
@@ -2898,8 +3004,7 @@ private:
       } else {
         this->visitDefault(node);
       }
-    } else if constexpr (std::same_as<
-                             T, slang::ast::RandSeqProductionSymbol>) {
+    } else if constexpr (std::same_as<T, slang::ast::RandSeqProductionSymbol>) {
       // Rule blocks and formal arguments are ordinary owned symbols. The
       // production graph itself is lazily elaborated data, so ASTVisitor's
       // default ownership walk cannot see it. Preserve a deterministic flat
@@ -2925,7 +3030,8 @@ private:
     } else if constexpr (std::same_as<T, slang::ast::ProdItem>) {
       node.visitExprs(*this);
     } else if constexpr (std::same_as<T, slang::ast::CodeBlockProd>) {
-      if (const slang::ast::Statement *statement = node.block->tryGetStatement())
+      if (const slang::ast::Statement *statement =
+              node.block->tryGetStatement())
         statement->visit(*this);
     } else if constexpr (std::same_as<T, slang::ast::IfElseProd>) {
       node.expr->visit(*this);

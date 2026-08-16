@@ -5,8 +5,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "SimulationVerifiers.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -14,12 +14,12 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/InliningUtils.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -57,8 +57,8 @@ static bool packedRangeContainsFourState(Type type, uint64_t low,
       return packedRangeContainsFourState(array.getElementType(),
                                           low % elementWidth, width);
     uint64_t firstWidth = elementWidth - low % elementWidth;
-    if (packedRangeContainsFourState(array.getElementType(),
-                                     low % elementWidth, firstWidth))
+    if (packedRangeContainsFourState(array.getElementType(), low % elementWidth,
+                                     firstWidth))
       return true;
     if (last > first + 1 && containsFourStateLeaf(array.getElementType()))
       return true;
@@ -236,7 +236,8 @@ LogicalResult SimVirtualInterfaceBindOp::verify() {
   if (!found.getInterfaceTypeAttr())
     return emitOpError("scope ID does not identify an interface instance");
   if (found.getInterfaceTypeAttr() != getResult().getType().getInterfaceName())
-    return emitOpError("scope interface specialization does not match result type");
+    return emitOpError(
+        "scope interface specialization does not match result type");
   return success();
 }
 
@@ -317,8 +318,8 @@ LogicalResult SimCovergroupInstanceQueryOp::verify() {
   return verifyCovergroupHandle(*this, getHandle().getType());
 }
 
-LogicalResult SimCovergroupTypeQueryOp::verifySymbolUses(
-    SymbolTableCollection &symbolTable) {
+LogicalResult
+SimCovergroupTypeQueryOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (!symbolTable.lookupNearestSymbolFrom<SimCovergroupDeclOp>(
           *this, getDeclarationAttr()))
     return emitOpError("references an unknown covergroup declaration");
@@ -406,8 +407,7 @@ SimClassDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   }
   if (Attribute attribute = (*this)->getAttr(metadata::randomModeField)) {
     auto reference = dyn_cast<FlatSymbolRefAttr>(attribute);
-    SimClassFieldDeclOp field =
-        lookupClassField(symbolTable, *this, reference);
+    SimClassFieldDeclOp field = lookupClassField(symbolTable, *this, reference);
     if (getBaseAttr() || !field || field.getOwner() != getSymName() ||
         field.getIsStatic() || !field.getType().isInteger(64))
       return emitOpError(
@@ -445,9 +445,8 @@ SimClassDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                  << " must be a strong rand object edge";
         current = lookupClass(symbolTable, field, handle.getClassName());
         if (!current)
-          return emitOpError()
-                 << "random-variable reference path field " << pathComponent
-                 << " has an unknown class type";
+          return emitOpError() << "random-variable reference path field "
+                               << pathComponent << " has an unknown class type";
       }
 
       SimClassFieldDeclOp target =
@@ -507,15 +506,13 @@ LogicalResult SimClassFieldDeclOp::verify() {
           "random object edge requires an indexed, strong instance "
           "class-handle field");
   }
-  Attribute variableAttribute =
-      (*this)->getAttr(metadata::randomVariableKind);
+  Attribute variableAttribute = (*this)->getAttr(metadata::randomVariableKind);
   auto variableKind =
       dyn_cast_or_null<RandomVariableKindAttr>(variableAttribute);
   if (variableAttribute && !variableKind)
     return emitOpError(
         "random variable kind must be a RandomVariableKind attribute");
-  Attribute signedAttribute =
-      (*this)->getAttr(metadata::randomVariableSigned);
+  Attribute signedAttribute = (*this)->getAttr(metadata::randomVariableSigned);
   auto isSigned = dyn_cast_or_null<BoolAttr>(signedAttribute);
   Attribute keyAttribute = (*this)->getAttr(metadata::randomCycleKeyField);
   Attribute positionAttribute =
@@ -659,10 +656,11 @@ static SimStorageDeclOp lookupStorage(Operation *operation, uint64_t id) {
   return {};
 }
 
-static LogicalResult verifyRandomValueReference(
-    SymbolTableCollection &symbolTable,
-    SimRandomConstraintTemplateOp templateOp, SimClassDeclOp owner,
-    RandomValueReferenceAttr reference) {
+static LogicalResult
+verifyRandomValueReference(SymbolTableCollection &symbolTable,
+                           SimRandomConstraintTemplateOp templateOp,
+                           SimClassDeclOp owner,
+                           RandomValueReferenceAttr reference) {
   auto verifyRange = [&](Type type, StringRef source) -> LogicalResult {
     std::optional<unsigned> packedWidth = getPackedWidth(type);
     if (!packedWidth || reference.getWidth() > *packedWidth ||
@@ -744,8 +742,8 @@ LogicalResult SimRandomConstraintTemplateOp::verifySymbolUses(
       auto reference = cast<RandomValueReferenceAttr>(attribute);
       if (!uniqueReferences.insert(reference).second)
         return emitOpError("random-value references contain a duplicate");
-      if (failed(verifyRandomValueReference(symbolTable, *this, owner,
-                                           reference)))
+      if (failed(
+              verifyRandomValueReference(symbolTable, *this, owner, reference)))
         return failure();
     }
 
@@ -763,8 +761,7 @@ LogicalResult SimRandomConstraintTemplateOp::verifySymbolUses(
       SimStorageDeclOp storage = lookupStorage(*this, id);
       if (!storage)
         return emitOpError()
-               << "constraint-block reference names unknown storage ID "
-               << id;
+               << "constraint-block reference names unknown storage ID " << id;
       if (!storage.getType().isInteger(64))
         return emitOpError()
                << "constraint-block storage ID " << id << " must be i64";
@@ -819,8 +816,8 @@ LogicalResult SimRandomConstraintValueOp::verify() {
   if (getIndexAttr().getValue().isNegative() ||
       getIndexAttr().getValue().getActiveBits() > 32)
     return emitOpError("reference index exceeds 32 bits");
-  ArrayAttr references = templateOp->getAttrOfType<ArrayAttr>(
-      templateOp.getReferencesAttrName());
+  ArrayAttr references =
+      templateOp->getAttrOfType<ArrayAttr>(templateOp.getReferencesAttrName());
   uint64_t index = getIndexAttr().getValue().getZExtValue();
   if (!references || index >= references.size())
     return emitOpError("reference index is outside the template inventory");
@@ -832,8 +829,7 @@ LogicalResult SimRandomConstraintValueOp::verify() {
 
 static LogicalResult verifyRandomConstraintSink(Operation *operation,
                                                 IntegerAttr block) {
-  auto templateOp =
-      operation->getParentOfType<SimRandomConstraintTemplateOp>();
+  auto templateOp = operation->getParentOfType<SimRandomConstraintTemplateOp>();
   if (!templateOp)
     return operation->emitOpError(
         "must be nested in a random constraint template");
@@ -989,6 +985,23 @@ LogicalResult SimManagedStoreOp::verify() {
   return success();
 }
 
+LogicalResult SimManagedBitsDynStoreOp::verify() {
+  Type element = getReference().getType().getElementType();
+  std::optional<unsigned> fieldWidth = getPackedWidth(element);
+  if (!fieldWidth ||
+      !isa<IntegerType>(getPackedScalarType(element)))
+    return emitOpError("reference must select a two-state packed field");
+  if (!getReplacement().getType().isSignless() ||
+      getReplacement().getType().getWidth() > 64)
+    return emitOpError(
+        "replacement must be a signless integer no wider than 64 bits");
+  if (getReplacement().getType().getWidth() > *fieldWidth)
+    return emitOpError("replacement width exceeds the packed field width");
+  if (!getLowBit().getType().isSignless())
+    return emitOpError("low-bit index must be a signless integer");
+  return success();
+}
+
 LogicalResult SimManagedNBAEnqueueOp::verify() {
   if (getDestination().getType().getElementType() != getValue().getType())
     return emitOpError("value type must match the referenced element");
@@ -1095,8 +1108,7 @@ SimClassDirectCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (!callee)
     return emitOpError("references an unknown method implementation");
   if (callee.getEntryKind() != EntryKind::Function)
-    return emitOpError(
-        "must reference a zero-time function implementation");
+    return emitOpError("must reference a zero-time function implementation");
   FunctionType type = callee.getFunctionType();
   SmallVector<Type> inputs;
   inputs.push_back(getReceiver().getType());
@@ -1334,10 +1346,9 @@ LogicalResult SimDesignOp::verifyRegions() {
       }
       llvm::SmallPtrSet<Operation *, 8> path;
       for (SimClassDeclOp current = classDecl; current;
-           current = current.getBaseAttr()
-                         ? lookupClass(symbolTable, current,
-                                       current.getBaseAttr())
-                         : SimClassDeclOp{})
+           current = current.getBaseAttr() ? lookupClass(symbolTable, current,
+                                                         current.getBaseAttr())
+                                           : SimClassDeclOp{})
         if (!path.insert(current).second)
           return classDecl.emitOpError("class inheritance contains a cycle");
     } else if (auto field = dyn_cast<SimClassFieldDeclOp>(op)) {
@@ -1345,8 +1356,7 @@ LogicalResult SimDesignOp::verifyRegions() {
         return field.emitOpError(
             "owner class contains a duplicate direct-property ordinal");
     } else if (auto method = dyn_cast<SimClassMethodDeclOp>(op)) {
-      if (method.getSlot() &&
-          *method.getSlot() != interfaceDispatchSlot &&
+      if (method.getSlot() && *method.getSlot() != interfaceDispatchSlot &&
           !methodSlots[method.getOwner()].insert(*method.getSlot()).second)
         return method.emitOpError(
             "owner class contains a duplicate virtual-method slot");
@@ -1411,10 +1421,9 @@ LogicalResult SimDesignOp::verifyRegions() {
                        portWidth.value() > sourceWidth.value() - low;
       if (!scopeIds.count(port.getScopeId()) || source == sourceTypes.end() ||
           invalidRange ||
-          (!invalidRange &&
-           packedRangeContainsFourState(source->second, low,
-                                        portWidth.value()) !=
-               containsFourStateLeaf(port.getType())))
+          (!invalidRange && packedRangeContainsFourState(source->second, low,
+                                                         portWidth.value()) !=
+                                containsFourStateLeaf(port.getType())))
         return port.emitOpError(
             "references an incompatible scope or source descriptor");
     } else if (auto connection = dyn_cast<SimNetConnectDeclOp>(op)) {
@@ -1459,8 +1468,8 @@ LogicalResult SimDesignOp::verifyRegions() {
   // this symbol table with a cached SymbolTableCollection.
   llvm::DenseMap<uint64_t, SimFuncOp> executableCodeUnits;
   for (SimFuncOp function : functions) {
-    bool pendingClockedSamplePlan = static_cast<bool>(
-        function->getAttrOfType<DictionaryAttr>(
+    bool pendingClockedSamplePlan =
+        static_cast<bool>(function->getAttrOfType<DictionaryAttr>(
             "obelisk_sim.clocked_sample_plan"));
     if (!function.isExternal() &&
         function.getEntryKind() != EntryKind::RootInitializer &&
@@ -1659,6 +1668,5 @@ LogicalResult SimDesignOp::verifyRegions() {
   }
   return success();
 }
-
 
 } // namespace obelisk::sim

@@ -12,6 +12,7 @@
 
 #include "mlir/Support/LogicalResult.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <cstdint>
@@ -69,10 +70,11 @@ struct NativeOutputOptions {
   std::vector<SharedLibraryInput> sharedLibraryInputs;
   std::string vpi = "off";
   std::string nativeScheduler = "auto";
+  std::string thinLTOCacheDir;
   bool bytecode = false;
-  // Full LTO re-optimizes the entire runtime on every link. Opting out links
-  // the prebuilt runtime archive instead, trading peak simulation speed for a
-  // link that costs milliseconds rather than seconds.
+  // LTO preserves LLVM whole-program optimization across generated native
+  // partitions. Opting out links the object runtime archive instead, trading
+  // peak simulation speed for a cheaper link.
   bool noLTO = false;
   bool timing = false;
   uint32_t optLevel = 3;
@@ -107,11 +109,13 @@ public:
   virtual bool supportsSemanticPartitions() const { return false; }
 
   /// Links a previously written module into an executable image. `modulePath`
-  /// is bitcode when usesFullLTO() holds and an object otherwise.
+  /// entries are bitcode for Full/Thin LTO and objects otherwise. Backends
+  /// without partition support receive exactly one entry.
   virtual mlir::LogicalResult
-  linkExecutable(llvm::StringRef modulePath, llvm::StringRef outputPath,
+  linkExecutable(llvm::ArrayRef<std::string> modulePaths,
+                 llvm::StringRef outputPath,
                  llvm::StringRef supportRoot,
-                 const NativeOutputOptions &options) = 0;
+                 const NativeOutputOptions &options, bool thinLTO) = 0;
 
   /// Locates the staged target-link support tree relative to the running
   /// driver, or nullopt when it is absent.

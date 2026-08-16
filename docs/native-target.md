@@ -144,35 +144,39 @@ optimization level:
 
 - `-O0` emits a native object and links `libobelisk_rt.a`.
 - `-O1`, `-O2`, and `-O3` serialize the optimized generated LLVM module and
-  link it together with `libobelisk_rt_lto.a` using LLD Full LTO.
+  link it together with `libobelisk_rt_lto.a` using LLD. Small unified designs
+  use Full LTO; large partitioned designs use ThinLTO.
 
 The optimized link uses matching LTO and code-generation optimization levels,
-whole-program visibility, and parallel Full-LTO partitions. Broad dynamic
+whole-program visibility, and parallel LTO backends. Broad dynamic
 export is disabled; only the `sv*` DPI context API is retained for foreign
 objects and shared libraries. Runtime ABI entry points that are not otherwise
 needed remain eligible for LTO internalization and elimination.
 
 `--compile-threads=<count>` controls the shared MLIR compilation pool, LLD
-threading, and the number of Full-LTO code-generation partitions. When it is
+threading and LTO code generation. When it is
 not specified, Obelisk uses LLVM's available-hardware count, clamped to at
 least one. This option does not change simulator worker-lane selection;
 `--threads` continues to control generated simulator lanes.
 
-The native support tree contains both runtime archives. They are generated
+The native support tree contains three runtime archives. They are generated
 from the same source revision and target flags by the pinned Clang, then
 content-hashed and staged with the other link inputs:
 
-- `libobelisk_rt.a` contains native x86-64 ELF members for `-O0`.
-- `libobelisk_rt_lto.a` contains LLVM bitcode members for `-O1` through `-O3`.
+- `libobelisk_rt.a` contains native x86-64 ELF members for `-O0` and
+  `-fno-lto` links.
+- `libobelisk_rt_lto.a` contains unified LLVM bitcode members for Full LTO.
+- `libobelisk_rt_prelinked.a` contains the runtime preoptimized with Full LTO
+  for partitioned ThinLTO design links.
 
 These are revision-coupled build-internal artifacts, not stable SDK
 libraries. The LTO archive and generated bitcode are additionally coupled to
-Obelisk's pinned LLVM 22.1.6 bitcode format and unified Full-LTO pipeline. A
+Obelisk's pinned LLVM 22.1.6 bitcode format and unified LTO pipeline. A
 compiler, generated module, or runtime archive from another LLVM or Obelisk
 build must not be mixed into a link.
 
-The planned transition from monolithic Full LTO to stable split objects,
-ThinLTO, and content-addressed incremental reuse is described in
+The stable split-object, ThinLTO, and incremental-cache architecture is
+described in
 [Native partitioning and incremental builds](native-incremental-builds.md).
 
 The native compiler emits generic x86-64 PIE executables. Obelisk's runtime,

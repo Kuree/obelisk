@@ -238,7 +238,8 @@ lowerPlainNativeProcess(sim::SimFuncOp function,
   return finishPreparedPlainNativeProcess(*prepared);
 }
 
-LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
+FailureOr<PreparedOrdinaryNativeFunction>
+prepareOrdinaryFunction(sim::SimFuncOp function) {
   if (failed(lowerSimulationTimeOperations(function)))
     return failure();
   bool privateSymbol =
@@ -305,6 +306,13 @@ LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
     for (BlockArgument argument : block.getArguments())
       argument.setType(
           convertProcessType(argument.getType(), replacement.getContext()));
+  return PreparedOrdinaryNativeFunction{replacement, observer, observerWidth,
+                                        observerFourState};
+}
+
+LogicalResult lowerPreparedOrdinaryFunction(
+    PreparedOrdinaryNativeFunction &function) {
+  func::FuncOp replacement = function.body;
   if (failed(lowerNativeDPICalls(replacement)))
     return failure();
   if (failed(lowerNativeFunctionBody(
@@ -313,17 +321,28 @@ LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
     return failure();
   if (failed(lowerCallableProcessControls(replacement)))
     return failure();
-  if (observer) {
-    if (!observerWidth || !observerFourState)
+  if (function.observer) {
+    if (!function.observerWidth || !function.observerFourState)
       return replacement.emitError(
           "observer entry is missing native descriptor metadata");
+    OpBuilder builder(replacement.getContext());
     replacement->setAttr(
         "obelisk.observer_width",
-        builder.getI32IntegerAttr(observerWidth.getValue().getZExtValue()));
+        builder.getI32IntegerAttr(
+            function.observerWidth.getValue().getZExtValue()));
     replacement->setAttr("obelisk.observer_four_state",
-                         builder.getBoolAttr(observerFourState.getValue()));
+                         builder.getBoolAttr(
+                             function.observerFourState.getValue()));
   }
   return success();
+}
+
+LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
+  FailureOr<PreparedOrdinaryNativeFunction> prepared =
+      prepareOrdinaryFunction(function);
+  if (failed(prepared))
+    return failure();
+  return lowerPreparedOrdinaryFunction(*prepared);
 }
 
 } // namespace obelisk::detail

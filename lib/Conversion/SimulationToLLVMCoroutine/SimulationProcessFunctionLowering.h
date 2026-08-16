@@ -18,6 +18,13 @@ struct PreparedPlainNativeProcess {
   const SimulationProcessFrameAnalysis *analysis;
 };
 
+struct PreparedOrdinaryNativeFunction {
+  mlir::func::FuncOp body;
+  bool observer;
+  mlir::IntegerAttr observerWidth;
+  mlir::BoolAttr observerFourState;
+};
+
 mlir::FailureOr<PreparedPlainNativeProcess> preparePlainNativeProcess(
     sim::SimFuncOp function,
     const SimulationProcessFrameAnalysis &analysis);
@@ -28,6 +35,10 @@ finishPreparedPlainNativeProcess(PreparedPlainNativeProcess &process);
 mlir::LogicalResult lowerPlainNativeProcess(
     sim::SimFuncOp function,
     const SimulationProcessFrameAnalysis &analysis);
+mlir::FailureOr<PreparedOrdinaryNativeFunction>
+prepareOrdinaryFunction(sim::SimFuncOp function);
+mlir::LogicalResult
+lowerPreparedOrdinaryFunction(PreparedOrdinaryNativeFunction &function);
 mlir::LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function);
 
 } // namespace obelisk::detail

@@ -34,6 +34,10 @@ module attributes {
         !obelisk_sim.class_handle<@Base> {
       is_static = false, is_weak = false
     }
+    obelisk_sim.class.field @Base_bits of @Base at 2 :
+        !obelisk_sim.packed_array<32767 : 0 x i1> {
+      is_static = false, is_weak = false
+    }
     obelisk_sim.class.method @I_get of @I slot 4294967295 signature_id 17
         interface_ordinal 0 :
       (!obelisk_sim.context, !obelisk_sim.class_handle<@I>) -> i64 {
@@ -106,6 +110,82 @@ module attributes {
       %one = arith.constant 1 : i64
       obelisk_sim.managed.store %one to %field :
         i64, !obelisk_sim.managed_ref<i64, @Base>
+      %bits_field = obelisk_sim.class.field_ref %base[@Base_bits] :
+        !obelisk_sim.class_handle<@Base> ->
+        !obelisk_sim.managed_ref<
+          !obelisk_sim.packed_array<32767 : 0 x i1>, @Base>
+      %bits = obelisk_sim.managed.load %bits_field :
+        !obelisk_sim.managed_ref<
+          !obelisk_sim.packed_array<32767 : 0 x i1>, @Base> ->
+        !obelisk_sim.packed_array<32767 : 0 x i1>
+      %flat = obelisk_sim.packed.flatten %bits :
+        (!obelisk_sim.packed_array<32767 : 0 x i1>) -> i32768
+      %byte = arith.constant 42 : i8
+      %low = arith.constant 17 : i66
+      %inserted = obelisk_sim.bits.dyn_insert %byte into %flat at %low :
+        (i32768, i8, i66) -> i32768
+      %updated = obelisk_sim.packed.unflatten %inserted :
+        (i32768) -> !obelisk_sim.packed_array<32767 : 0 x i1>
+      obelisk_sim.managed.store %updated to %bits_field :
+        !obelisk_sim.packed_array<32767 : 0 x i1>,
+        !obelisk_sim.managed_ref<
+          !obelisk_sim.packed_array<32767 : 0 x i1>, @Base>
+      // Four-state indices retain the generic read/modify/write lowering so
+      // an unknown index preserves the original field.
+      %bits_again = obelisk_sim.managed.load %bits_field :
+        !obelisk_sim.managed_ref<
+          !obelisk_sim.packed_array<32767 : 0 x i1>, @Base> ->
+        !obelisk_sim.packed_array<32767 : 0 x i1>
+      %flat_again = obelisk_sim.packed.flatten %bits_again :
+        (!obelisk_sim.packed_array<32767 : 0 x i1>) -> i32768
+      %unknown_low = obelisk_sim.logic.constant 0 : i66, 1 : i66 :
+        !obelisk_sim.logic<66>
+      %unknown_inserted = obelisk_sim.bits.dyn_insert %byte into
+        %flat_again at %unknown_low :
+        (i32768, i8, !obelisk_sim.logic<66>) -> i32768
+      %unknown_updated = obelisk_sim.packed.unflatten %unknown_inserted :
+        (i32768) -> !obelisk_sim.packed_array<32767 : 0 x i1>
+      obelisk_sim.managed.store %unknown_updated to %bits_field :
+        !obelisk_sim.packed_array<32767 : 0 x i1>,
+        !obelisk_sim.managed_ref<
+          !obelisk_sim.packed_array<32767 : 0 x i1>, @Base>
+      // An intervening heap effect prevents moving the read to an atomic RMW
+      // at the final store.
+      %bits_before_effect = obelisk_sim.managed.load %bits_field :
+        !obelisk_sim.managed_ref<
+          !obelisk_sim.packed_array<32767 : 0 x i1>, @Base> ->
+        !obelisk_sim.packed_array<32767 : 0 x i1>
+      %flat_before_effect = obelisk_sim.packed.flatten %bits_before_effect :
+        (!obelisk_sim.packed_array<32767 : 0 x i1>) -> i32768
+      obelisk_sim.managed.store %one to %field :
+        i64, !obelisk_sim.managed_ref<i64, @Base>
+      %inserted_after_effect = obelisk_sim.bits.dyn_insert %byte into
+        %flat_before_effect at %low : (i32768, i8, i66) -> i32768
+      %updated_after_effect = obelisk_sim.packed.unflatten
+        %inserted_after_effect :
+        (i32768) -> !obelisk_sim.packed_array<32767 : 0 x i1>
+      obelisk_sim.managed.store %updated_after_effect to %bits_field :
+        !obelisk_sim.packed_array<32767 : 0 x i1>,
+        !obelisk_sim.managed_ref<
+          !obelisk_sim.packed_array<32767 : 0 x i1>, @Base>
+      // A pure but non-speculatable operation also preserves the original
+      // read position and therefore blocks fusion.
+      %bits_before_div = obelisk_sim.managed.load %bits_field :
+        !obelisk_sim.managed_ref<
+          !obelisk_sim.packed_array<32767 : 0 x i1>, @Base> ->
+        !obelisk_sim.packed_array<32767 : 0 x i1>
+      %flat_before_div = obelisk_sim.packed.flatten %bits_before_div :
+        (!obelisk_sim.packed_array<32767 : 0 x i1>) -> i32768
+      %zero_byte = arith.constant 0 : i8
+      %unsafe_div = arith.divui %byte, %zero_byte : i8
+      %inserted_after_div = obelisk_sim.bits.dyn_insert %unsafe_div into
+        %flat_before_div at %low : (i32768, i8, i66) -> i32768
+      %updated_after_div = obelisk_sim.packed.unflatten %inserted_after_div :
+        (i32768) -> !obelisk_sim.packed_array<32767 : 0 x i1>
+      obelisk_sim.managed.store %updated_after_div to %bits_field :
+        !obelisk_sim.packed_array<32767 : 0 x i1>,
+        !obelisk_sim.managed_ref<
+          !obelisk_sim.packed_array<32767 : 0 x i1>, @Base>
       %delay = obelisk_sim.time.constant 2
       obelisk_sim.managed.nba.enqueue %one to %field after %delay :
         (i64, !obelisk_sim.managed_ref<i64, @Base>, !obelisk_sim.time) -> ()
@@ -127,6 +207,7 @@ module attributes {
 }
 
 
+// CHECK: llvm.func @obelisk_rt_v1_object_bits_insert(!llvm.ptr, i64, i64, i64, i32, i64, i32) -> i32
 // CHECK-LABEL: llvm.mlir.global internal constant @Derived.__obelisk_class_descriptor
 // CHECK-LABEL: llvm.mlir.global internal constant @Derived.__obelisk_interfaces
 // CHECK: llvm.mlir.constant(1 : i64)
@@ -143,12 +224,14 @@ module attributes {
 // CHECK-LABEL: llvm.func internal @Base_get.__obelisk_native_thunk
 // PARTITION: module attributes {
 // PARTITION-SAME: obelisk.native.physical_partition_manifest = [
-// PARTITION-SAME: id = "class:Base"
-// PARTITION-SAME: members = [@Base_get.__obelisk_native_thunk, @Base_tag.__obelisk_native_thunk, @base_get, @base_tag]
+// PARTITION-SAME: id = "unit:2"
+// PARTITION-SAME: members = [@Base_get.__obelisk_native_thunk, @base_get]
+// PARTITION-SAME: id = "unit:3"
+// PARTITION-SAME: members = [@Base_tag.__obelisk_native_thunk, @base_tag]
 // PARTITION: llvm.func internal @Base_get.__obelisk_native_thunk
-// PARTITION-SAME: obelisk.native.partition = "class:Base"
+// PARTITION-SAME: obelisk.native.partition = "unit:2"
 // PARTITION: llvm.func internal @Base_tag.__obelisk_native_thunk
-// PARTITION-SAME: obelisk.native.partition = "class:Base"
+// PARTITION-SAME: obelisk.native.partition = "unit:3"
 // CHECK-LABEL: llvm.func @root(
 // CHECK: llvm.call @obelisk_rt_v1_object_allocate
 // CHECK: llvm.call @obelisk_rt_v1_object_shallow_copy
@@ -156,6 +239,25 @@ module attributes {
 // CHECK: llvm.call @obelisk_rt_v1_object_cast
 // CHECK: llvm.call @obelisk_rt_v1_object_shallow_copy
 // CHECK: llvm.call @obelisk_rt_v1_object_write
+// CHECK-NOT: llvm.shl {{.*}} : i327
+// CHECK: %[[BIT_OFFSET:.*]] = llvm.mlir.constant(24 : i64) : i64
+// CHECK: %[[LOW:.*]] = llvm.mlir.constant(17 : i64) : i64
+// CHECK: %[[REPLACEMENT:.*]] = llvm.mlir.constant(42 : i64) : i64
+// CHECK: %[[VALID:.*]] = llvm.zext {{.*}} : i1 to i32
+// CHECK: %[[OBJECT:.*]] = llvm.inttoptr {{.*}} : i64 to !llvm.ptr
+// CHECK: %[[FIELD_WIDTH:.*]] = llvm.mlir.constant(32768 : i64) : i64
+// CHECK: %[[REPLACEMENT_WIDTH:.*]] = llvm.mlir.constant(8 : i32) : i32
+// CHECK: llvm.call @obelisk_rt_v1_object_bits_insert(%[[OBJECT]], %[[BIT_OFFSET]], %[[FIELD_WIDTH]], %[[LOW]], %[[VALID]], %[[REPLACEMENT]], %[[REPLACEMENT_WIDTH]])
+// CHECK-NOT: llvm.call @obelisk_rt_v1_object_bits_insert
+// CHECK: llvm.call @obelisk_rt_v1_object_read
+// CHECK: llvm.call @obelisk_rt_v1_object_write
+// CHECK: llvm.call @obelisk_rt_v1_object_read
+// CHECK: llvm.call @obelisk_rt_v1_object_write
+// CHECK: llvm.call @obelisk_rt_v1_object_write
+// CHECK: llvm.call @obelisk_rt_v1_object_read
+// CHECK: llvm.udiv
+// CHECK: llvm.call @obelisk_rt_v1_object_write
+// CHECK-NOT: llvm.call @obelisk_rt_v1_object_bits_insert
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_managed_nba
 // CHECK: llvm.call @base_get
 // CHECK: llvm.call @obelisk_rt_v1_method_invoke

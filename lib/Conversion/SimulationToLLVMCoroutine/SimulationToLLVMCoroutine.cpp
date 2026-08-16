@@ -54,6 +54,7 @@
 #include "llvm/Support/Error.h"
 
 #include <algorithm>
+#include <chrono>
 #include <limits>
 
 using namespace mlir;
@@ -82,8 +83,8 @@ using detail::finishPreparedPlainNativeProcess;
 using detail::finishPreparedSuspendableProcess;
 using detail::insertAutomaticOwnerReleases;
 using detail::instrumentManagedRoots;
-using detail::lowerOrdinaryFunction;
 using detail::lowerPackedSimulationOperations;
+using detail::lowerPreparedOrdinaryFunction;
 using detail::lowerPreparedPlainNativeProcess;
 using detail::lowerPreparedSuspendableProcess;
 using detail::makeDirectFragmentWrapper;
@@ -115,9 +116,11 @@ using detail::NativeStaticNBAPlan;
 using detail::NativeThreeTierKernelPlan;
 using detail::NativeThreeTierPlan;
 using detail::populateContextRuntimeToLLVMConversionPattern;
+using detail::PreparedOrdinaryNativeFunction;
 using detail::PreparedPlainNativeProcess;
 using detail::PreparedSuspendableProcess;
 using detail::prepareManagedLowering;
+using detail::prepareOrdinaryFunction;
 using detail::preparePlainNativeProcess;
 using detail::prepareSuspendableProcess;
 using detail::specializeNativeAOTCaptures;
@@ -1760,6 +1763,17 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
 LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     ModuleOp module, const llvm::DataLayout &dataLayout) {
   MLIRContext *context = module.getContext();
+  bool detailedTiming = module->hasAttr("obelisk.debug.native_timing");
+  auto lastTiming = std::chrono::steady_clock::now();
+  auto markTiming = [&](StringRef name) {
+    if (!detailedTiming)
+      return;
+    auto now = std::chrono::steady_clock::now();
+    double seconds = std::chrono::duration<double>(now - lastTiming).count();
+    llvm::errs() << "obelisk native preparation timing: " << name << ": "
+                 << seconds << " s\n";
+    lastTiming = now;
+  };
   // SimDesignOp is intentionally eliminated by this lowering. Preserve the
   // semantic partition inventory serially on the module before any early
   // bytecode-only or ordinary native path can erase its owner. String keys are
@@ -1793,6 +1807,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   FailureOr<NativeStateLayout> stateLayout = buildNativeStateLayout(module);
   if (failed(stateLayout))
     return failure();
+  markTiming("managed lowering and state layout");
   sim::StaticSpecializationAttr staticSpecialization;
   sim::StaticSuperstepAttr staticSuperstep;
   SmallVector<sim::ComputeNBACommitAttr> staticNBACommits;
@@ -2014,6 +2029,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   });
   if (analyzed.wasInterrupted())
     return failure();
+  markTiming("frame analysis and state threading");
   // Fixed root-spawn captures are useful independently of scheduler
   // selection: replacing a proven-unique storage capture with its context
   // lookup exposes a constant stable handle to direct-state lowering.  The
@@ -2205,6 +2221,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       return failure();
     threeTierPlan = std::move(*planned);
   }
+  markTiming("AOT and static schedule planning");
   FailureOr<analysis::SimulationScheduleAnalysis> scheduleRanks =
       analysis::SimulationScheduleAnalysis::compute(module);
   if (failed(scheduleRanks))
@@ -2269,6 +2286,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   if (failed(materializeEvalTwoStateVariants(module, metadataDesign,
                                              *stateLayout, evalScheduler)))
     return failure();
+  markTiming("schedule ranks, roots, and two-state variants");
 
   // Direct fragment extraction can end immediately before an observer
   // suspension, leaving its binding token unused in the generated eval body.
@@ -2364,6 +2382,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
           staticNBA ? &staticNBAPlan : nullptr, vpi.allowsWrite(),
           /*experimentalTwoState=*/false)))
     return failure();
+  markTiming("packed simulation lowering");
 
   FailureOr<SmallVector<NativeDirectFragment>> directFragments =
       materializeDirectFragments(
@@ -2373,6 +2392,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
               !guardedAOTSpecialization);
   if (failed(directFragments))
     return failure();
+  markTiming("direct fragment materialization");
 
   // Resolve typed graph-fusion membership before eval ownership.  Fusion may
   // replace several source actor continuations with one outlined
@@ -2796,6 +2816,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         direct.fusionGroup = group->second;
       }
   }
+  markTiming("eval ownership and graph planning");
 
   SmallVector<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>>
       rankedAOTNodes;
@@ -2897,6 +2918,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   }
   if (failed(makeSchedulerMain(module, *stateLayout, useAOT, evalScheduler)))
     return failure();
+  markTiming("process helpers and scheduler main");
 
   SmallVector<sim::SimFuncOp> ordinary;
   module.walk([&](sim::SimFuncOp function) {
@@ -2904,9 +2926,23 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         function.getEntryKind() == sim::EntryKind::Observer)
       ordinary.push_back(function);
   });
-  for (sim::SimFuncOp function : ordinary)
-    if (failed(lowerOrdinaryFunction(function)))
+  SmallVector<PreparedOrdinaryNativeFunction> ordinaryFunctions;
+  ordinaryFunctions.reserve(ordinary.size());
+  for (sim::SimFuncOp function : ordinary) {
+    FailureOr<PreparedOrdinaryNativeFunction> prepared =
+        prepareOrdinaryFunction(function);
+    if (failed(prepared))
       return failure();
+    ordinaryFunctions.push_back(std::move(*prepared));
+  }
+  markTiming("ordinary function preparation");
+  if (failed(failableParallelForEach(
+          context, ordinaryFunctions,
+          [&](PreparedOrdinaryNativeFunction &function) {
+            return lowerPreparedOrdinaryFunction(function);
+          })))
+    return failure();
+  markTiming("ordinary function body lowering");
   // Runtime status checks can make an ordinary direct body return i32 while
   // its wrapper was formed against the pre-runtime void signature. Reconcile
   // the explicitly tagged private call after every ordinary signature is
@@ -2954,6 +2990,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   }
   if (failed(materializeManagedMethodThunks(module, dataLayout)))
     return failure();
+  markTiming("managed method thunks");
 
   SmallVector<std::pair<sim::SimFuncOp, SimulationProcessFrameAnalysis *>>
       processFunctions;
@@ -2985,23 +3022,28 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       return failure();
     suspendableProcesses.push_back(std::move(*prepared));
   }
+  markTiming("process body preparation");
   if (failed(failableParallelForEach(
           context, plainProcesses, [&](PreparedPlainNativeProcess &process) {
             return lowerPreparedPlainNativeProcess(process);
           })))
     return failure();
+  markTiming("plain process body lowering");
   if (failed(failableParallelForEach(context, suspendableProcesses,
                                      [&](PreparedSuspendableProcess &process) {
                                        return lowerPreparedSuspendableProcess(
                                            process);
                                      })))
     return failure();
+  markTiming("suspendable process body lowering");
   for (PreparedPlainNativeProcess &process : plainProcesses)
     if (failed(finishPreparedPlainNativeProcess(process)))
       return failure();
+  markTiming("plain process finalization");
   for (PreparedSuspendableProcess &process : suspendableProcesses)
     if (failed(finishPreparedSuspendableProcess(process)))
       return failure();
+  markTiming("suspendable process finalization");
 
   SmallVector<sim::SimDesignOp> designs;
   module.walk([&](sim::SimDesignOp design) { designs.push_back(design); });
@@ -4229,6 +4271,17 @@ class ConvertObeliskSimProcessesToLLVMCoroutinesPass final
 public:
   void runOnOperation() override {
     ModuleOp module = getOperation();
+    bool detailedTiming = module->hasAttr("obelisk.debug.native_timing");
+    auto lastTiming = std::chrono::steady_clock::now();
+    auto markTiming = [&](StringRef name) {
+      if (!detailedTiming)
+        return;
+      auto now = std::chrono::steady_clock::now();
+      double seconds = std::chrono::duration<double>(now - lastTiming).count();
+      llvm::errs() << "obelisk native timing: " << name << ": " << seconds
+                   << " s\n";
+      lastTiming = now;
+    };
     auto layoutAttr = module->getAttrOfType<StringAttr>("llvm.data_layout");
     if (!layoutAttr) {
       module.emitError(
@@ -4253,9 +4306,11 @@ public:
       return signalPassFailure();
     if (failed(materializeEmbeddedSimulationDesign(module)))
       return signalPassFailure();
+    markTiming("validation and embedded design");
 
     if (failed(prepareSimulationProcessesToLLVMCoroutines(module, *parsed)))
       return signalPassFailure();
+    markTiming("native process preparation");
 
     LowerToLLVMOptions options(&getContext());
     options.dataLayout = *parsed;
@@ -4271,6 +4326,7 @@ public:
       signalPassFailure();
       return;
     }
+    markTiming("runtime byte-global inventory");
 
     // Runtime materializers may create immutable byte globals and runtime
     // calls may declare their C ABI entry points. Lower them serially before
@@ -4291,6 +4347,7 @@ public:
         return;
       }
     }
+    markTiming("serial runtime conversion");
 
     RewritePatternSet patterns(&getContext());
     populateSimulationCoroutineBodyToLLVMPatterns(converter, patterns);
@@ -4309,17 +4366,18 @@ public:
     // module-wide conversion driver otherwise walks thousands of cold UVM
     // methods serially and dominates -O3 compile time.
     SmallVector<SmallVector<Operation *>> functionBodies;
+    Dialect *llvmDialect =
+        getContext().getLoadedDialect<LLVM::LLVMDialect>();
     module.walk([&](FunctionOpInterface function) {
       if (function.isExternal())
         return;
-      bool needsConversion = false;
-      function.walk([&](Operation *operation) {
+      WalkResult inventory = function.walk([&](Operation *operation) {
         if (operation != function.getOperation() &&
-            operation->getDialect() !=
-                getContext().getLoadedDialect<LLVM::LLVMDialect>())
-          needsConversion = true;
+            operation->getDialect() != llvmDialect)
+          return WalkResult::interrupt();
+        return WalkResult::advance();
       });
-      if (!needsConversion)
+      if (!inventory.wasInterrupted())
         return;
       SmallVector<Operation *> roots;
       for (Block &block : function.getFunctionBody())
@@ -4328,6 +4386,7 @@ public:
       if (!roots.empty())
         functionBodies.push_back(std::move(roots));
     });
+    markTiming("function-body inventory");
 
     // Amortize converter and pattern construction without sharing their
     // mutable type-conversion caches between threads. Keeping chunks bounded
@@ -4370,10 +4429,12 @@ public:
       signalPassFailure();
       return;
     }
+    markTiming("parallel function-body conversion");
     if (failed(applyFullConversion(module, target, frozenPatterns))) {
       signalPassFailure();
       return;
     }
+    markTiming("serial wrapper conversion");
     SmallVector<UnrealizedConversionCastOp> unrealizedCasts;
     module.walk([&](UnrealizedConversionCastOp cast) {
       unrealizedCasts.push_back(cast);
@@ -4406,21 +4467,21 @@ public:
       signalPassFailure();
       return;
     }
+    markTiming("post-conversion materialization");
 
-    // LLVM's aggressive scalar pipeline can spend minutes in a handful of
-    // mechanically expanded UVM helpers while the rest of the design is
-    // modest. Put a deterministic per-function ceiling on optimization work;
-    // this preserves exact native semantics and leaves every smaller function
-    // at the requested level. The threshold override is an internal testing
-    // hook so the policy is covered without a giant fixture.
+    // ThinLTO may otherwise import a mechanically expanded helper into many
+    // shards and optimize the same large body repeatedly.  Keep full local
+    // optimization enabled, but make sufficiently large definitions a hard
+    // call boundary.  This avoids the old optnone tradeoff: every body still
+    // receives the requested O2/O3 pipeline exactly once.
     auto optimizationLevel =
         module->getAttrOfType<IntegerAttr>("obelisk.native.optimization_level");
     auto limitAttr =
-        module->getAttrOfType<IntegerAttr>("obelisk.native.max_optimized_ops");
-    uint64_t operationLimit =
+        module->getAttrOfType<IntegerAttr>("obelisk.native.max_inline_ops");
+    uint64_t inlineOperationLimit =
         limitAttr ? limitAttr.getValue().getZExtValue() : UINT64_C(5000);
     if (optimizationLevel && optimizationLevel.getInt() >= 2 &&
-        operationLimit != 0) {
+        inlineOperationLimit != 0) {
       module.walk([&](LLVM::LLVMFuncOp function) {
         if (function.isExternal())
           return;
@@ -4428,39 +4489,39 @@ public:
         function.walk([&](Operation *operation) {
           operations += operation != function.getOperation();
         });
-        if (operations <= operationLimit)
+        if (operations <= inlineOperationLimit)
           return;
         function.setAlwaysInline(false);
         function.setInlineHint(false);
         function.setNoInline(true);
-        function.setOptimizeNone(true);
+        SmallVector<Attribute> retained;
         if (ArrayAttr passthrough = function.getPassthroughAttr()) {
-          SmallVector<Attribute> retained;
           for (Attribute attribute : passthrough) {
             StringAttr name = dyn_cast<StringAttr>(attribute);
             if (!name)
               if (auto pair = dyn_cast<ArrayAttr>(attribute);
                   pair && !pair.empty())
                 name = dyn_cast<StringAttr>(pair.getValue()[0]);
-            if (name &&
-                (name.getValue() == "alwaysinline" ||
-                 name.getValue() == "minsize" || name.getValue() == "optsize"))
+            if (name && name.getValue() == "alwaysinline")
               continue;
             retained.push_back(attribute);
           }
-          if (retained.empty())
-            function->removeAttr("passthrough");
-          else
-            function.setPassthroughAttr(
-                ArrayAttr::get(&getContext(), retained));
         }
+        if (retained.empty())
+          function->removeAttr("passthrough");
+        else
+          function.setPassthroughAttr(ArrayAttr::get(&getContext(), retained));
       });
     }
     module->removeAttr("obelisk.native.optimization_level");
-    module->removeAttr("obelisk.native.max_optimized_ops");
+    module->removeAttr("obelisk.native.max_inline_ops");
     module->removeAttr("obelisk.native.max_state_domain_functions");
+    module->removeAttr("obelisk.debug.native_timing");
+    markTiming("large-function policy");
     if (failed(verify(module)))
       signalPassFailure();
+    else
+      markTiming("final verification");
   }
 };
 

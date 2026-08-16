@@ -139,7 +139,7 @@ if(OBELISK_TARGET_SYSROOT_ONLY)
   return()
 endif()
 
-foreach(tool clang++ llvm-ar llvm-ranlib)
+foreach(tool clang++ ld.lld llvm-ar llvm-ranlib)
   if(NOT EXISTS "${OBELISK_LLVM_DIST_DIR}/bin/${tool}")
     message(FATAL_ERROR
       "The pinned LLVM distribution is missing target-runtime tool: "
@@ -152,6 +152,10 @@ set(OBELISK_TARGET_RUNTIME_ARCHIVE
     "${_obelisk_target_runtime_dir}/libobelisk_rt.a")
 set(OBELISK_TARGET_RUNTIME_LTO_ARCHIVE
     "${_obelisk_target_runtime_dir}/libobelisk_rt_lto.a")
+set(OBELISK_TARGET_RUNTIME_PRELINKED_OBJECT
+    "${_obelisk_target_runtime_dir}/obelisk_rt_prelinked.o")
+set(OBELISK_TARGET_RUNTIME_PRELINKED_ARCHIVE
+    "${_obelisk_target_runtime_dir}/libobelisk_rt_prelinked.a")
 file(GLOB_RECURSE _obelisk_target_runtime_headers CONFIGURE_DEPENDS
   "${_obelisk_runtime_source_dir}/include/*.h"
   "${_obelisk_runtime_source_dir}/lib/*.h")
@@ -240,10 +244,33 @@ add_custom_command(
   DEPENDS ${_obelisk_target_runtime_lto_objects}
   COMMENT "Archiving target libobelisk_rt_lto.a with llvm-ar"
   VERBATIM)
+add_custom_command(
+  OUTPUT "${OBELISK_TARGET_RUNTIME_PRELINKED_OBJECT}"
+  COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/ld.lld"
+          -r --lto=full --lto-O3 --lto-CGO3
+          --whole-archive "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
+          --no-whole-archive
+          -o "${OBELISK_TARGET_RUNTIME_PRELINKED_OBJECT}"
+  DEPENDS "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
+  COMMENT "Prelinking the target runtime with Full LTO"
+  VERBATIM)
+add_custom_command(
+  OUTPUT "${OBELISK_TARGET_RUNTIME_PRELINKED_ARCHIVE}"
+  COMMAND "${CMAKE_COMMAND}" -E rm -f
+          "${OBELISK_TARGET_RUNTIME_PRELINKED_ARCHIVE}"
+  COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llvm-ar" rcs
+          "${OBELISK_TARGET_RUNTIME_PRELINKED_ARCHIVE}"
+          "${OBELISK_TARGET_RUNTIME_PRELINKED_OBJECT}"
+  COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llvm-ranlib"
+          "${OBELISK_TARGET_RUNTIME_PRELINKED_ARCHIVE}"
+  DEPENDS "${OBELISK_TARGET_RUNTIME_PRELINKED_OBJECT}"
+  COMMENT "Archiving the prelinked target runtime"
+  VERBATIM)
 add_custom_target(obelisk_target_runtime
   DEPENDS
     "${OBELISK_TARGET_RUNTIME_ARCHIVE}"
-    "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}")
+    "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
+    "${OBELISK_TARGET_RUNTIME_PRELINKED_ARCHIVE}")
 add_dependencies(obelisk_target_runtime obelisk_target_sysroot)
 
 set(OBELISK_NATIVE_SUPPORT_DIR
@@ -262,6 +289,7 @@ set(_obelisk_native_support_byproducts
   "${OBELISK_NATIVE_SUPPORT_DIR}/libunwind.a"
   "${OBELISK_NATIVE_SUPPORT_DIR}/libobelisk_rt.a"
   "${OBELISK_NATIVE_SUPPORT_DIR}/libobelisk_rt_lto.a"
+  "${OBELISK_NATIVE_SUPPORT_DIR}/libobelisk_rt_prelinked.a"
   "${OBELISK_NATIVE_SUPPORT_DIR}/glibc/usr/lib/x86_64-linux-gnu/Scrt1.o"
   "${OBELISK_NATIVE_SUPPORT_DIR}/glibc/usr/lib/x86_64-linux-gnu/crti.o"
   "${OBELISK_NATIVE_SUPPORT_DIR}/glibc/usr/lib/x86_64-linux-gnu/crtn.o"
@@ -305,6 +333,7 @@ add_custom_command(
     "-DSYSROOT=${OBELISK_TARGET_SYSROOT}"
     "-DRUNTIME_ARCHIVE=${OBELISK_TARGET_RUNTIME_ARCHIVE}"
     "-DRUNTIME_LTO_ARCHIVE=${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
+    "-DRUNTIME_PRELINKED_ARCHIVE=${OBELISK_TARGET_RUNTIME_PRELINKED_ARCHIVE}"
     "-DLLVM_DIST=${OBELISK_LLVM_DIST_DIR}"
     "-DSOURCE_DIR=${_obelisk_source_dir}"
     "-DSTAGE_KEY=${OBELISK_TARGET_SYSROOT_KEY}-llvm-${OBELISK_LLVM_VERSION}"
@@ -314,6 +343,7 @@ add_custom_command(
     "${OBELISK_TARGET_SYSROOT_STAMP}"
     "${OBELISK_TARGET_RUNTIME_ARCHIVE}"
     "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
+    "${OBELISK_TARGET_RUNTIME_PRELINKED_ARCHIVE}"
     "${_obelisk_source_dir}/cmake/StageNativeSupport.cmake"
     "${_obelisk_source_dir}/LICENSE"
     "${_obelisk_source_dir}/docs/third-party/licenses/LGPL-2.1.txt"

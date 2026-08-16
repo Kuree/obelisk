@@ -16,6 +16,7 @@
 #include "mlir/Transforms/DialectConversion.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/LLVMContext.h"
@@ -663,20 +664,28 @@ materializeManagedMethodThunks(ModuleOp module,
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = IntegerType::get(context, 32);
   Type i64 = IntegerType::get(context, 64);
+  llvm::StringSet<> existingSymbols;
+  for (Operation &operation : *module.getBody())
+    if (StringAttr name = SymbolTable::getSymbolName(&operation))
+      existingSymbols.insert(name.getValue());
+  SymbolTableCollection symbolTables;
+  llvm::DataLayout localDataLayout(dataLayout.getStringRepresentation());
+  llvm::LLVMContext llvmContext;
   for (sim::SimClassMethodDeclOp method : methods) {
     std::string thunkName = managedMethodThunkName(method.getSymName());
-    if (module.lookupSymbol(thunkName))
+    if (!existingSymbols.insert(thunkName).second)
       continue;
     OpBuilder builder(context);
     if (method.getIsTask()) {
-      auto implementation = SymbolTable::lookupNearestSymbolFrom<sim::SimFuncOp>(
-          method, method.getImplementationAttr());
+      auto implementation =
+          symbolTables.lookupNearestSymbolFrom<sim::SimFuncOp>(
+              method, method.getImplementationAttr());
       if (!implementation)
         return method.emitError(
             "managed task implementation was not preserved as a process");
       std::string helperName =
           (implementation.getSymName() + ".__obelisk_activate_checked").str();
-      auto helper = SymbolTable::lookupNearestSymbolFrom<LLVM::LLVMFuncOp>(
+      auto helper = symbolTables.lookupNearestSymbolFrom<LLVM::LLVMFuncOp>(
           method, FlatSymbolRefAttr::get(context, helperName));
       if (!helper)
         return method.emitError(
@@ -689,11 +698,9 @@ materializeManagedMethodThunks(ModuleOp module,
       unsigned physicalArgumentCount = helperInputs.size() - 3;
       FunctionType semanticType = cast<FunctionType>(method.getFunctionType());
       SmallVector<uint64_t> expectedSizes;
-      llvm::DataLayout local(dataLayout.getStringRepresentation());
-      llvm::LLVMContext llvmContext;
       for (Type argument : semanticType.getInputs().drop_front(2)) {
         FailureOr<analysis::SimulationStorageProperties> storage =
-            analysis::getSimulationStorageProperties(argument, local,
+            analysis::getSimulationStorageProperties(argument, localDataLayout,
                                                      llvmContext);
         if (failed(storage))
           return method.emitError("managed task argument has no native ABI");
@@ -789,7 +796,7 @@ materializeManagedMethodThunks(ModuleOp module,
       LLVM::ReturnOp::create(builder, method.getLoc(), status);
       continue;
     }
-    auto implementation = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
+    auto implementation = symbolTables.lookupNearestSymbolFrom<func::FuncOp>(
         method, method.getImplementationAttr());
     if (!implementation)
       return method.emitError(
@@ -826,13 +833,11 @@ materializeManagedMethodThunks(ModuleOp module,
         implementationType.getResults(), callArguments);
 
     FunctionType semanticType = cast<FunctionType>(method.getFunctionType());
-    llvm::DataLayout local(dataLayout.getStringRepresentation());
-    llvm::LLVMContext llvmContext;
     uint64_t resultOffset = 0;
     unsigned physicalResult = 0;
     for (Type resultType : semanticType.getResults()) {
       FailureOr<analysis::SimulationStorageProperties> storage =
-          analysis::getSimulationStorageProperties(resultType, local,
+          analysis::getSimulationStorageProperties(resultType, localDataLayout,
                                                    llvmContext);
       if (failed(storage))
         return method.emitError("managed method result has no native layout");

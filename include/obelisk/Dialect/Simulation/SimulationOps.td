@@ -1146,6 +1146,25 @@ def SimManagedStoreOp : SimOp<"managed.store", [
   let hasVerifier = 1;
 }
 
+def SimManagedBitsDynStoreOp : SimOp<"managed.bits_dyn_store", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "atomically replace a narrow slice of a wide packed field";
+  let description = [{
+    This native-lowering operation preserves `bits.dyn_insert` clipping and
+    out-of-range semantics without materializing the complete packed field as
+    one LLVM integer. It is formed only after any bytecode fallback has been
+    frozen.
+  }];
+  let arguments = (ins AnyInteger:$replacement, SimManagedRefType:$reference,
+                        AnyInteger:$low_bit);
+  let assemblyFormat = [{
+    $replacement `into` $reference `at` $low_bit attr-dict `:`
+    type($replacement) `,` qualified(type($reference)) `,` type($low_bit)
+  }];
+  let hasVerifier = 1;
+}
+
 def SimManagedWatchOp : SimOp<"managed.watch", [
     MemoryEffects<[MemRead<SimHeapResource>, MemRead<SimSchedulerResource>]>
   ]> {

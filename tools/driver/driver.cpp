@@ -710,6 +710,8 @@ static int executeCompilation(const InputArgList &args) {
         std::move(classifiedInputs.sharedLibraries);
     nativeOptions.vpi = vpiMode.str();
     nativeOptions.nativeScheduler = nativeScheduler.str();
+    nativeOptions.thinLTOCacheDir =
+        args.getLastArgValue(OPT_thinlto_cache_dir_EQ).str();
     nativeOptions.bytecode = executionTier == "bytecode";
     nativeOptions.optLevel = optLevel;
     nativeOptions.noLTO = args.hasFlag(OPT_fno_lto, OPT_flto, false);

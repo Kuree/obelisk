@@ -1296,6 +1296,9 @@ ABI_FUNCTION(obelisk_rt_v1_gc_design_candidate_root_register,
 ABI_FUNCTION(obelisk_rt_v1_object_write,
              obelisk_rt_status (*)(obelisk_rt_object_v1 *, uint64_t,
                                    const void *, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_object_bits_insert,
+             obelisk_rt_status (*)(obelisk_rt_object_v1 *, uint64_t, uint64_t,
+                                   int64_t, uint32_t, uint64_t, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_object_read_planes,
              obelisk_rt_status (*)(obelisk_rt_object_v1 *, uint64_t, void *,
                                    void *, uint64_t));

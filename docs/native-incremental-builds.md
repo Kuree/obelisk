@@ -1,6 +1,6 @@
 # Native partitioning and incremental builds
 
-Native compilation will use the same stable partition boundary for parallel
+Native compilation uses the same stable partition boundary for parallel
 code generation and incremental reuse.  Splitting one already-lowered LLVM
 module by worker count is deliberately not the contract: it makes cache keys
 and object membership change with the host and leaves the expensive lowering
@@ -14,23 +14,30 @@ validation; the unsplit wasm path is not inferred from native behavior.
 
 ## Partition contract
 
-The compiler will form partitions before LLVM optimization from stable
+The compiler forms partitions before LLVM optimization from stable
 simulation ownership:
 
 - one primary partition owns `main`, execution metadata, state storage, and
   externally visible ABI symbols;
-- class methods are grouped by semantic class identity;
-- process, task, assertion, and generated helper closures are grouped by their
-  stable code-unit identity;
-- a deterministic call-graph SCC closure prevents mutually recursive bodies
-  from being split, even when an SCC is oversized; and
-- oversized non-SCC owner groups are divided by stable symbol hash, never by
-  input order, worker count, or current machine load.
+- functions and class methods are owned by their stable code-unit identity, so
+  large UVM classes do not become indivisible native modules;
+- process, task, assertion, and generated helper closures inherit that
+  code-unit identity;
+- a deterministic call-graph SCC closure records mutually recursive semantic
+  ownership and invalidation as one dependency component; and
+- generated physical helpers remain with their semantic owner.
 
-Partition IDs are derived from semantic owner and stable symbol hashes.  The
-number of parallel workers only controls how many ready partitions compile at
-once.  Adding an unrelated function therefore does not renumber or move
-existing partitions.
+Partition IDs are derived from semantic owners. After all cross-symbol
+dependencies have been frozen, the native backend may split those owners and
+SCCs into definition-level physical shards; hidden external linkage and the
+ThinLTO combined index preserve their calls across shard boundaries. It
+deterministically packs those units into up to two instruction-weight-balanced
+physical shards per configured compile worker, capped at 256. Ordinary shards
+are ThinLTO bitcode; exceptional bodies above the direct-codegen ceiling are
+locally optimized native objects. Future
+frontend/semantic caching will key the fine-grained semantic-owner artifacts
+before this physical packing step, so a different host thread count cannot
+invalidate them.
 
 Each partition exports an explicit, deterministically named ABI surface and
 imports only the symbols recorded by its dependency summary.  Module inline
@@ -48,11 +55,21 @@ and inlining during native code generation. A meaningful simulation-throughput
 regression relative to Full LTO is a release blocker, not an accepted cost of
 incremental compilation.
 
-Every generated native partition and native-runtime archive member will carry
-a ThinLTO summary. LLD will build the combined index, perform bounded imports,
-and run independent backends in parallel. ThinLTO replaces Full LTO for large
-native designs; small designs may retain the single-module path when it is
-faster. Wasm64 retains its existing per-module optimization and object link.
+Every ordinary generated native shard carries a ThinLTO summary; exceptional
+direct-codegen object shards are already locally optimized. LLD builds the
+combined design index, performs bounded imports, and runs independent backends
+in parallel. The runtime is separately prelinked with Full LTO so its own
+whole-program optimization is preserved without adding all runtime bitcode to
+each design's ThinLTO index. ThinLTO replaces unified Full LTO for large native
+designs; small designs may retain the single-module path when it is faster.
+Wasm64 retains its existing per-module optimization and object link.
+
+Partitioned native executables use a persistent LLD ThinLTO cache. By default
+it is stored beside the output as `<output>.thinlto-cache`; builds can select a
+shared build-cache location with `--thinlto-cache-dir=<dir>`. LLVM's cache key
+includes the partition contents, combined-index imports, target, and codegen
+configuration, so unchanged backends are reused without bypassing cross-module
+optimization.
 
 `-fno-lto` remains the explicit compile-latency choice: it performs `-O3`
 optimization within each generated partition but does not request
@@ -60,9 +77,10 @@ cross-partition LLVM imports. The default `-O3` mode does not silently select
 that tradeoff. Likewise, oversized process bodies are not moved to bytecode in
 the default native mode merely to improve compiler latency.
 
-The prebuilt native runtime remains a separate archive.  `-fno-lto` consumes
-its ordinary object archive directly.  ThinLTO consumes a prebuilt ThinLTO
-archive, so compiling SystemVerilog never recompiles or assembles the runtime.
+The prebuilt native runtime remains a separate archive. `-fno-lto` consumes
+its ordinary object archive directly. ThinLTO consumes the Full-LTO-optimized
+prelinked object archive, so compiling SystemVerilog never recompiles or
+assembles the runtime.
 
 ## Cache keys and invalidation
 
@@ -79,15 +97,17 @@ The primary metadata partition also includes the ordered inventory of design
 descriptors and partitions. Source strings retained in canonical IR—including
 DPI locations and language-visible file names—therefore contribute through the
 bitcode digest. Nonsemantic build-root and temporary-path prefixes are
-normalized before hashing; timestamps, worker count, and diagnostic options do
-not enter a key.
+normalized before hashing; timestamps and diagnostic options do not enter a
+key. The current physical packing depends on the configured worker count and
+can therefore change LLD backend-cache keys; the future semantic-owner cache
+described above is intentionally worker-independent.
 
-On a rebuild the compiler reuses unchanged frontend/library artifacts, lowers
-only changed semantic owners and their invalidated dependents, recomputes the
-ThinLTO index, and recompiles only partitions whose own content or import list
-changed.  Cache entries are written atomically and are safe for concurrent
-readers.  A cache miss or incompatible manifest falls back to ordinary
-compilation without changing generated behavior.
+On a rebuild LLD recomputes the inexpensive ThinLTO combined index and reuses
+backend objects for partitions whose content and import list are unchanged.
+Cache entries are written atomically and are safe for concurrent readers. A
+cache miss falls back to ordinary ThinLTO backend compilation without changing
+generated behavior. Caching earlier frontend and semantic IR remains future
+work.
 
 ## Delivery order
 
@@ -95,10 +115,10 @@ compilation without changing generated behavior.
    SCC ownership, exported/imported symbols, and stable IDs.
 2. Emit multiple non-LTO objects from that manifest and link them with the
    existing prebuilt runtime archive.
-3. Build a ThinLTO runtime archive and link generated partition bitcode through
-   ThinLTO, retaining the unsplit fallback.
-4. Add the local content-addressed object/index cache and expose hit/miss
-   statistics through opt-in compiler diagnostics.
+3. Build a Full-LTO-prelinked runtime archive and link generated partition
+   bitcode through ThinLTO, retaining the unsplit fallback. (Implemented.)
+4. Add the local content-addressed ThinLTO backend cache. (Implemented; opt-in
+   hit/miss statistics remain future work.)
 5. Cache earlier semantic and simulation IR artifacts once their serialization
    and dependency summaries are stable.
 

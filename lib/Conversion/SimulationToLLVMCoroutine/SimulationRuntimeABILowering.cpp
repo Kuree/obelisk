@@ -49,11 +49,10 @@ void declareNativeRuntimeABI(ModuleOp module) {
       module, "obelisk_rt_v1_scheduler_event", LLVM::LLVMVoidType::get(context),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 32)});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_event_create",
-      IntegerType::get(context, 32),
-      {LLVM::LLVMPointerType::get(context),
-       LLVM::LLVMPointerType::get(context)});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_event_create",
+                           IntegerType::get(context, 32),
+                           {LLVM::LLVMPointerType::get(context),
+                            LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_scheduler_event_after",
       LLVM::LLVMVoidType::get(context),
@@ -118,8 +117,7 @@ void declareNativeRuntimeABI(ModuleOp module) {
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_fail",
-      LLVM::LLVMVoidType::get(context),
+      module, "obelisk_rt_v1_scheduler_fail", LLVM::LLVMVoidType::get(context),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32)});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_native_state_alloc", IntegerType::get(context, 32),
@@ -247,11 +245,11 @@ void declareNativeRuntimeABI(ModuleOp module) {
       {managedPointer, managedI32, managedI64, managedI32, managedI32,
        managedI64, managedI64, managedI64, managedPointer, managedI64,
        managedI64, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_mailbox_create_typed", managedI32,
-      {managedPointer, managedI64, managedI32, managedI32, managedI64,
-       managedI64, managedI64, managedPointer, managedI64, managedI64,
-       managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_mailbox_create_typed",
+                           managedI32,
+                           {managedPointer, managedI64, managedI32, managedI32,
+                            managedI64, managedI64, managedI64, managedPointer,
+                            managedI64, managedI64, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_clone", managedI32,
                            {managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_delete", managedI32,
@@ -294,13 +292,11 @@ void declareNativeRuntimeABI(ModuleOp module) {
                            {managedPointer, managedI64});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_sampled_read", managedI32,
-      {managedPointer, managedI64, managedI64, managedPointer,
-       managedPointer});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_sampled_history", managedI32,
-      {managedPointer, managedI64, managedI64, managedI64, managedI32,
-       managedI32, managedPointer, managedPointer, managedPointer,
-       managedPointer});
+      {managedPointer, managedI64, managedI64, managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_sampled_history", managedI32,
+                           {managedPointer, managedI64, managedI64, managedI64,
+                            managedI32, managedI32, managedPointer,
+                            managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_clocked_sample_update", managedI32,
       {managedPointer, managedI64, managedI64, managedI64, managedI32,
@@ -389,6 +385,10 @@ void declareNativeRuntimeABI(ModuleOp module) {
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_object_write", managedI32,
       {managedPointer, managedI64, managedPointer, managedI64});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_bits_insert",
+                           managedI32,
+                           {managedPointer, managedI64, managedI64, managedI64,
+                            managedI32, managedI64, managedI32});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_object_read_planes", managedI32,
       {managedPointer, managedI64, managedPointer, managedPointer, managedI64});
@@ -482,15 +482,14 @@ void declareNativeRuntimeABI(ModuleOp module) {
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_file_open_string", managedI32,
       {managedPointer, managedI64, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dump_open_string",
-                           managedI32, {managedPointer, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dump_ports", managedI32,
-                           {managedPointer, managedI64, managedI64,
-                            managedI32});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dump_ports_control",
-                           managedI32,
-                           {managedPointer, managedI64, managedI32,
-                            managedI64});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dump_open_string", managedI32,
+                           {managedPointer, managedI64});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_dump_ports", managedI32,
+      {managedPointer, managedI64, managedI64, managedI32});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_dump_ports_control", managedI32,
+      {managedPointer, managedI64, managedI32, managedI64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_file_getline_string",
                            managedI32,
                            {managedPointer, managedPointer, managedI32,
@@ -509,14 +508,12 @@ void declareNativeRuntimeABI(ModuleOp module) {
        managedI32, managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_plusarg_test", managedI32,
                            {managedPointer, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_plusarg_value", managedI32,
-      {managedPointer, managedPointer, managedI64, managedPointer,
-       managedPointer});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_import_call", managedI32,
-      {managedPointer, managedPointer, managedPointer, managedI32,
-       managedPointer, managedI32});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_plusarg_value", managedI32,
+                           {managedPointer, managedPointer, managedI64,
+                            managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_import_call", managedI32,
+                           {managedPointer, managedPointer, managedPointer,
+                            managedI32, managedPointer, managedI32});
 }
 
 } // namespace obelisk::detail

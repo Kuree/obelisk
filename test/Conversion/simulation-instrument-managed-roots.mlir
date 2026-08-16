@@ -5,6 +5,7 @@
   #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 1, packedOffset = 0>,
   #obelisk_sim.field<name = "bits", type = i64, ordinal = 2, packedOffset = 0>
 ], isTagged = false>
+!many = !obelisk_sim.unpacked_array<0 : 64 x !obelisk_sim.class_handle<@Object>>
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -24,6 +25,7 @@ module attributes {
 
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "roots"
+    obelisk_sim.code_unit.decl 2 in 0 function hierarchy "bulk"
     obelisk_sim.class.decl @Object id 1 {
       is_abstract = false, is_final = true, is_interface = false
     }
@@ -44,6 +46,21 @@ module attributes {
           !obelisk_sim.class_handle<@Object>
       obelisk_sim.return
     }
+
+    obelisk_sim.func @bulk(
+        %ctx: !obelisk_sim.context
+            {obelisk_sim.capture_kind = 0 : i32})
+        attributes {code_unit_id = 2 : i64, entry_kind = 8 : i32} {
+      %null = obelisk_sim.class.null : !obelisk_sim.class_handle<@Object>
+      %many = obelisk_sim.aggregate.construct %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null, %null :
+          (!obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>, !obelisk_sim.class_handle<@Object>) -> !many
+      obelisk_sim.gc.safepoint %ctx : !obelisk_sim.context
+      %reloaded = obelisk_sim.aggregate.extract %many[0] :
+          (!many) -> !obelisk_sim.class_handle<@Object>
+      %is_object = obelisk_sim.class.is_instance %reloaded is @Object :
+          !obelisk_sim.class_handle<@Object>
+      obelisk_sim.return
+    }
   }
 }
 
@@ -60,3 +77,10 @@ module attributes {
 // CHECK: obelisk_sim.class.root_bind %[[CANDIDATE]] to %[[SLOT]] at 0 candidate kinds 3
 // CHECK-NEXT: obelisk_sim.gc.safepoint
 // CHECK: llvm.call @obelisk_rt_v1_gc_managed_root_range_pop
+
+// A large aggregate uses compact bulk root refreshes instead of one scalar
+// dead-slot clear per root at every safepoint.
+// CHECK-LABEL: obelisk_sim.func @bulk
+// CHECK-COUNT-2: llvm.intr.memset
+// CHECK: obelisk_sim.class.root_bind %{{.*}} to %{{.*}} at 0 exact kinds 1
+// CHECK: obelisk_sim.gc.safepoint

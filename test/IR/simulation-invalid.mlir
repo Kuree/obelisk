@@ -2390,3 +2390,16 @@ module {
     }
   }
 }
+
+// -----
+
+module {
+  func.func @managed_bits_replacement_too_wide(
+      %reference: !obelisk_sim.managed_ref<i4, @C>,
+      %replacement: i8, %low: i32) {
+    // expected-error @+1 {{replacement width exceeds the packed field width}}
+    obelisk_sim.managed.bits_dyn_store %replacement into %reference at %low :
+      i8, !obelisk_sim.managed_ref<i4, @C>, i32
+    return
+  }
+}

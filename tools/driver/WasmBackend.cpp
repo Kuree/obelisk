@@ -221,10 +221,14 @@ public:
         std::nullopt, getCodeGenOptLevel(optLevel)));
   }
 
-  LogicalResult linkExecutable(StringRef modulePath, StringRef outputPath,
+  LogicalResult linkExecutable(ArrayRef<std::string> modulePaths,
+                               StringRef outputPath,
                                StringRef supportRoot,
-                               const NativeOutputOptions &options) override {
-    return linkWasmModule(modulePath, outputPath, supportRoot, options);
+                               const NativeOutputOptions &options,
+                               bool thinLTO) override {
+    if (thinLTO || modulePaths.size() != 1)
+      return failure();
+    return linkWasmModule(modulePaths.front(), outputPath, supportRoot, options);
   }
 };
 

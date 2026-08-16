@@ -106,29 +106,17 @@ static LogicalResult planNativePartitions(sim::SimDesignOp design) {
   for (auto [index, function] : llvm::enumerate(functions))
     functionIndices.try_emplace(function.getSymName(), index);
 
-  llvm::StringMap<SmallVector<std::string>> classOwners;
-  for (sim::SimClassMethodDeclOp method :
-       design.getOps<sim::SimClassMethodDeclOp>()) {
-    auto implementation = method.getImplementation();
-    if (!implementation)
-      continue;
-    SmallVector<std::string> &owners = classOwners[*implementation];
-    owners.push_back((Twine("class:") + method.getOwner()).str());
-  }
-  for (auto &entry : classOwners) {
-    sortUnique(entry.second);
-  }
-
   SmallVector<FunctionRecord> records;
   records.reserve(functions.size());
   for (sim::SimFuncOp function : functions) {
     FunctionRecord &record = records.emplace_back();
     record.function = function;
-    auto found = classOwners.find(function.getSymName());
-    if (found != classOwners.end())
-      record.owners.append(found->second);
-    else
-      record.owners.push_back(unitOwner(function));
+    // A class is an incremental source owner, but it is much too coarse as a
+    // native compilation unit: UVM classes can contain hundreds of unrelated
+    // methods. The stable code-unit identity is the smallest semantic owner
+    // that preserves function ABI and lets the physical finalizer discover
+    // dispatch-table/thunk references. Recursive call SCCs are merged below.
+    record.owners.push_back(unitOwner(function));
   }
 
   auto addEdge = [&](unsigned caller, StringRef callee) {

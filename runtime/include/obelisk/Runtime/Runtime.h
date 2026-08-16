@@ -1794,6 +1794,14 @@ obelisk_rt_status obelisk_rt_v1_object_read(obelisk_rt_object_v1 *object,
 obelisk_rt_status obelisk_rt_v1_object_write(obelisk_rt_object_v1 *object,
                                              uint64_t offset, const void *data,
                                              uint64_t size);
+// Atomically replace up to 64 bits within a two-state packed field. `valid`
+// zero preserves the field, which lets generated code normalize arbitrarily
+// wide signed indices without materializing the complete packed value.
+obelisk_rt_status
+obelisk_rt_v1_object_bits_insert(obelisk_rt_object_v1 *object, uint64_t offset,
+                                 uint64_t field_bit_width, int64_t low_bit,
+                                 uint32_t valid, uint64_t replacement,
+                                 uint32_t replacement_width);
 // Atomically access adjacent value/unknown field planes under one object lock.
 obelisk_rt_status obelisk_rt_v1_object_read_planes(obelisk_rt_object_v1 *object,
                                                    uint64_t offset, void *value,
@@ -3022,12 +3030,14 @@ obelisk_rt_status obelisk_rt_v1_dump_close(obelisk_rt_context *context);
 // keyed by filename. Repeated selections for one file accumulate module
 // scopes. An empty control path targets all sessions; an unknown nonempty path
 // is ignored. Actions are 0=off, 1=on, 2=checkpoint, 3=flush, and 4=limit.
-obelisk_rt_status obelisk_rt_v1_dump_ports(
-    obelisk_rt_context *context, obelisk_rt_string_v1 path,
-    obelisk_rt_string_v1 scope, int32_t timescale_exponent);
-obelisk_rt_status obelisk_rt_v1_dump_ports_control(
-    obelisk_rt_context *context, obelisk_rt_string_v1 path, uint32_t action,
-    uint64_t value);
+obelisk_rt_status obelisk_rt_v1_dump_ports(obelisk_rt_context *context,
+                                           obelisk_rt_string_v1 path,
+                                           obelisk_rt_string_v1 scope,
+                                           int32_t timescale_exponent);
+obelisk_rt_status obelisk_rt_v1_dump_ports_control(obelisk_rt_context *context,
+                                                   obelisk_rt_string_v1 path,
+                                                   uint32_t action,
+                                                   uint64_t value);
 
 typedef uint32_t obelisk_rt_fragment_code_kind;
 enum { OBELISK_RT_FRAGMENT_NATIVE = 0, OBELISK_RT_FRAGMENT_BYTECODE = 1 };

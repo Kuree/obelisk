@@ -59,7 +59,10 @@ def threads_EQ : Joined<["--"], "threads=">, Group<Compilation_Group>,
   HelpText<"Set generated simulator worker-lane count">;
 def compile_threads_EQ : Joined<["--"], "compile-threads=">,
   Group<Compilation_Group>, MetaVarName<"<count>">,
-  HelpText<"Set MLIR, LLD, and Full-LTO code-generation thread count">;
+  HelpText<"Set MLIR, LLD, and LTO code-generation thread count">;
+def thinlto_cache_dir_EQ : Joined<["--"], "thinlto-cache-dir=">,
+  Group<Compilation_Group>, MetaVarName<"<dir>">,
+  HelpText<"Store reusable native ThinLTO objects in <dir>">;
 def vpi_EQ : Joined<["--"], "vpi=">, Group<Compilation_Group>,
   MetaVarName<"<off|read|full>">, Values<"off,read,full">,
   HelpText<"Select VPI observability and mutation capability">;
@@ -76,9 +79,9 @@ def static_specialization_EQ : Joined<["--"], "static-specialization=">,
   Values<"auto,off,on">,
   HelpText<"Select direct static-state and narrow-NBA specialization">;
 def fno_lto : Flag<["-"], "fno-lto">, Group<Compilation_Group>,
-  HelpText<"Link against the prebuilt runtime instead of running full LTO">;
+  HelpText<"Disable cross-partition LTO and link the object runtime archive">;
 def flto : Flag<["-"], "flto">, Group<Compilation_Group>, Flags<[HelpHidden]>,
-  HelpText<"Run full LTO over the runtime (default above -O0)">;
+  HelpText<"Enable LTO (ThinLTO for partitioned native designs; default above -O0)">;
 def O0 : Flag<["-"], "O0">, Group<Compilation_Group>,
   HelpText<"Disable simulation and LLVM optimization">;
 def O1 : Flag<["-"], "O1">, Group<Compilation_Group>,

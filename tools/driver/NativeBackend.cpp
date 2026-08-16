@@ -158,13 +158,13 @@ LogicalResult sanitizeBundledBuildPaths(StringRef path, StringRef supportRoot) {
   return success();
 }
 
-LogicalResult linkELFExecutable(StringRef modulePath, StringRef outputPath,
-                                StringRef supportRoot, StringRef explicitSysroot,
-                             ArrayRef<NativeLinkInput> nativeLinkInputs,
-                             ArrayRef<SharedLibraryInput> sharedLibraryInputs,
-                             uint32_t optLevel, bool noLTO,
-                             uint32_t linkThreads) {
-  bool fullLTO = optLevel != 0 && !noLTO;
+LogicalResult linkELFExecutable(
+    ArrayRef<std::string> modulePaths, StringRef outputPath,
+    StringRef supportRoot, StringRef explicitSysroot, StringRef thinLTOCacheDir,
+    ArrayRef<NativeLinkInput> nativeLinkInputs,
+    ArrayRef<SharedLibraryInput> sharedLibraryInputs, uint32_t optLevel,
+    bool noLTO, uint32_t linkThreads, bool thinLTO) {
+  bool fullLTO = optLevel != 0 && !noLTO && !thinLTO;
   SmallString<256> glibcRoot;
   if (explicitSysroot.empty()) {
     glibcRoot = supportRoot;
@@ -211,14 +211,13 @@ LogicalResult linkELFExecutable(StringRef modulePath, StringRef outputPath,
     return path.str().str();
   };
   SmallVector<std::string> staticInputs;
-  SmallVector<StringRef> staticInputNames{"clang_rt.crtbegin.o",
-                                          fullLTO ? "libobelisk_rt_lto.a"
-                                                  : "libobelisk_rt.a",
-                                          "libc++.a",
-                                          "libc++abi.a",
-                                          "libunwind.a",
-                                          "libclang_rt.builtins.a",
-                                          "clang_rt.crtend.o"};
+  StringRef runtimeArchive = fullLTO   ? "libobelisk_rt_lto.a"
+                             : thinLTO ? "libobelisk_rt_prelinked.a"
+                                       : "libobelisk_rt.a";
+  SmallVector<StringRef> staticInputNames{
+      "clang_rt.crtbegin.o", runtimeArchive, "libc++.a",
+      "libc++abi.a",         "libunwind.a",  "libclang_rt.builtins.a",
+      "clang_rt.crtend.o"};
   for (StringRef name : staticInputNames) {
     FailureOr<std::string> path = supportInput(name);
     if (failed(path))
@@ -248,6 +247,30 @@ LogicalResult linkELFExecutable(StringRef modulePath, StringRef outputPath,
     owned.push_back((Twine("--lto-CGO") + Twine(optLevel)).str());
     owned.push_back("--lto-whole-program-visibility");
     owned.push_back((Twine("--lto-partitions=") + Twine(linkThreads)).str());
+  } else if (thinLTO) {
+    owned.push_back("--lto=thin");
+    owned.push_back((Twine("--lto-O") + Twine(optLevel)).str());
+    owned.push_back((Twine("--lto-CGO") + Twine(optLevel)).str());
+    owned.push_back("--lto-whole-program-visibility");
+    // The driver supplies bounded, weight-balanced modules. Let the explicit
+    // compiler thread budget govern ThinLTO's in-process backend pool too.
+    owned.push_back(
+        (Twine("--thinlto-jobs=") + Twine(std::max(linkThreads, uint32_t{1})))
+            .str());
+    SmallString<256> cacheDir;
+    if (thinLTOCacheDir.empty()) {
+      cacheDir = outputPath;
+      cacheDir.append(".thinlto-cache");
+    } else {
+      cacheDir = thinLTOCacheDir;
+    }
+    if (std::error_code error = sys::fs::create_directories(cacheDir)) {
+      errs() << "obelisk: error: could not create ThinLTO cache '" << cacheDir
+             << "': " << error.message() << '\n';
+      sys::fs::remove(*temporary);
+      return failure();
+    }
+    owned.push_back((Twine("--thinlto-cache-dir=") + cacheDir.str()).str());
   }
   owned.push_back("--eh-frame-hdr");
   owned.push_back("--hash-style=gnu");
@@ -258,7 +281,8 @@ LogicalResult linkELFExecutable(StringRef modulePath, StringRef outputPath,
   owned.push_back(glibcInputs[0]);
   owned.push_back(glibcInputs[1]);
   owned.push_back(staticInputs[0]);
-  owned.push_back(modulePath.str());
+  for (const std::string &modulePath : modulePaths)
+    owned.push_back(modulePath);
   bool noAsNeeded = false;
   for (const NativeLinkInput &linkInput : nativeLinkInputs) {
     if (linkInput.kind == NativeLinkInput::Kind::File) {
@@ -396,8 +420,8 @@ public:
   StringRef getDescription() const override { return "x86-64 ELF"; }
   bool supportsSemanticPartitions() const override { return true; }
 
-  std::unique_ptr<TargetMachine> createTargetMachine(std::string &error,
-                                                     uint32_t optLevel) override {
+  std::unique_ptr<TargetMachine>
+  createTargetMachine(std::string &error, uint32_t optLevel) override {
     static bool initialized = false;
     if (!initialized) {
       LLVMInitializeX86TargetInfo();
@@ -416,13 +440,15 @@ public:
         getCodeGenOptLevel(optLevel)));
   }
 
-  LogicalResult linkExecutable(StringRef modulePath, StringRef outputPath,
-                               StringRef supportRoot,
-                               const NativeOutputOptions &options) override {
-    return linkELFExecutable(modulePath, outputPath, supportRoot,
-                             options.explicitSysroot, options.nativeLinkInputs,
+  LogicalResult linkExecutable(ArrayRef<std::string> modulePaths,
+                               StringRef outputPath, StringRef supportRoot,
+                               const NativeOutputOptions &options,
+                               bool thinLTO) override {
+    return linkELFExecutable(modulePaths, outputPath, supportRoot,
+                             options.explicitSysroot, options.thinLTOCacheDir,
+                             options.nativeLinkInputs,
                              options.sharedLibraryInputs, options.optLevel,
-                             options.noLTO, options.compileThreads);
+                             options.noLTO, options.compileThreads, thinLTO);
   }
 };
 

@@ -16,6 +16,7 @@
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <cstddef>
 #include <limits>
@@ -474,6 +475,103 @@ private:
   const llvm::DataLayout &dataLayout;
 };
 
+class ManagedBitsDynStoreConversion final
+    : public OpConversionPattern<sim::SimManagedBitsDynStoreOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimManagedBitsDynStoreOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getReference().size() != 2 ||
+        adaptor.getReplacement().size() != 1 || adaptor.getLowBit().size() != 1)
+      return failure();
+    std::optional<unsigned> inputWidth =
+        sim::getPackedWidth(op.getReference().getType().getElementType());
+    if (!inputWidth)
+      return failure();
+    auto replacementType = cast<IntegerType>(op.getReplacement().getType());
+    auto lowType = cast<IntegerType>(op.getLowBit().getType());
+    Value replacement = adaptor.getReplacement().front();
+    Value low = adaptor.getLowBit().front();
+
+    Location location = op.getLoc();
+    Type i64 = rewriter.getI64Type();
+    Type i32 = rewriter.getI32Type();
+    auto signedConstant = [&](IntegerType type, int64_t value) {
+      return arith::ConstantOp::create(
+          rewriter, location, type,
+          rewriter.getIntegerAttr(type, APInt(type.getWidth(),
+                                              static_cast<uint64_t>(value),
+                                              /*isSigned=*/true)));
+    };
+    auto resizeSigned = [&](Value value, unsigned width) -> Value {
+      auto type = cast<IntegerType>(value.getType());
+      if (type.getWidth() < width)
+        return arith::ExtSIOp::create(rewriter, location,
+                                      rewriter.getIntegerType(width), value);
+      if (type.getWidth() > width)
+        return arith::TruncIOp::create(rewriter, location,
+                                       rewriter.getIntegerType(width), value);
+      return value;
+    };
+    auto resizeUnsigned = [&](Value value, unsigned width) -> Value {
+      auto type = cast<IntegerType>(value.getType());
+      if (type.getWidth() < width)
+        return arith::ExtUIOp::create(rewriter, location,
+                                      rewriter.getIntegerType(width), value);
+      if (type.getWidth() > width)
+        return arith::TruncIOp::create(rewriter, location,
+                                       rewriter.getIntegerType(width), value);
+      return value;
+    };
+    if (lowType.getWidth() == std::numeric_limits<unsigned>::max())
+      return failure();
+    unsigned boundBits = std::max(
+        2u, llvm::Log2_64_Ceil(static_cast<uint64_t>(std::max(
+                                      *inputWidth,
+                                      replacementType.getWidth())) +
+                                  1) +
+                2);
+    unsigned checkWidth = std::max(lowType.getWidth() + 1, boundBits);
+    Value checkedLow = resizeSigned(low, checkWidth);
+    auto checkType = cast<IntegerType>(checkedLow.getType());
+    Value atLeastPartial = arith::CmpIOp::create(
+        rewriter, location, arith::CmpIPredicate::sge, checkedLow,
+        signedConstant(checkType,
+                       -static_cast<int64_t>(replacementType.getWidth() - 1)));
+    Value belowField =
+        arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::slt,
+                              checkedLow,
+                              signedConstant(checkType, *inputWidth));
+    Value valid =
+        arith::AndIOp::create(rewriter, location, atLeastPartial, belowField);
+
+    Value lowI64 = resizeSigned(checkedLow, 64);
+    Value replacementI64 = resizeUnsigned(replacement, 64);
+    Value validI32 = arith::ExtUIOp::create(rewriter, location, i32, valid);
+    Value object = managedObjectPointer(rewriter, location,
+                                        adaptor.getReference().front());
+    auto [context, lane] = managedContextAndLane(rewriter, location);
+    (void)lane;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_object_bits_insert"),
+            ValueRange{object, adaptor.getReference()[1],
+                       llvmConstant(rewriter, location, i64, *inputWidth),
+                       lowI64, validI32, replacementI64,
+                       llvmConstant(rewriter, location, i32,
+                                    replacementType.getWidth())})
+            .getResult();
+    reportManagedStatus(rewriter, location, context, status);
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 class ManagedStoreConversion final
     : public OpConversionPattern<sim::SimManagedStoreOp> {
 public:
@@ -686,16 +784,15 @@ void populateManagedReferenceToLLVMConversionPatterns(
     RewritePatternSet &patterns, TypeConverter &converter,
     const llvm::DataLayout &dataLayout, uint64_t stateBitCount) {
   MLIRContext *context = patterns.getContext();
-  patterns.add<ArgumentRefFromRefConversion,
-               ArgumentRefFromManagedConversion,
+  patterns.add<ArgumentRefFromRefConversion, ArgumentRefFromManagedConversion,
                ReferencePathIndexConversion, ReferencePathAssocConversion,
                ArgumentRefFromPathConversion>(converter, context);
   patterns.add<ArgumentRefLoadConversion, ArgumentRefStoreConversion>(
       converter, context, dataLayout, stateBitCount);
+  patterns.add<ManagedBitsDynStoreConversion>(converter, context);
   patterns.add<ManagedLoadConversion, ManagedStoreConversion,
                ManagedNBAConversion, ReferencePathNBAConversion>(
       converter, context, dataLayout);
 }
 
 } // namespace obelisk::detail
-
