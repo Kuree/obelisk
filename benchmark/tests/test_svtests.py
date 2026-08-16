@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from concurrent.futures import Future
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -27,6 +28,18 @@ class SvTestsHelpersTest(unittest.TestCase):
                 root,
                 ["chapter-1/example", "chapter-1/example.sv"],
             )
+
+            self.assertEqual(selected, [test.resolve()])
+
+    def test_select_tests_resolves_dotted_name_without_extension(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            test = root / "tests" / "chapter-10" / "10.3.1--one-net.sv"
+            test.parent.mkdir(parents=True)
+            test.write_text("module example; endmodule\n", encoding="utf-8")
+
+            selected = svtests._select_tests(
+                root, ["chapter-10/10.3.1--one-net"])
 
             self.assertEqual(selected, [test.resolve()])
 
@@ -136,6 +149,145 @@ class SvTestsHelpersTest(unittest.TestCase):
             self.assertEqual(outcome.status, model.PASS)
             flags = compile_frontend.call_args.args[3]
             self.assertEqual(flags.count("--compile-threads=3"), 1)
+
+    def test_successful_corpus_results_resume_until_compiler_changes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            test = root / "tests" / "chapter-1" / "example.sv"
+            test.parent.mkdir(parents=True)
+            test.write_text("module example; endmodule\n", encoding="utf-8")
+            include = test.parent / "shared.svh"
+            include.write_text("`define VALUE 1\n", encoding="utf-8")
+            compiler = root / "obelisk"
+            compiler.write_text("generation one", encoding="utf-8")
+            args = SimpleNamespace(
+                jobs=1,
+                timeout=10,
+                design=None,
+                fetch=False,
+                tests=[],
+                vpi_code=[],
+                vpi=None,
+                obelisk_binary=str(compiler),
+                result_cache=str(root / "results.json"),
+                no_resume=False,
+            )
+            result = ("chapter-1/example.sv", model.Outcome(model.PASS))
+            with mock.patch.object(
+                    svtests, "judge_one", return_value=result) as judge:
+                self.assertEqual(svtests.run(root, args), dict([result]))
+                self.assertEqual(svtests.run(root, args), dict([result]))
+            self.assertEqual(judge.call_count, 1)
+
+            compiler.write_text("generation two", encoding="utf-8")
+            with mock.patch.object(
+                    svtests, "judge_one", return_value=result) as judge:
+                self.assertEqual(svtests.run(root, args), dict([result]))
+            judge.assert_called_once()
+
+            include.write_text("`define VALUE 2\n", encoding="utf-8")
+            with mock.patch.object(
+                    svtests, "judge_one", return_value=result) as judge:
+                self.assertEqual(svtests.run(root, args), dict([result]))
+            judge.assert_called_once()
+
+    def test_failed_corpus_results_are_never_cached(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            test = root / "tests" / "example.sv"
+            test.parent.mkdir(parents=True)
+            test.write_text("module example; endmodule\n", encoding="utf-8")
+            compiler = root / "obelisk"
+            compiler.touch()
+            args = SimpleNamespace(
+                jobs=1,
+                timeout=10,
+                design=None,
+                fetch=False,
+                tests=[],
+                vpi_code=[],
+                vpi=None,
+                obelisk_binary=str(compiler),
+                result_cache=str(root / "results.json"),
+                no_resume=False,
+            )
+            result = ("example.sv", model.Outcome(model.COMPILE_FAIL, "bad"))
+            with mock.patch.object(
+                    svtests, "judge_one", return_value=result) as judge:
+                svtests.run(root, args)
+                svtests.run(root, args)
+            self.assertEqual(judge.call_count, 2)
+
+    def test_result_cache_ignores_valid_non_object_json(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "results.json"
+            path.write_text("[]", encoding="utf-8")
+
+            cache = svtests._PassCache(path, "generation")
+
+            self.assertEqual(cache.entries, {})
+
+    def test_result_cache_can_be_disabled_for_untracked_vpi_headers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "results.json"
+            test = Path(temporary) / "test.sv"
+            test.write_text("module test; endmodule\n", encoding="utf-8")
+            cache = svtests._PassCache(
+                path, "generation", enabled=False)
+
+            cache.record("test.sv", test, model.Outcome(model.PASS))
+
+            self.assertIsNone(cache.lookup("test.sv", test))
+            self.assertFalse(path.exists())
+
+    def test_parallel_prefill_interrupt_cancels_bounded_work(self):
+        class InterruptingPool:
+            def __init__(self):
+                self.future = Future()
+                self.submissions = 0
+                self.shutdown_args = None
+
+            def submit(self, function, *args):
+                self.submissions += 1
+                if self.submissions == 2:
+                    raise KeyboardInterrupt
+                return self.future
+
+            def shutdown(self, *, wait, cancel_futures=False):
+                self.shutdown_args = (wait, cancel_futures)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tests = root / "tests"
+            tests.mkdir()
+            (tests / "one.sv").write_text(
+                "module one; endmodule\n", encoding="utf-8")
+            (tests / "two.sv").write_text(
+                "module two; endmodule\n", encoding="utf-8")
+            compiler = root / "obelisk"
+            compiler.touch()
+            args = SimpleNamespace(
+                jobs=2,
+                timeout=10,
+                design=None,
+                fetch=False,
+                tests=[],
+                vpi_code=[],
+                vpi=None,
+                obelisk_binary=str(compiler),
+                result_cache=str(root / "results.json"),
+                no_resume=False,
+            )
+            pool = InterruptingPool()
+            with (
+                mock.patch.object(
+                    svtests, "ProcessPoolExecutor", return_value=pool),
+                self.assertRaises(KeyboardInterrupt),
+            ):
+                svtests.run(root, args)
+
+            self.assertTrue(pool.future.cancelled())
+            self.assertEqual(pool.shutdown_args, (True, True))
 
 
 class SvTestsJudgeTest(unittest.TestCase):

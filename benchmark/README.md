@@ -74,6 +74,12 @@ otherwise. `CC` and `CXX` select the native compilers used to form a VPI DSO.
 The sv-tests runner divides that same affinity-aware CPU budget across active
 tests, preventing each compiler process from creating another full-size thread
 pool.
+Successful sv-tests results are checkpointed as they finish and reused on the
+next invocation when the compiler/build generation, harness, pinned checkout,
+test inputs, and timeout are unchanged. Failures always run again. Runs with
+`--vpi-code` conservatively bypass reuse because arbitrary transitive C/C++
+headers cannot be identified without a depfile. Use `--no-resume` for a fresh
+audit or `--result-cache PATH` to select a different checkpoint file.
 The Obelisk binary is otherwise resolved from `OBELISK_BENCH_COMPILER`, then
 the repo-relative `build/tools/driver/obelisk`. A suite checkout is resolved
 from `--suite-root`, then `OBELISK_BENCH_<SUITE>_ROOT`, then

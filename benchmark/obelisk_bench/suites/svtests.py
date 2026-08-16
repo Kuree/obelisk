@@ -14,13 +14,14 @@ recursively compiling every source in lexical order gives misleading results.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
 import re
 import shlex
 import subprocess
 import tempfile
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from .. import model, runner
@@ -53,6 +54,176 @@ _FRONTEND_MODES = {"elaboration", "parsing", "preprocessing"}
 _SOURCE_SUFFIXES = {".v", ".sv"}
 _FILELIST_VARIABLE = re.compile(
     r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+_RESULT_CACHE_SCHEMA = 1
+_SUCCESS_STATUSES = {model.PASS, model.XFAIL_PASS}
+
+
+def _path_identity(
+        path: Path, *, digest: bool = False,
+) -> dict[str, int | str]:
+    """Return a cheap identity for a generated tool or build stamp."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return {"path": str(path), "missing": 1}
+    identity: dict[str, int | str] = {
+        "path": str(path.resolve()),
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+    if digest and path.is_file():
+        identity["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return identity
+
+
+def _compiler_identity(obelisk: str) -> list[dict[str, int | str]]:
+    """Identify the driver and the build generation containing its DSOs."""
+    binary = Path(obelisk).resolve()
+    identity = [_path_identity(binary, digest=True)]
+    for parent in binary.parents:
+        if (parent / "build.ninja").is_file():
+            identity.append(_path_identity(parent / ".ninja_log", digest=True))
+            break
+    return identity
+
+
+def _suite_inputs_digest(root: Path) -> str:
+    """Hash every source/include input reachable through the pinned manifest."""
+    files: set[Path] = set()
+    directories: set[Path] = set()
+    libraries = root / "conf" / "runners" / "libs.json"
+    if libraries.is_file():
+        files.add(libraries.resolve())
+    for test in _tests(root):
+        values = _metadata(test)
+        sources, includes, _ = _resolve_test_inputs(root, test, values)
+        files.update(Path(source).resolve() for source in sources)
+        directories.update(Path(include).resolve() for include in includes)
+    for directory in sorted(directories):
+        if directory.is_dir():
+            files.update(
+                path.resolve() for path in directory.rglob("*")
+                if path.is_file()
+            )
+
+    digest = hashlib.sha256()
+    for path in sorted(files):
+        digest.update(str(path).encode("utf-8"))
+        digest.update(b"\0")
+        try:
+            digest.update(hashlib.sha256(path.read_bytes()).digest())
+        except OSError:
+            digest.update(b"<missing>")
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _cache_fingerprint(
+        obelisk: str,
+        root: Path,
+        args,
+        vpi_code: tuple[str, ...],
+        vpi_mode: str | None,
+) -> str:
+    """Fingerprint every run-wide input that may affect a cached success."""
+    git_dir = root / ".git"
+    harness_files = [Path(__file__), Path(runner.__file__), Path(model.__file__)]
+    payload = {
+        "schema": _RESULT_CACHE_SCHEMA,
+        "compiler": _compiler_identity(obelisk),
+        "harness": {
+            str(path.resolve()): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in harness_files
+        },
+        "suite_root": str(root.resolve()),
+        "suite_revision": SOURCE.rev,
+        "suite_head": _path_identity(git_dir / "HEAD", digest=True),
+        "suite_index": _path_identity(git_dir / "index", digest=True),
+        "suite_inputs": _suite_inputs_digest(root),
+        "timeout": args.timeout,
+        "vpi_mode": vpi_mode,
+        "vpi_code": [
+            _path_identity(Path(path), digest=True) for path in vpi_code
+        ],
+        "native_tools": {
+            name: os.environ.get(name) for name in ("CC", "CXX")
+        },
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _test_fingerprint(test: Path) -> str:
+    return hashlib.sha256(test.read_bytes()).hexdigest()
+
+
+class _PassCache:
+    """Incrementally persist successful tests for one exact run generation."""
+
+    def __init__(
+            self, path: Path, fingerprint: str, resume: bool = True,
+            enabled: bool = True,
+    ) -> None:
+        self.path = path
+        self.fingerprint = fingerprint
+        self.enabled = enabled
+        self.entries: dict[str, dict[str, str]] = {}
+        self.dirty = 0
+        if not enabled or not resume:
+            return
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return
+        if (isinstance(document, dict)
+                and document.get("schema") == _RESULT_CACHE_SCHEMA
+                and document.get("fingerprint") == fingerprint
+                and isinstance(document.get("entries"), dict)):
+            self.entries = document["entries"]
+
+    def lookup(self, name: str, test: Path) -> model.Outcome | None:
+        if not self.enabled:
+            return None
+        entry = self.entries.get(name)
+        if not isinstance(entry, dict):
+            return None
+        status = entry.get("status")
+        if (status not in _SUCCESS_STATUSES
+                or entry.get("test") != _test_fingerprint(test)):
+            return None
+        return model.Outcome(status)
+
+    def record(self, name: str, test: Path, outcome: model.Outcome) -> None:
+        if not self.enabled:
+            return
+        if outcome.status in _SUCCESS_STATUSES:
+            self.entries[name] = {
+                "status": outcome.status,
+                "test": _test_fingerprint(test),
+            }
+        else:
+            self.entries.pop(name, None)
+        self.dirty += 1
+        if self.dirty >= 8:
+            self.flush()
+
+    def flush(self) -> None:
+        if not self.dirty:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        document = {
+            "schema": _RESULT_CACHE_SCHEMA,
+            "fingerprint": self.fingerprint,
+            "entries": self.entries,
+        }
+        temporary = self.path.with_name(
+            f".{self.path.name}.{os.getpid()}.tmp")
+        temporary.write_text(
+            json.dumps(document, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        os.replace(temporary, self.path)
+        self.dirty = 0
 
 
 def _metadata(test: Path) -> dict[str, str]:
@@ -86,10 +257,10 @@ def _select_tests(root: Path, specs: list[str]) -> list[Path]:
     for spec in specs:
         spelling = Path(spec)
         candidates = [spelling, tests_dir / spelling]
-        if not spelling.suffix:
+        if spelling.suffix.lower() != ".sv":
             candidates += [
-                spelling.with_suffix(".sv"),
-                (tests_dir / spelling).with_suffix(".sv"),
+                Path(str(spelling) + ".sv"),
+                Path(str(tests_dir / spelling) + ".sv"),
             ]
         found = next(
             (candidate.resolve() for candidate in candidates
@@ -98,7 +269,8 @@ def _select_tests(root: Path, specs: list[str]) -> list[Path]:
         )
         if found is None and len(spelling.parts) == 1:
             matches = list(tests_dir.rglob(
-                spelling.name if spelling.suffix else spelling.name + ".sv"))
+                spelling.name if spelling.suffix.lower() == ".sv"
+                else spelling.name + ".sv"))
             if len(matches) == 1:
                 found = matches[0].resolve()
             elif len(matches) > 1:
@@ -679,20 +851,91 @@ def run(root: Path, args) -> dict[str, model.Outcome]:
     vpi_code = tuple(
         str(Path(path).resolve()) for path in getattr(args, "vpi_code", []))
     vpi_mode = getattr(args, "vpi", None)
-    compile_threads = _compile_threads_per_test(args.jobs, len(tests))
+    default_cache = Path(__file__).resolve().parents[2] / "cache" / "results"
+    cache_path = Path(getattr(args, "result_cache", None)
+                      or default_cache / "svtests.json")
+    cache = _PassCache(
+        cache_path,
+        _cache_fingerprint(obelisk, root, args, vpi_code, vpi_mode),
+        resume=not getattr(args, "no_resume", False),
+        # Compiled VPI sources can include arbitrary transitive C/C++ headers.
+        # Without a depfile, conservatively rerun rather than cache them.
+        enabled=not vpi_code,
+    )
+
+    outcomes: dict[str, model.Outcome] = {}
+    pending: list[Path] = []
+    for test in tests:
+        name = str(test.relative_to(root / "tests"))
+        cached = cache.lookup(name, test)
+        if cached is None:
+            pending.append(test)
+        else:
+            outcomes[name] = cached
+
     print(f"Running {len(tests)} sv-tests tests with -j{args.jobs} ...")
-    print(f"Using {compile_threads} Obelisk compile thread(s) per test")
+    if outcomes:
+        print(f"Reusing {len(outcomes)} unchanged successful result(s); "
+              f"running {len(pending)} test(s)")
+    compile_threads = _compile_threads_per_test(args.jobs, len(pending))
+    if pending:
+        print(f"Using {compile_threads} Obelisk compile thread(s) per test")
 
     tasks = [
         (obelisk, root, test, compile_timeout, args.timeout,
          vpi_code, vpi_mode, compile_threads)
-        for test in tests
+        for test in pending
     ]
-    if not tasks:
-        return {}
-    if args.jobs == 1:
-        results = [judge_one(*task) for task in tasks]
-    else:
-        with ProcessPoolExecutor(max_workers=args.jobs) as pool:
-            results = list(pool.map(judge_one, *zip(*tasks)))
-    return dict(results)
+    try:
+        if args.jobs == 1:
+            for test, task in zip(pending, tasks):
+                name, outcome = judge_one(*task)
+                outcomes[name] = outcome
+                cache.record(name, test, outcome)
+        else:
+            # Keep only a small bounded queue beyond the active workers. This
+            # avoids handing the entire corpus to multiprocessing at once and
+            # makes cancellation wait for active tests, not every queued test.
+            pool = ProcessPoolExecutor(max_workers=args.jobs)
+            work = iter(zip(pending, tasks))
+            futures = {}
+
+            def submit_next() -> bool:
+                try:
+                    test, task = next(work)
+                except StopIteration:
+                    return False
+                futures[pool.submit(judge_one, *task)] = test
+                return True
+
+            try:
+                for _ in range(min(len(tasks), args.jobs * 2)):
+                    submit_next()
+                while futures:
+                    future = next(as_completed(futures))
+                    test = futures.pop(future)
+                    name, outcome = future.result()
+                    outcomes[name] = outcome
+                    cache.record(name, test, outcome)
+                    submit_next()
+            except BaseException:
+                for future in futures:
+                    future.cancel()
+                pool.shutdown(wait=True, cancel_futures=True)
+                # Active workers can finish while shutdown waits. Preserve
+                # those successful results too before propagating the signal.
+                for future, test in futures.items():
+                    if future.cancelled() or not future.done():
+                        continue
+                    try:
+                        name, outcome = future.result()
+                    except BaseException:
+                        continue
+                    outcomes[name] = outcome
+                    cache.record(name, test, outcome)
+                raise
+            else:
+                pool.shutdown(wait=True)
+    finally:
+        cache.flush()
+    return dict(sorted(outcomes.items()))
