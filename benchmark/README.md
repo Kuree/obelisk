@@ -73,7 +73,9 @@ PATH` (driver binary),
 otherwise. `CC` and `CXX` select the native compilers used to form a VPI DSO.
 The sv-tests runner divides that same affinity-aware CPU budget across active
 tests, preventing each compiler process from creating another full-size thread
-pool.
+pool. UVM-tagged tests run in a separate heavyweight lane capped at half of the
+available CPUs and further limited by available memory (budgeted at 4 GiB per
+compiler while reserving up to 16 GiB for the desktop and other work).
 Successful sv-tests results are checkpointed as they finish and reused on the
 next invocation when the compiler/build generation, harness, pinned checkout,
 test inputs, and timeout are unchanged. Failures always run again. Runs with

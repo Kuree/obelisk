@@ -56,6 +56,9 @@ _FILELIST_VARIABLE = re.compile(
     r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 _RESULT_CACHE_SCHEMA = 1
 _SUCCESS_STATUSES = {model.PASS, model.XFAIL_PASS}
+_UVM_PREFERRED_THREADS = 4
+_UVM_ESTIMATED_RSS = 4 * 1024 ** 3
+_UVM_MAX_MEMORY_RESERVE = 16 * 1024 ** 3
 
 
 def _path_identity(
@@ -479,6 +482,23 @@ def _compile_threads_per_test(jobs: int, task_count: int) -> int:
     return max(1, hardware_threads // active_tests)
 
 
+def _uvm_parallelism(jobs: int, task_count: int) -> tuple[int, int]:
+    """Cap the heavyweight UVM lane by half-host CPU and available memory."""
+    cpu_budget = max(1, runner.available_cpu_count() // 2)
+    threads = min(_UVM_PREFERRED_THREADS, cpu_budget)
+    workers = max(1, cpu_budget // threads)
+    workers = min(jobs, task_count, workers)
+
+    available = runner.available_memory_bytes()
+    if available is not None:
+        reserve = min(_UVM_MAX_MEMORY_RESERVE, available // 2)
+        memory_workers = (available - reserve) // _UVM_ESTIMATED_RSS
+        workers = min(workers, memory_workers)
+    else:
+        workers = min(workers, 1)
+    return workers, threads
+
+
 def _expected_failure(
         rel: str, compiled: runner.CompileResult,
 ) -> tuple[str, model.Outcome] | None:
@@ -804,6 +824,77 @@ def _compile_design(
     return design, model.Outcome(model.COMPILE_FAIL, compiled.stderr)
 
 
+def _run_test_batch(
+        obelisk: str,
+        root: Path,
+        tests: list[Path],
+        compile_timeout: float,
+        run_timeout: float,
+        vpi_code: tuple[str, ...],
+        vpi_mode: str | None,
+        jobs: int,
+        compile_threads: int,
+        outcomes: dict[str, model.Outcome],
+        cache: _PassCache,
+) -> None:
+    """Run one resource-homogeneous batch with bounded queued work."""
+    tasks = [
+        (obelisk, root, test, compile_timeout, run_timeout,
+         vpi_code, vpi_mode, compile_threads)
+        for test in tests
+    ]
+    if jobs == 1:
+        for test, task in zip(tests, tasks):
+            name, outcome = judge_one(*task)
+            outcomes[name] = outcome
+            cache.record(name, test, outcome)
+        return
+
+    # Keep only a small bounded queue beyond the active workers. This avoids
+    # handing the entire corpus to multiprocessing at once and makes
+    # cancellation wait for active tests, not every queued test.
+    pool = ProcessPoolExecutor(max_workers=jobs)
+    work = iter(zip(tests, tasks))
+    futures = {}
+
+    def submit_next() -> bool:
+        try:
+            test, task = next(work)
+        except StopIteration:
+            return False
+        futures[pool.submit(judge_one, *task)] = test
+        return True
+
+    try:
+        for _ in range(min(len(tasks), jobs * 2)):
+            submit_next()
+        while futures:
+            future = next(as_completed(futures))
+            test = futures.pop(future)
+            name, outcome = future.result()
+            outcomes[name] = outcome
+            cache.record(name, test, outcome)
+            submit_next()
+    except BaseException:
+        for future in futures:
+            future.cancel()
+        pool.shutdown(wait=True, cancel_futures=True)
+        # Active workers can finish while shutdown waits. Preserve those
+        # successful results too before propagating the signal.
+        for future, test in futures.items():
+            if future.cancelled() or not future.done():
+                continue
+            try:
+                name, outcome = future.result()
+            except BaseException:
+                continue
+            outcomes[name] = outcome
+            cache.record(name, test, outcome)
+        raise
+    else:
+        pool.shutdown(wait=True)
+
+
 def run(root: Path, args) -> dict[str, model.Outcome]:
     """Select, compile, run, and judge the sv-tests corpus."""
     if args.jobs < 1:
@@ -877,65 +968,37 @@ def run(root: Path, args) -> dict[str, model.Outcome]:
     if outcomes:
         print(f"Reusing {len(outcomes)} unchanged successful result(s); "
               f"running {len(pending)} test(s)")
-    compile_threads = _compile_threads_per_test(args.jobs, len(pending))
-    if pending:
-        print(f"Using {compile_threads} Obelisk compile thread(s) per test")
-
-    tasks = [
-        (obelisk, root, test, compile_timeout, args.timeout,
-         vpi_code, vpi_mode, compile_threads)
-        for test in pending
+    ordinary = [
+        test for test in pending
+        if "uvm" not in _metadata(test).get("tags", "").split()
+    ]
+    uvm = [
+        test for test in pending
+        if "uvm" in _metadata(test).get("tags", "").split()
     ]
     try:
-        if args.jobs == 1:
-            for test, task in zip(pending, tasks):
-                name, outcome = judge_one(*task)
-                outcomes[name] = outcome
-                cache.record(name, test, outcome)
-        else:
-            # Keep only a small bounded queue beyond the active workers. This
-            # avoids handing the entire corpus to multiprocessing at once and
-            # makes cancellation wait for active tests, not every queued test.
-            pool = ProcessPoolExecutor(max_workers=args.jobs)
-            work = iter(zip(pending, tasks))
-            futures = {}
-
-            def submit_next() -> bool:
-                try:
-                    test, task = next(work)
-                except StopIteration:
-                    return False
-                futures[pool.submit(judge_one, *task)] = test
-                return True
-
-            try:
-                for _ in range(min(len(tasks), args.jobs * 2)):
-                    submit_next()
-                while futures:
-                    future = next(as_completed(futures))
-                    test = futures.pop(future)
-                    name, outcome = future.result()
-                    outcomes[name] = outcome
-                    cache.record(name, test, outcome)
-                    submit_next()
-            except BaseException:
-                for future in futures:
-                    future.cancel()
-                pool.shutdown(wait=True, cancel_futures=True)
-                # Active workers can finish while shutdown waits. Preserve
-                # those successful results too before propagating the signal.
-                for future, test in futures.items():
-                    if future.cancelled() or not future.done():
-                        continue
-                    try:
-                        name, outcome = future.result()
-                    except BaseException:
-                        continue
-                    outcomes[name] = outcome
-                    cache.record(name, test, outcome)
-                raise
-            else:
-                pool.shutdown(wait=True)
+        if ordinary:
+            ordinary_threads = _compile_threads_per_test(
+                args.jobs, len(ordinary))
+            ordinary_jobs = min(args.jobs, len(ordinary))
+            print(f"Ordinary lane: {ordinary_jobs} worker(s), "
+                  f"{ordinary_threads} compile thread(s) each")
+            _run_test_batch(
+                obelisk, root, ordinary, compile_timeout, args.timeout,
+                vpi_code, vpi_mode, ordinary_jobs, ordinary_threads,
+                outcomes, cache)
+        if uvm:
+            uvm_jobs, uvm_threads = _uvm_parallelism(args.jobs, len(uvm))
+            if uvm_jobs < 1:
+                raise SystemExit(
+                    "not enough available memory for one UVM compiler; "
+                    "free at least 8 GiB and resume the checkpoint")
+            print(f"UVM lane: {uvm_jobs} worker(s), "
+                  f"{uvm_threads} compile thread(s) each "
+                  f"({uvm_jobs * uvm_threads} total, half-host cap)")
+            _run_test_batch(
+                obelisk, root, uvm, compile_timeout, args.timeout,
+                vpi_code, vpi_mode, uvm_jobs, uvm_threads, outcomes, cache)
     finally:
         cache.flush()
     return dict(sorted(outcomes.items()))

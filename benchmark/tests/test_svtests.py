@@ -69,6 +69,50 @@ class SvTestsHelpersTest(unittest.TestCase):
             self.assertEqual(svtests._compile_threads_per_test(24, 2), 12)
             self.assertEqual(svtests._compile_threads_per_test(1, 1), 24)
 
+    def test_uvm_lane_uses_half_cpu_and_reserves_memory(self):
+        with (
+            mock.patch.object(
+                svtests.runner, "available_cpu_count", return_value=24),
+            mock.patch.object(
+                svtests.runner, "available_memory_bytes",
+                return_value=56 * 1024 ** 3),
+        ):
+            self.assertEqual(svtests._uvm_parallelism(24, 104), (3, 4))
+
+        with (
+            mock.patch.object(
+                svtests.runner, "available_cpu_count", return_value=24),
+            mock.patch.object(
+                svtests.runner, "available_memory_bytes",
+                return_value=8 * 1024 ** 3),
+        ):
+            self.assertEqual(svtests._uvm_parallelism(24, 104), (1, 4))
+
+        with (
+            mock.patch.object(
+                svtests.runner, "available_cpu_count", return_value=4),
+            mock.patch.object(
+                svtests.runner, "available_memory_bytes", return_value=None),
+        ):
+            self.assertEqual(svtests._uvm_parallelism(24, 104), (1, 2))
+
+        with (
+            mock.patch.object(
+                svtests.runner, "available_cpu_count", return_value=64),
+            mock.patch.object(
+                svtests.runner, "available_memory_bytes", return_value=None),
+        ):
+            self.assertEqual(svtests._uvm_parallelism(64, 104), (1, 4))
+
+        with (
+            mock.patch.object(
+                svtests.runner, "available_cpu_count", return_value=24),
+            mock.patch.object(
+                svtests.runner, "available_memory_bytes",
+                return_value=7 * 1024 ** 3),
+        ):
+            self.assertEqual(svtests._uvm_parallelism(24, 104), (0, 4))
+
     def test_assertion_output_is_checked_without_arbitrary_python(self):
         self.assertEqual(
             svtests._assertions_pass(
@@ -659,6 +703,57 @@ class SvTestsJudgeTest(unittest.TestCase):
 
 
 class BenchmarkRunnerTest(unittest.TestCase):
+    def test_available_memory_reads_linux_memavailable(self):
+        with mock.patch.object(
+                runner.Path, "read_text",
+                return_value="MemTotal: 100 kB\nMemAvailable: 42 kB\n"):
+            self.assertEqual(runner.available_memory_bytes(), 42 * 1024)
+
+    def test_available_memory_honors_cgroup_v2_remaining_limit(self):
+        membership = "0::/example.slice\n"
+        values = {
+            "/proc/self/cgroup": membership,
+            "/sys/fs/cgroup/example.slice/memory.max": str(10 * 1024 ** 3),
+            "/sys/fs/cgroup/example.slice/memory.current": str(4 * 1024 ** 3),
+        }
+
+        def read_text(path, *args, **kwargs):
+            spelling = str(path)
+            if spelling in values:
+                return values[spelling]
+            raise FileNotFoundError(spelling)
+
+        with mock.patch.object(
+                runner.Path, "read_text", autospec=True,
+                side_effect=read_text):
+            self.assertEqual(
+                runner._cgroup_available_memory_bytes(), 6 * 1024 ** 3)
+
+    def test_available_memory_honors_cgroup_v1_parent_limit(self):
+        values = {
+            "/proc/self/cgroup": "5:memory:/parent/child\n",
+            "/sys/fs/cgroup/memory/parent/child/memory.limit_in_bytes":
+                str((1 << 63) - 4096),
+            "/sys/fs/cgroup/memory/parent/child/memory.usage_in_bytes":
+                str(1 * 1024 ** 3),
+            "/sys/fs/cgroup/memory/parent/memory.limit_in_bytes":
+                str(10 * 1024 ** 3),
+            "/sys/fs/cgroup/memory/parent/memory.usage_in_bytes":
+                str(4 * 1024 ** 3),
+        }
+
+        def read_text(path, *args, **kwargs):
+            spelling = str(path)
+            if spelling in values:
+                return values[spelling]
+            raise FileNotFoundError(spelling)
+
+        with mock.patch.object(
+                runner.Path, "read_text", autospec=True,
+                side_effect=read_text):
+            self.assertEqual(
+                runner._cgroup_available_memory_bytes(), 6 * 1024 ** 3)
+
     def test_available_cpu_count_prefers_process_affinity(self):
         with (
             mock.patch.object(

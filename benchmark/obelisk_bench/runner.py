@@ -24,6 +24,86 @@ import subprocess
 import time
 
 
+def _host_available_memory_bytes() -> int | None:
+    try:
+        lines = Path("/proc/meminfo").read_text(encoding="utf-8").splitlines()
+        for line in lines:
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _cgroup_available_memory_bytes() -> int | None:
+    """Return the remaining cgroup memory allowance for v2 or v1."""
+    try:
+        memberships = Path("/proc/self/cgroup").read_text(
+            encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for membership in memberships:
+        fields = membership.split(":", 2)
+        if len(fields) != 3:
+            continue
+        hierarchy, controllers, relative = fields
+        if hierarchy == "0" and not controllers:
+            mount = Path("/sys/fs/cgroup")
+            directory = mount / relative.lstrip("/")
+            candidates: list[int] = []
+            while directory == mount or mount in directory.parents:
+                try:
+                    limit = (directory / "memory.max").read_text().strip()
+                    current = int(
+                        (directory / "memory.current").read_text().strip())
+                except (OSError, ValueError):
+                    pass
+                else:
+                    if limit != "max":
+                        try:
+                            candidates.append(max(0, int(limit) - current))
+                        except ValueError:
+                            pass
+                if directory == mount:
+                    break
+                directory = directory.parent
+            return min(candidates) if candidates else None
+        if "memory" in controllers.split(","):
+            mount = Path("/sys/fs/cgroup/memory")
+            directory = mount / relative.lstrip("/")
+            candidates: list[int] = []
+            while directory == mount or mount in directory.parents:
+                try:
+                    limit = int(
+                        (directory / "memory.limit_in_bytes").read_text())
+                    current = int(
+                        (directory / "memory.usage_in_bytes").read_text())
+                except (OSError, ValueError):
+                    pass
+                else:
+                    # The v1 unlimited sentinel is near INT64_MAX rather than
+                    # a spelling such as cgroup v2's "max".
+                    if limit < 1 << 60:
+                        candidates.append(max(0, limit - current))
+                if directory == mount:
+                    break
+                directory = directory.parent
+            return min(candidates) if candidates else None
+    return None
+
+
+def available_memory_bytes() -> int | None:
+    """Return the tightest discoverable host/cgroup available-memory limit."""
+    candidates = [
+        value for value in (
+            _host_available_memory_bytes(),
+            _cgroup_available_memory_bytes(),
+        )
+        if value is not None
+    ]
+    return min(candidates) if candidates else None
+
+
 def _run_with_retry(command, timeout, cwd=None):
     """Run a subprocess, retrying once on a transient exec failure.
 
