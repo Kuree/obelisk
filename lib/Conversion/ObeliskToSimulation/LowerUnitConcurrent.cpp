@@ -126,6 +126,17 @@ struct PersistentUnaryProperty {
   bool eventually = false;
 };
 
+/// A deterministic bounded prefix followed by one unbounded delay and one
+/// Boolean terminal. Prefix attempts remain a compact age bitset, the last M
+/// delay slots are another bitset, and every older attempt shares one exact
+/// eligible count. This preserves cover-sequence match multiplicity without
+/// expanding an infinite family of traces.
+struct PersistentDelaySequence {
+  FixedSequence prefix;
+  FixedSequenceAge terminal;
+  uint64_t minimum = 0;
+};
+
 using FixedSequenceAlternatives = SmallVector<FixedSequence, 4>;
 
 static constexpr size_t maxFixedSequenceAlternatives = 256;
@@ -344,8 +355,11 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
         auto delay = dyn_cast<DictionaryAttr>(delayAttr);
         if (delay && delay.getAs<BoolAttr>("is_unbounded") &&
             delay.getAs<BoolAttr>("is_unbounded").getValue())
-          return diagnose("unbounded sequence delay ##[...] is not executable "
-                          "yet");
+          return diagnose(
+              "unbounded sequence delay ##[M:$] currently requires one "
+              "final delay with M no greater than 63, a deterministic "
+              "bounded prefix, and one Boolean terminal without locals or "
+              "match items");
       }
     }
     if (auto first = dyn_cast<semantic::SVFirstMatchAssertionExprOp>(current)) {
@@ -729,6 +743,84 @@ compilePersistentUnary(Operation *operation) {
   result.kind = unary.getOperatorKind();
   result.minimum = minimum;
   result.eventually = eventually;
+  return result;
+}
+
+/// Recognize one final finite-but-unbounded delay without enumerating its
+/// infinite endpoint set:
+///
+///   deterministic-bounded-prefix ##[M:$] boolean
+///   ##[M:$] boolean
+///
+/// The prefix stays within the ordinary 63-cycle representation and M uses a
+/// 63-bit delay queue. Older live attempts are observationally equivalent and
+/// merge into one count until the terminal becomes true.
+static FailureOr<PersistentDelaySequence>
+compilePersistentDelay(Operation *operation) {
+  auto concat = dyn_cast<semantic::SVSequenceConcatExprOp>(operation);
+  if (!concat)
+    return failure();
+  SmallVector<Operation *> children = getChildren(concat);
+  ArrayAttr delays = concat.getDelays();
+  if (children.empty() || delays.size() != children.size())
+    return failure();
+
+  size_t unboundedIndex = children.size();
+  uint64_t minimum = 0;
+  for (auto [index, delayAttr] : llvm::enumerate(delays)) {
+    auto delay = dyn_cast<DictionaryAttr>(delayAttr);
+    auto isUnbounded =
+        delay ? delay.getAs<BoolAttr>("is_unbounded") : BoolAttr{};
+    auto lower = delay ? delay.getAs<IntegerAttr>("min") : IntegerAttr{};
+    if (!delay || !isUnbounded || !lower || lower.getInt() < 0)
+      return failure();
+    if (!isUnbounded.getValue())
+      continue;
+    if (unboundedIndex != children.size())
+      return failure();
+    unboundedIndex = index;
+    minimum = static_cast<uint64_t>(lower.getInt());
+  }
+  if (unboundedIndex + 1 != children.size() || minimum > 63)
+    return failure();
+
+  PersistentDelaySequence result;
+  result.minimum = minimum;
+  if (unboundedIndex == 0) {
+    // A leading delay has an implicit true sequence at the attempt clock.
+    result.prefix.ages.resize(1);
+  } else {
+    for (size_t index = 0; index < unboundedIndex; ++index) {
+      auto delay = dyn_cast<DictionaryAttr>(delays[index]);
+      auto lower = delay ? delay.getAs<IntegerAttr>("min") : IntegerAttr{};
+      auto upper = delay ? delay.getAs<IntegerAttr>("max") : IntegerAttr{};
+      auto isUnbounded =
+          delay ? delay.getAs<BoolAttr>("is_unbounded") : BoolAttr{};
+      if (!lower || !upper || !isUnbounded || isUnbounded.getValue() ||
+          lower.getInt() < 0 || lower.getInt() != upper.getInt())
+        return failure();
+      FailureOr<FixedSequence> prefix = compileFixedSequence(children[index]);
+      if (failed(prefix) || prefix->emptyMatch || prefix->vacuousSuccess ||
+          !prefix->firstMatchBoundaries.empty() ||
+          llvm::any_of(prefix->ages,
+                       [](const FixedSequenceAge &age) {
+                         return !age.matchItems.empty() ||
+                                !age.caseGuards.empty();
+                       }) ||
+          failed(appendFixedSequence(result.prefix, *prefix,
+                                     static_cast<uint64_t>(lower.getInt()))))
+        return failure();
+    }
+  }
+  if (result.prefix.ages.empty() || result.prefix.ages.size() > 63)
+    return failure();
+
+  FailureOr<FixedSequence> terminal =
+      compileFixedSequence(children[unboundedIndex]);
+  if (failed(terminal) || !isSingleBooleanAge(*terminal) ||
+      terminal->vacuousSuccess)
+    return failure();
+  result.terminal = std::move(terminal->ages.front());
   return result;
 }
 
@@ -2126,6 +2218,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   bool hasPersistentUntil = false;
   PersistentUnaryProperty persistentUnary;
   bool hasPersistentUnary = false;
+  PersistentDelaySequence persistentDelay;
+  bool hasPersistentDelay = false;
   bool nonoverlapped = false;
   bool followedBy = false;
   if (multiClockAttempt) {
@@ -2199,9 +2293,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       function->setAttr("obelisk_sim.followed_by_monitor",
                         builder.getUnitAttr());
   } else {
-    if (FailureOr<PersistentUnaryProperty> unary =
-            compilePersistentUnary(property);
-        succeeded(unary)) {
+    if (FailureOr<PersistentDelaySequence> delay =
+            compilePersistentDelay(property);
+        succeeded(delay)) {
+      persistentDelay = std::move(*delay);
+      hasPersistentDelay = true;
+      sequence.ages.resize(1);
+    } else if (FailureOr<PersistentUnaryProperty> unary =
+                   compilePersistentUnary(property);
+               succeeded(unary)) {
       persistentUnary = std::move(*unary);
       hasPersistentUnary = true;
       // The aggregate monitor owns its warm-up and eligible token counts.
@@ -2309,6 +2409,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                << "implication/followed-by antecedent match items require "
                   "assertion local flow",
            failure();
+  if (hasPersistentDelay && (localInstance || implication || disable || abort ||
+                             expectMonitor || firstMatch))
+    return emitError(getSemanticLocation(property))
+               << "unbounded sequence delay ##[M:$] currently requires one "
+                  "outermost deterministic sequence without locals, "
+                  "implication/followed-by, disable iff, abort, "
+                  "first_match, or expect",
+           failure();
   if (hasPersistentRepetition && (localInstance || implication || disable ||
                                   expectMonitor || firstMatch || coverSequence))
     return emitError(getSemanticLocation(property))
@@ -2350,7 +2458,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (localInstance || implication || disable || expectMonitor ||
         firstMatch || coverSequence || branchingSequence ||
         hasPersistentRepetition || hasPersistentUntil || hasPersistentUnary ||
-        matchItems)
+        hasPersistentDelay || matchItems)
       return emitError(getSemanticLocation(abort))
                  << "SVA property operator '" << spelling
                  << "' currently requires one outermost abort around a plain "
@@ -2878,10 +2986,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   };
 
   auto outlineCountedEndOfSimulation = [&](ArrayRef<Value> countStorages,
+                                           ArrayRef<Value> bitsetStorages,
                                            bool passed, StringRef identityTag,
                                            Operation *source) -> LogicalResult {
     std::optional<ReportCallback> &report = passed ? passReport : failReport;
-    if (countStorages.empty() || !report)
+    if ((countStorages.empty() && bitsetStorages.empty()) || !report)
       return success();
     if (disableEpoch)
       return function.emitError(
@@ -2919,6 +3028,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       if (inserted)
         captures.push_back(storage);
       countIndices.push_back(entry->second);
+    }
+    SmallVector<unsigned> bitsetIndices;
+    for (Value storage : bitsetStorages) {
+      auto [entry, inserted] =
+          captureIndices.try_emplace(storage, captures.size());
+      if (inserted)
+        captures.push_back(storage);
+      bitsetIndices.push_back(entry->second);
     }
     SmallVector<unsigned> reportCaptureIndices;
     for (Value capture : report->captures) {
@@ -3016,6 +3133,50 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Value one =
         arith::ConstantOp::create(entryBuilder, getSemanticLocation(source),
                                   stateType, entryBuilder.getI64IntegerAttr(1));
+    Block *current = &entry;
+    for (unsigned index : bitsetIndices) {
+      OpBuilder currentBuilder = OpBuilder::atBlockEnd(current);
+      Value bits =
+          sim::SimRefLoadOp::create(currentBuilder, getSemanticLocation(source),
+                                    stateType, entry.getArgument(index));
+      Block *bitLoop = new Block;
+      Block *bitBody = new Block;
+      Block *bitDone = new Block;
+      bitLoop->addArgument(stateType, getSemanticLocation(source));
+      bitLoop->addArgument(stateType, getSemanticLocation(source));
+      bitDone->addArgument(stateType, getSemanticLocation(source));
+      coordinator.getBody().push_back(bitLoop);
+      coordinator.getBody().push_back(bitBody);
+      coordinator.getBody().push_back(bitDone);
+      cf::BranchOp::create(currentBuilder, getSemanticLocation(source), bitLoop,
+                           ValueRange{bits, count});
+
+      OpBuilder bitLoopBuilder = OpBuilder::atBlockEnd(bitLoop);
+      Value remainingBits = bitLoop->getArgument(0);
+      Value accumulated = bitLoop->getArgument(1);
+      Value hasBits = arith::CmpIOp::create(
+          bitLoopBuilder, getSemanticLocation(source), arith::CmpIPredicate::ne,
+          remainingBits,
+          arith::ConstantOp::create(bitLoopBuilder, getSemanticLocation(source),
+                                    stateType,
+                                    bitLoopBuilder.getI64IntegerAttr(0)));
+      cf::CondBranchOp::create(bitLoopBuilder, getSemanticLocation(source),
+                               hasBits, bitBody, ValueRange{}, bitDone,
+                               ValueRange{accumulated});
+
+      OpBuilder bitBodyBuilder = OpBuilder::atBlockEnd(bitBody);
+      Value decremented = arith::SubIOp::create(
+          bitBodyBuilder, getSemanticLocation(source), remainingBits, one);
+      Value nextBits =
+          arith::AndIOp::create(bitBodyBuilder, getSemanticLocation(source),
+                                remainingBits, decremented);
+      Value nextAccumulated = arith::AddIOp::create(
+          bitBodyBuilder, getSemanticLocation(source), accumulated, one);
+      cf::BranchOp::create(bitBodyBuilder, getSemanticLocation(source), bitLoop,
+                           ValueRange{nextBits, nextAccumulated});
+      current = bitDone;
+      count = bitDone->getArgument(0);
+    }
     Block *loop = new Block;
     Block *body = new Block;
     Block *done = new Block;
@@ -3023,7 +3184,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     coordinator.getBody().push_back(loop);
     coordinator.getBody().push_back(body);
     coordinator.getBody().push_back(done);
-    cf::BranchOp::create(entryBuilder, getSemanticLocation(source), loop,
+    OpBuilder currentBuilder = OpBuilder::atBlockEnd(current);
+    cf::BranchOp::create(currentBuilder, getSemanticLocation(source), loop,
                          ValueRange{count});
 
     OpBuilder loopBuilder = OpBuilder::atBlockEnd(loop);
@@ -3549,6 +3711,230 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                             ArrayAttr{});
   }
 
+  if (hasPersistentDelay) {
+    function->setAttr("obelisk_sim.persistent_delay_monitor",
+                      builder.getUnitAttr());
+    function->setAttr("obelisk_sim.persistent_delay_minimum",
+                      builder.getI64IntegerAttr(persistentDelay.minimum));
+    function->setAttr(
+        "obelisk_sim.persistent_delay_prefix_horizon",
+        builder.getI64IntegerAttr(persistentDelay.prefix.ages.size()));
+    function->setAttr("obelisk_sim.persistent_delay_aggregate_tokens",
+                      builder.getUnitAttr());
+    function->setAttr("obelisk_sim.sva_transition_normal_form",
+                      builder.getStringAttr("canonical-minimal"));
+    if (coverSequence)
+      function->setAttr("obelisk_sim.persistent_delay_all_matches",
+                        builder.getUnitAttr());
+
+    Value prefixStateStorage;
+    if (persistentDelay.prefix.ages.size() > 1)
+      prefixStateStorage = sim::SimRefAllocOp::create(
+          builder, location,
+          sim::RefType::get(function.getContext(), stateType), zero);
+    Value warmupStorage;
+    if (persistentDelay.minimum != 0)
+      warmupStorage = sim::SimRefAllocOp::create(
+          builder, location,
+          sim::RefType::get(function.getContext(), stateType), zero);
+    Value eligibleStorage = sim::SimRefAllocOp::create(
+        builder, location, sim::RefType::get(function.getContext(), stateType),
+        zero);
+
+    bool weakCompletion = endStrength ? endStrength.getStrength() ==
+                                            semantic::SVAssertionStrength::Weak
+                                      : assertion;
+    SmallVector<Value> endCounts;
+    SmallVector<Value> endBitsets;
+    // A sequence used by assert/assume is weak unless explicitly qualified;
+    // other directives are strong. A weak finite-end completion is vacuous,
+    // so it never creates a cover hit.
+    if (!weakCompletion || !cover) {
+      endCounts.push_back(eligibleStorage);
+      if (prefixStateStorage)
+        endBitsets.push_back(prefixStateStorage);
+      if (warmupStorage)
+        endBitsets.push_back(warmupStorage);
+    }
+    StringRef completionTag = weakCompletion ? "delay_weak" : "delay_strong";
+    Operation *completionSource =
+        endStrength ? endStrength.getOperation() : property;
+    if (failed(outlineCountedEndOfSimulation(endCounts, endBitsets,
+                                             weakCompletion, completionTag,
+                                             completionSource)))
+      return failure();
+
+    Block *wait = addBlock();
+    Block *sample = addBlock();
+    emitBranch(wait);
+    setCurrent(wait);
+    if (failed(emitEventSuspend(clock, sample)))
+      return failure();
+    wait->getTerminator()->setAttr(
+        "resume_region", sim::EventRegionAttr::get(function.getContext(),
+                                                   sim::EventRegion::Observed));
+    setCurrent(sample);
+
+    bool savedSampleAssertionValues = sampleAssertionValues;
+    sampleAssertionValues = true;
+    Operation *savedSampledClock = activeSampledClock;
+    activeSampledClock = clock;
+    llvm::scope_exit restoreSampling([&] {
+      sampleAssertionValues = savedSampleAssertionValues;
+      activeSampledClock = savedSampledClock;
+    });
+
+    Value trueValue = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    Value one = arith::ConstantOp::create(builder, location, stateType,
+                                          builder.getI64IntegerAttr(1));
+    DenseMap<Operation *, Value> predicateCache;
+    auto evaluateAge = [&](const FixedSequenceAge &age) -> FailureOr<Value> {
+      Value result = trueValue;
+      auto evaluatePredicate = [&](Operation *predicate) -> FailureOr<Value> {
+        if (auto found = predicateCache.find(predicate);
+            found != predicateCache.end())
+          return found->second;
+        FailureOr<Value> value = lowerExpression(predicate);
+        if (failed(value))
+          return failure();
+        FailureOr<Value> truth =
+            truthValue(*value, getSemanticLocation(predicate));
+        if (failed(truth))
+          return failure();
+        predicateCache[predicate] = *truth;
+        return *truth;
+      };
+      for (Operation *predicate : age.predicates) {
+        FailureOr<Value> truth = evaluatePredicate(predicate);
+        if (failed(truth))
+          return failure();
+        result = arith::AndIOp::create(builder, location, result, *truth);
+      }
+      for (Operation *predicate : age.negatedPredicates) {
+        FailureOr<Value> truth = evaluatePredicate(predicate);
+        if (failed(truth))
+          return failure();
+        Value negated =
+            arith::XOrIOp::create(builder, location, *truth, trueValue);
+        result = arith::AndIOp::create(builder, location, result, negated);
+      }
+      return result;
+    };
+    auto selectCount = [&](Value condition, Value count) {
+      return arith::SelectOp::create(builder, location, condition, count, zero)
+          .getResult();
+    };
+    auto addCount = [&](Value &target, Value count) {
+      target = arith::AddIOp::create(builder, location, target, count);
+    };
+
+    Value prefixState =
+        prefixStateStorage
+            ? sim::SimRefLoadOp::create(builder, location, stateType,
+                                        prefixStateStorage)
+                  .getResult()
+            : zero;
+    Value nextPrefixState = zero;
+    Value completedPrefix = zero;
+    Value failedPrefix = zero;
+    for (uint64_t age = 1; age < persistentDelay.prefix.ages.size(); ++age) {
+      Value mask = arith::ConstantOp::create(
+          builder, location, stateType,
+          builder.getI64IntegerAttr(uint64_t{1} << age));
+      Value present =
+          arith::AndIOp::create(builder, location, prefixState, mask);
+      Value active = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, present, zero);
+      FailureOr<Value> matches = evaluateAge(persistentDelay.prefix.ages[age]);
+      if (failed(matches))
+        return failure();
+      Value advances =
+          arith::AndIOp::create(builder, location, active, *matches);
+      Value notMatches =
+          arith::XOrIOp::create(builder, location, *matches, trueValue);
+      Value fails =
+          arith::AndIOp::create(builder, location, active, notMatches);
+      addCount(failedPrefix, selectCount(fails, one));
+      if (age + 1 == persistentDelay.prefix.ages.size()) {
+        addCount(completedPrefix, selectCount(advances, one));
+      } else {
+        Value nextMask = arith::ConstantOp::create(
+            builder, location, stateType,
+            builder.getI64IntegerAttr(uint64_t{1} << (age + 1)));
+        Value advanced = selectCount(advances, nextMask);
+        nextPrefixState =
+            arith::OrIOp::create(builder, location, nextPrefixState, advanced);
+      }
+    }
+
+    FailureOr<Value> starts = evaluateAge(persistentDelay.prefix.ages.front());
+    if (failed(starts))
+      return failure();
+    Value failedStart =
+        arith::XOrIOp::create(builder, location, *starts, trueValue);
+    addCount(failedPrefix, selectCount(failedStart, one));
+    if (persistentDelay.prefix.ages.size() == 1) {
+      addCount(completedPrefix, selectCount(*starts, one));
+    } else {
+      Value firstMask = arith::ConstantOp::create(builder, location, stateType,
+                                                  builder.getI64IntegerAttr(2));
+      Value started = selectCount(*starts, firstMask);
+      nextPrefixState =
+          arith::OrIOp::create(builder, location, nextPrefixState, started);
+      sim::SimRefStoreOp::create(builder, location, nextPrefixState,
+                                 prefixStateStorage);
+    }
+
+    Value matured = completedPrefix;
+    if (warmupStorage) {
+      Value warmup = sim::SimRefLoadOp::create(builder, location, stateType,
+                                               warmupStorage);
+      Value matureMask = arith::ConstantOp::create(
+          builder, location, stateType,
+          builder.getI64IntegerAttr(uint64_t{1}
+                                    << (persistentDelay.minimum - 1)));
+      Value matureBit =
+          arith::AndIOp::create(builder, location, warmup, matureMask);
+      Value isMature = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, matureBit, zero);
+      matured = selectCount(isMature, one);
+      Value shifted = arith::ShLIOp::create(builder, location, warmup, one);
+      uint64_t queueMask =
+          (uint64_t{1} << persistentDelay.minimum) - uint64_t{1};
+      Value mask = arith::ConstantOp::create(
+          builder, location, stateType, builder.getI64IntegerAttr(queueMask));
+      Value retained = arith::AndIOp::create(builder, location, shifted, mask);
+      Value entered = selectCount(
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                completedPrefix, zero),
+          one);
+      Value nextWarmup =
+          arith::OrIOp::create(builder, location, retained, entered);
+      sim::SimRefStoreOp::create(builder, location, nextWarmup, warmupStorage);
+    }
+
+    Value eligible = sim::SimRefLoadOp::create(builder, location, stateType,
+                                               eligibleStorage);
+    Value eligibleNow =
+        arith::AddIOp::create(builder, location, eligible, matured);
+    FailureOr<Value> terminal = evaluateAge(persistentDelay.terminal);
+    if (failed(terminal))
+      return failure();
+    Value successCount = selectCount(*terminal, eligibleNow);
+    Value nextEligible =
+        coverSequence ? eligibleNow
+                      : arith::SelectOp::create(builder, location, *terminal,
+                                                zero, eligibleNow)
+                            .getResult();
+    sim::SimRefStoreOp::create(builder, location, nextEligible,
+                               eligibleStorage);
+    scheduleCount(successCount, true);
+    scheduleCount(failedPrefix, false);
+    cf::BranchOp::create(builder, location, wait);
+    return success();
+  }
+
   if (hasPersistentUnary) {
     StringRef spelling =
         semantic::stringifySVAssertionUnaryOperator(persistentUnary.kind);
@@ -3579,8 +3965,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (immatureStorage && (persistentUnary.eventually || !cover))
       endCounts.push_back(immatureStorage);
     if (failed(outlineCountedEndOfSimulation(
-            endCounts, /*passed=*/!persistentUnary.eventually, spelling,
-            property)))
+            endCounts, /*bitsetStorages=*/{},
+            /*passed=*/!persistentUnary.eventually, spelling, property)))
       return failure();
 
     Block *wait = addBlock();

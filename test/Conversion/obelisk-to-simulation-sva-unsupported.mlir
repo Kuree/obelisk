@@ -5,7 +5,7 @@
 // RUN: not obelisk-opt %t/until.mlir '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNTIL
 // RUN: not obelisk-opt %t/empty-property.mlir '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s --check-prefix=EMPTY
 
-// DELAY: error: unbounded sequence delay ##[...] is not executable yet
+// DELAY: error: unbounded sequence delay ##[M:$] currently requires one final delay with M no greater than 63, a deterministic bounded prefix, and one Boolean terminal without locals or match items
 // NONCONSECUTIVE: error: nonconsecutive sequence repetition [=] currently requires a positive finite range no greater than 63 on one boolean term, optionally preceded by a deterministic bounded prefix and followed by ##1 plus one boolean term
 // ALWAYS: error: SVA property operator 'always' currently requires its unbounded/no-range form over one deterministic one-cycle Boolean operand without locals or match items
 // UNTIL: error: SVA property operator 'until' currently requires two deterministic one-cycle boolean operands without locals, match items, disable iff, or nested property composition
@@ -32,13 +32,19 @@ module {
                 obelisk.sv.expression.named_value attributes {node_id = 11 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                 }
               }
-              obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = true, max = 1 : i64, min = 1 : i64}], node_id = 12 : i64} {
+              // The unbounded delay is not final, so this deliberately remains
+              // outside the compact executable shape.
+              obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = true, min = 1 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}], node_id = 12 : i64} {
                 obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 13 : i64, repetition_is_unbounded = false} {
                   obelisk.sv.expression.named_value attributes {node_id = 14 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                   }
                 }
                 obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 15 : i64, repetition_is_unbounded = false} {
                   obelisk.sv.expression.named_value attributes {node_id = 16 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                }
+                obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 17 : i64, repetition_is_unbounded = false} {
+                  obelisk.sv.expression.named_value attributes {node_id = 18 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                   }
                 }
               }
