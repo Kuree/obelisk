@@ -12,8 +12,8 @@ import dataclasses
 
 # Per-test status vocabulary shared by all suites.
 #   pass        - simulated to completion and self-checked as correct
-#   xfail_pass  - upstream counts it "passed" because Obelisk errored in the
-#                 phase where failure was expected; not a completed positive run
+#   xfail_pass  - an expected compiler/runtime failure or documented upstream
+#                 test XFAIL occurred; not a completed positive run
 #   compile_fail- Obelisk failed to compile the design
 #   run_fail    - compiled, but did not finish / did not self-check
 #   skip        - upstream skipped it (missing feature, unsupported scenario)

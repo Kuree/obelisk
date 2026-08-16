@@ -31,6 +31,14 @@ SOURCE = model.GitSource(
     rev="682f19035fc21c85b653661d8e1a6e4fe1acbf08",
 )
 
+# This pinned test states in its own source that the assertion fails on every
+# tested simulator: gnt2 becomes visible one sampled edge after the later arm
+# of the `and` sequence completes. Keep this distinct from metadata-driven
+# should-fail tests, which require an ordinary nonzero simulator exit.
+_EXPECTED_ASSERTION_FAILURES = {
+    "chapter-16/16.7--sequence-and-uvm.sv",
+}
+
 _METADATA = re.compile(r"^\s*:([a-zA-Z_-]+):\s*(.+)$")
 _ASSERTION = re.compile(r":assert:(.*)")
 _PATTERN_STRING = re.compile(r"''(\{.*?\})'")
@@ -333,6 +341,7 @@ def judge_one(
         values.get("should_fail", "0") == "1"
         or "should_fail_because" in values
     )
+    expected_assertion_failure = rel in _EXPECTED_ASSERTION_FAILURES
     sources, includes, defines = _resolve_test_inputs(root, test, values)
     missing = [
         spelling for spelling in [*sources, *includes]
@@ -350,7 +359,8 @@ def judge_one(
         flags += ["-I", include]
     for define in defines:
         flags += ["-D", define]
-    if "uvm" in values.get("tags", "").split():
+    is_uvm = "uvm" in values.get("tags", "").split()
+    if is_uvm:
         # The pinned suite supplies the SystemVerilog UVM package but not its
         # optional C DPI implementation.  UVM_NO_DPI selects the library's
         # portable fallback, while bytecode avoids recompiling the full class
@@ -372,6 +382,11 @@ def judge_one(
     except ValueError as error:
         return rel, model.Outcome(model.SKIP, str(error))
     frontend_timeout = max(compile_timeout, timeout)
+    if is_uvm:
+        # Even a tiny UVM test reparses and lowers the complete class library.
+        # With one compiler thread per parallel corpus worker that can exceed
+        # the ordinary 6x execution allowance without being stuck.
+        frontend_timeout = max(frontend_timeout, run_timeout * 12)
     with tempfile.TemporaryDirectory(prefix="obelisk-svt-") as tmp:
         if mode == "preprocessing":
             output = str(Path(tmp) / "preprocessed.sv")
@@ -433,6 +448,21 @@ def judge_one(
         # test's temporary directory instead of polluting the caller's cwd.
         result = runner.execute(str(binary), timeout, cwd=tmp)
         output = result.stdout + result.stderr
+        if expected_assertion_failure:
+            if result.timed_out or not result.ok:
+                return rel, model.Outcome(model.RUN_FAIL, output)
+            markers = [
+                match.group(1).strip()
+                for line in output.splitlines()
+                if (match := _ASSERTION.search(line))
+            ]
+            if not markers or any(marker != "(False)" for marker in markers):
+                return rel, model.Outcome(
+                    model.RUN_FAIL,
+                    "documented upstream assertion failure did not emit its "
+                    "exact false marker\n" + output,
+                )
+            return rel, model.Outcome(model.XFAIL_PASS)
         if expected_fail:
             if result.timed_out:
                 return rel, model.Outcome(model.RUN_FAIL, "timeout\n" + output)

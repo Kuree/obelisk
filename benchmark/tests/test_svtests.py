@@ -254,6 +254,58 @@ class SvTestsJudgeTest(unittest.TestCase):
 
         self.assertEqual(outcome.status, model.RUN_FAIL)
 
+    def test_pinned_upstream_assertion_failure_is_xfail(self):
+        self.test = (
+            self.root / "tests" / "chapter-16" /
+            "16.7--sequence-and-uvm.sv"
+        )
+        self.test.parent.mkdir(parents=True, exist_ok=True)
+        self.write_test(":type: simulation")
+        build, compile_design, execute = self.native_patches(
+            runner.ExecResult(
+                True, ":assert: (False)\n", False, returncode=0))
+        with build, compile_design, execute:
+            _, outcome = svtests.judge_one(
+                "obelisk", self.root, self.test, 60, 10,
+                compile_threads=1)
+
+        self.assertEqual(outcome.status, model.XFAIL_PASS)
+
+    def test_pinned_upstream_assertion_failure_rejects_unexpected_pass(self):
+        self.test = (
+            self.root / "tests" / "chapter-16" /
+            "16.7--sequence-and-uvm.sv"
+        )
+        self.test.parent.mkdir(parents=True, exist_ok=True)
+        self.write_test(":type: simulation")
+        build, compile_design, execute = self.native_patches(
+            runner.ExecResult(
+                True, ":assert: (True)\n", False, returncode=0))
+        with build, compile_design, execute:
+            _, outcome = svtests.judge_one(
+                "obelisk", self.root, self.test, 60, 10,
+                compile_threads=1)
+
+        self.assertEqual(outcome.status, model.RUN_FAIL)
+        self.assertIn("exact false marker", outcome.log)
+
+    def test_pinned_upstream_assertion_failure_rejects_invalid_marker(self):
+        self.test = (
+            self.root / "tests" / "chapter-16" /
+            "16.7--sequence-and-uvm.sv"
+        )
+        self.test.parent.mkdir(parents=True, exist_ok=True)
+        self.write_test(":type: simulation")
+        build, compile_design, execute = self.native_patches(
+            runner.ExecResult(
+                True, ":assert: __import__('os')\n", False, returncode=0))
+        with build, compile_design, execute:
+            _, outcome = svtests.judge_one(
+                "obelisk", self.root, self.test, 60, 10,
+                compile_threads=1)
+
+        self.assertEqual(outcome.status, model.RUN_FAIL)
+
     def test_uvm_simulation_uses_portable_bytecode_configuration(self):
         self.write_test(":type: simulation\n:tags: uvm")
         build, compile_design, execute = self.native_patches(
@@ -280,6 +332,7 @@ class SvTestsJudgeTest(unittest.TestCase):
         )
         self.assertIn("--execution-tier=bytecode", flags)
         self.assertIn("-fno-lto", flags)
+        self.assertEqual(compile_mock.call_args.kwargs["timeout"], 120)
 
     def test_uvm_configuration_preserves_existing_no_dpi_define(self):
         self.write_test(
