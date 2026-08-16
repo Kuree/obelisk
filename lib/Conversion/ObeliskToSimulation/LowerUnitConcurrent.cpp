@@ -2450,12 +2450,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                << "implication/followed-by antecedent match items require "
                   "assertion local flow",
            failure();
-  if (hasPersistentDelay &&
-      (localInstance || abort || expectMonitor || firstMatch))
+  if (hasPersistentDelay && (localInstance || expectMonitor || firstMatch))
     return emitError(getSemanticLocation(property))
                << "unbounded sequence delay ##[M:$] currently requires one "
-                  "deterministic sequence without locals, abort, "
-                  "first_match, or expect",
+                  "deterministic sequence without locals, first_match, or "
+                  "expect",
            failure();
   if (hasPersistentDelay && implication &&
       (antecedentSequence.ages.size() != 1 ||
@@ -2487,16 +2486,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                   "cover-sequence per-match "
                   "accounting",
            failure();
-  if (hasPersistentUnary && (localInstance || implication || abort ||
-                             expectMonitor || firstMatch || coverSequence))
+  if (hasPersistentUnary && (localInstance || implication || expectMonitor ||
+                             firstMatch || coverSequence))
     return emitError(getSemanticLocation(property))
                << "persistent property operator '"
                << semantic::stringifySVAssertionUnaryOperator(
                       persistentUnary.kind)
                << "' currently requires one outermost unbounded form over "
                   "a deterministic one-cycle Boolean operand without "
-                  "locals, match items, implication/followed-by, abort, "
-                  "first_match, expect, or cover-sequence "
+                  "locals, match items, implication/followed-by, first_match, "
+                  "expect, or cover-sequence "
                   "per-match accounting",
            failure();
   if (abort) {
@@ -2509,16 +2508,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           return !age.matchItems.empty();
         });
     if (localInstance || implication || disable || expectMonitor ||
-        firstMatch || coverSequence || branchingSequence ||
-        hasPersistentRepetition || hasPersistentUntil || hasPersistentUnary ||
-        hasPersistentDelay || matchItems)
+        firstMatch || coverSequence || branchingSequence || matchItems)
       return emitError(getSemanticLocation(abort))
                  << "SVA property operator '" << spelling
-                 << "' currently requires one outermost abort around a plain "
-                    "deterministic bounded property without locals, match "
-                    "items, implication/followed-by, disable iff, "
-                    "first_match, persistent operators, expect, or "
-                    "cover-sequence per-match accounting",
+                 << "' currently requires one outermost abort around a "
+                    "deterministic bounded property or supported aggregate "
+                    "persistent property without locals, match items, "
+                    "implication/followed-by, disable iff, first_match, "
+                    "expect, or cover-sequence per-match accounting",
              failure();
     function->setAttr(abort.getIsSynchronous()
                           ? "obelisk_sim.synchronous_property_abort"
@@ -2677,11 +2674,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                          builder.getI64IntegerAttr(0));
   bool persistentStateOwner = hasPersistentDelay || hasPersistentUnary ||
                               hasPersistentUntil || hasPersistentRepetition;
-  bool needsState = (disable && !persistentStateOwner) ||
-                    (abort && !abort.getIsSynchronous()) ||
-                    (!branchingSequence && sequence.ages.size() > 1) ||
-                    (implication && !hasPersistentDelay &&
-                     (nonoverlapped || antecedentSequence.ages.size() > 1));
+  bool needsState =
+      (disable && !persistentStateOwner) ||
+      (abort && !abort.getIsSynchronous() && !persistentStateOwner) ||
+      (!branchingSequence && sequence.ages.size() > 1) ||
+      (implication && !hasPersistentDelay &&
+       (nonoverlapped || antecedentSequence.ages.size() > 1));
   if (implication && antecedentSequence.ages.size() > 1)
     function->setAttr(
         "obelisk_sim.bounded_antecedent_horizon",
@@ -3332,6 +3330,478 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return success();
   };
 
+  struct PersistentAbortPlan {
+    FlatSymbolRefAttr dispatcher;
+    SmallVector<Value> operands;
+  };
+  auto preparePersistentAbort = [&](ArrayRef<Value> countStorages,
+                                    ArrayRef<Value> bitsetStorages)
+      -> FailureOr<std::optional<PersistentAbortPlan>> {
+    if (!abort)
+      return std::optional<PersistentAbortPlan>{};
+    if (countStorages.empty() && bitsetStorages.empty())
+      return function.emitError(
+                 "persistent property abort requires aggregate monitor state"),
+             failure();
+
+    auto design = function->getParentOfType<sim::SimDesignOp>();
+    if (!design)
+      return function.emitError(
+                 "persistent property abort requires a simulation design"),
+             failure();
+
+    bool accepted =
+        abort.getAction() == semantic::SVAssertionAbortAction::Accept;
+    std::optional<ReportCallback> *selectedReport =
+        accepted ? &passReport : &failReport;
+    bool emitReports = *selectedReport && !(accepted && cover);
+
+    Value context = function.getBody().front().getArgument(0);
+    SmallVector<Value> captures{context};
+    DenseMap<Value, unsigned> captureIndices;
+    captureIndices.try_emplace(context, 0);
+    auto appendCapture = [&](Value value) {
+      auto [entry, inserted] =
+          captureIndices.try_emplace(value, captures.size());
+      if (inserted)
+        captures.push_back(value);
+      return entry->second;
+    };
+    SmallVector<unsigned> countIndices;
+    for (Value storage : countStorages)
+      countIndices.push_back(appendCapture(storage));
+    SmallVector<unsigned> bitsetIndices;
+    for (Value storage : bitsetStorages)
+      bitsetIndices.push_back(appendCapture(storage));
+    SmallVector<unsigned> reportCaptureIndices;
+    if (emitReports)
+      for (Value capture : (*selectedReport)->captures)
+        reportCaptureIndices.push_back(appendCapture(capture));
+
+    SmallVector<Type> inputTypes;
+    SmallVector<DictionaryAttr> argumentAttrs;
+    for (auto [index, capture] : llvm::enumerate(captures)) {
+      inputTypes.push_back(capture.getType());
+      SmallVector<NamedAttribute> metadata;
+      if (auto argument = dyn_cast<BlockArgument>(capture);
+          argument && argument.getOwner() == &function.getBody().front()) {
+        if (DictionaryAttr sourceAttrs =
+                function.getArgAttrDict(argument.getArgNumber()))
+          llvm::append_range(metadata, sourceAttrs);
+      }
+      if (metadata.empty())
+        metadata.push_back(builder.getNamedAttr(
+            "obelisk_sim.capture_kind",
+            sim::CaptureKindAttr::get(function.getContext(),
+                                      index == 0 ? sim::CaptureKind::Context
+                                                 : sim::CaptureKind::Formal)));
+      if (isa<sim::RefType>(capture.getType()) &&
+          !isStaticallyAllocatedOverrideTarget(capture))
+        metadata.push_back(builder.getNamedAttr(
+            "obelisk_sim.automatic_reference_capture", builder.getUnitAttr()));
+      argumentAttrs.push_back(builder.getDictionaryAttr(metadata));
+    }
+    unsigned extraCountIndex = inputTypes.size();
+    inputTypes.push_back(stateType);
+    argumentAttrs.push_back(builder.getDictionaryAttr({builder.getNamedAttr(
+        "obelisk_sim.capture_kind",
+        sim::CaptureKindAttr::get(function.getContext(),
+                                  sim::CaptureKind::Formal))}));
+
+    uint64_t scopeID = 0;
+    std::string parentHierarchy = function.getSymName().str();
+    uint64_t parentID = function.getCodeUnitId().value_or(0);
+    for (sim::SimCodeUnitDeclOp declaration :
+         design.getBody().front().getOps<sim::SimCodeUnitDeclOp>()) {
+      if (declaration.getId() != parentID)
+        continue;
+      scopeID = declaration.getScopeId();
+      parentHierarchy = declaration.getHierarchicalName().str();
+      break;
+    }
+
+    StringRef action = accepted ? "accept" : "reject";
+    std::string symbol = (function.getSymName() + ".$concurrent_abort_count." +
+                          Twine(node) + "." + action)
+                             .str();
+    std::string identity =
+        (function.getSymName() + ".$concurrent_abort_count_identity." +
+         Twine(node) + "." + action)
+            .str();
+    uint64_t codeUnitID = stableCodeUnitID(identity);
+    std::string hierarchy =
+        (Twine(parentHierarchy) + ".$concurrent_abort_count." + Twine(node) +
+         "." + action)
+            .str();
+    OpBuilder outlineBuilder(function);
+    outlineBuilder.setInsertionPoint(function);
+    sim::SimCodeUnitDeclOp::create(
+        outlineBuilder, getSemanticLocation(abort), codeUnitID, scopeID,
+        sim::EntryKind::Function, outlineBuilder.getStringAttr(hierarchy),
+        outlineBuilder.getStringAttr(
+            "counted persistent concurrent assertion abort dispatcher"),
+        outlineBuilder.getUnitAttr());
+    SmallVector<NamedAttribute> attributes{
+        outlineBuilder.getNamedAttr(bindingsAttrName,
+                                    outlineBuilder.getArrayAttr({})),
+        outlineBuilder.getNamedAttr(
+            "code_unit_id", outlineBuilder.getI64IntegerAttr(codeUnitID)),
+        outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
+        outlineBuilder.getNamedAttr(
+            "home_region", sim::EventRegionAttr::get(function.getContext(),
+                                                     sim::EventRegion::Active)),
+        outlineBuilder.getNamedAttr(
+            "domain", sim::ExecutionDomainAttr::get(
+                          function.getContext(), sim::ExecutionDomain::Design)),
+        outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
+                                    outlineBuilder.getStringAttr(hierarchy)),
+    };
+    sim::SimFuncOp dispatcher = sim::SimFuncOp::create(
+        outlineBuilder, getSemanticLocation(abort), symbol,
+        FunctionType::get(function.getContext(), inputTypes, TypeRange{}),
+        sim::EntryKind::Function, attributes, argumentAttrs);
+    SymbolTable::setSymbolVisibility(dispatcher,
+                                     SymbolTable::Visibility::Private);
+    dispatcher->setAttr("obelisk_sim.concurrent_abort_counted",
+                        builder.getUnitAttr());
+
+    Block &entry = dispatcher.getBody().front();
+    OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
+    Value dispatchZero =
+        arith::ConstantOp::create(entryBuilder, getSemanticLocation(abort),
+                                  stateType, entryBuilder.getI64IntegerAttr(0));
+    Value total = entry.getArgument(extraCountIndex);
+    for (unsigned index : countIndices) {
+      Value amount =
+          sim::SimRefLoadOp::create(entryBuilder, getSemanticLocation(abort),
+                                    stateType, entry.getArgument(index));
+      total = arith::AddIOp::create(entryBuilder, getSemanticLocation(abort),
+                                    total, amount);
+      sim::SimRefStoreOp::create(entryBuilder, getSemanticLocation(abort),
+                                 dispatchZero, entry.getArgument(index));
+    }
+
+    // Count every live attempt represented by a bitset without introducing a
+    // Math dialect dependency into design bytecode. Kernighan's recurrence
+    // clears the least-significant set bit on each trip, so the generated CFG
+    // is proportional to the number of live attempts rather than the fixed
+    // state width. Each completed loop carries the accumulated total into the
+    // next bitset.
+    Value one;
+    if (!bitsetIndices.empty() || emitReports)
+      one = arith::ConstantOp::create(entryBuilder, getSemanticLocation(abort),
+                                      stateType,
+                                      entryBuilder.getI64IntegerAttr(1));
+    Block *currentBlock = &entry;
+    for (unsigned index : bitsetIndices) {
+      OpBuilder currentBuilder = OpBuilder::atBlockEnd(currentBlock);
+      Value bits =
+          sim::SimRefLoadOp::create(currentBuilder, getSemanticLocation(abort),
+                                    stateType, entry.getArgument(index));
+      sim::SimRefStoreOp::create(currentBuilder, getSemanticLocation(abort),
+                                 dispatchZero, entry.getArgument(index));
+
+      Block *bitLoop = new Block;
+      Block *bitBody = new Block;
+      Block *bitDone = new Block;
+      bitLoop->addArgument(stateType, getSemanticLocation(abort));
+      bitLoop->addArgument(stateType, getSemanticLocation(abort));
+      bitDone->addArgument(stateType, getSemanticLocation(abort));
+      dispatcher.getBody().push_back(bitLoop);
+      dispatcher.getBody().push_back(bitBody);
+      dispatcher.getBody().push_back(bitDone);
+      cf::BranchOp::create(currentBuilder, getSemanticLocation(abort), bitLoop,
+                           ValueRange{bits, total});
+
+      OpBuilder loopBuilder = OpBuilder::atBlockEnd(bitLoop);
+      Value remainingBits = bitLoop->getArgument(0);
+      Value accumulated = bitLoop->getArgument(1);
+      Value nonzero = arith::CmpIOp::create(
+          loopBuilder, getSemanticLocation(abort), arith::CmpIPredicate::ne,
+          remainingBits, dispatchZero);
+      cf::CondBranchOp::create(loopBuilder, getSemanticLocation(abort), nonzero,
+                               bitBody, ValueRange{}, bitDone,
+                               ValueRange{accumulated});
+
+      OpBuilder bodyBuilder = OpBuilder::atBlockEnd(bitBody);
+      Value decremented = arith::SubIOp::create(
+          bodyBuilder, getSemanticLocation(abort), remainingBits, one);
+      Value nextBits = arith::AndIOp::create(
+          bodyBuilder, getSemanticLocation(abort), remainingBits, decremented);
+      Value nextAccumulated = arith::AddIOp::create(
+          bodyBuilder, getSemanticLocation(abort), accumulated, one);
+      cf::BranchOp::create(bodyBuilder, getSemanticLocation(abort), bitLoop,
+                           ValueRange{nextBits, nextAccumulated});
+
+      currentBlock = bitDone;
+      total = bitDone->getArgument(0);
+    }
+
+    if (emitReports) {
+      OpBuilder currentBuilder = OpBuilder::atBlockEnd(currentBlock);
+      Block *loop = new Block;
+      Block *body = new Block;
+      Block *done = new Block;
+      loop->addArgument(stateType, getSemanticLocation(abort));
+      dispatcher.getBody().push_back(loop);
+      dispatcher.getBody().push_back(body);
+      dispatcher.getBody().push_back(done);
+      cf::BranchOp::create(currentBuilder, getSemanticLocation(abort), loop,
+                           ValueRange{total});
+
+      OpBuilder loopBuilder = OpBuilder::atBlockEnd(loop);
+      Value remaining = loop->getArgument(0);
+      Value nonzero = arith::CmpIOp::create(
+          loopBuilder, getSemanticLocation(abort), arith::CmpIPredicate::ne,
+          remaining, dispatchZero);
+      cf::CondBranchOp::create(loopBuilder, getSemanticLocation(abort), nonzero,
+                               body, ValueRange{}, done, ValueRange{});
+
+      OpBuilder bodyBuilder = OpBuilder::atBlockEnd(body);
+      SmallVector<Value> reportOperands;
+      for (unsigned index : reportCaptureIndices)
+        reportOperands.push_back(entry.getArgument(index));
+      sim::SimSpawnOp::create(bodyBuilder, (*selectedReport)->location,
+                              (*selectedReport)->function.getSymNameAttr(),
+                              reportOperands, ArrayAttr{}, ArrayAttr{});
+      Value next = arith::SubIOp::create(
+          bodyBuilder, getSemanticLocation(abort), remaining, one);
+      cf::BranchOp::create(bodyBuilder, getSemanticLocation(abort), loop,
+                           ValueRange{next});
+
+      OpBuilder doneBuilder = OpBuilder::atBlockEnd(done);
+      sim::SimReturnOp::create(doneBuilder, getSemanticLocation(abort),
+                               ValueRange{});
+    } else {
+      OpBuilder currentBuilder = OpBuilder::atBlockEnd(currentBlock);
+      sim::SimReturnOp::create(currentBuilder, getSemanticLocation(abort),
+                               ValueRange{});
+    }
+
+    PersistentAbortPlan plan{
+        FlatSymbolRefAttr::get(function.getContext(), dispatcher.getSymName()),
+        captures};
+    if (abort.getIsSynchronous())
+      return std::optional<PersistentAbortPlan>{std::move(plan)};
+
+    FailureOr<Value> current = lowerExpression(abortCondition);
+    if (failed(current))
+      return failure();
+    FailureOr<Value> truth =
+        truthValue(*current, getSemanticLocation(abortCondition));
+    if (failed(truth))
+      return failure();
+    FailureOr<Value> observer = bindObserver(abortCondition);
+    if (failed(observer))
+      return emitError(getSemanticLocation(abortCondition))
+                 << "asynchronous property abort expression has no observer; "
+                    "its operands are not executable",
+             failure();
+    auto observerBinding = observer->getDefiningOp<sim::SimObserverBindOp>();
+    if (!observerBinding)
+      return emitError(getSemanticLocation(abortCondition))
+                 << "asynchronous property abort expression has no observer "
+                    "binding",
+             failure();
+    for (Value capture : observerBinding.getValues())
+      if (isa<sim::RefType>(capture.getType()) &&
+          !isStaticallyAllocatedOverrideTarget(capture))
+        return emitError(getSemanticLocation(abortCondition))
+                   << "asynchronous property abort cannot observe an "
+                      "automatic variable",
+               failure();
+    sim::SimFuncOp observerEvaluator =
+        design.lookupSymbol<sim::SimFuncOp>(observerBinding.getEvaluator());
+    if (!observerEvaluator)
+      return emitError(getSemanticLocation(abortCondition))
+                 << "asynchronous property abort observer evaluator is "
+                    "missing",
+             failure();
+    observerEvaluator->setAttr("obelisk_sim.concurrent_abort_observer",
+                               builder.getUnitAttr());
+    observerEvaluator->setAttr("obelisk_sim.detached_controls",
+                               builder.getUnitAttr());
+
+    SmallVector<Value> actorCaptures{context};
+    DenseMap<Value, unsigned> actorCaptureIndices;
+    actorCaptureIndices.try_emplace(context, 0);
+    auto appendActorCapture = [&](Value value) {
+      auto [entry, inserted] =
+          actorCaptureIndices.try_emplace(value, actorCaptures.size());
+      if (inserted)
+        actorCaptures.push_back(value);
+      return entry->second;
+    };
+    SmallVector<unsigned> observerIndices;
+    for (Value capture : observerBinding.getValues())
+      observerIndices.push_back(appendActorCapture(capture));
+    unsigned initialConditionIndex = appendActorCapture(*truth);
+    SmallVector<unsigned> dispatcherIndices;
+    for (Value operand : plan.operands)
+      dispatcherIndices.push_back(appendActorCapture(operand));
+
+    SmallVector<Type> actorInputs;
+    SmallVector<DictionaryAttr> actorArgumentAttrs;
+    for (auto [index, capture] : llvm::enumerate(actorCaptures)) {
+      actorInputs.push_back(capture.getType());
+      SmallVector<NamedAttribute> metadata;
+      if (auto argument = dyn_cast<BlockArgument>(capture);
+          argument && argument.getOwner() == &function.getBody().front()) {
+        if (DictionaryAttr sourceAttrs =
+                function.getArgAttrDict(argument.getArgNumber()))
+          llvm::append_range(metadata, sourceAttrs);
+      }
+      if (metadata.empty())
+        metadata.push_back(builder.getNamedAttr(
+            "obelisk_sim.capture_kind",
+            sim::CaptureKindAttr::get(function.getContext(),
+                                      index == 0 ? sim::CaptureKind::Context
+                                                 : sim::CaptureKind::Formal)));
+      if (isa<sim::RefType>(capture.getType()) &&
+          !isStaticallyAllocatedOverrideTarget(capture))
+        metadata.push_back(builder.getNamedAttr(
+            "obelisk_sim.automatic_reference_capture", builder.getUnitAttr()));
+      actorArgumentAttrs.push_back(builder.getDictionaryAttr(metadata));
+    }
+
+    std::string actorSymbol =
+        (function.getSymName() + ".$concurrent_abort." + Twine(node)).str();
+    std::string actorIdentity =
+        (function.getSymName() + ".$concurrent_abort_observer." + Twine(node))
+            .str();
+    uint64_t actorCodeUnitID = stableCodeUnitID(actorIdentity);
+    std::string actorHierarchy =
+        (Twine(parentHierarchy) + ".$concurrent_abort." + Twine(node)).str();
+    sim::SimCodeUnitDeclOp::create(
+        outlineBuilder, getSemanticLocation(abort), actorCodeUnitID, scopeID,
+        sim::EntryKind::Fork, outlineBuilder.getStringAttr(actorHierarchy),
+        outlineBuilder.getStringAttr("concurrent assertion abort observer"),
+        outlineBuilder.getUnitAttr());
+    SmallVector<NamedAttribute> actorAttributes{
+        outlineBuilder.getNamedAttr(bindingsAttrName,
+                                    outlineBuilder.getArrayAttr({})),
+        outlineBuilder.getNamedAttr(
+            "code_unit_id", outlineBuilder.getI64IntegerAttr(actorCodeUnitID)),
+        outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
+        outlineBuilder.getNamedAttr(
+            "home_region",
+            sim::EventRegionAttr::get(function.getContext(),
+                                      sim::EventRegion::Reactive)),
+        outlineBuilder.getNamedAttr(
+            "domain", sim::ExecutionDomainAttr::get(
+                          function.getContext(), sim::ExecutionDomain::Design)),
+        outlineBuilder.getNamedAttr(
+            sim::metadata::hierarchicalName,
+            outlineBuilder.getStringAttr(actorHierarchy)),
+    };
+    sim::SimFuncOp actor = sim::SimFuncOp::create(
+        outlineBuilder, getSemanticLocation(abort), actorSymbol,
+        FunctionType::get(function.getContext(), actorInputs, TypeRange{}),
+        sim::EntryKind::Fork, actorAttributes, actorArgumentAttrs);
+    SymbolTable::setSymbolVisibility(actor, SymbolTable::Visibility::Private);
+    actor->setAttr("obelisk_sim.concurrent_abort", builder.getUnitAttr());
+    actor->setAttr("obelisk_sim.concurrent_abort_counted",
+                   builder.getUnitAttr());
+    actor->setAttr("obelisk_sim.detached_controls", builder.getUnitAttr());
+    actor->setAttr("obelisk_sim.priority_signal_resume", builder.getUnitAttr());
+
+    Block &actorEntry = actor.getBody().front();
+    Block *waitAbort = new Block;
+    Block *abortLiveAttempts = new Block;
+    waitAbort->addArgument(builder.getI1Type(),
+                           getSemanticLocation(abortCondition));
+    actor.getBody().push_back(waitAbort);
+    actor.getBody().push_back(abortLiveAttempts);
+    OpBuilder actorEntryBuilder = OpBuilder::atBlockEnd(&actorEntry);
+    cf::BranchOp::create(
+        actorEntryBuilder, getSemanticLocation(abort), waitAbort,
+        ValueRange{actorEntry.getArgument(initialConditionIndex)});
+
+    OpBuilder waitBuilder = OpBuilder::atBlockEnd(waitAbort);
+    SmallVector<Value> reboundValues;
+    for (unsigned index : observerIndices)
+      reboundValues.push_back(actorEntry.getArgument(index));
+    auto reboundObserver = sim::SimObserverBindOp::create(
+        waitBuilder, getSemanticLocation(abortCondition),
+        observerBinding.getResult().getType(),
+        observerBinding.getEvaluatorAttr(), reboundValues,
+        observerBinding.getCaptureCountAttr());
+    SmallVector<Value> observed{reboundObserver.getResult(),
+                                waitAbort->getArgument(0)};
+    auto abortWait = sim::SimSuspendObserveOp::create(
+        waitBuilder, getSemanticLocation(abortCondition), observed, 0,
+        ArrayRef<int32_t>{static_cast<int32_t>(sim::EdgeKind::Posedge)},
+        ArrayRef<int32_t>{-1}, sim::ContinuationSiteAttr{},
+        sim::EventRegionAttr::get(function.getContext(),
+                                  sim::EventRegion::Reactive),
+        abortLiveAttempts);
+    abortWait->setAttr("obelisk_sim.concurrent_abort_level_true",
+                       builder.getUnitAttr());
+
+    OpBuilder abortBuilder = OpBuilder::atBlockEnd(abortLiveAttempts);
+    SmallVector<Value> dispatcherOperands;
+    for (unsigned index : dispatcherIndices)
+      dispatcherOperands.push_back(actorEntry.getArgument(index));
+    dispatcherOperands.push_back(arith::ConstantOp::create(
+        abortBuilder, getSemanticLocation(abort), stateType,
+        abortBuilder.getI64IntegerAttr(0)));
+    sim::SimCallOp::create(abortBuilder, getSemanticLocation(abort),
+                           TypeRange{}, plan.dispatcher, dispatcherOperands,
+                           ArrayAttr{}, ArrayAttr{});
+    Value currentTrue = arith::ConstantOp::create(
+        abortBuilder, getSemanticLocation(abort), builder.getI1Type(),
+        builder.getBoolAttr(true));
+    cf::BranchOp::create(abortBuilder, getSemanticLocation(abort), waitAbort,
+                         ValueRange{currentTrue});
+
+    sim::SimSpawnOp::create(builder, getSemanticLocation(abort),
+                            actor.getSymNameAttr(), actorCaptures, ArrayAttr{},
+                            ArrayAttr{});
+    return std::optional<PersistentAbortPlan>{std::move(plan)};
+  };
+
+  auto abortPersistentSample =
+      [&](Block *wait,
+          const std::optional<PersistentAbortPlan> &plan) -> LogicalResult {
+    if (!plan)
+      return success();
+    FailureOr<Value> condition = [&]() -> FailureOr<Value> {
+      if (abort.getIsSynchronous())
+        return lowerExpression(abortCondition);
+      bool savedSampleAssertionValues = sampleAssertionValues;
+      Operation *savedSampledClock = activeSampledClock;
+      sampleAssertionValues = false;
+      activeSampledClock = nullptr;
+      llvm::scope_exit restore([&] {
+        sampleAssertionValues = savedSampleAssertionValues;
+        activeSampledClock = savedSampledClock;
+      });
+      return lowerExpression(abortCondition);
+    }();
+    if (failed(condition))
+      return failure();
+    FailureOr<Value> aborts =
+        truthValue(*condition, getSemanticLocation(abortCondition));
+    if (failed(aborts))
+      return failure();
+
+    Block *aborted = addBlock();
+    Block *evaluate = addBlock();
+    cf::CondBranchOp::create(builder, getSemanticLocation(abort), *aborts,
+                             aborted, ValueRange{}, evaluate, ValueRange{});
+    setCurrent(aborted);
+    SmallVector<Value> dispatcherOperands(plan->operands);
+    dispatcherOperands.push_back(
+        arith::ConstantOp::create(builder, getSemanticLocation(abort),
+                                  stateType, builder.getI64IntegerAttr(1)));
+    sim::SimCallOp::create(builder, getSemanticLocation(abort), TypeRange{},
+                           plan->dispatcher, dispatcherOperands, ArrayAttr{},
+                           ArrayAttr{});
+    cf::BranchOp::create(builder, getSemanticLocation(abort), wait);
+    setCurrent(evaluate);
+    return success();
+  };
+
   if (endStrength) {
     bool strong =
         endStrength.getStrength() == semantic::SVAssertionStrength::Strong;
@@ -3569,7 +4039,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     }
   }
 
-  if (abort && !abort.getIsSynchronous()) {
+  if (abort && !abort.getIsSynchronous() && !persistentStateOwner) {
     // Asynchronous aborts need a persistent observer in addition to the
     // clocked monitor. The observer completes only attempts represented by
     // live state bits; the clocked path below handles the attempt beginning on
@@ -3877,6 +4347,19 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (failed(outlineDisableObserver(delayStateStorages)))
       return failure();
 
+    SmallVector<Value> abortCounts{eligibleStorage};
+    SmallVector<Value> abortBitsets;
+    if (prefixStateStorage)
+      abortBitsets.push_back(prefixStateStorage);
+    if (warmupStorage)
+      abortBitsets.push_back(warmupStorage);
+    if (delayedActivationStorage)
+      abortBitsets.push_back(delayedActivationStorage);
+    FailureOr<std::optional<PersistentAbortPlan>> persistentAbort =
+        preparePersistentAbort(abortCounts, abortBitsets);
+    if (failed(persistentAbort))
+      return failure();
+
     bool weakCompletion = endStrength ? endStrength.getStrength() ==
                                             semantic::SVAssertionStrength::Weak
                                       : assertion;
@@ -3924,6 +4407,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       sampleAssertionValues = savedSampleAssertionValues;
       activeSampledClock = savedSampledClock;
     });
+
+    if (failed(abortPersistentSample(wait, *persistentAbort)))
+      return failure();
 
     Value trueValue = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(true));
@@ -4131,6 +4617,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       unaryStateStorages.push_back(immatureStorage);
     if (failed(outlineDisableObserver(unaryStateStorages)))
       return failure();
+    FailureOr<std::optional<PersistentAbortPlan>> persistentAbort =
+        preparePersistentAbort(unaryStateStorages, /*bitsetStorages=*/{});
+    if (failed(persistentAbort))
+      return failure();
 
     SmallVector<Value> endCounts{eligibleStorage};
     // Strong eventually fails every outstanding attempt. Weak always succeeds
@@ -4165,6 +4655,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       sampleAssertionValues = savedSampleAssertionValues;
       activeSampledClock = savedSampledClock;
     });
+
+    if (failed(abortPersistentSample(wait, *persistentAbort)))
+      return failure();
 
     Value truth = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(true));
@@ -4262,6 +4755,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     SmallVector<Value> untilStateStorages{liveStorage};
     if (failed(outlineDisableObserver(untilStateStorages)))
       return failure();
+    FailureOr<std::optional<PersistentAbortPlan>> persistentAbort =
+        preparePersistentAbort(untilStateStorages, /*bitsetStorages=*/{});
+    if (failed(persistentAbort))
+      return failure();
     SmallVector<Value> endCounts;
     if (persistentUntil.strong || !cover)
       endCounts.push_back(liveStorage);
@@ -4292,6 +4789,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       sampleAssertionValues = savedSampleAssertionValues;
       activeSampledClock = savedSampledClock;
     });
+
+    if (failed(abortPersistentSample(wait, *persistentAbort)))
+      return failure();
 
     Value trueValue = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(true));
@@ -4469,6 +4969,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (failed(outlineDisableObserver(repetitionStateStorages)))
       return failure();
 
+    SmallVector<Value> abortCounts;
+    for (const TokenState &state : tokenStates)
+      abortCounts.push_back(state.storage);
+    SmallVector<Value> abortBitsets;
+    if (prefixStateStorage)
+      abortBitsets.push_back(prefixStateStorage);
+    FailureOr<std::optional<PersistentAbortPlan>> persistentAbort =
+        preparePersistentAbort(abortCounts, abortBitsets);
+    if (failed(persistentAbort))
+      return failure();
+
     bool weakCompletion = endStrength ? endStrength.getStrength() ==
                                             semantic::SVAssertionStrength::Weak
                                       : assertion;
@@ -4511,6 +5022,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       sampleAssertionValues = savedSampleAssertionValues;
       activeSampledClock = savedSampledClock;
     });
+
+    if (failed(abortPersistentSample(wait, *persistentAbort)))
+      return failure();
 
     Value falseValue = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(false));
