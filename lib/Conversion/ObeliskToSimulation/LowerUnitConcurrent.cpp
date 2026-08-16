@@ -8,6 +8,8 @@
 
 #include "LowerUnit.h"
 
+#include "obelisk/Solver/ConstraintSolver.h"
+
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
@@ -45,6 +47,16 @@ struct FirstMatchBoundary {
 struct FixedSequence {
   SmallVector<FixedSequenceAge, 8> ages;
   SmallVector<FirstMatchBoundary, 1> firstMatchBoundaries;
+  bool vacuousSuccess = false;
+};
+
+struct BooleanMinimizationStats {
+  size_t alternativesBefore = 0;
+  size_t alternativesAfter = 0;
+  size_t literalsBefore = 0;
+  size_t literalsAfter = 0;
+  uint64_t solverQueries = 0;
+  StringRef backend;
 };
 
 /// One nonempty maximal clocked subsequence in the deliberately small
@@ -79,6 +91,97 @@ static FixedSequence negateSingleBooleanSequence(FixedSequence sequence) {
   std::swap(sequence.ages.front().predicates,
             sequence.ages.front().negatedPredicates);
   return sequence;
+}
+
+/// Minimize a same-endpoint property DNF before materializing monitor state.
+/// Temporal endpoint identity is deliberately outside the propositional
+/// solver: alternatives with different lengths, first_match boundaries, or
+/// match-item effects retain their exact source multiplicity and ordering.
+static std::optional<BooleanMinimizationStats>
+minimizeBooleanAlternatives(FixedSequenceAlternatives &alternatives) {
+  if (alternatives.size() < 2)
+    return std::nullopt;
+  size_t horizon = alternatives.front().ages.size();
+  bool vacuousSuccess = alternatives.front().vacuousSuccess;
+  if (horizon == 0 ||
+      llvm::any_of(alternatives, [&](const FixedSequence &alternative) {
+        return alternative.ages.size() != horizon ||
+               alternative.vacuousSuccess != vacuousSuccess ||
+               !alternative.firstMatchBoundaries.empty() ||
+               llvm::any_of(alternative.ages, [](const FixedSequenceAge &age) {
+                 return !age.matchItems.empty();
+               });
+      }))
+    return std::nullopt;
+
+  using Atom = std::pair<size_t, Operation *>;
+  DenseMap<Atom, uint32_t> atomIds;
+  DenseMap<std::pair<size_t, Attribute>, uint32_t> namedAtomIds;
+  SmallVector<Atom> atoms;
+  auto getAtom = [&](size_t age, Operation *predicate) {
+    if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(predicate)) {
+      std::pair<size_t, Attribute> key{age, named.getReferencedSymbolAttr()};
+      auto found = namedAtomIds.find(key);
+      if (found != namedAtomIds.end())
+        return found->second;
+      uint32_t id = static_cast<uint32_t>(atoms.size());
+      namedAtomIds.try_emplace(key, id);
+      atoms.push_back({age, predicate});
+      return id;
+    }
+    Atom atom{age, predicate};
+    auto [found, inserted] =
+        atomIds.try_emplace(atom, static_cast<uint32_t>(atoms.size()));
+    if (inserted)
+      atoms.push_back(atom);
+    return found->second;
+  };
+
+  BooleanMinimizationStats stats;
+  stats.alternativesBefore = alternatives.size();
+  std::vector<solver::BooleanCube> cubes;
+  cubes.reserve(alternatives.size());
+  for (const FixedSequence &alternative : alternatives) {
+    solver::BooleanCube cube;
+    for (auto [age, predicates] : llvm::enumerate(alternative.ages)) {
+      for (Operation *predicate : predicates.predicates)
+        cube.push_back({getAtom(age, predicate), false});
+      for (Operation *predicate : predicates.negatedPredicates)
+        cube.push_back({getAtom(age, predicate), true});
+    }
+    stats.literalsBefore += cube.size();
+    cubes.push_back(std::move(cube));
+  }
+
+  solver::BooleanDNFAnalysis analysis =
+      solver::minimizeBooleanDNF(std::move(cubes));
+  // An empty DNF is exactly false. Keep the original contradictory trace so
+  // the normal monitor reports failure instead of misdiagnosing compilation.
+  if (analysis.cubes.empty())
+    return std::nullopt;
+
+  FixedSequenceAlternatives minimized;
+  minimized.reserve(analysis.cubes.size());
+  for (const solver::BooleanCube &cube : analysis.cubes) {
+    FixedSequence alternative;
+    alternative.ages.resize(horizon);
+    alternative.vacuousSuccess = vacuousSuccess;
+    for (solver::BooleanLiteral literal : cube) {
+      if (literal.variable >= atoms.size())
+        return std::nullopt;
+      auto [age, predicate] = atoms[literal.variable];
+      (literal.negated ? alternative.ages[age].negatedPredicates
+                       : alternative.ages[age].predicates)
+          .push_back(predicate);
+      ++stats.literalsAfter;
+    }
+    minimized.push_back(std::move(alternative));
+  }
+  stats.alternativesAfter = minimized.size();
+  stats.solverQueries = analysis.solverQueries;
+  stats.backend = analysis.backend;
+  alternatives = std::move(minimized);
+  return stats;
 }
 
 /// Diagnose SVA forms that the bounded monitor compiler intentionally leaves
@@ -200,8 +303,9 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
           semantic::stringifySVAssertionAbortAction(abort.getAction()) +
           "_on' is not executable yet");
     if (isa<semantic::SVConditionalAssertionExprOp>(current))
-      return diagnose("conditional SVA property expressions are not "
-                      "executable yet");
+      return diagnose(
+          "conditional SVA properties currently require bounded branches "
+          "without unsupported locals or temporal operators");
     if (isa<semantic::SVCaseAssertionExprOp>(current))
       return diagnose("case SVA property expressions are not executable yet");
     if (isa<semantic::SVDisableIffAssertionExprOp>(current))
@@ -495,6 +599,7 @@ static LogicalResult appendFixedSequence(FixedSequence &result,
     boundary.age += start;
     result.firstMatchBoundaries.push_back(boundary);
   }
+  result.vacuousSuccess |= nested.vacuousSuccess;
   return success();
 }
 
@@ -651,6 +756,49 @@ compileFixedSequenceAlternatives(Operation *operation,
     return results;
   }
 
+  if (auto conditional =
+          dyn_cast<semantic::SVConditionalAssertionExprOp>(operation)) {
+    SmallVector<Operation *> children = getChildren(conditional);
+    size_t expectedChildren = conditional.getHasElse() ? 3 : 2;
+    if (children.size() != expectedChildren)
+      return failure();
+
+    Operation *condition = children.front();
+    FailureOr<FixedSequenceAlternatives> thenAlternatives =
+        compileFixedSequenceAlternatives(children[1], resolvedClock);
+    if (failed(thenAlternatives) || thenAlternatives->empty())
+      return failure();
+    for (FixedSequence &alternative : *thenAlternatives) {
+      if (alternative.ages.empty())
+        return failure();
+      alternative.ages.front().predicates.push_back(condition);
+    }
+
+    FixedSequenceAlternatives elseAlternatives;
+    if (conditional.getHasElse()) {
+      FailureOr<FixedSequenceAlternatives> compiledElse =
+          compileFixedSequenceAlternatives(children[2], resolvedClock);
+      if (failed(compiledElse) || compiledElse->empty())
+        return failure();
+      elseAlternatives = std::move(*compiledElse);
+    } else {
+      FixedSequence vacuous;
+      vacuous.ages.resize(1);
+      vacuous.vacuousSuccess = true;
+      elseAlternatives.push_back(std::move(vacuous));
+    }
+    if (thenAlternatives->size() >
+        maxFixedSequenceAlternatives - elseAlternatives.size())
+      return failure();
+    for (FixedSequence &alternative : elseAlternatives) {
+      if (alternative.ages.empty())
+        return failure();
+      alternative.ages.front().negatedPredicates.push_back(condition);
+    }
+    llvm::append_range(*thenAlternatives, std::move(elseAlternatives));
+    return std::move(*thenAlternatives);
+  }
+
   auto binary = dyn_cast<semantic::SVBinaryAssertionExprOp>(operation);
   SmallVector<Operation *> operands =
       binary ? getChildren(binary) : SmallVector<Operation *>{};
@@ -692,6 +840,7 @@ compileFixedSequenceAlternatives(Operation *operation,
           continue;
         FixedSequence combined;
         combined.ages.resize(std::max(left.ages.size(), right.ages.size()));
+        combined.vacuousSuccess = left.vacuousSuccess || right.vacuousSuccess;
         for (auto [age, value] : llvm::enumerate(left.ages)) {
           llvm::append_range(combined.ages[age].predicates, value.predicates);
           llvm::append_range(combined.ages[age].negatedPredicates,
@@ -719,7 +868,8 @@ compileFixedSequenceAlternatives(Operation *operation,
   case semantic::SVAssertionBinaryOperator::Throughout: {
     if (lhs->size() != 1 || lhs->front().ages.size() != 1)
       return failure();
-    if (!lhs->front().firstMatchBoundaries.empty())
+    if (!lhs->front().firstMatchBoundaries.empty() ||
+        lhs->front().vacuousSuccess)
       return failure();
     const FixedSequenceAge &guard = lhs->front().ages.front();
     for (FixedSequence &sequence : *rhs) {
@@ -742,6 +892,7 @@ compileFixedSequenceAlternatives(Operation *operation,
           return failure();
         for (size_t offset = 0; offset < placements; ++offset) {
           FixedSequence combined = outer;
+          combined.vacuousSuccess |= inner.vacuousSuccess;
           for (auto [age, value] : llvm::enumerate(inner.ages)) {
             llvm::append_range(combined.ages[offset + age].predicates,
                                value.predicates);
@@ -765,7 +916,9 @@ compileFixedSequenceAlternatives(Operation *operation,
   }
   case semantic::SVAssertionBinaryOperator::Iff: {
     if (lhs->size() != 1 || rhs->size() != 1 ||
-        !isSingleBooleanAge(lhs->front()) || !isSingleBooleanAge(rhs->front()))
+        !isSingleBooleanAge(lhs->front()) ||
+        !isSingleBooleanAge(rhs->front()) || lhs->front().vacuousSuccess ||
+        rhs->front().vacuousSuccess)
       return failure();
     FixedSequence bothTrue = lhs->front();
     llvm::append_range(bothTrue.ages.front().predicates,
@@ -784,10 +937,13 @@ compileFixedSequenceAlternatives(Operation *operation,
   }
   case semantic::SVAssertionBinaryOperator::Implies: {
     if (lhs->size() != 1 || rhs->size() != 1 ||
-        !isSingleBooleanAge(lhs->front()) || !isSingleBooleanAge(rhs->front()))
+        !isSingleBooleanAge(lhs->front()) ||
+        !isSingleBooleanAge(rhs->front()) || lhs->front().vacuousSuccess ||
+        rhs->front().vacuousSuccess)
       return failure();
     FixedSequence antecedentFalse =
         negateSingleBooleanSequence(std::move(lhs->front()));
+    antecedentFalse.vacuousSuccess = true;
     return FixedSequenceAlternatives{std::move(antecedentFalse),
                                      std::move(rhs->front())};
   }
@@ -1396,6 +1552,23 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                     "or combines bounded operators in a form whose endpoint "
                     "ordering is not executable yet",
              failure();
+    }
+    if (!cover) {
+      if (std::optional<BooleanMinimizationStats> stats =
+              minimizeBooleanAlternatives(*compiled)) {
+        function->setAttr("obelisk_sim.sva_boolean_solver",
+                          builder.getStringAttr(stats->backend));
+        function->setAttr("obelisk_sim.sva_boolean_solver_queries",
+                          builder.getI64IntegerAttr(stats->solverQueries));
+        function->setAttr("obelisk_sim.sva_boolean_alternatives_before",
+                          builder.getI64IntegerAttr(stats->alternativesBefore));
+        function->setAttr("obelisk_sim.sva_boolean_alternatives_after",
+                          builder.getI64IntegerAttr(stats->alternativesAfter));
+        function->setAttr("obelisk_sim.sva_boolean_literals_before",
+                          builder.getI64IntegerAttr(stats->literalsBefore));
+        function->setAttr("obelisk_sim.sva_boolean_literals_after",
+                          builder.getI64IntegerAttr(stats->literalsAfter));
+      }
     }
     if (compiled->size() == 1)
       sequence = std::move(compiled->front());
@@ -2011,6 +2184,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                       builder.getUnitAttr());
     function->setAttr("obelisk_sim.branching_sequence_alternatives",
                       builder.getI64IntegerAttr(sequenceAlternatives.size()));
+    size_t vacuousAlternatives = llvm::count_if(
+        sequenceAlternatives, [](const FixedSequence &alternative) {
+          return alternative.vacuousSuccess;
+        });
+    if (vacuousAlternatives != 0)
+      function->setAttr("obelisk_sim.vacuous_sequence_alternatives",
+                        builder.getI64IntegerAttr(vacuousAlternatives));
     SmallVector<Value> alternativeStates;
     alternativeStates.reserve(sequenceAlternatives.size());
     for (const FixedSequence &alternative : sequenceAlternatives) {
@@ -2052,6 +2232,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       horizon = std::max(horizon, alternative.ages.size());
     SmallVector<Value> activeAny(horizon, falseValue);
     SmallVector<Value> successAny(horizon, falseValue);
+    SmallVector<Value> nonvacuousSuccessAny(horizon, falseValue);
     SmallVector<Value> continueAny(horizon, falseValue);
     SmallVector<SmallVector<Value>> survives(sequenceAlternatives.size());
     SmallVector<Value> starts(sequenceAlternatives.size(), falseValue);
@@ -2101,10 +2282,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       if (failed(start))
         return failure();
       starts[alternativeIndex] = *start;
-      if (alternative.ages.size() == 1)
+      if (alternative.ages.size() == 1) {
         successAny[0] =
             arith::OrIOp::create(builder, location, successAny[0], *start);
-      else
+        if (!alternative.vacuousSuccess)
+          nonvacuousSuccessAny[0] = arith::OrIOp::create(
+              builder, location, nonvacuousSuccessAny[0], *start);
+      } else
         continueAny[0] =
             arith::OrIOp::create(builder, location, continueAny[0], *start);
 
@@ -2128,10 +2312,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         Value advances =
             arith::AndIOp::create(builder, location, active, *matches);
         survives[alternativeIndex][age] = advances;
-        if (age + 1 == alternative.ages.size())
+        if (age + 1 == alternative.ages.size()) {
           successAny[age] = arith::OrIOp::create(builder, location,
                                                  successAny[age], advances);
-        else
+          if (!alternative.vacuousSuccess)
+            nonvacuousSuccessAny[age] = arith::OrIOp::create(
+                builder, location, nonvacuousSuccessAny[age], advances);
+        } else
           continueAny[age] = arith::OrIOp::create(builder, location,
                                                   continueAny[age], advances);
       }
@@ -2237,7 +2424,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       }
     } else {
       for (size_t age = 1; age < horizon; ++age) {
-        reportWhen(successAny[age], true);
+        reportWhen(cover ? nonvacuousSuccessAny[age] : successAny[age], true);
         Value finished = arith::OrIOp::create(
             builder, location, successAny[age], continueAny[age]);
         Value failedAttempt = arith::AndIOp::create(
@@ -2245,7 +2432,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             arith::XOrIOp::create(builder, location, finished, trueValue));
         reportWhen(failedAttempt, false);
       }
-      reportWhen(successAny[0], true);
+      reportWhen(cover ? nonvacuousSuccessAny[0] : successAny[0], true);
       Value startFinished = arith::OrIOp::create(builder, location,
                                                  successAny[0], continueAny[0]);
       reportWhen(

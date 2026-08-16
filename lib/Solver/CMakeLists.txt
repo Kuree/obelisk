@@ -1,4 +1,5 @@
 set(OBELISK_SOLVER_SOURCES
+  BooleanDNF.cpp
   RandomProgramSMT.cpp
   SolverHeuristic.cpp
   SolverZ3.cpp
@@ -11,7 +12,7 @@ if(OBELISK_ENABLE_Z3)
   # exactly one analyzeRandomProgram definition.
   add_compile_definitions(OBELISK_ENABLE_Z3=1)
   # Z3's public C++ header predates LLVM's suggest-override policy.
-  set_source_files_properties(SolverZ3.cpp PROPERTIES
+  set_source_files_properties(BooleanDNF.cpp SolverZ3.cpp PROPERTIES
     COMPILE_OPTIONS "-fexceptions;-Wno-suggest-override")
   list(APPEND OBELISK_SOLVER_LIBS MLIRIR MLIRSMT)
 endif()

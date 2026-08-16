@@ -13,6 +13,36 @@ namespace obelisk::solver {
 
 enum class Satisfiability { Unknown, Satisfiable, Unsatisfiable };
 
+/// One literal in a propositional sum-of-products formula. Variables are
+/// opaque caller-assigned identities; a negated literal represents !variable.
+struct BooleanLiteral {
+  uint32_t variable = 0;
+  bool negated = false;
+
+  bool operator==(const BooleanLiteral &other) const {
+    return variable == other.variable && negated == other.negated;
+  }
+};
+
+using BooleanCube = std::vector<BooleanLiteral>;
+
+struct BooleanDNFAnalysis {
+  /// An exactly equivalent deterministic DNF. Contradictory, duplicate, and
+  /// subsumed cubes are removed even without Z3. The Z3 backend additionally
+  /// proves globally redundant literals and cubes before generated runtime
+  /// control flow is materialized.
+  std::vector<BooleanCube> cubes;
+  const char *backend = "heuristic";
+  uint64_t solverQueries = 0;
+};
+
+/// Minimize a propositional DNF without exposing solver types to compiler
+/// clients. Every accepted rewrite is equivalence-preserving; exhaustion of
+/// the optional resource/query budgets merely returns a less-minimal formula.
+BooleanDNFAnalysis minimizeBooleanDNF(std::vector<BooleanCube> cubes,
+                                      uint64_t resourceLimit = 10000,
+                                      uint64_t queryLimit = 4096);
+
 /// An inclusive interval containing every value of one serialized random
 /// variable that can participate in a hard-constraint solution. Signed
 /// intervals use sign-bit-biased coordinates so ordinary unsigned interval
