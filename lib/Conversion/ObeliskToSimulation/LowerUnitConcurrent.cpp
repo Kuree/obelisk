@@ -1,8 +1,9 @@
 //===- LowerUnitConcurrent.cpp - AOT concurrent assertion monitors -------===//
 //
-// Compiles the bounded single-clock SVA slice into ordinary simulation SSA.
-// Runtime state is a compact bitset carried across clock suspensions; the
-// runtime has no temporal interpreter and no solver dependency.
+// Compiles the bounded single-clock SVA slice and selected common persistent
+// forms into ordinary simulation SSA. Runtime state is a compact bitset or an
+// aggregate token DFA carried across clock suspensions; the runtime has no
+// temporal interpreter and no solver dependency.
 //
 //===----------------------------------------------------------------------===//
 
@@ -94,6 +95,19 @@ struct PersistentRepetitionSequence {
   uint64_t minimum = 0;
   uint64_t maximum = 0;
   bool hasTerminal = false;
+};
+
+/// A common unbounded property-until form. Every clock starts a new property
+/// attempt, but for one-cycle boolean operands all live attempts have the same
+/// future transition. The generated monitor can therefore retain one exact
+/// token count instead of one process or one state bit per attempt.
+struct PersistentUntilProperty {
+  FixedSequenceAge left;
+  FixedSequenceAge right;
+  semantic::SVAssertionBinaryOperator kind =
+      semantic::SVAssertionBinaryOperator::Until;
+  bool inclusive = false;
+  bool strong = false;
 };
 
 using FixedSequenceAlternatives = SmallVector<FixedSequence, 4>;
@@ -388,6 +402,17 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
                 binary.getOperatorKind()) +
             "' currently requires deterministic one-cycle boolean operands "
             "without match items");
+      case semantic::SVAssertionBinaryOperator::Until:
+      case semantic::SVAssertionBinaryOperator::SUntil:
+      case semantic::SVAssertionBinaryOperator::UntilWith:
+      case semantic::SVAssertionBinaryOperator::SUntilWith:
+        return diagnose(
+            Twine("SVA property operator '") +
+            semantic::stringifySVAssertionBinaryOperator(
+                binary.getOperatorKind()) +
+            "' currently requires two deterministic one-cycle boolean "
+            "operands without locals, match items, disable iff, or nested "
+            "property composition");
       default:
         return diagnose(Twine("SVA property operator '") +
                         semantic::stringifySVAssertionBinaryOperator(
@@ -595,6 +620,48 @@ static FailureOr<FixedSequence> compileFixedSequence(Operation *operation) {
   }
 
   return failure();
+}
+
+/// Recognize the high-frequency Boolean forms of `until`, `s_until`,
+/// `until_with`, and `s_until_with`. General temporal operands need correlated
+/// per-attempt state and are intentionally diagnosed rather than silently
+/// approximated by this aggregate monitor.
+static FailureOr<PersistentUntilProperty>
+compilePersistentUntil(Operation *operation) {
+  auto binary = dyn_cast<semantic::SVBinaryAssertionExprOp>(operation);
+  if (!binary)
+    return failure();
+  switch (binary.getOperatorKind()) {
+  case semantic::SVAssertionBinaryOperator::Until:
+  case semantic::SVAssertionBinaryOperator::SUntil:
+  case semantic::SVAssertionBinaryOperator::UntilWith:
+  case semantic::SVAssertionBinaryOperator::SUntilWith:
+    break;
+  default:
+    return failure();
+  }
+
+  SmallVector<Operation *> children = getChildren(binary);
+  if (children.size() != 2)
+    return failure();
+  FailureOr<FixedSequence> left = compileFixedSequence(children.front());
+  FailureOr<FixedSequence> right = compileFixedSequence(children.back());
+  if (failed(left) || failed(right) || !isSingleBooleanAge(*left) ||
+      !isSingleBooleanAge(*right) || left->vacuousSuccess ||
+      right->vacuousSuccess)
+    return failure();
+
+  PersistentUntilProperty result;
+  result.left = std::move(left->ages.front());
+  result.right = std::move(right->ages.front());
+  result.kind = binary.getOperatorKind();
+  result.inclusive =
+      result.kind == semantic::SVAssertionBinaryOperator::UntilWith ||
+      result.kind == semantic::SVAssertionBinaryOperator::SUntilWith;
+  result.strong =
+      result.kind == semantic::SVAssertionBinaryOperator::SUntil ||
+      result.kind == semantic::SVAssertionBinaryOperator::SUntilWith;
+  return result;
 }
 
 /// Compile the leading-##1 LRM multi-clock handoff form used by UVM's
@@ -1923,6 +1990,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   FixedSequenceAlternatives sequenceAlternatives;
   PersistentRepetitionSequence persistentRepetition;
   bool hasPersistentRepetition = false;
+  PersistentUntilProperty persistentUntil;
+  bool hasPersistentUntil = false;
   bool nonoverlapped = false;
   bool followedBy = false;
   if (multiClockAttempt) {
@@ -1984,9 +2053,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       function->setAttr("obelisk_sim.followed_by_monitor",
                         builder.getUnitAttr());
   } else {
-    if (FailureOr<PersistentRepetitionSequence> persistent =
-            compilePersistentRepetition(property);
-        succeeded(persistent)) {
+    if (FailureOr<PersistentUntilProperty> until =
+            compilePersistentUntil(property);
+        succeeded(until)) {
+      persistentUntil = std::move(*until);
+      hasPersistentUntil = true;
+      // The persistent monitor owns one aggregate live-attempt counter below.
+      // Keep ordinary bounded validation structurally nonempty.
+      sequence.ages.resize(1);
+    } else if (FailureOr<PersistentRepetitionSequence> persistent =
+                   compilePersistentRepetition(property);
+               succeeded(persistent)) {
       persistentRepetition = std::move(*persistent);
       hasPersistentRepetition = true;
       // The persistent monitor owns its own token state below. Keep ordinary
@@ -2073,6 +2150,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                   "assert, assume, cover-property, or restrict directive "
                   "without locals, implication, disable iff, first_match, "
                   "expect, or cover-sequence per-match accounting",
+           failure();
+  if (hasPersistentUntil && (localInstance || implication || disable ||
+                             expectMonitor || firstMatch || coverSequence))
+    return emitError(getSemanticLocation(property))
+               << "persistent until currently requires a plain assert, "
+                  "assume, cover-property, or restrict directive without "
+                  "locals, implication/followed-by, disable iff, "
+                  "first_match, expect, or cover-sequence per-match "
+                  "accounting",
            failure();
   if (branchingSequence &&
       (localInstance || implication || disable || expectMonitor))
@@ -2544,6 +2630,150 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                             report->function.getSymNameAttr(), captures,
                             ArrayAttr{}, ArrayAttr{});
   };
+  auto scheduleCount = [&](Value count, bool passed) {
+    std::optional<ReportCallback> &report = passed ? passReport : failReport;
+    if (!report)
+      return;
+    Value one = arith::ConstantOp::create(builder, location, stateType,
+                                          builder.getI64IntegerAttr(1));
+    Block *loop = addBlock();
+    Block *body = addBlock();
+    Block *done = addBlock();
+    loop->addArgument(stateType, location);
+    cf::BranchOp::create(builder, location, loop, ValueRange{count});
+    setCurrent(loop);
+    Value remaining = loop->getArgument(0);
+    Value nonzero = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne, remaining, zero);
+    cf::CondBranchOp::create(builder, location, nonzero, body, ValueRange{},
+                             done, ValueRange{});
+    setCurrent(body);
+    scheduleResult(passed);
+    Value next = arith::SubIOp::create(builder, location, remaining, one);
+    cf::BranchOp::create(builder, location, loop, ValueRange{next});
+    setCurrent(done);
+  };
+
+  if (hasPersistentUntil) {
+    function->setAttr("obelisk_sim.persistent_until_monitor",
+                      builder.getUnitAttr());
+    function->setAttr(
+        "obelisk_sim.persistent_until_kind",
+        builder.getStringAttr(semantic::stringifySVAssertionBinaryOperator(
+            persistentUntil.kind)));
+    if (persistentUntil.inclusive)
+      function->setAttr("obelisk_sim.persistent_until_inclusive",
+                        builder.getUnitAttr());
+    if (persistentUntil.strong)
+      function->setAttr("obelisk_sim.persistent_until_strong",
+                        builder.getUnitAttr());
+    function->setAttr("obelisk_sim.persistent_until_aggregate_tokens",
+                      builder.getUnitAttr());
+    function->setAttr("obelisk_sim.sva_transition_normal_form",
+                      builder.getStringAttr("canonical-minimal"));
+
+    Value liveStorage = sim::SimRefAllocOp::create(
+        builder, location, sim::RefType::get(function.getContext(), stateType),
+        zero);
+    Block *wait = addBlock();
+    Block *sample = addBlock();
+    emitBranch(wait);
+    setCurrent(wait);
+    if (failed(emitEventSuspend(clock, sample)))
+      return failure();
+    wait->getTerminator()->setAttr(
+        "resume_region", sim::EventRegionAttr::get(function.getContext(),
+                                                   sim::EventRegion::Observed));
+    setCurrent(sample);
+
+    bool savedSampleAssertionValues = sampleAssertionValues;
+    sampleAssertionValues = true;
+    Operation *savedSampledClock = activeSampledClock;
+    activeSampledClock = clock;
+    llvm::scope_exit restoreSampling([&] {
+      sampleAssertionValues = savedSampleAssertionValues;
+      activeSampledClock = savedSampledClock;
+    });
+
+    Value trueValue = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    DenseMap<Operation *, Value> predicateCache;
+    auto evaluateAge = [&](const FixedSequenceAge &age) -> FailureOr<Value> {
+      Value result = trueValue;
+      auto evaluatePredicate = [&](Operation *predicate) -> FailureOr<Value> {
+        if (auto found = predicateCache.find(predicate);
+            found != predicateCache.end())
+          return found->second;
+        FailureOr<Value> value = lowerExpression(predicate);
+        if (failed(value))
+          return failure();
+        FailureOr<Value> truth =
+            truthValue(*value, getSemanticLocation(predicate));
+        if (failed(truth))
+          return failure();
+        predicateCache[predicate] = *truth;
+        return *truth;
+      };
+      for (Operation *predicate : age.predicates) {
+        FailureOr<Value> truth = evaluatePredicate(predicate);
+        if (failed(truth))
+          return failure();
+        result = arith::AndIOp::create(builder, location, result, *truth);
+      }
+      for (Operation *predicate : age.negatedPredicates) {
+        FailureOr<Value> truth = evaluatePredicate(predicate);
+        if (failed(truth))
+          return failure();
+        Value negated =
+            arith::XOrIOp::create(builder, location, *truth, trueValue);
+        result = arith::AndIOp::create(builder, location, result, negated);
+      }
+      return result;
+    };
+    auto negate = [&](Value value) {
+      return arith::XOrIOp::create(builder, location, value, trueValue)
+          .getResult();
+    };
+
+    FailureOr<Value> left = evaluateAge(persistentUntil.left);
+    FailureOr<Value> right = evaluateAge(persistentUntil.right);
+    if (failed(left) || failed(right))
+      return failure();
+    Value notLeft = negate(*left);
+    Value notRight = negate(*right);
+    Value succeeds;
+    Value fails;
+    Value continues;
+    if (persistentUntil.inclusive) {
+      // until_with requires the left property through and including the clock
+      // on which the right property succeeds.
+      succeeds = arith::AndIOp::create(builder, location, *left, *right);
+      fails = notLeft;
+      continues = arith::AndIOp::create(builder, location, *left, notRight);
+    } else {
+      // Plain until does not require the left property on the terminal clock.
+      succeeds = *right;
+      fails = arith::AndIOp::create(builder, location, notRight, notLeft);
+      continues = arith::AndIOp::create(builder, location, notRight, *left);
+    }
+
+    Value one = arith::ConstantOp::create(builder, location, stateType,
+                                          builder.getI64IntegerAttr(1));
+    Value live =
+        sim::SimRefLoadOp::create(builder, location, stateType, liveStorage);
+    Value attempts = arith::AddIOp::create(builder, location, live, one);
+    Value nextLive =
+        arith::SelectOp::create(builder, location, continues, attempts, zero);
+    sim::SimRefStoreOp::create(builder, location, nextLive, liveStorage);
+    Value successCount =
+        arith::SelectOp::create(builder, location, succeeds, attempts, zero);
+    Value failureCount =
+        arith::SelectOp::create(builder, location, fails, attempts, zero);
+    scheduleCount(successCount, true);
+    scheduleCount(failureCount, false);
+    cf::BranchOp::create(builder, location, wait);
+    return success();
+  }
 
   if (hasPersistentRepetition) {
     function->setAttr("obelisk_sim.persistent_repetition_monitor",
@@ -2825,27 +3055,6 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     for (auto [state, nextAmount] : llvm::zip_equal(tokenStates, nextAmounts))
       sim::SimRefStoreOp::create(builder, location, nextAmount, state.storage);
 
-    auto scheduleCount = [&](Value count, bool passed) {
-      std::optional<ReportCallback> &report = passed ? passReport : failReport;
-      if (!report)
-        return;
-      Block *loop = addBlock();
-      Block *body = addBlock();
-      Block *done = addBlock();
-      loop->addArgument(stateType, location);
-      cf::BranchOp::create(builder, location, loop, ValueRange{count});
-      setCurrent(loop);
-      Value remaining = loop->getArgument(0);
-      Value nonzero = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ne, remaining, zero);
-      cf::CondBranchOp::create(builder, location, nonzero, body, ValueRange{},
-                               done, ValueRange{});
-      setCurrent(body);
-      scheduleResult(passed);
-      Value next = arith::SubIOp::create(builder, location, remaining, one);
-      cf::BranchOp::create(builder, location, loop, ValueRange{next});
-      setCurrent(done);
-    };
     scheduleCount(successCount, true);
     scheduleCount(failureCount, false);
     cf::BranchOp::create(builder, location, wait);
