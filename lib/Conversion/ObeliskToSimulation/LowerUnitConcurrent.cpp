@@ -29,8 +29,15 @@ namespace {
 /// One deterministic bounded sequence. Each clock age contains the boolean
 /// expressions that must all hold at that age. Empty ages represent ## gaps.
 struct FixedSequenceAge {
+  struct CaseGuard {
+    Operation *selector = nullptr;
+    Operation *label = nullptr;
+    bool negated = false;
+  };
+
   SmallVector<Operation *, 2> predicates;
   SmallVector<Operation *, 2> negatedPredicates;
+  SmallVector<CaseGuard, 2> caseGuards;
   SmallVector<Operation *, 2> matchItems;
 };
 
@@ -114,9 +121,15 @@ minimizeBooleanAlternatives(FixedSequenceAlternatives &alternatives) {
       }))
     return std::nullopt;
 
-  using Atom = std::pair<size_t, Operation *>;
-  DenseMap<Atom, uint32_t> atomIds;
+  struct Atom {
+    size_t age = 0;
+    Operation *predicate = nullptr;
+    FixedSequenceAge::CaseGuard caseGuard;
+  };
+  DenseMap<std::pair<size_t, Operation *>, uint32_t> atomIds;
   DenseMap<std::pair<size_t, Attribute>, uint32_t> namedAtomIds;
+  DenseMap<std::pair<size_t, std::pair<Operation *, Operation *>>, uint32_t>
+      caseAtomIds;
   SmallVector<Atom> atoms;
   auto getAtom = [&](size_t age, Operation *predicate) {
     if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(predicate)) {
@@ -126,14 +139,23 @@ minimizeBooleanAlternatives(FixedSequenceAlternatives &alternatives) {
         return found->second;
       uint32_t id = static_cast<uint32_t>(atoms.size());
       namedAtomIds.try_emplace(key, id);
-      atoms.push_back({age, predicate});
+      atoms.push_back({age, predicate, {}});
       return id;
     }
-    Atom atom{age, predicate};
+    std::pair<size_t, Operation *> atom{age, predicate};
     auto [found, inserted] =
         atomIds.try_emplace(atom, static_cast<uint32_t>(atoms.size()));
     if (inserted)
-      atoms.push_back(atom);
+      atoms.push_back({age, predicate, {}});
+    return found->second;
+  };
+  auto getCaseAtom = [&](size_t age, const FixedSequenceAge::CaseGuard &guard) {
+    std::pair<size_t, std::pair<Operation *, Operation *>> key{
+        age, {guard.selector, guard.label}};
+    auto [found, inserted] =
+        caseAtomIds.try_emplace(key, static_cast<uint32_t>(atoms.size()));
+    if (inserted)
+      atoms.push_back({age, nullptr, {guard.selector, guard.label, false}});
     return found->second;
   };
 
@@ -148,6 +170,8 @@ minimizeBooleanAlternatives(FixedSequenceAlternatives &alternatives) {
         cube.push_back({getAtom(age, predicate), false});
       for (Operation *predicate : predicates.negatedPredicates)
         cube.push_back({getAtom(age, predicate), true});
+      for (const FixedSequenceAge::CaseGuard &guard : predicates.caseGuards)
+        cube.push_back({getCaseAtom(age, guard), guard.negated});
     }
     stats.literalsBefore += cube.size();
     cubes.push_back(std::move(cube));
@@ -169,10 +193,16 @@ minimizeBooleanAlternatives(FixedSequenceAlternatives &alternatives) {
     for (solver::BooleanLiteral literal : cube) {
       if (literal.variable >= atoms.size())
         return std::nullopt;
-      auto [age, predicate] = atoms[literal.variable];
-      (literal.negated ? alternative.ages[age].negatedPredicates
-                       : alternative.ages[age].predicates)
-          .push_back(predicate);
+      const Atom &atom = atoms[literal.variable];
+      if (atom.predicate) {
+        (literal.negated ? alternative.ages[atom.age].negatedPredicates
+                         : alternative.ages[atom.age].predicates)
+            .push_back(atom.predicate);
+      } else {
+        FixedSequenceAge::CaseGuard guard = atom.caseGuard;
+        guard.negated = literal.negated;
+        alternative.ages[atom.age].caseGuards.push_back(guard);
+      }
       ++stats.literalsAfter;
     }
     minimized.push_back(std::move(alternative));
@@ -307,7 +337,10 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
           "conditional SVA properties currently require bounded branches "
           "without unsupported locals or temporal operators");
     if (isa<semantic::SVCaseAssertionExprOp>(current))
-      return diagnose("case SVA property expressions are not executable yet");
+      return diagnose(
+          "case SVA properties currently require ordinary case-equality "
+          "labels and bounded branches without unsupported locals or "
+          "temporal operators");
     if (isa<semantic::SVDisableIffAssertionExprOp>(current))
       return diagnose("nested disable iff is not executable yet; disable iff "
                       "is currently supported only at the outermost property");
@@ -453,6 +486,8 @@ static FailureOr<FixedSequence> compileFixedSequence(Operation *operation) {
                            nestedAge.predicates);
         llvm::append_range(result.ages[start + age].negatedPredicates,
                            nestedAge.negatedPredicates);
+        llvm::append_range(result.ages[start + age].caseGuards,
+                           nestedAge.caseGuards);
         llvm::append_range(result.ages[start + age].matchItems,
                            nestedAge.matchItems);
       }
@@ -586,6 +621,8 @@ static LogicalResult appendFixedSequence(FixedSequence &result,
                        nestedAge.predicates);
     llvm::append_range(result.ages[start + age].negatedPredicates,
                        nestedAge.negatedPredicates);
+    llvm::append_range(result.ages[start + age].caseGuards,
+                       nestedAge.caseGuards);
     llvm::append_range(result.ages[start + age].matchItems,
                        nestedAge.matchItems);
   }
@@ -756,6 +793,76 @@ compileFixedSequenceAlternatives(Operation *operation,
     return results;
   }
 
+  if (auto caseProperty =
+          dyn_cast<semantic::SVCaseAssertionExprOp>(operation)) {
+    SmallVector<Operation *> children = getChildren(caseProperty);
+    if (children.empty())
+      return failure();
+    Operation *selector = children.front();
+    size_t childIndex = 1;
+    SmallVector<Operation *> priorLabels;
+    FixedSequenceAlternatives results;
+    for (Attribute sizeAttr : caseProperty.getItemGroupSizes()) {
+      auto size = dyn_cast<IntegerAttr>(sizeAttr);
+      if (!size || size.getInt() <= 0)
+        return failure();
+      size_t labelCount = static_cast<size_t>(size.getInt());
+      if (childIndex + labelCount >= children.size())
+        return failure();
+      ArrayRef<Operation *> labels(children.data() + childIndex, labelCount);
+      childIndex += labelCount;
+      FailureOr<FixedSequenceAlternatives> body =
+          compileFixedSequenceAlternatives(children[childIndex++],
+                                           resolvedClock);
+      if (failed(body) || body->empty() ||
+          body->size() >
+              (maxFixedSequenceAlternatives - results.size()) / labelCount)
+        return failure();
+      for (Operation *label : labels) {
+        for (const FixedSequence &bodyAlternative : *body) {
+          if (bodyAlternative.ages.empty())
+            return failure();
+          FixedSequence alternative = bodyAlternative;
+          for (Operation *prior : priorLabels)
+            alternative.ages.front().caseGuards.push_back(
+                {selector, prior, true});
+          alternative.ages.front().caseGuards.push_back(
+              {selector, label, false});
+          results.push_back(std::move(alternative));
+        }
+      }
+      llvm::append_range(priorLabels, labels);
+    }
+
+    FixedSequenceAlternatives fallback;
+    if (caseProperty.getHasDefault()) {
+      if (childIndex >= children.size())
+        return failure();
+      FailureOr<FixedSequenceAlternatives> compiledDefault =
+          compileFixedSequenceAlternatives(children[childIndex++],
+                                           resolvedClock);
+      if (failed(compiledDefault) || compiledDefault->empty())
+        return failure();
+      fallback = std::move(*compiledDefault);
+    } else {
+      FixedSequence vacuous;
+      vacuous.ages.resize(1);
+      vacuous.vacuousSuccess = true;
+      fallback.push_back(std::move(vacuous));
+    }
+    if (childIndex != children.size() ||
+        results.size() > maxFixedSequenceAlternatives - fallback.size())
+      return failure();
+    for (FixedSequence &alternative : fallback) {
+      if (alternative.ages.empty())
+        return failure();
+      for (Operation *prior : priorLabels)
+        alternative.ages.front().caseGuards.push_back({selector, prior, true});
+    }
+    llvm::append_range(results, std::move(fallback));
+    return results;
+  }
+
   if (auto conditional =
           dyn_cast<semantic::SVConditionalAssertionExprOp>(operation)) {
     SmallVector<Operation *> children = getChildren(conditional);
@@ -818,6 +925,12 @@ compileFixedSequenceAlternatives(Operation *operation,
   };
   if (llvm::any_of(*lhs, hasMatchItems) || llvm::any_of(*rhs, hasMatchItems))
     return failure();
+  auto hasVacuousAlternative = [](const FixedSequence &sequence) {
+    return sequence.vacuousSuccess;
+  };
+  if (llvm::any_of(*lhs, hasVacuousAlternative) ||
+      llvm::any_of(*rhs, hasVacuousAlternative))
+    return failure();
 
   switch (binary.getOperatorKind()) {
   case semantic::SVAssertionBinaryOperator::Or: {
@@ -845,11 +958,13 @@ compileFixedSequenceAlternatives(Operation *operation,
           llvm::append_range(combined.ages[age].predicates, value.predicates);
           llvm::append_range(combined.ages[age].negatedPredicates,
                              value.negatedPredicates);
+          llvm::append_range(combined.ages[age].caseGuards, value.caseGuards);
         }
         for (auto [age, value] : llvm::enumerate(right.ages)) {
           llvm::append_range(combined.ages[age].predicates, value.predicates);
           llvm::append_range(combined.ages[age].negatedPredicates,
                              value.negatedPredicates);
+          llvm::append_range(combined.ages[age].caseGuards, value.caseGuards);
         }
         if (!left.firstMatchBoundaries.empty() &&
             !right.firstMatchBoundaries.empty())
@@ -876,6 +991,7 @@ compileFixedSequenceAlternatives(Operation *operation,
       for (FixedSequenceAge &age : sequence.ages) {
         llvm::append_range(age.predicates, guard.predicates);
         llvm::append_range(age.negatedPredicates, guard.negatedPredicates);
+        llvm::append_range(age.caseGuards, guard.caseGuards);
       }
     }
     return std::move(*rhs);
@@ -898,6 +1014,8 @@ compileFixedSequenceAlternatives(Operation *operation,
                                value.predicates);
             llvm::append_range(combined.ages[offset + age].negatedPredicates,
                                value.negatedPredicates);
+            llvm::append_range(combined.ages[offset + age].caseGuards,
+                               value.caseGuards);
           }
           if (!combined.firstMatchBoundaries.empty() &&
               !inner.firstMatchBoundaries.empty())
@@ -2238,6 +2356,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     SmallVector<Value> starts(sequenceAlternatives.size(), falseValue);
     SmallVector<Value> nextStates(sequenceAlternatives.size(), zero);
     llvm::DenseMap<Operation *, Value> predicateCache;
+    llvm::DenseMap<std::pair<Operation *, Operation *>, Value> caseGuardCache;
+    llvm::DenseMap<Operation *, Value> caseSelectorCache;
     auto evaluateAge = [&](const FixedSequenceAge &age) -> FailureOr<Value> {
       Value result = trueValue;
       auto evaluatePredicate = [&](Operation *predicate) -> FailureOr<Value> {
@@ -2271,6 +2391,37 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         Value negated =
             arith::XOrIOp::create(builder, location, *truth, trueValue);
         result = arith::AndIOp::create(builder, location, result, negated);
+      }
+      for (const FixedSequenceAge::CaseGuard &guard : age.caseGuards) {
+        std::pair<Operation *, Operation *> key{guard.selector, guard.label};
+        Value matched;
+        if (auto found = caseGuardCache.find(key);
+            found != caseGuardCache.end()) {
+          matched = found->second;
+        } else {
+          Value selector;
+          if (auto found = caseSelectorCache.find(guard.selector);
+              found != caseSelectorCache.end()) {
+            selector = found->second;
+          } else {
+            FailureOr<Value> loweredSelector = lowerExpression(guard.selector);
+            if (failed(loweredSelector))
+              return failure();
+            selector = *loweredSelector;
+            caseSelectorCache[guard.selector] = selector;
+          }
+          FailureOr<Value> comparison =
+              lowerCaseLabel(selector, selector.getType(), guard.selector,
+                             guard.label, semantic::SVCaseCondition::Normal);
+          if (failed(comparison) || !(*comparison).getType().isInteger(1))
+            return failure();
+          matched = *comparison;
+          caseGuardCache[key] = matched;
+        }
+        if (guard.negated)
+          matched =
+              arith::XOrIOp::create(builder, location, matched, trueValue);
+        result = arith::AndIOp::create(builder, location, result, matched);
       }
       return result;
     };
