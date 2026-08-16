@@ -1,4 +1,7 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: obelisk-opt %s --obelisk-sim-plan-native-partitions \
+// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN:   | FileCheck %s --check-prefix=PARTITION
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
@@ -138,6 +141,14 @@ module attributes {
 // CHECK: llvm.mlir.constant(16 : i64)
 // CHECK-LABEL: llvm.mlir.global internal constant @Base.__obelisk_class_descriptor
 // CHECK-LABEL: llvm.func internal @Base_get.__obelisk_native_thunk
+// PARTITION: module attributes {
+// PARTITION-SAME: obelisk.native.physical_partition_manifest = [
+// PARTITION-SAME: id = "class:Base"
+// PARTITION-SAME: members = [@Base_get.__obelisk_native_thunk, @Base_tag.__obelisk_native_thunk, @base_get, @base_tag]
+// PARTITION: llvm.func internal @Base_get.__obelisk_native_thunk
+// PARTITION-SAME: obelisk.native.partition = "class:Base"
+// PARTITION: llvm.func internal @Base_tag.__obelisk_native_thunk
+// PARTITION-SAME: obelisk.native.partition = "class:Base"
 // CHECK-LABEL: llvm.func @root(
 // CHECK: llvm.call @obelisk_rt_v1_object_allocate
 // CHECK: llvm.call @obelisk_rt_v1_object_shallow_copy

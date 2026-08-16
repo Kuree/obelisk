@@ -166,7 +166,8 @@ LogicalResult addMinimalMain(ModuleOp module) {
 LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
                           StringRef triple, bool bytecode, StringRef vpi,
                           obelisk::sim::NativeSchedulerMode nativeScheduler,
-                          uint32_t optLevel, bool timing,
+                          uint32_t optLevel, bool planSemanticPartitions,
+                          bool timing,
                           bool &requiresStateSync) {
   if (bytecode && nativeScheduler == obelisk::sim::NativeSchedulerMode::Auto)
     nativeScheduler = obelisk::sim::NativeSchedulerMode::Generic;
@@ -261,6 +262,12 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
   // provides the deoptimization implementation.
   if (needsHybridBytecode || evalScheduler)
     manager.addPass(createObeliskSimOptimizeNativeRegionsPass());
+  // Partition metadata is a native ELF object/ThinLTO contract. In
+  // particular, wasm64 keeps its current single-module lowering and staged
+  // wasm-object runtime even when the source design is large.
+  if (planSemanticPartitions)
+    manager.nest<obelisk::sim::SimDesignOp>().addPass(
+        createObeliskSimPlanNativePartitionsPass());
   manager.addPass(createConvertObeliskSimProcessesToLLVMCoroutinesPass());
   if (failed(manager.run(module)))
     return failure();
@@ -526,7 +533,10 @@ LogicalResult emitTargetOutput(ModuleOp module,
   }
   if (failed(lowerToLLVM(module, *targetMachine, backend->getTriple(),
                          options.bytecode, options.vpi, *nativeScheduler,
-                         options.optLevel, options.timing, requiresStateSync)))
+                         options.optLevel,
+                         backend->supportsSemanticPartitions() &&
+                             !options.bytecode,
+                         options.timing, requiresStateSync)))
     return failure();
 
   registerLLVMDialectTranslation(*module.getContext());

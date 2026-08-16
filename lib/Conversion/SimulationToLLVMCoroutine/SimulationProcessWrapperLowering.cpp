@@ -53,6 +53,7 @@ LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
   auto requirements = LLVM::LLVMFuncOp::create(
       builder, location, makeName(".__obelisk_native_requirements"),
       LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false));
+  copyNativePartition(ramp, requirements);
   Block *requirementsEntry = requirements.addEntryBlock(builder);
   builder.setInsertionPointToStart(requirementsEntry);
   Value null = LLVM::ZeroOp::create(builder, location, pointer);
@@ -69,6 +70,7 @@ LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
   auto execute = LLVM::LLVMFuncOp::create(
       builder, location, makeName(".__obelisk_native_execute"),
       LLVM::LLVMFunctionType::get(i32, {pointer}, false));
+  copyNativePartition(ramp, execute);
   Block *executeEntry = execute.addEntryBlock(builder);
   Block *start = new Block;
   Block *resume = new Block;
@@ -110,6 +112,7 @@ LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
   auto destroy = LLVM::LLVMFuncOp::create(
       builder, location, makeName(".__obelisk_native_destroy"),
       LLVM::LLVMFunctionType::get(voidType, {pointer}, false));
+  copyNativePartition(ramp, destroy);
   Block *destroyEntry = destroy.addEntryBlock(builder);
   Block *destroyCall = new Block;
   Block *destroyDone = new Block;
@@ -153,6 +156,7 @@ makePlainNativeWrappers(ModuleOp module, func::FuncOp body, StringRef baseName,
   auto requirements = LLVM::LLVMFuncOp::create(
       builder, location, (baseName + ".__obelisk_native_requirements").str(),
       LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false));
+  copyNativePartition(body, requirements);
   Block *requirementsEntry = requirements.addEntryBlock(builder);
   builder.setInsertionPointToStart(requirementsEntry);
   LLVM::StoreOp::create(builder, location,
@@ -168,6 +172,7 @@ makePlainNativeWrappers(ModuleOp module, func::FuncOp body, StringRef baseName,
   auto execute = LLVM::LLVMFuncOp::create(
       builder, location, (baseName + ".__obelisk_native_execute").str(),
       LLVM::LLVMFunctionType::get(i32, {pointer}, false));
+  copyNativePartition(body, execute);
   Block *executeEntry = execute.addEntryBlock(builder);
   builder.setInsertionPointToStart(executeEntry);
   Value instance = executeEntry->getArgument(0);
@@ -214,6 +219,7 @@ makePlainNativeWrappers(ModuleOp module, func::FuncOp body, StringRef baseName,
   auto destroy = LLVM::LLVMFuncOp::create(
       builder, location, (baseName + ".__obelisk_native_destroy").str(),
       LLVM::LLVMFunctionType::get(voidType, {pointer}, false));
+  copyNativePartition(body, destroy);
   Block *destroyEntry = destroy.addEntryBlock(builder);
   builder.setInsertionPointToStart(destroyEntry);
   LLVM::ReturnOp::create(builder, location, ValueRange{});
@@ -234,6 +240,7 @@ LogicalResult makeDirectFragmentWrapper(
   auto wrapper = LLVM::LLVMFuncOp::create(
       builder, location, wrapperName,
       LLVM::LLVMFunctionType::get(i32, {pointer}, false));
+  copyNativePartition(body, wrapper);
   if (body->hasAttr("obelisk.eval.inductive_two_state") ||
       body->hasAttr("obelisk.eval.selected_two_state") ||
       body->hasAttr("obelisk.eval.four_state_source"))

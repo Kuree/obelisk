@@ -85,6 +85,25 @@ inline constexpr llvm::StringLiteral nativeGuardedSpecializationBody =
 /// native-only next-state and publication rewrites consume the annotation.
 inline constexpr llvm::StringLiteral nativeRegionBody =
     "obelisk.native.region_body";
+/// Stable semantic partition assigned before native lowering.  The value is
+/// independent of worker count and is retained on generated LLVM functions so
+/// object emission and incremental caches share one ownership boundary.
+inline constexpr llvm::StringLiteral nativePartition =
+    "obelisk.native.partition";
+/// Deterministic per-design inventory of native partitions, their members,
+/// imports, exports, and dependencies.
+inline constexpr llvm::StringLiteral nativePartitionManifest =
+    "obelisk.native.partition_manifest";
+/// Module-level, design-keyed copies of native partition manifests.  Design
+/// operations are erased during LLVM lowering, so later object emission and
+/// cache planning consume this preserved inventory.
+inline constexpr llvm::StringLiteral nativePartitionManifests =
+    "obelisk.native.partition_manifests";
+/// Link-complete post-lowering inventory of physical LLVM symbols and their
+/// cross-partition references. Object emission consumes this manifest rather
+/// than the pre-lowering semantic inventory.
+inline constexpr llvm::StringLiteral nativePhysicalPartitionManifest =
+    "obelisk.native.physical_partition_manifest";
 
 // Revision-coupled eval facts shared by planning and LLVM materialization.
 // These affect scheduling correctness and must not drift as ad-hoc strings

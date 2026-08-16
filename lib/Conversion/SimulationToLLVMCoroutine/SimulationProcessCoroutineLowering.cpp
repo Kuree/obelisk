@@ -587,6 +587,7 @@ prepareSuspendableProcess(sim::SimFuncOp function,
   ramp->setAttr(
       "passthrough",
       builder.getArrayAttr({builder.getStringAttr("presplitcoroutine")}));
+  copyNativePartition(function, ramp);
   addFrameAttributes(ramp, analysis, builder);
   ramp.getBody().takeBody(function.getBody());
   function.erase();

@@ -77,6 +77,22 @@ def ObeliskSimThreadRuntimeStatusesPass
   }];
 }
 
+def ObeliskSimPlanNativePartitionsPass
+    : Pass<"obelisk-sim-plan-native-partitions",
+           "obelisk::sim::SimDesignOp"> {
+  let summary = "Plan stable semantic native compilation partitions";
+  let description = [{
+    Groups executable simulation functions by semantic class or code-unit
+    ownership, keeps direct-call SCCs indivisible, and records deterministic
+    members, imports, exports, and dependencies. Partition identity never
+    depends on IR order, worker count, or host load, so the same manifest can
+    drive parallel object emission, ThinLTO, and incremental cache keys.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect"
+  ];
+}
+
 def ObeliskSimInstrumentManagedRootsPass
     : Pass<"obelisk-sim-instrument-managed-roots", "mlir::ModuleOp"> {
   let summary = "Bind live managed SSA values to precise GC roots";

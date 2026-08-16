@@ -712,6 +712,7 @@ materializeManagedMethodThunks(ModuleOp module,
               i32, {pointer, pointer, pointer, pointer, i32, pointer, i64},
               false),
           LLVM::Linkage::Internal);
+      copyNativePartition(helper, thunk);
       Block *entry = thunk.addEntryBlock(builder);
       Block *invoke = new Block;
       Block *invalid = new Block;
@@ -800,6 +801,7 @@ materializeManagedMethodThunks(ModuleOp module,
             i32, {pointer, pointer, pointer, pointer, i32, pointer, i64},
             false),
         LLVM::Linkage::Internal);
+    copyNativePartition(implementation, thunk);
     Block *entry = thunk.addEntryBlock(builder);
     builder.setInsertionPointToStart(entry);
 

@@ -301,4 +301,9 @@ LLVM::LLVMFuncOp getOrDeclareLLVMFunction(ModuleOp module, StringRef name,
       LLVM::LLVMFunctionType::get(result, arguments, false));
 }
 
+void copyNativePartition(Operation *source, Operation *target) {
+  if (Attribute partition = source->getAttr(sim::metadata::nativePartition))
+    target->setAttr(sim::metadata::nativePartition, partition);
+}
+
 } // namespace obelisk::detail

@@ -394,6 +394,7 @@ class NativeBackend final : public TargetBackend {
 public:
   StringRef getTriple() const override { return kTargetTriple; }
   StringRef getDescription() const override { return "x86-64 ELF"; }
+  bool supportsSemanticPartitions() const override { return true; }
 
   std::unique_ptr<TargetMachine> createTargetMachine(std::string &error,
                                                      uint32_t optLevel) override {

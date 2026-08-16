@@ -169,6 +169,7 @@ preparePlainNativeProcess(sim::SimFuncOp function,
                 builder.getI32IntegerAttr(
                     static_cast<uint32_t>(function.getEntryKind())));
   body->setAttr("obelisk.native_scratch_size", builder.getI64IntegerAttr(0));
+  copyNativePartition(function, body);
   body.getBody().takeBody(function.getBody());
   function.erase();
   for (Block &block : body.getBody())
@@ -282,6 +283,7 @@ LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
                        builder.getI32IntegerAttr(entryKind));
   replacement->setAttr("obelisk.native_scratch_size",
                        builder.getI64IntegerAttr(0));
+  copyNativePartition(function, replacement);
   if (evalFourStateSource)
     replacement->setAttr("obelisk.eval.four_state_source",
                          evalFourStateSource);

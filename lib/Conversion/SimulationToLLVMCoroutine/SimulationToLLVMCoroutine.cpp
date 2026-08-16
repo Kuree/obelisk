@@ -693,6 +693,7 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
                           source.getFunctionType().getInputs(),
                           TypeRange{builder.getI8Type()}),
         sim::EntryKind::Function, attributes, argumentAttrs);
+    detail::copyNativePartition(source, probe);
     probe->setAttr("obelisk.eval.borrowed_captures", builder.getUnitAttr());
     probe->setAttr("obelisk.eval.path_known_predicate", builder.getUnitAttr());
     SymbolTable::setSymbolVisibility(probe, SymbolTable::Visibility::Private);
@@ -1553,6 +1554,7 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
           FunctionType::get(context, actor.getFunctionType().getInputs(),
                             TypeRange{}),
           sim::EntryKind::Function, ArrayRef<NamedAttribute>{}, argumentAttrs);
+      detail::copyNativePartition(actor, body);
       body->setAttr("obelisk.eval.borrowed_captures", UnitAttr::get(context));
       body->setAttr("obelisk.eval.raw_captures", UnitAttr::get(context));
       if (Attribute owners = actor->getAttr("obelisk.eval.source_owners"))
@@ -1758,6 +1760,34 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
 LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     ModuleOp module, const llvm::DataLayout &dataLayout) {
   MLIRContext *context = module.getContext();
+  // SimDesignOp is intentionally eliminated by this lowering. Preserve the
+  // semantic partition inventory serially on the module before any early
+  // bytecode-only or ordinary native path can erase its owner. String keys are
+  // used because the design symbols themselves do not survive conversion.
+  SmallVector<std::pair<std::string, ArrayAttr>> partitionManifests;
+  module.walk([&](sim::SimDesignOp design) {
+    if (ArrayAttr manifest = design->getAttrOfType<ArrayAttr>(
+            sim::metadata::nativePartitionManifest))
+      partitionManifests.emplace_back(design.getSymName().str(), manifest);
+  });
+  llvm::sort(partitionManifests, [](const auto &lhs, const auto &rhs) {
+    return lhs.first < rhs.first;
+  });
+  if (partitionManifests.empty()) {
+    module->removeAttr(sim::metadata::nativePartitionManifests);
+  } else {
+    Builder manifestBuilder(context);
+    SmallVector<Attribute> preserved;
+    preserved.reserve(partitionManifests.size());
+    for (const auto &[design, partitions] : partitionManifests)
+      preserved.push_back(manifestBuilder.getDictionaryAttr({
+          manifestBuilder.getNamedAttr("design",
+                                       manifestBuilder.getStringAttr(design)),
+          manifestBuilder.getNamedAttr("partitions", partitions),
+      }));
+    module->setAttr(sim::metadata::nativePartitionManifests,
+                    manifestBuilder.getArrayAttr(preserved));
+  }
   if (failed(prepareManagedLowering(module, dataLayout)))
     return failure();
   FailureOr<NativeStateLayout> stateLayout = buildNativeStateLayout(module);
@@ -3254,6 +3284,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       route.checkpointFallback =
           LLVM::LLVMFuncOp::create(builder, route.fourState.getLoc(),
                                    route.fourStateFallbackName, bodyType);
+      detail::copyNativePartition(route.fourState, route.checkpointFallback);
       route.checkpointFallback.setPrivate();
       Block *callbackEntry = route.checkpointFallback.addEntryBlock(builder);
       Block *resume = new Block;
@@ -3375,6 +3406,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       builder.setInsertionPointToEnd(module.getBody());
       route.dispatcher = LLVM::LLVMFuncOp::create(
           builder, route.twoState.getLoc(), route.dispatcherName, bodyType);
+      detail::copyNativePartition(route.twoState, route.dispatcher);
       route.dispatcher.setPrivate();
       route.dispatcher->setAttr(
           "passthrough",
@@ -3512,6 +3544,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       route.fourStateFallback =
           LLVM::LLVMFuncOp::create(builder, route.fourState.getLoc(),
                                    route.fourStateFallbackName, bodyType);
+      detail::copyNativePartition(route.fourState, route.fourStateFallback);
       route.fourStateFallback.setPrivate();
       Block *entry = route.fourStateFallback.addEntryBlock(builder);
       builder.setInsertionPointToStart(entry);
@@ -4366,6 +4399,10 @@ public:
       return;
     }
     if (failed(verifyGeneratedEvalCallClosures(module))) {
+      signalPassFailure();
+      return;
+    }
+    if (failed(detail::finalizeNativePartitionManifest(module))) {
       signalPassFailure();
       return;
     }

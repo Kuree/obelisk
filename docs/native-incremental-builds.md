@@ -6,6 +6,12 @@ module by worker count is deliberately not the contract: it makes cache keys
 and object membership change with the host and leaves the expensive lowering
 as one monolithic step.
 
+This contract is initially specific to the native ELF backend. The wasm64
+backend continues to lower and optimize one module and links the prebuilt
+wasm-object runtime. Native partition metadata is neither planned nor consumed
+for wasm64 until WebAssembly partitioning has its own linkage and performance
+validation; the unsplit wasm path is not inferred from native behavior.
+
 ## Partition contract
 
 The compiler will form partitions before LLVM optimization from stable
@@ -34,11 +40,25 @@ rules are implemented.  The unsplit path remains the correctness fallback.
 
 ## ThinLTO
 
-Every generated partition and target-runtime archive member will carry a
-ThinLTO summary.  LLD will build the combined index, perform bounded imports,
-and run independent backends in parallel.  ThinLTO replaces Full LTO for large
-generated designs; small designs may retain the single-module path when it is
-faster.
+Simulation-aware whole-design optimization runs before this boundary. The
+partitioner therefore does not prevent scheduling, state-domain, devirtualize,
+specialize, or simulation-inlining passes from seeing the complete design.
+At `-O3`, ThinLTO's combined index then permits bounded cross-partition import
+and inlining during native code generation. A meaningful simulation-throughput
+regression relative to Full LTO is a release blocker, not an accepted cost of
+incremental compilation.
+
+Every generated native partition and native-runtime archive member will carry
+a ThinLTO summary. LLD will build the combined index, perform bounded imports,
+and run independent backends in parallel. ThinLTO replaces Full LTO for large
+native designs; small designs may retain the single-module path when it is
+faster. Wasm64 retains its existing per-module optimization and object link.
+
+`-fno-lto` remains the explicit compile-latency choice: it performs `-O3`
+optimization within each generated partition but does not request
+cross-partition LLVM imports. The default `-O3` mode does not silently select
+that tradeoff. Likewise, oversized process bodies are not moved to bytecode in
+the default native mode merely to improve compiler latency.
 
 The prebuilt native runtime remains a separate archive.  `-fno-lto` consumes
 its ordinary object archive directly.  ThinLTO consumes a prebuilt ThinLTO

@@ -227,6 +227,14 @@ getOrDeclareLLVMFunction(mlir::ModuleOp module, llvm::StringRef name,
                          mlir::Type result,
                          mlir::ArrayRef<mlir::Type> arguments);
 
+/// Preserve the stable semantic native-partition boundary while replacing or
+/// outlining executable functions during native lowering.
+void copyNativePartition(mlir::Operation *source, mlir::Operation *target);
+
+/// Build the link-complete physical partition manifest after every native
+/// function, helper, and global has been materialized.
+mlir::LogicalResult finalizeNativePartitionManifest(mlir::ModuleOp module);
+
 mlir::LogicalResult lowerNativeDPICalls(mlir::Operation *root);
 mlir::LogicalResult
 lowerNativeFunctionBody(mlir::Operation *root,

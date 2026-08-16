@@ -100,6 +100,12 @@ public:
   /// and runs full LTO, rather than consuming a relocatable object.
   virtual bool usesFullLTO(uint32_t optLevel) const { return optLevel != 0; }
 
+  /// Whether this backend can consume stable semantic compilation
+  /// partitions. The default deliberately keeps targets such as wasm64 on
+  /// their existing single-module path until their object/link semantics are
+  /// implemented and validated independently.
+  virtual bool supportsSemanticPartitions() const { return false; }
+
   /// Links a previously written module into an executable image. `modulePath`
   /// is bitcode when usesFullLTO() holds and an object otherwise.
   virtual mlir::LogicalResult

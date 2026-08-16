@@ -55,6 +55,7 @@ makeProcessActivationHelper(ModuleOp module, sim::SimFuncOp function,
       builder, location, checkedHelperName,
       LLVM::LLVMFunctionType::get(i32, checkedArguments, false),
       LLVM::Linkage::Internal);
+  copyNativePartition(function, checkedHelper);
   Block *entry = checkedHelper.addEntryBlock(builder);
   Block *created = new Block;
   Block *failed = new Block;
@@ -126,6 +127,7 @@ makeProcessActivationHelper(ModuleOp module, sim::SimFuncOp function,
   auto helper = LLVM::LLVMFuncOp::create(
       builder, location, helperName,
       LLVM::LLVMFunctionType::get(i64, arguments, false));
+  copyNativePartition(function, helper);
   Block *wrapperEntry = helper.addEntryBlock(builder);
   Block *wrapperSucceeded = new Block;
   Block *wrapperFailed = new Block;
@@ -202,7 +204,7 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
     auto arrayType =
         LLVM::LLVMArrayType::get(i32, schedule.continuations.size());
     auto makeArray = [&](StringRef name, unsigned element) {
-      makeConstantGlobal(
+      LLVM::GlobalOp global = makeConstantGlobal(
           module, location, arrayType, name, LLVM::Linkage::Internal, 4,
           [&](OpBuilder &initializer) {
             Value array =
@@ -217,6 +219,7 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
                   ArrayRef<int64_t>{static_cast<int64_t>(index)});
             return array;
           });
+      copyNativePartition(function, global);
     };
     makeArray(continuationName, 0);
     makeArray(rankName, 1);
@@ -224,7 +227,7 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
   if (!schedule.bytecodeContinuations.empty()) {
     auto arrayType =
         LLVM::LLVMArrayType::get(i32, schedule.bytecodeContinuations.size());
-    makeConstantGlobal(
+    LLVM::GlobalOp global = makeConstantGlobal(
         module, location, arrayType, bytecodeContinuationName,
         LLVM::Linkage::Internal, 4, [&](OpBuilder &initializer) {
           Value array = LLVM::ZeroOp::create(initializer, location, arrayType);
@@ -236,11 +239,13 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
                 ArrayRef<int64_t>{static_cast<int64_t>(index)});
           return array;
         });
+    copyNativePartition(function, global);
   }
   builder.setInsertionPointAfter(function);
   auto helper = LLVM::LLVMFuncOp::create(
       builder, location, helperName,
       LLVM::LLVMFunctionType::get(i64, arguments, false));
+  copyNativePartition(function, helper);
   Block *entry = helper.addEntryBlock(builder);
   Block *created = new Block;
   Block *createFailed = new Block;
