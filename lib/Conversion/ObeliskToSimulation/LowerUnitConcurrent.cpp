@@ -114,6 +114,18 @@ struct PersistentUntilProperty {
   bool strong = false;
 };
 
+/// A common unbounded unary property over one Boolean clock sample. Every
+/// clock starts one evaluation attempt. Attempts younger than `minimum` are
+/// represented by one bounded warm-up count; all eligible attempts share one
+/// exact live count because they observe the same future Boolean value.
+struct PersistentUnaryProperty {
+  FixedSequenceAge operand;
+  semantic::SVAssertionUnaryOperator kind =
+      semantic::SVAssertionUnaryOperator::Always;
+  uint64_t minimum = 0;
+  bool eventually = false;
+};
+
 using FixedSequenceAlternatives = SmallVector<FixedSequence, 4>;
 
 static constexpr size_t maxFixedSequenceAlternatives = 256;
@@ -371,11 +383,18 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
       if (unary.getOperatorKind() ==
               semantic::SVAssertionUnaryOperator::Always ||
           unary.getOperatorKind() ==
+              semantic::SVAssertionUnaryOperator::SEventually)
+        return diagnose(
+            Twine("SVA property operator '") +
+            semantic::stringifySVAssertionUnaryOperator(
+                unary.getOperatorKind()) +
+            "' currently requires its unbounded/no-range form over one "
+            "deterministic one-cycle Boolean operand without locals or "
+            "match items");
+      if (unary.getOperatorKind() ==
               semantic::SVAssertionUnaryOperator::SAlways ||
           unary.getOperatorKind() ==
-              semantic::SVAssertionUnaryOperator::Eventually ||
-          unary.getOperatorKind() ==
-              semantic::SVAssertionUnaryOperator::SEventually)
+              semantic::SVAssertionUnaryOperator::Eventually)
         return diagnose(
             Twine("SVA property operator '") +
             semantic::stringifySVAssertionUnaryOperator(
@@ -666,6 +685,50 @@ compilePersistentUntil(Operation *operation) {
   result.strong =
       result.kind == semantic::SVAssertionBinaryOperator::SUntil ||
       result.kind == semantic::SVAssertionBinaryOperator::SUntilWith;
+  return result;
+}
+
+/// Recognize the LRM's common genuinely unbounded unary forms:
+///
+///   always property_expr
+///   always [M:$] property_expr
+///   s_eventually property_expr
+///   s_eventually [M:$] property_expr
+///
+/// Weak eventually is required to have a bounded range, and strong always is
+/// required to have a bounded range, so those remain in the fixed compiler.
+static FailureOr<PersistentUnaryProperty>
+compilePersistentUnary(Operation *operation) {
+  auto unary = dyn_cast<semantic::SVUnaryAssertionExprOp>(operation);
+  if (!unary)
+    return failure();
+  bool always =
+      unary.getOperatorKind() == semantic::SVAssertionUnaryOperator::Always;
+  bool eventually = unary.getOperatorKind() ==
+                    semantic::SVAssertionUnaryOperator::SEventually;
+  if (!always && !eventually)
+    return failure();
+
+  uint64_t minimum = 0;
+  if (unary.getHasRange()) {
+    if (!unary.getRangeIsUnbounded() || !unary.getRangeMin())
+      return failure();
+    minimum = static_cast<uint64_t>(*unary.getRangeMin());
+  }
+
+  SmallVector<Operation *> children = getChildren(unary);
+  if (children.size() != 1)
+    return failure();
+  FailureOr<FixedSequence> operand = compileFixedSequence(children.front());
+  if (failed(operand) || !isSingleBooleanAge(*operand) ||
+      operand->vacuousSuccess)
+    return failure();
+
+  PersistentUnaryProperty result;
+  result.operand = std::move(operand->ages.front());
+  result.kind = unary.getOperatorKind();
+  result.minimum = minimum;
+  result.eventually = eventually;
   return result;
 }
 
@@ -2061,6 +2124,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   bool hasPersistentRepetition = false;
   PersistentUntilProperty persistentUntil;
   bool hasPersistentUntil = false;
+  PersistentUnaryProperty persistentUnary;
+  bool hasPersistentUnary = false;
   bool nonoverlapped = false;
   bool followedBy = false;
   if (multiClockAttempt) {
@@ -2134,9 +2199,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       function->setAttr("obelisk_sim.followed_by_monitor",
                         builder.getUnitAttr());
   } else {
-    if (FailureOr<PersistentUntilProperty> until =
-            compilePersistentUntil(property);
-        succeeded(until)) {
+    if (FailureOr<PersistentUnaryProperty> unary =
+            compilePersistentUnary(property);
+        succeeded(unary)) {
+      persistentUnary = std::move(*unary);
+      hasPersistentUnary = true;
+      // The aggregate monitor owns its warm-up and eligible token counts.
+      // Keep ordinary bounded validation structurally nonempty.
+      sequence.ages.resize(1);
+    } else if (FailureOr<PersistentUntilProperty> until =
+                   compilePersistentUntil(property);
+               succeeded(until)) {
       persistentUntil = std::move(*until);
       hasPersistentUntil = true;
       // The persistent monitor owns one aggregate live-attempt counter below.
@@ -2253,6 +2326,18 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                   "first_match, expect, or cover-sequence per-match "
                   "accounting",
            failure();
+  if (hasPersistentUnary && (localInstance || implication || disable || abort ||
+                             expectMonitor || firstMatch || coverSequence))
+    return emitError(getSemanticLocation(property))
+               << "persistent property operator '"
+               << semantic::stringifySVAssertionUnaryOperator(
+                      persistentUnary.kind)
+               << "' currently requires one outermost unbounded form over "
+                  "a deterministic one-cycle Boolean operand without "
+                  "locals, match items, implication/followed-by, disable "
+                  "iff, abort, first_match, expect, or cover-sequence "
+                  "per-match accounting",
+           failure();
   if (abort) {
     std::string spelling =
         (Twine(abort.getIsSynchronous() ? "sync_" : "") +
@@ -2264,7 +2349,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         });
     if (localInstance || implication || disable || expectMonitor ||
         firstMatch || coverSequence || branchingSequence ||
-        hasPersistentRepetition || hasPersistentUntil || matchItems)
+        hasPersistentRepetition || hasPersistentUntil || hasPersistentUnary ||
+        matchItems)
       return emitError(getSemanticLocation(abort))
                  << "SVA property operator '" << spelling
                  << "' currently requires one outermost abort around a plain "
@@ -2291,7 +2377,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
            failure();
   if (endStrength &&
       (implication || branchingSequence || hasPersistentRepetition ||
-       hasPersistentUntil || firstMatch || expectMonitor || coverSequence))
+       hasPersistentUntil || hasPersistentUnary || firstMatch ||
+       expectMonitor || coverSequence))
     return emitError(getSemanticLocation(endStrength))
                << "SVA '"
                << semantic::stringifySVAssertionStrength(
@@ -2790,6 +2877,186 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     setCurrent(done);
   };
 
+  auto outlineCountedEndOfSimulation = [&](ArrayRef<Value> countStorages,
+                                           bool passed, StringRef identityTag,
+                                           Operation *source) -> LogicalResult {
+    std::optional<ReportCallback> &report = passed ? passReport : failReport;
+    if (countStorages.empty() || !report)
+      return success();
+    if (disableEpoch)
+      return function.emitError(
+                 "counted end-of-simulation completion does not support "
+                 "disable epochs"),
+             failure();
+
+    auto design = function->getParentOfType<sim::SimDesignOp>();
+    if (!design)
+      return function.emitError(
+                 "counted end-of-simulation completion requires a "
+                 "simulation design"),
+             failure();
+
+    uint64_t scopeID = 0;
+    std::string parentHierarchy = function.getSymName().str();
+    uint64_t parentID = function.getCodeUnitId().value_or(0);
+    for (sim::SimCodeUnitDeclOp declaration :
+         design.getBody().front().getOps<sim::SimCodeUnitDeclOp>()) {
+      if (declaration.getId() != parentID)
+        continue;
+      scopeID = declaration.getScopeId();
+      parentHierarchy = declaration.getHierarchicalName().str();
+      break;
+    }
+
+    Value context = function.getBody().front().getArgument(0);
+    SmallVector<Value> captures{context};
+    DenseMap<Value, unsigned> captureIndices;
+    captureIndices.try_emplace(context, 0);
+    SmallVector<unsigned> countIndices;
+    for (Value storage : countStorages) {
+      auto [entry, inserted] =
+          captureIndices.try_emplace(storage, captures.size());
+      if (inserted)
+        captures.push_back(storage);
+      countIndices.push_back(entry->second);
+    }
+    SmallVector<unsigned> reportCaptureIndices;
+    for (Value capture : report->captures) {
+      auto [entry, inserted] =
+          captureIndices.try_emplace(capture, captures.size());
+      if (inserted)
+        captures.push_back(capture);
+      reportCaptureIndices.push_back(entry->second);
+    }
+
+    SmallVector<Type> inputTypes;
+    SmallVector<DictionaryAttr> argumentAttrs;
+    for (auto [index, capture] : llvm::enumerate(captures)) {
+      inputTypes.push_back(capture.getType());
+      SmallVector<NamedAttribute> metadata;
+      if (auto argument = dyn_cast<BlockArgument>(capture);
+          argument && argument.getOwner() == &function.getBody().front()) {
+        if (DictionaryAttr sourceAttrs =
+                function.getArgAttrDict(argument.getArgNumber()))
+          llvm::append_range(metadata, sourceAttrs);
+      }
+      if (metadata.empty())
+        metadata.push_back(builder.getNamedAttr(
+            "obelisk_sim.capture_kind",
+            sim::CaptureKindAttr::get(function.getContext(),
+                                      index == 0 ? sim::CaptureKind::Context
+                                                 : sim::CaptureKind::Formal)));
+      if (isa<sim::RefType>(capture.getType()) &&
+          !isStaticallyAllocatedOverrideTarget(capture))
+        metadata.push_back(builder.getNamedAttr(
+            "obelisk_sim.automatic_reference_capture", builder.getUnitAttr()));
+      argumentAttrs.push_back(builder.getDictionaryAttr(metadata));
+    }
+
+    std::string symbol = (function.getSymName() + ".$concurrent_eos_count." +
+                          Twine(node) + "." + identityTag)
+                             .str();
+    std::string identity =
+        (function.getSymName() + ".$concurrent_eos_count_identity." +
+         Twine(node) + "." + identityTag)
+            .str();
+    uint64_t codeUnitID = stableCodeUnitID(identity);
+    std::string hierarchy =
+        (Twine(parentHierarchy) + ".$concurrent_eos_count." + Twine(node) +
+         "." + identityTag)
+            .str();
+    OpBuilder outlineBuilder(function);
+    outlineBuilder.setInsertionPoint(function);
+    sim::SimCodeUnitDeclOp::create(
+        outlineBuilder, getSemanticLocation(source), codeUnitID, scopeID,
+        sim::EntryKind::Final, outlineBuilder.getStringAttr(hierarchy),
+        outlineBuilder.getStringAttr(
+            "counted concurrent assertion end-of-simulation coordinator"),
+        outlineBuilder.getUnitAttr());
+    SmallVector<NamedAttribute> attributes{
+        outlineBuilder.getNamedAttr(bindingsAttrName,
+                                    outlineBuilder.getArrayAttr({})),
+        outlineBuilder.getNamedAttr(
+            "code_unit_id", outlineBuilder.getI64IntegerAttr(codeUnitID)),
+        outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
+        outlineBuilder.getNamedAttr(
+            "home_region", sim::EventRegionAttr::get(function.getContext(),
+                                                     sim::EventRegion::Active)),
+        outlineBuilder.getNamedAttr(
+            "domain", sim::ExecutionDomainAttr::get(
+                          function.getContext(), sim::ExecutionDomain::Design)),
+        outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
+                                    outlineBuilder.getStringAttr(hierarchy)),
+    };
+    sim::SimFuncOp coordinator = sim::SimFuncOp::create(
+        outlineBuilder, getSemanticLocation(source), symbol,
+        FunctionType::get(function.getContext(), inputTypes, TypeRange{}),
+        sim::EntryKind::Final, attributes, argumentAttrs);
+    SymbolTable::setSymbolVisibility(coordinator,
+                                     SymbolTable::Visibility::Private);
+    coordinator->setAttr("obelisk_sim.concurrent_eos_coordinator",
+                         builder.getUnitAttr());
+    coordinator->setAttr("obelisk_sim.concurrent_eos_counted",
+                         builder.getUnitAttr());
+    coordinator->setAttr("obelisk_sim.detached_controls",
+                         builder.getUnitAttr());
+
+    Block &entry = coordinator.getBody().front();
+    OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
+    Value count =
+        arith::ConstantOp::create(entryBuilder, getSemanticLocation(source),
+                                  stateType, entryBuilder.getI64IntegerAttr(0));
+    for (unsigned index : countIndices) {
+      Value amount =
+          sim::SimRefLoadOp::create(entryBuilder, getSemanticLocation(source),
+                                    stateType, entry.getArgument(index));
+      count = arith::AddIOp::create(entryBuilder, getSemanticLocation(source),
+                                    count, amount);
+    }
+    Value one =
+        arith::ConstantOp::create(entryBuilder, getSemanticLocation(source),
+                                  stateType, entryBuilder.getI64IntegerAttr(1));
+    Block *loop = new Block;
+    Block *body = new Block;
+    Block *done = new Block;
+    loop->addArgument(stateType, getSemanticLocation(source));
+    coordinator.getBody().push_back(loop);
+    coordinator.getBody().push_back(body);
+    coordinator.getBody().push_back(done);
+    cf::BranchOp::create(entryBuilder, getSemanticLocation(source), loop,
+                         ValueRange{count});
+
+    OpBuilder loopBuilder = OpBuilder::atBlockEnd(loop);
+    Value remaining = loop->getArgument(0);
+    Value nonzero = arith::CmpIOp::create(
+        loopBuilder, getSemanticLocation(source), arith::CmpIPredicate::ne,
+        remaining,
+        arith::ConstantOp::create(loopBuilder, getSemanticLocation(source),
+                                  stateType, loopBuilder.getI64IntegerAttr(0)));
+    cf::CondBranchOp::create(loopBuilder, getSemanticLocation(source), nonzero,
+                             body, ValueRange{}, done, ValueRange{});
+
+    OpBuilder bodyBuilder = OpBuilder::atBlockEnd(body);
+    SmallVector<Value> reportOperands;
+    for (unsigned index : reportCaptureIndices)
+      reportOperands.push_back(entry.getArgument(index));
+    sim::SimSpawnOp::create(bodyBuilder, report->location,
+                            report->function.getSymNameAttr(), reportOperands,
+                            ArrayAttr{}, ArrayAttr{});
+    Value next = arith::SubIOp::create(bodyBuilder, getSemanticLocation(source),
+                                       remaining, one);
+    cf::BranchOp::create(bodyBuilder, getSemanticLocation(source), loop,
+                         ValueRange{next});
+
+    OpBuilder doneBuilder = OpBuilder::atBlockEnd(done);
+    sim::SimReturnOp::create(doneBuilder, getSemanticLocation(source),
+                             ValueRange{});
+    sim::SimSpawnOp::create(builder, getSemanticLocation(source),
+                            coordinator.getSymNameAttr(), captures, ArrayAttr{},
+                            ArrayAttr{});
+    return success();
+  };
+
   if (endStrength) {
     bool strong =
         endStrength.getStrength() == semantic::SVAssertionStrength::Strong;
@@ -3280,6 +3547,132 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     sim::SimSpawnOp::create(builder, getSemanticLocation(abort),
                             actor.getSymNameAttr(), captures, ArrayAttr{},
                             ArrayAttr{});
+  }
+
+  if (hasPersistentUnary) {
+    StringRef spelling =
+        semantic::stringifySVAssertionUnaryOperator(persistentUnary.kind);
+    function->setAttr("obelisk_sim.persistent_unary_monitor",
+                      builder.getUnitAttr());
+    function->setAttr("obelisk_sim.persistent_unary_kind",
+                      builder.getStringAttr(spelling));
+    function->setAttr("obelisk_sim.persistent_unary_minimum",
+                      builder.getI64IntegerAttr(persistentUnary.minimum));
+    function->setAttr("obelisk_sim.persistent_unary_aggregate_tokens",
+                      builder.getUnitAttr());
+    function->setAttr("obelisk_sim.sva_transition_normal_form",
+                      builder.getStringAttr("canonical-minimal"));
+
+    Value eligibleStorage = sim::SimRefAllocOp::create(
+        builder, location, sim::RefType::get(function.getContext(), stateType),
+        zero);
+    Value immatureStorage;
+    if (persistentUnary.minimum != 0)
+      immatureStorage = sim::SimRefAllocOp::create(
+          builder, location,
+          sim::RefType::get(function.getContext(), stateType), zero);
+
+    SmallVector<Value> endCounts{eligibleStorage};
+    // Strong eventually fails every outstanding attempt. Weak always succeeds
+    // all outstanding attempts at finite end of simulation, but cover counts
+    // only eligible attempts that actually evaluated its Boolean operand.
+    if (immatureStorage && (persistentUnary.eventually || !cover))
+      endCounts.push_back(immatureStorage);
+    if (failed(outlineCountedEndOfSimulation(
+            endCounts, /*passed=*/!persistentUnary.eventually, spelling,
+            property)))
+      return failure();
+
+    Block *wait = addBlock();
+    Block *sample = addBlock();
+    emitBranch(wait);
+    setCurrent(wait);
+    if (failed(emitEventSuspend(clock, sample)))
+      return failure();
+    wait->getTerminator()->setAttr(
+        "resume_region", sim::EventRegionAttr::get(function.getContext(),
+                                                   sim::EventRegion::Observed));
+    setCurrent(sample);
+
+    bool savedSampleAssertionValues = sampleAssertionValues;
+    sampleAssertionValues = true;
+    Operation *savedSampledClock = activeSampledClock;
+    activeSampledClock = clock;
+    llvm::scope_exit restoreSampling([&] {
+      sampleAssertionValues = savedSampleAssertionValues;
+      activeSampledClock = savedSampledClock;
+    });
+
+    Value truth = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    auto evaluatePredicate = [&](Operation *predicate) -> FailureOr<Value> {
+      FailureOr<Value> value = lowerExpression(predicate);
+      if (failed(value))
+        return failure();
+      return truthValue(*value, getSemanticLocation(predicate));
+    };
+    for (Operation *predicate : persistentUnary.operand.predicates) {
+      FailureOr<Value> value = evaluatePredicate(predicate);
+      if (failed(value))
+        return failure();
+      truth = arith::AndIOp::create(builder, location, truth, *value);
+    }
+    for (Operation *predicate : persistentUnary.operand.negatedPredicates) {
+      FailureOr<Value> value = evaluatePredicate(predicate);
+      if (failed(value))
+        return failure();
+      Value negated = arith::XOrIOp::create(
+          builder, location, *value,
+          arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                    builder.getBoolAttr(true)));
+      truth = arith::AndIOp::create(builder, location, truth, negated);
+    }
+
+    Value one = arith::ConstantOp::create(builder, location, stateType,
+                                          builder.getI64IntegerAttr(1));
+    Value eligible = sim::SimRefLoadOp::create(builder, location, stateType,
+                                               eligibleStorage);
+    Value eligibleNow;
+    if (!immatureStorage) {
+      // The attempt beginning on this tick is immediately eligible.
+      eligibleNow = arith::AddIOp::create(builder, location, eligible, one);
+    } else {
+      Value immature = sim::SimRefLoadOp::create(builder, location, stateType,
+                                                 immatureStorage);
+      Value minimum = arith::ConstantOp::create(
+          builder, location, stateType,
+          builder.getI64IntegerAttr(persistentUnary.minimum));
+      Value atCapacity = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, immature, minimum);
+      Value matured =
+          arith::SelectOp::create(builder, location, atCapacity, one, zero);
+      Value incremented =
+          arith::AddIOp::create(builder, location, immature, one);
+      Value nextImmature = arith::SelectOp::create(
+          builder, location, atCapacity, immature, incremented);
+      sim::SimRefStoreOp::create(builder, location, nextImmature,
+                                 immatureStorage);
+      eligibleNow = arith::AddIOp::create(builder, location, eligible, matured);
+    }
+
+    Value terminalCount;
+    Value nextEligible;
+    if (persistentUnary.eventually) {
+      terminalCount =
+          arith::SelectOp::create(builder, location, truth, eligibleNow, zero);
+      nextEligible =
+          arith::SelectOp::create(builder, location, truth, zero, eligibleNow);
+    } else {
+      terminalCount =
+          arith::SelectOp::create(builder, location, truth, zero, eligibleNow);
+      nextEligible =
+          arith::SelectOp::create(builder, location, truth, eligibleNow, zero);
+    }
+    scheduleCount(terminalCount, persistentUnary.eventually);
+    sim::SimRefStoreOp::create(builder, location, nextEligible,
+                               eligibleStorage);
+    cf::BranchOp::create(builder, location, wait);
+    return success();
   }
 
   if (hasPersistentUntil) {
