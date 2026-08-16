@@ -859,6 +859,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   bool cover =
       op.getAssertionKind() == semantic::SVAssertionKind::CoverProperty ||
       op.getAssertionKind() == semantic::SVAssertionKind::CoverSequence;
+  bool coverSequence =
+      op.getAssertionKind() == semantic::SVAssertionKind::CoverSequence;
   bool assertion = op.getAssertionKind() == semantic::SVAssertionKind::Assert ||
                    op.getAssertionKind() == semantic::SVAssertionKind::Assume;
   bool observable = assertion || cover;
@@ -1141,12 +1143,6 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return emitError(getSemanticLocation(property))
                << "branching bounded sequences do not yet support match "
                   "items",
-           failure();
-  if (branchingSequence &&
-      op.getAssertionKind() == semantic::SVAssertionKind::CoverSequence)
-    return emitError(getSemanticLocation(property))
-               << "branching cover sequence requires per-match endpoint "
-                  "accounting that is not executable yet",
            failure();
   if (!localInstance &&
       llvm::any_of(sequence.ages, [](const FixedSequenceAge &age) {
@@ -1682,6 +1678,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   };
 
   if (branchingSequence) {
+    bool perMatchCover = coverSequence && !firstMatch;
     function->setAttr("obelisk_sim.branching_sequence_monitor",
                       builder.getUnitAttr());
     function->setAttr("obelisk_sim.branching_sequence_alternatives",
@@ -1805,9 +1802,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       if (alternative.ages.size() == 1)
         continue;
       Value nextState = zero;
-      Value startEnabled = arith::AndIOp::create(
-          builder, location, starts[alternativeIndex],
-          arith::XOrIOp::create(builder, location, successAny[0], trueValue));
+      Value startEnabled = starts[alternativeIndex];
+      if (!perMatchCover)
+        startEnabled = arith::AndIOp::create(
+            builder, location, startEnabled,
+            arith::XOrIOp::create(builder, location, successAny[0],
+                                  trueValue));
       Value firstMask = arith::ConstantOp::create(builder, location, stateType,
                                                   builder.getI64IntegerAttr(2));
       nextState = arith::OrIOp::create(
@@ -1815,10 +1815,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           arith::SelectOp::create(builder, location, startEnabled, firstMask,
                                   zero));
       for (uint64_t age = 1; age + 1 < alternative.ages.size(); ++age) {
-        Value enabled = arith::AndIOp::create(
-            builder, location, survives[alternativeIndex][age],
-            arith::XOrIOp::create(builder, location, successAny[age],
-                                  trueValue));
+        Value enabled = survives[alternativeIndex][age];
+        if (!perMatchCover)
+          enabled = arith::AndIOp::create(
+              builder, location, enabled,
+              arith::XOrIOp::create(builder, location, successAny[age],
+                                    trueValue));
         Value nextMask = arith::ConstantOp::create(
             builder, location, stateType,
             builder.getI64IntegerAttr(uint64_t{1} << (age + 1)));
@@ -1842,21 +1844,33 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       emitBranch(continuation);
       setCurrent(continuation);
     };
-    for (size_t age = 1; age < horizon; ++age) {
-      reportWhen(successAny[age], true);
-      Value finished = arith::OrIOp::create(builder, location, successAny[age],
-                                            continueAny[age]);
-      Value failedAttempt = arith::AndIOp::create(
-          builder, location, activeAny[age],
-          arith::XOrIOp::create(builder, location, finished, trueValue));
-      reportWhen(failedAttempt, false);
+    if (perMatchCover) {
+      function->setAttr("obelisk_sim.cover_sequence_per_match",
+                        builder.getUnitAttr());
+      for (auto [alternativeIndex, alternative] :
+           llvm::enumerate(sequenceAlternatives)) {
+        Value matched = alternative.ages.size() == 1
+                            ? starts[alternativeIndex]
+                            : survives[alternativeIndex].back();
+        reportWhen(matched, true);
+      }
+    } else {
+      for (size_t age = 1; age < horizon; ++age) {
+        reportWhen(successAny[age], true);
+        Value finished = arith::OrIOp::create(
+            builder, location, successAny[age], continueAny[age]);
+        Value failedAttempt = arith::AndIOp::create(
+            builder, location, activeAny[age],
+            arith::XOrIOp::create(builder, location, finished, trueValue));
+        reportWhen(failedAttempt, false);
+      }
+      reportWhen(successAny[0], true);
+      Value startFinished = arith::OrIOp::create(
+          builder, location, successAny[0], continueAny[0]);
+      reportWhen(
+          arith::XOrIOp::create(builder, location, startFinished, trueValue),
+          false);
     }
-    reportWhen(successAny[0], true);
-    Value startFinished =
-        arith::OrIOp::create(builder, location, successAny[0], continueAny[0]);
-    reportWhen(
-        arith::XOrIOp::create(builder, location, startFinished, trueValue),
-        false);
 
     for (auto [state, nextState] :
          llvm::zip_equal(alternativeStates, nextStates))
