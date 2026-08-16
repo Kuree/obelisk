@@ -73,10 +73,10 @@ static bool areEquivalentDirectClocks(Operation *left, Operation *right) {
       !isa<semantic::SVNamedValueExpressionOp,
            semantic::SVHierarchicalValueExpressionOp>(rhsChildren.front()))
     return false;
-  auto lhsSymbol = lhsChildren.front()->getAttrOfType<SymbolRefAttr>(
-      "referenced_symbol");
-  auto rhsSymbol = rhsChildren.front()->getAttrOfType<SymbolRefAttr>(
-      "referenced_symbol");
+  auto lhsSymbol =
+      lhsChildren.front()->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+  auto rhsSymbol =
+      rhsChildren.front()->getAttrOfType<SymbolRefAttr>("referenced_symbol");
   return lhsSymbol && rhsSymbol && lhsSymbol == rhsSymbol;
 }
 
@@ -240,8 +240,8 @@ compileMultiClockSequence(Operation *operation, Operation *inheritedClock) {
         compileMultiClockSequence(children.back(), clock);
     if (failed(nested))
       return failure();
-    nested->changesClock |= inheritedClock &&
-                            !areEquivalentDirectClocks(inheritedClock, clock);
+    nested->changesClock |=
+        inheritedClock && !areEquivalentDirectClocks(inheritedClock, clock);
     return nested;
   }
 
@@ -272,8 +272,7 @@ compileMultiClockSequence(Operation *operation, Operation *inheritedClock) {
     auto delay = dyn_cast<DictionaryAttr>(delays[index]);
     auto minimum = delay ? delay.getAs<IntegerAttr>("min") : IntegerAttr{};
     auto maximum = delay ? delay.getAs<IntegerAttr>("max") : IntegerAttr{};
-    auto unbounded =
-        delay ? delay.getAs<BoolAttr>("is_unbounded") : BoolAttr{};
+    auto unbounded = delay ? delay.getAs<BoolAttr>("is_unbounded") : BoolAttr{};
     if (!minimum || !maximum || !unbounded || unbounded.getValue() ||
         minimum.getInt() != 1 || maximum.getInt() != 1)
       return failure();
@@ -338,10 +337,66 @@ compileFixedSequenceAlternatives(Operation *operation,
 
   if (auto simple = dyn_cast<semantic::SVSimpleAssertionExprOp>(operation)) {
     SmallVector<Operation *> children = getChildren(simple);
-    if (!simple.getIsNull() && !simple.getHasRepetition() &&
-        children.size() == 1 &&
+    if (simple.getIsNull() || children.size() != 1)
+      return failure();
+    if (!simple.getHasRepetition() &&
         isa<semantic::SVAssertionInstanceExpressionOp>(children.front()))
       return compileFixedSequenceAlternatives(children.front(), resolvedClock);
+
+    // A finite positive consecutive range is the union of its exact repeat
+    // counts. Keep that union in the same bounded exact-trace representation
+    // used for ranged ## delays and binary sequence composition. Empty and
+    // unbounded repetition require distinct endpoint/termination semantics
+    // and deliberately remain outside this compiler.
+    if (simple.getHasRepetition() &&
+        simple.getRepetitionKind() ==
+            semantic::SVSequenceRepetitionKind::Consecutive &&
+        !simple.getRepetitionIsUnbounded() && simple.getRepetitionMin() &&
+        simple.getRepetitionMax() && *simple.getRepetitionMin() > 0 &&
+        *simple.getRepetitionMax() >= *simple.getRepetitionMin()) {
+      FixedSequenceAlternatives nested;
+      if (isa<semantic::SVAssertionInstanceExpressionOp>(children.front())) {
+        FailureOr<FixedSequenceAlternatives> compiled =
+            compileFixedSequenceAlternatives(children.front(), resolvedClock);
+        if (failed(compiled))
+          return failure();
+        nested = std::move(*compiled);
+      } else {
+        FixedSequence term;
+        term.ages.resize(1);
+        term.ages.front().predicates.push_back(children.front());
+        nested.push_back(std::move(term));
+      }
+      if (nested.empty())
+        return failure();
+
+      uint64_t minimum = *simple.getRepetitionMin();
+      uint64_t maximum = *simple.getRepetitionMax();
+      FixedSequenceAlternatives prefixes(1);
+      FixedSequenceAlternatives results;
+      for (uint64_t count = 1; count <= maximum; ++count) {
+        if (prefixes.size() > maxFixedSequenceAlternatives / nested.size())
+          return failure();
+        FixedSequenceAlternatives expanded;
+        expanded.reserve(prefixes.size() * nested.size());
+        for (const FixedSequence &prefix : prefixes) {
+          for (const FixedSequence &suffix : nested) {
+            FixedSequence combined = prefix;
+            uint64_t offset = combined.ages.empty() ? 0 : 1;
+            if (failed(appendFixedSequence(combined, suffix, offset)))
+              return failure();
+            expanded.push_back(std::move(combined));
+          }
+        }
+        prefixes = std::move(expanded);
+        if (count < minimum)
+          continue;
+        if (results.size() > maxFixedSequenceAlternatives - prefixes.size())
+          return failure();
+        llvm::append_range(results, prefixes);
+      }
+      return results;
+    }
   }
 
   if (auto clocking =
@@ -372,9 +427,8 @@ compileFixedSequenceAlternatives(Operation *operation,
           compileFixedSequenceAlternatives(child, resolvedClock);
       if (failed(nested))
         return failure();
-      uint64_t offsets = static_cast<uint64_t>(maximum.getInt() -
-                                               minimum.getInt()) +
-                         1;
+      uint64_t offsets =
+          static_cast<uint64_t>(maximum.getInt() - minimum.getInt()) + 1;
       if (nested->empty() ||
           results.size() > maxFixedSequenceAlternatives / nested->size() ||
           results.size() * nested->size() >
@@ -384,11 +438,11 @@ compileFixedSequenceAlternatives(Operation *operation,
       expanded.reserve(results.size() * nested->size() * offsets);
       for (const FixedSequence &prefix : results)
         for (const FixedSequence &suffix : *nested)
-          for (int64_t offset = minimum.getInt();
-               offset <= maximum.getInt(); ++offset) {
+          for (int64_t offset = minimum.getInt(); offset <= maximum.getInt();
+               ++offset) {
             FixedSequence combined = prefix;
-            if (failed(appendFixedSequence(
-                    combined, suffix, static_cast<uint64_t>(offset))))
+            if (failed(appendFixedSequence(combined, suffix,
+                                           static_cast<uint64_t>(offset))))
               return failure();
             expanded.push_back(std::move(combined));
           }
@@ -439,11 +493,9 @@ compileFixedSequenceAlternatives(Operation *operation,
         FixedSequence combined;
         combined.ages.resize(std::max(left.ages.size(), right.ages.size()));
         for (auto [age, value] : llvm::enumerate(left.ages))
-          llvm::append_range(combined.ages[age].predicates,
-                             value.predicates);
+          llvm::append_range(combined.ages[age].predicates, value.predicates);
         for (auto [age, value] : llvm::enumerate(right.ages))
-          llvm::append_range(combined.ages[age].predicates,
-                             value.predicates);
+          llvm::append_range(combined.ages[age].predicates, value.predicates);
         results.push_back(std::move(combined));
       }
     }
@@ -459,6 +511,29 @@ compileFixedSequenceAlternatives(Operation *operation,
       for (FixedSequenceAge &age : sequence.ages)
         llvm::append_range(age.predicates, guard);
     return std::move(*rhs);
+  }
+  case semantic::SVAssertionBinaryOperator::Within: {
+    FixedSequenceAlternatives results;
+    for (const FixedSequence &inner : *lhs) {
+      for (const FixedSequence &outer : *rhs) {
+        if (inner.ages.size() > outer.ages.size())
+          continue;
+        size_t placements = outer.ages.size() - inner.ages.size() + 1;
+        if (placements > maxFixedSequenceAlternatives ||
+            results.size() > maxFixedSequenceAlternatives - placements)
+          return failure();
+        for (size_t offset = 0; offset < placements; ++offset) {
+          FixedSequence combined = outer;
+          for (auto [age, value] : llvm::enumerate(inner.ages))
+            llvm::append_range(combined.ages[offset + age].predicates,
+                               value.predicates);
+          results.push_back(std::move(combined));
+        }
+      }
+    }
+    if (results.empty())
+      return failure();
+    return results;
   }
   default:
     return failure();
@@ -675,8 +750,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   }
   SmallVector<Operation *> children = getChildren(op);
 
-  bool expect =
-      op.getAssertionKind() == semantic::SVAssertionKind::Expect;
+  bool expect = op.getAssertionKind() == semantic::SVAssertionKind::Expect;
   bool expectMonitor = op->hasAttr("obelisk_sim.expect_monitor");
   if (expect && !expectMonitor) {
     size_t actionCount = static_cast<size_t>(op.getHasPassAction()) +
@@ -703,8 +777,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                             Twine(node) + "." + Twine(occurrence))
                                .str();
 
-    Attribute previousCodeUnit =
-        op->getAttr("obelisk_sim.fork_code_unit_id");
+    Attribute previousCodeUnit = op->getAttr("obelisk_sim.fork_code_unit_id");
     Attribute previousCaptures = op->getAttr(calleeCapturesAttrName);
     op->setAttr("obelisk_sim.fork_code_unit_id",
                 builder.getI64IntegerAttr(stableCodeUnitID(identity)));
@@ -749,14 +822,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       return failure();
     monitor->first->setAttr("obelisk_sim.expect_monitor_actor",
                             builder.getUnitAttr());
-    sim::SimSpawnOp::create(builder, location,
-                            monitor->first.getSymNameAttr(), monitor->second,
-                            ArrayAttr{}, ArrayAttr{});
+    sim::SimSpawnOp::create(builder, location, monitor->first.getSymNameAttr(),
+                            monitor->second, ArrayAttr{}, ArrayAttr{});
 
     Block *completedBlock = addBlock();
     sim::SimSuspendEventOp::create(
-        builder, location, completed, ValueRange{},
-        sim::ContinuationSiteAttr{},
+        builder, location, completed, ValueRange{}, sim::ContinuationSiteAttr{},
         sim::EventRegionAttr::get(function.getContext(),
                                   sim::EventRegion::Reactive),
         completedBlock);
@@ -770,14 +841,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                              failBlock, ValueRange{});
     size_t actionBase = children.size() - actionCount;
     setCurrent(passBlock);
-    if (op.getHasPassAction() &&
-        failed(lowerStatement(children[actionBase])))
+    if (op.getHasPassAction() && failed(lowerStatement(children[actionBase])))
       return failure();
     emitBranch(mergeBlock);
     setCurrent(failBlock);
     if (op.getHasFailAction()) {
-      if (failed(lowerStatement(
-              children[actionBase + op.getHasPassAction()])))
+      if (failed(lowerStatement(children[actionBase + op.getHasPassAction()])))
         return failure();
     } else {
       emitDefaultAssertionFailure(location, "expect");
@@ -890,6 +959,21 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return op.emitError("disable iff wraps an unsupported assertion instance"),
            failure();
 
+  bool firstMatch = false;
+  if (auto first = dyn_cast<semantic::SVFirstMatchAssertionExprOp>(property)) {
+    SmallVector<Operation *> nested = getChildren(first);
+    if (first.getMatchItemCount() != 0 || nested.size() != 1)
+      return emitError(getSemanticLocation(first))
+                 << "bounded first_match does not yet support match items",
+             failure();
+    property = unwrapAssertionInstance(nested.front());
+    if (!property)
+      return first.emitError("first_match wraps an unsupported assertion "
+                             "instance"),
+             failure();
+    firstMatch = true;
+  }
+
   bool multiClockAttempt =
       op->hasAttr("obelisk_sim.multiclock_sequence_attempt");
   MultiClockSequence multiClockSequence;
@@ -898,7 +982,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       succeeded(compiled) && compiled->changesClock &&
       compiled->hasLeadingDelay) {
     multiClockSequence = std::move(*compiled);
-    if (localInstance || disable || expectMonitor ||
+    if (localInstance || disable || expectMonitor || firstMatch ||
         op.getAssertionKind() == semantic::SVAssertionKind::CoverSequence)
       return emitError(getSemanticLocation(property))
                  << "multi-clock sequence handoff currently requires a plain "
@@ -917,12 +1001,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
       uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
       uint64_t occurrence = nextForkOrdinal;
-      std::string identity =
-          (function.getSymName() + ".$multiclock_attempt." + Twine(node) +
-           "." + Twine(occurrence))
-              .str();
-      Attribute previousCodeUnit =
-          op->getAttr("obelisk_sim.fork_code_unit_id");
+      std::string identity = (function.getSymName() + ".$multiclock_attempt." +
+                              Twine(node) + "." + Twine(occurrence))
+                                 .str();
+      Attribute previousCodeUnit = op->getAttr("obelisk_sim.fork_code_unit_id");
       op->setAttr("obelisk_sim.fork_code_unit_id",
                   builder.getI64IntegerAttr(stableCodeUnitID(identity)));
       op->setAttr("obelisk_sim.multiclock_sequence_attempt",
@@ -943,18 +1025,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       attempt->first->setAttr("obelisk_sim.detached_controls",
                               builder.getUnitAttr());
       attempt->first->setAttr(
-          "home_region",
-          sim::EventRegionAttr::get(function.getContext(),
-                                    sim::EventRegion::Observed));
+          "home_region", sim::EventRegionAttr::get(function.getContext(),
+                                                   sim::EventRegion::Observed));
       attempt->first->setAttr(
           "domain", sim::ExecutionDomainAttr::get(
                         function.getContext(), sim::ExecutionDomain::Design));
       function->setAttr("obelisk_sim.multiclock_sequence_monitor",
                         builder.getUnitAttr());
-      function->setAttr(
-          "home_region",
-          sim::EventRegionAttr::get(function.getContext(),
-                                    sim::EventRegion::Observed));
+      function->setAttr("home_region",
+                        sim::EventRegionAttr::get(function.getContext(),
+                                                  sim::EventRegion::Observed));
       function->setAttr(
           "domain", sim::ExecutionDomainAttr::get(
                         function.getContext(), sim::ExecutionDomain::Design));
@@ -994,12 +1074,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     // monitor state that it will never use.
     sequence.ages.resize(1);
   } else if (auto binary =
-          dyn_cast_or_null<semantic::SVBinaryAssertionExprOp>(property);
-      binary &&
-      (binary.getOperatorKind() ==
-           semantic::SVAssertionBinaryOperator::OverlappedImplication ||
-       binary.getOperatorKind() ==
-           semantic::SVAssertionBinaryOperator::NonOverlappedImplication)) {
+                 dyn_cast_or_null<semantic::SVBinaryAssertionExprOp>(property);
+             binary &&
+             (binary.getOperatorKind() ==
+                  semantic::SVAssertionBinaryOperator::OverlappedImplication ||
+              binary.getOperatorKind() == semantic::SVAssertionBinaryOperator::
+                                              NonOverlappedImplication)) {
     SmallVector<Operation *> operands = getChildren(binary);
     if (operands.size() != 2)
       return binary.emitError("malformed implication"), failure();
@@ -1025,8 +1105,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       return emitError(getSemanticLocation(property))
                  << "AOT concurrent monitors currently support boolean "
                     "terms, bounded ## delays, bounded and/or/intersect/"
-                    "throughout composition, and fixed consecutive "
-                    "repetition",
+                    "throughout/within composition, and bounded positive "
+                    "consecutive repetition",
              failure();
     if (compiled->size() == 1)
       sequence = std::move(compiled->front());
@@ -1034,25 +1114,27 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       sequenceAlternatives = std::move(*compiled);
   }
   bool branchingSequence = !sequenceAlternatives.empty();
+  if (firstMatch)
+    function->setAttr("obelisk_sim.first_match_monitor", builder.getUnitAttr());
   if ((!branchingSequence && sequence.ages.empty()) ||
-      llvm::any_of(sequenceAlternatives, [](const FixedSequence &alternative) {
-        return alternative.ages.empty() || alternative.ages.size() > 63;
-      }) ||
+      llvm::any_of(sequenceAlternatives,
+                   [](const FixedSequence &alternative) {
+                     return alternative.ages.empty() ||
+                            alternative.ages.size() > 63;
+                   }) ||
       sequence.ages.size() > 63)
     return op.emitError("concurrent monitor horizon must be 1..63 cycles"),
            failure();
-  if (branchingSequence && (localInstance || implication || disable ||
-                            expectMonitor))
+  if (branchingSequence &&
+      (localInstance || implication || disable || expectMonitor))
     return emitError(getSemanticLocation(property))
                << "branching bounded sequences currently require a plain "
                   "concurrent directive without locals, implication, "
                   "disable iff, or expect",
            failure();
   if (branchingSequence &&
-      llvm::any_of(sequenceAlternatives,
-                   [](const FixedSequence &alternative) {
-        return llvm::any_of(alternative.ages,
-                            [](const FixedSequenceAge &age) {
+      llvm::any_of(sequenceAlternatives, [](const FixedSequence &alternative) {
+        return llvm::any_of(alternative.ages, [](const FixedSequenceAge &age) {
           return !age.matchItems.empty();
         });
       }))
@@ -1094,10 +1176,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (!resultStorage && resultPath)
       resultStorage = values.lookup(resultPath.getValue());
     if (!completed || !isa<sim::EventType>(completed.getType()) ||
-        !resultStorage ||
-        !isa<sim::RefType>(resultStorage.getType()))
-      return emitError(location)
-                 << "expect monitor has no completion captures",
+        !resultStorage || !isa<sim::RefType>(resultStorage.getType()))
+      return emitError(location) << "expect monitor has no completion captures",
              failure();
 
     function->setAttr("home_region",
@@ -1105,7 +1185,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                                 sim::EventRegion::Observed));
     function->setAttr(
         "domain", sim::ExecutionDomainAttr::get(function.getContext(),
-                                                 sim::ExecutionDomain::Design));
+                                                sim::ExecutionDomain::Design));
     Block *successBlock = addBlock();
     Block *failureBlock = addBlock();
     Block *wait = addBlock();
@@ -1141,9 +1221,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           return failure();
         matches = arith::AndIOp::create(builder, location, matches, *truth);
       }
-      Block *matched = age + 1 == sequence.ages.size()
-                           ? successBlock
-                           : addBlock();
+      Block *matched =
+          age + 1 == sequence.ages.size() ? successBlock : addBlock();
       cf::CondBranchOp::create(builder, location, matches, matched,
                                ValueRange{}, failureBlock, ValueRange{});
       wait = matched;
@@ -1171,9 +1250,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   Type stateType = builder.getI64Type();
   Value zero = arith::ConstantOp::create(builder, location, stateType,
                                          builder.getI64IntegerAttr(0));
-  bool needsState =
-      disable || (!branchingSequence && sequence.ages.size() > 1) ||
-      (implication && nonoverlapped);
+  bool needsState = disable ||
+                    (!branchingSequence && sequence.ages.size() > 1) ||
+                    (implication && nonoverlapped);
   Value stateStorage;
   if (needsState)
     stateStorage = sim::SimRefAllocOp::create(
@@ -1506,13 +1585,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   };
 
   if (multiClockAttempt) {
+    function->setAttr("home_region",
+                      sim::EventRegionAttr::get(function.getContext(),
+                                                sim::EventRegion::Observed));
     function->setAttr(
-        "home_region",
-        sim::EventRegionAttr::get(function.getContext(),
-                                  sim::EventRegion::Observed));
-    function->setAttr(
-        "domain", sim::ExecutionDomainAttr::get(
-                      function.getContext(), sim::ExecutionDomain::Design));
+        "domain", sim::ExecutionDomainAttr::get(function.getContext(),
+                                                sim::ExecutionDomain::Design));
     Block *successBlock = addBlock();
     Block *failureBlock = addBlock();
     Block *wait = addBlock();
@@ -1606,9 +1684,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   if (branchingSequence) {
     function->setAttr("obelisk_sim.branching_sequence_monitor",
                       builder.getUnitAttr());
-    function->setAttr(
-        "obelisk_sim.branching_sequence_alternatives",
-        builder.getI64IntegerAttr(sequenceAlternatives.size()));
+    function->setAttr("obelisk_sim.branching_sequence_alternatives",
+                      builder.getI64IntegerAttr(sequenceAlternatives.size()));
     SmallVector<Value> alternativeStates;
     alternativeStates.reserve(sequenceAlternatives.size());
     for (const FixedSequence &alternative : sequenceAlternatives) {
@@ -1687,17 +1764,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         return failure();
       starts[alternativeIndex] = *start;
       if (alternative.ages.size() == 1)
-        successAny[0] = arith::OrIOp::create(builder, location, successAny[0],
-                                             *start);
+        successAny[0] =
+            arith::OrIOp::create(builder, location, successAny[0], *start);
       else
-        continueAny[0] = arith::OrIOp::create(
-            builder, location, continueAny[0], *start);
+        continueAny[0] =
+            arith::OrIOp::create(builder, location, continueAny[0], *start);
 
       if (alternative.ages.size() == 1)
         continue;
       Value state = sim::SimRefLoadOp::create(
-          builder, location, stateType,
-          alternativeStates[alternativeIndex]);
+          builder, location, stateType, alternativeStates[alternativeIndex]);
       for (uint64_t age = 1; age < alternative.ages.size(); ++age) {
         Value mask = arith::ConstantOp::create(
             builder, location, stateType,
@@ -1706,8 +1782,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             arith::AndIOp::create(builder, location, state, mask);
         Value active = arith::CmpIOp::create(
             builder, location, arith::CmpIPredicate::ne, presentBits, zero);
-        activeAny[age] = arith::OrIOp::create(builder, location,
-                                              activeAny[age], active);
+        activeAny[age] =
+            arith::OrIOp::create(builder, location, activeAny[age], active);
         FailureOr<Value> matches =
             evaluateAge(alternative.ages[age].predicates);
         if (failed(matches))
@@ -1716,11 +1792,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             arith::AndIOp::create(builder, location, active, *matches);
         survives[alternativeIndex][age] = advances;
         if (age + 1 == alternative.ages.size())
-          successAny[age] = arith::OrIOp::create(
-              builder, location, successAny[age], advances);
+          successAny[age] = arith::OrIOp::create(builder, location,
+                                                 successAny[age], advances);
         else
-          continueAny[age] = arith::OrIOp::create(
-              builder, location, continueAny[age], advances);
+          continueAny[age] = arith::OrIOp::create(builder, location,
+                                                  continueAny[age], advances);
       }
     }
 
@@ -1732,8 +1808,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       Value startEnabled = arith::AndIOp::create(
           builder, location, starts[alternativeIndex],
           arith::XOrIOp::create(builder, location, successAny[0], trueValue));
-      Value firstMask = arith::ConstantOp::create(
-          builder, location, stateType, builder.getI64IntegerAttr(2));
+      Value firstMask = arith::ConstantOp::create(builder, location, stateType,
+                                                  builder.getI64IntegerAttr(2));
       nextState = arith::OrIOp::create(
           builder, location, nextState,
           arith::SelectOp::create(builder, location, startEnabled, firstMask,
@@ -1768,8 +1844,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     };
     for (size_t age = 1; age < horizon; ++age) {
       reportWhen(successAny[age], true);
-      Value finished = arith::OrIOp::create(
-          builder, location, successAny[age], continueAny[age]);
+      Value finished = arith::OrIOp::create(builder, location, successAny[age],
+                                            continueAny[age]);
       Value failedAttempt = arith::AndIOp::create(
           builder, location, activeAny[age],
           arith::XOrIOp::create(builder, location, finished, trueValue));
@@ -1778,9 +1854,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     reportWhen(successAny[0], true);
     Value startFinished =
         arith::OrIOp::create(builder, location, successAny[0], continueAny[0]);
-    reportWhen(arith::XOrIOp::create(builder, location, startFinished,
-                                     trueValue),
-               false);
+    reportWhen(
+        arith::XOrIOp::create(builder, location, startFinished, trueValue),
+        false);
 
     for (auto [state, nextState] :
          llvm::zip_equal(alternativeStates, nextStates))
@@ -1954,8 +2030,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             if (auto named =
                     dyn_cast<semantic::SVNamedValueExpressionOp>(nested))
               path = named.getReferencedPath();
-            else if (auto hierarchical = dyn_cast<
-                         semantic::SVHierarchicalValueExpressionOp>(nested))
+            else if (auto hierarchical =
+                         dyn_cast<semantic::SVHierarchicalValueExpressionOp>(
+                             nested))
               path = hierarchical.getReferencedPath();
             else if (auto member =
                          dyn_cast<semantic::SVMemberAccessExpressionOp>(nested))
@@ -1974,8 +2051,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           uint64_t occurrence = nextForkOrdinal;
           std::string identity =
               (function.getSymName() + ".$concurrent_match_call." +
-               Twine(node) + "." + Twine(itemID) + "." +
-               Twine(occurrence))
+               Twine(node) + "." + Twine(itemID) + "." + Twine(occurrence))
                   .str();
           Attribute previousCodeUnit =
               item->getAttr("obelisk_sim.fork_code_unit_id");
@@ -1995,10 +2071,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
               "home_region",
               sim::EventRegionAttr::get(function.getContext(),
                                         sim::EventRegion::Reactive));
-          callback->first->setAttr(
-              "domain",
-              sim::ExecutionDomainAttr::get(
-                  function.getContext(), sim::ExecutionDomain::Design));
+          callback->first->setAttr("domain", sim::ExecutionDomainAttr::get(
+                                                 function.getContext(),
+                                                 sim::ExecutionDomain::Design));
           callback->first->setAttr("obelisk_sim.concurrent_match_call",
                                    builder.getUnitAttr());
           callback->first->setAttr("obelisk_sim.detached_controls",
@@ -2008,8 +2083,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                   callback->second, ArrayAttr{}, ArrayAttr{});
           continue;
         }
-        if (assignment.getHasTimingControl() ||
-            assignment.getOperatorKind() ||
+        if (assignment.getHasTimingControl() || assignment.getOperatorKind() ||
             assignment.getAssignmentKind() !=
                 semantic::SVAssignmentKind::Blocking ||
             operands.size() != 2)

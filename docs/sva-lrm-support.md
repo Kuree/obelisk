@@ -11,6 +11,10 @@ This document tracks Obelisk against the assertion facilities in IEEE Std
   preferred to an approximation with different scheduling, sampling, vacuity,
   or endpoint semantics.
 
+Obelisk does **not** currently implement the full SVA language. Passing UVM or
+the pinned sv-tests corpus demonstrates the executable subset those suites
+exercise; it is not a claim of complete IEEE 1800 assertion conformance.
+
 The active normative reference is IEEE Std 1800-2023, principally the
 assertions and checker chapters and the assertion-related system tasks and
 functions.  The standard is available through the IEEE GET program:
@@ -27,8 +31,8 @@ functions.  The standard is available through the IEEE GET program:
 | Sampled-value functions | Executable subset | `$sampled`, `$past`, `$rose`, `$fell`, `$stable`, and `$changed` work on statically addressable packed storage. `$past` supports constant positive depth and a statically addressable gate, using bounded per-logical-process history. Concurrent predicates may select a direct alternate edge clock with an optional direct `iff`; Postponed history updates preserve strictly prior-clock semantics. The compiler coalesces referenced canonical bit ranges so Preponed capture copies only sampled state. | Add simultaneous `$past` gate plus explicit-clock `iff`, automatic/computed operands, full clock-context validation, and the remaining global sampled-value functions. |
 | Boolean sequence terms | Executable subset | Four-state sampled terms are converted to assertion truth in generated SSA. | Support arbitrary legal sequence expressions, formal arguments, local variables, and match items. |
 | Cycle delay `##` | Executable subset | Fixed nonnegative `##N` and small bounded `##[M:N]` ranges are compiled AOT with a total horizon of at most 63 samples. Branching expansion is capped at 256 exact traces. | Add unbounded delays, larger endpoint sets without trace expansion, dynamic delay extensions if supported by policy, and unbounded/end-of-simulation behavior. |
-| Repetition | Executable subset | Fixed positive consecutive `[*N]` within the 63-sample horizon is compiled AOT. | Add ranges, `[*0]`, unbounded repetition, nonconsecutive `[=]`, goto `[->]`, and their endpoint semantics. |
-| Sequence composition | Executable subset | Bounded `and`, `or`, `intersect`, and `throughout` compile to at most 256 exact traces for plain concurrent directives without locals, implication, `disable iff`, or `expect`. Equivalent direct clocks flow through named sequence expansion. Branching `cover sequence` remains rejected because each successful endpoint must be counted separately. `within` and `first_match`-style structure remain semantic IR only. | Replace trace expansion with compact thread merging, add per-match cover accounting, match-item/local flow, and operator-specific empty-match rules. |
+| Repetition | Executable subset | Fixed and finite positive consecutive `[*N]` / `[*M:N]` repetition within the 63-sample horizon and 256-trace cap is compiled AOT. | Add `[*0]`, unbounded repetition, nonconsecutive `[=]`, goto `[->]`, and their endpoint semantics. |
+| Sequence composition | Executable subset | Bounded `and`, `or`, `intersect`, `throughout`, and `within` compile to at most 256 exact traces for plain concurrent directives without locals, implication, `disable iff`, or `expect`. Top-level bounded `first_match` uses the monitor's earliest-success suppression without match items. Equivalent direct clocks flow through named sequence expansion. Branching `cover sequence` remains rejected because each successful endpoint must be counted separately. | Replace trace expansion with compact thread merging, add nested `first_match` continuation priority, per-match cover accounting, match-item/local flow, and operator-specific empty-match rules. |
 | Property implication | Executable subset | `|->` and `|=>` work for an atomic antecedent and a bounded fixed consequent. Overlapping attempts use compiler-generated bitset state. False antecedents produce vacuous assertion success but never a cover hit. | Add arbitrary antecedent endpoint sets, vacuity control/accounting, followed-by forms, and composition with all property operators. |
 | Other property operators | Semantic IR; rejected | IR preserves `not`, `and`, `or`, `iff`, `implies`, `until`, `s_until`, `until_with`, `s_until_with`, `nexttime`, `s_nexttime`, `always`, `s_always`, `eventually`, and `s_eventually`. | Implement weak/strong termination, finite-simulation completion, vacuity, and the precise attempt/thread semantics of each operator. |
 | `strong` / `weak` | Semantic IR; rejected | Strength is preserved. | Implement end-of-simulation success/failure and composition rules. |
@@ -41,6 +45,28 @@ functions.  The standard is available through the IEEE GET program:
 | Attempt, success, failure and vacuity accounting | Rejected except observable immediate failures | No incomplete counters are exposed. | Add counters and query/control behavior for immediate and concurrent assertions, including vacuous success and disabled/killed attempts. |
 | Checker declarations and instances | Semantic IR | Checker declaration ports; static and procedural instance identities; resolved formal/actual connection metadata; instance-body declaration/parent identity, nesting and context; and procedural checker-statement identities are preserved with verifiers. An elaborated instance body retains its cloned ports, default clock/default disable, properties, assertions, procedures, and expressions. | Execute checker procedures/assertions, infer all checker clocks, implement free-variable and hierarchy behavior, and preserve a standalone uninstantiated body if the frontend exposes one; currently Slang exposes member bodies only through an elaborated `CheckerInstanceBodySymbol`. |
 | Assertion VPI/API | Rejected | No partial assertion object model is exposed. | Add assertion/attempt objects, callbacks, reason/status data, controls, and stable hierarchy after core simulation semantics are complete. |
+
+## Implementation order
+
+The remaining work has semantic dependencies and should not be implemented as
+independent syntax cases:
+
+1. Finish the bounded monitor surface: nested `first_match`, arbitrary bounded
+   implication antecedents, empty-match rules, branching match-item
+   flow, and per-endpoint `cover sequence` reporting.
+2. Add a runtime representation for unbounded live attempts and explicit
+   end-of-simulation completion. This unlocks unbounded delay/repetition,
+   `until`/`eventually`/`always`, and correct `strong`/`weak` behavior.
+3. Generalize clock inference and maximal clocked subsequences, then compose
+   abort operators, automatic locals, and ordered Reactive match actions with
+   that attempt model.
+4. Build complete attempt/success/failure/vacuity accounting and assertion
+   controls on the stable core semantics. Checker execution and assertion VPI
+   follow because both expose those identities and counters publicly.
+
+This ordering keeps bounded assertions fast while avoiding temporary
+implementations whose vacuity, endpoint, or event-region behavior would later
+have to change.
 
 ## Runtime architecture
 
