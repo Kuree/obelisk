@@ -316,6 +316,68 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 200 : i64, procedure_kind = 2 : i32, sym_name = "s200", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 201 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 202 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 203 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 204 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.binary attributes {node_id = 205 : i64, operator_kind = 11 : i32} {
+                obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 1 : i64}], node_id = 206 : i64} {
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 207 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 208 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 209 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 210 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s14.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                }
+                obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}], node_id = 211 : i64} {
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 212 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 213 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 214 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 215 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s14.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                }
+              }
+            }
+            obelisk.sv.statement.expression_statement attributes {node_id = 216 : i64} {
+              obelisk.sv.expression.call attributes {argument_count = 0 : i64, callee_name = "$display", constraint_restrictions = [], defaulted_arguments = array<i64>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 217 : i64, semantic_type = !obelisk.void, subroutine_kind = 1 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s3.top::@s4.top} {
+              }
+            }
+          }
+        }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 220 : i64, procedure_kind = 2 : i32, sym_name = "s220", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 221 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 222 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 223 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 224 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.binary attributes {node_id = 225 : i64, operator_kind = 12 : i32} {
+                obelisk.sv.assertion.binary attributes {node_id = 226 : i64, operator_kind = 1 : i32} {
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 227 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 228 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 229 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 230 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s14.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                }
+                obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 231 : i64, repetition_is_unbounded = false} {
+                  obelisk.sv.expression.named_value attributes {node_id = 232 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -430,4 +492,32 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 4 : i64
 // CHECK-SAME: obelisk_sim.first_match_monitor
 // CHECK-SAME: obelisk_sim.first_match_priority_groups = 2 : i64
+
+// A ranged antecedent retains both exact traces and gives each trace its own
+// compact consequent channel. Vacuity is decided only after all live
+// antecedent alternatives for one property attempt are exhausted.
+// CHECK-LABEL: obelisk_sim.func private @unit_11(
+// CHECK-SAME: obelisk_sim.bounded_antecedent_horizon = 3 : i64
+// CHECK-SAME: obelisk_sim.branching_antecedent_alternatives = 2 : i64
+// CHECK-SAME: obelisk_sim.branching_antecedent_match_channels = 2 : i64
+// CHECK-SAME: obelisk_sim.branching_antecedent_monitor
+// CHECK: arith.andi {{.*}}obelisk_sim.branching_antecedent_channel = 0 : i64{{.*}}obelisk_sim.branching_antecedent_consequent_trigger
+// CHECK: arith.andi {{.*}}obelisk_sim.branching_antecedent_channel = 1 : i64{{.*}}obelisk_sim.branching_antecedent_consequent_trigger
+// CHECK: arith.select {{.*}}obelisk_sim.branching_antecedent_matched_history
+// CHECK: arith.andi {{.*}}obelisk_sim.branching_antecedent_vacuity
+// CHECK: cf.br {{.*}}obelisk_sim.branching_antecedent_backedge
+
+// Same-endpoint `or` alternatives retain two nonoverlapped consequent
+// triggers while sharing only the ordinary implication-vacuity history.
+// CHECK-LABEL: obelisk_sim.func private @unit_12(
+// CHECK-SAME: obelisk_sim.branching_antecedent_alternatives = 2 : i64
+// CHECK-SAME: obelisk_sim.branching_antecedent_match_channels = 2 : i64
+// CHECK-SAME: obelisk_sim.branching_antecedent_monitor
+// CHECK: [[A_SAMPLE:%.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg2
+// CHECK: [[A_MATCH:%.*]] = obelisk_sim.logic.is_true [[A_SAMPLE]]
+// CHECK: [[B_SAMPLE:%.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg3
+// CHECK: [[B_MATCH:%.*]] = obelisk_sim.logic.is_true [[B_SAMPLE]]
+// CHECK: [[A_CHANNEL:%.*]] = arith.extui [[A_MATCH]] : i1 to i64
+// CHECK: [[B_CHANNEL:%.*]] = arith.extui [[B_MATCH]] : i1 to i64
+// CHECK: cf.br {{.*}}([[A_CHANNEL]], [[B_CHANNEL]] : i64, i64) {obelisk_sim.branching_antecedent_backedge}
 // CHECK-NOT: obelisk.sv.assertion

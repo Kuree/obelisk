@@ -25,6 +25,53 @@ class ObeliskSimMaterializeClockedSamplesPass
 public:
   void runOnOperation() override {
     sim::SimDesignOp design = getOperation();
+    bool invalid = false;
+    for (sim::SimFuncOp function :
+         design.getBody().front().getOps<sim::SimFuncOp>()) {
+      auto propagateObserverRequest = [&](StringRef requestName,
+                                          StringRef targetName,
+                                          StringRef kind) {
+        auto requests = function->getAttrOfType<ArrayAttr>(requestName);
+        if (!requests)
+          return;
+        bool requestInvalid = false;
+        for (Attribute request : requests) {
+          auto evaluatorRef = dyn_cast<FlatSymbolRefAttr>(request);
+          if (!evaluatorRef) {
+            function.emitError()
+                << "concurrent " << kind
+                << " observer request is not a flat symbol reference";
+            requestInvalid = invalid = true;
+            continue;
+          }
+          sim::SimFuncOp evaluator =
+              design.lookupSymbol<sim::SimFuncOp>(evaluatorRef);
+          if (!evaluator) {
+            function.emitError()
+                << "concurrent " << kind << " observer evaluator "
+                << evaluatorRef << " is missing";
+            requestInvalid = invalid = true;
+            continue;
+          }
+          evaluator->setAttr(targetName, UnitAttr::get(design.getContext()));
+          evaluator->setAttr("obelisk_sim.detached_controls",
+                             UnitAttr::get(design.getContext()));
+        }
+        if (!requestInvalid)
+          function->removeAttr(requestName);
+      };
+      propagateObserverRequest(
+          simlowering::concurrentCancelObserverRequestAttrName,
+          "obelisk_sim.concurrent_cancel_observer", "cancel");
+      propagateObserverRequest(
+          simlowering::concurrentAbortObserverRequestAttrName,
+          "obelisk_sim.concurrent_abort_observer", "abort");
+    }
+    if (invalid) {
+      signalPassFailure();
+      return;
+    }
+
     sim::SimFuncOp root;
     llvm::StringMap<SmallVector<sim::SimFuncOp, 2>> planGroups;
     for (sim::SimFuncOp function :
@@ -56,7 +103,6 @@ public:
     Value context = root.getBody().front().getArgument(0);
     OpBuilder declarationBuilder(&design.getBody().front(),
                                  design.getBody().front().begin());
-    bool invalid = false;
     llvm::DenseMap<uint64_t, Operation *> codeUnitIDs;
     for (sim::SimCodeUnitDeclOp declaration :
          design.getBody().front().getOps<sim::SimCodeUnitDeclOp>())

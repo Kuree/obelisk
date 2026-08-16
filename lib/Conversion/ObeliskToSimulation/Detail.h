@@ -157,6 +157,13 @@ inline constexpr ::mlir::StringLiteral observerResultAttrName =
     "obelisk_sim.observer_result";
 inline constexpr ::mlir::StringLiteral observerEventPrimaryAttrName =
     "obelisk_sim.event_primary";
+/// Unit lowering is a parallel nested-function pipeline. Observer users mark
+/// their own function and the following serial design pass propagates these
+/// requests to the shared evaluator without cross-function mutation.
+inline constexpr ::mlir::StringLiteral concurrentCancelObserverRequestAttrName =
+    "obelisk_sim.concurrent_cancel_observer_request";
+inline constexpr ::mlir::StringLiteral concurrentAbortObserverRequestAttrName =
+    "obelisk_sim.concurrent_abort_observer_request";
 inline constexpr ::mlir::StringLiteral sequenceEndpointEventAttrName =
     "obelisk_sim.sequence_endpoint_event";
 inline constexpr ::mlir::StringLiteral sequenceEndpointMonitorAttrName =
