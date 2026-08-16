@@ -8,7 +8,9 @@
 
 #include <algorithm>
 #include <limits>
+#ifdef OBELISK_Z3_SINGLE_THREADED
 #include <mutex>
+#endif
 #include <numeric>
 #include <optional>
 #include <string>
@@ -85,16 +87,19 @@ BooleanDNFAnalysis minimizeBooleanDNF(std::vector<BooleanCube> cubes,
   if (analysis.cubes.empty() || resourceLimit == 0 || queryLimit == 0)
     return analysis;
 
-  // Obelisk intentionally builds Z3 with Z3_SINGLE_THREADED. MLIR may lower
-  // independent assertion units concurrently, so all entries into the Z3 C
-  // API must share the same compiler-side lock even when they use separate
-  // contexts. The formulas are tiny and runtime code remains fully parallel.
+#ifdef OBELISK_Z3_SINGLE_THREADED
+  // The non-pthread wasm compiler uses Z3's single-threaded build.
   std::lock_guard<std::mutex> z3Lock(detail::getZ3Mutex());
+#endif
   try {
-    // Reuse one propositional context across assertion units. Context
-    // construction is otherwise larger than these tiny SAT queries, and the
-    // process-wide Z3 lock already provides its required exclusivity.
+#ifdef OBELISK_Z3_SINGLE_THREADED
     static z3::context context;
+#else
+    // Z3 contexts are isolated rather than shared across native MLIR workers.
+    // Reuse one per worker thread because constructing a context is larger than
+    // these tiny propositional queries.
+    static thread_local z3::context context;
+#endif
     uint32_t maximumVariable = 0;
     for (const BooleanCube &cube : analysis.cubes)
       for (BooleanLiteral literal : cube)

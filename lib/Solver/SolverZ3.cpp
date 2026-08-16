@@ -20,7 +20,9 @@
 #include <algorithm>
 #include <climits>
 #include <cstdint>
+#ifdef OBELISK_Z3_SINGLE_THREADED
 #include <mutex>
+#endif
 #include <optional>
 #include <string>
 #include <utility>
@@ -274,10 +276,12 @@ private:
 
 } // namespace
 
+#ifdef OBELISK_Z3_SINGLE_THREADED
 std::mutex &detail::getZ3Mutex() {
   static std::mutex mutex;
   return mutex;
 }
+#endif
 
 RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
                                            size_t programSize,
@@ -290,9 +294,12 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
   if (!smt)
     return analysis;
 
-  // Decoding and SMT-dialect construction are independent compiler work. Only
-  // serialize the region that enters the non-thread-safe Z3 library.
+#ifdef OBELISK_Z3_SINGLE_THREADED
+  // The non-pthread wasm build removes Z3's internal synchronization. Native
+  // compilers instead use the thread-safe build and enter here concurrently
+  // with one context per worker invocation.
   std::lock_guard<std::mutex> lock(detail::getZ3Mutex());
+#endif
 
   // Z3 uses exceptions internally even though the rest of Obelisk follows
   // LLVM's no-exceptions convention. They are contained within this

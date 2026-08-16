@@ -11,6 +11,9 @@ if(OBELISK_ENABLE_Z3)
   # backend before creating it so both implementation translation units select
   # exactly one analyzeRandomProgram definition.
   add_compile_definitions(OBELISK_ENABLE_Z3=1)
+  if(EMSCRIPTEN)
+    add_compile_definitions(OBELISK_Z3_SINGLE_THREADED=1)
+  endif()
   # Z3's public C++ header predates LLVM's suggest-override policy.
   set_source_files_properties(BooleanDNF.cpp SolverZ3.cpp PROPERTIES
     COMPILE_OPTIONS "-fexceptions;-Wno-suggest-override")

@@ -1,12 +1,16 @@
 #ifndef OBELISK_SOLVER_Z3SUPPORT_H
 #define OBELISK_SOLVER_Z3SUPPORT_H
 
+#ifdef OBELISK_Z3_SINGLE_THREADED
 #include <mutex>
+#endif
 
 namespace obelisk::solver::detail {
 
-/// One process-wide gate for the compiler's Z3_SINGLE_THREADED build.
+#ifdef OBELISK_Z3_SINGLE_THREADED
+/// One process-wide gate for the non-pthread wasm compiler's Z3 build.
 std::mutex &getZ3Mutex();
+#endif
 
 } // namespace obelisk::solver::detail
 

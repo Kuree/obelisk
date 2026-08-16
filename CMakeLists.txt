@@ -225,6 +225,11 @@ if(OBELISK_ENABLE_Z3)
   set(OBELISK_Z3_ARCHIVE_SHA256
       "4071977e66e9f3d239b7b098ceddfe62ffdf3c71e345e9524a4a5001d1f4adf3")
   set(_obelisk_z3_install "${CMAKE_BINARY_DIR}/z3-${OBELISK_Z3_VERSION}")
+  if(EMSCRIPTEN)
+    set(_obelisk_z3_single_threaded ON)
+  else()
+    set(_obelisk_z3_single_threaded OFF)
+  endif()
   set(_obelisk_z3_cmake_args
       -DCMAKE_BUILD_TYPE=Release
       -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
@@ -241,11 +246,12 @@ if(OBELISK_ENABLE_Z3)
       -DZ3_INCLUDE_GIT_HASH=OFF
       -DZ3_INCLUDE_GIT_DESCRIBE=OFF
       -DZ3_LINK_TIME_OPTIMIZATION=OFF
-      -DZ3_SINGLE_THREADED=ON
+      -DZ3_SINGLE_THREADED=${_obelisk_z3_single_threaded}
       -DZ3_POLLING_TIMER=ON)
   # Preserve cross-compilation, including Emscripten, across the isolated
-  # nested configure. Z3's single-threaded polling mode avoids timer threads
-  # and does not require a pthread-enabled WebAssembly runtime.
+  # nested configure. Native compilers use Z3's thread-safe build so independent
+  # MLIR workers can solve concurrently. The wasm compiler retains
+  # single-threaded polling mode because it has no pthread runtime.
   if(CMAKE_TOOLCHAIN_FILE)
     list(APPEND _obelisk_z3_cmake_args
       "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}")
@@ -306,6 +312,9 @@ if(OBELISK_ENABLE_Z3)
     # DISABLE_EXCEPTION_CATCHING=0 setting is incompatible with that ABI.
     target_link_options(ObeliskZ3 INTERFACE
       "SHELL:-s ALLOW_MEMORY_GROWTH=1")
+  else()
+    find_package(Threads REQUIRED)
+    target_link_libraries(ObeliskZ3 INTERFACE Threads::Threads)
   endif()
   add_dependencies(ObeliskZ3 obelisk_z3_project)
   message(STATUS "Building compiler-only Z3 ${OBELISK_Z3_VERSION} from source")
