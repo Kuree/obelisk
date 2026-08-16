@@ -2581,11 +2581,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                   "##[M:$] Boolean consequent without an explicit prefix",
            failure();
   if (branchingAntecedent &&
-      (localInstance || disable || expectMonitor || endStrength))
+      (localInstance || expectMonitor || endStrength))
     return emitError(getSemanticLocation(implication))
                << "branching implication/followed-by antecedents currently "
-                  "require a plain concurrent directive without locals, "
-                  "disable iff, expect, or outer strong/weak qualification",
+                  "require a concurrent directive without locals, expect, "
+                  "or outer strong/weak qualification",
            failure();
   if (branchingAntecedent && llvm::any_of(antecedentAlternatives,
                                           [](const FixedSequence &alternative) {
@@ -2597,11 +2597,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
            failure();
   if (branchingConsequent &&
       (branchingAntecedent || antecedentSequence.ages.size() != 1 ||
-       localInstance || disable || expectMonitor || endStrength))
+       localInstance || expectMonitor || endStrength))
     return emitError(getSemanticLocation(implication))
                << "branching implication/followed-by consequents currently "
-                  "require one Boolean antecedent in a plain concurrent "
-                  "directive without locals, disable iff, expect, or outer "
+                  "require one Boolean antecedent in a concurrent directive "
+                  "without locals, expect, or outer "
                   "strong/weak qualification",
            failure();
   if (branchingConsequent &&
@@ -2669,11 +2669,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             semantic::stringifySVAssertionAbortAction(abort.getAction())));
   }
   if (branchingSequence &&
-      (localInstance || implication || disable || expectMonitor))
+      (localInstance || implication || expectMonitor))
     return emitError(getSemanticLocation(property))
-               << "branching bounded sequences currently require a plain "
-                  "concurrent directive without locals, implication, "
-                  "disable iff, or expect",
+               << "branching bounded sequences currently require a "
+                  "concurrent directive without locals, implication, or "
+                  "expect",
            failure();
   if (endStrength &&
       (implication || branchingSequence || hasPersistentUntil ||
@@ -2817,7 +2817,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   bool persistentStateOwner = hasPersistentDelay || hasPersistentUnary ||
                               hasPersistentUntil || hasPersistentRepetition;
   bool needsState =
-      (disable && !persistentStateOwner) ||
+      (disable && !persistentStateOwner && !branchingSequence &&
+       !branchingAntecedent && !branchingConsequent) ||
       (abort && !abort.getIsSynchronous() && !persistentStateOwner) ||
       (!branchingSequence && sequence.ages.size() > 1) ||
       (implication && !branchingAntecedent && !branchingConsequent &&
@@ -2839,7 +2840,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   if (disable) {
     // `disable iff` is unsampled and asynchronous. Bind its two-state truth
     // value as a computed observer: every false-to-true transition wakes a
-    // cold Observed actor which clears live attempts and advances an epoch.
+    // cold Reactive actor which clears live attempts and advances an epoch.
     // Reactive reports capture that epoch and become no-ops when cancellation
     // overtakes an already queued callback in the same time slot.
     FailureOr<Value> current = lowerExpression(disable);
@@ -2991,10 +2992,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       [&](ArrayRef<Value> stateStorages) -> LogicalResult {
     if (!disable)
       return success();
-    if (!disableDesign || !disableObserverBinding || stateStorages.empty())
+    if (!disableDesign || !disableObserverBinding)
       return function.emitError(
-                 "concurrent disable outlining requires a design, observer, "
-                 "and at least one monitor state storage"),
+                 "concurrent disable outlining requires a design and "
+                 "observer"),
              failure();
 
     std::string symbol =
@@ -3179,7 +3180,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return success();
   };
 
-  if (disable && !persistentStateOwner &&
+  if (disable && !persistentStateOwner && !branchingSequence &&
+      !branchingAntecedent && !branchingConsequent &&
       failed(outlineDisableObserver({stateStorage})))
     return failure();
 
@@ -5498,6 +5500,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             builder, location,
             sim::RefType::get(function.getContext(), stateType), zero);
 
+    SmallVector<Value> branchingStateStorages;
+    for (Value storage : alternativeStates)
+      if (storage)
+        branchingStateStorages.push_back(storage);
+    if (matchedState)
+      branchingStateStorages.push_back(matchedState);
+    if (consequentNeedsState)
+      llvm::append_range(branchingStateStorages, consequentStates);
+    if (failed(outlineDisableObserver(branchingStateStorages)))
+      return failure();
+
     Block *wait = addBlock();
     Block *sample = addBlock();
     emitBranch(wait);
@@ -5508,6 +5521,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         "resume_region", sim::EventRegionAttr::get(function.getContext(),
                                                    sim::EventRegion::Observed));
     setCurrent(sample);
+
+    if (failed(cancelDisabledSample(wait, branchingStateStorages)))
+      return failure();
 
     bool savedSampleAssertionValues = sampleAssertionValues;
     sampleAssertionValues = true;
@@ -5913,6 +5929,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           builder, location,
           sim::RefType::get(function.getContext(), stateType), zero));
     }
+    SmallVector<Value> branchingStateStorages;
+    for (Value storage : alternativeStates)
+      if (storage)
+        branchingStateStorages.push_back(storage);
+    if (failed(outlineDisableObserver(branchingStateStorages)))
+      return failure();
 
     Block *wait = addBlock();
     Block *sample = addBlock();
@@ -5924,6 +5946,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         "resume_region", sim::EventRegionAttr::get(function.getContext(),
                                                    sim::EventRegion::Observed));
     setCurrent(sample);
+
+    if (failed(cancelDisabledSample(wait, branchingStateStorages)))
+      return failure();
 
     bool savedSampleAssertionValues = sampleAssertionValues;
     sampleAssertionValues = true;

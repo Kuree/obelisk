@@ -1,6 +1,6 @@
 // RUN: not obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s
 
-// CHECK: error: branching implication/followed-by consequents currently require one Boolean antecedent in a plain concurrent directive without locals, disable iff, expect, or outer strong/weak qualification
+// CHECK: error: branching implication/followed-by consequents currently require one Boolean antecedent in a concurrent directive without locals, expect, or outer strong/weak qualification
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {
