@@ -55,6 +55,10 @@ struct FirstMatchBoundary {
 struct FixedSequence {
   SmallVector<FixedSequenceAge, 8> ages;
   SmallVector<FirstMatchBoundary, 1> firstMatchBoundaries;
+  /// This trace matches over zero clock ticks. It may participate in the
+  /// positive-delay concatenation rewrites from IEEE 1800 empty-match rules,
+  /// but it cannot itself be promoted to a property.
+  bool emptyMatch = false;
   bool vacuousSuccess = false;
 };
 
@@ -113,6 +117,10 @@ struct PersistentUntilProperty {
 using FixedSequenceAlternatives = SmallVector<FixedSequence, 4>;
 
 static constexpr size_t maxFixedSequenceAlternatives = 256;
+
+static LogicalResult appendFixedSequence(FixedSequence &result,
+                                         const FixedSequence &nested,
+                                         uint64_t offset);
 
 static bool isSingleBooleanAge(const FixedSequence &sequence) {
   return sequence.ages.size() == 1 &&
@@ -291,8 +299,11 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
             "unbounded consecutive sequence repetition [*...:$] is not "
             "executable yet");
       if (minimum && *minimum == 0)
-        return diagnose("empty consecutive sequence repetition [*0...] is not "
-                        "executable yet");
+        return diagnose(
+            "empty consecutive repetition [*0...] currently requires "
+            "positive-delay concatenation that eliminates every empty "
+            "endpoint; standalone empty matches and ##0 empty fusion are "
+            "not executable properties");
       return WalkResult::advance();
     };
 
@@ -531,9 +542,13 @@ static FailureOr<FixedSequence> compileFixedSequence(Operation *operation) {
               semantic::SVSequenceRepetitionKind::Consecutive ||
           simple.getRepetitionIsUnbounded() || !simple.getRepetitionMin() ||
           !simple.getRepetitionMax() ||
-          *simple.getRepetitionMin() != *simple.getRepetitionMax() ||
-          *simple.getRepetitionMin() <= 0)
+          *simple.getRepetitionMin() != *simple.getRepetitionMax())
         return failure();
+      if (*simple.getRepetitionMin() == 0) {
+        FixedSequence empty;
+        empty.emptyMatch = true;
+        return empty;
+      }
       repetitions = static_cast<uint64_t>(*simple.getRepetitionMin());
     }
     FixedSequence nested;
@@ -547,6 +562,8 @@ static FailureOr<FixedSequence> compileFixedSequence(Operation *operation) {
       nested.ages.resize(1);
       nested.ages.front().predicates.push_back(children.front());
     }
+    if (nested.emptyMatch)
+      return nested;
     if (nested.ages.empty() || repetitions > 63 / nested.ages.size())
       return failure();
     FixedSequence result;
@@ -572,31 +589,10 @@ static FailureOr<FixedSequence> compileFixedSequence(Operation *operation) {
           minimum.getInt() < 0 || minimum.getInt() != maximum.getInt())
         return failure();
       FailureOr<FixedSequence> nested = compileFixedSequence(child);
-      if (failed(nested))
+      if (failed(nested) ||
+          failed(appendFixedSequence(
+              result, *nested, static_cast<uint64_t>(minimum.getInt()))))
         return failure();
-      uint64_t offset = minimum.getInt();
-      if (result.ages.empty())
-        result.ages.resize(1);
-      // A match item at the left endpoint executes before a ##0 successor is
-      // evaluated. This fixed-age representation cannot preserve that
-      // intra-Observed ordering, so do not flatten it into a conjunction.
-      if (offset == 0 && !result.ages.back().matchItems.empty())
-        return failure();
-      uint64_t start = result.ages.size() - 1 + offset;
-      uint64_t required = start + nested->ages.size();
-      if (required > 63)
-        return failure();
-      result.ages.resize(std::max<uint64_t>(result.ages.size(), required));
-      for (auto [age, nestedAge] : llvm::enumerate(nested->ages)) {
-        llvm::append_range(result.ages[start + age].predicates,
-                           nestedAge.predicates);
-        llvm::append_range(result.ages[start + age].negatedPredicates,
-                           nestedAge.negatedPredicates);
-        llvm::append_range(result.ages[start + age].caseGuards,
-                           nestedAge.caseGuards);
-        llvm::append_range(result.ages[start + age].matchItems,
-                           nestedAge.matchItems);
-      }
     }
     return result;
   }
@@ -753,8 +749,32 @@ compileMultiClockSequence(Operation *operation, Operation *inheritedClock) {
 static LogicalResult appendFixedSequence(FixedSequence &result,
                                          const FixedSequence &nested,
                                          uint64_t offset) {
+  if (nested.emptyMatch) {
+    if (!nested.ages.empty() || !nested.firstMatchBoundaries.empty() ||
+        nested.vacuousSuccess)
+      return failure();
+    if (result.emptyMatch || (result.ages.empty() && offset != 0))
+      return failure();
+    if (result.ages.empty()) {
+      result.emptyMatch = true;
+      return success();
+    }
+    // (seq ##n empty), n>0, is (seq ##(n-1) true). An empty ##0
+    // fusion never matches and remains outside the executable property subset.
+    if (offset == 0 || result.ages.size() + offset - 1 > 63)
+      return failure();
+    result.ages.resize(result.ages.size() + offset - 1);
+    return success();
+  }
   if (nested.ages.empty())
     return failure();
+  if (result.emptyMatch) {
+    // (empty ##n seq), n>0, is (##(n-1) seq).
+    if (offset == 0)
+      return failure();
+    result = FixedSequence{};
+    return appendFixedSequence(result, nested, offset - 1);
+  }
   if (result.ages.empty())
     result.ages.resize(1);
   if (offset == 0 && !result.ages.back().matchItems.empty())
@@ -970,16 +990,14 @@ compileFixedSequenceAlternatives(Operation *operation,
         isa<semantic::SVAssertionInstanceExpressionOp>(children.front()))
       return compileFixedSequenceAlternatives(children.front(), resolvedClock);
 
-    // A finite positive consecutive range is the union of its exact repeat
-    // counts. Keep that union in the same bounded exact-trace representation
-    // used for ranged ## delays and binary sequence composition. Empty and
-    // unbounded repetition require distinct endpoint/termination semantics
-    // and deliberately remain outside this compiler.
+    // A finite consecutive range is the union of its exact repeat counts.
+    // Count zero is retained as an empty trace so surrounding positive-delay
+    // concatenation can apply the LRM empty-match rewrite exactly.
     if (simple.getHasRepetition() &&
         simple.getRepetitionKind() ==
             semantic::SVSequenceRepetitionKind::Consecutive &&
         !simple.getRepetitionIsUnbounded() && simple.getRepetitionMin() &&
-        simple.getRepetitionMax() && *simple.getRepetitionMin() > 0 &&
+        simple.getRepetitionMax() &&
         *simple.getRepetitionMax() >= *simple.getRepetitionMin()) {
       FixedSequenceAlternatives nested;
       if (isa<semantic::SVAssertionInstanceExpressionOp>(children.front())) {
@@ -994,13 +1012,21 @@ compileFixedSequenceAlternatives(Operation *operation,
         term.ages.front().predicates.push_back(children.front());
         nested.push_back(std::move(term));
       }
-      if (nested.empty())
+      if (nested.empty() ||
+          llvm::any_of(nested, [](const FixedSequence &alternative) {
+            return alternative.emptyMatch || alternative.ages.empty();
+          }))
         return failure();
 
       uint64_t minimum = *simple.getRepetitionMin();
       uint64_t maximum = *simple.getRepetitionMax();
       FixedSequenceAlternatives prefixes(1);
       FixedSequenceAlternatives results;
+      if (minimum == 0) {
+        FixedSequence empty;
+        empty.emptyMatch = true;
+        results.push_back(std::move(empty));
+      }
       for (uint64_t count = 1; count <= maximum; ++count) {
         if (prefixes.size() > maxFixedSequenceAlternatives / nested.size())
           return failure();
@@ -2039,6 +2065,18 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
              failure();
     FailureOr<FixedSequence> lhs = compileFixedSequence(operands.front());
     FailureOr<FixedSequence> rhs = compileFixedSequence(operands.back());
+    if (succeeded(lhs) && lhs->emptyMatch)
+      return emitError(getSemanticLocation(operands.front()))
+                 << "empty-match implication/followed-by antecedents are not "
+                    "executable yet; overlapping implication requires a "
+                    "nondegenerate antecedent and nonoverlapping empty "
+                    "antecedents require their distinct LRM start semantics",
+             failure();
+    if (succeeded(rhs) && rhs->emptyMatch)
+      return emitError(getSemanticLocation(operands.back()))
+                 << "an empty-match sequence cannot be used as an "
+                    "implication/followed-by consequent property",
+             failure();
     if (failed(lhs) || lhs->ages.empty()) {
       if (diagnoseUnsupportedConcurrentFeature(operands.front(),
                                                /*nested=*/true))
@@ -2106,6 +2144,18 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                       "ordering is not executable yet",
                failure();
       }
+      if (llvm::any_of(*compiled, [](const FixedSequence &alternative) {
+            return alternative.emptyMatch;
+          }))
+        return emitError(getSemanticLocation(property))
+                   << (coverSequence
+                           ? "standalone empty-match cover-sequence accounting "
+                             "is not executable yet"
+                           : "a sequence used as a property cannot admit an "
+                             "empty match")
+                   << "; use positive-delay concatenation to eliminate the "
+                      "empty endpoint",
+               failure();
       if (!cover) {
         if (std::optional<BooleanMinimizationStats> stats =
                 minimizeBooleanAlternatives(*compiled)) {
