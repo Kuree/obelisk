@@ -307,6 +307,38 @@ void ObeliskSimPreparePass::runOnOperation() {
                       ArrayAttr::get(context, types));
   });
 
+  // IEEE 1800-2017 23.2.2.4 allows a default value only on an input port, so an
+  // initializer on an output port is not a port default: 23.2.2.3 makes an
+  // explicitly typed output port a variable, and the initializer is that
+  // variable's declaration assignment. IEEE 1800-2017 10.5 requires it to be
+  // applied before any initial or always procedure starts.
+  //
+  // The frontend mirrors slang, which parents the expression under the port
+  // symbol where nothing consumes it. Give it to the port's variable so the
+  // ordinary static-initializer path below picks it up.
+  semanticRoot->walk([&](semantic::SVPortSymbolOp port) {
+    if (port.getDirection() != semantic::SVArgumentDirection::Out)
+      return;
+    SmallVector<Operation *> initializer = getChildren(port);
+    if (initializer.size() != 1)
+      return;
+    Operation *body = port->getParentOp();
+    if (!body)
+      return;
+    StringRef portPath = getHierarchyName(port);
+    for (Operation *sibling : getChildren(body)) {
+      auto variable = dyn_cast<semantic::SVVariableSymbolOp>(sibling);
+      if (!variable || getHierarchyName(variable) != portPath ||
+          !getChildren(variable).empty())
+        continue;
+      Region &target = variable.getBody();
+      if (target.empty())
+        target.emplaceBlock();
+      initializer.front()->moveBefore(&target.front(), target.front().end());
+      break;
+    }
+  });
+
   SmallVector<Operation *> sourceUnits;
   semanticRoot->walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isCompileTimeOnlyInstanceMember(op))
