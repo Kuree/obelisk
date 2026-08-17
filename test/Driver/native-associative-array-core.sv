@@ -96,7 +96,7 @@ module native_associative_array_core;
   // CHECK-NEXT: default-eq=1 reads=1/2
   // CHECK-NEXT: key-delete='{-4:
   // CHECK-SAME: missing=7
-  // CHECK-NEXT: whole-delete='{} missing=0
+  // CHECK-NEXT: whole-delete='{} missing=x
   // CHECK-NEXT: nba='{-1:
   // CHECK-SAME: caseeq=1
   // SLANG: slang.expression.structured_assignment_pattern

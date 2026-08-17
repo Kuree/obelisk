@@ -338,6 +338,13 @@ private:
           ::mlir::Location location, bool targetSigned = false);
   ::mlir::FailureOr<::mlir::Value> toPackedScalar(::mlir::Value value,
                                                   ::mlir::Location location);
+  /// Convert an integral queue / dynamic-array index to the signed runtime
+  /// representation without conflating an X/Z-containing four-state index
+  /// with integer zero.  The container runtime already defines every negative
+  /// index as invalid, so -1 is the common sentinel for an unknown index.
+  ::mlir::FailureOr<::mlir::Value>
+  toContainerIndex(::mlir::Value value, bool sourceSigned,
+                   ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   formatTaggedUnionPattern(::mlir::Value value, ::mlir::Type semanticType,
                            ::mlir::Location location);

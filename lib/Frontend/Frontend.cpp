@@ -21,6 +21,8 @@
 #include "slang/ast/expressions/Operator.h"
 #include "slang/ast/symbols/VariableSymbols.h"
 #include "slang/ast/types/TypePrinter.h"
+#include "slang/analysis/AnalysisManager.h"
+#include "slang/analysis/ValueDriver.h"
 #include "slang/driver/Driver.h"
 #include "slang/numeric/Time.h"
 #include "slang/syntax/AllSyntax.h"
@@ -737,9 +739,10 @@ class SlangASTImporter
                                         slang::ast::VisitFlags::Bad> {
 public:
   SlangASTImporter(ModuleOp module, const slang::SourceManager &sourceManager,
-                   const slang::ast::Compilation &compilation)
+                   const slang::ast::Compilation &compilation,
+                   const slang::analysis::AnalysisManager &analysisManager)
       : builder(module.getContext()), sourceManager(sourceManager),
-        compilation(compilation),
+        compilation(compilation), analysisManager(analysisManager),
         typeConverter(module.getContext(),
                       [this](const slang::ast::Symbol &symbol) {
                         return getSemanticSymbolReference(symbol);
@@ -3162,6 +3165,9 @@ private:
         isNet = port.isNetPort();
         isAnsi = port.isAnsiPort;
         internal = port.getInternalExpr();
+        if (isNet && direction != slang::ast::ArgumentDirection::InOut &&
+            isPortCoercedToInOut(instance, *connection, port))
+          direction = slang::ast::ArgumentDirection::InOut;
       }
 
       NamedAttrList attrs;
@@ -3265,6 +3271,93 @@ private:
     }
   }
 
+  bool isPortCoercedToInOut(
+      const slang::ast::InstanceSymbol &instance,
+      const slang::ast::PortConnection &connection,
+      const slang::ast::PortSymbol &port) const {
+    using slang::analysis::DriverFlags;
+    using slang::analysis::ValueDriver;
+    using slang::ast::ArgumentDirection;
+    using slang::ast::ValueSymbol;
+
+    SmallVector<const ValueSymbol *> endpoints;
+    if (port.direction == ArgumentDirection::In) {
+      if (port.internalSymbol &&
+          slang::ast::ValueSymbol::isKind(port.internalSymbol->kind))
+        endpoints.push_back(&port.internalSymbol->as<ValueSymbol>());
+      else if (const slang::ast::Expression *expression =
+                   port.getInternalExpr()) {
+        slang::ast::EvalContext context(instance.body);
+        slang::ast::ValuePath::visitPaths(
+            *expression, context,
+            [&](const slang::ast::ValuePath &path) {
+              if (const ValueSymbol *symbol = path.rootSymbol())
+                endpoints.push_back(symbol);
+            },
+            /*skipSelectors=*/true);
+      }
+      // Slang analyzes one canonical body for equivalent instances. Query its
+      // corresponding endpoint as well so coercion is preserved on every
+      // elaborated instance, not only the canonical representative.
+      if (const slang::ast::InstanceBodySymbol *canonical =
+              instance.getCanonicalBody())
+        if (const slang::ast::Symbol *canonicalPortSymbol =
+                canonical->findPort(port.name))
+          if (canonicalPortSymbol->kind == slang::ast::SymbolKind::Port) {
+            const auto &canonicalPort =
+                canonicalPortSymbol->as<slang::ast::PortSymbol>();
+            if (canonicalPort.internalSymbol &&
+                slang::ast::ValueSymbol::isKind(
+                    canonicalPort.internalSymbol->kind))
+              endpoints.push_back(
+                  &canonicalPort.internalSymbol->as<ValueSymbol>());
+          }
+    } else if (port.direction == ArgumentDirection::Out) {
+      const slang::ast::Expression *expression = connection.getExpression();
+      if (expression &&
+          expression->kind == slang::ast::ExpressionKind::Assignment)
+        expression = &expression->as<slang::ast::AssignmentExpression>().left();
+      if (expression) {
+        slang::ast::EvalContext context(instance);
+        slang::ast::ValuePath::visitPaths(
+            *expression, context,
+            [&](const slang::ast::ValuePath &path) {
+              if (const ValueSymbol *symbol = path.rootSymbol())
+                endpoints.push_back(symbol);
+            },
+            /*skipSelectors=*/true);
+      }
+    } else {
+      return false;
+    }
+
+    const DriverFlags portFlag = port.direction == ArgumentDirection::In
+                                     ? DriverFlags::InputPort
+                                     : DriverFlags::OutputPort;
+    auto overlaps = [](const ValueDriver &lhs, const ValueDriver &rhs) {
+      auto lhsBounds = lhs.getBounds();
+      auto rhsBounds = rhs.getBounds();
+      return lhsBounds.first <= rhsBounds.second &&
+             rhsBounds.first <= lhsBounds.second;
+    };
+    for (const ValueSymbol *endpoint : endpoints) {
+      std::vector<const ValueDriver *> drivers =
+          analysisManager.getDrivers(*endpoint);
+      for (const ValueDriver *portDriver : drivers) {
+        if (!portDriver->flags.has(portFlag))
+          continue;
+        if (port.direction == ArgumentDirection::Out &&
+            portDriver->containingSymbol != &instance)
+          continue;
+        for (const ValueDriver *other : drivers)
+          if (other != portDriver && !other->isUnidirectionalPort() &&
+              overlaps(*portDriver, *other))
+            return true;
+      }
+    }
+    return false;
+  }
+
   struct PendingReference {
     Operation *operation;
     const slang::ast::Symbol *target;
@@ -3290,6 +3383,7 @@ private:
   OpBuilder builder;
   const slang::SourceManager &sourceManager;
   const slang::ast::Compilation &compilation;
+  const slang::analysis::AnalysisManager &analysisManager;
   SlangTypeConverter typeConverter;
   llvm::DenseMap<const slang::ast::Symbol *, std::string> anonymousSymbolPaths;
   llvm::DenseMap<const slang::ast::Symbol *, std::string> resolvedSymbolPaths;
@@ -3439,8 +3533,12 @@ importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
   if (!driver.reportDiagnostics(/*quiet=*/true))
     return failure();
 
+  slang::analysis::AnalysisManager analysisManager;
+  analysisManager.analyze(*compilation);
+
   OwningOpRef<ModuleOp> module(ModuleOp::create(UnknownLoc::get(&context)));
-  SlangASTImporter importer(*module, driver.sourceManager, *compilation);
+  SlangASTImporter importer(*module, driver.sourceManager, *compilation,
+                            analysisManager);
   // Definitions are kept in Compilation's deterministic definition map and
   // are not children of RootSymbol. Import them explicitly so modules,
   // interfaces, programs, and primitives remain represented even when they

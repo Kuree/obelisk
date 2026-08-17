@@ -115,7 +115,7 @@ validateLayout(const obelisk_rt_process_descriptor_v1 &descriptor) {
       uint64_t unknownEnd;
       if (unknown.kind != field.kind ||
           unknown.flags != OBELISK_RT_FRAME_FOUR_STATE_UNKNOWN ||
-          unknown.offset != end || unknown.size != field.size ||
+          unknown.offset < end || unknown.size != field.size ||
           unknown.alignment != field.alignment || unknown.reserved != 0 ||
           unknown.offset % unknown.alignment != 0 ||
           addOverflow(unknown.offset, unknown.size, unknownEnd) ||

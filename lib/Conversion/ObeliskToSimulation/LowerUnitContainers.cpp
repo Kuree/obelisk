@@ -336,15 +336,46 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     FailureOr<Value> index = lowerExpression(children[1]);
     FailureOr<Value> value = lowerExpression(children[2]);
     FailureOr<Value> convertedIndex =
-        succeeded(index) ? convert(*index, builder.getI64Type(),
-                                   isSignedNode(children[1]), location)
-                         : FailureOr<Value>(failure());
+        succeeded(index)
+            ? toContainerIndex(*index, isSignedNode(children[1]), location)
+            : FailureOr<Value>(failure());
     FailureOr<Value> convertedValue =
         succeeded(value)
             ? convert(*value, elementType, isSignedNode(children[2]), location)
             : FailureOr<Value>(failure());
     if (failed(convertedIndex) || failed(convertedValue))
       return failure();
+    if (queue.getBound()) {
+      Value size = sim::SimContainerSizeOp::create(
+          builder, location, builder.getI64Type(), *receiver);
+      Value zero = arith::ConstantOp::create(
+          builder, location, builder.getI64Type(), builder.getI64IntegerAttr(0));
+      Value one = arith::ConstantOp::create(
+          builder, location, builder.getI64Type(), builder.getI64IntegerAttr(1));
+      Value bound = arith::ConstantOp::create(
+          builder, location, builder.getI64Type(),
+          builder.getI64IntegerAttr(queue.getBound()));
+      Value capacity = arith::AddIOp::create(builder, location, bound, one);
+      Value full = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::uge, size, capacity);
+      Value nonnegative = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::sge, *convertedIndex, zero);
+      Value withinBound = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ule, *convertedIndex, bound);
+      Value valid = arith::AndIOp::create(builder, location, nonnegative,
+                                         withinBound);
+      Value trimNeeded =
+          arith::AndIOp::create(builder, location, full, valid);
+      Block *trim = addBlock();
+      Block *insert = addBlock();
+      cf::CondBranchOp::create(builder, location, trimNeeded, trim, ValueRange{},
+                               insert, ValueRange{});
+      setCurrent(trim);
+      Value last = arith::SubIOp::create(builder, location, size, one);
+      sim::SimQueueDeleteOp::create(builder, location, *receiver, last);
+      cf::BranchOp::create(builder, location, insert);
+      setCurrent(insert);
+    }
     sim::SimQueueInsertOp::create(builder, location, *receiver, *convertedIndex,
                                   *convertedValue);
     return mutatedResult(arith::ConstantOp::create(
@@ -365,9 +396,9 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
                failure();
       FailureOr<Value> index = lowerExpression(children[1]);
       FailureOr<Value> converted =
-          succeeded(index) ? convert(*index, builder.getI64Type(),
-                                     isSignedNode(children[1]), location)
-                           : FailureOr<Value>(failure());
+          succeeded(index)
+              ? toContainerIndex(*index, isSignedNode(children[1]), location)
+              : FailureOr<Value>(failure());
       if (failed(converted))
         return failure();
       sim::SimQueueDeleteOp::create(builder, location, *receiver, *converted);

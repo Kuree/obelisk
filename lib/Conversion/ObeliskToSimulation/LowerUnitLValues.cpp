@@ -170,12 +170,8 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
         FailureOr<Value> index = lowerExpression(selection[1]);
         if (failed(base) || failed(container) || failed(index))
           return failure();
-        FailureOr<Value> scalarIndex = toPackedScalar(*index, location);
-        if (failed(scalarIndex))
-          return failure();
         FailureOr<Value> index64 =
-            convert(*scalarIndex, builder.getI64Type(),
-                    isSignedNode(selection[1]), location);
+            toContainerIndex(*index, isSignedNode(selection[1]), location);
         if (failed(index64))
           return failure();
         captured.kind = CapturedLValue::Kind::ContainerElement;
@@ -926,8 +922,14 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         builder, location, builder.getI64Type(), builder.getI64IntegerAttr(0));
     Value nonnegative = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::sge, destination.index, zero);
-    Value inRange = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ult, destination.index, size);
+    // A queue element assignment at index == size appends one element. Dynamic
+    // arrays have fixed runtime size and therefore retain the strict bound.
+    arith::CmpIPredicate upperPredicate =
+        isa<sim::QueueType>((*currentContainer).getType())
+            ? arith::CmpIPredicate::ule
+            : arith::CmpIPredicate::ult;
+    Value inRange = arith::CmpIOp::create(builder, location, upperPredicate,
+                                          destination.index, size);
     Value valid =
         arith::AndIOp::create(builder, location, nonnegative, inRange);
     Block *write = addBlock();

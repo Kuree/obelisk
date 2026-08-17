@@ -1820,8 +1820,19 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   if (auto reads = op->getAttrOfType<ArrayAttr>(calleeReadCapturesAttrName))
     for (Attribute read : reads)
       readCaptures.insert(cast<StringAttr>(read).getValue());
+  llvm::StringSet<> writtenCaptures;
+  if (auto writes =
+          op->getAttrOfType<ArrayAttr>(calleeWrittenCapturesAttrName))
+    for (Attribute written : writes)
+      writtenCaptures.insert(cast<StringAttr>(written).getValue());
+  bool excludeWrittenSensitivity =
+      function.getEntryKind() == sim::EntryKind::AlwaysComb ||
+      function.getEntryKind() == sim::EntryKind::AlwaysLatch;
   if (!virtualCallees)
     for (const auto &read : readCaptures) {
+      if (excludeWrittenSensitivity &&
+          writtenCaptures.contains(read.getKey()))
+        continue;
       Value capture = values.lookup(read.getKey());
       if (!capture)
         capture = lvalues.lookup(read.getKey());
@@ -1838,7 +1849,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
               << "direct callee capture has no frozen local binding: " << path;
           return failure();
         }
-        if (readCaptures.contains(path))
+        if (readCaptures.contains(path) &&
+            (!excludeWrittenSensitivity ||
+             !writtenCaptures.contains(path)))
           recordSensitivity(capture);
         operands.push_back(capture);
       }
@@ -1956,8 +1969,15 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                    failure();
           candidateOperands.push_back(capture);
         }
+        llvm::StringSet<> candidateWrites;
+        if (auto writes = candidate.getAs<ArrayAttr>("written_captures"))
+          for (Attribute writeAttr : writes)
+            candidateWrites.insert(cast<StringAttr>(writeAttr).getValue());
         for (Attribute readAttr : candidate.getAs<ArrayAttr>("read_captures")) {
-          Value capture = values.lookup(cast<StringAttr>(readAttr).getValue());
+          StringRef path = cast<StringAttr>(readAttr).getValue();
+          if (excludeWrittenSensitivity && candidateWrites.contains(path))
+            continue;
+          Value capture = values.lookup(path);
           if (capture)
             recordSensitivity(capture);
         }
@@ -2006,8 +2026,15 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                    failure();
           candidateOperands.push_back(capture);
         }
+        llvm::StringSet<> candidateWrites;
+        if (auto writes = candidate.getAs<ArrayAttr>("written_captures"))
+          for (Attribute writeAttr : writes)
+            candidateWrites.insert(cast<StringAttr>(writeAttr).getValue());
         for (Attribute readAttr : candidate.getAs<ArrayAttr>("read_captures")) {
-          Value capture = values.lookup(cast<StringAttr>(readAttr).getValue());
+          StringRef path = cast<StringAttr>(readAttr).getValue();
+          if (excludeWrittenSensitivity && candidateWrites.contains(path))
+            continue;
+          Value capture = values.lookup(path);
           if (capture)
             recordSensitivity(capture);
         }

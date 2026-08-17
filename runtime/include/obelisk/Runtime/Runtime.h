@@ -1361,8 +1361,9 @@ typedef struct obelisk_rt_bytecode_service_site_v1 {
 
 // Canonical process frames are shared by every executable tier. Layout fields
 // are sorted by offset and describe all compiler-owned ranges, including both
-// adjacent planes of a four-state value and scheduler wait records. Native
-// addresses are forbidden in the canonical frame.
+// paired planes of a four-state value and scheduler wait records. ABI-required
+// padding may appear between the value and unknown planes. Native addresses
+// are forbidden in the canonical frame.
 typedef uint32_t obelisk_rt_frame_field_kind;
 enum {
   OBELISK_RT_FRAME_CAPTURE = 1,

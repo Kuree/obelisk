@@ -37,6 +37,7 @@ struct PreparedCaptures {
                  mlir::SmallVector<std::pair<std::string, DescriptorInfo>>>
       descriptors;
   llvm::DenseMap<mlir::Operation *, llvm::StringSet<>> readDescriptors;
+  llvm::DenseMap<mlir::Operation *, llvm::StringSet<>> writtenDescriptors;
   llvm::DenseMap<mlir::Operation *, mlir::SmallVector<PreparedLocal>> locals;
   llvm::DenseMap<mlir::Operation *, mlir::SmallVector<PreparedConstant>>
       constants;

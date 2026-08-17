@@ -1121,13 +1121,26 @@ public:
         types.empty() || types.size() > 2)
       return failure();
     SmallVector<Value> storage;
-    for (Type type : types) {
-      Value zero = zeroNativeValue(rewriter, op.getLoc(), type);
-      if (!zero)
+    SmallVector<uint64_t> byteSizes;
+    for (auto [index, type] : llvm::enumerate(types)) {
+      Value initial = zeroNativeValue(rewriter, op.getLoc(), type);
+      uint64_t byteSize = 0;
+      if (auto integer = dyn_cast<IntegerType>(type)) {
+        byteSize = (integer.getWidth() + 7) / 8;
+        if (index == 1 || isa<sim::EventType>(op.getResult().getType()))
+          initial = arith::ConstantOp::create(
+              rewriter, op.getLoc(), type,
+              rewriter.getIntegerAttr(
+                  integer, APInt::getAllOnes(integer.getWidth())));
+      } else if (auto floating = dyn_cast<FloatType>(type)) {
+        byteSize = floating.getWidth() / 8;
+      }
+      if (!initial || byteSize == 0)
         return failure();
       Value slot = entryAlloca(rewriter, op.getLoc(), type, 1, 8);
-      LLVM::StoreOp::create(rewriter, op.getLoc(), zero, slot, 8);
+      LLVM::StoreOp::create(rewriter, op.getLoc(), initial, slot, 8);
       storage.push_back(slot);
+      byteSizes.push_back(byteSize);
     }
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
     Value unknown =
@@ -1138,10 +1151,16 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_container_read"),
+                               "obelisk_rt_v1_container_read_checked"),
             ValueRange{managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getContainer().front()),
-                       adaptor.getIndex().front(), storage.front(), unknown})
+                       adaptor.getIndex().front(), storage.front(),
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI64Type(), byteSizes.front()),
+                       unknown,
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI64Type(),
+                                    storage.size() == 2 ? byteSizes[1] : 0)})
             .getResult();
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     (void)lane;

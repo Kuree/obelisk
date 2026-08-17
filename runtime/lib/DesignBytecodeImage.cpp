@@ -1583,7 +1583,7 @@ bool validateImage(const Image &image) {
         uint64_t requiredPlane = (uint64_t{layout.width} + 7) / 8;
         if ((layout.size & 1) != 0 || capture.planeSize < requiredPlane ||
             capture.planeSize > registerPlane ||
-            capture.unknownOffset != capture.valueOffset + capture.planeSize ||
+            capture.unknownOffset < capture.valueOffset + capture.planeSize ||
             capture.unknownOffset > canonicalSize ||
             capture.planeSize > canonicalSize - capture.unknownOffset)
           return reject(__LINE__, "invalid four-state capture plane layout",
@@ -2325,7 +2325,9 @@ bool validateImage(const Image &image) {
         if (instruction.flags > OBELISK_RT_DB_OVERRIDE_ASSIGN ||
             instruction.destination || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
-            !reg(instruction.source0) || !numeric(instruction.source1) ||
+            !reg(instruction.source0) ||
+            (!numeric(instruction.source1) &&
+             !floating(instruction.source1)) ||
             layoutAt(image, function, instruction.source0).kind !=
                 OBELISK_RT_DBREG_HANDLE)
           return reject(__LINE__, "invalid instruction encoding or operands",

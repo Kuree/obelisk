@@ -290,7 +290,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
         rhsConsumed = 0;
       }
     }
-    if (lhsIndex != lhs.size() || rhsIndex != rhs.size()) {
+    if ((lhsIndex != lhs.size() || rhsIndex != rhs.size()) &&
+        connection.getDirection() != semantic::SVArgumentDirection::InOut) {
       emitError(getSemanticLocation(connection))
           << "static net connection has incompatible endpoint widths";
       invalid = true;

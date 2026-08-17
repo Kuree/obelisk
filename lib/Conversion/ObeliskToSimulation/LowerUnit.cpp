@@ -52,6 +52,14 @@ constexpr bool sameEventRegionEncoding(ir::EventRegion source,
   return static_cast<uint32_t>(source) == static_cast<uint32_t>(target);
 }
 
+static std::optional<unsigned> getOverrideBitWidth(Type type) {
+  if (std::optional<unsigned> packed = sim::getPackedWidth(type))
+    return packed;
+  if (auto real = dyn_cast<FloatType>(type))
+    return real.getWidth();
+  return std::nullopt;
+}
+
 static_assert(
     sameEventRegionEncoding(ir::EventRegion::Preponed,
                             sim::EventRegion::Preponed) &&
@@ -1205,6 +1213,39 @@ FailureOr<Value> UnitLowering::toPackedScalar(Value value, Location location) {
       .getResult();
 }
 
+FailureOr<Value> UnitLowering::toContainerIndex(Value value, bool sourceSigned,
+                                                Location location) {
+  FailureOr<Value> scalar = toPackedScalar(value, location);
+  if (failed(scalar))
+    return failure();
+
+  Value index = *scalar;
+  Value known;
+  if (auto logic = dyn_cast<sim::LogicType>(index.getType())) {
+    auto bitsType = builder.getIntegerType(logic.getWidth());
+    Value bits =
+        sim::SimLogicToBitsOp::create(builder, location, bitsType, index);
+    Value roundTrip =
+        sim::SimLogicFromBitsOp::create(builder, location, logic, bits);
+    known = sim::SimLogicCompareOp::create(
+        builder, location, builder.getI1Type(), sim::CompareKind::CaseEq, index,
+        roundTrip);
+    index = bits;
+  }
+
+  FailureOr<Value> converted =
+      convert(index, builder.getI64Type(), sourceSigned, location);
+  if (failed(converted))
+    return failure();
+  if (!known)
+    return *converted;
+
+  Value invalid = arith::ConstantOp::create(
+      builder, location, builder.getI64Type(), builder.getI64IntegerAttr(-1));
+  return arith::SelectOp::create(builder, location, known, *converted, invalid)
+      .getResult();
+}
+
 FailureOr<Value> UnitLowering::formatTaggedUnionPattern(Value value,
                                                         Type semanticType,
                                                         Location location) {
@@ -2108,9 +2149,10 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
       return failure();
     Type elementType = referenceType ? referenceType.getElementType()
                                      : netType.getElementType();
-    if (!sim::getPackedWidth(elementType)) {
+    if (!getOverrideBitWidth(elementType)) {
       emitError(getSemanticLocation(lhs))
-          << "force and procedural assign require packed integral storage";
+          << "force and procedural assign require scalar integral or real "
+             "storage";
       return failure();
     }
     FailureOr<Value> converted =
@@ -2163,9 +2205,9 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     }
     Type elementType = referenceType ? referenceType.getElementType()
                                      : netType.getElementType();
-    if (!sim::getPackedWidth(elementType)) {
+    if (!getOverrideBitWidth(elementType)) {
       emitError(getSemanticLocation(lhs))
-          << "release and deassign require packed integral storage";
+          << "release and deassign require scalar integral or real storage";
       return failure();
     }
     sim::SimReleaseOverrideOp::create(builder, location, *target,

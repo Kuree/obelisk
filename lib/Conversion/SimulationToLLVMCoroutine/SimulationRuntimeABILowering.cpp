@@ -236,6 +236,10 @@ void declareNativeRuntimeABI(ModuleOp module) {
        managedI32, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_size", managedI64,
                            {managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_read_checked",
+                           managedI32,
+                           {managedPointer, managedI64, managedPointer,
+                            managedI64, managedPointer, managedI64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_create_like",
                            managedI32,
                            {managedPointer, managedPointer, managedPointer,

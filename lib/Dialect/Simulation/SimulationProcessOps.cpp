@@ -38,6 +38,14 @@
 
 using namespace mlir;
 
+static std::optional<unsigned> getOverrideBitWidth(Type type) {
+  if (std::optional<unsigned> packed = obelisk::sim::getPackedWidth(type))
+    return packed;
+  if (auto real = dyn_cast<FloatType>(type))
+    return real.getWidth();
+  return std::nullopt;
+}
+
 namespace obelisk::sim {
 
 void SimFuncOp::build(OpBuilder &builder, OperationState &state, StringRef name,
@@ -271,9 +279,12 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
 LogicalResult SimFuncOp::verify() {
   FunctionType type = getFunctionType();
   if (getDomain() == ExecutionDomain::Program &&
-      getHomeRegion() != EventRegion::Reactive)
+      getHomeRegion() != EventRegion::Reactive &&
+      !(getEntryKind() == EntryKind::Final &&
+        getHomeRegion() == EventRegion::Active))
     return emitOpError(
-        "program-domain code units must have reactive home region");
+        "program-domain code units must have reactive home region, except "
+        "final procedures which must have active home region");
   if (getDomain() == ExecutionDomain::Design &&
       getHomeRegion() != EventRegion::Active &&
       getHomeRegion() != EventRegion::Observed &&
@@ -1507,8 +1518,8 @@ LogicalResult SimOverrideOp::verify() {
     return emitOpError("procedural assign requires a variable reference");
   if (elementType != getValue().getType())
     return emitOpError("target element type must match the override value");
-  if (!getPackedWidth(elementType))
-    return emitOpError("requires a fixed-width packed value");
+  if (!getOverrideBitWidth(elementType))
+    return emitOpError("requires a fixed-width scalar integral or real value");
   return success();
 }
 
@@ -1532,8 +1543,8 @@ LogicalResult SimReleaseOverrideOp::verify() {
     return emitOpError("target must be a static reference or built-in net");
   if (getIsAssign() && !isa<RefType>(getTarget().getType()))
     return emitOpError("procedural deassign requires a variable reference");
-  if (!getPackedWidth(elementType))
-    return emitOpError("requires a fixed-width packed value");
+  if (!getOverrideBitWidth(elementType))
+    return emitOpError("requires a fixed-width scalar integral or real value");
   return success();
 }
 

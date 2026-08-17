@@ -233,6 +233,28 @@ def run(root: Path, args) -> dict[str, model.Outcome]:
     lists = resolve_lists(root, requested)
     ivtest_dir = _ivtest_dir(root)
     items = read_items(ivtest_dir, lists)
+    if args.tests:
+        requested_tests = set(args.tests)
+        selected: list[Descriptor] = []
+        matched: set[str] = set()
+        for item in items:
+            spellings = {
+                item.key,
+                item.source.name,
+                item.source.stem,
+                str(item.source),
+            }
+            hits = spellings & requested_tests
+            if hits:
+                selected.append(item)
+                matched.update(hits)
+        missing = requested_tests - matched
+        if missing:
+            raise SystemExit(
+                "ivtest test not found in selected lists: "
+                + ", ".join(sorted(missing))
+            )
+        items = selected
     obelisk = args.obelisk_binary
     timeout = args.timeout
     vpi_code = tuple(

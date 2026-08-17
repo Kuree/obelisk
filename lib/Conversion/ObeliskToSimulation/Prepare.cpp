@@ -5035,6 +5035,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     return abort();
   auto &unitCaptures = preparedCaptures->descriptors;
   auto &unitReadCaptures = preparedCaptures->readDescriptors;
+  auto &unitWrittenCaptures = preparedCaptures->writtenDescriptors;
   auto &unitLocals = preparedCaptures->locals;
   auto &unitConstants = preparedCaptures->constants;
   auto &observerLocalCaptures = preparedCaptures->observerLocals;
@@ -5050,6 +5051,17 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVector<StringRef> paths;
     for (const auto &read : unitReadCaptures[source])
       paths.push_back(read.getKey());
+    llvm::sort(paths);
+    SmallVector<Attribute> attributes;
+    attributes.reserve(paths.size());
+    for (StringRef path : paths)
+      attributes.push_back(builder.getStringAttr(path));
+    return attributes;
+  };
+  auto writtenCaptureAttributes = [&](Operation *source) {
+    SmallVector<StringRef> paths;
+    for (const auto &written : unitWrittenCaptures[source])
+      paths.push_back(written.getKey());
     llvm::sort(paths);
     SmallVector<Attribute> attributes;
     attributes.reserve(paths.size());
@@ -5250,11 +5262,16 @@ void ObeliskSimPreparePass::runOnOperation() {
     call->setAttr(calleeCapturesAttrName, builder.getArrayAttr(capturePaths));
     call->setAttr(calleeReadCapturesAttrName,
                   builder.getArrayAttr(readCapturePaths));
+    call->setAttr(calleeWrittenCapturesAttrName,
+                  builder.getArrayAttr(
+                      writtenCaptureAttributes(targetSource)));
     if (!virtualTargets.empty()) {
       SmallVector<Attribute> candidates;
       for (Operation *candidate : virtualTargets) {
         SmallVector<Attribute> captures;
         SmallVector<Attribute> readCaptures = readCaptureAttributes(candidate);
+        SmallVector<Attribute> writtenCaptures =
+            writtenCaptureAttributes(candidate);
         for (const auto &capture : unitCaptures[candidate])
           if (!usesContextStorage(candidate, capture))
             captures.push_back(builder.getStringAttr(capture.first));
@@ -5269,6 +5286,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             builder.getNamedAttr("captures", builder.getArrayAttr(captures)),
             builder.getNamedAttr("read_captures",
                                  builder.getArrayAttr(readCaptures)),
+            builder.getNamedAttr("written_captures",
+                                 builder.getArrayAttr(writtenCaptures)),
         }));
       }
       call->setAttr("obelisk_sim.virtual_interface_callees",
@@ -6015,10 +6034,19 @@ void ObeliskSimPreparePass::runOnOperation() {
         functionAttrs.push_back(
             builder.getNamedAttr("obelisk_sim.control_target_id", targetID));
     bool programDomain = isProgramCodeUnit(unit.source);
+    // Final procedures are held in the runtime's end-of-simulation phase; the
+    // compute graph independently places their executable fragment in its
+    // postponed plan.  Their process ABI home must remain Active even when the
+    // declaration belongs to a program block.  Encoding a program final as a
+    // Reactive-home final is rejected by both native and bytecode scheduling
+    // because no ordinary reactive work may be introduced during finalization.
+    bool finalProcedure = unit.entryKind == sim::EntryKind::Final;
     functionAttrs.push_back(builder.getNamedAttr(
         "home_region", sim::EventRegionAttr::get(
-                           context, programDomain ? sim::EventRegion::Reactive
-                                                  : sim::EventRegion::Active)));
+                           context,
+                           programDomain && !finalProcedure
+                               ? sim::EventRegion::Reactive
+                               : sim::EventRegion::Active)));
     functionAttrs.push_back(builder.getNamedAttr(
         "domain", sim::ExecutionDomainAttr::get(
                       context, programDomain ? sim::ExecutionDomain::Program

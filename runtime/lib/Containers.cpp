@@ -123,7 +123,19 @@ void initializeElementDefault(const obelisk_rt_element_type_v1 *element,
   std::memset(value, element->kind == OBELISK_RT_ELEMENT_EVENT ? 0xff : 0,
               static_cast<size_t>(element->value_size));
   if ((element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) && unknown)
-    std::memset(unknown, 0, static_cast<size_t>(element->value_size));
+    std::memset(unknown, 0xff, static_cast<size_t>(element->value_size));
+}
+
+void initializeElementRange(const obelisk_rt_element_type_v1 *element,
+                            uint8_t *data, uint64_t count) {
+  uint64_t stride = elementStride(element);
+  for (uint64_t index = 0; index != count; ++index) {
+    uint8_t *value = data + index * stride;
+    void *unknown = (element->flags & OBELISK_RT_ELEMENT_FOUR_STATE)
+                        ? value + element->value_size
+                        : nullptr;
+    initializeElementDefault(element, value, unknown);
+  }
 }
 
 bool multiplyFits(uint64_t left, uint64_t right, uint64_t &result) {
@@ -479,13 +491,12 @@ obelisk_rt_status initializeContainer(obelisk_rt_gc_lane_v1 *lane,
   obelisk_rt_object_v1 *buffer = nullptr;
   if (status == OBELISK_RT_OK)
     status = allocateBuffer(lane, capacity, elementStride(element), &buffer);
-  if (status == OBELISK_RT_OK && size != 0 &&
-      element->kind == OBELISK_RT_ELEMENT_EVENT)
+  if (status == OBELISK_RT_OK && size != 0)
     status = accessBuffer(buffer, [&](uint8_t *data, uint64_t extent) {
       uint64_t bytes = size * elementStride(element);
       if (bytes > extent)
         return OBELISK_RT_INVALID_HANDLE;
-      std::memset(data, 0xff, static_cast<size_t>(bytes));
+      initializeElementRange(element, data, size);
       return OBELISK_RT_OK;
     });
   if (status == OBELISK_RT_OK) {
@@ -3007,8 +3018,15 @@ obelisk_rt_v1_container_read(obelisk_rt_object_v1 *container, int64_t index,
 extern "C" obelisk_rt_status obelisk_rt_v1_container_read_checked(
     obelisk_rt_object_v1 *container, int64_t index, void *outValue,
     uint64_t valueSize, void *outUnknown, uint64_t unknownSize) {
-  if (!container || !outValue)
+  if (!outValue || ((outUnknown == nullptr) != (unknownSize == 0)))
     return OBELISK_RT_INVALID_ARGUMENT;
+  // A default-initialized dynamic array or queue is represented by a null
+  // managed handle. The typed callers initialize their output to the element
+  // default before entering the runtime, so an indexed read simply preserves
+  // that value. The unchecked ABI cannot do this because it has no element
+  // layout information and therefore continues to reject null handles.
+  if (!container)
+    return OBELISK_RT_OK;
   ContainerHeader snapshot;
   obelisk_rt_status status = snapshotHeader(container, snapshot);
   if (status != OBELISK_RT_OK)
@@ -3064,10 +3082,8 @@ obelisk_rt_v1_dynamic_array_resize(obelisk_rt_gc_lane_v1 *lane,
                 uint64_t bytes = (resize->size - oldSize) * stride;
                 if (offset > size || bytes > size - offset)
                   return OBELISK_RT_INVALID_HANDLE;
-                if (header->element->kind == OBELISK_RT_ELEMENT_EVENT)
-                  std::memset(data + offset, 0xff, static_cast<size_t>(bytes));
-                else
-                  std::memset(data + offset, 0, static_cast<size_t>(bytes));
+                initializeElementRange(header->element, data + offset,
+                                       resize->size - oldSize);
                 return OBELISK_RT_OK;
               });
           if (status != OBELISK_RT_OK)

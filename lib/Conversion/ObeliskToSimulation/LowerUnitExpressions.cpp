@@ -3054,11 +3054,8 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
       unboundedPlaceholder = previousPlaceholder;
       if (failed(index))
         return failure();
-      FailureOr<Value> scalarIndex = toPackedScalar(*index, location);
-      if (failed(scalarIndex))
-        return failure();
-      FailureOr<Value> index64 = convert(*scalarIndex, builder.getI64Type(),
-                                         isSignedNode(children[1]), location);
+      FailureOr<Value> index64 =
+          toContainerIndex(*index, isSignedNode(children[1]), location);
       if (failed(index64))
         return failure();
       resolvedIndex = *index64;
@@ -3109,8 +3106,8 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
     FailureOr<Value> index = lowerExpression(children[1]);
     if (failed(index))
       return failure();
-    FailureOr<Value> index64 = convert(*index, builder.getI64Type(),
-                                       isSignedNode(children[1]), location);
+    FailureOr<Value> index64 =
+        toContainerIndex(*index, isSignedNode(children[1]), location);
     if (failed(index64))
       return failure();
     Value byte = sim::SimStringGetcOp::create(

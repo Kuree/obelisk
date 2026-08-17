@@ -2498,7 +2498,7 @@ def SimRefStoreOp : SimOp<"ref.store", [
 def SimOverrideOp : SimOp<"override", [
     MemoryEffects<[MemWrite<SimSchedulerResource>]>
   ]> {
-  let summary = "publish a whole static packed force or procedural assign";
+  let summary = "publish a whole static scalar force or procedural assign";
   let arguments = (ins
     Arg<AnyType, "", [
       MemWrite<SimStorageResource>, MemWrite<SimNetResource>
@@ -2511,7 +2511,7 @@ def SimOverrideOp : SimOp<"override", [
 def SimReleaseOverrideOp : SimOp<"release_override", [
     MemoryEffects<[MemWrite<SimSchedulerResource>]>
   ]> {
-  let summary = "release a whole static force or procedural assign";
+  let summary = "release a whole static scalar force or procedural assign";
   let arguments = (ins
     Arg<AnyType, "", [
       MemWrite<SimStorageResource>, MemWrite<SimNetResource>

@@ -166,8 +166,20 @@ Operation *getPortActualLValue(semantic::SVPortConnectionOp connection) {
   if (!assignment)
     return actual;
   SmallVector<Operation *> children = getChildren(assignment);
-  if (children.size() == 2 &&
-      isa<semantic::SVEmptyArgumentExpressionOp>(children[1]))
+  if (children.size() != 2)
+    return actual;
+  Operation *placeholder = children[1];
+  bool strippedConversion = false;
+  while (isa<semantic::SVConversionExpressionOp>(placeholder)) {
+    strippedConversion = true;
+    SmallVector<Operation *> converted = getChildren(placeholder);
+    if (converted.size() != 1)
+      return actual;
+    placeholder = converted.front();
+  }
+  if (isa<semantic::SVEmptyArgumentExpressionOp>(placeholder) &&
+      (!strippedConversion ||
+       connection.getDirection() == semantic::SVArgumentDirection::InOut))
     return children.front();
   return actual;
 }

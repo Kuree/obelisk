@@ -174,7 +174,7 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
     }
   }
   llvm::DenseMap<Operation *, llvm::StringSet<>> subroutineLocalDescriptors;
-  llvm::DenseMap<Operation *, llvm::StringSet<>> writtenDescriptors;
+  auto &writtenDescriptors = result.writtenDescriptors;
 
   for (const PreparedUnit &unit : analysisUnits.units) {
     llvm::StringSet<> seenPaths;
@@ -699,6 +699,10 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       for (const auto &read : result.readDescriptors[source])
         changed |=
             result.readDescriptors[destination].insert(read.getKey()).second;
+      for (const auto &written : writtenDescriptors[source])
+        changed |= writtenDescriptors[destination]
+                       .insert(written.getKey())
+                       .second;
     };
     // Every declaration in a virtual family shares one capture ABI.
     for (auto [method, overridden] : virtualOverrideEdges) {
@@ -709,6 +713,21 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       for (Operation *target : edge.second)
         mergeCaptures(edge.first, target);
   } while (changed);
+
+  // IEEE 1800-2017 9.2.2.2.1 excludes variables written anywhere in an
+  // always_comb procedure, including through called functions, from its
+  // implicit sensitivity. always_latch uses the same implicit-sensitivity
+  // rules (9.2.2.3). Direct writes are also observed during lowering, but the
+  // transitive callee contract must be filtered here before it is frozen onto
+  // call sites; otherwise a read-modify-write helper makes the process wake on
+  // its own output forever in the same time slot.
+  for (const PreparedUnit &unit : analysisUnits.units) {
+    if (unit.entryKind != sim::EntryKind::AlwaysComb &&
+        unit.entryKind != sim::EntryKind::AlwaysLatch)
+      continue;
+    for (const auto &written : writtenDescriptors[unit.source])
+      result.readDescriptors[unit.source].erase(written.getKey());
+  }
 
   // Non-callable code units still need the complete transitive read set for
   // implicit sensitivity and observer dependencies. Reattach those descriptor

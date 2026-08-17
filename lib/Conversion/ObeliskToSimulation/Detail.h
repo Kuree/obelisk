@@ -118,6 +118,8 @@ inline constexpr ::mlir::StringLiteral calleeCapturesAttrName =
     "obelisk_sim.callee_captures";
 inline constexpr ::mlir::StringLiteral calleeReadCapturesAttrName =
     "obelisk_sim.callee_read_captures";
+inline constexpr ::mlir::StringLiteral calleeWrittenCapturesAttrName =
+    "obelisk_sim.callee_written_captures";
 inline constexpr ::mlir::StringLiteral calleeFormalsAttrName =
     "obelisk_sim.callee_formals";
 inline constexpr ::mlir::StringLiteral staticClassPropertyAttrName =

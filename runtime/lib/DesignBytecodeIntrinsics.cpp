@@ -380,6 +380,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     }
     uint64_t planeSize =
         output.kind == OBELISK_RT_DBREG_LOGIC ? output.size / 2 : output.size;
+    if (output.kind == OBELISK_RT_DBREG_LOGIC)
+      std::memset(frame.data + output.offset + planeSize, 0xff, planeSize);
     void *unknown = output.kind == OBELISK_RT_DBREG_LOGIC
                         ? frame.data + output.offset + planeSize
                         : nullptr;

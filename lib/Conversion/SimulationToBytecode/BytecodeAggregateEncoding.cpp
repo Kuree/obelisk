@@ -196,7 +196,11 @@ FailureOr<uint32_t> Encoder::encodeArrayOffset(FunctionPlan &plan, Type array,
   uint32_t roundTrip = kInvalidRegister;
   uint32_t fits = kInvalidRegister;
   if (sourceLayout->width > 64) {
-    roundTrip = temporary(plan, indexValue.getType());
+    // The whole-design proof may compact a known four-state index to a
+    // one-plane bytecode register. Preserve that representation for the
+    // widened round trip: it is compared directly with the original index,
+    // and COMPARE requires representation-compatible inputs.
+    roundTrip = temporaryLike(plan, indexValue.getType(), indexValue);
     fits = temporary(plan, IntegerType::get(context, 1));
   }
   uint32_t leftReg = temporary(plan, calculationType);
