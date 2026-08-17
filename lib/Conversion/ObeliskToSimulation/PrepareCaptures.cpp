@@ -127,6 +127,30 @@ static bool isRandSequenceFormal(Operation *operation) {
              ->getParentOfType<semantic::SVRandSeqProductionSymbolOp>();
 }
 
+/// A non-ANSI subroutine port and the separate data declaration that gives it
+/// a type declare a single object (IEEE 1800-2017 13.3). The declaration keeps
+/// its own symbol, which the port names as its merged variable, so a reference
+/// through it is a reference to the formal.
+static bool isMergedFormalVariable(Operation *operation) {
+  auto variable = dyn_cast_or_null<semantic::SVVariableSymbolOp>(operation);
+  if (!variable)
+    return false;
+  auto subroutine =
+      dyn_cast_or_null<semantic::SVSubroutineSymbolOp>(operation->getParentOp());
+  if (!subroutine)
+    return false;
+  StringAttr name = variable.getSymNameAttr();
+  for (Operation *sibling : getChildren(subroutine)) {
+    auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(sibling);
+    if (!formal)
+      continue;
+    if (SymbolRefAttr merged = formal.getMergedVariableSymbolAttr();
+        merged && merged.getLeafReference() == name)
+      return true;
+  }
+  return false;
+}
+
 FailureOr<PreparedCaptures>
 analyzeCodeUnitCaptures(const PreparedUnits &units,
                         const llvm::StringMap<DescriptorInfo> &descriptors,
@@ -259,7 +283,9 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       // formals are different: 18.17 places them in the randsequence's
       // automatic scope, so they require activation-local bindings.
       if (unit.entryKind == sim::EntryKind::Function &&
-          isa_and_nonnull<semantic::SVFormalArgumentSymbolOp>(referencedSymbol) &&
+          (isa_and_nonnull<semantic::SVFormalArgumentSymbolOp>(
+               referencedSymbol) ||
+           isMergedFormalVariable(referencedSymbol)) &&
           !isRandSequenceFormal(referencedSymbol))
         return;
       // Unnamed statement scopes are not part of Slang's hierarchical name,
