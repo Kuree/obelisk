@@ -3192,6 +3192,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     auto descriptor = scalar(0);
     if (!descriptor || *descriptor > UINT32_MAX)
       return OBELISK_RT_INVALID_BYTECODE;
+    if (!context)
+      return OBELISK_RT_INVALID_ARGUMENT;
     // IEEE exposes these as void system tasks. A bad descriptor may update
     // the runtime's last-error record, but it must not terminate the calling
     // procedural process.

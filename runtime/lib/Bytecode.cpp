@@ -1169,6 +1169,8 @@ invokeService(const obelisk_rt_bytecode_service_site_v1 &site,
     auto descriptor = scalar(0);
     if (!descriptor || *descriptor > UINT32_MAX)
       return std::nullopt;
+    if (!context)
+      return OBELISK_RT_INVALID_ARGUMENT;
     if (site.service == OBELISK_RT_BC_SERVICE_FILE_CLOSE) {
       (void)obelisk_rt_v1_file_close(context,
                                      static_cast<uint32_t>(*descriptor));

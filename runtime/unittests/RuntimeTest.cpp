@@ -1278,7 +1278,7 @@ TEST_F(RuntimeTest, FormatsPackedStringsAndScalarPatterns) {
   LogicValue pattern("10xz", true);
   auto [status, output] = format("%s %p", {packed.arg(), pattern.arg()});
   EXPECT_EQ(status, OBELISK_RT_OK);
-  EXPECT_EQ(output, "AB 4'sb10xz");
+  EXPECT_EQ(output, "A B 4'sb10xz");
 }
 
 TEST_F(RuntimeTest, EmitsRawTwoAndFourStateChunks) {

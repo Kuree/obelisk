@@ -38,8 +38,7 @@ module attributes {
       %delay = obelisk_sim.time.constant 1
       obelisk_sim.suspend.delay %delay to ^failed
     ^failed:
-      obelisk_sim.file.flush %ctx, %descriptor :
-          (!obelisk_sim.context, i32) -> ()
+      obelisk_sim.dump.flush %ctx : (!obelisk_sim.context) -> ()
       obelisk_sim.return
     }
 

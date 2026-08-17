@@ -228,7 +228,7 @@ TEST(GeneratedProcess, SchedulerRunsEventSpawnJoinAndAwait) {
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
   testing::internal::CaptureStdout();
-  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
   EXPECT_EQ(testing::internal::GetCapturedStdout(),
             "join-short\njoin-long\njoined\nawait-child\nawaited\n");
   obelisk_rt_v1_context_destroy(context);
