@@ -39,6 +39,10 @@ let irLanguage = MLIR_LANGUAGE_ID;
 let scheduleSourceHighlight = null;
 let worker = null;
 let workerReady = false;
+// A worker started to be ready for the *next* compile rather than to serve a
+// request that is already waiting. Its readiness must not touch the UI, which
+// still belongs to the run that just finished.
+let backgroundPreload = false;
 let pendingCompilation = null;
 let options = { ...DEFAULTS };
 let activeStage = DEFAULT_STAGE;
@@ -235,6 +239,15 @@ function run() {
   compileStage('run');
 }
 
+// A run is over: release the UI and start warming the worker the next compile
+// will use, so its module instantiation and toolchain install happen while the
+// user is reading results rather than after their next click.
+function finishRun() {
+  busy = false;
+  setBusyLabel(false);
+  initWorker({ background: true });
+}
+
 function setBusyLabel(isBusy) {
   ui.run.disabled = isBusy;
   ui.runLabel.textContent = isBusy ? 'Working' : 'Run';
@@ -255,8 +268,13 @@ function dispatchCompilation() {
   worker.postMessage(request);
 }
 
-function initWorker() {
+// Instantiating the module and installing the target archives costs a few
+// hundred milliseconds. Doing it while the page is idle keeps it off the next
+// compile's critical path. This only preloads: the worker still runs exactly
+// one compile, so the fresh-process boundary below is preserved.
+function initWorker({ background = false } = {}) {
   disposeWorker();
+  backgroundPreload = background;
   const freshWorker = new Worker('./compiler-worker.js');
   worker = freshWorker;
   freshWorker.onmessage = (event) => {
@@ -281,9 +299,16 @@ async function onMessage(message) {
   switch (message.type) {
     case 'ready':
       workerReady = true;
-      if (pendingCompilation) dispatchCompilation();
-      else if (findStage(activeStage).kind === 'waveform') showWaveform();
-      else {
+      if (pendingCompilation) {
+        backgroundPreload = false;
+        dispatchCompilation();
+      } else if (backgroundPreload) {
+        // Nothing is waiting on this worker, and the status line still reports
+        // the run that just finished.
+        backgroundPreload = false;
+      } else if (findStage(activeStage).kind === 'waveform') {
+        showWaveform();
+      } else {
         setBusyLabel(false);
         setStatus('ready');
       }
@@ -307,7 +332,7 @@ async function onMessage(message) {
         record(`\ncompilation failed (exit ${message.status})\n`, 'stderr');
         if (message.message) record(`${message.message}\n`, 'stderr');
         finishRecording(`${counts.errors} error${counts.errors === 1 ? '' : 's'}`, 'err');
-        busy = false; setBusyLabel(false);
+        finishRun();
         return;
       }
 
@@ -322,14 +347,14 @@ async function onMessage(message) {
           if (message.stage === 'schedule') showSchedule(text);
           else showIr(text, cached.language);
         }
-        busy = false; setBusyLabel(false);
+        finishRun();
         return;
       }
 
       record(`compiled ${formatBytes(message.binary.byteLength)} in ${compileMs} ms\n\n`, 'note');
       setStatus('running', 'busy');
       await execute(message.binary, compileMs, counts);
-      busy = false; setBusyLabel(false);
+      finishRun();
       break;
     }
 
@@ -337,7 +362,7 @@ async function onMessage(message) {
       disposeWorker();
       record(`\n${message.message}\n`, 'stderr');
       finishRecording('failed', 'err');
-      busy = false; setBusyLabel(false);
+      finishRun();
       break;
   }
 }
