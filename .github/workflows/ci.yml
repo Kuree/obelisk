@@ -26,17 +26,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The prebuilt LLVM distribution extracts to ~12 GB, which does not fit
-      # in a stock runner's free space alongside the build tree.
-      - name: Reclaim disk space
-        run: |
-          df -h /
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
-                      /usr/local/share/boost /usr/local/.ghcup \
-                      /usr/share/swift /usr/local/lib/node_modules
-          sudo apt-get clean
-          df -h /
-
+      # No disk reclamation step: the runner starts with ~87 GB free on a
+      # 145 GB volume, and a full build -- 12 GB of extracted LLVM, the 1.9 GB
+      # archive and ~6 GB of build tree -- peaks around 22 GB.
       - name: Install build tools
         run: |
           sudo apt-get update
