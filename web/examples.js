@@ -45,6 +45,68 @@ endmodule
 `,
   },
   {
+    name: 'SystemVerilog assertions',
+    source: `// A temporal property checks a multi-cycle request/response protocol.
+module sva_protocol;
+  logic clk = 0;
+  logic rst = 1;
+  logic req = 0;
+  logic grant = 0;
+  logic busy = 0;
+  logic done = 0;
+  logic error = 0;
+  int completed = 0;
+
+  // A response grants the request, remains busy for two clocks, then
+  // completes without an error.
+  sequence response_path;
+    grant ##1 busy[*2] ##1 (done && !error);
+  endsequence
+
+  // |=> starts the response sequence on the clock after req. Reset can
+  // asynchronously cancel any live attempt.
+  property bounded_response;
+    @(posedge clk) disable iff (rst)
+      req |=> response_path;
+  endproperty
+
+  response_check: assert property (bounded_response)
+    else $error("request did not receive a bounded response");
+  response_coverage: cover property (bounded_response) completed++;
+
+  always #1 clk = ~clk;
+
+  initial begin
+    $dumpfile("sva-protocol.vcd");
+    $dumpvars(0, sva_protocol);
+
+    // A complete response.
+    @(negedge clk); rst = 0; req = 1;
+    @(negedge clk); req = 0; grant = 1;
+    @(negedge clk); grant = 0; busy = 1;
+    @(negedge clk);
+    @(negedge clk); busy = 0; done = 1;
+    @(negedge clk); done = 0; req = 1;
+
+    // Cancel the next attempt while its response is in progress.
+    @(negedge clk); req = 0; grant = 1;
+    @(negedge clk); grant = 0; rst = 1; busy = 1;
+
+    // Reset deassertion permits a fresh successful attempt.
+    @(negedge clk); rst = 0; busy = 0; req = 1;
+    @(negedge clk); req = 0; grant = 1;
+    @(negedge clk); grant = 0; busy = 1;
+    @(negedge clk);
+    @(negedge clk); busy = 0; done = 1;
+    @(negedge clk); done = 0;
+
+    $display("completed assertion attempts: %0d", completed);
+    $finish;
+  end
+endmodule
+`,
+  },
+  {
     name: 'RV32IM core',
     source: `// A single-cycle RV32IM core with separate instruction and data ports.
 module rv32im_core (
