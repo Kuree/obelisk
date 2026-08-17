@@ -1441,7 +1441,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_leave(
   context->activeExecRegion = UINT32_MAX;
   context->activeLogicalProcessToken = 0;
   context->activeLogicalProcessParent = 0;
-  if (context->schedulerSlotProgress == (UINT64_C(1) << 20)) {
+  if (context->schedulerSlotProgress == UINT64_MAX) {
     context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
     return context->schedulerStatus;
   }
@@ -2001,7 +2001,7 @@ obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context,
       return status;
     if (changed && ++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
-    if (context->schedulerSlotProgress == (UINT64_C(1) << 20)) {
+    if (context->schedulerSlotProgress == UINT64_MAX) {
       context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
       return context->schedulerStatus;
     }
@@ -2193,7 +2193,7 @@ obelisk_rt_status adoptScheduledSuspendUnlocked(
 obelisk_rt_status runScheduler(obelisk_rt_context *context) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
-  constexpr uint64_t maxSlotProgress = UINT64_C(1) << 20;
+  constexpr uint64_t maxSlotProgress = UINT64_MAX;
   auto recordSlotProgress = [&]() -> obelisk_rt_status {
     ContextMutexLock lock(context);
     if (context->schedulerSlotProgress == maxSlotProgress) {
@@ -3482,8 +3482,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               context, scheduled.signalSubscriptions, scheduled.token, false);
         if (!scheduled.callers.empty() && !context->schedulerFinishRequested &&
             !killRequested) {
+          if (scheduled.callerControlDepths.size() != scheduled.callers.size())
+            return OBELISK_RT_INVALID_LIFECYCLE;
           scheduled.instance = scheduled.callers.back();
           scheduled.callers.pop_back();
+          scheduled.callerControlDepths.pop_back();
           scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
           scheduled.waitOffset = 0;
           scheduled.waitSize = 0;
@@ -3502,6 +3505,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           context->schedulerCompactionPending = true;
           if (terminationRequested || killRequested)
             terminatedCallers.swap(scheduled.callers);
+          scheduled.callerControlDepths.clear();
           obelisk_rt_release_controls_unlocked(context, scheduled.controls);
           scheduled.controls.clear();
           destroy = true;
@@ -3533,10 +3537,13 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         if (scheduled.callers.size() == std::numeric_limits<size_t>::max())
           return OBELISK_RT_OUT_OF_RESOURCES;
         scheduled.callers.reserve(scheduled.callers.size() + 1);
+        scheduled.callerControlDepths.reserve(
+            scheduled.callerControlDepths.size() + 1);
         if (!scheduled.signalSubscriptions.empty())
           obelisk_rt_unregister_signal_wait_unlocked(
               context, scheduled.signalSubscriptions, scheduled.token, false);
         scheduled.callers.push_back(selected);
+        scheduled.callerControlDepths.push_back(scheduled.controls.size());
         scheduled.instance = callee;
         scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
         scheduled.waitOffset = 0;

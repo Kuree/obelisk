@@ -1634,7 +1634,6 @@ bool validateImage(const Image &image) {
     }
     return nullptr;
   };
-  uint64_t driverStart = captureIndex;
   uint64_t previousDriverEnd = 0;
   std::vector<CaptureRecord> driverRecords;
   for (; captureIndex != image.stateDescriptorCount; ++captureIndex) {
@@ -1651,14 +1650,12 @@ bool validateImage(const Image &image) {
         driver.planeSize > image.stateBitCount - driver.unknownOffset ||
         !target || (driver.argument >> 1) != (target->argument >> 1))
       return reject(__LINE__, "invalid or misordered driver state record");
-    for (uint64_t previous = driverStart; previous != captureIndex;
-         ++previous) {
-      CaptureRecord other = captureAt(image, previous);
-      if (other.unknownOffset == driver.unknownOffset &&
-          ((other.argument >> 1) != (driver.argument >> 1) ||
-           other.planeSize != driver.planeSize))
-        return reject(__LINE__, "incompatible drivers share a target range");
-    }
+    // Driver ranges are resolved bitwise and may legally overlap. In
+    // particular, a driver for a packed aggregate and a driver for its
+    // low-order member have the same target start but different widths. The
+    // containing-net check above already proves that every bit has the net's
+    // resolution kind; requiring equal widths here would reject that legal
+    // topology before execution.
     driverRecords.push_back(driver);
     previousDriverEnd = driver.valueOffset + driver.planeSize;
   }

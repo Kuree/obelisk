@@ -408,7 +408,7 @@ public:
   }
 };
 
-template <typename Op, typename RuntimeOp>
+template <typename Op, typename RuntimeOp, bool checkStatus = true>
 class DescriptorTaskConversion final : public SimIOConversion<Op> {
 public:
   using SimIOConversion<Op>::SimIOConversion;
@@ -423,7 +423,8 @@ public:
     Value status = RuntimeOp::create(
         rewriter, loc, runtime::StatusType::get(rewriter.getContext()), context,
         fd);
-    sim::SimStatusCheckOp::create(rewriter, loc, status);
+    if constexpr (checkStatus)
+      sim::SimStatusCheckOp::create(rewriter, loc, status);
     rewriter.eraseOp(op);
     return success();
   }
@@ -741,9 +742,9 @@ void populateSimulationToRuntimePatterns(const TypeConverter &converter,
                               runtime::RTFileOpenMCDOp>,
                OpenConversion<sim::SimFileOpenOp, runtime::RTFileOpenOp>,
                DescriptorTaskConversion<sim::SimFileCloseOp,
-                                        runtime::RTFileCloseOp>,
+                                        runtime::RTFileCloseOp, false>,
                DescriptorTaskConversion<sim::SimFileFlushOp,
-                                        runtime::RTFileFlushOp>,
+                                        runtime::RTFileFlushOp, false>,
                DescriptorStatusConversion<sim::SimFileRewindOp,
                                           runtime::RTFileRewindOp>>(converter,
                                                                    context);

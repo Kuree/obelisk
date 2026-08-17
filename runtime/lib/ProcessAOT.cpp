@@ -738,7 +738,7 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
     if (status != OBELISK_RT_OK)
       return status;
   }
-  if (context->schedulerSlotProgress == (UINT64_C(1) << 20)) {
+  if (context->schedulerSlotProgress == UINT64_MAX) {
     context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
     return context->schedulerStatus;
   }
@@ -978,7 +978,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
           removeNativeAOTDeadlineUnlocked(context, actorSlot);
           scheduled.signalLatch.reset();
         }
-        if (context->schedulerSlotProgress == (UINT64_C(1) << 20)) {
+        if (context->schedulerSlotProgress == UINT64_MAX) {
           context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
           return context->schedulerStatus;
         }
@@ -1029,6 +1029,8 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
     case OBELISK_RT_FRAGMENT_TERMINATE:
       if (!scheduled.callers.empty() && !terminationRequested &&
           !killRequested) {
+        if (scheduled.callerControlDepths.size() != scheduled.callers.size())
+          return OBELISK_RT_INVALID_LIFECYCLE;
         obelisk_rt_process_instance_v1 *caller = scheduled.callers.back();
         status = context->nativeSchedulePlan->bind(
             context->nativeSchedulePlan->mutable_state, context, actorSlot,
@@ -1036,6 +1038,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
         if (status != OBELISK_RT_OK)
           return status;
         scheduled.callers.pop_back();
+        scheduled.callerControlDepths.pop_back();
         scheduled.instance = caller;
         scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
         scheduled.waitOffset = 0;
@@ -1068,6 +1071,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       context->schedulerCompactionPending = true;
       if (terminationRequested || killRequested)
         terminatedCallers.swap(scheduled.callers);
+      scheduled.callerControlDepths.clear();
       obelisk_rt_release_controls_unlocked(context, scheduled.controls);
       scheduled.controls.clear();
       scheduled.signalTriggered = false;
@@ -1170,6 +1174,8 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       if (scheduled.callers.size() == std::numeric_limits<size_t>::max())
         return OBELISK_RT_OUT_OF_RESOURCES;
       scheduled.callers.reserve(scheduled.callers.size() + 1);
+      scheduled.callerControlDepths.reserve(
+          scheduled.callerControlDepths.size() + 1);
       if (!scheduled.signalSubscriptions.empty())
         obelisk_rt_unregister_signal_wait_unlocked(
             context, scheduled.signalSubscriptions, scheduled.token, false);
@@ -1179,6 +1185,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       if (status != OBELISK_RT_OK)
         return status;
       scheduled.callers.push_back(selected);
+      scheduled.callerControlDepths.push_back(scheduled.controls.size());
       scheduled.instance = callee;
       scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
       scheduled.waitOffset = 0;
@@ -1219,7 +1226,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       if (status != OBELISK_RT_OK)
         return status;
     }
-    if (context->schedulerSlotProgress == (UINT64_C(1) << 20)) {
+    if (context->schedulerSlotProgress == UINT64_MAX) {
       context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
       return context->schedulerStatus;
     }
@@ -1650,7 +1657,7 @@ obelisk_rt_status drainNativeAOTCurrentSlotUnlocked(
       if (status != OBELISK_RT_OK)
         return status;
       if (designProgress) {
-        if (context->schedulerSlotProgress == (UINT64_C(1) << 20)) {
+        if (context->schedulerSlotProgress == UINT64_MAX) {
           context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
           return context->schedulerStatus;
         }
@@ -3000,7 +3007,7 @@ retryNativeSchedule:;
             status = checkpointCallback(context);
             {
               ContextMutexLock lock(context);
-              if (context->schedulerSlotProgress == (UINT64_C(1) << 20)) {
+              if (context->schedulerSlotProgress == UINT64_MAX) {
                 status = OBELISK_RT_OUT_OF_RESOURCES;
                 break;
               }

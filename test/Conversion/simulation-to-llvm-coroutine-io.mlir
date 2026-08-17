@@ -83,8 +83,6 @@ module attributes {
 // CHECK: llvm.icmp "eq"
 // CHECK: llvm.cond_br
 // CHECK: llvm.call @obelisk_rt_v1_file_close
-// CHECK: llvm.icmp "eq"
-// CHECK: llvm.cond_br
 // CHECK: llvm.call @obelisk_rt_v1_file_getline
 // CHECK: "llvm.intr.memcpy"
 // CHECK: llvm.call @obelisk_rt_v1_buffer_release

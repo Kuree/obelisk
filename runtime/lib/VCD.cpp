@@ -1552,8 +1552,13 @@ obelisk_rt_v1_dump_timescale(obelisk_rt_context *context, int32_t exponent) {
     obelisk_rt_status status = ensureState(context, state);
     if (status != OBELISK_RT_OK)
       return status;
+    // Lowered dump tasks carry the design timescale at each call site. Once
+    // the header exists, repeating that same annotation is idempotent; only a
+    // conflicting late change is invalid.
     if (state->headerWritten)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return state->timescaleSet && state->timescaleExponent == exponent
+                 ? OBELISK_RT_OK
+                 : OBELISK_RT_INVALID_LIFECYCLE;
     state->timescaleSet = true;
     state->timescaleExponent = exponent;
     return OBELISK_RT_OK;
@@ -1579,7 +1584,7 @@ obelisk_rt_v1_dump_vars(obelisk_rt_context *context, uint64_t levels,
     // Every selection must be registered before the plan is materialized,
     // because a VCD header is complete before the first value record.
     if (state->planBuilt)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return OBELISK_RT_OK;
     if (!state->file) {
       status = openFile(context, *state, "dump.vcd");
       if (status != OBELISK_RT_OK)

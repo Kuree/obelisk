@@ -3192,11 +3192,16 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     auto descriptor = scalar(0);
     if (!descriptor || *descriptor > UINT32_MAX)
       return OBELISK_RT_INVALID_BYTECODE;
-    return signature.id == OBELISK_RT_INTRINSIC_V1_FILE_CLOSE
-               ? obelisk_rt_v1_file_close(context,
-                                          static_cast<uint32_t>(*descriptor))
-               : obelisk_rt_v1_file_flush(context,
-                                          static_cast<uint32_t>(*descriptor));
+    // IEEE exposes these as void system tasks. A bad descriptor may update
+    // the runtime's last-error record, but it must not terminate the calling
+    // procedural process.
+    if (signature.id == OBELISK_RT_INTRINSIC_V1_FILE_CLOSE)
+      (void)obelisk_rt_v1_file_close(context,
+                                     static_cast<uint32_t>(*descriptor));
+    else
+      (void)obelisk_rt_v1_file_flush(context,
+                                     static_cast<uint32_t>(*descriptor));
+    return OBELISK_RT_OK;
   }
   case OBELISK_RT_INTRINSIC_V1_FILE_GETC: {
     auto descriptor = scalar(0);

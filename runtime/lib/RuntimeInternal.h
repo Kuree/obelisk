@@ -350,6 +350,10 @@ inline uint32_t obelisk_rt_commit_region(uint32_t homeRegion) {
 struct ScheduledProcess {
   obelisk_rt_process_instance_v1 *instance = nullptr;
   std::vector<obelisk_rt_process_instance_v1 *> callers;
+  // Control-stack size immediately before each corresponding task call.
+  // This identifies the caller continuation to restore when a live task
+  // activation is disabled from another logical process.
+  std::vector<size_t> callerControlDepths;
   std::vector<uint64_t> controls;
   uint64_t token = 0;
   uint64_t parent = 0;
@@ -519,6 +523,7 @@ struct DesignActivation {
   uint64_t scratchOffset = 0;
   uint64_t scratchSize = 0;
   uint32_t scheduleRank = UINT32_MAX;
+  size_t controlDepth = 0;
 };
 
 struct ScheduledDesignTask {

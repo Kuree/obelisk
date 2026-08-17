@@ -347,7 +347,7 @@ module attributes {
 // CHECK-LABEL: llvm.func @capture_ref(
 // CHECK: llvm.call @obelisk_rt_v1_native_state_release
 // CHECK-LABEL: llvm.func @consume_ref_with_status(
-// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_release
+// CHECK: llvm.call @obelisk_rt_v1_native_state_release
 // CHECK-LABEL: llvm.func @ref_lifetime
 // CHECK: llvm.call @obelisk_rt_v1_native_state_alloc
 // CHECK: llvm.call @obelisk_rt_v1_native_state_retain

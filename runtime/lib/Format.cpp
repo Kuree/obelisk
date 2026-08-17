@@ -91,6 +91,27 @@ bool getStringBytes(const obelisk_rt_arg_v1 &argument, char scratch[8],
          OBELISK_RT_OK;
 }
 
+bool getStringLogicView(const obelisk_rt_arg_v1 &argument,
+                        std::vector<uint64_t> &storage, LogicView &view) {
+  char scratch[8];
+  const char *bytes = nullptr;
+  uint64_t size = 0;
+  if (!getStringBytes(argument, scratch, bytes, size) || size == 0 ||
+      size > std::numeric_limits<uint32_t>::max() / 8)
+    return false;
+  uint64_t width = size * 8;
+  storage.assign(static_cast<size_t>(wordCount(width)), 0);
+  // A SystemVerilog string's first byte is its most-significant byte when it
+  // participates in an integral format conversion.
+  for (uint64_t index = 0; index != size; ++index) {
+    uint64_t bit = (size - index - 1) * 8;
+    storage[bit / 64] |=
+        uint64_t{static_cast<unsigned char>(bytes[index])} << (bit % 64);
+  }
+  view = {width, false, storage.data(), nullptr};
+  return true;
+}
+
 bool valueBit(const LogicView &view, uint64_t bit) {
   return ((view.value[bit / 64] >> (bit % 64)) & 1) != 0;
 }
@@ -335,12 +356,13 @@ obelisk_rt_status formatInteger(std::string &output, const LogicView &view,
   return OBELISK_RT_OK;
 }
 
-std::string logicToString(const LogicView &view) {
+std::string logicToString(const LogicView &view, bool trimLeadingNulls) {
   std::string result;
   uint64_t bytes = (view.width + 7) / 8;
   result.reserve(static_cast<size_t>(
       std::min<uint64_t>(bytes, std::numeric_limits<size_t>::max())));
   unsigned leadingBits = static_cast<unsigned>(view.width % 8);
+  bool seenNonNull = false;
   for (uint64_t byteIndex = bytes; byteIndex > 0; --byteIndex) {
     unsigned bits = byteIndex == bytes && leadingBits ? leadingBits : 8;
     uint64_t low = (byteIndex - 1) * 8;
@@ -350,8 +372,12 @@ std::string logicToString(const LogicView &view) {
       if (!unknownBit(view, sourceBit) && valueBit(view, sourceBit))
         character |= static_cast<uint8_t>(1u << bit);
     }
-    if (character != 0)
-      result.push_back(static_cast<char>(character));
+    if (trimLeadingNulls && !seenNonNull && character == 0)
+      continue;
+    seenNonNull |= character != 0;
+    // IEEE string formatting preserves the remaining packed byte positions.
+    // A null byte is rendered as a space instead of terminating the field.
+    result.push_back(character == 0 ? ' ' : static_cast<char>(character));
   }
   return result;
 }
@@ -498,13 +524,15 @@ obelisk_rt_status formatArgument(std::string &output,
   char spec =
       static_cast<char>(std::tolower(static_cast<unsigned char>(specifier)));
   LogicView view;
+  std::vector<uint64_t> stringLogic;
   switch (spec) {
   case 'b':
   case 'o':
   case 'd':
   case 'h':
   case 'x':
-    if (!getLogicView(argument, view)) {
+    if (!getLogicView(argument, view) &&
+        !getStringLogicView(argument, stringLogic, view)) {
       if (argument.kind != OBELISK_RT_ARG_REAL || !argument.data)
         return OBELISK_RT_ARGUMENT_MISMATCH;
       double real = *static_cast<const double *>(argument.data);
@@ -522,7 +550,8 @@ obelisk_rt_status formatArgument(std::string &output,
     }
     return formatInteger(output, view, spec, options);
   case 'c': {
-    if (!getLogicView(argument, view))
+    if (!getLogicView(argument, view) &&
+        !getStringLogicView(argument, stringLogic, view))
       return OBELISK_RT_ARGUMENT_MISMATCH;
     uint8_t character = 0;
     for (unsigned bit = 0; bit < 8 && bit < view.width; ++bit)
@@ -540,13 +569,19 @@ obelisk_rt_status formatArgument(std::string &output,
       if (!getStringBytes(argument, scratch, bytes, size) ||
           size > std::numeric_limits<size_t>::max())
         return OBELISK_RT_INVALID_ARGUMENT;
-      return formatStringValue(
-          output, std::string(bytes, static_cast<size_t>(size)),
-          options);
+      std::string_view source(bytes, static_cast<size_t>(size));
+      if (options.zero) {
+        size_t first = source.find_first_not_of('\0');
+        source.remove_prefix(first == std::string_view::npos ? source.size()
+                                                             : first);
+      }
+      std::string field(source);
+      std::replace(field.begin(), field.end(), '\0', ' ');
+      return formatStringValue(output, std::move(field), options);
     }
     if (!getLogicView(argument, view))
       return OBELISK_RT_ARGUMENT_MISMATCH;
-    return formatStringValue(output, logicToString(view), options);
+    return formatStringValue(output, logicToString(view, options.zero), options);
   case 'e':
   case 'f':
   case 'g': {
@@ -1043,6 +1078,10 @@ obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
     reportFormatWarnings(context, warnings);
     if (appendNewline)
       output.push_back('\n');
+    // An MCD with no selected bits writes nowhere. Formatting and argument
+    // evaluation still occur, but the void display task succeeds.
+    if (descriptor == 0)
+      return OBELISK_RT_OK;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     return writeUnlocked(context, descriptor, output.data(), output.size(),
                          nullptr);

@@ -124,9 +124,7 @@ module {
 // CHECK: %[[OPEN_OK:.*]] = obelisk_rt.status.is %[[OPEN_STATUS]], 0
 // CHECK: arith.select %[[OPEN_OK]], %[[OPEN_BITS]], %[[OPEN_FAILURE]] : i32
 // CHECK: %[[CLOSE_STATUS:.*]] = obelisk_rt.file.close
-// CHECK-NEXT: obelisk_sim.status.check %[[CLOSE_STATUS]]
 // CHECK: %[[FLUSH_STATUS:.*]] = obelisk_rt.file.flush
-// CHECK-NEXT: obelisk_sim.status.check %[[FLUSH_STATUS]]
 // CHECK: %[[GETC_STATUS:.*]], %[[BYTE:.*]] = obelisk_rt.file.getc
 // CHECK: %[[BYTE_I32:.*]] = arith.extui %[[BYTE]] : i8 to i32
 // CHECK: %[[GETC_FAILURE:.*]] = arith.constant -1 : i32

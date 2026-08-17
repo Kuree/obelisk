@@ -9,9 +9,9 @@ the design and native inputs with Obelisk, run it, and judge it three ways:
   * a descriptor with a gold file passes iff its stdout matches the gold;
   * otherwise the test self-checks and must print `PASSED`.
 
-Because we control each test's output path, there is no shared `work/a.out` to
-collide on, so parallelism needs no sandbox — every test compiles into its own
-temporary directory.
+Every test executes in its own temporary ivtest-shaped directory. This avoids
+parallel collisions in `work/` and `log/` while preserving relative fixture
+lookups such as `ivltests/fread.txt`.
 """
 
 from __future__ import annotations
@@ -60,6 +60,14 @@ def resolve_lists(root: Path, requested: list[str]) -> list[Path]:
 
 
 @dataclasses.dataclass
+class ArtifactDiff:
+    """A generated artifact and its checked-in oracle."""
+    actual: Path
+    expected: Path
+    skip_lines: int = 0
+
+
+@dataclasses.dataclass
 class Descriptor:
     """A normalized ivtest test, format-independent."""
     key: str
@@ -67,6 +75,7 @@ class Descriptor:
     iverilog_args: list[str]
     source: Path
     gold: Path | None
+    artifact_diffs: list[ArtifactDiff]
     vpi_sources: list[Path]
     vpi_compiler_args: list[str]
 
@@ -95,6 +104,7 @@ def _parse_descriptor(ivtest_dir: Path, key: str, fields: list[str]) -> Descript
             iverilog_args=list(data.get("iverilog-args", [])),
             source=ivtest_dir / "ivltests" / data["source"],
             gold=(ivtest_dir / "gold" / f"{gold}-vvp-stdout.gold") if gold else None,
+            artifact_diffs=[],
             vpi_sources=vpi_sources,
             vpi_compiler_args=list(data.get("vpi-compiler-args", [])),
         )
@@ -123,6 +133,7 @@ def _parse_descriptor(ivtest_dir: Path, key: str, fields: list[str]) -> Descript
             iverilog_args=type_and_args[1:],
             source=source,
             gold=ivtest_dir / "vpi_gold" / fields[2],
+            artifact_diffs=[],
             vpi_sources=vpi_sources,
             vpi_compiler_args=compiler_args,
         )
@@ -130,15 +141,27 @@ def _parse_descriptor(ivtest_dir: Path, key: str, fields: list[str]) -> Descript
     type_and_args = second.split(",")
     directory = fields[1] if len(fields) > 1 else "ivltests"
     gold = None
+    artifact_diffs: list[ArtifactDiff] = []
     for extra in fields[2:]:
         if extra.startswith("gold="):
             gold = ivtest_dir / "gold" / extra[len("gold="):]
+        elif extra.startswith("diff="):
+            parts = extra[len("diff="):].split(":")
+            if len(parts) not in (2, 3):
+                raise ValueError(f"malformed ivtest diff descriptor: {extra}")
+            skip_lines = int(parts[2]) if len(parts) == 3 else 0
+            artifact_diffs.append(ArtifactDiff(
+                actual=Path(parts[0]),
+                expected=ivtest_dir / parts[1],
+                skip_lines=skip_lines,
+            ))
     return Descriptor(
         key=key,
         test_type=type_and_args[0],
         iverilog_args=type_and_args[1:],
         source=ivtest_dir / directory / f"{key}.v",
         gold=gold,
+        artifact_diffs=artifact_diffs,
         vpi_sources=[],
         vpi_compiler_args=[],
     )
@@ -178,6 +201,11 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
     flags += ["-y", str(ivtest_dir / "ivltests"), "-I", str(ivtest_dir / "ivltests")]
 
     with tempfile.TemporaryDirectory(prefix="obelisk-ivt-") as tmp:
+        run_dir = Path(tmp)
+        (run_dir / "work").mkdir()
+        (run_dir / "log").mkdir()
+        (run_dir / "ivltests").symlink_to(
+            ivtest_dir / "ivltests", target_is_directory=True)
         native = runner.build_vpi_inputs(
             obelisk,
             [*(str(path) for path in desc.vpi_sources), *vpi_code],
@@ -210,7 +238,28 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
         if not compiled.ok:
             return (desc.key, model.Outcome(model.COMPILE_FAIL, compiled.stderr))
 
-        result = runner.execute(str(binary), timeout)
+        result = runner.execute(str(binary), timeout, cwd=tmp)
+        if desc.artifact_diffs:
+            if not result.ok:
+                return (desc.key, model.Outcome(model.RUN_FAIL, result.stdout))
+            for artifact in desc.artifact_diffs:
+                actual = run_dir / artifact.actual
+                if not actual.exists() or not artifact.expected.exists():
+                    return (desc.key, model.Outcome(
+                        model.RUN_FAIL,
+                        f"missing artifact oracle: {actual} or "
+                        f"{artifact.expected}",
+                    ))
+                actual_lines = actual.read_text(
+                    encoding="utf-8", errors="replace").splitlines()
+                expected_lines = artifact.expected.read_text(
+                    encoding="utf-8", errors="replace").splitlines()
+                if (actual_lines[artifact.skip_lines:] !=
+                        expected_lines[artifact.skip_lines:]):
+                    return (desc.key, model.Outcome(
+                        model.RUN_FAIL, f"artifact differs: {artifact.actual}",
+                    ))
+            return (desc.key, model.Outcome(model.PASS))
         if desc.gold is not None:
             if (result.ok and desc.gold.exists() and
                     result.stdout == desc.gold.read_text(
@@ -221,10 +270,15 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
                 line.strip() == PASSED_MARKER
                 for line in result.stdout.splitlines()):
             return (desc.key, model.Outcome(model.PASS))
-        # Test doesn't use PASSED marker. Treat clean exit as pass.
-        if result.ok:
-            return (desc.key, model.Outcome(model.PASS))
-        return (desc.key, model.Outcome(model.RUN_FAIL, result.stdout))
+        # This matches ivtest's Diff.pm oracle: ordinary tests without a gold
+        # or diff artifact must print a standalone PASSED marker. A clean exit
+        # after printing FAILED is still a failed self-check.
+        diagnostic = result.stdout
+        if result.stderr:
+            diagnostic += result.stderr
+        if result.timed_out and not diagnostic:
+            diagnostic = f"execution exceeded {timeout:g}s"
+        return (desc.key, model.Outcome(model.RUN_FAIL, diagnostic))
 
 
 def run(root: Path, args) -> dict[str, model.Outcome]:

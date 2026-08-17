@@ -471,14 +471,30 @@ void ObeliskSimPreparePass::runOnOperation() {
   // IDs cross both native and bytecode ABIs, so unchecked truncated hashes
   // are not acceptable.
   llvm::StringSet<> controlPaths;
+  llvm::StringSet<> repeatingStatementBlockPaths;
   llvm::StringSet<> staticPaths;
+  semanticRoot->walk([&](semantic::SVProceduralBlockSymbolOp procedure) {
+    if (procedure.getProcedureKind() ==
+            semantic::SVProceduralBlockKind::Initial ||
+        procedure.getProcedureKind() == semantic::SVProceduralBlockKind::Final)
+      return;
+    procedure->walk([&](semantic::SVBlockStatementOp block) {
+      if (auto path = block.getBlockPathAttr())
+        repeatingStatementBlockPaths.insert(path.getValue());
+    });
+  });
   semanticRoot->walk([&](Operation *op) {
     if (auto block = dyn_cast<semantic::SVBlockStatementOp>(op)) {
       if (auto path = block.getBlockPathAttr())
         controlPaths.insert(path.getValue());
     } else if (auto disable = dyn_cast<semantic::SVDisableStatementOp>(op)) {
-      if (auto path = disable.getTargetPathAttr())
+      if (auto path = disable.getTargetPathAttr()) {
         controlPaths.insert(path.getValue());
+        if (repeatingStatementBlockPaths.contains(path.getValue()))
+          disable->setAttr(
+              "obelisk_sim.nonlocal_repeating_statement_block_target",
+              UnitAttr::get(context));
+      }
     } else if (auto declaration =
                    dyn_cast<semantic::SVVariableDeclStatementOp>(op)) {
       staticPaths.insert(declaration.getReferencedPath());

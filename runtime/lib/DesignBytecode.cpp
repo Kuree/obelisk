@@ -2879,6 +2879,7 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
         nativeInstances.insert(nativeInstances.end(), process.callers.begin(),
                                process.callers.end());
         process.callers.clear();
+        process.callerControlDepths.clear();
         obelisk_rt_unregister_signal_wait_unlocked(
             context, process.signalSubscriptions, process.token, false);
         process.instance = nullptr;
@@ -3187,6 +3188,7 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
         nativeInstances.insert(nativeInstances.end(), process.callers.begin(),
                                process.callers.end());
         process.callers.clear();
+        process.callerControlDepths.clear();
         obelisk_rt_unregister_signal_wait_unlocked(
             context, process.signalSubscriptions, process.token, false);
         process.instance = nullptr;
@@ -3275,6 +3277,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
     uint64_t id;
     uint32_t function;
     uint64_t scratchOffset;
+    bool releaseOwnedStates;
     std::vector<uint8_t> frame;
   };
   try {
@@ -3325,11 +3328,45 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
       if (targets.empty())
         return OBELISK_RT_OK;
       auto isTargetMember = [&](const std::vector<uint64_t> &controls) {
-        for (uint64_t token : targets)
-          if (std::find(controls.begin(), controls.end(), token) !=
-              controls.end())
-            return true;
-        return false;
+        return std::any_of(controls.begin(), controls.end(),
+                           [&](uint64_t control) {
+                             return std::find(targets.begin(), targets.end(),
+                                              control) != targets.end();
+                           });
+      };
+      struct UnwindBoundary {
+        size_t caller;
+        size_t control;
+      };
+      auto targetedControl =
+          [&](const std::vector<uint64_t> &controls) -> std::optional<size_t> {
+        for (size_t index = 0; index != controls.size(); ++index)
+          if (std::find(targets.begin(), targets.end(), controls[index]) !=
+              targets.end())
+            return index;
+        return std::nullopt;
+      };
+      auto nativeUnwind = [&](const ScheduledProcess &process)
+          -> std::optional<UnwindBoundary> {
+        std::optional<size_t> control = targetedControl(process.controls);
+        if (!control || process.callerControlDepths.size() !=
+                            process.callers.size())
+          return std::nullopt;
+        for (size_t index = 0; index != process.callerControlDepths.size();
+             ++index)
+          if (process.callerControlDepths[index] == *control)
+            return UnwindBoundary{index, *control};
+        return std::nullopt;
+      };
+      auto designUnwind = [&](const ScheduledDesignTask &task)
+          -> std::optional<UnwindBoundary> {
+        std::optional<size_t> control = targetedControl(task.controls);
+        if (!control)
+          return std::nullopt;
+        for (size_t index = 0; index != task.callers.size(); ++index)
+          if (task.callers[index].controlDepth == *control)
+            return UnwindBoundary{index, *control};
+        return std::nullopt;
       };
 
       // The disabling process follows its statically lowered exit edge. Drop
@@ -3357,25 +3394,33 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
         if (!process.instance || (token == current && !cancelCurrent) ||
             !isTargetMember(process.controls))
           continue;
-        if (process.callers.size() == std::numeric_limits<size_t>::max())
+        std::optional<UnwindBoundary> unwind = nativeUnwind(process);
+        if (!unwind &&
+            process.callers.size() == std::numeric_limits<size_t>::max())
           throw std::bad_alloc();
-        size_t count = process.callers.size() + 1;
+        size_t count = unwind ? process.callers.size() - unwind->caller
+                              : process.callers.size() + 1;
         if (count > std::numeric_limits<size_t>::max() - nativeActivationCount)
           throw std::bad_alloc();
         nativeActivationCount += count;
-        ++nativeTaskCount;
+        if (!unwind)
+          ++nativeTaskCount;
       }
       for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
         if (task.terminated || (task.id == current && !cancelCurrent) ||
             !isTargetMember(task.controls))
           continue;
-        if (task.callers.size() == std::numeric_limits<size_t>::max())
+        std::optional<UnwindBoundary> unwind = designUnwind(task);
+        if (!unwind &&
+            task.callers.size() == std::numeric_limits<size_t>::max())
           throw std::bad_alloc();
-        size_t count = task.callers.size() + 1;
+        size_t count = unwind ? task.callers.size() - unwind->caller
+                              : task.callers.size() + 1;
         if (count > std::numeric_limits<size_t>::max() - designActivationCount)
           throw std::bad_alloc();
         designActivationCount += count;
-        ++designTaskCount;
+        if (!unwind)
+          ++designTaskCount;
       }
       nativeInstances.reserve(nativeActivationCount);
       designTasks.reserve(designActivationCount);
@@ -3400,7 +3445,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
         for (const ScheduledProcess &process : context->scheduledProcesses) {
           uint64_t token = (UINT64_C(1) << 63) | process.token;
           if (!process.instance || (token == current && !cancelCurrent) ||
-              !isTargetMember(process.controls))
+              !isTargetMember(process.controls) || nativeUnwind(process))
             continue;
           if (context->terminatedNativeProcesses
                   .insert(process.token, process.random)
@@ -3411,7 +3456,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
         }
         for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
           if (task.terminated || (task.id == current && !cancelCurrent) ||
-              !isTargetMember(task.controls))
+              !isTargetMember(task.controls) || designUnwind(task))
             continue;
           if (context->terminatedDesignTasks.insert(task.id, task.random)
                   .second)
@@ -3450,10 +3495,52 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
             !isTargetMember(process.controls))
           continue;
         obelisk_rt_flush_deferred_immediate_reports_unlocked(context, token);
+        if (std::optional<UnwindBoundary> unwind = nativeUnwind(process)) {
+          obelisk_rt_process_instance_v1 *caller =
+              process.callers[unwind->caller];
+          if (process.aotActorSlot != UINT32_MAX) {
+            uint32_t slot = process.aotActorSlot;
+            if (!context->nativeSchedulePlan ||
+                slot >= context->nativeScheduleActors.size())
+              return OBELISK_RT_INVALID_LIFECYCLE;
+            obelisk_rt_status status = context->nativeSchedulePlan->bind(
+                context->nativeSchedulePlan->mutable_state, context, slot,
+                caller);
+            if (status != OBELISK_RT_OK)
+              return status;
+            context->nativeScheduleActors[slot] = caller;
+            context->nativeScheduleActorTokens[slot] = process.token;
+          }
+          nativeInstances.push_back(process.instance);
+          for (size_t index = process.callers.size();
+               index != unwind->caller + 1; --index)
+            nativeInstances.push_back(process.callers[index - 1]);
+          process.instance = caller;
+          process.callers.resize(unwind->caller);
+          process.callerControlDepths.resize(unwind->caller);
+          obelisk_rt_unregister_signal_wait_unlocked(
+              context, process.signalSubscriptions, process.token, false);
+          for (size_t index = unwind->control;
+               index != process.controls.size(); ++index)
+            obelisk_rt_release_control_unlocked(context,
+                                                process.controls[index]);
+          process.controls.resize(unwind->control);
+          process.suspendKind = OBELISK_RT_SUSPEND_NONE;
+          process.waitOffset = 0;
+          process.waitSize = 0;
+          process.waitGenerations.clear();
+          process.signalLatch.reset();
+          process.signalTriggered = false;
+          process.urgent = true;
+          process.queuedRegion = process.homeRegion;
+          context->nativePollCandidates.insert(process.token);
+          continue;
+        }
         nativeInstances.push_back(process.instance);
         nativeInstances.insert(nativeInstances.end(), process.callers.begin(),
                                process.callers.end());
         process.callers.clear();
+        process.callerControlDepths.clear();
         obelisk_rt_unregister_signal_wait_unlocked(
             context, process.signalSubscriptions, process.token, false);
         process.instance = nullptr;
@@ -3474,11 +3561,47 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
             !isTargetMember(task.controls))
           continue;
         obelisk_rt_flush_deferred_immediate_reports_unlocked(context, task.id);
-        designTasks.push_back({task.id, task.function, task.scratchOffset,
+        if (std::optional<UnwindBoundary> unwind = designUnwind(task)) {
+          designTasks.push_back({task.id, task.function, task.scratchOffset,
+                                 false, std::move(task.frame)});
+          for (size_t index = task.callers.size();
+               index != unwind->caller + 1; --index) {
+            DesignActivation &activation = task.callers[index - 1];
+            designTasks.push_back(
+                {task.id, activation.function, activation.scratchOffset, false,
+                 std::move(activation.frame)});
+          }
+          DesignActivation caller = std::move(task.callers[unwind->caller]);
+          task.callers.resize(unwind->caller);
+          task.function = caller.function;
+          task.continuation = caller.continuation;
+          task.frame = std::move(caller.frame);
+          task.scratchOffset = caller.scratchOffset;
+          task.scratchSize = caller.scratchSize;
+          task.scheduleRank = caller.scheduleRank;
+          obelisk_rt_unregister_signal_wait_unlocked(
+              context, task.signalSubscriptions, task.id, true);
+          for (size_t index = unwind->control;
+               index != task.controls.size(); ++index)
+            obelisk_rt_release_control_unlocked(context,
+                                                task.controls[index]);
+          task.controls.resize(unwind->control);
+          task.suspendKind = OBELISK_RT_SUSPEND_NONE;
+          task.waitOffset = 0;
+          task.waitSize = 0;
+          task.waitGenerations.clear();
+          task.signalLatch.reset();
+          task.signalTriggered = false;
+          task.urgent = true;
+          task.queuedRegion = task.homeRegion;
+          context->designPollCandidates.insert(task.id);
+          continue;
+        }
+        designTasks.push_back({task.id, task.function, task.scratchOffset, true,
                                std::move(task.frame)});
         for (DesignActivation &caller : task.callers)
           designTasks.push_back({task.id, caller.function, caller.scratchOffset,
-                                 std::move(caller.frame)});
+                                 true, std::move(caller.frame)});
         task.callers.clear();
         obelisk_rt_unregister_signal_wait_unlocked(
             context, task.signalSubscriptions, task.id, true);
@@ -3524,7 +3647,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       uint64_t last = 0;
       for (const CancelledDesignTask &task : designTasks)
-        if (task.id != last) {
+        if (task.releaseOwnedStates && task.id != last) {
           releaseDesignTaskOwnedStatesUnlocked(context, task.id);
           last = task.id;
         }
@@ -4113,7 +4236,8 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
               context, task.signalSubscriptions, task.id, true);
         task.callers.push_back({task.function, task.continuation,
                                 std::move(task.frame), task.scratchOffset,
-                                task.scratchSize, task.scheduleRank});
+                                task.scratchSize, task.scheduleRank,
+                                task.controls.size()});
         DesignActivation activation = std::move(pendingActivation->activation);
         task.function = activation.function;
         task.continuation = activation.continuation;

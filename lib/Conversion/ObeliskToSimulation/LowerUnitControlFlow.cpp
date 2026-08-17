@@ -6,7 +6,6 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
-
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -1343,6 +1342,19 @@ LogicalResult UnitLowering::lowerDisable(semantic::SVDisableStatementOp op) {
       return success();
     }
   }
+
+  // A statement block in another repeating procedural activation needs a
+  // resumable exit continuation in that activation. Cancelling the complete
+  // logical process would suppress its next iteration. Initial/final targets
+  // can be cancelled outright, and inherited fork controls use the return
+  // path below, so reject only this genuinely unsafe boundary.
+  if (op->hasAttr(
+          "obelisk_sim.nonlocal_repeating_statement_block_target")) {
+    emitError(location)
+        << "disable of a nonlocal statement block is not executable yet";
+    return failure();
+  }
+
   if (inheritedControlIDs.contains(path.getValue())) {
     sim::SimControlDisableOp::create(
         builder, location, builder.getI64IntegerAttr(targetID), Value{},

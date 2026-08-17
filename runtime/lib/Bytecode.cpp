@@ -1169,12 +1169,16 @@ invokeService(const obelisk_rt_bytecode_service_site_v1 &site,
     auto descriptor = scalar(0);
     if (!descriptor || *descriptor > UINT32_MAX)
       return std::nullopt;
-    if (site.service == OBELISK_RT_BC_SERVICE_FILE_CLOSE)
-      return obelisk_rt_v1_file_close(context,
-                                      static_cast<uint32_t>(*descriptor));
-    if (site.service == OBELISK_RT_BC_SERVICE_FILE_FLUSH)
-      return obelisk_rt_v1_file_flush(context,
-                                      static_cast<uint32_t>(*descriptor));
+    if (site.service == OBELISK_RT_BC_SERVICE_FILE_CLOSE) {
+      (void)obelisk_rt_v1_file_close(context,
+                                     static_cast<uint32_t>(*descriptor));
+      return OBELISK_RT_OK;
+    }
+    if (site.service == OBELISK_RT_BC_SERVICE_FILE_FLUSH) {
+      (void)obelisk_rt_v1_file_flush(context,
+                                     static_cast<uint32_t>(*descriptor));
+      return OBELISK_RT_OK;
+    }
     return obelisk_rt_v1_file_rewind(context,
                                      static_cast<uint32_t>(*descriptor));
   }
