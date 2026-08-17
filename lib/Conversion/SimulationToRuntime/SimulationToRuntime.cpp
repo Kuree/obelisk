@@ -611,8 +611,10 @@ public:
         rewriter, loc, packedType, valueScratch, count, false);
     Value unknown = runtime::RTPackedFromBytesOp::create(
         rewriter, loc, packedType, unknownScratch, count, false);
-    rewriter.replaceOp(op, ValueRange{value, unknown, call.getKind(),
-                                      call.getAddress()});
+    // The four-state token data occupies two of the replacement values, so the
+    // results have to be handed over grouped rather than flattened.
+    rewriter.replaceOpWithMultiple(
+        op, {{value, unknown}, {call.getKind()}, {call.getAddress()}});
     return success();
   }
 };
