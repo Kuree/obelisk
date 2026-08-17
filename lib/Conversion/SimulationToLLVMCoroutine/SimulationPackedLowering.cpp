@@ -691,6 +691,7 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimStringRepeatOp, sim::SimStringLengthOp, sim::SimStringGetcOp,
         sim::SimStringPutcOp, sim::SimStringSubstrOp, sim::SimStringCompareOp,
         sim::SimStringCaseConvertOp, sim::SimStringParseIntegerOp,
+        sim::SimStringParseLogicOp,
         sim::SimStringParseRealOp, sim::SimStringScanFieldOp,
         sim::SimStringFormatIntegerOp, sim::SimStringFormatRealOp,
         sim::SimFileOpenStringMCDOp, sim::SimFileOpenStringOp,

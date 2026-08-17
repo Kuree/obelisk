@@ -472,6 +472,10 @@ void declareNativeRuntimeABI(ModuleOp module) {
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_parse_integer",
                            managedI32,
                            {managedI64, managedI32, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_parse_logic",
+                           managedI32,
+                           {managedI64, managedI32, managedPointer,
+                            managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_parse_real",
                            managedI32, {managedI64, managedPointer});
   getOrDeclareLLVMFunction(

@@ -992,6 +992,11 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && string(input(0)) && bits(input(1), 64) &&
            bits(output(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_STRING_PARSE_LOGIC:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 1 && string(input(0)) && bits(input(1), 64) &&
+           output(0) && output(0)->kind == OBELISK_RT_DBREG_LOGIC &&
+           output(0)->width == 64;
   case OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && string(input(0)) && output(0) &&

@@ -695,6 +695,42 @@ private:
   std::string symbol;
 };
 
+class StringParseLogicConversion final
+    : public OpConversionPattern<sim::SimStringParseLogicOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimStringParseLogicOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Type i64 = rewriter.getI64Type();
+    Value valueOutput = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+    Value unknownOutput = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+    for (Value output : {valueOutput, unknownOutput})
+      LLVM::StoreOp::create(rewriter, op.getLoc(),
+                            LLVM::ZeroOp::create(rewriter, op.getLoc(), i64),
+                            output, 8);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_string_parse_logic"),
+            ValueRange{adaptor.getInput().front(),
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI32Type(), op.getRadix()),
+                       valueOutput, unknownOutput})
+            .getResult();
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    SmallVector<Value> result{
+        LLVM::LoadOp::create(rewriter, op.getLoc(), i64, valueOutput, 8),
+        LLVM::LoadOp::create(rewriter, op.getLoc(), i64, unknownOutput, 8)};
+    rewriter.replaceOpWithMultiple(op, ArrayRef<SmallVector<Value>>{result});
+    return success();
+  }
+};
+
 } // namespace
 
 void populateManagedStringToLLVMConversionPatterns(
@@ -704,7 +740,7 @@ void populateManagedStringToLLVMConversionPatterns(
                StringToPackedConversion, StringConcatConversion,
                StringLengthConversion, StringGetcConversion,
                StringCompareConversion, StringScanFieldConversion,
-               FileScanFieldConversion,
+               FileScanFieldConversion, StringParseLogicConversion,
                PlusargTestConversion,
                PlusargValueConversion,
                StringDumpOpenConversion, StringDumpPortsConversion,

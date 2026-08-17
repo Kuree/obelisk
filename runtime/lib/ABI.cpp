@@ -1370,6 +1370,9 @@ ABI_FUNCTION(obelisk_rt_v1_string_case_convert,
                                    obelisk_rt_string_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_string_parse_integer,
              obelisk_rt_status (*)(obelisk_rt_string_v1, uint32_t, uint64_t *));
+ABI_FUNCTION(obelisk_rt_v1_string_parse_logic,
+             obelisk_rt_status (*)(obelisk_rt_string_v1, uint32_t, uint64_t *,
+                                   uint64_t *));
 ABI_FUNCTION(obelisk_rt_v1_string_parse_real,
              obelisk_rt_status (*)(obelisk_rt_string_v1, double *));
 ABI_FUNCTION(obelisk_rt_v1_string_format_integer,

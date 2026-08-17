@@ -1000,6 +1000,19 @@ def SimStringParseIntegerOp : SimOp<"string.parse_integer", [Pure]> {
   let hasVerifier = 1;
 }
 
+def SimStringParseLogicOp : SimOp<"string.parse_logic", [Pure]> {
+  let summary = "parse a managed string into four-state integral data";
+  let description = [{
+    Parses up to 64 bits while preserving x, z, and ? digits in separate value
+    and unknown planes. The result type must be `!obelisk_sim.logic<64>`.
+  }];
+  let arguments = (ins SimStringType:$input, I32Attr:$radix);
+  let results = (outs SimLogicType:$result);
+  let assemblyFormat =
+      "$input `radix` `=` $radix attr-dict `:` type($result)";
+  let hasVerifier = 1;
+}
+
 def SimStringParseRealOp : SimOp<"string.parse_real", [Pure]> {
   let summary = "parse a locale-independent real from a managed string";
   let arguments = (ins SimStringType:$input);

@@ -981,6 +981,12 @@ LogicalResult SimStringParseIntegerOp::verify() {
   return verifyStringRadix(getOperation(), getRadix());
 }
 
+LogicalResult SimStringParseLogicOp::verify() {
+  if (getResult().getType().getWidth() != 64)
+    return emitOpError("result must be !obelisk_sim.logic<64>");
+  return verifyStringRadix(getOperation(), getRadix());
+}
+
 LogicalResult SimStringFormatIntegerOp::verify() {
   return verifyStringRadix(getOperation(), getRadix());
 }

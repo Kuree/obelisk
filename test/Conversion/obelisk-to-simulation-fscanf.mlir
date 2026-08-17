@@ -8,7 +8,7 @@
 // CHECK-NOT: obelisk_sim.file.getline_string
 // CHECK: %[[FIELD:.*]], %[[OK:.*]], %[[EOF:.*]] = obelisk_sim.file.scan_field {{.*}} {prefix = "", specifier = 100 : i32}
 // CHECK: arith.cmpi ne, %[[EOF]]
-// CHECK: obelisk_sim.string.parse_integer %[[FIELD]] radix = 10
+// CHECK: obelisk_sim.string.parse_logic %[[FIELD]] radix = 10 : <64>
 // CHECK: arith.cmpi ne, %[[OK]]
 
 module {

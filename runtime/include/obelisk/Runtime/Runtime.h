@@ -965,6 +965,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_SEMAPHORE_PUT = UINT32_C(0x00010459),
   OBELISK_RT_INTRINSIC_V1_SEMAPHORE_TRY_GET = UINT32_C(0x0001045a),
   OBELISK_RT_INTRINSIC_V1_EVENT_CREATE = UINT32_C(0x0001045b),
+  OBELISK_RT_INTRINSIC_V1_STRING_PARSE_LOGIC = UINT32_C(0x0001045c),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -1928,6 +1929,9 @@ obelisk_rt_status obelisk_rt_v1_string_scan_field(
 obelisk_rt_status
 obelisk_rt_v1_string_parse_integer(obelisk_rt_string_v1 string, uint32_t radix,
                                    uint64_t *out_value);
+obelisk_rt_status obelisk_rt_v1_string_parse_logic(
+    obelisk_rt_string_v1 string, uint32_t radix, uint64_t *out_value,
+    uint64_t *out_unknown);
 obelisk_rt_status obelisk_rt_v1_string_parse_real(obelisk_rt_string_v1 string,
                                                   double *out_value);
 obelisk_rt_status

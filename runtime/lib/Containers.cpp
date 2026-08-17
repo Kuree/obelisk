@@ -1396,6 +1396,10 @@ bool scanDigit(char character, uint32_t radix) {
   unsigned char value = static_cast<unsigned char>(character);
   if (character == '_')
     return true;
+  if (radix != 10 && (character == 'x' || character == 'X' ||
+                      character == 'z' || character == 'Z' ||
+                      character == '?'))
+    return true;
   uint32_t digit = value >= '0' && value <= '9'   ? value - '0'
                    : value >= 'a' && value <= 'f' ? value - 'a' + 10
                    : value >= 'A' && value <= 'F' ? value - 'A' + 10
@@ -1409,8 +1413,12 @@ uint64_t scanFieldExtent(const StringView &view, uint64_t &index,
                          uint32_t specifier) {
   char letter = static_cast<char>(
       std::tolower(static_cast<unsigned char>(specifier)));
-  if (letter == 'c')
-    return index < view.size ? 1 : 0;
+  if (letter == 'c') {
+    if (index >= view.size)
+      return 0;
+    ++index;
+    return 1;
+  }
   while (index < view.size && scanSpace(view.bytes[index]))
     ++index;
   uint64_t start = index;
@@ -1531,6 +1539,67 @@ extern "C" obelisk_rt_status obelisk_rt_v1_string_parse_integer(
     value = value * radix + digit;
   }
   *outValue = negative ? uint64_t{0} - value : value;
+  return OBELISK_RT_OK;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_string_parse_logic(
+    obelisk_rt_string_v1 string, uint32_t radix, uint64_t *outValue,
+    uint64_t *outUnknown) {
+  if (!outValue || !outUnknown ||
+      (radix != 2 && radix != 8 && radix != 10 && radix != 16))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outValue = 0;
+  *outUnknown = 0;
+  StringView view;
+  obelisk_rt_status status = readString(string, view);
+  if (status != OBELISK_RT_OK)
+    return status;
+  uint64_t index = 0;
+  while (index < view.size && scanSpace(view.bytes[index]))
+    ++index;
+  bool negative = false;
+  if (index < view.size &&
+      (view.bytes[index] == '+' || view.bytes[index] == '-')) {
+    negative = view.bytes[index] == '-';
+    ++index;
+  }
+  uint64_t value = 0;
+  uint64_t unknown = 0;
+  for (; index < view.size; ++index) {
+    unsigned char character = static_cast<unsigned char>(view.bytes[index]);
+    if (character == '_')
+      continue;
+    bool isX = character == 'x' || character == 'X';
+    bool isZ = character == 'z' || character == 'Z' || character == '?';
+    if ((isX || isZ) && radix != 10) {
+      value *= radix;
+      unknown = unknown * radix + (radix - 1);
+      if (isZ)
+        value += radix - 1;
+      continue;
+    }
+    uint32_t digit = character >= '0' && character <= '9'
+                         ? character - '0'
+                     : character >= 'a' && character <= 'f'
+                         ? character - 'a' + 10
+                     : character >= 'A' && character <= 'F'
+                         ? character - 'A' + 10
+                         : UINT32_MAX;
+    if (digit >= radix)
+      break;
+    value = value * radix + digit;
+    unknown *= radix;
+  }
+  if (negative) {
+    if (unknown) {
+      value = 0;
+      unknown = UINT64_MAX;
+    } else {
+      value = uint64_t{0} - value;
+    }
+  }
+  *outValue = value;
+  *outUnknown = unknown;
   return OBELISK_RT_OK;
 }
 

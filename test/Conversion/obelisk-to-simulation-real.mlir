@@ -46,12 +46,22 @@ module {
       obelisk.sv.symbol.instance_body attributes {hierarchical_name = "real_literal", name = "real_literal", node_id = 22 : i64, sym_name = "s16.real_literal"} {
         obelisk.sv.symbol.variable attributes {hierarchical_name = "real_literal.value", lifetime = 1 : i32, name = "value", node_id = 23 : i64, semantic_type = !obelisk.real, sym_name = "s17.value"} {
         }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "real_literal.logic_target", lifetime = 1 : i32, name = "logic_target", node_id = 42 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s27.logic_target"} {
+        }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "real_literal", node_id = 24 : i64, procedure_kind = 0 : i32, sym_name = "s18", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 25 : i64} {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 26 : i64, semantic_type = !obelisk.real} {
               obelisk.sv.expression.named_value attributes {node_id = 27 : i64, referenced_path = "real_literal.value", referenced_symbol = @s5.$root::@s15.real_literal::@s16.real_literal::@s17.value, semantic_type = !obelisk.real} {
               }
               obelisk.sv.expression.real_literal attributes {constant_value = "1.5", node_id = 28 : i64, semantic_type = !obelisk.real} {
+              }
+            }
+          }
+          obelisk.sv.statement.expression_statement attributes {node_id = 43 : i64} {
+            obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 44 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
+              obelisk.sv.expression.named_value attributes {node_id = 45 : i64, referenced_path = "real_literal.logic_target", referenced_symbol = @s5.$root::@s15.real_literal::@s16.real_literal::@s27.logic_target, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
+              }
+              obelisk.sv.expression.named_value attributes {node_id = 46 : i64, referenced_path = "real_literal.value", referenced_symbol = @s5.$root::@s15.real_literal::@s16.real_literal::@s17.value, semantic_type = !obelisk.real} {
               }
             }
           }
@@ -92,4 +102,12 @@ module {
 // CHECK-DAG: obelisk_sim.storage.decl {{.*}} : f32
 // CHECK-DAG: obelisk_sim.storage.decl {{.*}} : !obelisk_sim.unpacked_array<0 : 1 x f64>
 // CHECK-DAG: obelisk_sim.storage.decl {{.*}} : f64
+// A non-finite real converted to four-state integral data must become X.
+// CHECK-DAG: %[[UNKNOWN_LOGIC:.*]] = obelisk_sim.logic.constant 0 : i8, -1 : i8 : !obelisk_sim.logic<8>
+// CHECK: %[[REAL_VALUE:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<f64> -> f64
+// CHECK: %[[REAL_BITS:.*]] = obelisk_sim.real.to_integer %[[REAL_VALUE]] signed = false : i8
+// CHECK: %[[KNOWN_LOGIC:.*]] = obelisk_sim.logic.from_bits %[[REAL_BITS]] : i8 -> !obelisk_sim.logic<8>
+// CHECK: %[[ENCODED:.*]] = arith.bitcast %[[REAL_VALUE]] : f64 to i64
+// CHECK: %[[FINITE:.*]] = arith.cmpi ne, {{.*}} : i64
+// CHECK: arith.select %[[FINITE]], %[[KNOWN_LOGIC]], %[[UNKNOWN_LOGIC]] : !obelisk_sim.logic<8>
 // CHECK-NOT: obelisk.sv.

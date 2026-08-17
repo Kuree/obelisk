@@ -1307,6 +1307,20 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         input, static_cast<uint32_t>(*radix), &result);
     return status == OBELISK_RT_OK ? sentinel(0, result) : status;
   }
+  case OBELISK_RT_INTRINSIC_V1_STRING_PARSE_LOGIC: {
+    obelisk_rt_string_v1 input = 0;
+    auto radix = scalar(1);
+    if (!readString(inputRegister(0), input) || !radix)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Layout output = layoutAt(image, frame.function, outputRegister(0));
+    if (output.kind != OBELISK_RT_DBREG_LOGIC || output.width != 64)
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t planeSize = ((uint64_t{output.width} + 63) / 64) * 8;
+    return obelisk_rt_v1_string_parse_logic(
+        input, static_cast<uint32_t>(*radix),
+        reinterpret_cast<uint64_t *>(frame.data + output.offset),
+        reinterpret_cast<uint64_t *>(frame.data + output.offset + planeSize));
+  }
   case OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL: {
     obelisk_rt_string_v1 input = 0;
     if (!readString(inputRegister(0), input))

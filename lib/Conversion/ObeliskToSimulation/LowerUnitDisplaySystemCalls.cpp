@@ -72,18 +72,12 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
       output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_OMITTED);
       continue;
     }
-    if (auto literal = getStringLiteral(child)) {
-      if (isFormat || interpretLiteralsAsFormats) {
-        output.items.push_back(sim::SimBytesConstantOp::create(
-            builder, getSemanticLocation(literal), literal.getConstantValue()));
-        output.flags.push_back(
-            isFormat ? OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT : 0);
-      } else {
-        output.items.push_back(sim::SimStringLiteralOp::create(
-            builder, getSemanticLocation(literal), stringType,
-            literal.getConstantValue()));
-        output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING);
-      }
+    if (auto literal = getStringLiteral(child);
+        literal && (isFormat || interpretLiteralsAsFormats)) {
+      output.items.push_back(sim::SimBytesConstantOp::create(
+          builder, getSemanticLocation(literal), literal.getConstantValue()));
+      output.flags.push_back(
+          isFormat ? OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT : 0);
       continue;
     }
 

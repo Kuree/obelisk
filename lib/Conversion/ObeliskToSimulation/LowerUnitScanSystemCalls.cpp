@@ -236,8 +236,9 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
       parsed = sim::SimStringParseRealOp::create(builder, location,
                                                  builder.getF64Type(), field);
     else
-      parsed = sim::SimStringParseIntegerOp::create(
-          builder, location, builder.getI64Type(), field, radix);
+      parsed = sim::SimStringParseLogicOp::create(
+          builder, location,
+          sim::LogicType::get(function.getContext(), 64), field, radix);
     FailureOr<Value> value =
         convert(parsed, destinationType, radix != kTextRadix, location);
     if (failed(value))

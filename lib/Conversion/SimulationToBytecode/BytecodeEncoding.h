@@ -203,6 +203,8 @@ constexpr uint32_t kIntrinsicStringScanField =
     OBELISK_RT_INTRINSIC_V1_STRING_SCAN_FIELD;
 constexpr uint32_t kIntrinsicStringParseInteger =
     OBELISK_RT_INTRINSIC_V1_STRING_PARSE_INTEGER;
+constexpr uint32_t kIntrinsicStringParseLogic =
+    OBELISK_RT_INTRINSIC_V1_STRING_PARSE_LOGIC;
 constexpr uint32_t kIntrinsicStringParseReal =
     OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL;
 constexpr uint32_t kIntrinsicStringFormatInteger =

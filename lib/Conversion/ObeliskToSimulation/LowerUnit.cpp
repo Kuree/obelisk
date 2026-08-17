@@ -1083,8 +1083,31 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
       Value bits =
           sim::SimRealToIntegerOp::create(builder, location, bitsType, value,
                                           builder.getBoolAttr(targetSigned));
-      return sim::SimLogicFromBitsOp::create(builder, location, targetLogic,
-                                             bits)
+      Value converted = sim::SimLogicFromBitsOp::create(
+          builder, location, targetLogic, bits);
+
+      // IEEE 1800 real-to-integral conversion produces an unknown value for
+      // NaN and either infinity. A two-state destination subsequently coerces
+      // that unknown to zero, but a four-state destination must retain it.
+      // Inspect the IEEE-754 exponent here so the integer conversion itself
+      // can remain the shared two-state primitive.
+      Type i64 = builder.getI64Type();
+      Value encoded =
+          arith::BitcastOp::create(builder, location, i64, value);
+      Value shift = arith::ConstantOp::create(
+          builder, location, i64, builder.getI64IntegerAttr(52));
+      Value exponent =
+          arith::ShRUIOp::create(builder, location, encoded, shift);
+      Value exponentMask = arith::ConstantOp::create(
+          builder, location, i64, builder.getI64IntegerAttr(0x7ff));
+      exponent = arith::AndIOp::create(builder, location, exponent,
+                                       exponentMask);
+      Value finite = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, exponent,
+          exponentMask);
+      Value unknown = createDefaultValue(builder, location, targetLogic);
+      return arith::SelectOp::create(builder, location, finite, converted,
+                                     unknown)
           .getResult();
     }
   }

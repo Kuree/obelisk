@@ -94,7 +94,7 @@ module attributes {
                   }
                   obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 47 : i64, referenced_path = "swrite_test.value", referenced_symbol = @s1.$root::@s3.swrite_test::@s4.swrite_test::@s8.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                   }
-                  obelisk.sv.expression.string_literal attributes {constant_value = "%d", is_signed = false, node_id = 48 : i64, semantic_type = !obelisk.ranged_packed_array<15 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  obelisk.sv.expression.string_literal attributes {constant_value = "", is_signed = false, node_id = 48 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
                   }
                 }
               }
@@ -121,6 +121,7 @@ module attributes {
 }
 
 
+// CHECK-DAG: %[[EMPTY_LITERAL:.*]] = arith.constant 0 : i8
 // CHECK: %[[DECIMAL:.*]] = obelisk_sim.string.output_format {{.*}} radix = 10 flags = [0, 1] {library_cell = "work.swrite_test", scope = "swrite_test"
 // CHECK-NEXT: obelisk_sim.ref.store %[[DECIMAL]]
 // CHECK: %[[HEX:.*]] = obelisk_sim.string.output_format {{.*}} radix = 16 flags = [1, 2, 136] {library_cell = "work.swrite_test", scope = "swrite_test"
@@ -135,8 +136,9 @@ module attributes {
 // CHECK: %[[ARRAY_STRING:.*]] = obelisk_sim.string.from_packed %[[ARRAY_PACKED]] : (!obelisk_sim.logic<128>) -> !obelisk_sim.string
 // CHECK: obelisk_sim.string.output_format {{.*}}(%{{.*}}, %[[ARRAY_STRING]]) radix = 10 flags = [0, 8]
 // CHECK: %[[DYNAMIC_FORMAT:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<!obelisk_sim.string> -> !obelisk_sim.string
-// CHECK: %[[FORMAT_LITERAL_VALUE:.*]] = obelisk_sim.string.literal "%d"
-// CHECK: %[[SFORMAT:.*]] = obelisk_sim.string.output_format {{.*}}(%[[DYNAMIC_FORMAT]], %{{.*}}, %[[FORMAT_LITERAL_VALUE]]) radix = 10 flags = [40, 1, 8] {library_cell = "work.swrite_test", scope = "swrite_test"
+// A non-format string literal remains its packed value. In particular, the
+// empty literal is one null byte, so %s renders one space while %0s trims it.
+// CHECK: %[[SFORMAT:.*]] = obelisk_sim.string.output_format {{.*}}(%[[DYNAMIC_FORMAT]], %{{.*}}, %[[EMPTY_LITERAL]]) radix = 10 flags = [40, 1, 0] {library_cell = "work.swrite_test", scope = "swrite_test"
 // CHECK-NEXT: obelisk_sim.ref.store %[[SFORMAT]]
 // CHECK: %[[LITERAL_SFORMAT:.*]] = obelisk_sim.string.output_format {{.*}}(%{{.*}}, %{{.*}}) radix = 10 flags = [32, 1] {library_cell = "work.swrite_test", scope = "swrite_test"
 // CHECK-NEXT: obelisk_sim.ref.store %[[LITERAL_SFORMAT]]
