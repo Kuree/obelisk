@@ -2319,6 +2319,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   bool hasPersistentDelay = false;
   bool nonoverlapped = false;
   bool followedBy = false;
+  size_t consequentAlternativeAdmissionCount = 1;
+  bool consequentAlternativesAdmissionEligible = true;
   auto recordBooleanMinimization = [&](const BooleanMinimizationStats &stats) {
     function->setAttr("obelisk_sim.sva_boolean_solver",
                       builder.getStringAttr(stats.backend));
@@ -2401,6 +2403,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                  "most 256 bounded alternatives within the 63-cycle "
                  "horizon"),
              failure();
+    }
+    if (succeeded(rhs)) {
+      consequentAlternativeAdmissionCount = rhs->size();
+      consequentAlternativesAdmissionEligible =
+          llvm::all_of(*rhs, [](const FixedSequence &alternative) {
+            return alternative.ages.size() == 1 &&
+                   !alternative.vacuousSuccess &&
+                   alternative.firstMatchBoundaries.empty() &&
+                   alternative.ages.front().matchItems.empty();
+          });
     }
     if (!cover && succeeded(rhs))
       if (std::optional<BooleanMinimizationStats> stats =
@@ -2508,6 +2520,24 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   bool branchingSequence = !sequenceAlternatives.empty();
   bool branchingAntecedent = !antecedentAlternatives.empty();
   bool branchingConsequent = !consequentAlternatives.empty();
+  bool combinedBranchingRequested =
+      branchingAntecedent && consequentAlternativeAdmissionCount > 1;
+  bool combinedBranchingWithinLimit =
+      !combinedBranchingRequested ||
+      antecedentAlternatives.size() <=
+          maxFixedSequenceAlternatives /
+              consequentAlternativeAdmissionCount;
+  bool combinedBooleanBranching =
+      branchingAntecedent && branchingConsequent &&
+      combinedBranchingWithinLimit &&
+      consequentAlternativesAdmissionEligible &&
+      llvm::all_of(consequentAlternatives,
+                   [](const FixedSequence &alternative) {
+                     return alternative.ages.size() == 1 &&
+                            !alternative.vacuousSuccess &&
+                            alternative.firstMatchBoundaries.empty() &&
+                            alternative.ages.front().matchItems.empty();
+                   });
   bool boundedFirstMatch =
       firstMatch ||
       llvm::any_of(sequenceAlternatives,
@@ -2595,8 +2625,19 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                << "branching implication/followed-by antecedents cannot "
                   "contain vacuous property alternatives",
            failure();
+  if ((combinedBranchingRequested &&
+       (!combinedBranchingWithinLimit ||
+        !consequentAlternativesAdmissionEligible)) ||
+      (branchingAntecedent && branchingConsequent &&
+       !combinedBooleanBranching))
+    return emitError(getSemanticLocation(implication))
+               << "combined branching implication/followed-by currently "
+                  "requires a one-cycle bounded consequent without "
+                  "first_match, vacuous alternatives, or match items and at "
+                  "most 256 antecedent/consequent alternative pairs",
+           failure();
   if (branchingConsequent &&
-      (branchingAntecedent || antecedentSequence.ages.size() != 1 ||
+      ((!branchingAntecedent && antecedentSequence.ages.size() != 1) ||
        localInstance || expectMonitor || endStrength))
     return emitError(getSemanticLocation(implication))
                << "branching implication/followed-by consequents currently "
@@ -2610,6 +2651,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                << "branching implication/followed-by consequents do not yet "
                   "support match items or assertion-local flow",
            failure();
+  if (combinedBooleanBranching)
+    // The branching-antecedent monitor owns the exact consequent truth and
+    // per-antecedent match channels. Keep its existing one-age state shape.
+    sequence.ages.resize(1);
   if (hasPersistentRepetition && (localInstance || implication ||
                                   expectMonitor || firstMatch || coverSequence))
     return emitError(getSemanticLocation(property))
@@ -5474,6 +5519,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                       builder.getI64IntegerAttr(antecedentAlternatives.size()));
     function->setAttr("obelisk_sim.branching_antecedent_match_channels",
                       builder.getI64IntegerAttr(antecedentAlternatives.size()));
+    if (combinedBooleanBranching) {
+      function->setAttr("obelisk_sim.branching_consequent_alternatives",
+                        builder.getI64IntegerAttr(
+                            consequentAlternatives.size()));
+      function->setAttr(
+          "obelisk_sim.combined_boolean_branching_pairs",
+          builder.getI64IntegerAttr(antecedentAlternatives.size() *
+                                    consequentAlternativeAdmissionCount));
+      function->setAttr("obelisk_sim.combined_boolean_branching_monitor",
+                        builder.getUnitAttr());
+    }
 
     SmallVector<Value> alternativeStates;
     alternativeStates.reserve(antecedentAlternatives.size());
@@ -5602,6 +5658,23 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
               arith::XOrIOp::create(builder, location, matched, trueValue);
         result = arith::AndIOp::create(builder, location, result, matched);
       }
+      return result;
+    };
+    std::optional<Value> combinedConsequentTruth;
+    auto evaluateConsequentAge = [&](uint64_t age) -> FailureOr<Value> {
+      if (!combinedBooleanBranching)
+        return evaluateAge(sequence.ages[age]);
+      assert(age == 0 && "combined Boolean consequent has one age");
+      if (combinedConsequentTruth)
+        return *combinedConsequentTruth;
+      Value result = falseValue;
+      for (const FixedSequence &alternative : consequentAlternatives) {
+        FailureOr<Value> matched = evaluateAge(alternative.ages.front());
+        if (failed(matched))
+          return failure();
+        result = arith::OrIOp::create(builder, location, result, *matched);
+      }
+      combinedConsequentTruth = result;
       return result;
     };
     auto reportWhen = [&](Value condition, bool passed) {
@@ -5764,7 +5837,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         Value present = arith::AndIOp::create(builder, location, state, mask);
         Value active = arith::CmpIOp::create(
             builder, location, arith::CmpIPredicate::ne, present, zero);
-        FailureOr<Value> matches = evaluateAge(sequence.ages[age]);
+        FailureOr<Value> matches = evaluateConsequentAge(age);
         if (failed(matches))
           return failure();
         Value advances =
@@ -5789,7 +5862,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       }
     }
 
-    FailureOr<Value> consequentStart = evaluateAge(sequence.ages.front());
+    FailureOr<Value> consequentStart = evaluateConsequentAge(0);
     if (failed(consequentStart))
       return failure();
     auto markConsequentTrigger = [&](Operation *operation, size_t channel) {
