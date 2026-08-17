@@ -115,6 +115,8 @@ module native_conditional_expressions;
 
     narrow_signed = -1;
     wide_unsigned = 8'h81;
+    // The unsigned arm makes the conditional unsigned, so the signed arm is
+    // coerced before it widens and contributes 8'b00001111, not 8'b11111111.
     mixed_result = predicate ? narrow_signed : wide_unsigned;
     $display("mixed-width value=%b", mixed_result);
 
@@ -199,7 +201,7 @@ endmodule
 // CHECK-NEXT: ambiguous value=10xz calls=2 order=12
 // CHECK-NEXT: vector-true value=0101
 // CHECK-NEXT: nested value=10x0
-// CHECK-NEXT: mixed-width value=1xxxxxx1
+// CHECK-NEXT: mixed-width value=x000xxx1
 // CHECK-NEXT: enum value=xxx
 // CHECK-NEXT: packed-struct value=10xz,0x11
 // CHECK-NEXT: packed-union value=10xz0x11

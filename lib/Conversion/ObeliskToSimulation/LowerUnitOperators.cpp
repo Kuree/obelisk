@@ -1812,7 +1812,10 @@ FailureOr<Value> UnitLowering::lowerConditionalExpression(
                                        *resultType);
       return value ? FailureOr<Value>(value) : FailureOr<Value>(failure());
     }
-    FailureOr<Value> value = lowerExpression(expression);
+    // Both arms are context-determined operands of the conditional, so a
+    // widening conversion follows the signedness of the result rather than of
+    // the arm itself (IEEE 1800-2017 11.8.2).
+    FailureOr<Value> value = lowerContextDeterminedExpression(expression);
     if (failed(value))
       return failure();
     return convert(*value, *resultType, isSignedNode(expression),
