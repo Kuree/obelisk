@@ -1110,6 +1110,34 @@ obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
     if (descriptor == 0)
       return OBELISK_RT_OK;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    if (context->activeLogicalProcessToken != 0 &&
+        context->activeLogicalProcessToken ==
+            context->monitorLogicalProcessToken) {
+      // IEEE 1800-2017 21.2.3: the simulation time arguments never trigger a
+      // report, so they are held at zero while rendering what the report is
+      // compared against.
+      std::string report = output;
+      if (std::any_of(items, items + itemCount, [](const obelisk_rt_arg_v1 &item) {
+            return item.kind == OBELISK_RT_ARG_TIME;
+          })) {
+        static const uint64_t frozenTime = 0;
+        std::vector<obelisk_rt_arg_v1> untimed(items, items + itemCount);
+        for (obelisk_rt_arg_v1 &item : untimed)
+          if (item.kind == OBELISK_RT_ARG_TIME)
+            item.data = &frozenTime;
+        std::string keyError;
+        std::vector<std::string> keyWarnings;
+        std::string keyed;
+        if (buildDisplay(keyed, defaultRadix, untimed.data(), untimed.size(),
+                         environment, timeFormat, keyError,
+                         keyWarnings) == OBELISK_RT_OK)
+          report = std::move(keyed);
+      }
+      if (context->monitorReported && context->monitorReport == report)
+        return OBELISK_RT_OK;
+      context->monitorReport = std::move(report);
+      context->monitorReported = true;
+    }
     return writeUnlocked(context, descriptor, output.data(), output.size(),
                          nullptr);
   });

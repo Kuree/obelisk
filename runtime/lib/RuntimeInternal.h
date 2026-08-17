@@ -909,6 +909,11 @@ struct obelisk_rt_context {
   obelisk_rt_random_state_v1 *activeRandom = nullptr;
   uint64_t monitorLogicalProcessToken = 0;
   bool monitorEnabled = true;
+  // What the registered monitor reported last. A monitor process wakes on any
+  // change to a variable it reads, but IEEE 1800-2017 21.2.3 reports only when
+  // one of its own arguments changes value.
+  std::string monitorReport;
+  bool monitorReported = false;
   std::vector<uint64_t> activeControls;
   obelisk_rt_process_instance_v1 *activeNativeProcess = nullptr;
   bool designTaskExecuting = false;

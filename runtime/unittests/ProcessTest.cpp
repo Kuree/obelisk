@@ -12,6 +12,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <limits>
 #include <random>
 #include <string_view>
@@ -933,6 +934,70 @@ TEST(RuntimeInternals, ResumeOverridesRequireExecutableHomeRegions) {
   EXPECT_FALSE(obelisk_rt_next_queued_region(OBELISK_RT_REGION_ACTIVE,
                                              OBELISK_RT_SUSPEND_CHANGE, 1, nba,
                                              queuedRegion));
+}
+
+TEST(RuntimeInternals, MonitorRepeatsOnlyWhenItsDisplayedValuesChange) {
+  // IEEE 1800-2017 21.2.3: a monitor reports when one of its arguments
+  // changes value. Waking it without a change -- an unrelated bit of a
+  // watched variable, say -- must not repeat the report.
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  std::string path =
+      (std::filesystem::temp_directory_path() / "obelisk-monitor.bin").string();
+  std::string mode = "w+b";
+  uint32_t descriptor = 0;
+  ASSERT_EQ(obelisk_rt_v1_file_open(context, path.data(), path.size(),
+                                    mode.data(), mode.size(), &descriptor),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_monitor_register(context, 21, 1), OBELISK_RT_OK);
+  context->activeLogicalProcessToken = 21;
+
+  std::string formatString = "bit=%b";
+  uint64_t zero = 0;
+  uint64_t one = 1;
+  auto report = [&](const uint64_t &value) {
+    obelisk_rt_arg_v1 items[2] = {
+        {OBELISK_RT_ARG_STRING, OBELISK_RT_ARG_FORMAT_STRING,
+         formatString.size(), formatString.data(), nullptr},
+        {OBELISK_RT_ARG_LOGIC, 0, 1, &value, nullptr}};
+    return obelisk_rt_v1_display(context, descriptor, 1,
+                                 OBELISK_RT_RADIX_DECIMAL, items, 2, nullptr);
+  };
+  ASSERT_EQ(report(zero), OBELISK_RT_OK);
+  ASSERT_EQ(report(zero), OBELISK_RT_OK);
+  ASSERT_EQ(report(one), OBELISK_RT_OK);
+  ASSERT_EQ(report(one), OBELISK_RT_OK);
+
+  // A simulation time argument advances on its own and never triggers a
+  // report, so a list carrying one still reports only on a value change.
+  std::string timedFormat = "%0t bit=%b";
+  uint64_t early = 10;
+  uint64_t late = 20;
+  auto timedReport = [&](const uint64_t &time, const uint64_t &value) {
+    obelisk_rt_arg_v1 items[3] = {
+        {OBELISK_RT_ARG_STRING, OBELISK_RT_ARG_FORMAT_STRING,
+         timedFormat.size(), timedFormat.data(), nullptr},
+        {OBELISK_RT_ARG_TIME, 0, 64, &time, nullptr},
+        {OBELISK_RT_ARG_LOGIC, 0, 1, &value, nullptr}};
+    return obelisk_rt_v1_display(context, descriptor, 1,
+                                 OBELISK_RT_RADIX_DECIMAL, items, 3, nullptr);
+  };
+  ASSERT_EQ(timedReport(early, one), OBELISK_RT_OK);
+  ASSERT_EQ(timedReport(late, one), OBELISK_RT_OK);
+  ASSERT_EQ(timedReport(late, zero), OBELISK_RT_OK);
+  context->activeLogicalProcessToken = 0;
+
+  ASSERT_EQ(obelisk_rt_v1_file_flush(context, descriptor), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_file_rewind(context, descriptor), OBELISK_RT_OK);
+  char bytes[64]{};
+  uint64_t read = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_file_read(context, descriptor, bytes, sizeof(bytes), &read),
+      OBELISK_RT_OK);
+  EXPECT_EQ(std::string(bytes, static_cast<size_t>(read)),
+            "bit=0\nbit=1\n10 bit=1\n20 bit=0\n");
+  obelisk_rt_v1_context_destroy(context);
+  std::filesystem::remove(path);
 }
 
 TEST(RuntimeInternals, ReplacedAndReenabledMonitorsAreWokenInPostponed) {

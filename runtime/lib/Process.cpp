@@ -1673,6 +1673,9 @@ obelisk_rt_v1_monitor_register(obelisk_rt_context *context,
     uint64_t previous = context->monitorLogicalProcessToken;
     context->monitorLogicalProcessToken = replacement;
     context->monitorEnabled = true;
+    // A newly registered argument list always reports once.
+    context->monitorReported = false;
+    context->monitorReport.clear();
     if (previous != replacement)
       wakeMonitorProcessUnlocked(context, previous);
     return OBELISK_RT_OK;
