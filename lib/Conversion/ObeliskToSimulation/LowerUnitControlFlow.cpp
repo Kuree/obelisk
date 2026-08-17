@@ -758,6 +758,13 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
       return initializeAggregateMembers(destination);
     return success();
   }
+  // A named event of static lifetime is a design object whose cell already
+  // exists (IEEE 1800-2017 6.21 and 15.5). Its declaration statement only
+  // brings the name into scope; there is nothing to allocate or initialize,
+  // and the event handle is bound rather than referenced.
+  Value bound = values.lookup(path);
+  if (children.empty() && bound && isa<sim::EventType>(bound.getType()))
+    return success();
   Value destination = lvalues.lookup(path);
   if (!destination || !isa<sim::RefType>(destination.getType())) {
     emitError(location) << "variable declaration has no reference binding";
