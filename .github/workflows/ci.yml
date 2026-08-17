@@ -116,14 +116,17 @@ jobs:
         run: cmake --build build --target check-obelisk
 
   # ---------------------------------------------------------------------------
-  # Step 2: after the native suite is green, build and smoke-test the wasm
-  # toolchain on every ref. Main additionally uploads the tested page for the
-  # deploy job below, so pull requests cannot merge wasm-only regressions.
+  # Build and smoke-test the wasm toolchain on every ref. Main additionally
+  # uploads the tested page for the deploy job below, so pull requests cannot
+  # merge wasm-only regressions.
   #
+  # Deliberately not gated on the native job. The two share no build output, so
+  # sequencing them only delayed the page by a full native build -- and while
+  # the native suite was red the wasm job never ran, so its compiler cache
+  # could never be repopulated and every eventual run started cold.
   # ---------------------------------------------------------------------------
   wasm-build-and-test:
     name: Build and test wasm
-    needs: build-and-test
     runs-on: ubuntu-latest
     timeout-minutes: 300
     # Runs inside the prebuilt toolchain image, which carries emsdk and the
@@ -211,12 +214,16 @@ jobs:
         with:
           path: site
 
-  # The build job above owns the artifact so the exact files that passed its
+  # The wasm job owns the artifact so the exact files that passed its
   # browser-toolchain smoke test are the ones deployed. This job performs no
   # rebuild and never writes to a branch.
+  #
+  # Depends on both builds even though only one produces the artifact: the two
+  # now run concurrently, and a page must never ship from a commit whose native
+  # regression suite is failing.
   deploy-pages:
     name: Deploy Pages
-    needs: wasm-build-and-test
+    needs: [build-and-test, wasm-build-and-test]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
