@@ -424,8 +424,20 @@ obelisk_rt_status formatFloat(std::string &output, double value, char specifier,
 }
 
 double logicToDouble(const LogicView &view) {
+  // IEEE 1800-2017 6.12.2: an x or z bit converts to zero, per bit rather
+  // than poisoning the whole value.
+  std::vector<uint64_t> known;
+  LogicView defined = view;
+  if (view.unknown) {
+    uint64_t words = wordCount(view.width);
+    known.assign(view.value, view.value + words);
+    for (uint64_t index = 0; index < words; ++index)
+      known[index] &= ~view.unknown[index];
+    defined.value = known.data();
+    defined.unknown = nullptr;
+  }
   bool negative = false;
-  std::vector<uint64_t> words = magnitudeWords(view, negative);
+  std::vector<uint64_t> words = magnitudeWords(defined, negative);
   long double value = 0;
   for (size_t index = words.size(); index > 0; --index)
     value = std::ldexp(value, 64) + words[index - 1];
@@ -542,9 +554,18 @@ obelisk_rt_status formatArgument(std::string &output,
       if (argument.kind != OBELISK_RT_ARG_REAL || !argument.data)
         return OBELISK_RT_ARGUMENT_MISMATCH;
       double real = *static_cast<const double *>(argument.data);
+      // A rounded infinity or NaN has no integral rendering. Name it instead
+      // of failing the format, which would discard the whole output.
+      if (std::isnan(real)) {
+        output += "nan";
+        return OBELISK_RT_OK;
+      }
+      if (std::isinf(real)) {
+        output += real < 0 ? "-inf" : "inf";
+        return OBELISK_RT_OK;
+      }
       long double rounded = std::round(static_cast<long double>(real));
-      if (!std::isfinite(real) ||
-          rounded <
+      if (rounded <
               static_cast<long double>(std::numeric_limits<int64_t>::min()) ||
           rounded >
               static_cast<long double>(std::numeric_limits<int64_t>::max()))
@@ -594,7 +615,7 @@ obelisk_rt_status formatArgument(std::string &output,
     double value;
     if (argument.kind == OBELISK_RT_ARG_REAL && argument.data)
       value = *static_cast<const double *>(argument.data);
-    else if (getLogicView(argument, view) && !decimalUnknown(view))
+    else if (getLogicView(argument, view))
       value = logicToDouble(view);
     else
       return OBELISK_RT_ARGUMENT_MISMATCH;

@@ -1186,6 +1186,27 @@ TEST_F(RuntimeTest, FormatsUnknownAndSignedDecimal) {
   EXPECT_EQ(signedWidthStatus, OBELISK_RT_OK);
   EXPECT_EQ(signedWidthOutput, " 4095|  1023");
 
+  // A real operand of an integer format converts by rounding, which leaves
+  // infinities and NaN with no numeric rendering. Report them rather than
+  // failing the whole format, which would abort the display.
+  double infinity = std::numeric_limits<double>::infinity();
+  double notANumber = std::numeric_limits<double>::quiet_NaN();
+  double negativeInfinity = -infinity;
+  auto [nonFiniteStatus, nonFiniteOutput] =
+      format("%d|%0d|%h", {realArg(infinity), realArg(negativeInfinity),
+                           realArg(notANumber)});
+  EXPECT_EQ(nonFiniteStatus, OBELISK_RT_OK);
+  EXPECT_EQ(nonFiniteOutput, "inf|-inf|nan");
+
+  // IEEE 1800-2017 6.12.2: converting an integral value to a real treats its
+  // x and z bits as zero, so a real format still renders an unknown operand.
+  LogicValue unknownReal("0000000000001x1z");
+  LogicValue allUnknownReal("xxxxxxxx");
+  auto [realStatus, realOutput] =
+      format("%f|%0.1f", {unknownReal.arg(), allUnknownReal.arg()});
+  EXPECT_EQ(realStatus, OBELISK_RT_OK);
+  EXPECT_EQ(realOutput, "10.000000|0.0");
+
   LogicValue sixtyFiveBits(65, {0, 1});
   auto [wideStatus, wideOutput] = format("%0d", {sixtyFiveBits.arg()});
   EXPECT_EQ(wideStatus, OBELISK_RT_OK);
