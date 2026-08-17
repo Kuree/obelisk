@@ -524,6 +524,12 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
     observedDependencies = saved;
     if (failed(result))
       return failure();
+    // IEEE 1800-2017 9.4.2.2: an enclosing implicit event list covers every
+    // read of the statement it controls, and this nested statement is part of
+    // it. Only the identifiers of a nested event *expression* are excluded,
+    // and an implicit list has none.
+    if (saved)
+      saved->insert_range(dependencies);
     Block *statementEnd = current;
     if (dependencies.empty()) {
       unsupported(control)
