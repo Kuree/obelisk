@@ -9,6 +9,7 @@ module {
     obelisk_sim.code_unit.decl 9100002 in 0 continuous hierarchy "test.primitives.xnor"
     obelisk_sim.code_unit.decl 9100003 in 0 continuous hierarchy "test.primitives.bufif0"
     obelisk_sim.code_unit.decl 9100004 in 0 continuous hierarchy "test.primitives.notif1"
+    obelisk_sim.code_unit.decl 9100005 in 0 continuous hierarchy "test.primitives.buf"
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
     obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.logic<1> design
     obelisk_sim.storage.decl 2 in 0 : !obelisk_sim.logic<1> design
@@ -75,6 +76,30 @@ module {
       obelisk.sv.expression.named_value attributes {node_id = 23 : i64, referenced_path = "top.a", referenced_symbol = @a, semantic_type = !logic1} {}
       obelisk.sv.expression.named_value attributes {node_id = 24 : i64, referenced_path = "top.b", referenced_symbol = @b, semantic_type = !logic1} {}
       obelisk.sv.expression.named_value attributes {node_id = 25 : i64, referenced_path = "top.c", referenced_symbol = @c, semantic_type = !logic1} {}
+      obelisk_sim.return
+    }
+
+    // IEEE 1800-2017 Table 28-6: a buf input of z drives x, so the pass-through
+    // gate cannot forward its input unchanged.
+    // CHECK-LABEL: obelisk_sim.func @primitive_buf
+    // CHECK: %[[IN:.*]] = obelisk_sim.ref.load %arg2
+    // CHECK: %[[ONES:.*]] = obelisk_sim.logic.constant true, false
+    // CHECK: %[[RESULT:.*]] = obelisk_sim.logic.binary and %[[IN]], %[[ONES]]
+    // CHECK: obelisk_sim.driver.drive %arg1 = %[[RESULT]]
+    obelisk_sim.func @primitive_buf(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %out: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 0 : i64},
+        %a: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64})
+        attributes {entry_kind = 7 : i32, code_unit_id = 9100005 : i64,
+                    obelisk_sim.primitive_name = "buf",
+                    obelisk_sim.bindings = [
+                      #obelisk_sim.argument_binding<path = "top.buf_out", argument = 1, kind = lvalue_only, copyOut = false>,
+                      #obelisk_sim.argument_binding<path = "top.a", argument = 2, kind = direct, copyOut = false>]} {
+      obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 40 : i64, semantic_type = !logic1} {
+        obelisk.sv.expression.named_value attributes {node_id = 41 : i64, referenced_path = "top.buf_out", referenced_symbol = @buf_out, semantic_type = !logic1} {}
+        obelisk.sv.expression.empty_argument attributes {node_id = 42 : i64, semantic_type = !logic1} {}
+      }
+      obelisk.sv.expression.named_value attributes {node_id = 43 : i64, referenced_path = "top.a", referenced_symbol = @a, semantic_type = !logic1} {}
       obelisk_sim.return
     }
 

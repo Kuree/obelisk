@@ -1883,6 +1883,21 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
     return toLogic(*scalar, getSemanticLocation(input));
   };
 
+  // The truth tables of IEEE 1800-2017 28.4 give a gate the same output for a
+  // z input as for an x one. Gates that compute a result observe that through
+  // their own tables, but a gate that passes its data input through has to
+  // normalize it, and conjunction with all ones is exactly that table.
+  auto normalizeGateInput = [&](Value input) -> Value {
+    auto type = cast<sim::LogicType>(input.getType());
+    auto planeType = IntegerType::get(function.getContext(), type.getWidth());
+    Value ones = sim::SimLogicConstantOp::create(
+        builder, location, type,
+        builder.getIntegerAttr(planeType, APInt::getAllOnes(type.getWidth())),
+        builder.getIntegerAttr(planeType, 0));
+    return sim::SimLogicBinaryOp::create(builder, location, type,
+                                         sim::BinaryKind::And, input, ones);
+  };
+
   Value result;
   if (name == "and" || name == "nand" || name == "or" || name == "nor" ||
       name == "xor" || name == "xnor") {
@@ -1914,10 +1929,10 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
     FailureOr<Value> input = lowerInput(inputs.front());
     if (failed(input))
       return failure();
-    result = *input;
-    if (name == "not")
-      result = sim::SimLogicUnaryOp::create(builder, location, logicType,
-                                            sim::UnaryKind::BitNot, result);
+    result = name == "not" ? Value(sim::SimLogicUnaryOp::create(
+                                 builder, location, logicType,
+                                 sim::UnaryKind::BitNot, *input))
+                           : normalizeGateInput(*input);
   } else if (name == "bufif0" || name == "bufif1" || name == "notif0" ||
              name == "notif1") {
     if (inputs.size() != 2)
@@ -1928,10 +1943,11 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
         lowerInput(inputs[1], sim::LogicType::get(function.getContext(), 1));
     if (failed(data) || failed(control))
       return failure();
-    Value driven = *data;
-    if (name.starts_with("not"))
-      driven = sim::SimLogicUnaryOp::create(builder, location, logicType,
-                                            sim::UnaryKind::BitNot, driven);
+    Value driven = name.starts_with("not")
+                       ? Value(sim::SimLogicUnaryOp::create(
+                             builder, location, logicType,
+                             sim::UnaryKind::BitNot, *data))
+                       : normalizeGateInput(*data);
     auto planeType =
         IntegerType::get(function.getContext(), logicType.getWidth());
     APInt highZ = APInt::getAllOnes(logicType.getWidth());
