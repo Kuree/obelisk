@@ -118,10 +118,32 @@ target_compile_features(ObeliskGeneratedArithmeticRuntimeTests PRIVATE
 set_target_properties(ObeliskGeneratedArithmeticRuntimeTests PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
 )
-add_dependencies(check-obelisk-runtime-units
+set(OBELISK_RUNTIME_UNIT_TARGETS
   ObeliskGeneratedArithmeticRuntimeTests
   ObeliskGeneratedProcessRuntimeTests
+  ObeliskProcessRuntimeTests
+  ObeliskRuntimeTests
 )
+
+# A nested suite rather than a sibling: lit checks each subdirectory of a suite
+# for its own site config, so generating one here puts the runtime unit tests
+# inside the regression suite's single invocation -- one worker pool and one
+# summary across both test formats, following llvm/test/Unit.
+configure_lit_site_cfg(
+  ${CMAKE_CURRENT_SOURCE_DIR}/Unit/lit.site.cfg.py.in
+  ${CMAKE_CURRENT_BINARY_DIR}/Unit/lit.site.cfg.py
+  MAIN_CONFIG
+  ${CMAKE_CURRENT_SOURCE_DIR}/Unit/lit.cfg.py
+)
+
+# Runs only the unit suite, the counterpart to LLVM's check-llvm-unit.
+add_lit_testsuite(check-obelisk-runtime-units
+  "Running the Obelisk runtime unit tests"
+  ${CMAKE_CURRENT_BINARY_DIR}/Unit
+  DEPENDS
+  ${OBELISK_RUNTIME_UNIT_TARGETS}
+)
+set_target_properties(check-obelisk-runtime-units PROPERTIES FOLDER "Tests")
 
 add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
   ${CMAKE_CURRENT_BINARY_DIR}
@@ -131,6 +153,6 @@ add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
   obelisk-not
   obelisk-opt
   obelisk-sim-standard-api-test
+  ${OBELISK_RUNTIME_UNIT_TARGETS}
 )
 set_target_properties(check-obelisk PROPERTIES FOLDER "Tests")
-add_dependencies(check-obelisk check-obelisk-runtime-units)

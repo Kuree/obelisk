@@ -1,7 +1,0 @@
-@LIT_SITE_CFG_IN_HEADER@
-
-config.obelisk_runtime_unit_dir = "@CMAKE_CURRENT_BINARY_DIR@"
-
-lit_config.load_config(
-    config, "@PROJECT_SOURCE_DIR@/runtime/unittests/lit.cfg.py"
-)

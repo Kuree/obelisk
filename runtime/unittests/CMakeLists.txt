@@ -58,18 +58,6 @@ set_target_properties(ObeliskProcessRuntimeTests PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
 
-configure_lit_site_cfg(
-  ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in
-  ${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py
-  MAIN_CONFIG
-  ${CMAKE_CURRENT_SOURCE_DIR}/lit.cfg.py
-)
-
-add_lit_testsuite(check-obelisk-runtime-units
-  "Running the Obelisk runtime unit tests"
-  ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS
-  ObeliskProcessRuntimeTests
-  ObeliskRuntimeTests
-)
-set_target_properties(check-obelisk-runtime-units PROPERTIES FOLDER "Tests")
+# The lit suite covering these binaries is declared in test/Unit, so the
+# regression suite's single lit invocation discovers it as a nested suite.
+# check-obelisk-runtime-units still runs them on their own from there.
