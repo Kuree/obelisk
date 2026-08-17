@@ -66,19 +66,11 @@ jobs:
                  "$HOME/.local/bin/split-file"
           "$HOME/.local/bin/split-file" --version
 
-      # Keyed on the pinned dependency versions, so the cache invalidates
-      # exactly when a pin moves: CMakeLists.txt holds the LLVM/slang/Z3 pins,
-      # test/CMakeLists.txt the UVM pin, and cmake/ the sysroot package pins.
-      # Unlike the compiler cache below, this key is content-addressed and must
-      # NOT roll per commit.
-      - name: Cache pinned downloads
-        uses: actions/cache@v4
-        with:
-          path: |
-            build/_downloads
-            .target-package-cache
-          key: obelisk-deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'test/CMakeLists.txt', 'cmake/*.cmake') }}
-
+      # Nothing downloaded is cached. Every pinned archive is content-addressed
+      # and fetched over the network either way, so a cache restore would move
+      # the same bytes from a different host; the shared 10 GB budget is worth
+      # more to ccache, which stores something the runner cannot re-fetch.
+      #
       # Cache entries are immutable, so a compiler cache has to be written under
       # a fresh key each run and recovered through the prefix fallback --
       # a fixed key would freeze at the first green build and decay from there.
@@ -102,8 +94,6 @@ jobs:
       # release, but it is only two frontend tests over a ~10 MB archive and it
       # is the one thing guarding elaboration of unmodified UVM, so CI pays it.
       - name: Configure
-        env:
-          OBELISK_TARGET_PACKAGE_CACHE: ${{ github.workspace }}/.target-package-cache
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
