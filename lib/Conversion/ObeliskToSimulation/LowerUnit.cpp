@@ -247,6 +247,12 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
             "obelisk_sim.control_target_id"))
       taskControlActivation =
           sim::SimControlEnterOp::create(builder, function.getLoc(), targetID);
+  // The return variable is an activation-local binding for an automatic
+  // function and a captured descriptor for a static one, so the unit names it
+  // rather than leaving the binding walk below to discover it.
+  if (auto path = function->getAttrOfType<StringAttr>(
+          sim::metadata::returnVariablePath))
+    returnPath = path.getValue().str();
   auto bindings = function->getAttrOfType<ArrayAttr>(bindingsAttrName);
   if (auto inherited = function->getAttrOfType<ArrayAttr>("inherited_controls"))
     for (Attribute attribute : inherited) {

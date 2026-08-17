@@ -39,6 +39,13 @@ inline constexpr llvm::StringLiteral descriptorPackedLow =
     "obelisk_sim.descriptor_packed_low";
 inline constexpr llvm::StringLiteral hierarchicalName =
     "obelisk_sim.hierarchical_name";
+/// Marks a storage descriptor that a subroutine owns. Its writers are the
+/// subroutine's callers rather than drivers of a design variable.
+inline constexpr llvm::StringLiteral subroutineStorage =
+    "obelisk_sim.subroutine_storage";
+/// Hierarchical path of the variable that holds a function's return value.
+inline constexpr llvm::StringLiteral returnVariablePath =
+    "obelisk_sim.return_variable_path";
 /// Stable base-to-derived index of an effective rand/randc class property.
 inline constexpr llvm::StringLiteral randomModeIndex =
     "obelisk_sim.random_mode_index";
@@ -158,7 +165,8 @@ inline bool isKnownBoundary(llvm::StringRef name) {
 
 inline bool isKnownOperation(llvm::StringRef name) {
   return isKnownBoundary(name) || name == bindings || name == delayScale ||
-         name == delayQuantum || name == hierarchicalName || name == lowered ||
+         name == delayQuantum || name == hierarchicalName ||
+         name == returnVariablePath || name == lowered ||
          name == randomModeIndex || name == randomObjectEdge ||
          name == randomVariableKind || name == randomVariableSigned ||
          name == randomCycleKeyField || name == randomCyclePositionField ||

@@ -123,6 +123,11 @@ verifyVariableWriters(sim::SimDesignOp design,
 
   bool invalid = false;
   for (auto &[descriptor, continuous] : continuousWrites) {
+    // A subroutine's own storage is written by whichever processes call it,
+    // and those calls are not drivers of a design variable.
+    if (sim::SimStorageDeclOp storage = storageByID.lookup(descriptor);
+        storage && storage->hasAttr(sim::metadata::subroutineStorage))
+      continue;
     for (auto [index, write] : llvm::enumerate(continuous)) {
       std::optional<DescriptorWrite> earlier =
           findOverlap(ArrayRef(continuous).take_front(index), write);

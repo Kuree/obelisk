@@ -235,7 +235,7 @@ module {
 // The outlined task copies its hidden output temporary back through the
 // caller-provided output reference.
 // CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK: [[OUT_STORAGE:%.*]] = obelisk_sim.context.storage %arg0[3]
+// CHECK: [[OUT_STORAGE:%.*]] = obelisk_sim.context.storage %arg0[4]
 // CHECK: [[OUT:%.*]] = obelisk_sim.ref.load [[OUT_STORAGE]]
 // CHECK: obelisk_sim.ref.store [[OUT]] to %arg3
 // CHECK-LABEL: obelisk_sim.func private @unit_4(

@@ -5920,6 +5920,12 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (isVoidFunction)
       functionAttrs.push_back(builder.getNamedAttr("obelisk_sim.void_function",
                                                    builder.getUnitAttr()));
+    // A static function's return variable is captured as design storage rather
+    // than bound as an activation-local, so name it for the return lowering.
+    if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source))
+      if (std::optional<StringRef> path = subroutine.getReturnVariablePath())
+        functionAttrs.push_back(builder.getNamedAttr(
+            sim::metadata::returnVariablePath, builder.getStringAttr(*path)));
     if (isa<semantic::SVClassPropertySymbolOp>(unit.source))
       functionAttrs.push_back(builder.getNamedAttr(
           "obelisk_sim.static_initializer", builder.getUnitAttr()));

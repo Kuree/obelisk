@@ -252,6 +252,22 @@ bool isAutomaticLocalSymbol(Operation *op) {
          statementBlock != nullptr;
 }
 
+static bool isStaticReturnVariable(Operation *op) {
+  auto variable = dyn_cast<semantic::SVVariableSymbolOp>(op);
+  if (!variable || !variable.getIsCompilerGenerated())
+    return false;
+  // IEEE 1800-2017 13.4.2 makes every declaration of a static subroutine
+  // static, and 13.4.1 gives the return value a variable of its own. Slang
+  // always models that compiler-generated variable as automatic, so the
+  // subroutine's own lifetime decides here.
+  auto subroutine = op->getParentOfType<semantic::SVSubroutineSymbolOp>();
+  if (!subroutine || subroutine.getDefaultLifetime() !=
+                         semantic::SVVariableLifetime::Static)
+    return false;
+  std::optional<StringRef> returnPath = subroutine.getReturnVariablePath();
+  return returnPath && *returnPath == getHierarchyName(op);
+}
+
 bool isStaticFormal(Operation *op) {
   auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(op);
   if (!formal || formal.getDirection() == semantic::SVArgumentDirection::Ref)
@@ -290,8 +306,10 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       return;
     auto variable = dyn_cast<semantic::SVVariableSymbolOp>(op);
     auto classProperty = dyn_cast<semantic::SVClassPropertySymbolOp>(op);
-    bool staticVariable = variable && variable.getLifetime() ==
-                                          semantic::SVVariableLifetime::Static;
+    bool staticVariable =
+        variable && (variable.getLifetime() ==
+                         semantic::SVVariableLifetime::Static ||
+                     isStaticReturnVariable(variable));
     bool staticClassProperty =
         classProperty &&
         classProperty.getLifetime() == semantic::SVVariableLifetime::Static;
@@ -360,6 +378,11 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       auto declaration = sim::SimStorageDeclOp::create(
           builder, getSemanticLocation(op), id, scopeId, *type, lifetime,
           hierarchy, debug, sim::ComputeObservabilityKindAttr{});
+      // Storage a subroutine owns is written by its callers, which the driver
+      // rules of IEEE 1800-2017 6.5 do not count as competing drivers.
+      if (op->getParentOfType<semantic::SVSubroutineSymbolOp>())
+        declaration->setAttr(sim::metadata::subroutineStorage,
+                             builder.getUnitAttr());
       if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(op->getParentOp());
           body && body->hasAttr("virtual_interface_identity") &&
           !isCompileTimeOnlyInstanceMember(body))
