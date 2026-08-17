@@ -162,7 +162,10 @@ LogicalResult SimDriverDeclOp::verify() {
       return failure();
     uint64_t low = getDrivenLowAttr().getValue().getZExtValue();
     uint64_t width = getDrivenWidthAttr().getValue().getZExtValue();
-    std::optional<unsigned> typeWidth = getPackedWidth(getType());
+    // A driver on one element of an unpacked array of nets covers a run of the
+    // array's storage, which is laid out by provenance span rather than packed
+    // width. Both agree for a packed net.
+    std::optional<uint64_t> typeWidth = getProvenanceSpan(getType());
     if (width == 0)
       return emitOpError("driven width must be positive");
     if (!typeWidth || low > *typeWidth || width > *typeWidth - low)
@@ -1433,8 +1436,10 @@ LogicalResult SimDesignOp::verifyRegions() {
           rhs == netTypes.end())
         return connection.emitOpError(
             "references an unknown scope or net descriptor");
-      std::optional<unsigned> lhsWidth = getPackedWidth(lhs->second);
-      std::optional<unsigned> rhsWidth = getPackedWidth(rhs->second);
+      // A connection can name a run of an unpacked array of nets, whose
+      // storage is laid out by provenance span. Both agree for a packed net.
+      std::optional<uint64_t> lhsWidth = getProvenanceSpan(lhs->second);
+      std::optional<uint64_t> rhsWidth = getProvenanceSpan(rhs->second);
       uint64_t width = connection.getWidth();
       uint64_t lhsOffset = connection.getLhsOffset();
       uint64_t rhsOffset = connection.getRhsOffset();

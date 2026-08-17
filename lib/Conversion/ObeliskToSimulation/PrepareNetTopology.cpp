@@ -44,7 +44,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
           descriptor->second.kind != DescriptorInfo::Kind::Net)
         return false;
       std::optional<unsigned> width =
-          sim::getPackedWidth(descriptor->second.type);
+          analysis::getSimulationStorageBitWidth(descriptor->second.type);
       if (!width)
         return false;
       std::optional<uint64_t> nodeId;
@@ -61,7 +61,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
           descriptor->second.kind != DescriptorInfo::Kind::Net)
         return false;
       std::optional<unsigned> width =
-          sim::getPackedWidth(descriptor->second.type);
+          analysis::getSimulationStorageBitWidth(descriptor->second.type);
       if (!width)
         return false;
       std::optional<uint64_t> nodeId;
@@ -95,8 +95,9 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
           *sourceType, static_cast<unsigned>(ordinal.getInt()));
       FailureOr<Type> resultType = getNormalizedSemanticType(expression);
       std::optional<unsigned> resultWidth =
-          succeeded(resultType) ? sim::getPackedWidth(*resultType)
-                                : std::nullopt;
+          succeeded(resultType)
+              ? analysis::getSimulationStorageBitWidth(*resultType)
+              : std::nullopt;
       if (!subelement || !resultWidth ||
           subelement->first > base.front().width ||
           *resultWidth > base.front().width - subelement->first)
@@ -141,12 +142,14 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
         getNormalizedSemanticType(children.front());
     FailureOr<Type> resultType = getNormalizedSemanticType(expression);
     std::optional<unsigned> width =
-        succeeded(resultType) ? sim::getPackedWidth(*resultType) : std::nullopt;
+        succeeded(resultType)
+            ? analysis::getSimulationStorageBitWidth(*resultType)
+            : std::nullopt;
     if (failed(normalizedSource) || !width)
       return false;
 
     if (isa<semantic::SVElementSelectExpressionOp>(expression) &&
-        isa<sim::PackedArrayType>(*normalizedSource)) {
+        isa<sim::PackedArrayType, sim::UnpackedArrayType>(*normalizedSource)) {
       std::optional<unsigned> ordinal =
           sim::getArrayElementOrdinal(*normalizedSource, *first);
       if (!ordinal)
@@ -327,7 +330,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       internalNet = flattenNetExpr(internalExpression, lhs);
     } else if (internalDescriptor->second.kind == DescriptorInfo::Kind::Net) {
       if (std::optional<unsigned> width =
-              sim::getPackedWidth(internalDescriptor->second.type)) {
+              analysis::getSimulationStorageBitWidth(
+                  internalDescriptor->second.type)) {
         lhs.push_back({internalDescriptor->second, 0, *width,
                        internalPath.str(), std::nullopt});
         internalNet = true;
@@ -432,10 +436,10 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
         }
         if (target->second.kind == DescriptorInfo::Kind::Net) {
           std::optional<unsigned> width =
-              sim::getPackedWidth(target->second.type);
+              analysis::getSimulationStorageBitWidth(target->second.type);
           if (!width) {
             emitError(getSemanticLocation(unit))
-                << "net connection target has no fixed packed width";
+                << "net connection target has no fixed storage width";
             invalid = true;
             continue;
           }
@@ -452,10 +456,11 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
         invalid = true;
         continue;
       }
-      std::optional<unsigned> width = sim::getPackedWidth(target->second.type);
+      std::optional<unsigned> width =
+          analysis::getSimulationStorageBitWidth(target->second.type);
       if (!width) {
         emitError(getSemanticLocation(unit))
-            << "net initializer target has no fixed packed width";
+            << "net initializer target has no fixed storage width";
         invalid = true;
         continue;
       }
