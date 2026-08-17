@@ -47,7 +47,12 @@ module attributes {
     return %result : i13
   }
 
-  func.func @edge_materializers(%wide: i80) {
+  func.func @edge_materializers(%wide: i80, %count: i64) -> i8 {
+    // A byte-wide destination already spans exactly one byte, so assembling it
+    // must not widen the loaded byte.
+    %byte_scratch = obelisk_rt.bytes.scratch 1
+    %byte = obelisk_rt.bytes.to_packed %byte_scratch, %count
+        {high_alignment = false} : (!obelisk_rt.mut_bytes, i64) -> i8
     %empty_bytes = obelisk_rt.bytes.constant ""
     %empty_bytes_arg = obelisk_rt.argument.bytes %empty_bytes
         {is_format_string = false} : (!obelisk_rt.bytes) -> !obelisk_rt.arg
@@ -56,7 +61,7 @@ module attributes {
     %empty_args = obelisk_rt.argument.array : () -> !obelisk_rt.args
     %args = obelisk_rt.argument.array %empty_bytes_arg, %wide_arg :
         (!obelisk_rt.arg, !obelisk_rt.arg) -> !obelisk_rt.args
-    return
+    return %byte : i8
   }
 }
 
@@ -95,9 +100,13 @@ module attributes {
 // CHECK: "llvm.intr.memcpy"
 
 // CHECK-LABEL: func.func @edge_materializers(
-// CHECK: llvm.alloca {{.*}} x i128
+// CHECK-DAG: llvm.alloca {{.*}} x !llvm.array<1 x i8> {alignment = 1 : i64}
+// CHECK-DAG: llvm.alloca {{.*}} x i128
+// CHECK: "llvm.intr.memcpy"
+// CHECK-NOT: llvm.zext {{.*}} : i8 to i8
+// CHECK: llvm.shl {{.*}} : i8
 // CHECK: llvm.mlir.zero : !llvm.ptr
 // CHECK: llvm.zext {{.*}} : i80 to i128
 // CHECK: llvm.mlir.zero : !llvm.ptr
 // CHECK: llvm.mlir.constant(0 : i64) : i64
-// CHECK: return
+// CHECK: return {{.*}} : i8

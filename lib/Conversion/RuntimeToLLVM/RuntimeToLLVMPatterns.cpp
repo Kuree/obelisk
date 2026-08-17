@@ -409,8 +409,10 @@ public:
         byte = LLVM::SelectOp::create(
             rewriter, location, active, byte,
             llvmIntegerConstant(rewriter, location, abi.i8, 0));
-        Value wide =
-            LLVM::ZExtOp::create(rewriter, location, storageType, byte);
+        // A single-byte destination is already as wide as the loaded byte.
+        Value wide = byte;
+        if (storageWidth > 8)
+          wide = LLVM::ZExtOp::create(rewriter, location, storageType, byte);
         Value shift;
         if (op.getHighAlignment()) {
           shift = llvmIntegerConstant(rewriter, location, storageType,
