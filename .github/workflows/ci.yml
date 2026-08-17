@@ -41,19 +41,43 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build cmake ccache
-          python3 -m pip install --user lit
+          # The runner's system Python is externally managed (PEP 668), so a
+          # plain --user install is refused; this is a throwaway VM, so opting
+          # out of the marker is the whole fix.
+          python3 -m pip install --user --break-system-packages lit
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      # Keyed on the pinned dependency versions declared in CMakeLists.txt, so
-      # the cache invalidates exactly when a pin moves. Unlike the compiler
-      # cache below, this key is content-addressed and must NOT roll per commit.
+      # test/lit.cfg.py treats a missing split-file as fatal, which aborts the
+      # entire suite rather than skipping the tests that use it. The pinned
+      # LLVM release archive ships neither split-file nor FileCheck (hence
+      # tools/filecheck), and the runner image is not guaranteed to carry
+      # llvm-N-tools, so install it explicitly.
+      - name: Install LLVM test tools
+        run: |
+          package=$(apt-cache --names-only search '^llvm-[0-9]+-tools$' \
+                    | cut -d' ' -f1 | sort -V | tail -1)
+          test -n "$package"
+          sudo apt-get install -y --no-install-recommends "$package"
+          # lit.cfg.py falls back to a fixed list of versioned names, so
+          # publish the unversioned one; a newer package can then never fall
+          # off the end of that list.
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$(ls -1 /usr/bin/split-file-* | sort -V | tail -1)" \
+                 "$HOME/.local/bin/split-file"
+          "$HOME/.local/bin/split-file" --version
+
+      # Keyed on the pinned dependency versions, so the cache invalidates
+      # exactly when a pin moves: CMakeLists.txt holds the LLVM/slang/Z3 pins,
+      # test/CMakeLists.txt the UVM pin, and cmake/ the sysroot package pins.
+      # Unlike the compiler cache below, this key is content-addressed and must
+      # NOT roll per commit.
       - name: Cache pinned downloads
         uses: actions/cache@v4
         with:
           path: |
             build/_downloads
             .target-package-cache
-          key: obelisk-deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/TargetNativeSupport.cmake') }}
+          key: obelisk-deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'test/CMakeLists.txt', 'cmake/*.cmake') }}
 
       # Cache entries are immutable, so a compiler cache has to be written under
       # a fresh key each run and recovered through the prefix fallback --
@@ -73,6 +97,10 @@ jobs:
       # ccache is opted into here rather than in CMakeLists.txt, so local
       # builds are untouched. The launcher reaches Z3's nested configure
       # through the pass-through in CMakeLists.txt.
+      #
+      # The real-UVM regression is opt-in because it fetches the Accellera
+      # release, but it is only two frontend tests over a ~10 MB archive and it
+      # is the one thing guarding elaboration of unmodified UVM, so CI pays it.
       - name: Configure
         env:
           OBELISK_TARGET_PACKAGE_CACHE: ${{ github.workspace }}/.target-package-cache
@@ -80,6 +108,7 @@ jobs:
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DOBELISK_INCLUDE_TESTS=ON \
+            -DOBELISK_ENABLE_REAL_UVM_TESTS=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
