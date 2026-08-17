@@ -573,7 +573,14 @@ obelisk_rt_status formatArgument(std::string &output,
       uint64_t integer =
           static_cast<uint64_t>(static_cast<int64_t>(rounded));
       view = LogicView{64, true, &integer, nullptr};
-      return formatInteger(output, view, spec, options);
+      // IEEE 1800-2017 21.2.1.3 takes the default field width from the size
+      // of the operand, and Table 21-3 covers a real only under %e, %f, and
+      // %g, so an integer format of a real has no standard width. Render it at
+      // its own length rather than at the width of the staging integer.
+      FormatOptions realOptions = options;
+      if (!realOptions.width)
+        realOptions.width = 0;
+      return formatInteger(output, view, spec, realOptions);
     }
     return formatInteger(output, view, spec, options);
   case 'c': {
@@ -837,6 +844,9 @@ obelisk_rt_status formatSequence(std::string &output, std::string_view format,
       return OBELISK_RT_FORMAT_ERROR;
     }
     if ((integer || spec == 't') && options.zero) {
+      // IEEE 1800-2017 21.2.1.3 spells a field width as a plain decimal
+      // constant, so a leading zero belongs to that constant rather than
+      // selecting a pad character. `%0d` is its minimum-width form.
       if (!options.width)
         options.width = 0;
       options.zero = false;

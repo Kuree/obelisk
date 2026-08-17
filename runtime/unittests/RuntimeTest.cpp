@@ -1365,6 +1365,29 @@ TEST_F(RuntimeTest, RejectsMalformedFormatsAndArgumentMismatch) {
   EXPECT_FALSE(message.str().empty());
 }
 
+TEST_F(RuntimeTest, FormatsPaddedWidthsAndRealIntegerDefaults) {
+  // IEEE 1800-2017 21.2.1.3: a field width is a plain decimal constant, so the
+  // zero of `%04d` is part of it rather than a pad character. Decimal fields
+  // pad with spaces; hexadecimal, octal, and binary fields pad with zeros.
+  LogicValue value("0000000001100101");
+  auto [padStatus, padOutput] =
+      format("%04d|%08h|%0d|%6d", {value.arg(), value.arg(), value.arg(),
+                                   value.arg()});
+  EXPECT_EQ(padStatus, OBELISK_RT_OK);
+  EXPECT_EQ(padOutput, " 101|00000065|101|   101");
+
+  // The default field width of an integer format comes from the size of its
+  // operand, which a real does not have. The standard leaves the case
+  // undefined; rendering at the operand's own length keeps the field from
+  // reporting the width of the integer the value was staged in.
+  double real = 1.4;
+  double wide = 20.0;
+  auto [realStatus, realOutput] =
+      format("R: %d|%d|%5d", {realArg(real), realArg(wide), realArg(wide)});
+  EXPECT_EQ(realStatus, OBELISK_RT_OK);
+  EXPECT_EQ(realOutput, "R: 1|20|   20");
+}
+
 TEST_F(RuntimeTest, DisplayHandlesFormatItemsDefaultsAndNewline) {
   TempDirectory temporary;
   uint32_t descriptor = open(temporary.file("display.bin"), "w+b");
