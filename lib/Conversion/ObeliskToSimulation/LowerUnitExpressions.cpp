@@ -289,9 +289,24 @@ FailureOr<Value> lowerStringLiteralValue(OpBuilder &builder, Operation *op,
   if (!spelling)
     return emitError(location) << "string literal has no byte payload",
            failure();
-  if (isa<sim::StringType>(type))
-    return sim::SimStringLiteralOp::create(builder, location, type, spelling)
+  if (isa<sim::StringType>(type)) {
+    // IEEE 1800-2017 6.16: "A string variable shall not contain the special
+    // character "\0"." The same literal keeps its zero bytes when it is used as
+    // a packed value (5.9, below), so they are dropped only here, on the
+    // conversion to the string type. This matches the packed-to-string runtime
+    // conversion, which already omits zero-valued bytes.
+    StringRef text = spelling.getValue();
+    if (!text.contains('\0'))
+      return sim::SimStringLiteralOp::create(builder, location, type, spelling)
+          .getResult();
+    std::string stripped;
+    stripped.reserve(text.size());
+    for (char byte : text)
+      if (byte != '\0')
+        stripped.push_back(byte);
+    return sim::SimStringLiteralOp::create(builder, location, type, stripped)
         .getResult();
+  }
 
   Type scalar = sim::getPackedScalarType(type);
   std::optional<unsigned> width =
