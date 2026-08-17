@@ -474,12 +474,16 @@ LogicalResult SimObserverBindOp::verify() {
       return emitOpError(
           "captures must use storage, net, driver, named-event, or managed "
           "handles");
+    // IEEE 1800-2017 9.4.2 allows an event expression to select a member of an
+    // aggregate as long as the expression itself reduces to a singular value,
+    // so a capture may name the whole aggregate the evaluator indexes into.
+    // Only the observer's result has to be singular, and its type carries that.
     if (!isManagedHandleType(element) &&
-        !isa<FloatType, ProcessType>(element) &&
-        !getPackedWidth(element))
+        !isa<FloatType, ProcessType>(element) && !getPackedWidth(element) &&
+        !isAggregateType(element))
       return emitOpError(
-          "captured handles must refer to packed, floating, process, or "
-          "managed values");
+          "captured handles must refer to packed, floating, process, "
+          "aggregate, or managed values");
   }
   for (Value dependency : getDependencies())
     if (!isa<RefType, NetType, EventType, ManagedWatchType>(
