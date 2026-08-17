@@ -95,12 +95,8 @@ Type convertProcessType(Type type, MLIRContext *context) {
   if (isa<sim::ContextType, runtime::ContextType,
           runtime::ProcessDescriptorType, runtime::ProcessInstanceType>(type))
     return LLVM::LLVMPointerType::get(context);
-  if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
-          sim::ProcessType, sim::ControlType, sim::CovergroupHandleType,
-          sim::VirtualInterfaceType, sim::ChandleType>(type))
-    return IntegerType::get(context, 64);
-  if (sim::isManagedHandleType(type))
-    return IntegerType::get(context, 64);
+  if (sim::isSimulationHandleType(type) || sim::isManagedHandleType(type))
+    return IntegerType::get(context, sim::simulationHandleBitWidth);
   if (isa<sim::ArgumentRefType>(type))
     return IntegerType::get(context, 192);
   if (isa<sim::TimeType>(type))

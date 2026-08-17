@@ -452,6 +452,12 @@ bool isManagedHandleType(Type type) {
       type);
 }
 
+bool isSimulationHandleType(Type type) {
+  return isa<RefType, NetType, DriverType, EventType, ProcessType, ControlType,
+             ObserverType, ManagedWatchType, CovergroupHandleType,
+             VirtualInterfaceType, ChandleType>(type);
+}
+
 LogicalResult SimManagedNullOp::verify() {
   if (!isManagedHandleType(getResult().getType()) ||
       isa<ClassHandleType>(getResult().getType()))

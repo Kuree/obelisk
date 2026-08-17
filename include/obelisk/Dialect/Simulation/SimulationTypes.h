@@ -100,6 +100,13 @@ bool getManagedHandleOffsets(::mlir::Type type,
 /// True for a nullable one-word value owned by the precise managed heap.
 bool isManagedHandleType(::mlir::Type type);
 
+/// True for a frame-relative simulator identifier. These are opaque 64-bit
+/// words wherever they are stored, independent of whatever they denote.
+bool isSimulationHandleType(::mlir::Type type);
+
+/// Bit width of a simulation handle word.
+constexpr unsigned simulationHandleBitWidth = 64;
+
 } // namespace obelisk::sim
 
 #endif // OBELISK_DIALECT_SIMULATION_SIMULATIONTYPES_H

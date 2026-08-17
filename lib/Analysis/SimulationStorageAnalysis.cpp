@@ -38,12 +38,11 @@ getSimulationStorageProperties(Type type, const llvm::DataLayout &dataLayout,
   } else if (isa<sim::ArgumentRefType>(type)) {
     // {owner root, ordinary handle or managed byte offset, managed tag}.
     llvmType = llvm::IntegerType::get(llvmContext, 192);
-  } else if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
-                 sim::ProcessType, sim::ControlType, sim::CovergroupHandleType,
-                 sim::VirtualInterfaceType, sim::ChandleType>(type)) {
+  } else if (sim::isSimulationHandleType(type)) {
     // Simulation handles remain frame-relative stable IDs. They must never
     // become host pointers in the canonical frame shared with bytecode.
-    llvmType = llvm::Type::getInt64Ty(llvmContext);
+    llvmType =
+        llvm::IntegerType::get(llvmContext, sim::simulationHandleBitWidth);
   } else if (sim::isAggregateType(type)) {
     std::optional<unsigned> width = getSimulationStorageBitWidth(type);
     if (!width)

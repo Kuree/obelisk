@@ -494,16 +494,8 @@ LogicalResult lowerPackedSimulationOperations(
         });
     addSimulationToRuntimeTypeConversions(c);
     c.addConversion([context](Type type) -> std::optional<Type> {
-      if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
-              sim::ProcessType, sim::ControlType, sim::ObserverType,
-              sim::ManagedWatchType, sim::CovergroupHandleType,
-              sim::VirtualInterfaceType, sim::ChandleType>(type))
-        return IntegerType::get(context, 64);
-      return std::nullopt;
-    });
-    c.addConversion([context](Type type) -> std::optional<Type> {
-      if (sim::isManagedHandleType(type))
-        return IntegerType::get(context, 64);
+      if (sim::isSimulationHandleType(type) || sim::isManagedHandleType(type))
+        return IntegerType::get(context, sim::simulationHandleBitWidth);
       return std::nullopt;
     });
     c.addConversion([context](sim::ArgumentRefType) -> Type {
