@@ -30,9 +30,21 @@ UnitLowering::lowerRealConversionSystemCall(semantic::SVCallExpressionOp op) {
     FailureOr<Value> input = lowerExpression(children.front());
     if (failed(input))
       return failure();
+    Location argument = getSemanticLocation(children.front());
+    bool argumentSigned = isSignedNode(children.front());
+    // The argument is declared as an integer, so a real one is rounded to an
+    // integer -- and a non-finite one to zero -- before it converts back.
+    if (isa<FloatType>((*input).getType())) {
+      FailureOr<Value> rounded =
+          convert(*input, builder.getI32Type(), argumentSigned, argument,
+                  /*targetSigned=*/true);
+      if (failed(rounded))
+        return failure();
+      input = *rounded;
+      argumentSigned = true;
+    }
     FailureOr<Value> result =
-        convert(*input, builder.getF64Type(), isSignedNode(children.front()),
-                getSemanticLocation(children.front()));
+        convert(*input, builder.getF64Type(), argumentSigned, argument);
     if (failed(result))
       return failure();
     return convertResult(*result);
