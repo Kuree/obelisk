@@ -7333,6 +7333,19 @@ void ObeliskSimPreparePass::runOnOperation() {
     return unit.entryKind == sim::EntryKind::AlwaysComb ||
            unit.entryKind == sim::EntryKind::AlwaysLatch;
   };
+  // IEEE 1800-2017 4.9.1: a continuous assignment process "is also evaluated at
+  // time zero in order to propagate constant values. This includes implicit
+  // continuous assignments inferred from port connections." A driver whose
+  // source is constant never transitions afterwards, so this time-zero
+  // evaluation is the only one it gets; ordering it after an initial process
+  // that reads the driven net leaves that read observing the net's default
+  // value forever.
+  auto propagatesConstantsAtTimeZero = [](const PreparedUnit &unit) {
+    return unit.entryKind == sim::EntryKind::Continuous ||
+           unit.entryKind == sim::EntryKind::PortInitialize ||
+           unit.entryKind == sim::EntryKind::PortInput ||
+           unit.entryKind == sim::EntryKind::PortOutput;
+  };
 
   // Establish explicit always-process sensitivities before initial processes
   // can trigger events or mutate their watched values. This deterministic
@@ -7343,11 +7356,21 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (failed(spawnRootUnit(unit)))
         return abort();
 
+  // Then propagate the continuous drivers, so a constant reaches its readers
+  // instead of racing them in source order. Re-evaluation stays event-driven,
+  // so this only fixes which side of the time-zero race a constant lands on.
+  for (PreparedUnit &unit : units)
+    if (isRootSpawned(unit) && !startsByWaiting(unit) &&
+        propagatesConstantsAtTimeZero(unit))
+      if (failed(spawnRootUnit(unit)))
+        return abort();
+
   // IEEE 1800-2017 9.2.2.2 requires the automatic time-zero activation of an
   // always_comb procedure to occur after all initial and always procedures
   // have started. Section 9.2.2.3 applies the same rule to always_latch.
   for (PreparedUnit &unit : units) {
     if (!isRootSpawned(unit) || startsByWaiting(unit) ||
+        propagatesConstantsAtTimeZero(unit) ||
         hasDeferredTimeZeroActivation(unit))
       continue;
     if (failed(spawnRootUnit(unit)))

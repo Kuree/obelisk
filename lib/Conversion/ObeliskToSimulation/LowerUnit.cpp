@@ -1052,21 +1052,16 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
                  builder.getBoolAttr(sourceSigned))
           .getResult();
     if (auto sourceLogic = dyn_cast<sim::LogicType>(value.getType())) {
+      // IEEE 1800-2017 6.12.2: "Individual bits that are x or z in the net or
+      // the variable shall be treated as zero upon conversion." That is
+      // per-bit, not all-or-nothing, and it is exactly what logic.to_bits
+      // already performs, so no separate normalization is needed.
       Type bitsType =
           IntegerType::get(value.getContext(), sourceLogic.getWidth());
       Value bits =
           sim::SimLogicToBitsOp::create(builder, location, bitsType, value);
-      Value roundTrip =
-          sim::SimLogicFromBitsOp::create(builder, location, sourceLogic, bits);
-      Value known = sim::SimLogicCompareOp::create(
-          builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
-          value, roundTrip);
-      Value zero = arith::ConstantOp::create(
-          builder, location, bitsType, builder.getIntegerAttr(bitsType, 0));
-      Value normalized =
-          arith::SelectOp::create(builder, location, known, bits, zero);
       return sim::SimRealFromIntegerOp::create(
-                 builder, location, targetType, normalized,
+                 builder, location, targetType, bits,
                  builder.getBoolAttr(sourceSigned))
           .getResult();
     }
