@@ -742,20 +742,31 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
           !current->back().hasTrait<OpTrait::IsTerminator>())
         cf::BranchOp::create(builder, location, resume);
     };
-    auto writePart = [&](unsigned baseLow, unsigned width) -> LogicalResult {
+    // `sourceLow` is the bit of the assigned value that lands on `baseLow`.
+    // A selection clipped at the low end starts partway into the value, so
+    // taking its lowest bits would shift the whole assignment down.
+    auto writePart = [&](unsigned baseLow, unsigned sourceLow,
+                         unsigned width) -> LogicalResult {
       Value replacement;
       Type replacementType;
       if (auto logic = dyn_cast<sim::LogicType>((*scalar).getType())) {
         replacementType = sim::LogicType::get(function.getContext(), width);
         replacement = sim::SimLogicExtractOp::create(
             builder, location, replacementType, *scalar,
-            builder.getI64IntegerAttr(0));
+            builder.getI64IntegerAttr(sourceLow));
       } else if (auto integer = dyn_cast<IntegerType>((*scalar).getType())) {
         replacementType = builder.getIntegerType(width);
+        Value shifted = *scalar;
+        if (sourceLow != 0)
+          shifted = arith::ShRUIOp::create(
+              builder, location, shifted,
+              arith::ConstantOp::create(
+                  builder, location, integer,
+                  builder.getIntegerAttr(integer, sourceLow)));
         replacement = replacementType == integer
-                          ? *scalar
+                          ? shifted
                           : Value(arith::TruncIOp::create(
-                                builder, location, replacementType, *scalar));
+                                builder, location, replacementType, shifted));
       } else {
         return failure();
       }
@@ -813,7 +824,8 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
       cf::CondBranchOp::create(builder, location, matches, write, ValueRange{},
                                next, ValueRange{});
       setCurrent(write);
-      if (failed(writePart(/*baseLow=*/0, selectedBitWidth - clipped)))
+      if (failed(writePart(/*baseLow=*/0, /*sourceLow=*/clipped,
+                           selectedBitWidth - clipped)))
         return failure();
       branchToResume(resume);
       setCurrent(next);
@@ -828,7 +840,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
       cf::CondBranchOp::create(builder, location, matches, write, ValueRange{},
                                next, ValueRange{});
       setCurrent(write);
-      if (failed(writePart(selectedLow, overlap)))
+      if (failed(writePart(selectedLow, /*sourceLow=*/0, overlap)))
         return failure();
       branchToResume(resume);
       setCurrent(next);
