@@ -321,9 +321,18 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
             captureLValue(selection.front(), location);
         if (failed(base))
           return failure();
+        // A select wider than the storage it names reaches outside it, so no
+        // subreference describes it. IEEE 1800-2017 11.5.1 keeps only the bits
+        // that are in range, which the read-modify-write path below does by
+        // discarding the padding it wrote through.
+        bool reachesOutsideStorage =
+            *sim::getPackedWidth(*destinationType) >
+            *sim::getPackedWidth(*baseType);
         bool hasDirectView =
             base->kind == CapturedLValue::Kind::Reference &&
-            isa<sim::RefType, sim::DriverType>(base->reference.getType());
+            isa<sim::RefType, sim::DriverType>(base->reference.getType()) &&
+            !(reachesOutsideStorage &&
+              isa<sim::RefType>(base->reference.getType()));
         if (!hasDirectView) {
           FailureOr<PackedSelectionAddress> address =
               lowerPackedSelectionAddress(destination, *baseType,
@@ -333,6 +342,7 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
           captured.kind = CapturedLValue::Kind::PackedValueSlice;
           captured.lowBit = address->lowBit;
           captured.index = address->dynamicLow;
+          captured.padding = address->padding;
           captured.children.push_back(std::move(*base));
           return captured;
         }
@@ -385,6 +395,13 @@ UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
     Type resultScalarType = sim::getPackedScalarType(destination.type);
     if (failed(scalar) || !resultScalarType)
       return failure();
+    if (destination.padding) {
+      FailureOr<Value> padded =
+          padSelectionWindow(*scalar, destination.padding, location);
+      if (failed(padded))
+        return failure();
+      scalar = *padded;
+    }
     Value selected;
     if (destination.index) {
       if (isa<sim::LogicType>((*scalar).getType()))
@@ -869,6 +886,14 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     FailureOr<Value> replacement = toPackedScalar(*converted, location);
     if (failed(baseScalar) || failed(replacement))
       return failure();
+    Type unpaddedType = (*baseScalar).getType();
+    if (destination.padding) {
+      FailureOr<Value> padded =
+          padSelectionWindow(*baseScalar, destination.padding, location);
+      if (failed(padded))
+        return failure();
+      baseScalar = *padded;
+    }
 
     Value updated;
     if (destination.index) {
@@ -891,6 +916,15 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
       updated = sim::SimBitsDynInsertOp::create(builder, location,
                                                 (*baseScalar).getType(),
                                                 *baseScalar, *replacement, low);
+    }
+    if (destination.padding) {
+      // Whatever the write placed outside the value stays in the padding and
+      // is dropped here, leaving only the bits that were in range.
+      FailureOr<Value> narrowed = unpadSelectionWindow(
+          updated, destination.padding, unpaddedType, location);
+      if (failed(narrowed))
+        return failure();
+      updated = *narrowed;
     }
     FailureOr<Value> rebuilt = convert(updated, base.type, false, location,
                                        isSignedNode(base.semanticNode));

@@ -72,6 +72,9 @@ private:
     ::mlir::Value container;
     ::mlir::Value index;
     uint64_t lowBit = 0;
+    /// Out-of-range bits added on either side of a packed slice's base so that
+    /// a select wider than the base still names one contiguous window.
+    uint64_t padding = 0;
     unsigned ordinal = 0;
     std::vector<CapturedLValue> children;
   };
@@ -81,6 +84,8 @@ private:
     bool constant = false;
     uint64_t lowBit = 0;
     ::mlir::Value dynamicLow;
+    /// See CapturedLValue::padding. `dynamicLow` already counts it.
+    uint64_t padding = 0;
   };
 
   ::mlir::FailureOr<::mlir::Value> lowerExpression(::mlir::Operation *op,
@@ -89,6 +94,17 @@ private:
   lowerPackedSelectionAddress(::mlir::Operation *op,
                               ::mlir::Type sourceValueType,
                               ::mlir::Type resultType);
+  /// Surround `scalar` with `padding` out-of-range bits on either side. Reads
+  /// of the padding see x, matching what IEEE 1800-2017 11.5.1 requires of a
+  /// select position outside the value.
+  ::mlir::FailureOr<::mlir::Value> padSelectionWindow(::mlir::Value scalar,
+                                                      uint64_t padding,
+                                                      ::mlir::Location location);
+  /// Recover the original value from a window produced by padSelectionWindow,
+  /// dropping whatever a write placed in the padding.
+  ::mlir::FailureOr<::mlir::Value>
+  unpadSelectionWindow(::mlir::Value padded, uint64_t padding,
+                       ::mlir::Type scalarType, ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   lowerContextDeterminedExpression(::mlir::Operation *op);
   ::mlir::FailureOr<::mlir::Value>

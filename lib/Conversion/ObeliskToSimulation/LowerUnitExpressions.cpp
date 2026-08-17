@@ -2648,6 +2648,12 @@ UnitLowering::lowerPackedSelectionAddress(Operation *op, Type sourceValueType,
     return sim::SimLogicBinaryOp::create(builder, location, lhs.getType(),
                                          sim::BinaryKind::Sub, lhs, rhs);
   };
+  auto add = [&](Value lhs, Value rhs) -> Value {
+    if (isa<IntegerType>(lhs.getType()))
+      return arith::AddIOp::create(builder, location, lhs, rhs);
+    return sim::SimLogicBinaryOp::create(builder, location, lhs.getType(),
+                                         sim::BinaryKind::Add, lhs, rhs);
+  };
   auto multiply = [&](Value lhs, Value rhs) -> Value {
     if (isa<IntegerType>(lhs.getType()))
       return arith::MulIOp::create(builder, location, lhs, rhs);
@@ -2770,7 +2776,75 @@ UnitLowering::lowerPackedSelectionAddress(Operation *op, Type sourceValueType,
       address.dynamicLow = subtract(address.dynamicLow, adjustment);
     }
   }
+  // IEEE 1800-2017 11.5.1: a select wider than the value it addresses is
+  // always partially out of range. Padding the value with that many
+  // out-of-range bits on either side gives every position the select can name
+  // a window inside the padded value, so the caller reads x out of the padding
+  // and discards whatever a write leaves there.
+  if (*resultWidth > *sourceWidth && address.dynamicLow) {
+    address.padding = *resultWidth;
+    unsigned arithmeticWidth =
+        *sim::getPackedWidth(address.dynamicLow.getType());
+    Value shift = createKnownIndex(address.dynamicLow.getType(),
+                                   APInt(arithmeticWidth, address.padding));
+    address.dynamicLow = add(address.dynamicLow, shift);
+  }
   return address;
+}
+
+FailureOr<Value> UnitLowering::padSelectionWindow(Value scalar,
+                                                  uint64_t padding,
+                                                  Location location) {
+  std::optional<unsigned> width = sim::getPackedWidth(scalar.getType());
+  if (!width || padding > std::numeric_limits<unsigned>::max() / 2 ||
+      *width > std::numeric_limits<unsigned>::max() - 2 * padding) {
+    emitError(location) << "part-select window is too wide to pad";
+    return failure();
+  }
+  auto paddedWidth = static_cast<unsigned>(*width + 2 * padding);
+  auto planeType = IntegerType::get(function.getContext(), paddedWidth);
+  auto lowBit = builder.getI64IntegerAttr(static_cast<int64_t>(padding));
+  if (isa<sim::LogicType>(scalar.getType())) {
+    // Every padding bit is out of range, which reads as x.
+    Type paddedType = sim::LogicType::get(function.getContext(), paddedWidth);
+    Value unknown = sim::SimLogicConstantOp::create(
+        builder, location, paddedType, builder.getIntegerAttr(planeType, 0),
+        builder.getIntegerAttr(planeType, APInt::getAllOnes(paddedWidth)));
+    return sim::SimLogicInsertOp::create(builder, location, paddedType, unknown,
+                                         scalar, lowBit)
+        .getResult();
+  }
+  // A two-state value has no x, so an out-of-range read of one is zero.
+  Value zero = arith::ConstantOp::create(builder, location, planeType,
+                                         builder.getIntegerAttr(planeType, 0));
+  Value low = arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                        lowBit);
+  return sim::SimBitsDynInsertOp::create(builder, location, planeType, zero,
+                                         scalar, low)
+      .getResult();
+}
+
+FailureOr<Value> UnitLowering::unpadSelectionWindow(Value padded,
+                                                    uint64_t padding,
+                                                    Type scalarType,
+                                                    Location location) {
+  auto lowBit = builder.getI64IntegerAttr(static_cast<int64_t>(padding));
+  if (auto logic = dyn_cast<sim::LogicType>(scalarType))
+    return sim::SimLogicExtractOp::create(builder, location, logic, padded,
+                                          lowBit)
+        .getResult();
+  auto integer = dyn_cast<IntegerType>(scalarType);
+  auto paddedInteger = dyn_cast<IntegerType>(padded.getType());
+  if (!integer || !paddedInteger) {
+    emitError(location) << "part-select window is not a packed value";
+    return failure();
+  }
+  Value amount = arith::ConstantOp::create(
+      builder, location, paddedInteger,
+      builder.getIntegerAttr(paddedInteger, static_cast<int64_t>(padding)));
+  Value shifted = arith::ShRUIOp::create(builder, location, padded, amount);
+  return arith::TruncIOp::create(builder, location, integer, shifted)
+      .getResult();
 }
 
 FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
@@ -3228,6 +3302,14 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   uint64_t lowBit = address->lowBit;
   Value dynamicLow = address->dynamicLow;
 
+  // A padded window lives in a value, so a select that needs one cannot also
+  // hand back a view of the storage it came from.
+  if (address->padding &&
+      isa<sim::RefType, sim::NetType, sim::DriverType>((*input).getType())) {
+    unsupported(op) << " (reference to a part-select wider than its value)";
+    return failure();
+  }
+
   if (isa<sim::RefType>((*input).getType())) {
     Type selected = sim::RefType::get(function.getContext(), *resultType);
     if (constant)
@@ -3264,6 +3346,13 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   if (failed(scalarInput))
     return failure();
   input = *scalarInput;
+  if (address->padding) {
+    FailureOr<Value> padded =
+        padSelectionWindow(*input, address->padding, location);
+    if (failed(padded))
+      return failure();
+    input = *padded;
+  }
   if (isa<sim::LogicType>((*input).getType())) {
     auto selected = cast<sim::LogicType>(scalarResultType);
     Value value;

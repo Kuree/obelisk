@@ -3441,6 +3441,12 @@ buildSlangArguments(ArrayRef<std::string> inputs,
   appendValues(result, "-v", options.libraryFiles);
   appendValues(result, "--top", options.topModules);
   appendValues(result, "-G", options.paramOverrides);
+  // IEEE 1800-2017 11.5.1 and 7.4.6 define what an out-of-range select reads
+  // and writes, so simulating one is conforming rather than an error. Slang
+  // raises these to errors by default; put the downgrade ahead of the user's
+  // own options so `-Werror=range-oob` still wins.
+  for (llvm::StringRef warning : {"index-oob", "range-oob", "range-width-oob"})
+    result.emplace_back(("-Wno-error=" + warning).str());
   appendValues(result, "-W", options.warningOptions);
   appendValues(result, "--suppress-warnings", options.suppressWarningsPaths);
 
