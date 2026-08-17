@@ -319,9 +319,15 @@ std::optional<char> decimalUnknown(const LogicView &view) {
 }
 
 uint32_t defaultDecimalWidth(const LogicView &view) {
+  // The field holds the largest value the operand can represent. A signed
+  // operand spends its most significant bit on the sign, so it contributes one
+  // magnitude bit fewer and one character more.
+  uint64_t magnitudeBits =
+      view.isSigned && view.width > 0 ? view.width - 1 : view.width;
   double digits =
-      std::ceil(static_cast<double>(view.width) * 0.30102999566398119521);
-  uint64_t width = static_cast<uint64_t>(digits) + (view.isSigned ? 1 : 0);
+      std::ceil(static_cast<double>(magnitudeBits) * 0.30102999566398119521);
+  uint64_t width = std::max<uint64_t>(static_cast<uint64_t>(digits), 1) +
+                   (view.isSigned ? 1 : 0);
   return static_cast<uint32_t>(
       std::min<uint64_t>(width, std::numeric_limits<uint32_t>::max()));
 }

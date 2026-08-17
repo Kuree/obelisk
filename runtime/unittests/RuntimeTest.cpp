@@ -1176,6 +1176,16 @@ TEST_F(RuntimeTest, FormatsUnknownAndSignedDecimal) {
   EXPECT_EQ(smallStatus, OBELISK_RT_OK);
   EXPECT_EQ(smallOutput, " -3|-3| 3");
 
+  // IEEE 1800-2017 21.2.1.3: the default %d field is wide enough for the
+  // largest value the operand can hold, which for a signed operand is one
+  // magnitude bit narrower than the operand itself plus room for the sign.
+  LogicValue fourteenBits("00111111111111", true);
+  LogicValue sixteenBits("0000001111111111", true);
+  auto [signedWidthStatus, signedWidthOutput] =
+      format("%d|%d", {fourteenBits.arg(), sixteenBits.arg()});
+  EXPECT_EQ(signedWidthStatus, OBELISK_RT_OK);
+  EXPECT_EQ(signedWidthOutput, " 4095|  1023");
+
   LogicValue sixtyFiveBits(65, {0, 1});
   auto [wideStatus, wideOutput] = format("%0d", {sixtyFiveBits.arg()});
   EXPECT_EQ(wideStatus, OBELISK_RT_OK);
