@@ -816,6 +816,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_scan_field(
     std::unique_lock<std::recursive_mutex> lock;
     obelisk_rt_status status =
         checkFileArguments(context, descriptor, entry, lock);
+    // IEEE 1800-2017 21.3.4.3 ends $fscanf with EOF when the input ends before
+    // the first conversion, and a descriptor that was never opened has no
+    // input to begin with -- $fopen hands back 0 for a file it could not open.
+    // That is a failed conversion, not a failed simulation, so it reads as end
+    // of file like every other read on a descriptor that cannot deliver.
+    if (status == OBELISK_RT_INVALID_HANDLE) {
+      *outEOF = 1;
+      return OBELISK_RT_OK;
+    }
     if (status != OBELISK_RT_OK)
       return status;
     // A formatted read needs a stream to scan and put characters back on; a

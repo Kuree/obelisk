@@ -1665,6 +1665,39 @@ TEST_F(RuntimeTest, ReadsWithoutReadAccessReportEndOfFileInsteadOfIOError) {
   EXPECT_EQ(readHostFile(path), "kept");
 }
 
+// IEEE 1800-2017 21.3.4.3: $fscanf returns EOF (-1) when the input ends
+// before the first conversion. A descriptor that was never opened -- $fopen
+// returning 0 on a missing file is the ordinary way to get one -- has no
+// input at all, so it reads as end of file. Returning an error status instead
+// would end the simulation rather than the one system call, which is what
+// every other read on an unusable descriptor already avoids.
+TEST_F(RuntimeTest, ScansOnAnInvalidDescriptorReportEndOfFile) {
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+
+  obelisk_rt_string_v1 field = 1;
+  uint32_t ok = 1;
+  uint32_t scanEOF = 0;
+  EXPECT_EQ(obelisk_rt_v1_file_scan_field(context, lane, 0, 1, nullptr, 0, 'd',
+                                          &field, &ok, &scanEOF),
+            OBELISK_RT_OK);
+  EXPECT_EQ(field, 0u);
+  EXPECT_EQ(ok, 0u);
+  EXPECT_EQ(scanEOF, 1u);
+
+  // A disabled conversion still leaves the stream alone and reports nothing:
+  // lowering stops issuing them once an earlier one failed.
+  scanEOF = 1;
+  EXPECT_EQ(obelisk_rt_v1_file_scan_field(context, lane, 0, 0, nullptr, 0, 'd',
+                                          &field, &ok, &scanEOF),
+            OBELISK_RT_OK);
+  EXPECT_EQ(scanEOF, 0u);
+
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+}
+
 TEST_F(RuntimeTest, HoldsOnePushedBackByteWithoutReadAccess) {
   TempDirectory temporary;
   std::filesystem::path path = temporary.file("pushback.txt");
