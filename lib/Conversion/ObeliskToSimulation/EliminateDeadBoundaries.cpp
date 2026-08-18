@@ -154,7 +154,7 @@ static void updateBindings(sim::SimFuncOp function,
       --newIndex;
     updated.push_back(sim::ArgumentBindingAttr::get(
         function.getContext(), argument.getPath(), newIndex, argument.getKind(),
-        argument.getCopyOut(), argument.getLvalueNode()));
+        argument.getCopyOut(), argument.getLvalueNode(), argument.getCopyIn()));
   }
   function->setAttr(bindingsAttrName,
                     ArrayAttr::get(function.getContext(), updated));

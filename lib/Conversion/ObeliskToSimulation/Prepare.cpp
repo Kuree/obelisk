@@ -5605,7 +5605,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           context, builder.getStringAttr(capture.first), argument,
           plannedDriver ? sim::UnitArgumentKind::LValueOnly
                         : sim::UnitArgumentKind::Direct,
-          /*copyOut=*/false, lvalueNode));
+          /*copyOut=*/false, lvalueNode, /*copyIn=*/true));
     }
     for (const PreparedLocal &local : locals) {
       auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
@@ -5625,7 +5625,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       argAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Value));
       bindings.push_back(sim::ArgumentBindingAttr::get(
           context, builder.getStringAttr(local.path), argument,
-          sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{}));
+          sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{},
+          /*copyIn=*/true));
     }
     for (const PreparedLocal &value : observerValues) {
       unsigned argument = inputs.size();
@@ -5633,7 +5634,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       argAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Value));
       bindings.push_back(sim::ArgumentBindingAttr::get(
           context, builder.getStringAttr(value.path), argument,
-          sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{}));
+          sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{},
+          /*copyIn=*/true));
       observerThisArgument = argument;
     }
 
@@ -5661,7 +5663,8 @@ void ObeliskSimPreparePass::runOnOperation() {
               captureMetadata(builder, sim::CaptureKind::Formal));
           formalBindings.push_back(sim::ArgumentBindingAttr::get(
               context, builder.getStringAttr(classThisPath), argument,
-              sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{}));
+              sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{},
+              /*copyIn=*/true));
         }
         for (semantic::SVFormalArgumentSymbolOp formal : formals) {
           if (dpiImport) {
@@ -5702,6 +5705,11 @@ void ObeliskSimPreparePass::runOnOperation() {
           // the local does not escape. Only `ref` preserves caller aliasing.
           bool copyOut = direction == semantic::SVArgumentDirection::Out ||
                          direction == semantic::SVArgumentDirection::InOut;
+          // IEEE 1800-2017 13.5.1 copies an input or inout formal in at the
+          // call; 13.5.2 only copies an output formal out at the return. The
+          // difference shows in a static subroutine, whose formal is a static
+          // variable (13.3.1) holding what the last call left in it.
+          bool copyIn = direction != semantic::SVArgumentDirection::Out;
           if (copyOut && !directTask)
             copyOutResultTypes.push_back(*type);
           formalBindings.push_back(sim::ArgumentBindingAttr::get(
@@ -5709,7 +5717,7 @@ void ObeliskSimPreparePass::runOnOperation() {
               argument,
               isRef ? sim::UnitArgumentKind::Direct
                     : sim::UnitArgumentKind::FormalLocal,
-              copyOut, IntegerAttr{}));
+              copyOut, IntegerAttr{}, copyIn));
           if (directTask && copyOut) {
             unsigned destinationArgument = reordered.size();
             reordered.push_back(sim::RefType::get(context, *type));
@@ -5718,7 +5726,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             formalBindings.push_back(sim::ArgumentBindingAttr::get(
                 context, builder.getStringAttr(getHierarchyName(formal)),
                 destinationArgument, sim::UnitArgumentKind::CopyOutDestination,
-                /*copyOut=*/false, IntegerAttr{}));
+                /*copyOut=*/false, IntegerAttr{}, /*copyIn=*/true));
           }
         }
         unsigned offset = reordered.size() - 1;
@@ -5743,7 +5751,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           formalBindings.push_back(sim::ArgumentBindingAttr::get(
               context, argument.getPath(), argument.getArgument() + offset,
               argument.getKind(), argument.getCopyOut(),
-              argument.getLvalueNode()));
+              argument.getLvalueNode(), argument.getCopyIn()));
         }
         inputs = std::move(reordered);
         argAttrs = std::move(reorderedAttrs);
@@ -6801,7 +6809,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       argumentAttrs.push_back(representative.parent.getArgAttrDict(oldIndex));
       helperBindings.push_back(sim::ArgumentBindingAttr::get(
           context, argument.getPath(), newIndex, argument.getKind(),
-          /*copyOut=*/false, argument.getLvalueNode()));
+          /*copyOut=*/false, argument.getLvalueNode(), argument.getCopyIn()));
       capturePaths.push_back(builder.getStringAttr(path));
     }
 
@@ -6964,7 +6972,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       argAttrs.push_back(builder.getDictionaryAttr(metadataAttrs));
       bindings.push_back(sim::ArgumentBindingAttr::get(
           context, builder.getStringAttr(capture.first), argument,
-          sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{}));
+          sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{},
+          /*copyIn=*/true));
     }
     for (const PreparedConstant &constant : unitConstants[classType])
       bindings.push_back(sim::ConstantBindingAttr::get(

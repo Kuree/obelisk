@@ -46,7 +46,11 @@ def SimArgumentBindingAttr
     "uint64_t":$argument,
     EnumParameter<SimUnitArgumentKind>:$kind,
     "bool":$copyOut,
-    OptionalParameter<"::mlir::IntegerAttr">:$lvalueNode
+    OptionalParameter<"::mlir::IntegerAttr">:$lvalueNode,
+    // IEEE 1800-2017 13.5.1: an input or inout formal takes the caller's value
+    // at the call. An output formal does not, which a static subroutine can
+    // tell apart: its formal keeps what the previous call left in it.
+    DefaultValuedParameter<"bool", "true">:$copyIn
   );
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;

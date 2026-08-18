@@ -264,6 +264,10 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
     }
   if (!bindings)
     return;
+  // A formal whose binding declines copy-in keeps whatever its shared location
+  // already holds. The formal-local binding is seen before the descriptor
+  // binding that names that location, so record the decision on the way past.
+  llvm::StringSet<> withoutCopyIn;
   for (Attribute attr : bindings) {
     if (auto descriptor = dyn_cast<sim::DescriptorBindingAttr>(attr)) {
       StringRef path = descriptor.getPath().getValue();
@@ -271,7 +275,8 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
           builder, function.getLoc(), descriptor.getType(),
           function.getBody().front().getArgument(0),
           descriptor.getDescriptor());
-      if (function.getEntryKind() == sim::EntryKind::Task) {
+      if (function.getEntryKind() == sim::EntryKind::Task &&
+          !withoutCopyIn.contains(path)) {
         Value local = values.lookup(path);
         if (local && local != storage && isa<sim::RefType>(local.getType()) &&
             local.getType() == storage.getType()) {
@@ -302,6 +307,8 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
         lvalues[path] = local;
         if (argument.getCopyOut())
           copyOutPaths.push_back(path.str());
+        if (!argument.getCopyIn())
+          withoutCopyIn.insert(path);
         continue;
       }
       if (argument.getKind() == sim::UnitArgumentKind::LValueOnly) {
@@ -314,11 +321,16 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
         Value local = values.lookup(path);
         if (local && local != value && isa<sim::RefType>(local.getType()) &&
             local.getType() == value.getType()) {
-          Value initial = sim::SimRefLoadOp::create(
-              builder, function.getLoc(),
-              cast<sim::RefType>(local.getType()).getElementType(), local);
-          sim::SimRefStoreOp::create(builder, function.getLoc(), initial,
-                                     value);
+          // An output formal is never copied in (IEEE 1800-2017 13.5.2), so
+          // the shared location keeps the value the previous call left in it
+          // instead of taking whatever the caller passed for it.
+          if (argument.getCopyIn()) {
+            Value initial = sim::SimRefLoadOp::create(
+                builder, function.getLoc(),
+                cast<sim::RefType>(local.getType()).getElementType(), local);
+            sim::SimRefStoreOp::create(builder, function.getLoc(), initial,
+                                       value);
+          }
           // A static task formal is backed by its descriptor after copy-in.
           // Keep reads and writes on that same storage; otherwise reads use
           // the descriptor while assignments continue updating the discarded

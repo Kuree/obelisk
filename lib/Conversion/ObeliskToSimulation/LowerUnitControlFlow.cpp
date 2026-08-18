@@ -882,7 +882,8 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
     argumentAttrs.push_back(metadata);
     bindings.push_back(sim::ArgumentBindingAttr::get(
         context, builder.getStringAttr(path), argument,
-        sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{}));
+        sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{},
+        /*copyIn=*/true));
   };
   ArrayAttr parentBindings =
       function->getAttrOfType<ArrayAttr>(bindingsAttrName);
@@ -956,7 +957,7 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
         bindings.push_back(sim::ArgumentBindingAttr::get(
             context, builder.getStringAttr(entry.getKey()),
             *outlinedThisArgument, sim::UnitArgumentKind::Direct,
-            /*copyOut=*/false, IntegerAttr{}));
+            /*copyOut=*/false, IntegerAttr{}, /*copyIn=*/true));
   }
   if (parentBindings)
     for (Attribute attribute : parentBindings) {

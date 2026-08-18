@@ -2245,6 +2245,28 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @binding_copy_in_role {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 task hierarchy "bad"
+    // Only a formal has a direction to take copy-in from, so declining it
+    // anywhere else names a rule that has no meaning there.
+    obelisk_sim.func private @bad(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %value: i32 {obelisk_sim.capture_kind = 1 : i32})
+        attributes {
+          entry_kind = 12 : i32, code_unit_id = 1 : i64,
+          obelisk_sim.bindings = [
+            // expected-error @below {{skipping copy-in is valid only for a formal-local argument binding}}
+            #obelisk_sim.argument_binding<path = "value", argument = 1, kind = direct, copyOut = false, copyIn = false>]
+        } {
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @binding_role_type {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 function hierarchy "bad"

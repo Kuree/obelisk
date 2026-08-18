@@ -167,9 +167,13 @@ FrozenConstantAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 LogicalResult
 ArgumentBindingAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                             StringAttr path, uint64_t, UnitArgumentKind kind,
-                            bool copyOut, IntegerAttr lvalueNode) {
+                            bool copyOut, IntegerAttr lvalueNode, bool copyIn) {
   if (!path || path.getValue().empty())
     return emitError() << "argument binding path must not be empty";
+  if (!copyIn && kind != UnitArgumentKind::FormalLocal)
+    return emitError()
+           << "skipping copy-in is valid only for a formal-local argument "
+              "binding";
   if (copyOut && kind != UnitArgumentKind::FormalLocal)
     return emitError()
            << "copy-out is valid only for a formal-local argument binding";
