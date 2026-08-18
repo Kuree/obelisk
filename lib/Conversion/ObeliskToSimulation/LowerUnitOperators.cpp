@@ -743,8 +743,23 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       break;
     }
     if (compare) {
+      // The comparison plane follows the operator, not the expression type.
+      // IEEE 1800-2017 11.4.6 lets `==?` and `!=?` yield x when the left
+      // operand carries an x or z outside a wildcard position, and 11.4.5
+      // says the same of `==` and `!=`; only the case comparisons are
+      // guaranteed known. A two-state left operand rules the unknown out, so
+      // the expression type can still be `bit` — `bit [2:0] ==? logic [2:0]`
+      // is one such expression. Build every four-state comparison on the
+      // four-state plane, which is what the op requires of these kinds, and
+      // let the conversion below narrow the result to the expression type.
+      bool caseComparison = *compare == sim::CompareKind::CaseEq ||
+                            *compare == sim::CompareKind::CaseNe;
+      Type comparedType =
+          caseComparison ? builder.getI1Type()
+                         : cast<Type>(sim::LogicType::get(
+                               function.getContext(), 1));
       Value compared = sim::SimLogicCompareOp::create(
-          builder, location, scalarResultType, *compare, *lhs, *rhs);
+          builder, location, comparedType, *compare, *lhs, *rhs);
       return convert(compared, *resultType, false, location);
     }
 
