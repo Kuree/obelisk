@@ -2082,12 +2082,29 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     FailureOr<Value> value = lowerExpression(op);
     if (failed(value))
       return failure();
+    // IEEE 1800-2017 8.8: the declaration initializer is assigned to the
+    // property on construction, so the property's own type governs. The
+    // initializer's type need not already be it -- `bit x = 1'b0` initializes
+    // a scalar property from a self-determined `bit [0:0]` literal.
+    auto property =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimClassFieldDeclOp>(function,
+                                                                      field);
+    if (!property) {
+      emitError(location) << "class property initializer has no declared "
+                             "property: "
+                          << field.getValue();
+      return failure();
+    }
+    FailureOr<Value> converted =
+        convert(*value, property.getType(), isSignedNode(op), location);
+    if (failed(converted))
+      return failure();
     auto objectType = cast<sim::ClassHandleType>(thisObject.getType());
     Type referenceType = sim::ManagedRefType::get(
-        function.getContext(), (*value).getType(), objectType.getClassName());
+        function.getContext(), property.getType(), objectType.getClassName());
     Value reference = sim::SimClassFieldRefOp::create(
         builder, location, referenceType, thisObject, field);
-    sim::SimManagedStoreOp::create(builder, location, *value, reference);
+    sim::SimManagedStoreOp::create(builder, location, *converted, reference);
     return success();
   }
   if (isa<semantic::SVEmptyStatementOp>(op))
