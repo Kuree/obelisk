@@ -1038,3 +1038,27 @@ obelisk_rt_v1_last_error(obelisk_rt_context *context,
     return makeBuffer(error->second.message, outMessage);
   });
 }
+
+extern "C" void
+obelisk_rt_v1_scheduler_report_status(obelisk_rt_context *context,
+                                      obelisk_rt_status status) {
+  // A standalone simulator returns this status from main and exits, so this is
+  // the last chance to say what ended the run. A design-requested end is not a
+  // failure to report: $finish is OK and $fatal already printed its message.
+  if (!context || status == OBELISK_RT_OK || status == OBELISK_RT_FATAL)
+    return;
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    auto error = threadErrors.find(context);
+    bool described =
+        error != threadErrors.end() &&
+        error->second.contextLifetime.lock() == context->errorLifetime &&
+        !error->second.message.empty();
+    if (described)
+      std::fprintf(stderr, "error: %s (status %d)\n",
+                   error->second.message.c_str(), status);
+    else
+      std::fprintf(stderr, "error: simulation ended with status %d\n", status);
+  } catch (...) {
+  }
+}

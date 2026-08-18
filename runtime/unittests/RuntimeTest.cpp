@@ -3482,6 +3482,29 @@ TEST_F(ManagedHeapTest, NarrowBitInsertPreservesPackedStorageAndHandles) {
             OBELISK_RT_INVALID_ARGUMENT);
 }
 
+TEST_F(RuntimeTest, SchedulerStatusReportNamesTheFailure) {
+  // A standalone simulator returns the scheduler's status and exits, so a run
+  // that ended on a runtime error has nowhere else to say what happened. A
+  // successful run and a $fatal -- which printed its own message -- stay
+  // quiet.
+  testing::internal::CaptureStderr();
+  obelisk_rt_v1_scheduler_report_status(context, OBELISK_RT_OK);
+  obelisk_rt_v1_scheduler_report_status(context, OBELISK_RT_FATAL);
+  EXPECT_EQ(testing::internal::GetCapturedStderr(), "");
+
+  uint32_t closed = open(TempDirectory().file("reported.log"), "w");
+  ASSERT_EQ(obelisk_rt_v1_file_close(context, closed), OBELISK_RT_OK);
+  uint64_t written = 0;
+  char byte = 'x';
+  ASSERT_EQ(obelisk_rt_v1_file_write(context, closed, &byte, 1, &written),
+            OBELISK_RT_INVALID_HANDLE);
+  testing::internal::CaptureStderr();
+  obelisk_rt_v1_scheduler_report_status(context, OBELISK_RT_IO_ERROR);
+  std::string reported = testing::internal::GetCapturedStderr();
+  EXPECT_NE(reported.find("invalid output descriptor"), std::string::npos);
+  EXPECT_NE(reported.find("status 4"), std::string::npos);
+}
+
 TEST_F(RuntimeTest, ClosedOutputDescriptorWarnsAndContinues) {
   // IEEE 1800-2017 21.3.4 leaves writing to a channel that is not open
   // undefined. Reporting it and carrying on tells the user what happened;

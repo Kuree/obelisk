@@ -248,6 +248,12 @@ LogicalResult makeSchedulerMain(ModuleOp module,
       SymbolRefAttr::get(context, useAOT ? "obelisk_rt_v1_scheduler_run_aot"
                                          : "obelisk_rt_v1_scheduler_run"),
       runtimeContext);
+  // Nothing after this point can report: the context holding the diagnostic is
+  // destroyed on the next line and the process exits with the status.
+  LLVM::CallOp::create(
+      builder, location, TypeRange{},
+      SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_report_status"),
+      ValueRange{runtimeContext, run.getResult()});
   LLVM::CallOp::create(
       builder, location, TypeRange{},
       SymbolRefAttr::get(context, "obelisk_rt_v1_context_destroy"),
@@ -285,6 +291,8 @@ LogicalResult makeSchedulerMain(ModuleOp module,
                            {pointer, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_run", i32,
                            {pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_report_status",
+                           voidType, {pointer, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_install_aot", i32,
                            {pointer, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_run_aot", i32,

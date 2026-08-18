@@ -3417,6 +3417,12 @@ const char *obelisk_rt_v1_status_string(obelisk_rt_status status);
 void obelisk_rt_v1_buffer_release(obelisk_rt_buffer_v1 *buffer);
 obelisk_rt_status obelisk_rt_v1_last_error(obelisk_rt_context *context,
                                            obelisk_rt_buffer_v1 *out_message);
+// Report a simulation that ended on a runtime error. A standalone simulator's
+// `main` calls this with the scheduler's status before destroying the context,
+// so a run that fails says why instead of exiting on a bare status. A
+// successful run and a design-requested $fatal report nothing.
+void obelisk_rt_v1_scheduler_report_status(obelisk_rt_context *context,
+                                           obelisk_rt_status status);
 
 // Formatting and display. Input arrays remain caller-owned and must not be
 // mutated until the call returns. format() consumes every supplied argument.
