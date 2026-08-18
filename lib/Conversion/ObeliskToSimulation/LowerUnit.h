@@ -105,6 +105,14 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   unpadSelectionWindow(::mlir::Value padded, uint64_t padding,
                        ::mlir::Type scalarType, ::mlir::Location location);
+  /// Emit the source index of every element an unpacked-array range selection
+  /// of `source` produces, in result order. `bounds` are the selection's two
+  /// index expressions and `count` the number of elements selected.
+  ::mlir::FailureOr<::mlir::SmallVector<::mlir::Value>>
+  unpackedSliceIndices(semantic::SVRangeSelectExpressionOp range,
+                       ::mlir::ArrayRef<::mlir::Operation *> bounds,
+                       sim::UnpackedArrayType source, unsigned count,
+                       ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   lowerContextDeterminedExpression(::mlir::Operation *op);
   ::mlir::FailureOr<::mlir::Value>

@@ -89,52 +89,17 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
             << "unpacked array slice destination is not a reference or driver";
         return failure();
       }
-      auto indexType = IntegerType::get(function.getContext(), 65);
-      auto lowerIndex = [&](Operation *index) -> FailureOr<Value> {
-        FailureOr<Value> value = lowerExpression(index);
-        if (failed(value))
-          return failure();
-        FailureOr<Value> scalar =
-            toPackedScalar(*value, getSemanticLocation(index));
-        if (failed(scalar))
-          return failure();
-        return convert(*scalar, indexType, isSignedNode(index),
-                       getSemanticLocation(index));
-      };
-      FailureOr<Value> first = lowerIndex(selection[1]);
-      if (failed(first))
+      unsigned count = sim::getAggregateNumElements(resultArray);
+      FailureOr<SmallVector<Value>> indices =
+          unpackedSliceIndices(range, ArrayRef(selection).drop_front(),
+                               sourceArray, count, location);
+      if (failed(indices))
         return failure();
-      Value ascends;
-      if (range.getSelectionKind() == semantic::SVRangeSelectionKind::Simple) {
-        FailureOr<Value> second = lowerIndex(selection[2]);
-        if (failed(second))
-          return failure();
-        ascends = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::slt, *first, *second);
-      }
 
       captured.kind = CapturedLValue::Kind::AggregateSlice;
-      unsigned count = sim::getAggregateNumElements(resultArray);
       captured.children.reserve(count);
       for (unsigned ordinal = 0; ordinal < count; ++ordinal) {
-        Value offset = arith::ConstantOp::create(
-            builder, location, indexType,
-            builder.getIntegerAttr(indexType, ordinal));
-        Value above = arith::AddIOp::create(builder, location, *first, offset);
-        Value below = arith::SubIOp::create(builder, location, *first, offset);
-        Value index;
-        switch (range.getSelectionKind()) {
-        case semantic::SVRangeSelectionKind::Simple:
-          index =
-              arith::SelectOp::create(builder, location, ascends, above, below);
-          break;
-        case semantic::SVRangeSelectionKind::IndexedUp:
-          index = above;
-          break;
-        case semantic::SVRangeSelectionKind::IndexedDown:
-          index = below;
-          break;
-        }
+        Value index = (*indices)[ordinal];
         Type elementType = sim::getAggregateElementType(resultArray, ordinal);
         CapturedLValue element;
         element.semanticNode = destination;

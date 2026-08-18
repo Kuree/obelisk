@@ -2880,6 +2880,80 @@ FailureOr<Value> UnitLowering::unpadSelectionWindow(Value padded,
       .getResult();
 }
 
+FailureOr<SmallVector<Value>> UnitLowering::unpackedSliceIndices(
+    semantic::SVRangeSelectExpressionOp range, ArrayRef<Operation *> bounds,
+    sim::UnpackedArrayType source, unsigned count, Location location) {
+  auto indexType = IntegerType::get(function.getContext(), 65);
+  auto lowerIndex = [&](Operation *index) -> FailureOr<Value> {
+    FailureOr<Value> value = lowerExpression(index);
+    if (failed(value))
+      return failure();
+    FailureOr<Value> scalar =
+        toPackedScalar(*value, getSemanticLocation(index));
+    if (failed(scalar))
+      return failure();
+    return convert(*scalar, indexType, isSignedNode(index),
+                   getSemanticLocation(index));
+  };
+  FailureOr<Value> base = lowerIndex(bounds.front());
+  if (failed(base))
+    return failure();
+  semantic::SVRangeSelectionKind kind = range.getSelectionKind();
+  Value ascends;
+  if (kind == semantic::SVRangeSelectionKind::Simple) {
+    FailureOr<Value> second = lowerIndex(bounds.back());
+    if (failed(second))
+      return failure();
+    ascends = arith::CmpIOp::create(builder, location,
+                                    arith::CmpIPredicate::slt, *base, *second);
+  }
+  // IEEE 1800-2017 11.5.1: an indexed part-select grows up (`+:`) or down
+  // (`-:`) from its base, and "the msb/lsb ordering of the part-select is the
+  // same as the ordering of the vector being indexed" -- which 7.4.6 carries
+  // over to slicing an unpacked array. So the result keeps the source array's
+  // direction and its first element is the one with the leftmost declared
+  // index: a simple range names that element itself, an indexed one names it
+  // only when growing away from the base walks the source left to right.
+  bool descending = source.getLeft() >= source.getRight();
+  bool baseIsFirst = true;
+  switch (kind) {
+  case semantic::SVRangeSelectionKind::Simple:
+    break;
+  case semantic::SVRangeSelectionKind::IndexedUp:
+    baseIsFirst = !descending;
+    break;
+  case semantic::SVRangeSelectionKind::IndexedDown:
+    baseIsFirst = descending;
+    break;
+  }
+
+  SmallVector<Value> indices;
+  indices.reserve(count);
+  for (unsigned ordinal = 0; ordinal < count; ++ordinal) {
+    unsigned distance = baseIsFirst ? ordinal : count - 1 - ordinal;
+    Value offset =
+        arith::ConstantOp::create(builder, location, indexType,
+                                  builder.getIntegerAttr(indexType, distance));
+    switch (kind) {
+    case semantic::SVRangeSelectionKind::Simple:
+      indices.push_back(arith::SelectOp::create(
+          builder, location, ascends,
+          arith::AddIOp::create(builder, location, *base, offset),
+          arith::SubIOp::create(builder, location, *base, offset)));
+      break;
+    case semantic::SVRangeSelectionKind::IndexedUp:
+      indices.push_back(
+          arith::AddIOp::create(builder, location, *base, offset));
+      break;
+    case semantic::SVRangeSelectionKind::IndexedDown:
+      indices.push_back(
+          arith::SubIOp::create(builder, location, *base, offset));
+      break;
+    }
+  }
+  return indices;
+}
+
 FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
@@ -3036,55 +3110,17 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
         return failure();
       aggregate = *loaded;
     }
-    auto indexType = IntegerType::get(function.getContext(), 65);
-    auto lowerIndex = [&](Operation *index) -> FailureOr<Value> {
-      FailureOr<Value> value = lowerExpression(index);
-      if (failed(value))
-        return failure();
-      FailureOr<Value> scalar =
-          toPackedScalar(*value, getSemanticLocation(index));
-      if (failed(scalar))
-        return failure();
-      return convert(*scalar, indexType, isSignedNode(index),
-                     getSemanticLocation(index));
-    };
-    FailureOr<Value> first = lowerIndex(children[1]);
-    if (failed(first))
-      return failure();
-    Value ascends;
-    if (range.getSelectionKind() == semantic::SVRangeSelectionKind::Simple) {
-      FailureOr<Value> second = lowerIndex(children[2]);
-      if (failed(second))
-        return failure();
-      ascends = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::slt, *first, *second);
-    }
-    SmallVector<Value> elements;
+    auto sourceArray = cast<sim::UnpackedArrayType>(sourceValueType);
     unsigned count = sim::getAggregateNumElements(resultArray);
+    FailureOr<SmallVector<Value>> indices = unpackedSliceIndices(
+        range, ArrayRef(children).drop_front(), sourceArray, count, location);
+    if (failed(indices))
+      return failure();
+    SmallVector<Value> elements;
     elements.reserve(count);
-    for (unsigned ordinal = 0; ordinal < count; ++ordinal) {
-      Value offset =
-          arith::ConstantOp::create(builder, location, indexType,
-                                    builder.getIntegerAttr(indexType, ordinal));
-      Value above = arith::AddIOp::create(builder, location, *first, offset);
-      Value below = arith::SubIOp::create(builder, location, *first, offset);
-      Value index;
-      switch (range.getSelectionKind()) {
-      case semantic::SVRangeSelectionKind::Simple:
-        index =
-            arith::SelectOp::create(builder, location, ascends, above, below);
-        break;
-      case semantic::SVRangeSelectionKind::IndexedUp:
-        index = above;
-        break;
-      case semantic::SVRangeSelectionKind::IndexedDown:
-        index = below;
-        break;
-      }
-      Type sourceElement =
-          cast<sim::UnpackedArrayType>(sourceValueType).getElementType();
+    for (Value index : *indices) {
       Value elementValue = sim::SimArrayDynExtractOp::create(
-          builder, location, sourceElement, aggregate, index);
+          builder, location, sourceArray.getElementType(), aggregate, index);
       FailureOr<Value> converted =
           convert(elementValue, resultArray.getElementType(), false, location);
       if (failed(converted))
