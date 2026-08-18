@@ -633,9 +633,12 @@ public:
                   rewriter.getI32Type()},
         runtimeContext(rewriter, loc, adaptor.getContext().front()),
         descriptor(rewriter, loc, adaptor.getDescriptor().front()));
-    Value zero = iConstant(rewriter, loc, rewriter.getI32Type(), 0);
+    // IEEE 1800-2017 21.3.6 has $feof return non-zero once end of file has been
+    // detected and zero while more input may come. A descriptor that is not
+    // open can never deliver a byte, so end of file is the answer for it too.
+    Value closed = iConstant(rewriter, loc, rewriter.getI32Type(), 1);
     rewriter.replaceOp(
-        op, sentinel(rewriter, loc, call.getStatus(), call.getIsEof(), zero));
+        op, sentinel(rewriter, loc, call.getStatus(), call.getIsEof(), closed));
     return success();
   }
 };

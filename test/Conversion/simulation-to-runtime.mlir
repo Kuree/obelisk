@@ -157,8 +157,11 @@ module {
 // CHECK-NEXT: obelisk_sim.status.check %[[TOKEN_STATUS]]
 // CHECK: obelisk_rt.bytes.to_packed %[[TOKEN_VALUE_SCRATCH]]
 // CHECK: obelisk_rt.bytes.to_packed %[[TOKEN_UNKNOWN_SCRATCH]]
+// A descriptor that is not open can never deliver a byte, so IEEE 1800-2017
+// 21.3.6's "non-zero when EOF has been detected" is the honest answer for one:
+// $feof reports end of file rather than the zero that means more is coming.
 // CHECK: %[[EOF_STATUS:.*]], %[[EOF_VALUE:.*]] = obelisk_rt.file.eof
-// CHECK: %[[EOF_FAILURE:.*]] = arith.constant 0 : i32
+// CHECK: %[[EOF_FAILURE:.*]] = arith.constant 1 : i32
 // CHECK: %[[EOF_OK:.*]] = obelisk_rt.status.is %[[EOF_STATUS]], 0
 // CHECK: arith.select %[[EOF_OK]], %[[EOF_VALUE]], %[[EOF_FAILURE]] : i32
 // CHECK: %[[SEEK_STATUS:.*]] = obelisk_rt.file.seek
