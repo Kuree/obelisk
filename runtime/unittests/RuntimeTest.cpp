@@ -3482,6 +3482,22 @@ TEST_F(ManagedHeapTest, NarrowBitInsertPreservesPackedStorageAndHandles) {
             OBELISK_RT_INVALID_ARGUMENT);
 }
 
+TEST_F(RuntimeTest, ClosedOutputDescriptorWarnsAndContinues) {
+  // IEEE 1800-2017 21.3.4 leaves writing to a channel that is not open
+  // undefined. Reporting it and carrying on tells the user what happened;
+  // failing the display would end the simulation with nothing to read.
+  TempDirectory temporary;
+  uint32_t descriptor = open(temporary.file("closed-output.log"), "w");
+  ASSERT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
+  testing::internal::CaptureStderr();
+  obelisk_rt_arg_v1 item = stringArg("dropped");
+  EXPECT_EQ(obelisk_rt_v1_display(context, descriptor, 1,
+                                  OBELISK_RT_RADIX_DECIMAL, &item, 1, nullptr),
+            OBELISK_RT_OK);
+  std::string warnings = testing::internal::GetCapturedStderr();
+  EXPECT_NE(warnings.find("output descriptor"), std::string::npos);
+}
+
 TEST_F(RuntimeTest, DesignatedFormatWarnsAndContinuesOnArgumentMismatch) {
   TempDirectory temporary;
   uint32_t descriptor = open(temporary.file("designated-format.bin"), "w+b");

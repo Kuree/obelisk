@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <random>
 #include <string_view>
@@ -996,6 +997,49 @@ TEST(RuntimeInternals, MonitorRepeatsOnlyWhenItsDisplayedValuesChange) {
       OBELISK_RT_OK);
   EXPECT_EQ(std::string(bytes, static_cast<size_t>(read)),
             "bit=0\nbit=1\n10 bit=1\n20 bit=0\n");
+  obelisk_rt_v1_context_destroy(context);
+  std::filesystem::remove(path);
+}
+
+TEST(RuntimeInternals, ClosingAChannelDisablesTheMonitorWritingToIt) {
+  // IEEE 1800-2017 21.3.5: closing a channel disables any $fmonitor or
+  // $fstrobe associated with it. The report that would follow the close is
+  // dropped, and the monitor stays unregistered rather than failing every
+  // time one of its arguments changes.
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  std::string path =
+      (std::filesystem::temp_directory_path() / "obelisk-monitor-closed.bin")
+          .string();
+  std::string mode = "w+b";
+  uint32_t descriptor = 0;
+  ASSERT_EQ(obelisk_rt_v1_file_open(context, path.data(), path.size(),
+                                    mode.data(), mode.size(), &descriptor),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_monitor_register(context, 21, 1), OBELISK_RT_OK);
+  context->activeLogicalProcessToken = 21;
+
+  std::string formatString = "bit=%b";
+  uint64_t zero = 0;
+  uint64_t one = 1;
+  auto report = [&](const uint64_t &value) {
+    obelisk_rt_arg_v1 items[2] = {
+        {OBELISK_RT_ARG_STRING, OBELISK_RT_ARG_FORMAT_STRING,
+         formatString.size(), formatString.data(), nullptr},
+        {OBELISK_RT_ARG_LOGIC, 0, 1, &value, nullptr}};
+    return obelisk_rt_v1_display(context, descriptor, 1,
+                                 OBELISK_RT_RADIX_DECIMAL, items, 2, nullptr);
+  };
+  ASSERT_EQ(report(zero), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
+  EXPECT_EQ(report(one), OBELISK_RT_OK);
+  EXPECT_EQ(context->monitorLogicalProcessToken, 0u);
+  context->activeLogicalProcessToken = 0;
+
+  std::ifstream written(path, std::ios::binary);
+  std::string contents((std::istreambuf_iterator<char>(written)),
+                       std::istreambuf_iterator<char>());
+  EXPECT_EQ(contents, "bit=0\n");
   obelisk_rt_v1_context_destroy(context);
   std::filesystem::remove(path);
 }

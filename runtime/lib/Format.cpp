@@ -1129,9 +1129,10 @@ obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
     if (descriptor == 0)
       return OBELISK_RT_OK;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    if (context->activeLogicalProcessToken != 0 &&
-        context->activeLogicalProcessToken ==
-            context->monitorLogicalProcessToken) {
+    bool monitorReport = context->activeLogicalProcessToken != 0 &&
+                         context->activeLogicalProcessToken ==
+                             context->monitorLogicalProcessToken;
+    if (monitorReport) {
       // IEEE 1800-2017 21.2.3: the simulation time arguments never trigger a
       // report, so they are held at zero while rendering what the report is
       // compared against.
@@ -1157,7 +1158,24 @@ obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
       context->monitorReport = std::move(report);
       context->monitorReported = true;
     }
-    return writeUnlocked(context, descriptor, output.data(), output.size(),
-                         nullptr);
+    obelisk_rt_status written = writeUnlocked(
+        context, descriptor, output.data(), output.size(), nullptr);
+    if (written != OBELISK_RT_INVALID_HANDLE)
+      return written;
+    if (monitorReport) {
+      // IEEE 1800-2017 21.3.5: closing a channel disables the $fmonitor
+      // writing to it. Unregistering the monitor here stops the report the
+      // clause drops and leaves the monitor process nothing to resume for.
+      context->monitorLogicalProcessToken = 0;
+      context->monitorReported = false;
+      context->monitorReport.clear();
+      return OBELISK_RT_OK;
+    }
+    // 21.3.4 leaves an output task on a channel that is not open undefined.
+    // Report it and carry on: failing the display would end the simulation
+    // without saying why.
+    std::fprintf(stderr, "warning: output descriptor %u is not open\n",
+                 descriptor);
+    return OBELISK_RT_OK;
   });
 }
