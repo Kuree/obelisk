@@ -205,8 +205,11 @@ bool UnitLowering::hasWatchableSignalHandle(Operation *expression) {
   }
   if (!unpackedStep)
     return true;
-  // Only a built-in net lacks the view operation such a step needs; storage
-  // references have subelement and array-element views for every aggregate.
+  // A net is viewed only through the packed windows of its storage, which is
+  // all a step out of a packed aggregate needs. A step out of an unpacked one
+  // has no such view, so its event has to be observed instead; storage
+  // references keep subelement and array-element views for every aggregate and
+  // stay directly watchable.
   auto path = node->getAttrOfType<StringAttr>("referenced_path");
   if (!path)
     return true;

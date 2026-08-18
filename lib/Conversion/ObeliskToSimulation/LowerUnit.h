@@ -345,8 +345,9 @@ private:
   bindObserver(::mlir::Operation *expression,
                ::mlir::ValueRange dynamicDependencies = {});
   /// Whether an addressable event expression also lowers to a handle the
-  /// scheduler can watch. A built-in net has no aggregate view operations, so
-  /// selecting into an unpacked array of nets has to be observed instead.
+  /// scheduler can watch. A net is viewed only through packed windows of its
+  /// storage, so selecting an element of an unpacked array of nets has to be
+  /// observed instead.
   bool hasWatchableSignalHandle(::mlir::Operation *expression);
   void recordSensitivity(::mlir::Value value);
   void recordManagedRead(::mlir::Value reference, ::mlir::Location location);

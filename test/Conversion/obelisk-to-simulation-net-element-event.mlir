@@ -55,6 +55,12 @@ module attributes {
   }
 }
 
+// The scheduler watches exactly that window, so a change elsewhere in the net
+// is not an event on `w[1]`.
+// CHECK: effect = watch, resource = net, target = descriptor, descriptor = 0
+// CHECK-SAME: low = 1, width = 1
+// CHECK-SAME: trigger = change
+
 // CHECK: obelisk_sim.func private @unit_0(
 // CHECK-SAME: %[[NET:[^:]*]]: !obelisk_sim.net<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>
 // CHECK: %[[BIT:.*]] = obelisk_sim.net.extract %[[NET]] from 1
