@@ -2540,6 +2540,41 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       entryKind != sim::EntryKind::Continuous &&
       entryKind != sim::EntryKind::PortInput &&
       entryKind != sim::EntryKind::PortOutput) {
+    // IEEE 1800-2017 9.2.2.1: an always procedure whose body has no timing
+    // control cannot advance simulation time, which deadlocks the run. What
+    // the rest of the time slot does is not settled by the standard: 4.7 says
+    // a simulator *may* suspend a process that reached no time control and
+    // interleave others, but does not require it, and 4.6 promises no
+    // fairness. Interleaving would let the slot keep running, but every value
+    // it then produced would depend on an ordering the standard leaves open,
+    // so a run that looked like it worked would not be one to trust. Report
+    // the deadlock instead and leave the loop as written.
+    bool suspends = false;
+    llvm::DenseSet<Block *> visited;
+    SmallVector<Block *> pending{loopHeader};
+    while (!pending.empty() && !suspends) {
+      Block *block = pending.pop_back_val();
+      if (!visited.insert(block).second || block->empty())
+        continue;
+      Operation &terminator = block->back();
+      if (isa<sim::SimSuspendDelayOp, sim::SimSuspendChangeOp,
+              sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
+              sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
+              sim::SimSuspendEventOp, sim::SimSuspendMailboxOp,
+              sim::SimSuspendSemaphoreOp, sim::SimSuspendForeverOp,
+              sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
+              sim::SimSuspendChildrenOp, sim::SimSuspendObserveOp,
+              sim::SimTaskCallOp>(terminator)) {
+        suspends = true;
+        break;
+      }
+      for (Block *successor : terminator.getSuccessors())
+        pending.push_back(successor);
+    }
+    if (!suspends)
+      emitWarning(function.getLoc())
+          << "always procedure has no timing control, so simulation time "
+             "cannot advance once it starts and the run will not terminate";
     cf::BranchOp::create(builder, function.getLoc(), loopHeader);
     return success();
   }
