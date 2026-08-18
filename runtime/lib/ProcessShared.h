@@ -160,10 +160,18 @@ bool publishStaticAOTSignalTransitionUnlocked(
     obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
     uint64_t *outSequence, bool indexedExternalDeposit = false);
+// `establishesOverride` marks the publication that installs a force or assign
+// procedural continuous assignment. Every other publication is filtered
+// against the override masks; that one is the write the masks describe.
 bool publishNativeSignalTransitionUnlocked(
     obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
-    const uint8_t *newValue, const uint8_t *newUnknown);
+    const uint8_t *newValue, const uint8_t *newUnknown,
+    bool establishesOverride = false);
+void publishOverrideEstablishmentTransition(
+    obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth,
+    const uint8_t *oldValue, const uint8_t *oldUnknown, const uint8_t *newValue,
+    const uint8_t *newUnknown);
 void wakeMonitorProcessUnlocked(obelisk_rt_context *context,
                                 uint64_t logicalToken);
 

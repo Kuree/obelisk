@@ -602,7 +602,8 @@ extern "C" void obelisk_rt_v1_scheduler_signal(obelisk_rt_context *context,
 bool publishNativeSignalTransitionUnlocked(
     obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
-    const uint8_t *newValue, const uint8_t *newUnknown) {
+    const uint8_t *newValue, const uint8_t *newUnknown,
+    bool establishesOverride) {
   // Generated native code may have committed later source stores to its
   // private plane before publishing this transition. Advance the canonical
   // plane one publication at a time so observer evaluators see source-order
@@ -640,10 +641,14 @@ bool publishNativeSignalTransitionUnlocked(
   // They must not wake a waiter, and above all they must not reach the
   // canonical plane: release resolves the target from its drivers and compares
   // the result against that plane to decide whether the net changed.
+  // The publication that installs an override is exempt: it carries the very
+  // value the mask was just set to describe, and IEEE 1800-2017 9.4.2 makes
+  // that a value change like any other, so it has to reach waiters.
   std::vector<uint8_t> overriddenChanged;
   std::vector<uint8_t> overriddenPosedge;
   std::vector<uint8_t> overriddenNegedge;
-  if (!context->forceMask.empty() || !context->assignMask.empty()) {
+  if (!establishesOverride &&
+      (!context->forceMask.empty() || !context->assignMask.empty())) {
     size_t byteCount = static_cast<size_t>((bitWidth + 7) / 8);
     for (uint64_t bit = 0; bit != bitWidth; ++bit) {
       uint64_t absolute = 0;
@@ -737,10 +742,14 @@ bool publishNativeSignalTransitionUnlocked(
   return true;
 }
 
-extern "C" void obelisk_rt_v1_scheduler_signal_transition(
-    obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth,
-    const uint8_t *oldValue, const uint8_t *oldUnknown, const uint8_t *newValue,
-    const uint8_t *newUnknown) {
+namespace {
+
+void schedulerSignalTransition(obelisk_rt_context *context, uint64_t bitOffset,
+                               uint64_t bitWidth, const uint8_t *oldValue,
+                               const uint8_t *oldUnknown,
+                               const uint8_t *newValue,
+                               const uint8_t *newUnknown,
+                               bool establishesOverride) {
   if (!context || bitOffset == UINT64_MAX || bitWidth == 0 ||
       bitWidth > UINT64_MAX - 7 || !oldValue || !newValue)
     return;
@@ -787,8 +796,8 @@ extern "C" void obelisk_rt_v1_scheduler_signal_transition(
           context, bitOffset, bitWidth,
           reinterpret_cast<const uint8_t *>(&changedBits),
           reinterpret_cast<const uint8_t *>(&posedgeBits),
-          reinterpret_cast<const uint8_t *>(&negedgeBits), newValue,
-          newUnknown);
+          reinterpret_cast<const uint8_t *>(&negedgeBits), newValue, newUnknown,
+          establishesOverride);
       return;
     }
     PackedSignalTransitionBuffer transitions(bitWidth);
@@ -833,12 +842,36 @@ extern "C" void obelisk_rt_v1_scheduler_signal_transition(
     if (changed)
       (void)publishNativeSignalTransitionUnlocked(
           context, bitOffset, bitWidth, transitions.changed(),
-          transitions.posedge(), transitions.negedge(), newValue, newUnknown);
+          transitions.posedge(), transitions.negedge(), newValue, newUnknown,
+          establishesOverride);
   } catch (const std::bad_alloc &) {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
   } catch (...) {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
   }
+}
+
+} // namespace
+
+extern "C" void obelisk_rt_v1_scheduler_signal_transition(
+    obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth,
+    const uint8_t *oldValue, const uint8_t *oldUnknown, const uint8_t *newValue,
+    const uint8_t *newUnknown) {
+  schedulerSignalTransition(context, bitOffset, bitWidth, oldValue, oldUnknown,
+                            newValue, newUnknown, false);
+}
+
+// IEEE 1800-2017 10.6.2: a force or an assign procedural continuous assignment
+// takes over its target the moment it executes. That write is a value change
+// (9.4.2), so it publishes like any other — but the override masks are already
+// set by the time it does, and the ordinary path reads those masks as "a driver
+// changed behind an override" and drops the bits. Publish it exempt instead.
+void publishOverrideEstablishmentTransition(
+    obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth,
+    const uint8_t *oldValue, const uint8_t *oldUnknown, const uint8_t *newValue,
+    const uint8_t *newUnknown) {
+  schedulerSignalTransition(context, bitOffset, bitWidth, oldValue, oldUnknown,
+                            newValue, newUnknown, true);
 }
 
 extern "C" void obelisk_rt_v1_scheduler_static_transition(

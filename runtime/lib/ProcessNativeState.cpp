@@ -375,7 +375,7 @@ obelisk_rt_v1_native_override(obelisk_rt_context *context, uint8_t *globalValue,
       obelisk_rt_aot_external_write_range_unlocked(context, absolute, bitWidth,
                                                    true);
     }
-    obelisk_rt_v1_scheduler_signal_transition(
+    publishOverrideEstablishmentTransition(
         context, handle, bitWidth, oldValue.data(), oldUnknown.data(),
         publishedValue.data(), publishedUnknown.data());
     return OBELISK_RT_OK;

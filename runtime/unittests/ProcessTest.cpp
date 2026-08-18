@@ -2390,6 +2390,53 @@ TEST(Scheduler, NativeTransitionKeepsOverriddenBits) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+// IEEE 1800-2017 9.4.2: an implicit event is detected on any change in the
+// value of its expression, and 10.6.2 makes a force one such change — it
+// overrides every driver of the target until a release. The publication that
+// installs the override therefore has to reach waiters like any other write.
+// It is the one transition the override mask must not filter: the mask exists
+// to drop driver transitions arriving behind an established override.
+TEST(Scheduler, NativeOverrideWakesWaitersOnTheForcedValue) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 8;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 8),
+            OBELISK_RT_OK);
+  uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
+  ASSERT_NE(root, UINT64_MAX);
+
+  SchedulerFixture fixture(5);
+  fixture.descriptor.execution = &execution;
+  schedulerWaitKind = OBELISK_RT_SUSPEND_CHANGE;
+  schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_CHANGE;
+  schedulerWaitHandle = root;
+  schedulerWaitWidth = 8;
+  schedulerResumeCount = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(fixture), 0),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(schedulerResumeCount, 0u);
+
+  uint8_t globalValue = 0;
+  uint8_t globalUnknown = 0;
+  uint8_t forced = 1;
+  uint8_t forcedUnknown = 0;
+  ASSERT_EQ(obelisk_rt_v1_native_override(context, &globalValue, &globalUnknown,
+                                          8, root, 8,
+                                          OBELISK_RT_DESCRIPTOR_STORAGE, 0,
+                                          &forced, &forcedUnknown),
+            OBELISK_RT_OK);
+  EXPECT_EQ(context->stateValue[0] & 0xffu, 1u);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerResumeCount, 1u);
+
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, AOTStaticFanoutMatchesRangeAndFourStateEdgeExactly) {
   AOTTestState state;
   const obelisk_rt_static_fanout_entry fanout[] = {
