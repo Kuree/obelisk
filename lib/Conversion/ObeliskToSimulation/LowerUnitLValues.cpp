@@ -28,19 +28,45 @@ Operation *getSingleRegionRoot(Region &region) {
   return &region.front().front();
 }
 
-bool isSequentialContainerSubvalue(Operation *expression) {
+/// Whether a dynamic container's element sits under this designator. IEEE
+/// 1800-2017 7.5, 7.8, and 7.10 give queues, associative arrays, and dynamic
+/// arrays storage the container itself owns, which it hands out only by value,
+/// so naming a part of one needs a write that rebuilds the whole element.
+bool isContainerElementSubvalue(Operation *expression) {
   SmallVector<Operation *> children = getChildren(expression);
   if (isa<semantic::SVElementSelectExpressionOp>(expression) &&
       children.size() == 2) {
     FailureOr<Type> baseType = getNormalizedSemanticType(children.front());
     if (succeeded(baseType) &&
-        isa<sim::DynamicArrayType, sim::QueueType>(*baseType))
+        isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
+            *baseType))
       return true;
-    return isSequentialContainerSubvalue(children.front());
+    return isContainerElementSubvalue(children.front());
   }
   if (isa<semantic::SVMemberAccessExpressionOp>(expression) &&
       children.size() == 1)
-    return isSequentialContainerSubvalue(children.front());
+    return isContainerElementSubvalue(children.front());
+  return false;
+}
+
+/// Whether a class property sits under this designator. IEEE 1800-2017 8.3
+/// makes a property a variable of the object, so a part of one is as
+/// assignable as a part of any other variable (7.2 for a structure member,
+/// 7.4.6 for an array element). The object's storage is managed and exposes no
+/// interior reference of its own, so the write rebuilds the whole property the
+/// way a container element's does.
+bool isClassPropertySubvalue(Operation *expression) {
+  SmallVector<Operation *> children = getChildren(expression);
+  if (isa<semantic::SVMemberAccessExpressionOp>(expression) &&
+      children.size() == 1) {
+    if (expression->hasAttr("obelisk_sim.class_field"))
+      return true;
+    return isClassPropertySubvalue(children.front());
+  }
+  if (isa<semantic::SVElementSelectExpressionOp,
+          semantic::SVRangeSelectExpressionOp>(expression) &&
+      !children.empty())
+    return isClassPropertySubvalue(children.front());
   return false;
 }
 
@@ -183,7 +209,8 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
 
       if (isa<sim::PackedArrayType, sim::UnpackedArrayType>(*baseType) &&
           getConstantSpelling(selection[1]).has_value() &&
-          isSequentialContainerSubvalue(selection.front())) {
+          (isContainerElementSubvalue(selection.front()) ||
+           isClassPropertySubvalue(selection.front()))) {
         FailureOr<Type> indexType = getNormalizedSemanticType(selection[1]);
         std::optional<unsigned> indexWidth =
             succeeded(indexType) ? sim::getPackedWidth(*indexType)
@@ -252,7 +279,8 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
         frozenReceiver &&
         isa<sim::ArgumentRefType, sim::ManagedRefType, sim::ReferencePathType>(
             frozenReceiver.getType());
-    if (isSequentialContainerSubvalue(destination) ||
+    if (isContainerElementSubvalue(destination) ||
+        isClassPropertySubvalue(destination) ||
         sim::isManagedHandleType(*destinationType) || indirectReference ||
         (unpackedUnion && !unpackedUnion.getIsTagged())) {
       FailureOr<CapturedLValue> base = captureLValue(members.front(), location);
