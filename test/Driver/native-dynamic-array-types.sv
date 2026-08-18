@@ -37,8 +37,11 @@ module native_dynamic_array_types;
              $isunknown(unknown_a == mismatch));
   end
 
+  // IEEE 1800-2017 21.2.1.7 prints a plain integral pattern element "as they
+  // would unformatted", which 21.2.1 makes the default decimal format of
+  // $display; an element with only some bits unknown reports X, as %d does.
   // CHECK: strings='{"a", "b", "b"} unique='{"b", "a"}
   // CHECK-NEXT: reals='{1, 1, 2, 3} min='{1}
-  // CHECK-NEXT: logics='{4'b0011, 4'bx001, 4'b0010} unique='{4'b0011, 4'bx001, 4'b0010}
+  // CHECK-NEXT: logics='{3, X, 2} unique='{3, X, 2}
   // CHECK-NEXT: equality unknown=1 case=1 mismatch=0
 endmodule

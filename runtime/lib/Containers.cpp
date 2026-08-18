@@ -2438,18 +2438,19 @@ obelisk_rt_status obelisk_rt_container_pattern(obelisk_rt_object_v1 *container,
   size_t valueSize = static_cast<size_t>(snapshot.element->value_size);
   std::vector<uint8_t> value;
   std::vector<uint8_t> unknown;
+  // Integral elements are rendered from word-aligned planes, reused across
+  // the walk rather than reallocated for every element.
+  std::vector<uint64_t> valueWords;
+  std::vector<uint64_t> unknownWords;
   try {
     value.resize(valueSize);
     if (snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE)
       unknown.resize(valueSize);
+    valueWords.resize((valueSize + 7) / 8);
+    unknownWords.resize(unknown.empty() ? 0 : valueWords.size());
   } catch (const std::bad_alloc &) {
     return OBELISK_RT_OUT_OF_MEMORY;
   }
-
-  auto bit = [](const std::vector<uint8_t> &bytes, uint64_t index) {
-    return index / 8 < bytes.size() &&
-           ((bytes[static_cast<size_t>(index / 8)] >> (index % 8)) & 1) != 0;
-  };
   auto appendString = [&](obelisk_rt_string_v1 string) {
     char inlineBytes[8];
     const char *bytes = nullptr;
@@ -2615,19 +2616,17 @@ obelisk_rt_status obelisk_rt_container_pattern(obelisk_rt_object_v1 *container,
     switch (snapshot.element->kind) {
     case OBELISK_RT_ELEMENT_BITS:
     case OBELISK_RT_ELEMENT_LOGIC:
-      output += std::to_string(snapshot.element->bit_width);
-      output.push_back('\'');
-      if (snapshot.element->flags & OBELISK_RT_ELEMENT_SIGNED)
-        output.push_back('s');
-      output.push_back('b');
-      for (uint64_t position = snapshot.element->bit_width; position != 0;
-           --position) {
-        uint64_t selected = position - 1;
-        if (!unknown.empty() && bit(unknown, selected))
-          output.push_back(bit(value, selected) ? 'z' : 'x');
-        else
-          output.push_back(bit(value, selected) ? '1' : '0');
-      }
+      // An element reads the same as any other singular value in a pattern.
+      std::fill(valueWords.begin(), valueWords.end(), 0);
+      std::fill(unknownWords.begin(), unknownWords.end(), 0);
+      std::memcpy(valueWords.data(), value.data(), valueSize);
+      if (!unknownWords.empty())
+        std::memcpy(unknownWords.data(), unknown.data(), valueSize);
+      output += obelisk_rt_pattern_integer_text(
+          snapshot.element->bit_width,
+          (snapshot.element->flags & OBELISK_RT_ELEMENT_SIGNED) != 0,
+          valueWords.data(),
+          unknownWords.empty() ? nullptr : unknownWords.data());
       break;
     case OBELISK_RT_ELEMENT_REAL: {
       double real = 0.0;

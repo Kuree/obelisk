@@ -1304,12 +1304,23 @@ TEST_F(RuntimeTest, FormatsRemainingScalarFormsAndEmptyStrings) {
   EXPECT_EQ(timeOutput, "[" + std::string(18, ' ') + "10]");
 }
 
+// IEEE 1800-2017 21.2.1.7: a singular value that is not a packed structure,
+// an enumeration, or a string "shall print its value as they would
+// unformatted", and 21.2.1 makes the unformatted rendering of $display the
+// default decimal format. An unknown bit makes the whole field unknown, just
+// as %d does.
 TEST_F(RuntimeTest, FormatsPackedStringsAndScalarPatterns) {
   LogicValue packed("010000010000000001000010"); // "A", NUL, "B"
-  LogicValue pattern("10xz", true);
-  auto [status, output] = format("%s %p", {packed.arg(), pattern.arg()});
+  LogicValue partlyUnknown("10xz", true);
+  LogicValue whollyUnknown("xxxx", true);
+  LogicValue negative("1101", true);
+  LogicValue positive("0101");
+  auto [status, output] =
+      format("%s %p %p %p %p",
+             {packed.arg(), partlyUnknown.arg(), whollyUnknown.arg(),
+              negative.arg(), positive.arg()});
   EXPECT_EQ(status, OBELISK_RT_OK);
-  EXPECT_EQ(output, "A B 4'sb10xz");
+  EXPECT_EQ(output, "A B X x -3 5");
 }
 
 TEST_F(RuntimeTest, EmitsRawTwoAndFourStateChunks) {

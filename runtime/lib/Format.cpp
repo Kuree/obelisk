@@ -120,12 +120,6 @@ bool unknownBit(const LogicView &view, uint64_t bit) {
   return view.unknown && ((view.unknown[bit / 64] >> (bit % 64)) & 1) != 0;
 }
 
-char logicSymbol(const LogicView &view, uint64_t bit) {
-  if (!unknownBit(view, bit))
-    return valueBit(view, bit) ? '1' : '0';
-  return valueBit(view, bit) ? 'z' : 'x';
-}
-
 void applyPadding(std::string &output, std::string field, uint32_t width,
                   bool left, char padding) {
   if (field.size() >= width) {
@@ -469,18 +463,33 @@ obelisk_rt_status appendRaw(std::string &output, const LogicView &view,
   return OBELISK_RT_OK;
 }
 
+} // namespace
+
+// IEEE 1800-2017 21.2.1.7: a singular value that is neither a packed
+// structure, an enumeration, nor a string prints "as they would unformatted",
+// and 21.2.1 makes that the default decimal format of $display -- unpadded
+// here, matching the compact spelling the clause's own examples use for
+// pattern elements.
+std::string obelisk_rt_pattern_integer_text(uint64_t width, bool isSigned,
+                                            const uint64_t *value,
+                                            const uint64_t *unknown) {
+  LogicView view;
+  view.width = width;
+  view.isSigned = isSigned;
+  view.value = value;
+  view.unknown = unknown;
+  if (std::optional<char> symbol = decimalUnknown(view))
+    return std::string(1, *symbol);
+  return knownDecimal(view);
+}
+
+namespace {
+
 std::string scalarPattern(const obelisk_rt_arg_v1 &argument) {
   LogicView view;
-  if (getLogicView(argument, view)) {
-    std::string result = std::to_string(view.width);
-    result.push_back('\'');
-    if (view.isSigned)
-      result.push_back('s');
-    result.push_back('b');
-    for (uint64_t bit = view.width; bit > 0; --bit)
-      result.push_back(logicSymbol(view, bit - 1));
-    return result;
-  }
+  if (getLogicView(argument, view))
+    return obelisk_rt_pattern_integer_text(view.width, view.isSigned,
+                                           view.value, view.unknown);
   char scratch[8];
   const char *bytes = nullptr;
   uint64_t size = 0;

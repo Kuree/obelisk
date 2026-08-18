@@ -345,8 +345,10 @@ TEST_F(ManagedValueTest, CreatesTypedContainersAndFormatsPatterns) {
             OBELISK_RT_OK);
   EXPECT_EQ(
       std::string(reinterpret_cast<const char *>(output.data), output.size),
-      "'{32'sb00000000000000000000000000000011, "
-      "32'sb00000000000000000000000000000001}");
+      // IEEE 1800-2017 21.2.1.7: an element that is a plain integral prints
+      // "as they would unformatted", which 21.2.1 makes the default decimal
+      // format of $display.
+      "'{3, 1}");
   obelisk_rt_v1_buffer_release(&output);
 
   obelisk_rt_object_v1 *clone = nullptr;
@@ -1296,9 +1298,7 @@ TEST_F(ManagedValueTest,
             OBELISK_RT_OK);
   EXPECT_EQ(std::string(reinterpret_cast<const char *>(output.data),
                         output.size),
-            "'{-2:64'b000000000000000000000000000000000000000000000000000000"
-            "0000000101, 4:64'b000000000000000000000000000000000000000000000000"
-            "0000000000001001}");
+            "'{-2:5, 4:9}");
   obelisk_rt_v1_buffer_release(&output);
 
   obelisk_rt_object_v1 *copy = nullptr;

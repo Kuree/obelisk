@@ -1397,6 +1397,13 @@ obelisk_rt_status guarded(obelisk_rt_context *context,
   }
 }
 
+// The IEEE 1800-2017 21.2.1.7 rendering of one singular integral value inside
+// an assignment pattern: the default decimal format of $display (21.2.1),
+// unpadded. Shared so a container element reads the same as a struct member.
+std::string obelisk_rt_pattern_integer_text(uint64_t width, bool isSigned,
+                                            const uint64_t *value,
+                                            const uint64_t *unknown);
+
 obelisk_rt_status makeBuffer(std::string_view source,
                              obelisk_rt_buffer_v1 *output);
 bool validBytes(const void *data, uint64_t size);
