@@ -445,6 +445,11 @@ private:
   ::llvm::StringMap<semantic::SVCovergroupTypeOp> semanticCovergroups;
   ::llvm::StringSet<> coverageDefinitionNames;
   ::mlir::Value thisObject;
+  // The object of the scope containing a randomize() with call, live
+  // only while its inline constraints are lowered. IEEE 1800-2017 18.7
+  // resolves a name that the randomize() with object class does not
+  // declare in that scope instead, so both objects are addressable.
+  ::mlir::Value enclosingThisObject;
   ::mlir::Value taskControlActivation;
   ::llvm::SetVector<::mlir::Value> sensitivity;
   ::llvm::SetVector<::mlir::Value> *observedDependencies = nullptr;

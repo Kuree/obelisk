@@ -4070,12 +4070,18 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   // block and shared with the runtime fallback. Keeping the analysis here also
   // lets the generated proposal consume conservative compiler-side domains.
   Value programSavedThis = thisObject;
+  Value programSavedEnclosingThis = enclosingThisObject;
   SmallVector<Value> programSavedCandidates =
       std::move(randomizeCandidateValues);
   llvm::scope_exit restoreProgramBindings([&] {
     thisObject = programSavedThis;
+    enclosingThisObject = programSavedEnclosingThis;
     randomizeCandidateValues = std::move(programSavedCandidates);
   });
+  // IEEE 1800-2017 18.7: a name an inline constraint does not resolve in the
+  // randomize() with object class resolves in the scope containing the call,
+  // so that scope's object stays reachable alongside the receiver.
+  enclosingThisObject = programSavedThis;
   thisObject = receiver;
   bool emittedHard = false;
   bool emittedSoft = false;
@@ -6188,11 +6194,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (failed(candidates))
       return failure();
     Value savedThis = thisObject;
+    Value savedEnclosingThis = enclosingThisObject;
     SmallVector<Value> savedCandidates = std::move(randomizeCandidateValues);
     llvm::scope_exit restoreBindings([&] {
       thisObject = savedThis;
+      enclosingThisObject = savedEnclosingThis;
       randomizeCandidateValues = std::move(savedCandidates);
     });
+    enclosingThisObject = savedThis;
     thisObject = receiver;
     randomizeCandidateValues = *candidates;
 
@@ -6737,6 +6746,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             arith::AndIOp::create(builder, location, softSatisfied, soft);
     }
     thisObject = savedThis;
+    enclosingThisObject = savedEnclosingThis;
     randomizeCandidateValues = std::move(savedCandidates);
     restoreBindings.release();
     Value preferred =

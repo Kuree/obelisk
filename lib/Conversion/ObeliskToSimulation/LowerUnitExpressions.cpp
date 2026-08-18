@@ -31,6 +31,23 @@ bool containsUnboundedLiteral(Operation *operation) {
   return found;
 }
 
+// Whether `object`'s class, or one of its base classes, declares `field`.
+bool classDeclares(Operation *from, sim::ClassHandleType object,
+                   FlatSymbolRefAttr owner) {
+  llvm::SmallPtrSet<Operation *, 8> visited;
+  auto current = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+      from, object.getClassName());
+  while (current && visited.insert(current).second) {
+    if (current.getSymNameAttr() == owner.getAttr())
+      return true;
+    if (!current.getBaseAttr())
+      break;
+    current = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+        current, current.getBaseAttr());
+  }
+  return false;
+}
+
 bool isTaggedUnionType(Type type) {
   if (auto packed = dyn_cast<sim::PackedUnionType>(type))
     return packed.getIsTagged();
@@ -167,14 +184,30 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
           << "instance property reference has no this object";
       return failure();
     }
+    // IEEE 1800-2017 18.7: inside an inline constraint, `this` is the
+    // randomize() with object, but a name that class does not declare
+    // resolves in the scope containing the call. Address whichever of the two
+    // objects in scope actually owns the property.
+    auto ownsClassProperty = [&](Value candidate) {
+      auto handle = dyn_cast<sim::ClassHandleType>(candidate.getType());
+      auto declaration =
+          SymbolTable::lookupNearestSymbolFrom<sim::SimClassFieldDeclOp>(
+              function, field);
+      return handle && declaration &&
+             classDeclares(function, handle, declaration.getOwnerAttr());
+    };
+    Value object = thisObject;
+    if (enclosingThisObject && !ownsClassProperty(thisObject) &&
+        ownsClassProperty(enclosingThisObject))
+      object = enclosingThisObject;
     FailureOr<Type> elementType = getNormalizedSemanticType(op);
-    auto objectType = dyn_cast<sim::ClassHandleType>(thisObject.getType());
+    auto objectType = dyn_cast<sim::ClassHandleType>(object.getType());
     if (failed(elementType) || !objectType)
       return failure();
     Type referenceType = sim::ManagedRefType::get(
         function.getContext(), *elementType, objectType.getClassName());
     Value reference = sim::SimClassFieldRefOp::create(
-        builder, getSemanticLocation(op), referenceType, thisObject, field);
+        builder, getSemanticLocation(op), referenceType, object, field);
     if (lvalue)
       return reference;
     recordManagedRead(reference, getSemanticLocation(op));
