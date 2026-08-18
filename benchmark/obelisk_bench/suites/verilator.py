@@ -210,6 +210,17 @@ def trace_dumpfile_define(directory: str | Path) -> str:
     return f"-DTEST_DUMPFILE={Path(directory) / TRACE_DUMPFILE}"
 
 
+def object_directory_define(directory: str | Path) -> str:
+    """Point the macro naming driver.py's output directory at our own.
+
+    Tests that write a log or a dump spell its directory `TEST_OBJ_DIR`, which
+    upstream defines to the per-test `obj_dir`. Undefined, the stringified
+    token becomes part of the path and the write lands in the launch
+    directory.
+    """
+    return f"-DTEST_OBJ_DIR={Path(directory)}"
+
+
 def judge_one(obelisk: str, top: Path, timeout: float,
               vpi_code: tuple[str, ...] = (),
               vpi_mode: str | None = None) -> model.Outcome:
@@ -236,6 +247,7 @@ def judge_one(obelisk: str, top: Path, timeout: float,
         # literally `` `TEST_DUMPFILE`` in the benchmark launch directory.
         extra = [
             trace_dumpfile_define(tmp),
+            object_directory_define(tmp),
             "-y", str(top.parent), "-Y", ".v", "-Y", ".sv",
             "-I", str(top.parent),
         ]
@@ -257,7 +269,12 @@ def judge_one(obelisk: str, top: Path, timeout: float,
         if not compiled.ok:
             return model.Outcome(model.COMPILE_FAIL, compiled.stderr)
 
-        result = runner.execute(str(binary), timeout)
+        # A test that reads a data file names it the way driver.py's working
+        # directory sees it -- `t/<name>.dat`, relative to test_regress. Linking
+        # that directory into the per-test temporary directory resolves those
+        # reads without letting a test that writes a file touch the checkout.
+        (Path(tmp) / "t").symlink_to(top.parent, target_is_directory=True)
+        result = runner.execute(str(binary), timeout, cwd=tmp)
         if result.ok and FINISHED_MARKER in result.stdout:
             return model.Outcome(model.PASS)
         if FINISHED_MARKER in top_text:

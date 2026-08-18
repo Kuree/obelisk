@@ -110,5 +110,16 @@ class TraceDumpfileTest(unittest.TestCase):
             )
 
 
+class ObjectDirectoryTest(unittest.TestCase):
+    def test_object_directory_macro_points_to_the_test_directory(self):
+        # A test writes its log to `TEST_OBJ_DIR`; upstream's driver.py defines
+        # it to the per-test obj_dir, so ours names the temporary directory.
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            self.assertEqual(
+                verilator.object_directory_define(tmp),
+                f"-DTEST_OBJ_DIR={Path(tmp)}",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

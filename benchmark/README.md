@@ -26,7 +26,10 @@ each suite. The two suites differ only in what a "test" is:
 
 - **verilator** — the portable `simulator`-scenario corpus (~1700 tests). Each
   design's `module t` is wrapped in a generated clock top-shell (the same one
-  Verilator's `driver.py` would produce) so clocked designs advance.
+  Verilator's `driver.py` would produce) so clocked designs advance. Each test
+  runs in its own temporary directory, with `t/` linked to the corpus and
+  `TEST_OBJ_DIR` pointing at that directory, so a test reads its data file and
+  writes its log where upstream's driver puts them.
 - **ivtest** — Icarus's `ivltests` corpus, described by per-test list entries in
   JSON, legacy inline, or VPI-regression form. VPI entries build their C/C++
   sources into a shared module and attach it as a positional native input.
