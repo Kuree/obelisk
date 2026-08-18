@@ -2333,6 +2333,63 @@ TEST(Scheduler, AOTFusedReadyNodesRetainStaticNodeOrder) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+// IEEE 1800-2017 10.6.2: a force overrides every driver of its target until a
+// release, so a driver that changes behind the override is not a value change.
+// Generated code reports the transition it computed from its own plane, which
+// does not model the override; the overridden bit must not reach the canonical
+// plane, because release resolves the target from its drivers and compares the
+// result against that plane to decide whether the value changed.
+TEST(Scheduler, NativeTransitionKeepsOverriddenBits) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 8;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 8),
+            OBELISK_RT_OK);
+  uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
+  ASSERT_NE(root, UINT64_MAX);
+
+  uint8_t globalValue = 0;
+  uint8_t globalUnknown = 0;
+  uint8_t forced = 1;
+  uint8_t forcedUnknown = 0;
+  ASSERT_EQ(obelisk_rt_v1_native_override(
+                context, &globalValue, &globalUnknown, 8,
+                obelisk_rt_v1_native_handle_offset(root, 1), 1,
+                OBELISK_RT_DESCRIPTOR_STORAGE, 0, &forced, &forcedUnknown),
+            OBELISK_RT_OK);
+  ASSERT_EQ((context->stateValue[0] >> 1) & 1, 1u);
+
+  // A driver behind the override reports bit 1 going to z and bit 2 to one.
+  uint8_t oldValue = 1u << 1;
+  uint8_t oldUnknown = 0;
+  uint8_t newValue = (1u << 1) | (1u << 2);
+  uint8_t newUnknown = 1u << 1;
+  obelisk_rt_v1_scheduler_signal_transition(context, root, 8, &oldValue,
+                                            &oldUnknown, &newValue,
+                                            &newUnknown);
+
+  // The forced bit keeps its overridden value; the unforced bit still lands.
+  EXPECT_EQ((context->stateValue[0] >> 1) & 1, 1u);
+  EXPECT_EQ((context->stateUnknown[0] >> 1) & 1, 0u);
+  EXPECT_EQ((context->stateValue[0] >> 2) & 1, 1u);
+
+  // After release the driver value becomes visible again.
+  ASSERT_EQ(obelisk_rt_v1_native_release_override(
+                context, &globalValue, &globalUnknown, 8,
+                obelisk_rt_v1_native_handle_offset(root, 1), 1,
+                OBELISK_RT_DESCRIPTOR_STORAGE, 0),
+            OBELISK_RT_OK);
+  obelisk_rt_v1_scheduler_signal_transition(context, root, 8, &oldValue,
+                                            &oldUnknown, &newValue,
+                                            &newUnknown);
+  EXPECT_EQ((context->stateUnknown[0] >> 1) & 1, 1u);
+
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, AOTStaticFanoutMatchesRangeAndFourStateEdgeExactly) {
   AOTTestState state;
   const obelisk_rt_static_fanout_entry fanout[] = {

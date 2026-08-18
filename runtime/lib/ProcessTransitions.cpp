@@ -603,11 +603,6 @@ bool publishNativeSignalTransitionUnlocked(
     obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
     const uint8_t *newValue, const uint8_t *newUnknown) {
-  uint64_t sequence = 0;
-  if (!obelisk_rt_publish_signal_transition_batch_unlocked(
-          context, bitOffset, bitWidth, changed, posedge, negedge, 0,
-          &sequence))
-    return false;
   // Generated native code may have committed later source stores to its
   // private plane before publishing this transition. Advance the canonical
   // plane one publication at a time so observer evaluators see source-order
@@ -621,22 +616,76 @@ bool publishNativeSignalTransitionUnlocked(
   const NativeStaticState *publishedState =
       publishedStatic ? findNativeStaticState(context, publishedStaticID)
                       : nullptr;
-  for (uint64_t bit = 0; bit != bitWidth; ++bit) {
-    if (!byteBit(changed, bit) || bit > static_cast<uint64_t>(INT64_MAX))
-      continue;
+  auto canonicalBit = [&](uint64_t bit, uint64_t &absolute) {
     int64_t local = 0;
-    if (!addHandleOffset(publishedOffset, bit, local) || local < 0)
-      continue;
-    uint64_t absolute = static_cast<uint64_t>(local);
+    if (bit > static_cast<uint64_t>(INT64_MAX) ||
+        !addHandleOffset(publishedOffset, bit, local) || local < 0)
+      return false;
+    absolute = static_cast<uint64_t>(local);
     if (publishedStatic) {
       if (!publishedState || absolute >= publishedState->bitWidth)
-        continue;
+        return false;
       absolute += publishedState->bitOffset;
     } else if (!publishedGlobal) {
-      continue;
+      return false;
     }
-    if (absolute >= context->stateValue.size() * uint64_t{64} ||
-        absolute >= context->stateUnknown.size() * uint64_t{64})
+    return absolute < context->stateValue.size() * uint64_t{64} &&
+           absolute < context->stateUnknown.size() * uint64_t{64};
+  };
+
+  // IEEE 1800-2017 10.6.2: a force overrides every driver of its target until
+  // the target is released, so a driver that changes behind an active override
+  // is not a value change. Generated code computes this transition from its own
+  // plane, which does not model the override, so drop the overridden bits here.
+  // They must not wake a waiter, and above all they must not reach the
+  // canonical plane: release resolves the target from its drivers and compares
+  // the result against that plane to decide whether the net changed.
+  std::vector<uint8_t> overriddenChanged;
+  std::vector<uint8_t> overriddenPosedge;
+  std::vector<uint8_t> overriddenNegedge;
+  if (!context->forceMask.empty() || !context->assignMask.empty()) {
+    size_t byteCount = static_cast<size_t>((bitWidth + 7) / 8);
+    for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+      uint64_t absolute = 0;
+      if (!byteBit(changed, bit) || !canonicalBit(bit, absolute))
+        continue;
+      uint64_t limb = absolute / 64;
+      uint64_t mask = uint64_t{1} << (absolute % 64);
+      if ((limb >= context->forceMask.size() ||
+           (context->forceMask[limb] & mask) == 0) &&
+          (limb >= context->assignMask.size() ||
+           (context->assignMask[limb] & mask) == 0))
+        continue;
+      if (overriddenChanged.empty()) {
+        overriddenChanged.assign(changed, changed + byteCount);
+        if (posedge)
+          overriddenPosedge.assign(posedge, posedge + byteCount);
+        if (negedge)
+          overriddenNegedge.assign(negedge, negedge + byteCount);
+      }
+      setByteBit(overriddenChanged.data(), bit, false);
+      if (posedge)
+        setByteBit(overriddenPosedge.data(), bit, false);
+      if (negedge)
+        setByteBit(overriddenNegedge.data(), bit, false);
+    }
+    if (!overriddenChanged.empty()) {
+      changed = overriddenChanged.data();
+      if (posedge)
+        posedge = overriddenPosedge.data();
+      if (negedge)
+        negedge = overriddenNegedge.data();
+    }
+  }
+
+  uint64_t sequence = 0;
+  if (!obelisk_rt_publish_signal_transition_batch_unlocked(
+          context, bitOffset, bitWidth, changed, posedge, negedge, 0,
+          &sequence))
+    return false;
+  for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+    uint64_t absolute = 0;
+    if (!byteBit(changed, bit) || !canonicalBit(bit, absolute))
       continue;
     uint64_t mask = uint64_t{1} << (absolute % 64);
     uint64_t &valueLimb = context->stateValue[absolute / 64];
