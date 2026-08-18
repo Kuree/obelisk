@@ -1202,7 +1202,13 @@ struct SimplifyStaticExtract final : OpRewritePattern<ExtractOp> {
     auto resultWidth = getSelectionWidth(op.getResult().getType());
     if (!inputWidth || !resultWidth)
       return failure();
-    if (op.getLowBit() == 0 && *inputWidth == *resultWidth) {
+    // Only a view that selects the whole input *and* keeps its type is the
+    // identity. A full-width extract can still retype what it names -- an
+    // IEEE 1800-2017 11.5.1 part-select spanning all of an `int` produces
+    // `bit [31:0]` -- and replacing that with the input would hand every user
+    // a reference whose element type no longer matches the value it carries.
+    if (op.getLowBit() == 0 && *inputWidth == *resultWidth &&
+        op.getResult().getType() == op.getInput().getType()) {
       rewriter.replaceOp(op, op.getInput());
       return success();
     }

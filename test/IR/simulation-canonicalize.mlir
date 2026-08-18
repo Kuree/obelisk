@@ -8,8 +8,10 @@ module {
     obelisk_sim.code_unit.decl 9000004 in 0 initial hierarchy "test.folds.constants.9000004"
     obelisk_sim.code_unit.decl 9000005 in 0 function hierarchy "test.folds.to_bits_matrix.9000005"
     obelisk_sim.code_unit.decl 9000006 in 0 function hierarchy "test.folds.truth_matrix.9000006"
+    obelisk_sim.code_unit.decl 9000007 in 0 function hierarchy "test.folds.retyping_ref_extract.9000007"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
+    obelisk_sim.storage.decl 1 in 0 : i32 design
 
     // to_bits(from_bits(x)) is the identity; the reverse is not, because
     // from_bits cannot carry an unknown plane.
@@ -98,6 +100,19 @@ module {
       %mixed_true_truth = obelisk_sim.logic.is_true %mixed_true : !obelisk_sim.logic<4>
       %mixed_false_truth = obelisk_sim.logic.is_true %mixed_false : !obelisk_sim.logic<4>
       obelisk_sim.return %zero_truth, %one_truth, %x_truth, %z_truth, %mixed_true_truth, %mixed_false_truth : i1, i1, i1, i1, i1, i1
+    }
+
+    // A full-width ref.extract that retypes its element -- `int` viewed as the
+    // `bit [31:0]` an IEEE 1800-2017 11.5.1 part-select of it produces -- is
+    // not the identity, so it survives. Folding it away would leave the store
+    // below writing a packed array through a reference to `i32`.
+    // CHECK-LABEL: obelisk_sim.func @retyping_ref_extract
+    // CHECK: %[[VIEW:.*]] = obelisk_sim.ref.extract %arg1 from 0 : !obelisk_sim.ref<i32> -> !obelisk_sim.ref<!obelisk_sim.packed_array<31 : 0 x i1>>
+    // CHECK: obelisk_sim.ref.store %arg2 to %[[VIEW]]
+    obelisk_sim.func @retyping_ref_extract(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %ref: !obelisk_sim.ref<i32> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}, %value: !obelisk_sim.packed_array<31 : 0 x i1> {obelisk_sim.capture_kind = 2 : i32}) attributes {entry_kind = 8 : i32, code_unit_id = 9000007 : i64} {
+      %view = obelisk_sim.ref.extract %ref from 0 : !obelisk_sim.ref<i32> -> !obelisk_sim.ref<!obelisk_sim.packed_array<31 : 0 x i1>>
+      obelisk_sim.ref.store %value to %view : !obelisk_sim.packed_array<31 : 0 x i1>, !obelisk_sim.ref<!obelisk_sim.packed_array<31 : 0 x i1>>
+      obelisk_sim.return
     }
   }
 }
