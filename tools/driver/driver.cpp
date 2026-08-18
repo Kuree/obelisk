@@ -658,6 +658,38 @@ static int executeCompilation(const InputArgList &args) {
   }
   context.loadAllAvailableDialects();
 
+  // MLIR only falls back to printing a diagnostic when it is an error and no
+  // handler is registered, so without this every warning and remark a pass
+  // emits -- and every note attached to an error -- is dropped on the floor.
+  // Print all of them, in the format the fallback uses for errors.
+  context.getDiagEngine().registerHandler([](Diagnostic &diagnostic) {
+    std::function<void(Diagnostic &)> print = [&](Diagnostic &entry) {
+      llvm::raw_ostream &os = llvm::errs();
+      if (!llvm::isa<UnknownLoc>(entry.getLocation()))
+        os << entry.getLocation() << ": ";
+      switch (entry.getSeverity()) {
+      case DiagnosticSeverity::Error:
+        os << "error: ";
+        break;
+      case DiagnosticSeverity::Warning:
+        os << "warning: ";
+        break;
+      case DiagnosticSeverity::Remark:
+        os << "remark: ";
+        break;
+      case DiagnosticSeverity::Note:
+        os << "note: ";
+        break;
+      }
+      os << entry << '\n';
+      for (Diagnostic &note : entry.getNotes())
+        print(note);
+      os.flush();
+    };
+    print(diagnostic);
+    return success();
+  });
+
   auto importedModule =
       obelisk::frontend::importSystemVerilog(inputs, context, frontendOptions);
   if (failed(importedModule))
