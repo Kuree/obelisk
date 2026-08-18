@@ -1806,7 +1806,12 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     Value taskDestination;
     if (directTask) {
       taskDestination = *destination;
-      if (!isa<sim::RefType>((*destination).getType()))
+      // IEEE 1800-2017 13.5: returning from the subroutine assigns the output
+      // and inout formals to the actuals, so a formal whose type differs from
+      // its actual keeps its own storage and is converted on the way back.
+      // Only an exactly matching variable reference can be the formal itself.
+      if (!isa<sim::RefType>((*destination).getType()) ||
+          destinationType != formalType)
         taskDestination = sim::SimRefAllocOp::create(
             builder, location,
             sim::RefType::get(function.getContext(), formalType), initial);
