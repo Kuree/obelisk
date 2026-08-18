@@ -8,6 +8,7 @@ from pathlib import Path
 BENCHMARK_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARK_DIR))
 
+from obelisk_bench import model  # noqa: E402
 from obelisk_bench.suites import verilator  # noqa: E402
 
 
@@ -119,6 +120,32 @@ class ObjectDirectoryTest(unittest.TestCase):
                 verilator.object_directory_define(tmp),
                 f"-DTEST_OBJ_DIR={Path(tmp)}",
             )
+
+
+class ExcludedTest(unittest.TestCase):
+    def test_an_excluded_test_is_skipped_without_compiling(self):
+        # The skip has to come before the test file is even read, so that
+        # judging one costs nothing and needs no checkout.
+        outcome = verilator.judge_one(
+            "/nonexistent/obelisk", Path("/nonexistent/t/t_param_avec.v"), 10)
+        self.assertEqual(outcome.status, model.SKIP)
+        self.assertIn("IEEE 1800-2017 7.6", outcome.log)
+        self.assertIn("by position", outcome.log)
+
+    def test_every_exclusion_cites_the_clause_that_settles_it(self):
+        for name, excluded in verilator.EXCLUDED.items():
+            with self.subTest(test=name):
+                self.assertRegex(excluded.clause,
+                                 r"^IEEE 1800-2017 \d+(\.\d+)*$")
+                self.assertTrue(excluded.reason.strip())
+
+    def test_a_test_outside_the_list_is_still_judged(self):
+        # The skip is gated on the name alone, so anything else goes on to be
+        # read and compiled -- here that means failing to find the file rather
+        # than quietly reporting a skip.
+        with self.assertRaises(OSError):
+            verilator.judge_one("/nonexistent/obelisk",
+                                Path("/nonexistent/t/t_unpacked_slice.v"), 10)
 
 
 if __name__ == "__main__":

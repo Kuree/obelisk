@@ -7,6 +7,8 @@ instantiates the design's `module t` and toggles its clock), compile the shell
 plus the test with Obelisk, run the result, and judge it:
 
   * `_bad` / `_unsup` tests expect a compile error;
+  * a test in `EXCLUDED` is skipped, because what it asserts is Verilator's
+    behavior rather than the language's;
   * everything else self-checks and must print `*-* All Finished *-*`.
 
 Real Verilator is never invoked. The clock-shell generation mirrors driver.py's
@@ -19,6 +21,7 @@ from __future__ import annotations
 import re
 import tempfile
 from pathlib import Path
+from typing import NamedTuple
 
 from .. import model, runner
 
@@ -65,6 +68,64 @@ PORT_TYPE_WORDS = frozenset({
     "tri1", "triand", "trior", "unsigned", "uwire", "var", "wand", "wire",
     "wor",
 })
+
+
+class Exclusion(NamedTuple):
+    """Why one test is not Obelisk's to pass, and the clause that says so."""
+    clause: str
+    reason: str
+
+
+PATTERN_RADIX = Exclusion(
+    "IEEE 1800-2017 21.2.1.7",
+    "a singular pattern element prints the way it prints unformatted, which "
+    "21.2.1 makes decimal; the test expects Verilator's hexadecimal with a "
+    "base prefix")
+CLASS_PATTERN = Exclusion(
+    "IEEE 1800-2017 21.2.1.7",
+    "the rendering of a non-null class handle is implementation dependent; the "
+    "test expects Verilator's assignment pattern of the object's properties")
+TWO_STATE_INITIALIZATION = Exclusion(
+    "IEEE 1800-2017 6.8",
+    "a four-state variable starts at x, and the design reads one before "
+    "anything assigns it; the test needs the zero a two-state simulator starts "
+    "it with (4.9.2 also leaves the time-zero order of initial and always "
+    "blocks arbitrary)")
+STATIC_SUBROUTINE_RECURSION = Exclusion(
+    "IEEE 1800-2017 13.4.2",
+    "recursion is reserved for an automatic subroutine, and the test recurses "
+    "through a static task; one set of formals shared across the invocations "
+    "is what a static lifetime means")
+ARRAY_ASSIGNMENT_ORDER = Exclusion(
+    "IEEE 1800-2017 7.6",
+    "an unpacked array assignment pairs the elements by position, and the test "
+    "assigns between ranges that run opposite ways expecting Verilator's "
+    "pairing by storage slot")
+READMEM_HASH_COMMENT = Exclusion(
+    "IEEE 1800-2017 21.4",
+    "a memory file admits only // and /* */ comments, and the test's data file "
+    "carries an SRecord-style `#` comment")
+
+# Tests whose expectation rests on Verilator-specific behavior rather than on
+# what the language requires. Each names the clause that settles it, so a reader
+# can check the call rather than take it on trust, and the run prints both when
+# it reports the skip. Add an entry only after reading the test and confirming
+# the clause applies: a test that merely looks unfamiliar belongs in the failure
+# list, where it stays visible as something to explain or fix. A test this
+# runner cannot set up is not a skip either -- that one is the harness's to fix.
+EXCLUDED: dict[str, Exclusion] = {
+    "t_dynarray": PATTERN_RADIX,
+    "t_dynarray_method": PATTERN_RADIX,
+    "t_stream_dynamic": PATTERN_RADIX,
+    "t_struct_nest_uarray": PATTERN_RADIX,
+    "t_class_enum": CLASS_PATTERN,
+    "t_display_class": CLASS_PATTERN,
+    "t_case_unique_overlap": TWO_STATE_INITIALIZATION,
+    "t_math_cmp": TWO_STATE_INITIALIZATION,
+    "t_static_task_args": STATIC_SUBROUTINE_RECURSION,
+    "t_param_avec": ARRAY_ASSIGNMENT_ORDER,
+    "t_sys_readmem": READMEM_HASH_COMMENT,
+}
 
 
 def _test_dir(root: Path) -> Path:
@@ -226,6 +287,9 @@ def judge_one(obelisk: str, top: Path, timeout: float,
               vpi_mode: str | None = None) -> model.Outcome:
     """Compile and run one test, returning its outcome."""
     name = top.stem
+    if excluded := EXCLUDED.get(name):
+        return model.Outcome(model.SKIP,
+                             f"{excluded.clause}: {excluded.reason}")
     top_text = top.read_text(encoding="utf-8", errors="replace")
     expects_error = bool(EXPECTED_ERROR.search(name))
 

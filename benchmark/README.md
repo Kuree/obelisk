@@ -29,7 +29,8 @@ each suite. The two suites differ only in what a "test" is:
   Verilator's `driver.py` would produce) so clocked designs advance. Each test
   runs in its own temporary directory, with `t/` linked to the corpus and
   `TEST_OBJ_DIR` pointing at that directory, so a test reads its data file and
-  writes its log where upstream's driver puts them.
+  writes its log where upstream's driver puts them. A handful are **skipped**:
+  see *Skipped tests* below.
 - **ivtest** — Icarus's `ivltests` corpus, described by per-test list entries in
   JSON, legacy inline, or VPI-regression form. VPI entries build their C/C++
   sources into a shared module and attach it as a positional native input.
@@ -115,6 +116,30 @@ failures whose diagnostics match no rule at all, typically a parse or
 elaboration message with no construct in it. Both are the honest measure of what
 the classifier still misses; promote a bucket by adding a named rule to `RULES`
 in `classify.py` when it grows large enough to matter.
+
+## Skipped tests
+
+A few Verilator tests assert Verilator's own behavior rather than the
+language's — `%p` spelling an integer in hex, a four-state variable starting at
+zero, an unpacked array assignment pairing elements by storage slot. Passing
+them would mean implementing something IEEE 1800-2017 says otherwise about, so
+`EXCLUDED` in `suites/verilator.py` names each one with the clause that settles
+it, and the run reports them as skips with that citation:
+
+```
+Skipped:
+  t_dynarray, t_dynarray_method, t_stream_dynamic, t_struct_nest_uarray
+    IEEE 1800-2017 21.2.1.7: a singular pattern element prints the way it
+    prints unformatted, which 21.2.1 makes decimal; the test expects
+    Verilator's hexadecimal with a base prefix
+```
+
+A skip is counted apart from both passes and failures, so it can neither
+flatter the score nor hide as a bug. Add an entry only after reading the test
+and confirming the clause applies — a test that merely looks unfamiliar belongs
+in the failure list, where it stays visible. A test the runner cannot set up
+(one whose upstream `.py` generates an input file, say) is *not* a skip: it
+stays a failure, because that one is the harness's to fix.
 
 ## Adding a suite
 

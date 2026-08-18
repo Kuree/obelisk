@@ -36,7 +36,9 @@ class Outcome:
     """The result of one test: a status plus the compile log for classification.
 
     `log` is the raw compiler diagnostics text (empty when the test never
-    reached compilation); classify.py buckets it into features.
+    reached compilation); classify.py buckets it into features. A skipped test
+    carries the reason it was skipped there instead -- only compile-failure
+    logs reach the classifier, so the two never mix.
     """
     status: str
     log: str = ""

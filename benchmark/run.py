@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import textwrap
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -32,6 +33,30 @@ def _print_summary(summary: dict) -> None:
           f"{summary['compile_fail']} compile-fail, "
           f"{summary['run_fail']} run-fail, "
           f"{summary['skipped']} skipped")
+
+
+def _print_skips(outcomes: dict[str, model.Outcome]) -> None:
+    """List the tests a suite excluded, grouped by the reason it gave.
+
+    A skip is neither a pass nor a failure, so the count alone would hide what
+    the suite decided not to measure. Printing the reasons keeps that decision
+    in front of whoever reads the run.
+    """
+    reasons: dict[str, list[str]] = {}
+    for name, outcome in sorted(outcomes.items()):
+        if outcome.status == model.SKIP:
+            reasons.setdefault(outcome.log, []).append(name)
+    if not reasons:
+        return
+    print("\nSkipped:")
+    for reason, names in sorted(reasons.items(), key=lambda item: item[1]):
+        print(textwrap.fill(", ".join(names), width=78,
+                            initial_indent="  ", subsequent_indent="  "))
+        print(textwrap.fill(reason or "no reason given", width=78,
+                            initial_indent="    ", subsequent_indent="    "))
+    print("  A skip is neither a pass nor a failure: the suite decided the "
+          "expectation is not\n  Obelisk's to meet, and named the clause it "
+          "read to decide that.")
 
 
 def _print_failures(outcomes: dict[str, model.Outcome]) -> None:
@@ -58,6 +83,7 @@ def command_run(args) -> int:
 
     summary = model.summarize(outcomes)
     _print_summary(summary)
+    _print_skips(outcomes)
     if args.show_failures:
         _print_failures(outcomes)
 
