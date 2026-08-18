@@ -185,6 +185,37 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
       .getResult();
 }
 
+bool UnitLowering::hasWatchableSignalHandle(Operation *expression) {
+  // Walk the addressable select chain down to the declaration it starts from,
+  // noting whether any step selects out of an unpacked aggregate.
+  bool unpackedStep = false;
+  Operation *node = expression;
+  while (isa<semantic::SVElementSelectExpressionOp,
+             semantic::SVRangeSelectExpressionOp,
+             semantic::SVMemberAccessExpressionOp>(node)) {
+    SmallVector<Operation *> children = getChildren(node);
+    if (children.empty())
+      return true;
+    FailureOr<Type> sourceType = getNormalizedSemanticType(children.front());
+    if (failed(sourceType))
+      return true;
+    if (!sim::getPackedWidth(*sourceType))
+      unpackedStep = true;
+    node = children.front();
+  }
+  if (!unpackedStep)
+    return true;
+  // Only a built-in net lacks the view operation such a step needs; storage
+  // references have subelement and array-element views for every aggregate.
+  auto path = node->getAttrOfType<StringAttr>("referenced_path");
+  if (!path)
+    return true;
+  Value declaration = values.lookup(path.getValue());
+  if (!declaration)
+    declaration = lvalues.lookup(path.getValue());
+  return !declaration || !isa<sim::NetType>(declaration.getType());
+}
+
 LogicalResult UnitLowering::emitEventSuspend(Operation *control,
                                              Block *continuation,
                                              ValueRange continuationOperands) {
@@ -311,9 +342,15 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
             : getNormalizedSemanticType(children.front());
     if (failed(watchedType))
       return failure();
+    // IEEE 1800-2017 9.4.2 lets an event expression select an aggregate
+    // element as long as the expression reduces to a singular value. One that
+    // has no watchable handle is re-evaluated by an observer instead, which
+    // reports a change in exactly that value.
     bool computed =
         !isAddressableExpression(children.front()) ||
+        !hasWatchableSignalHandle(children.front()) ||
         (event.getHasIff() && (!isAddressableExpression(children[1]) ||
+                               !hasWatchableSignalHandle(children[1]) ||
                                isa<sim::EventType>(*watchedType)));
     if (computed)
       return emitObserved(ArrayRef<semantic::SVSignalEventControlOp>(event));
@@ -399,7 +436,8 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       return failure();
     }
     computed |=
-        event.getHasIff() || !isAddressableExpression(eventChildren.front());
+        event.getHasIff() || !isAddressableExpression(eventChildren.front()) ||
+        !hasWatchableSignalHandle(eventChildren.front());
     FailureOr<Type> watchedType =
         eventChildren.front()->hasAttr("virtual_interface_clocking_block_event")
             ? FailureOr<Type>(sim::LogicType::get(function.getContext(), 1))

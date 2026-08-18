@@ -3204,10 +3204,26 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
     return convert(byte, *resultType, false, location);
   }
 
+  // A built-in net has no aggregate view operations; only the flat packed
+  // window operations below apply to one. IEEE 1800-2017 11.5.1 makes a
+  // bit-select of a packed net exactly such a window, so a select that has to
+  // stay addressable -- an event expression per 9.4.2, or a force target --
+  // takes that path. A select that only needs a value instead reads the whole
+  // net and selects from the aggregate it read.
+  bool netAggregateSelect =
+      element && isa<sim::NetType>((*input).getType()) &&
+      isa<sim::PackedArrayType, sim::UnpackedArrayType>(sourceValueType);
+  if (netAggregateSelect && !lvalue) {
+    input = loadReference(*input, location);
+    if (failed(input))
+      return failure();
+    netAggregateSelect = false;
+  }
+
   // Fixed packed and unpacked arrays remain first-class aggregates. Their
   // dynamic operation consumes a source index, while static views use a
   // declaration-order ordinal.
-  if (element &&
+  if (element && !netAggregateSelect &&
       isa<sim::PackedArrayType, sim::UnpackedArrayType>(sourceValueType)) {
     std::optional<unsigned> ordinal;
     if (isIntegerConstant(children[1])) {
