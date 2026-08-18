@@ -369,6 +369,14 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   formatTaggedUnionPattern(::mlir::Value value, ::mlir::Type semanticType,
                            ::mlir::Location location);
+  // Render an unpacked struct, array, or untagged union as the assignment
+  // pattern IEEE 1800-2017 21.2.1.7 gives %p. The shape is static, so the
+  // pattern punctuation becomes a format string and the singular elements
+  // become its arguments.
+  ::mlir::FailureOr<::mlir::Value>
+  formatUnpackedAggregatePattern(::mlir::Value value,
+                                 ::mlir::Location location);
+  ::mlir::IntegerAttr designTimePrecisionExponent();
   ::mlir::FailureOr<::mlir::Value> truthValue(::mlir::Value value,
                                               ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value> toLogic(::mlir::Value value,

@@ -15,6 +15,149 @@ using namespace mlir;
 
 namespace obelisk::simlowering {
 
+namespace {
+
+bool isUnpackedAggregateType(Type type) {
+  return isa<sim::UnpackedArrayType, sim::UnpackedStructType,
+             sim::UnpackedUnionType>(type);
+}
+
+// Escape the characters a generated format string would otherwise interpret.
+void appendFormatText(std::string &format, StringRef text) {
+  for (char character : text) {
+    if (character == '%')
+      format.push_back('%');
+    format.push_back(character);
+  }
+}
+
+} // namespace
+
+// The decimal exponent, in seconds, of one design-precision tick. %t needs it
+// to rescale when $timeformat has overridden the display units.
+IntegerAttr UnitLowering::designTimePrecisionExponent() {
+  auto design = function->getParentOfType<sim::SimDesignOp>();
+  IntegerAttr precisionFs = design ? design.getTimePrecisionFsAttr() : nullptr;
+  if (!precisionFs)
+    return {};
+  int32_t exponent = -15;
+  for (uint64_t scale = precisionFs.getValue().getZExtValue(); scale > 1;
+       scale /= 10)
+    ++exponent;
+  return builder.getI32IntegerAttr(exponent);
+}
+
+FailureOr<Value>
+UnitLowering::formatUnpackedAggregatePattern(Value value, Location location) {
+  if (!isUnpackedAggregateType(value.getType()))
+    return failure();
+  auto timeMultiplier =
+      function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+  StringAttr lexicalScope =
+      function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+  if (!timeMultiplier || !lexicalScope)
+    return failure();
+
+  std::string format;
+  SmallVector<Value> items;
+  SmallVector<int32_t> flags;
+  // A leading empty format item is what SimStringOutputFormatOp expects to
+  // find the designated format in; it is filled in once the walk knows the
+  // complete pattern text.
+  items.push_back(Value{});
+  flags.push_back(OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT);
+
+  // IEEE 1800-2017 21.2.1.7: an unpacked type is traversed until a singular
+  // type is reached. Structures print their element names, arrays print bare
+  // elements, and a union prints only its first declared element.
+  std::function<LogicalResult(Value)> traverse =
+      [&](Value element) -> LogicalResult {
+    Type type = element.getType();
+    if (auto unionType = dyn_cast<sim::UnpackedUnionType>(type)) {
+      auto first = unionType.getFields().empty()
+                       ? sim::FieldAttr{}
+                       : dyn_cast<sim::FieldAttr>(unionType.getFields()[0]);
+      if (unionType.getIsTagged() || !first)
+        return failure();
+      format.append("'{");
+      appendFormatText(format, first.getName().getValue());
+      format.push_back(':');
+      Type fieldType = sim::getAggregateElementType(type, 0);
+      if (failed(traverse(sim::SimUnionExtractOp::create(
+              builder, location, fieldType, element, 0))))
+        return failure();
+      format.push_back('}');
+      return success();
+    }
+    if (isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type)) {
+      auto structType = dyn_cast<sim::UnpackedStructType>(type);
+      ArrayAttr fields = structType ? structType.getFields() : ArrayAttr{};
+      unsigned count = sim::getAggregateNumElements(type);
+      format.append("'{");
+      for (unsigned index = 0; index != count; ++index) {
+        if (index != 0)
+          format.append(", ");
+        if (fields && index < fields.size())
+          if (auto field = dyn_cast<sim::FieldAttr>(fields[index])) {
+            appendFormatText(format, field.getName().getValue());
+            format.push_back(':');
+          }
+        Type elementType = sim::getAggregateElementType(type, index);
+        if (failed(traverse(sim::SimAggregateExtractOp::create(
+                builder, location, elementType, element, index))))
+          return failure();
+      }
+      format.push_back('}');
+      return success();
+    }
+
+    // A singular element. The runtime already renders one for %p; only a
+    // string needs help here, because 21.2.1.7 prints it in quotes.
+    if (isa<sim::StringType>(type)) {
+      format.append("\"%p\"");
+      items.push_back(element);
+      flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING);
+      return success();
+    }
+    format.append("%p");
+    if (isa<FloatType>(type)) {
+      FailureOr<Value> real =
+          convert(element, builder.getF64Type(), false, location);
+      if (failed(real))
+        return failure();
+      items.push_back(*real);
+      flags.push_back(OBELISK_RT_OUTPUT_ITEM_REAL);
+      return success();
+    }
+    if (isa<sim::ClassHandleType>(type)) {
+      items.push_back(element);
+      flags.push_back(OBELISK_RT_OUTPUT_ITEM_CLASS);
+      return success();
+    }
+    if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(type)) {
+      items.push_back(element);
+      flags.push_back(OBELISK_RT_OUTPUT_ITEM_CONTAINER);
+      return success();
+    }
+    FailureOr<Value> scalar = toPackedScalar(element, location);
+    if (failed(scalar))
+      return failure();
+    items.push_back(*scalar);
+    flags.push_back(0);
+    return success();
+  };
+  if (failed(traverse(value)))
+    return failure();
+
+  items.front() = sim::SimBytesConstantOp::create(builder, location, format);
+  return sim::SimStringOutputFormatOp::create(
+             builder, location, sim::StringType::get(function.getContext()),
+             function.getBody().front().getArgument(0), items, 10, flags,
+             lexicalScope, StringAttr{}, timeMultiplier,
+             designTimePrecisionExponent())
+      .getResult();
+}
+
 FailureOr<UnitLowering::LoweredOutputList>
 UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
                                    bool interpretLiteralsAsFormats,
@@ -161,6 +304,14 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
         return failure();
       output.items.push_back(*pattern);
       output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING);
+    } else if (FailureOr<Value> pattern = formatUnpackedAggregatePattern(
+                   *value, getSemanticLocation(child));
+               succeeded(pattern)) {
+      // An unpacked aggregate has no packed value to hand the runtime; its
+      // only formatted rendering is the IEEE 1800-2017 21.2.1.7 assignment
+      // pattern, which the compiler can build because the shape is static.
+      output.items.push_back(*pattern);
+      output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING);
     } else {
       FailureOr<Value> scalar =
           toPackedScalar(*value, getSemanticLocation(child));
@@ -206,16 +357,7 @@ UnitLowering::lowerStringFormatSystemCall(semantic::SVCallExpressionOp op) {
     op.emitError("string formatting call has no elaborated lexical scope");
     return failure();
   }
-  IntegerAttr timePrecision;
-  if (auto design = function->getParentOfType<sim::SimDesignOp>()) {
-    if (IntegerAttr precisionFs = design.getTimePrecisionFsAttr()) {
-      int32_t exponent = -15;
-      for (uint64_t scale = precisionFs.getValue().getZExtValue(); scale > 1;
-           scale /= 10)
-        ++exponent;
-      timePrecision = builder.getI32IntegerAttr(exponent);
-    }
-  }
+  IntegerAttr timePrecision = designTimePrecisionExponent();
   Type stringType = sim::StringType::get(function.getContext());
   Value result = sim::SimStringOutputFormatOp::create(
       builder, location, stringType, function.getBody().front().getArgument(0),
