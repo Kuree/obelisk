@@ -31,16 +31,18 @@ FailureOr<Value> UnitLowering::lowerUnary(semantic::SVUnaryExpressionOp op) {
   bool decrement = kind == semantic::SVUnaryOperator::Predecrement ||
                    kind == semantic::SVUnaryOperator::Postdecrement;
   if (increment || decrement) {
-    FailureOr<Value> destination = lowerExpression(children.front(), true);
+    // IEEE 1800-2017 11.4.2 defines increment and decrement as a read of the
+    // variable followed by a blocking assignment back to it, so the operand is
+    // reached the way a compound assignment (11.4.1) reaches its destination.
+    // A capture also covers the destinations that have no interior reference
+    // of their own -- a queue element's member, part of a class property --
+    // which a plain lvalue reference cannot name.
+    FailureOr<CapturedLValue> destination =
+        captureLValue(children.front(), location);
     if (failed(destination))
       return failure();
-    Type referenceType = getReferenceElementType(*destination);
-    if (!referenceType) {
-      emitError(location) << "increment and decrement require a variable "
-                             "reference";
-      return failure();
-    }
-    FailureOr<Value> loaded = loadReference(*destination, location);
+    Type destinationType = destination->type;
+    FailureOr<Value> loaded = loadCapturedLValue(*destination, location);
     if (failed(loaded))
       return failure();
     Value oldValue = *loaded;
@@ -52,7 +54,8 @@ FailureOr<Value> UnitLowering::lowerUnary(semantic::SVUnaryExpressionOp op) {
           increment
               ? Value(arith::AddFOp::create(builder, location, oldValue, one))
               : Value(arith::SubFOp::create(builder, location, oldValue, one));
-      if (failed(storeReference(*destination, newValue, location)))
+      if (failed(writeCapturedLValue(*destination, newValue, false, false,
+                                     location)))
         return failure();
       bool post = kind == semantic::SVUnaryOperator::Postincrement ||
                   kind == semantic::SVUnaryOperator::Postdecrement;
@@ -84,10 +87,11 @@ FailureOr<Value> UnitLowering::lowerUnary(semantic::SVUnaryExpressionOp op) {
                     arith::SubIOp::create(builder, location, *oldScalar, one));
     }
     FailureOr<Value> newValue = convert(
-        newScalar, referenceType, isSignedNode(children.front()), location);
+        newScalar, destinationType, isSignedNode(children.front()), location);
     if (failed(newValue))
       return failure();
-    if (failed(storeReference(*destination, *newValue, location)))
+    if (failed(writeCapturedLValue(*destination, *newValue, false, false,
+                                   location)))
       return failure();
     bool post = kind == semantic::SVUnaryOperator::Postincrement ||
                 kind == semantic::SVUnaryOperator::Postdecrement;
