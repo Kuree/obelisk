@@ -1120,6 +1120,7 @@ private:
   }
 
   LogicalResult buildFragments();
+  void orderStartupSpawns();
   void buildControlEdges();
   void buildDataEdges();
   LogicalResult buildSites(ComputeGraphResult &result);
@@ -1240,6 +1241,123 @@ LogicalResult ComputeGraphBuilder::buildFragments() {
   nbaFrontierSites.resize(nbaRoots.size());
   eventSites.resize(eventRoots.size());
   return success();
+}
+
+/// Order the time-zero propagation spawns by what they carry.
+///
+/// IEEE 1800-2017 4.9.1 evaluates every continuous assignment at time zero "in
+/// order to propagate constant values", and says the same of "implicit
+/// continuous assignments inferred from port connections". The root
+/// initializer already spawns those before any initial procedure, but it
+/// spawns them in elaboration order, which walks a hierarchy outermost first
+/// -- the opposite of the direction a value travels out of a nested instance.
+/// One link of such a chain then propagates per time-zero pass, and an initial
+/// procedure reading the far end sees a value nothing has produced yet.
+///
+/// Sorting them so a driver follows whatever writes what it reads makes the
+/// whole chain propagate before the readers run. A combinational loop has no
+/// such order; its members keep the order they had.
+void ComputeGraphBuilder::orderStartupSpawns() {
+  sim::SimFuncOp root;
+  for (Fragment &fragment : fragments)
+    if (fragment.function.getEntryKind() == sim::EntryKind::RootInitializer)
+      root = fragment.function;
+  if (!root || root.getBody().empty())
+    return;
+
+  // What each unit consumes and produces, keyed by the symbol a spawn names.
+  struct Flow {
+    SmallVector<uint64_t> reads;
+    SmallVector<uint64_t> writes;
+  };
+  llvm::StringMap<Flow> flows;
+  for (Fragment &fragment : fragments) {
+    if (!isSettlingEntryKind(fragment.function.getEntryKind()))
+      continue;
+    Flow &flow = flows[fragment.function.getSymName()];
+    for (const ComputeEffect &effect : fragment.effects) {
+      DescriptorProvenance provenance = getRootProvenance(effect.target);
+      if (!provenance.descriptor)
+        continue;
+      switch (effect.kind) {
+      case sim::ComputeEffectKind::Read:
+      case sim::ComputeEffectKind::Watch:
+        flow.reads.push_back(*provenance.descriptor);
+        break;
+      case sim::ComputeEffectKind::Write:
+      case sim::ComputeEffectKind::Drive:
+        flow.writes.push_back(*provenance.descriptor);
+        break;
+      default:
+        break;
+      }
+    }
+  }
+
+  SmallVector<sim::SimSpawnOp> spawns;
+  for (sim::SimSpawnOp spawn : root.getBody().front().getOps<sim::SimSpawnOp>())
+    if (flows.contains(spawn.getCallee()))
+      spawns.push_back(spawn);
+  if (spawns.size() < 2)
+    return;
+
+  // Who writes each descriptor, so a consumer finds its producers by looking
+  // up what it reads instead of asking every other spawn.
+  DenseMap<uint64_t, SmallVector<unsigned>> producersOf;
+  for (auto [index, spawn] : llvm::enumerate(spawns))
+    for (uint64_t descriptor : flows[spawn.getCallee()].writes)
+      producersOf[descriptor].push_back(static_cast<unsigned>(index));
+
+  // Edge count into each spawn from the producers of what it reads. Kahn's
+  // algorithm over that count, taking the earliest ready spawn each time, is
+  // the original order wherever the flow does not constrain it.
+  SmallVector<unsigned> waiting(spawns.size(), 0);
+  SmallVector<SmallVector<unsigned>> consumers(spawns.size());
+  for (auto [consumer, spawn] : llvm::enumerate(spawns)) {
+    DenseSet<unsigned> seen;
+    for (uint64_t descriptor : flows[spawn.getCallee()].reads)
+      for (unsigned producer : producersOf.lookup(descriptor)) {
+        if (producer == consumer || !seen.insert(producer).second)
+          continue;
+        consumers[producer].push_back(static_cast<unsigned>(consumer));
+        ++waiting[consumer];
+      }
+  }
+
+  std::priority_queue<unsigned, std::vector<unsigned>, std::greater<unsigned>>
+      ready;
+  for (unsigned index = 0; index != spawns.size(); ++index)
+    if (waiting[index] == 0)
+      ready.push(index);
+  SmallVector<unsigned> order;
+  order.reserve(spawns.size());
+  SmallVector<bool> placed(spawns.size(), false);
+  while (order.size() != spawns.size()) {
+    if (ready.empty()) {
+      // A loop among the remaining spawns: no order settles it, so keep the
+      // one they already have and let the scheduler iterate them.
+      for (unsigned index = 0; index != spawns.size(); ++index)
+        if (!placed[index])
+          ready.push(index);
+    }
+    unsigned next = ready.top();
+    ready.pop();
+    if (placed[next])
+      continue;
+    placed[next] = true;
+    order.push_back(next);
+    for (unsigned consumer : consumers[next])
+      if (--waiting[consumer] == 0 && !placed[consumer])
+        ready.push(consumer);
+  }
+  if (llvm::is_sorted(order))
+    return;
+
+  // Every spawn moves to just past where the last of them sat, so each one
+  // still follows the operands materialized for it.
+  Operation *anchor = spawns.back()->getNextNode();
+  for (unsigned index : order)
+    spawns[index]->moveBefore(anchor);
 }
 
 void ComputeGraphBuilder::buildControlEdges() {
@@ -1391,23 +1509,55 @@ void ComputeGraphBuilder::buildDataEdges() {
       if (effect.kind != sim::ComputeEffectKind::Watch &&
           effect.kind != sim::ComputeEffectKind::NBA)
         activeEffects.add(fragment, effect);
+  auto settles = [&](uint32_t id) {
+    return isSettlingEntryKind(fragments[id].function.getEntryKind());
+  };
   SmallVector<sim::ComputeEdgeAttr> processEdges;
-  for (sim::ComputeEdgeAttr edge : edges)
-    if (edge.getKind() == sim::ComputeEdgeKind::ProcessOrder)
+  SmallVector<sim::ComputeEdgeAttr> settleEdges;
+  for (sim::ComputeEdgeAttr edge : edges) {
+    if (edge.getKind() == sim::ComputeEdgeKind::ProcessOrder) {
       processEdges.push_back(edge);
+      settleEdges.push_back(edge);
+      continue;
+    }
+    // Only the continuously propagating processes are ranked by what they
+    // carry. Everywhere else a conflict is a choice among legal interleavings,
+    // and the existing one stays: reordering those would move output a design
+    // is entitled to see in either order, for no gain.
+    if (edge.getKind() == sim::ComputeEdgeKind::Sensitivity &&
+        settles(edge.getSource()) && settles(edge.getTarget()))
+      settleEdges.push_back(edge);
+  }
   SmallVector<uint32_t> fragmentIds;
   fragmentIds.reserve(fragments.size());
   for (Fragment &fragment : fragments)
     fragmentIds.push_back(fragment.id);
+  auto settlingFirst = [&](uint32_t id) { return settles(id) ? 0u : 1u; };
   SmallVector<SmallVector<uint32_t>> controlGroups =
-      computeSCCSchedule(fragmentIds, processEdges, [&](uint32_t id) {
-        return isSettlingEntryKind(fragments[id].function.getEntryKind()) ? 0u
-                                                                          : 1u;
-      });
+      computeSCCSchedule(fragmentIds, processEdges, settlingFirst);
   SmallVector<unsigned> controlGroupForFragment(fragments.size());
   for (auto [group, members] : llvm::enumerate(controlGroups))
     for (uint32_t member : members)
       controlGroupForFragment[member] = static_cast<unsigned>(group);
+
+  // Where a fragment lands once the sensitivity edges are counted too. The
+  // chain below picks one legal order for conflicting producers, and picking
+  // one that contradicts a producer-wakes-consumer edge would make the pair
+  // strongly connected: a cycle that only a fixpoint settles, and that a
+  // time-zero reader can observe half-finished. Ranking with those edges
+  // included costs nothing when they agree with the control order and breaks
+  // the tie the right way when they do not. A genuine loop stays a loop --
+  // its members share a rank, and the deterministic group order still applies.
+  SmallVector<unsigned> settleRank(fragments.size(), 0);
+  for (auto [rank, members] : llvm::enumerate(
+           computeSCCSchedule(fragmentIds, settleEdges, settlingFirst)))
+    for (uint32_t member : members)
+      settleRank[member] = static_cast<unsigned>(rank);
+  SmallVector<unsigned> groupRank(controlGroups.size(),
+                                  std::numeric_limits<unsigned>::max());
+  for (auto [group, members] : llvm::enumerate(controlGroups))
+    for (uint32_t member : members)
+      groupRank[group] = std::min(groupRank[group], settleRank[member]);
 
   // Conflict edges only need to impose an order, not encode the complete
   // pairwise relation. Union control components connected by a conflict, then
@@ -1465,6 +1615,10 @@ void ComputeGraphBuilder::buildDataEdges() {
   ComputeEffect mergedConflict{sim::ComputeEffectKind::Write};
   for (auto &[root, groups] : conflictSets) {
     (void)root;
+    llvm::sort(groups, [&](unsigned lhs, unsigned rhs) {
+      return std::make_pair(groupRank[lhs], lhs) <
+             std::make_pair(groupRank[rhs], rhs);
+    });
     for (auto pair : llvm::zip(groups, llvm::drop_begin(groups))) {
       unsigned sourceGroup = std::get<0>(pair);
       unsigned targetGroup = std::get<1>(pair);
@@ -1739,6 +1893,7 @@ FailureOr<ComputeGraphResult> ComputeGraphBuilder::derive() {
         "requested worker count exceeds the lane ID range");
   if (failed(buildFragments()))
     return failure();
+  orderStartupSpawns();
   buildControlEdges();
   buildDataEdges();
   if (failed(buildSites(result)))
