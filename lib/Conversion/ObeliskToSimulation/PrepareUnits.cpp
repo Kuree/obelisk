@@ -381,7 +381,8 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
         SmallVector<Operation *> children = getChildren(wait);
         if (children.size() == 2 &&
             (!isAddressableTimingExpression(children.front()) ||
-             isManagedMemberExpression(children.front())))
+             isManagedMemberExpression(children.front()) ||
+             !storageDecidesTruth(children.front())))
           observerCandidates.push_back({children.front(), ObserverResult::Truth,
                                         "wait", unit.id, unit.hierarchy});
         return;

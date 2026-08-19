@@ -435,6 +435,12 @@ getNormalizedSemanticType(::mlir::Operation *op);
 ::mlir::FailureOr<::mlir::Type>
 normalizeSemanticType(::mlir::Type type, ::mlir::Location location);
 
+/// Whether a timing condition is decided by its watched storage being nonzero.
+/// A `wait` on such an expression can suspend on the storage directly; anything
+/// else -- a handle, whose truth is being non-null, or a real, whose truth is a
+/// floating-point comparison -- has to re-evaluate the condition instead.
+bool storageDecidesTruth(::mlir::Operation *expression);
+
 /// Stable flat executable symbol for a semantic class reference. Semantic
 /// paths may be nested and coexist with the generated design between passes;
 /// executable descriptors therefore use their own collision-free namespace.

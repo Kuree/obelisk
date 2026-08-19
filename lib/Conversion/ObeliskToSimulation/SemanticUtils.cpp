@@ -88,6 +88,16 @@ SmallVector<Operation *> getChildren(Operation *op) {
   return children;
 }
 
+bool storageDecidesTruth(Operation *expression) {
+  // IEEE 1800-2017 12.4 reads a condition as a comparison against zero, and
+  // only a packed integral value answers that from its stored bits. A handle
+  // compares against null, whose representation need not be all-zero, and a
+  // real compares as a float, which -0.0 and NaN both get wrong when read as
+  // bits.
+  FailureOr<Type> type = getNormalizedSemanticType(expression);
+  return succeeded(type) && bool(sim::getPackedScalarType(*type));
+}
+
 std::optional<StringRef> getConstantSpelling(Operation *operation) {
   if (auto literal = dyn_cast<semantic::SVIntegerLiteralOp>(operation))
     return literal.getConstantValue();
