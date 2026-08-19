@@ -789,19 +789,6 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
     }
 
     if (kind == Binary::Power) {
-      if (isSignedNode(children[1])) {
-        std::optional<unsigned> width = sim::getPackedWidth((*rhs).getType());
-        std::optional<StringRef> spelling = getConstantSpelling(children[1]);
-        FailureOr<ParsedConstant> exponent =
-            width && spelling ? parseSVInteger(*spelling, *width,
-                                               getSemanticLocation(children[1]))
-                              : FailureOr<ParsedConstant>(failure());
-        if (failed(exponent) || !exponent->unknown.isZero() ||
-            exponent->value.isNegative()) {
-          unsupported(op) << " (signed dynamic or negative integral power)";
-          return failure();
-        }
-      }
       auto logicType = cast<sim::LogicType>((*lhs).getType());
       auto planeType = builder.getIntegerType(logicType.getWidth());
       Type predicateType = sim::LogicType::get(function.getContext(), 1);
@@ -815,37 +802,38 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       Value value = logicConstant(APInt(logicType.getWidth(), 1),
                                   APInt(logicType.getWidth(), 0));
       Value base = *lhs;
-      unsigned exponentWidth;
-      if (auto type = dyn_cast<sim::LogicType>((*rhs).getType()))
-        exponentWidth = type.getWidth();
-      else
-        exponentWidth = cast<IntegerType>((*rhs).getType()).getWidth();
-      for (unsigned bit = 0; bit != exponentWidth; ++bit) {
-        Value condition;
-        if (isa<sim::LogicType>((*rhs).getType())) {
-          condition = sim::SimLogicExtractOp::create(builder, location,
-                                                     predicateType, *rhs, bit);
-        } else {
-          auto integerType = cast<IntegerType>((*rhs).getType());
-          Value bitValue = *rhs;
-          if (bit != 0) {
-            Value amount = arith::ConstantOp::create(
-                builder, location, integerType,
-                builder.getIntegerAttr(integerType, bit));
-            bitValue =
-                arith::ShRUIOp::create(builder, location, bitValue, amount);
-          }
-          if (integerType.getWidth() != 1)
-            bitValue = arith::TruncIOp::create(builder, location,
-                                               builder.getI1Type(), bitValue);
-          condition = sim::SimLogicFromBitsOp::create(builder, location,
-                                                      predicateType, bitValue);
+      std::optional<unsigned> exponentWidth =
+          sim::getPackedWidth((*rhs).getType());
+      if (!exponentWidth || *exponentWidth == 0) {
+        emitError(location) << "power exponent has no packed width";
+        return failure();
+      }
+      auto exponentBit = [&](unsigned bit) -> Value {
+        if (isa<sim::LogicType>((*rhs).getType()))
+          return sim::SimLogicExtractOp::create(builder, location,
+                                                predicateType, *rhs, bit);
+        auto integerType = cast<IntegerType>((*rhs).getType());
+        Value bitValue = *rhs;
+        if (bit != 0) {
+          Value amount = arith::ConstantOp::create(
+              builder, location, integerType,
+              builder.getIntegerAttr(integerType, bit));
+          bitValue = arith::ShRUIOp::create(builder, location, bitValue,
+                                            amount);
         }
+        if (integerType.getWidth() != 1)
+          bitValue = arith::TruncIOp::create(builder, location,
+                                             builder.getI1Type(), bitValue);
+        return sim::SimLogicFromBitsOp::create(builder, location,
+                                               predicateType, bitValue);
+      };
+      for (unsigned bit = 0; bit != *exponentWidth; ++bit) {
+        Value condition = exponentBit(bit);
         Value multiplied = sim::SimLogicBinaryOp::create(
             builder, location, logicType, sim::BinaryKind::Mul, value, base);
         value = sim::SimLogicMuxOp::create(builder, location, logicType,
                                            condition, multiplied, value);
-        if (bit + 1 != exponentWidth)
+        if (bit + 1 != *exponentWidth)
           base = sim::SimLogicBinaryOp::create(
               builder, location, logicType, sim::BinaryKind::Mul, base, base);
       }
@@ -865,6 +853,44 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
           rhsKnown);
       Value allUnknown = logicConstant(APInt(logicType.getWidth(), 0),
                                        APInt::getAllOnes(logicType.getWidth()));
+      // IEEE 1800-2017 11.4.4, Table 11-4: a negative exponent leaves the
+      // result decided by the base alone. The squaring loop above read the
+      // exponent's bits as a magnitude, so its value is meaningless here and
+      // is replaced rather than corrected. Only an exponent whose own
+      // self-determined type is signed can be negative.
+      if (isSignedNode(children[1])) {
+        unsigned width = logicType.getWidth();
+        Value zero = logicConstant(APInt(width, 0), APInt(width, 0));
+        Value one = logicConstant(APInt(width, 1), APInt(width, 0));
+        Value minusOne = logicConstant(APInt::getAllOnes(width),
+                                       APInt(width, 0));
+        auto equals = [&](Value candidate) -> Value {
+          return sim::SimLogicCompareOp::create(builder, location,
+                                                predicateType,
+                                                sim::CompareKind::Eq, *lhs,
+                                                candidate);
+        };
+        // Table 11-4's remaining bases -- negative below -1 and positive above
+        // 1 -- both give zero, so they need no test of their own.
+        Value negative = zero;
+        if (signedOp) {
+          // -1 alternates with the exponent's parity, which its low bit gives
+          // even in two's complement.
+          Value alternating = sim::SimLogicMuxOp::create(
+              builder, location, logicType, exponentBit(0), minusOne, one);
+          negative = sim::SimLogicMuxOp::create(
+              builder, location, logicType, equals(minusOne), alternating,
+              negative);
+        }
+        negative = sim::SimLogicMuxOp::create(builder, location, logicType,
+                                              equals(one), one, negative);
+        negative = sim::SimLogicMuxOp::create(builder, location, logicType,
+                                              equals(zero), allUnknown,
+                                              negative);
+        value = sim::SimLogicMuxOp::create(builder, location, logicType,
+                                           exponentBit(*exponentWidth - 1),
+                                           negative, value);
+      }
       value = sim::SimLogicMuxOp::create(builder, location, logicType, known,
                                          value, allUnknown);
       return convert(value, *resultType, signedOp, location);
