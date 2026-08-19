@@ -312,6 +312,7 @@ enum class RuntimeMaterializer {
   ArgumentManagedContainer,
   ArgumentManagedObject,
   ArgumentVirtualInterface,
+  ArgumentProcess,
   ArgumentArray,
   FormatEnvironment,
   DescriptorFromBits,
@@ -598,6 +599,7 @@ public:
       rewriter.replaceOp(operation, argument);
       return success();
     }
+    case RuntimeMaterializer::ArgumentProcess:
     case RuntimeMaterializer::ArgumentVirtualInterface: {
       FailureOr<Value> data =
           allocateAtFunctionEntry(operation, rewriter, abi,
@@ -610,7 +612,9 @@ public:
       argument = insertStructValue(
           rewriter, location, argument,
           llvmIntegerConstant(rewriter, location, abi.i32,
-                              OBELISK_RT_ARG_VIRTUAL_INTERFACE),
+                              materializer == RuntimeMaterializer::ArgumentProcess
+                                  ? OBELISK_RT_ARG_PROCESS
+                                  : OBELISK_RT_ARG_VIRTUAL_INTERFACE),
           0);
       argument = insertStructValue(rewriter, location, argument, *data, 3);
       rewriter.replaceOp(operation, argument);
@@ -1024,6 +1028,7 @@ void populateRuntimePatterns(const TypeConverter &converter,
                                ArgumentManagedObject);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentVirtualInterfaceOp,
                                ArgumentVirtualInterface);
+  OBELISK_RUNTIME_MATERIALIZER(RTArgumentProcessOp, ArgumentProcess);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentArrayOp, ArgumentArray);
   OBELISK_RUNTIME_MATERIALIZER(RTFormatEnvironmentOp, FormatEnvironment);
   OBELISK_RUNTIME_MATERIALIZER(RTFileDescriptorFromBitsOp, DescriptorFromBits);

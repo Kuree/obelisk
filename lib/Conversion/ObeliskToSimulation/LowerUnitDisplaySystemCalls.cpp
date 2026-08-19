@@ -386,6 +386,12 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
       // instead of pretending it is a packed integer.
       output.items.push_back(*value);
       output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_CLASS);
+    } else if (isa<sim::ProcessType>((*value).getType())) {
+      // IEEE 1800-2017 21.2.1.7 gives a process handle the same singular
+      // treatment as any other handle: null spells "null" and a live handle
+      // renders implementation dependently.
+      output.items.push_back(*value);
+      output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_PROCESS);
     } else if (isa<sim::VirtualInterfaceType>((*value).getType())) {
       // Preserve the typed handle through formatted output. Its runtime
       // representation is a stable elaborated scope identity, but treating

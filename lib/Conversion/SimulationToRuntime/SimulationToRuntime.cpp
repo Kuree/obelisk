@@ -170,6 +170,19 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
           identity));
       continue;
     }
+    if (isa<sim::ProcessType>(sourceType)) {
+      if (converted.size() != 1)
+        return rewriter.notifyMatchFailure(
+            op, "process output item did not convert 1:1");
+      Value identity = converted.front();
+      if (!identity.getType().isInteger(64))
+        return rewriter.notifyMatchFailure(
+            op, "process output item did not convert to i64");
+      arguments.push_back(runtime::RTArgumentProcessOp::create(
+          rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
+          identity));
+      continue;
+    }
     if (sourceType.isF64()) {
       if (converted.size() != 1)
         return rewriter.notifyMatchFailure(

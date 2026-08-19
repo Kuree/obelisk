@@ -97,6 +97,12 @@ def RTArgumentVirtualInterfaceOp
   let results = (outs RTArgumentType:$result);
 }
 
+def RTArgumentProcessOp
+    : RTOp<"argument.process", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins I64:$value);
+  let results = (outs RTArgumentType:$result);
+}
+
 def RTArgumentArrayOp : RTOp<"argument.array", [MemoryEffects<[MemAlloc]>]> {
   let arguments = (ins Variadic<RTArgumentType>:$arguments);
   let results = (outs RTArgumentArrayType:$result);

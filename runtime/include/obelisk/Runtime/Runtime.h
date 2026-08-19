@@ -3091,7 +3091,10 @@ enum {
   // data points to one uint64_t stable scope identity; size must be zero.
   // Zero is the null virtual-interface handle. This representation is
   // accepted by %p.
-  OBELISK_RT_ARG_VIRTUAL_INTERFACE = 8
+  OBELISK_RT_ARG_VIRTUAL_INTERFACE = 8,
+  // data points to one uint64_t stable process identity; size must be zero.
+  // Zero is the null process handle. This representation is accepted by %p.
+  OBELISK_RT_ARG_PROCESS = 9
 };
 
 typedef uint32_t obelisk_rt_arg_flags;

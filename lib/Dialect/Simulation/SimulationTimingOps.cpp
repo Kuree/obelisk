@@ -497,13 +497,13 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
       return operation->emitOpError("item flags require more display operands");
     Value item = items[itemIndex++];
     if (!isa<BytesType, StringType, DynamicArrayType, QueueType, AssocArrayType,
-             ClassHandleType, VirtualInterfaceType, IntegerType, LogicType>(
-            item.getType()) &&
+             ClassHandleType, VirtualInterfaceType, ProcessType, IntegerType,
+             LogicType>(item.getType()) &&
         !item.getType().isF64())
       return operation->emitOpError(
           "items must be literal bytes, packed integers, or f64 reals; "
           "managed strings, containers, class handles, and virtual-interface "
-          "handles are also accepted");
+          "and process handles are also accepted");
     if ((flags & ~OBELISK_RT_OUTPUT_ITEM_ALL) != 0)
       return operation->emitOpError(
           "display item flags contain an unknown bit");
@@ -520,6 +520,10 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
       return operation->emitOpError(
           "virtual-interface display flags require a virtual-interface "
           "operand");
+    if ((flags & OBELISK_RT_OUTPUT_ITEM_PROCESS) != 0 &&
+        !isa<ProcessType>(item.getType()))
+      return operation->emitOpError(
+          "process display flags require a process-handle operand");
     if ((flags & OBELISK_RT_OUTPUT_ITEM_REAL) != 0 && !item.getType().isF64())
       return operation->emitOpError(
           "real display items must have f64 operands");
@@ -562,6 +566,10 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
         return operation->emitOpError(
             "virtual-interface items require only the virtual-interface "
             "flag");
+    } else if (isa<ProcessType>(item.getType())) {
+      if (flags != OBELISK_RT_OUTPUT_ITEM_PROCESS)
+        return operation->emitOpError(
+            "process-handle items require only the process flag");
     } else if (item.getType().isF64()) {
       if (flags != OBELISK_RT_OUTPUT_ITEM_REAL)
         return operation->emitOpError("f64 items require only the real flag");
