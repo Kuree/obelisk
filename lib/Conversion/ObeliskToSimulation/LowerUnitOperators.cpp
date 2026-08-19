@@ -123,6 +123,20 @@ FailureOr<Value> UnitLowering::lowerUnary(semantic::SVUnaryExpressionOp op) {
     }
     return convert(value, *resultType, false, location);
   }
+  if (kind == semantic::SVUnaryOperator::LogicalNot &&
+      isa<sim::ChandleType, sim::ProcessType, sim::ClassHandleType,
+          sim::EventType, sim::VirtualInterfaceType>((*input).getType())) {
+    // A handle has no packed value to reduce; IEEE 1800-2017 12.4's reading of
+    // a condition against zero becomes a comparison with null.
+    FailureOr<Value> truth = truthValue(*input, location);
+    if (failed(truth))
+      return failure();
+    Value value = arith::XOrIOp::create(
+        builder, location, *truth,
+        arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                  builder.getBoolAttr(true)));
+    return convert(value, *resultType, false, location);
+  }
   FailureOr<Value> scalarInput = toPackedScalar(*input, location);
   if (failed(scalarInput))
     return failure();

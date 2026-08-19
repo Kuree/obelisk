@@ -1347,12 +1347,28 @@ FailureOr<Value> UnitLowering::formatTaggedUnionPattern(Value value,
 }
 
 FailureOr<Value> UnitLowering::truthValue(Value value, Location location) {
-  if (isa<sim::ChandleType>(value.getType())) {
-    Value null = sim::SimChandleNullOp::create(builder, location);
-    Value isNull =
-        sim::SimChandleEqualOp::create(builder, location, value, null);
+  // IEEE 1800-2017 12.4 reads a condition as `expression != 0`. A handle has
+  // no zero to compare against, so the null handle 8.4 gives it stands in and
+  // the surviving handles are the true ones.
+  Type type = value.getType();
+  Value null;
+  if (isa<sim::ChandleType>(type))
+    null = sim::SimChandleNullOp::create(builder, location);
+  else if (isa<sim::ProcessType>(type))
+    null = sim::SimProcessNullOp::create(builder, location);
+  else if (isa<sim::ClassHandleType>(type))
+    null = sim::SimClassNullOp::create(builder, location, type);
+  else if (isa<sim::EventType>(type))
+    null = sim::SimEventNullOp::create(builder, location, type);
+  else if (isa<sim::VirtualInterfaceType>(type))
+    null = sim::SimVirtualInterfaceNullOp::create(builder, location, type);
+  if (null) {
+    FailureOr<Value> isNull = conditionalEqual(value, null, type, location,
+                                               /*caseEquality=*/true);
+    if (failed(isNull))
+      return failure();
     return arith::XOrIOp::create(
-               builder, location, isNull,
+               builder, location, *isNull,
                arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                          builder.getBoolAttr(true)))
         .getResult();
