@@ -101,6 +101,11 @@ ARRAY_ASSIGNMENT_ORDER = Exclusion(
     "an unpacked array assignment pairs the elements by position, and the test "
     "assigns between ranges that run opposite ways expecting Verilator's "
     "pairing by storage slot")
+BOUNDED_QUEUE_CAPACITY = Exclusion(
+    "IEEE 1800-2017 7.10",
+    "a queue's bound is its maximum index, so `int q[$:5]` holds six elements "
+    "(the clause's own `byte q1[$:255]` is \"a queue whose maximum size is 256 "
+    "elements\"); the test expects Verilator's bound-as-size and reads five")
 READMEM_HASH_COMMENT = Exclusion(
     "IEEE 1800-2017 21.4",
     "a memory file admits only // and /* */ comments, and the test's data file "
@@ -116,6 +121,7 @@ READMEM_HASH_COMMENT = Exclusion(
 EXCLUDED: dict[str, Exclusion] = {
     "t_dynarray": PATTERN_RADIX,
     "t_dynarray_method": PATTERN_RADIX,
+    "t_stream_crc_example": PATTERN_RADIX,
     "t_stream_dynamic": PATTERN_RADIX,
     "t_struct_nest_uarray": PATTERN_RADIX,
     "t_class_enum": CLASS_PATTERN,
@@ -124,6 +130,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_math_cmp": TWO_STATE_INITIALIZATION,
     "t_static_task_args": STATIC_SUBROUTINE_RECURSION,
     "t_param_avec": ARRAY_ASSIGNMENT_ORDER,
+    "t_queue_slice": BOUNDED_QUEUE_CAPACITY,
     "t_sys_readmem": READMEM_HASH_COMMENT,
 }
 
