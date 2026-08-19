@@ -115,6 +115,11 @@ PARTIAL_PART_SELECT_WRITE = Exclusion(
     "a part-select only partly out of range still writes the bits that are in "
     "range, so `to[4-:4] = v` on a `[83:4]` vector stores v's top bit into "
     "bit 4; the test expects Verilator's suppression of the whole write")
+OUT_OF_RANGE_PART_SELECT_READ = Exclusion(
+    "IEEE 1800-2017 11.5.1",
+    "a part-select reads x for the bits that are out of range, so a loop that "
+    "walks `data[i +: 8]` up to the last index of `data` reads x from its final "
+    "few steps; the test expects Verilator's zero fill")
 UNSIGNED_SELECT_INDEX = Exclusion(
     "IEEE 1800-2017 11.8.1",
     "a concatenation is unsigned and 11.6.1 carries that through the "
@@ -157,6 +162,8 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_enum_func": IMPLICIT_SENSITIVITY_STARTUP,
     "t_split_var_4": TWO_STATE_INITIALIZATION,
     "t_param_type5": UNNAMED_TYPE_SPELLING,
+    "t_emit_constw": OUT_OF_RANGE_PART_SELECT_READ,
+    "t_mem_multi_io": TWO_STATE_INITIALIZATION,
 }
 
 
