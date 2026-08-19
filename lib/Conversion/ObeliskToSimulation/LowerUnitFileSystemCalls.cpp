@@ -374,7 +374,10 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     Block *warnWordCount = addBlock();
     Block *addressError = addBlock();
     Block *dataError = addBlock();
+    Block *readFile = addBlock();
+    Block *openError = addBlock();
     Block *exit = addBlock();
+    Block *done = addBlock();
 
     auto withinInclusiveRange = [&](Value value) -> Value {
       Value atOrBelowStart = arith::CmpIOp::create(
@@ -399,6 +402,17 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
           arith::CmpIOp::create(builder, location, lessEqual, value, high);
       return arith::AndIOp::create(builder, location, withinLow, withinHigh);
     };
+    // IEEE 1800-2017 21.4 does not say what a failed open does. A zero
+    // descriptor is what the open reports it with, and reading from one would
+    // otherwise reach the runtime as a bare invalid-descriptor status that
+    // names neither the file nor the task.
+    Value opened =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                              descriptor, constant(i32, 0));
+    cf::CondBranchOp::create(builder, location, opened, readFile, ValueRange{},
+                             openError, ValueRange{});
+    setCurrent(readFile);
+
     Value validBounds = arith::AndIOp::create(
         builder, location, withinMemory(*start), withinMemory(*finish));
     cf::CondBranchOp::create(
@@ -655,8 +669,29 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     emitMessage("ERROR", "data value is outside the enumerated type");
     cf::BranchOp::create(builder, location, exit);
 
+    setCurrent(openError);
+    // The memory keeps the value it already had; only the report and the
+    // unsuccessful final status mark that the read did not happen.
+    std::string detail = "cannot open the memory file";
+    if (auto literal = getStringLiteral(children[0])) {
+      detail += " ";
+      // emitMessage's text is read as a display format, so a path that spells
+      // a percent has to carry it through as one.
+      for (char character : literal.getConstantValue()) {
+        detail.push_back(character);
+        if (character == '%')
+          detail.push_back('%');
+      }
+    }
+    emitMessage("ERROR", detail);
+    sim::SimErrorOp::create(builder, location, context);
+    cf::BranchOp::create(builder, location, done);
+
     setCurrent(exit);
     sim::SimFileCloseOp::create(builder, location, context, descriptor);
+    cf::BranchOp::create(builder, location, done);
+
+    setCurrent(done);
     return dummyTaskResult();
   }
 

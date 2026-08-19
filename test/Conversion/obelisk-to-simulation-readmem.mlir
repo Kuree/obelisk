@@ -42,7 +42,11 @@ module {
 // CHECK-DAG: obelisk_sim.bytes.constant "WARNING: $readmemh: data word count does not match address range"
 // CHECK-DAG: obelisk_sim.bytes.constant "ERROR: $readmemh: address is outside the selected memory range"
 // CHECK: %[[FD:.*]] = obelisk_sim.file.open
-// CHECK: cf.br ^[[LOOP:bb[0-9]+]]({{.*}} : i64, i1, i64, i1)
+// A descriptor of zero means the open failed, so the read is entered only
+// once that is ruled out. The address-range check folds into the same branch
+// here because this memory's bounds are static.
+// CHECK: %[[OPENED:.*]] = arith.cmpi ne, %[[FD]], %{{.*}}
+// CHECK: cf.cond_br %[[OPENED]], ^[[LOOP:bb[0-9]+]]({{.*}} : i64, i1, i64, i1), ^[[OPEN_ERROR:bb[0-9]+]]
 // CHECK: ^[[LOOP]](%[[CURSOR:.*]]: i64, %[[SAW_ADDRESS:.*]]: i1, %[[COUNT:.*]]: i64, %[[EXHAUSTED:.*]]: i1):
 // CHECK: %[[DATA:.*]], %[[KIND:.*]], %[[ADDRESS:.*]] = obelisk_sim.file.readmem_token {{.*}} {radix = 16 : i32}
 // CHECK: cf.cond_br {{.*}}, ^[[COUNT_CHECK:bb[0-9]+]], ^[[CLASSIFY:bb[0-9]+]]
@@ -65,5 +69,13 @@ module {
 // CHECK: obelisk_sim.display
 // CHECK: ^[[ADDRESS_ERROR]]:
 // CHECK: obelisk_sim.display
+// The failed-open report names the file and records an unsuccessful run. It
+// shares nothing with the read but its exit; in particular it must not close a
+// descriptor the open never handed out.
+// CHECK: ^[[OPEN_ERROR]]:
+// CHECK: obelisk_sim.bytes.constant "ERROR: $readmemh: cannot open the memory file
+// CHECK: obelisk_sim.display
+// CHECK-NEXT: obelisk_sim.error
+// CHECK-NOT: obelisk_sim.file.close
 // CHECK: ^[[EXIT]]:
 // CHECK: obelisk_sim.file.close {{.*}}, %[[FD]]
