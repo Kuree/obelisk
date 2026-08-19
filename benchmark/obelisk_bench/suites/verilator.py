@@ -110,6 +110,26 @@ READMEM_HASH_COMMENT = Exclusion(
     "IEEE 1800-2017 21.4",
     "a memory file admits only // and /* */ comments, and the test's data file "
     "carries an SRecord-style `#` comment")
+PARTIAL_PART_SELECT_WRITE = Exclusion(
+    "IEEE 1800-2017 11.5.1",
+    "a part-select only partly out of range still writes the bits that are in "
+    "range, so `to[4-:4] = v` on a `[83:4]` vector stores v's top bit into "
+    "bit 4; the test expects Verilator's suppression of the whole write")
+UNSIGNED_SELECT_INDEX = Exclusion(
+    "IEEE 1800-2017 11.8.1",
+    "a concatenation is unsigned and 11.6.1 carries that through the "
+    "subtraction, so `{1'b0, crc[3:0]} - 16` indexes with a large unsigned "
+    "value that falls outside the vector and reads x; the test expects "
+    "Verilator's signed reading of the same index")
+IMPLICIT_SENSITIVITY_STARTUP = Exclusion(
+    "IEEE 1800-2017 9.2.2.2.2",
+    "always @* waits for a change on its inferred sensitivity list, unlike "
+    "always_comb, which the clause contrasts as executing once at time zero; "
+    "the test needs the time-zero settle Verilator gives always @*")
+UNNAMED_TYPE_SPELLING = Exclusion(
+    "IEEE 1800-2017 20.6.1",
+    "$typename spells an unnamed type in an implementation-dependent way, and "
+    "the test expects Verilator's internal \"MEMBERDTYPE 'a'\" rendering")
 
 # Tests whose expectation rests on Verilator-specific behavior rather than on
 # what the language requires. Each names the clause that settles it, so a reader
@@ -132,6 +152,11 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_param_avec": ARRAY_ASSIGNMENT_ORDER,
     "t_queue_slice": BOUNDED_QUEUE_CAPACITY,
     "t_sys_readmem": READMEM_HASH_COMMENT,
+    "t_select_plus": PARTIAL_PART_SELECT_WRITE,
+    "t_select_negative": UNSIGNED_SELECT_INDEX,
+    "t_enum_func": IMPLICIT_SENSITIVITY_STARTUP,
+    "t_split_var_4": TWO_STATE_INITIALIZATION,
+    "t_param_type5": UNNAMED_TYPE_SPELLING,
 }
 
 
