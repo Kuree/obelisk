@@ -2281,6 +2281,106 @@ UnitLowering::lowerTaggedUnion(semantic::SVTaggedUnionExpressionOp op) {
       .getResult();
 }
 
+namespace {
+
+// IEEE 1800-2017 6.11.1's simple bit vector type: one packed dimension of plain
+// bits, which the integer atom types are equivalent to. A packed structure or a
+// second packed dimension is not one.
+bool isSimpleBitVectorType(Type type) {
+  if (isa<sim::LogicType, IntegerType>(type))
+    return true;
+  auto packed = dyn_cast<sim::PackedArrayType>(type);
+  if (!packed)
+    return false;
+  Type element = packed.getElementType();
+  if (auto logic = dyn_cast<sim::LogicType>(element))
+    return logic.getWidth() == 1;
+  auto integer = dyn_cast<IntegerType>(element);
+  return integer && integer.getWidth() == 1;
+}
+
+} // namespace
+
+FailureOr<int64_t> UnitLowering::declaredIndexOrdinal(Type aggregate,
+                                                     Operation *key) {
+  int64_t left = 0;
+  bool descending = false;
+  if (auto packed = dyn_cast<sim::PackedArrayType>(aggregate)) {
+    left = packed.getLeft();
+    descending = packed.getLeft() >= packed.getRight();
+  } else if (auto unpacked = dyn_cast<sim::UnpackedArrayType>(aggregate)) {
+    left = unpacked.getLeft();
+    descending = unpacked.getLeft() >= unpacked.getRight();
+  } else {
+    // 10.9.1 gives index keys to arrays; a struct is keyed by member name.
+    emitError(getSemanticLocation(key))
+        << "assignment-pattern index key requires an array target";
+    return failure();
+  }
+  std::optional<StringRef> spelling = getConstantSpelling(key);
+  FailureOr<Type> keyType = getNormalizedSemanticType(key);
+  std::optional<unsigned> width =
+      succeeded(keyType) ? sim::getPackedWidth(*keyType) : std::nullopt;
+  FailureOr<ParsedConstant> parsed =
+      spelling && width
+          ? parseSVInteger(*spelling, *width, getSemanticLocation(key))
+          : FailureOr<ParsedConstant>(failure());
+  if (failed(parsed) || !parsed->unknown.isZero()) {
+    emitError(getSemanticLocation(key))
+        << "assignment-pattern index key is not a known constant";
+    return failure();
+  }
+  // The key is written in the declared range, so it is read with the key
+  // expression's own signedness before being offset from the left bound.
+  APInt index = parsed->value;
+  // One bit wider than either input so the subtraction below cannot wrap.
+  unsigned working = std::max<unsigned>(index.getBitWidth(), 64) + 1;
+  APInt bound(working, static_cast<uint64_t>(left), true);
+  APInt selected =
+      isSignedNode(key) ? index.sext(working) : index.zext(working);
+  APInt ordinal = descending ? bound - selected : selected - bound;
+  if (ordinal.isNegative() || ordinal.getActiveBits() > 63) {
+    emitError(getSemanticLocation(key))
+        << "assignment-pattern index key is outside the array's range";
+    return failure();
+  }
+  return static_cast<int64_t>(ordinal.getZExtValue());
+}
+
+FailureOr<Value> UnitLowering::materializeDefaultElement(Value value,
+                                                         Type elementType,
+                                                         Operation *source,
+                                                         Location location) {
+  // IEEE 1800-2017 10.9.2: the value is assigned directly when the member is a
+  // simple bit vector type, already has the value's type, or is not an array or
+  // structure at all. Only what is left over -- a structure, or an array whose
+  // elements are not plain bits -- takes the default recursively.
+  bool assignable = isSimpleBitVectorType(elementType) ||
+                    value.getType() == elementType ||
+                    !sim::isAggregateType(elementType);
+  if (!assignable &&
+      !isa<sim::PackedUnionType, sim::UnpackedUnionType>(elementType)) {
+    unsigned count = sim::getAggregateNumElements(elementType);
+    SmallVector<Value> nested;
+    nested.reserve(count);
+    for (unsigned index = 0; index != count; ++index) {
+      FailureOr<Value> element = materializeDefaultElement(
+          value, sim::getAggregateElementType(elementType, index), source,
+          location);
+      if (failed(element))
+        return failure();
+      nested.push_back(*element);
+    }
+    return sim::SimAggregateConstructOp::create(builder, location, elementType,
+                                                nested)
+        .getResult();
+  }
+  return convert(value, elementType,
+                 isSignedNode(source) ||
+                     isa<semantic::SVUnbasedUnsizedIntegerLiteralOp>(source),
+                 location);
+}
+
 FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
   Location location = getSemanticLocation(op);
   FailureOr<Type> resultType = getNormalizedSemanticType(op);
@@ -2435,68 +2535,99 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
         .getResult();
   }
   uint64_t elementCount = sim::getAggregateNumElements(*resultType);
-  if (structured && structured.getHasDefaultSetter()) {
-    if (structured.getMemberSetterCount() != 0 ||
-        structured.getTypeSetterCount() != 0 ||
-        structured.getIndexSetterCount() != 0 || children.size() != 1) {
-      unsupported(op) << " (mixed aggregate assignment-pattern setters)";
+  if (structured) {
+    // IEEE 1800-2017 10.9.1 and 10.9.2 match a pattern's setters in a fixed
+    // order: a member or index key claims its own element, a type key claims
+    // what those left, and `default` covers the rest. Slang hands the setters
+    // over in that order, spelling each index setter as its index expression
+    // followed by its value.
+    uint64_t memberSetters = structured.getMemberSetterCount();
+    uint64_t typeSetters = structured.getTypeSetterCount();
+    uint64_t indexSetters = structured.getIndexSetterCount();
+    bool hasDefault = structured.getHasDefaultSetter();
+    if (typeSetters != 0) {
+      // A type key names the type whose members it claims, which the imported
+      // node records only as a count.
+      unsupported(op) << " (assignment-pattern type setters)";
       return failure();
     }
-    Operation *defaultNode = children.front();
-    FailureOr<Value> value = lowerExpression(defaultNode);
-    if (failed(value))
+    if (children.size() !=
+        memberSetters + 2 * indexSetters + (hasDefault ? 1 : 0)) {
+      emitError(location)
+          << "assignment-pattern setters do not account for its operands";
       return failure();
-    SmallVector<Value> elements;
-    elements.reserve(elementCount);
-    for (uint64_t index = 0; index < elementCount; ++index) {
-      FailureOr<Value> converted = convert(
-          *value, sim::getAggregateElementType(*resultType, index),
-          isSignedNode(defaultNode) ||
-              isa<semantic::SVUnbasedUnsizedIntegerLiteralOp>(defaultNode),
-          getSemanticLocation(defaultNode));
-      if (failed(converted))
-        return failure();
-      elements.push_back(*converted);
     }
-    return sim::SimAggregateConstructOp::create(builder, location, *resultType,
-                                                elements)
-        .getResult();
-  }
-  if (structured && structured.getMemberSetterCount() != 0) {
     auto ordinals = structured.getMemberSetterOrdinals();
-    if (!ordinals || structured.getMemberSetterCount() != elementCount ||
-        structured.getTypeSetterCount() != 0 ||
-        structured.getIndexSetterCount() != 0 ||
-        structured.getHasDefaultSetter() || children.size() != elementCount) {
-      unsupported(op) << " (mixed aggregate assignment-pattern setters)";
+    if (memberSetters != 0 &&
+        (!ordinals || ordinals->size() != memberSetters)) {
+      emitError(location) << "assignment-pattern member setters have no "
+                             "elaborated ordinals";
       return failure();
     }
+
     SmallVector<Value> elements(elementCount);
-    for (auto [childIndex, child] : llvm::enumerate(children)) {
-      int64_t selected = (*ordinals)[childIndex];
-      if (selected < 0 || static_cast<uint64_t>(selected) >= elementCount ||
-          elements[selected]) {
-        emitError(location)
-            << "aggregate assignment-pattern member ordinal is invalid";
+    auto claim = [&](int64_t ordinal, Operation *child) -> LogicalResult {
+      if (ordinal < 0 || static_cast<uint64_t>(ordinal) >= elementCount) {
+        emitError(getSemanticLocation(child))
+            << "assignment-pattern key is outside the target";
         return failure();
       }
-      Type fieldType = sim::getAggregateElementType(*resultType, selected);
+      if (elements[ordinal]) {
+        // 10.9.1 makes a repeated index an error, and a repeated member name
+        // cannot elaborate to anything else either.
+        emitError(getSemanticLocation(child))
+            << "assignment-pattern key sets the same element twice";
+        return failure();
+      }
       FailureOr<Value> value = lowerExpression(child);
       if (failed(value))
         return failure();
       FailureOr<Value> converted =
-          convert(*value, fieldType, isSignedNode(child), location);
+          convert(*value, sim::getAggregateElementType(*resultType, ordinal),
+                  isSignedNode(child), getSemanticLocation(child));
       if (failed(converted))
         return failure();
-      elements[selected] = *converted;
+      elements[ordinal] = *converted;
+      return success();
+    };
+
+    size_t cursor = 0;
+    for (uint64_t setter = 0; setter != memberSetters; ++setter)
+      if (failed(claim((*ordinals)[setter], children[cursor++])))
+        return failure();
+    for (uint64_t setter = 0; setter != indexSetters; ++setter) {
+      Operation *key = children[cursor++];
+      Operation *value = children[cursor++];
+      FailureOr<int64_t> ordinal = declaredIndexOrdinal(*resultType, key);
+      if (failed(ordinal) || failed(claim(*ordinal, value)))
+        return failure();
     }
+    if (hasDefault) {
+      Operation *defaultNode = children[cursor++];
+      FailureOr<Value> value = lowerExpression(defaultNode);
+      if (failed(value))
+        return failure();
+      for (uint64_t index = 0; index != elementCount; ++index) {
+        if (elements[index])
+          continue;
+        FailureOr<Value> element = materializeDefaultElement(
+            *value, sim::getAggregateElementType(*resultType, index),
+            defaultNode, getSemanticLocation(defaultNode));
+        if (failed(element))
+          return failure();
+        elements[index] = *element;
+      }
+    }
+    for (uint64_t index = 0; index != elementCount; ++index)
+      if (!elements[index]) {
+        // 10.9.1 and 10.9.2 both close with "every element shall be covered".
+        emitError(location)
+            << "assignment pattern leaves element " << index << " unset";
+        return failure();
+      }
     return sim::SimAggregateConstructOp::create(builder, location, *resultType,
                                                 elements)
         .getResult();
-  }
-  if (structured) {
-    unsupported(op) << " (aggregate assignment-pattern setters)";
-    return failure();
   }
   if (isa<semantic::SVReplicatedAssignmentPatternExpressionOp>(op)) {
     if (children.size() < 2 || !getConstantSpelling(children.front())) {

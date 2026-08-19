@@ -385,6 +385,18 @@ private:
   formatUnpackedAggregatePattern(::mlir::Value value,
                                  ::mlir::Location location);
   ::mlir::IntegerAttr designTimePrecisionExponent();
+  // Map an assignment-pattern index key onto the element ordinal the aggregate
+  // stores it at. IEEE 1800-2017 10.9.1 writes the key in the array's own
+  // declared index range, which may descend and may start below zero.
+  ::mlir::FailureOr<int64_t> declaredIndexOrdinal(::mlir::Type aggregate,
+                                                  ::mlir::Operation *key);
+  // Build one element from an assignment pattern's `default:` value. IEEE
+  // 1800-2017 10.9.2 applies the value directly to a singular member and
+  // recurses into an aggregate one.
+  ::mlir::FailureOr<::mlir::Value>
+  materializeDefaultElement(::mlir::Value value, ::mlir::Type elementType,
+                            ::mlir::Operation *source,
+                            ::mlir::Location location);
   // The current simulation time expressed in the code unit's time units, the
   // scale IEEE 1800-2017 20.3.1 gives $time and 21.2.1.5 gives %t.
   ::mlir::FailureOr<::mlir::Value>
