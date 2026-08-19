@@ -140,6 +140,12 @@ CONTEXT_DETERMINED_POWER_BASE = Exclusion(
     "`(-8'sh1 ** -8'sh2) === 8'h1` reads the base as 255 and Table 11-4 gives "
     "0 for a base above 1 with a negative exponent; the test's own guards "
     "already excuse Icarus, Questa, and VCS from these two lines")
+LOCATOR_RETURN_ELEMENT_TYPE = Exclusion(
+    "IEEE 1800-2017 7.12.1",
+    "an array locator's return type is a queue of the array's element type, so "
+    "`int unsigned array[3]` gives min() the type `int unsigned$[$]`; the test "
+    "expects Verilator's spelling with the element's unsigned dropped, and its "
+    "%p expectations are the hexadecimal ones 21.2.1.7 already rules out")
 UNSIGNED_SELECT_INDEX = Exclusion(
     "IEEE 1800-2017 11.8.1",
     "a concatenation is unsigned and 11.6.1 carries that through the "
@@ -185,6 +191,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_emit_constw": OUT_OF_RANGE_PART_SELECT_READ,
     "t_mem_multi_io": TWO_STATE_INITIALIZATION,
     "t_math_pow3": CONTEXT_DETERMINED_POWER_BASE,
+    "t_typename_min": LOCATOR_RETURN_ELEMENT_TYPE,
 }
 
 
