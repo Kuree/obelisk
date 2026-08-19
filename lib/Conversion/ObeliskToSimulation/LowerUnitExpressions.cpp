@@ -534,6 +534,65 @@ FailureOr<Value> UnitLowering::lowerConcatenation(Operation *op) {
     }
     return result;
   }
+  if (auto arrayResult = dyn_cast<sim::UnpackedArrayType>(*resultType)) {
+    // IEEE 1800-2017 10.10: each item contributes either one element or, when
+    // it is itself an unpacked array of the element type, all of its elements
+    // in the order they appear in the item. The clause also makes it an error
+    // for the total to differ from a fixed-size target, so every count here is
+    // known and the result can be built without a loop.
+    Type elementType = arrayResult.getElementType();
+    SmallVector<Value> elements;
+    for (Operation *child : children) {
+      FailureOr<Value> input = lowerExpression(child);
+      if (failed(input))
+        return failure();
+      Location childLocation = getSemanticLocation(child);
+      Type inputType = (*input).getType();
+      if (isa<sim::DynamicArrayType, sim::QueueType>(inputType)) {
+        // A dynamically sized item leaves the target's element count unknown
+        // until the assignment runs, which 10.10 gives no defined outcome for.
+        emitError(childLocation)
+            << "unpacked array concatenation item with a run-time size cannot "
+               "fill a fixed-size target";
+        return failure();
+      }
+      // 10.10 spreads only an item that is itself an unpacked array; an item
+      // whose own type is the element type stays one element even when that
+      // element type is an array.
+      auto item = dyn_cast<sim::UnpackedArrayType>(inputType);
+      if (inputType == elementType)
+        item = {};
+      if (!item) {
+        FailureOr<Value> converted =
+            convert(*input, elementType, isSignedNode(child), childLocation);
+        if (failed(converted))
+          return failure();
+        elements.push_back(*converted);
+        continue;
+      }
+      unsigned count = sim::getAggregateNumElements(item);
+      for (unsigned index = 0; index != count; ++index) {
+        Value value = sim::SimAggregateExtractOp::create(
+            builder, childLocation, sim::getAggregateElementType(item, index),
+            *input, index);
+        FailureOr<Value> converted =
+            convert(value, elementType, isSignedNode(child), childLocation);
+        if (failed(converted))
+          return failure();
+        elements.push_back(*converted);
+      }
+    }
+    unsigned expected = sim::getAggregateNumElements(arrayResult);
+    if (elements.size() != expected) {
+      emitError(location) << "unpacked array concatenation composes "
+                          << elements.size() << " elements for a target of "
+                          << expected;
+      return failure();
+    }
+    return sim::SimAggregateConstructOp::create(builder, location, *resultType,
+                                                elements)
+        .getResult();
+  }
   Type scalarResultType = sim::getPackedScalarType(*resultType);
   if (!scalarResultType) {
     unsupported(op) << " (unpacked concatenation result)";
