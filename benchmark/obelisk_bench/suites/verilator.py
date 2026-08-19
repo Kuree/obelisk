@@ -133,6 +133,13 @@ OUT_OF_RANGE_PART_SELECT_READ = Exclusion(
     "a part-select reads x for the bits that are out of range, so a loop that "
     "walks `data[i +: 8]` up to the last index of `data` reads x from its final "
     "few steps; the test expects Verilator's zero fill")
+CONTEXT_DETERMINED_POWER_BASE = Exclusion(
+    "IEEE 1800-2017 11.8.1",
+    "an unsigned operand anywhere in an expression makes the whole expression "
+    "unsigned, and 11.4.4 self-determines only the power's exponent, so "
+    "`(-8'sh1 ** -8'sh2) === 8'h1` reads the base as 255 and Table 11-4 gives "
+    "0 for a base above 1 with a negative exponent; the test's own guards "
+    "already excuse Icarus, Questa, and VCS from these two lines")
 UNSIGNED_SELECT_INDEX = Exclusion(
     "IEEE 1800-2017 11.8.1",
     "a concatenation is unsigned and 11.6.1 carries that through the "
@@ -177,6 +184,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_param_type5": UNNAMED_TYPE_SPELLING,
     "t_emit_constw": OUT_OF_RANGE_PART_SELECT_READ,
     "t_mem_multi_io": TWO_STATE_INITIALIZATION,
+    "t_math_pow3": CONTEXT_DETERMINED_POWER_BASE,
 }
 
 
