@@ -6,6 +6,8 @@
 #include "obelisk/Runtime/OutputItemFlags.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/Matchers.h"
 
 #include <optional>
 #include <string>
@@ -45,6 +47,108 @@ IntegerAttr UnitLowering::designTimePrecisionExponent() {
        scale /= 10)
     ++exponent;
   return builder.getI32IntegerAttr(exponent);
+}
+
+FailureOr<Value> UnitLowering::currentTimeInUnits(Location location) {
+  auto scale = function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+  if (!scale || !scale.getValue().isStrictlyPositive()) {
+    function.emitError("code unit has no valid frozen time scale");
+    return failure();
+  }
+  Type i64 = builder.getI64Type();
+  Value context = function.getBody().front().getArgument(0);
+  Value now = sim::SimTimeNowOp::create(builder, location, i64, context);
+  // IEEE 1800-2017 20.3.1: $time returns the precision-tick count scaled to the
+  // enclosing scope's time unit and rounded, rather than truncated, to an
+  // integer.
+  Value scaleValue = arith::ConstantOp::create(builder, location, i64, scale);
+  Value quotient = arith::DivUIOp::create(builder, location, now, scaleValue);
+  Value remainder = arith::RemUIOp::create(builder, location, now, scaleValue);
+  uint64_t ticks = scale.getValue().getZExtValue();
+  Value halfway = arith::ConstantOp::create(
+      builder, location, i64, builder.getI64IntegerAttr(ticks / 2 + ticks % 2));
+  Value increment = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::uge, remainder, halfway);
+  Value extended = arith::ExtUIOp::create(builder, location, i64, increment);
+  return arith::AddIOp::create(builder, location, quotient, extended)
+      .getResult();
+}
+
+LogicalResult UnitLowering::emitTerminationDiagnostic(StringRef name,
+                                                      Value verbosity,
+                                                      Location location) {
+  // IEEE 1800-2017 20.2, Table 20-1: verbosity 0 prints nothing, and 1 and 2
+  // print the simulation time and the location of the call. The extra memory
+  // and CPU statistics 2 asks for have no defined content and no source in the
+  // runtime, so 2 prints what 1 does.
+  APInt folded;
+  bool isConstant = matchPattern(verbosity, m_ConstantInt(&folded));
+  if (isConstant && folded.isZero())
+    return success();
+
+  StringAttr lexicalScope =
+      function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+  if (!lexicalScope) {
+    function.emitError("code unit has no lexical scope");
+    return failure();
+  }
+
+  Block *merge = nullptr;
+  if (!isConstant) {
+    // A run-time verbosity picks its Table 20-1 row on the way past. Branching
+    // rather than selecting a rendered message keeps the diagnostic free of
+    // managed string state, which would push the whole design out of native
+    // scheduling for the sake of a message that usually is not printed.
+    Value zero = arith::ConstantOp::create(
+        builder, location, verbosity.getType(),
+        builder.getZeroAttr(verbosity.getType()));
+    Value wanted = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne, verbosity, zero);
+    Block *report = addBlock();
+    merge = addBlock();
+    cf::CondBranchOp::create(builder, location, wanted, report, ValueRange{},
+                             merge, ValueRange{});
+    setCurrent(report);
+  }
+
+  // currentTimeInUnits has already rejected a missing or unusable scale.
+  FailureOr<Value> time = currentTimeInUnits(location);
+  if (failed(time))
+    return failure();
+  auto timeMultiplier =
+      function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+
+  std::string file = "<unknown>";
+  unsigned line = 0;
+  if (auto source = location->findInstanceOf<FileLineColLoc>()) {
+    file = source.getFilename().str();
+    line = source.getLine();
+  }
+  // The leading item of a display list is read as the format for the items
+  // after it, so the fixed text is escaped and the time becomes its argument.
+  std::string format;
+  appendFormatText(format, name);
+  appendFormatText(format, ": " + file + ":" + std::to_string(line) + ": ");
+  format += "simulation time %0t\n";
+
+  // Table 20-1's diagnostic is simulator commentary, not design output, so it
+  // joins the severity tasks on standard error rather than in the design's
+  // stdout stream.
+  Value context = function.getBody().front().getArgument(0);
+  Value descriptor = arith::ConstantOp::create(
+      builder, location, builder.getI32Type(),
+      builder.getI32IntegerAttr(static_cast<int32_t>(0x80000002u)));
+  Value text = sim::SimBytesConstantOp::create(builder, location, format);
+  sim::SimDisplayOp::create(builder, location, context, descriptor,
+                            ValueRange{text, *time}, /*newline=*/false, 10,
+                            builder.getDenseI32ArrayAttr({0, 0}), lexicalScope,
+                            StringAttr{}, timeMultiplier,
+                            designTimePrecisionExponent());
+  if (merge) {
+    cf::BranchOp::create(builder, location, merge, ValueRange{});
+    setCurrent(merge);
+  }
+  return success();
 }
 
 FailureOr<Value>

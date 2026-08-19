@@ -385,6 +385,15 @@ private:
   formatUnpackedAggregatePattern(::mlir::Value value,
                                  ::mlir::Location location);
   ::mlir::IntegerAttr designTimePrecisionExponent();
+  // The current simulation time expressed in the code unit's time units, the
+  // scale IEEE 1800-2017 20.3.1 gives $time and 21.2.1.5 gives %t.
+  ::mlir::FailureOr<::mlir::Value>
+  currentTimeInUnits(::mlir::Location location);
+  // Emit the IEEE 1800-2017 20.2 Table 20-1 diagnostic for a $finish or $stop
+  // whose verbosity is not the constant 0.
+  ::mlir::LogicalResult
+  emitTerminationDiagnostic(::mlir::StringRef name, ::mlir::Value verbosity,
+                            ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value> truthValue(::mlir::Value value,
                                               ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value> toLogic(::mlir::Value value,

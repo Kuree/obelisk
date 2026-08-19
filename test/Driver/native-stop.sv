@@ -13,7 +13,7 @@
 // RUN: diff -u %t.o0.native.out %t.o3.native.out
 // RUN: diff -u %t.o0.native.err %t.o3.native.err
 // RUN: FileCheck %s --check-prefix=STDOUT < %t.o3.native.out
-// RUN: FileCheck %s --check-prefix=EMPTY --allow-empty < %t.o3.native.err
+// RUN: FileCheck %s --check-prefix=STDERR < %t.o3.native.err
 
 module native_stop;
   initial begin
@@ -34,4 +34,7 @@ endmodule
 // STDOUT-NEXT: final
 // STDOUT-NOT: after-stop
 // STDOUT-NOT: late
-// EMPTY-NOT: {{.}}
+// IEEE 1800-2017 20.2, Table 20-1: the default verbosity of 1 prints the
+// simulation time and the location of the call.
+// STDERR: $stop: {{.*}}native-stop.sv:21: simulation time 0
+// STDERR-NOT: {{.}}

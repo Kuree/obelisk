@@ -1300,26 +1300,19 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       function.emitError("code unit has no valid frozen time scale");
       return failure();
     }
-    Value now = sim::SimTimeNowOp::create(builder, location, i64, context);
     if (name == "$realtime") {
+      Value now = sim::SimTimeNowOp::create(builder, location, i64, context);
       Value real = sim::SimTimeToRealOp::create(
           builder, location, builder.getF64Type(), now, scaleAttr);
       return convertResult(real);
     }
-    Value scale = arith::ConstantOp::create(builder, location, i64, scaleAttr);
-    Value quotient = arith::DivUIOp::create(builder, location, now, scale);
-    Value remainder = arith::RemUIOp::create(builder, location, now, scale);
-    uint64_t threshold = scaleAttr.getValue().getZExtValue() / 2 +
-                         scaleAttr.getValue().getZExtValue() % 2;
-    Value halfway = constant(i64, threshold);
-    Value increment = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::uge, remainder, halfway);
-    Value extended = arith::ExtUIOp::create(builder, location, i64, increment);
-    Value rounded =
-        arith::AddIOp::create(builder, location, quotient, extended);
+    FailureOr<Value> rounded = currentTimeInUnits(location);
+    if (failed(rounded))
+      return failure();
     if (name == "$stime")
-      rounded = arith::TruncIOp::create(builder, location, i32, rounded);
-    return convertResult(rounded);
+      rounded = arith::TruncIOp::create(builder, location, i32, *rounded)
+                    .getResult();
+    return convertResult(*rounded);
   }
 
   if (name == "triggered") {
@@ -1352,6 +1345,8 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         return failure();
       verbosity = *lowered;
     }
+    if (failed(emitTerminationDiagnostic(name, verbosity, location)))
+      return failure();
     if (name == "$finish")
       sim::SimFinishOp::create(builder, location, context, verbosity);
     else
