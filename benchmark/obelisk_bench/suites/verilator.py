@@ -36,6 +36,19 @@ FINISHED_MARKER = "*-* All Finished *-*"
 STOP_MARKER = "$stop"
 SCENARIO = "simulator"
 SIM_TIME = 1100  # matches driver.py's default; the shell runs `while ($time < N)`
+# A test that needs a longer run says so in its descriptor, and driver.py writes
+# that number into the shell instead of the default. A test whose design counts
+# to a cycle the default never reaches just stops printing partway through, so
+# the two spellings the simulator-scenario corpus actually uses are read here.
+# `test.benchmark` is unset outside a benchmark run, so the conditional form
+# resolves to its else branch.
+SIM_TIME_LITERAL = re.compile(r"^\s*test\.sim_time\s*=\s*(\d+)\s*$", re.MULTILINE)
+SIM_TIME_CYCLES = re.compile(
+    r"^\s*test\.sim_time\s*=\s*(?:test\.)?cycles\s*\*\s*(\d+)\s*\+\s*(\d+)\s*$",
+    re.MULTILINE)
+CYCLES_DEFAULT = re.compile(
+    r"^\s*test\.cycles\s*=\s*\(.*?\bif\s+test\.benchmark\s+else\s+(\d+)\s*\)\s*$",
+    re.MULTILINE)
 TRACE_DUMPFILE = "simx.vcd"
 
 EXPECTED_ERROR = re.compile(r"_(bad|unsup|fail\d*)$")
@@ -269,7 +282,27 @@ def detect_inputs(top_text: str) -> list[str]:
     return list(inputs)
 
 
-def make_top_shell(inputs: list[str]) -> str:
+def detect_sim_time(descriptor: Path) -> int:
+    """Return the run length the test's descriptor asks for.
+
+    A cheap regex over the `.py`, which is never executed. Anything the two
+    supported spellings do not cover keeps driver.py's default rather than
+    guessing, so an unreadable descriptor can only leave a test where it
+    already was.
+    """
+    if not descriptor.exists():
+        return SIM_TIME
+    text = descriptor.read_text(encoding="utf-8", errors="replace")
+    if literal := SIM_TIME_LITERAL.search(text):
+        return int(literal.group(1))
+    scaled = SIM_TIME_CYCLES.search(text)
+    cycles = CYCLES_DEFAULT.search(text)
+    if scaled and cycles:
+        return int(cycles.group(1)) * int(scaled.group(1)) + int(scaled.group(2))
+    return SIM_TIME
+
+
+def make_top_shell(inputs: list[str], sim_time: int = SIM_TIME) -> str:
     """Generate the clock-driving top module, matching driver.py's _make_top_v."""
     lines = ["module top;"]
     for name in sorted(inputs):
@@ -287,7 +320,7 @@ def make_top_shell(inputs: list[str]) -> str:
     if "clk" in inputs:
         lines.append("        clk = 0;")
     lines.append("        #10;")
-    lines.append(f"        while ($time < {SIM_TIME}) begin")
+    lines.append(f"        while ($time < {sim_time}) begin")
     # driver.py's main loop: five sub-steps of one time unit, `fastclk` toggling
     # on each and `clk` on the first, so `clk` has a period of 10. Toggling on a
     # sixth sub-step instead stretches the period to 12 and costs the run ~19 of
@@ -342,7 +375,10 @@ def judge_one(obelisk: str, top: Path, timeout: float,
         if not native.ok:
             return model.Outcome(model.COMPILE_FAIL, native.stderr)
         shell = Path(tmp) / "top.v"
-        shell.write_text(make_top_shell(detect_inputs(top_text)), encoding="utf-8")
+        shell.write_text(
+            make_top_shell(detect_inputs(top_text),
+                           detect_sim_time(top.with_suffix(".py"))),
+            encoding="utf-8")
         binary = Path(tmp) / "sim"
         # -y/+libext lets separate submodule files resolve; +incdir for includes.
         # Upstream's driver defines this for trace tests. Without it, nested
