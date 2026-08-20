@@ -176,6 +176,12 @@ MIXED_VARIABLE_DRIVERS = Exclusion(
     "with `assign` while an initial block writes the same bits; 6.5 splits "
     "that rule per element, which Obelisk honors for genuinely disjoint "
     "fields")
+SHORTREAL_COMPARISON_PRECISION = Exclusion(
+    "IEEE 1800-2017 11.3.1",
+    "an expression is real whenever either operand is, so a shortreal holding "
+    "`$bitstoshortreal($shortrealtobits(1.414))` widens to 1.4139999151229858 "
+    "before it meets the real literal 1.414 and compares unequal; the test "
+    "expects Verilator's comparison in shortreal precision")
 UNNAMED_TYPE_SPELLING = Exclusion(
     "IEEE 1800-2017 20.6.1",
     "$typename spells an unnamed type in an implementation-dependent way, and "
@@ -206,6 +212,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_select_negative": UNSIGNED_SELECT_INDEX,
     "t_enum_func": IMPLICIT_SENSITIVITY_STARTUP,
     "t_sequence_sexpr_throughout": THROUGHOUT_TEMPORAL_AND,
+    "t_math_shortreal": SHORTREAL_COMPARISON_PRECISION,
     "t_detectarray_1": MIXED_VARIABLE_DRIVERS,
     "t_detectarray_2": MIXED_VARIABLE_DRIVERS,
     "t_split_var_4": TWO_STATE_INITIALIZATION,
