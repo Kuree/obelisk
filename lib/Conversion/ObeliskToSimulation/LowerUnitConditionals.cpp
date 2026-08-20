@@ -939,40 +939,11 @@ UnitLowering::lowerCaseLabel(Value selector, Type selectorType,
   auto compareValue =
       [&](Value candidate, sim::CompareKind logicKind,
           arith::CmpIPredicate integerKind) -> FailureOr<Value> {
-    if (selectorFloat) {
-      // Table 11-1 gives real operands the relational and logical-equality
-      // operators, so an ordered comparison carries both plain `case` labels
-      // and the endpoints of a `case ... inside` range. IEEE 1800-2017 11.3.1
-      // makes an expression real when either operand is, so a shortreal
-      // selector still compares a real label in double precision.
-      auto selectorWidth = cast<FloatType>(selectorType).getWidth();
-      Type comparisonType = selectorType;
-      if (auto candidateFloat = dyn_cast<FloatType>(candidate.getType());
-          candidateFloat && candidateFloat.getWidth() > selectorWidth)
-        comparisonType = candidateFloat;
-      FailureOr<Value> comparisonSelector =
-          convert(selector, comparisonType, false, location);
-      FailureOr<Value> comparisonCandidate =
-          convert(candidate, comparisonType, false, location);
-      if (failed(comparisonSelector) || failed(comparisonCandidate))
-        return failure();
-      arith::CmpFPredicate predicate = arith::CmpFPredicate::OEQ;
-      switch (integerKind) {
-      case arith::CmpIPredicate::sge:
-      case arith::CmpIPredicate::uge:
-        predicate = arith::CmpFPredicate::OGE;
-        break;
-      case arith::CmpIPredicate::sle:
-      case arith::CmpIPredicate::ule:
-        predicate = arith::CmpFPredicate::OLE;
-        break;
-      default:
-        break;
-      }
-      return arith::CmpFOp::create(builder, location, predicate,
-                                   *comparisonSelector, *comparisonCandidate)
-          .getResult();
-    }
+    // Table 11-1 gives real operands the relational and logical-equality
+    // operators, so an ordered comparison carries both plain `case` labels and
+    // the endpoints of a `case ... inside` range.
+    if (selectorFloat)
+      return compareFloatMember(selector, candidate, integerKind, location);
     FailureOr<Value> normalized =
         convert(candidate, selectorType, false, location);
     if (failed(normalized))

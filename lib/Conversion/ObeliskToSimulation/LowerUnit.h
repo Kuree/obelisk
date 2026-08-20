@@ -10,6 +10,7 @@
 
 #include "Detail.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/IRMapping.h"
 
 #include "llvm/ADT/SetVector.h"
@@ -371,6 +372,15 @@ private:
           ::mlir::Location location, bool targetSigned = false);
   ::mlir::FailureOr<::mlir::Value> toPackedScalar(::mlir::Value value,
                                                   ::mlir::Location location);
+  /// Compare a floating-point selector against one `case` label or `inside`
+  /// set member. IEEE 1800-2017 11.3.1 makes the comparison real whenever
+  /// either operand is, so both sides widen to the larger float type first.
+  /// `integerPredicate` names the ordering the caller wants; anything other
+  /// than an upper or lower bound compares for equality.
+  ::mlir::FailureOr<::mlir::Value>
+  compareFloatMember(::mlir::Value selector, ::mlir::Value candidate,
+                     ::mlir::arith::CmpIPredicate integerPredicate,
+                     ::mlir::Location location);
   /// Convert an integral queue / dynamic-array index to the signed runtime
   /// representation without conflating an X/Z-containing four-state index
   /// with integer zero.  The container runtime already defines every negative

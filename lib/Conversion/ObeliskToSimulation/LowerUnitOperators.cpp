@@ -1916,6 +1916,45 @@ FailureOr<Value> UnitLowering::lowerConditionalExpression(
   return mergeBlock->getArgument(0);
 }
 
+FailureOr<Value>
+UnitLowering::compareFloatMember(Value selector, Value candidate,
+                                 arith::CmpIPredicate integerPredicate,
+                                 Location location) {
+  auto selectorType = dyn_cast<FloatType>(selector.getType());
+  if (!selectorType) {
+    emitError(location) << "float member comparison has no float selector";
+    return failure();
+  }
+  // IEEE 1800-2017 11.3.1: an expression is real when either operand is, so a
+  // shortreal selector still compares a real bound in double precision.
+  Type comparisonType = selectorType;
+  if (auto candidateType = dyn_cast<FloatType>(candidate.getType());
+      candidateType && candidateType.getWidth() > selectorType.getWidth())
+    comparisonType = candidateType;
+  FailureOr<Value> comparisonSelector =
+      convert(selector, comparisonType, false, location);
+  FailureOr<Value> comparisonCandidate =
+      convert(candidate, comparisonType, false, location);
+  if (failed(comparisonSelector) || failed(comparisonCandidate))
+    return failure();
+  arith::CmpFPredicate predicate = arith::CmpFPredicate::OEQ;
+  switch (integerPredicate) {
+  case arith::CmpIPredicate::sge:
+  case arith::CmpIPredicate::uge:
+    predicate = arith::CmpFPredicate::OGE;
+    break;
+  case arith::CmpIPredicate::sle:
+  case arith::CmpIPredicate::ule:
+    predicate = arith::CmpFPredicate::OLE;
+    break;
+  default:
+    break;
+  }
+  return arith::CmpFOp::create(builder, location, predicate,
+                               *comparisonSelector, *comparisonCandidate)
+      .getResult();
+}
+
 FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
@@ -1928,8 +1967,13 @@ FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
   if (failed(loweredSelector))
     return failure();
   bool stringSelector = isa<sim::StringType>((*loweredSelector).getType());
+  // IEEE 1800-2017 11.4.13: `inside` compares nonintegral expressions with the
+  // equality operator, and 11.3.1 gives the operator real operands. A
+  // floating-point selector therefore keeps its own type instead of being
+  // forced through a packed scalar.
+  bool floatSelector = isa<FloatType>((*loweredSelector).getType());
   Value selector = *loweredSelector;
-  if (!stringSelector) {
+  if (!stringSelector && !floatSelector) {
     FailureOr<Value> scalarSelector = toPackedScalar(selector, location);
     if (failed(scalarSelector))
       return failure();
@@ -1960,6 +2004,8 @@ FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
   auto compare = [&](Value candidate, sim::CompareKind logicKind,
                      arith::CmpIPredicate integerKind,
                      Location itemLocation) -> FailureOr<Value> {
+    if (floatSelector)
+      return compareFloatMember(selector, candidate, integerKind, itemLocation);
     FailureOr<Value> normalized =
         convert(candidate, (*loweredSelector).getType(), false, itemLocation);
     if (failed(normalized))
