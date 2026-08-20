@@ -185,7 +185,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // Goto repetition plus a terminal continuation uses four distinct aggregate
 // DFA cells. Every weak EOS completion and terminal success becomes failure
-// after negation; the EOS coordinator counts all four cells.
+// after negation; an X/Z gap becomes a live pass, and the EOS coordinator
+// counts all four cells.
 // CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_count.43.repetition_weak(
 // CHECK-COUNT-4: obelisk_sim.ref.load
 // CHECK-NOT: obelisk_sim.ref.load
@@ -202,10 +203,12 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-NOT: obelisk_sim.ref.alloc
 // CHECK: obelisk_sim.spawn @unit_2.$concurrent_eos_count.43.repetition_weak
 // CHECK: obelisk_sim.spawn @unit_2.fork.43.1.1
+// CHECK: obelisk_sim.spawn @unit_2.fork.43.0.0
 
 // Nonconsecutive repetition has a different three-cell DFA. Cover's strong
 // operand failure at EOS becomes one hit per counted attempt; terminal
-// successes invert to silent failures.
+// successes invert to silent failures, while an X/Z gap is an operand failure
+// and therefore produces the negated property's live pass.
 // CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos_count.60.repetition_strong(
 // CHECK-COUNT-3: obelisk_sim.ref.load
 // CHECK-NOT: obelisk_sim.ref.load
@@ -221,4 +224,4 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-COUNT-3: obelisk_sim.ref.alloc
 // CHECK-NOT: obelisk_sim.ref.alloc
 // CHECK: obelisk_sim.spawn @unit_3.$concurrent_eos_count.60.repetition_strong
-// CHECK-NOT: obelisk_sim.spawn @unit_3.fork
+// CHECK: obelisk_sim.spawn @unit_3.fork.60.0.0

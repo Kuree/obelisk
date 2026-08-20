@@ -77,6 +77,67 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
+
+        // a[->0:$] ##1 b starts in the saturated terminal-pending state.
+        // A false b permits a to become the last occurrence; a true b also
+        // completes the zero-occurrence endpoint on the entry clock.
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 50 : i64, procedure_kind = 2 : i32, sym_name = "s50", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 51 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 52 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 53 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 54 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}], node_id = 55 : i64} {
+                obelisk.sv.assertion.simple attributes {has_repetition = true, is_null = false, node_id = 56 : i64, repetition_is_unbounded = true, repetition_kind = 2 : i32, repetition_min = 0 : i64} {
+                  obelisk.sv.expression.named_value attributes {node_id = 57 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                }
+                obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 58 : i64, repetition_is_unbounded = false} {
+                  obelisk.sv.expression.named_value attributes {node_id = 59 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                }
+              }
+            }
+            obelisk.sv.statement.expression_statement attributes {node_id = 60 : i64} {
+              obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "$display", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 61 : i64, semantic_type = !obelisk.void, subroutine_kind = 1 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s3.top::@s4.top} {
+                obelisk.sv.expression.string_literal attributes {constant_value = "goto-zero-pass", node_id = 62 : i64, semantic_type = !obelisk.ranged_packed_array<111 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                }
+              }
+            }
+          }
+        }
+
+        // a[=0:$] ##1 b has one saturated eligible state. Since the maximum
+        // is unbounded, true and false a have the same saturated destination,
+        // but X/Z a still kills the trace. The terminal b is tested on every
+        // clock, including the zero-occurrence entry clock.
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 70 : i64, procedure_kind = 2 : i32, sym_name = "s70", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 71 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 72 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 73 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 74 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}], node_id = 75 : i64} {
+                obelisk.sv.assertion.simple attributes {has_repetition = true, is_null = false, node_id = 76 : i64, repetition_is_unbounded = true, repetition_kind = 1 : i32, repetition_min = 0 : i64} {
+                  obelisk.sv.expression.named_value attributes {node_id = 77 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                }
+                obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 78 : i64, repetition_is_unbounded = false} {
+                  obelisk.sv.expression.named_value attributes {node_id = 79 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                }
+              }
+            }
+            obelisk.sv.statement.expression_statement attributes {node_id = 80 : i64} {
+              obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "$display", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 81 : i64, semantic_type = !obelisk.void, subroutine_kind = 1 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s3.top::@s4.top} {
+                obelisk.sv.expression.string_literal attributes {constant_value = "nonconsecutive-zero-pass", node_id = 82 : i64, semantic_type = !obelisk.ranged_packed_array<199 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -114,3 +175,64 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos_count.31.repetition_strong
 // CHECK-COUNT-3: obelisk_sim.assert.sampled_read
 // CHECK-NOT: obelisk_sim.assert.sampled_read
+
+// Goto minimum zero uses one nonpending and one terminal-pending saturated
+// state. Both are weak-completed at EOS. The repeated term is split into
+// true, strict-false, and X/Z classes; terminal failure gates the X/Z failure.
+// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_count.51.repetition_weak(
+// CHECK-COUNT-2: obelisk_sim.ref.load
+// CHECK-NOT: obelisk_sim.ref.load
+// CHECK: obelisk_sim.spawn @unit_2.fork.51.0.0
+// CHECK-LABEL: obelisk_sim.func private @unit_2(
+// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "goto"
+// CHECK-SAME: obelisk_sim.persistent_repetition_min = 0 : i64
+// CHECK-SAME: obelisk_sim.persistent_repetition_states = 2 : i64
+// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
+// CHECK-COUNT-2: obelisk_sim.ref.alloc
+// CHECK-NOT: obelisk_sim.ref.alloc
+// CHECK: %[[GOTO_NONPENDING:.*]] = obelisk_sim.ref.load
+// CHECK-NEXT: %[[GOTO_PENDING:.*]] = obelisk_sim.ref.load
+// CHECK: %[[GOTO_ONE:.*]] = arith.constant {{.*}}1 : i64
+// CHECK-NEXT: %[[GOTO_ENTRY:.*]] = arith.addi %[[GOTO_PENDING]], %[[GOTO_ONE]] : i64
+// CHECK: %[[GOTO_REPEAT:.*]] = obelisk_sim.assert.sampled_read
+// CHECK-NEXT: %[[GOTO_TRUE:.*]] = obelisk_sim.logic.is_true %[[GOTO_REPEAT]]
+// CHECK: %[[GOTO_ZERO:.*]] = obelisk_sim.logic.constant false, false
+// CHECK-NEXT: %[[GOTO_FALSE:.*]] = obelisk_sim.logic.compare case_eq %[[GOTO_REPEAT]], %[[GOTO_ZERO]]
+// CHECK-NEXT: %[[GOTO_KNOWN:.*]] = arith.ori %[[GOTO_TRUE]], %[[GOTO_FALSE]]
+// CHECK: %[[GOTO_UNKNOWN:.*]] = arith.xori %[[GOTO_KNOWN]],
+// CHECK: %[[GOTO_TERMINAL:.*]] = obelisk_sim.assert.sampled_read
+// CHECK: %[[GOTO_NOT_TERMINAL:.*]] = arith.xori
+// CHECK: arith.andi %[[GOTO_NOT_TERMINAL]], %[[GOTO_UNKNOWN]]
+// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK: obelisk_sim.spawn @unit_2.fork.51.0.0
+// CHECK: obelisk_sim.spawn @unit_2.fork.51.1.2
+
+// Nonconsecutive minimum zero has one saturated eligible state. Its terminal
+// is evaluated immediately. True and strict-false repeated values retain the
+// state after terminal failure; X/Z instead dispatches assertion failure.
+// CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos_count.71.repetition_weak(
+// CHECK-COUNT-1: obelisk_sim.ref.load
+// CHECK-NOT: obelisk_sim.ref.load
+// CHECK: obelisk_sim.spawn @unit_3.fork.71.0.0
+// CHECK-LABEL: obelisk_sim.func private @unit_3(
+// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "nonconsecutive"
+// CHECK-SAME: obelisk_sim.persistent_repetition_min = 0 : i64
+// CHECK-SAME: obelisk_sim.persistent_repetition_states = 1 : i64
+// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
+// CHECK-COUNT-1: obelisk_sim.ref.alloc
+// CHECK-NOT: obelisk_sim.ref.alloc
+// CHECK: %[[NONCONSECUTIVE_ACTIVE:.*]] = obelisk_sim.ref.load
+// CHECK: %[[NONCONSECUTIVE_ONE:.*]] = arith.constant {{.*}}1 : i64
+// CHECK-NEXT: %[[NONCONSECUTIVE_ENTRY:.*]] = arith.addi %[[NONCONSECUTIVE_ACTIVE]], %[[NONCONSECUTIVE_ONE]] : i64
+// CHECK: %[[NONCONSECUTIVE_REPEAT:.*]] = obelisk_sim.assert.sampled_read
+// CHECK-NEXT: %[[NONCONSECUTIVE_TRUE:.*]] = obelisk_sim.logic.is_true %[[NONCONSECUTIVE_REPEAT]]
+// CHECK: %[[NONCONSECUTIVE_ZERO:.*]] = obelisk_sim.logic.constant false, false
+// CHECK-NEXT: %[[NONCONSECUTIVE_FALSE:.*]] = obelisk_sim.logic.compare case_eq %[[NONCONSECUTIVE_REPEAT]], %[[NONCONSECUTIVE_ZERO]]
+// CHECK-NEXT: %[[NONCONSECUTIVE_KNOWN:.*]] = arith.ori %[[NONCONSECUTIVE_TRUE]], %[[NONCONSECUTIVE_FALSE]]
+// CHECK: %[[NONCONSECUTIVE_UNKNOWN:.*]] = arith.xori %[[NONCONSECUTIVE_KNOWN]],
+// CHECK: %[[NONCONSECUTIVE_TERMINAL:.*]] = obelisk_sim.assert.sampled_read
+// CHECK: %[[NONCONSECUTIVE_NOT_TERMINAL:.*]] = arith.xori
+// CHECK: arith.andi %[[NONCONSECUTIVE_NOT_TERMINAL]], %[[NONCONSECUTIVE_UNKNOWN]]
+// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK: obelisk_sim.spawn @unit_3.fork.71.0.0
+// CHECK: obelisk_sim.spawn @unit_3.fork.71.1.2

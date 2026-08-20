@@ -588,8 +588,8 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
             " currently requires a minimum no greater than 63 on one "
             "Boolean term, optionally preceded by a deterministic bounded "
             "prefix and followed by ##1 plus one Boolean term; minimum zero "
-            "is supported only for consecutive [*0:$] with that ##1 "
-            "Boolean continuation so no empty property endpoint remains");
+            "requires that ##1 Boolean continuation so no empty property "
+            "endpoint remains");
       }
       if (kind == semantic::SVSequenceRepetitionKind::Nonconsecutive) {
         return diagnose(
@@ -1493,9 +1493,7 @@ compilePersistentRepetition(Operation *operation) {
   result.maximum = unbounded
                        ? result.minimum
                        : static_cast<uint64_t>(*repetition.getRepetitionMax());
-  if (result.minimum == 0 &&
-      (!result.unbounded ||
-       result.kind != semantic::SVSequenceRepetitionKind::Consecutive))
+  if (result.minimum == 0 && !result.unbounded)
     return failure();
 
   SmallVector<Operation *> repeatedChildren = getChildren(repetition);
@@ -1535,7 +1533,7 @@ compilePersistentRepetition(Operation *operation) {
   // cannot be used as a sequential property (IEEE 1800-2017 16.12.2 and
   // 16.12.22). A ##1 Boolean continuation eliminates that empty property
   // endpoint; its zero-occurrence case is evaluated from the saturated
-  // pending state on the repetition entry clock.
+  // terminal-eligible state on the repetition entry clock.
   if (repetitionIndex + 1 == children.size()) {
     if (result.minimum == 0)
       return failure();
@@ -6810,36 +6808,43 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Value one = arith::ConstantOp::create(builder, location, stateType,
                                           builder.getI64IntegerAttr(1));
     DenseMap<Operation *, Value> predicateCache;
+    DenseMap<Operation *, Value> predicateValueCache;
     DenseMap<Attribute, Value> symbolicPredicateCache;
+    DenseMap<Attribute, Value> symbolicPredicateValueCache;
+    auto evaluatePredicate = [&](Operation *predicate) -> FailureOr<Value> {
+      if (auto found = predicateCache.find(predicate);
+          found != predicateCache.end())
+        return found->second;
+      Attribute referencedSymbol;
+      if (isa<semantic::SVNamedValueExpressionOp,
+              semantic::SVHierarchicalValueExpressionOp>(predicate))
+        referencedSymbol = predicate->getAttr("referenced_symbol");
+      if (referencedSymbol) {
+        if (auto found = symbolicPredicateCache.find(referencedSymbol);
+            found != symbolicPredicateCache.end()) {
+          predicateCache[predicate] = found->second;
+          predicateValueCache[predicate] =
+              symbolicPredicateValueCache.lookup(referencedSymbol);
+          return found->second;
+        }
+      }
+      FailureOr<Value> value = lowerExpression(predicate);
+      if (failed(value))
+        return failure();
+      FailureOr<Value> truth =
+          truthValue(*value, getSemanticLocation(predicate));
+      if (failed(truth))
+        return failure();
+      predicateCache[predicate] = *truth;
+      predicateValueCache[predicate] = *value;
+      if (referencedSymbol) {
+        symbolicPredicateCache[referencedSymbol] = *truth;
+        symbolicPredicateValueCache[referencedSymbol] = *value;
+      }
+      return *truth;
+    };
     auto evaluateAge = [&](const FixedSequenceAge &age) -> FailureOr<Value> {
       Value result = trueValue;
-      auto evaluatePredicate = [&](Operation *predicate) -> FailureOr<Value> {
-        if (auto found = predicateCache.find(predicate);
-            found != predicateCache.end())
-          return found->second;
-        Attribute referencedSymbol;
-        if (isa<semantic::SVNamedValueExpressionOp,
-                semantic::SVHierarchicalValueExpressionOp>(predicate))
-          referencedSymbol = predicate->getAttr("referenced_symbol");
-        if (referencedSymbol) {
-          if (auto found = symbolicPredicateCache.find(referencedSymbol);
-              found != symbolicPredicateCache.end()) {
-            predicateCache[predicate] = found->second;
-            return found->second;
-          }
-        }
-        FailureOr<Value> value = lowerExpression(predicate);
-        if (failed(value))
-          return failure();
-        FailureOr<Value> truth =
-            truthValue(*value, getSemanticLocation(predicate));
-        if (failed(truth))
-          return failure();
-        predicateCache[predicate] = *truth;
-        if (referencedSymbol)
-          symbolicPredicateCache[referencedSymbol] = *truth;
-        return *truth;
-      };
       for (Operation *predicate : age.predicates) {
         FailureOr<Value> truth = evaluatePredicate(predicate);
         if (failed(truth))
@@ -6859,6 +6864,34 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     auto negate = [&](Value value) {
       return arith::XOrIOp::create(builder, location, value, trueValue)
           .getResult();
+    };
+    auto evaluateStrictFalse =
+        [&](const FixedSequenceAge &age) -> FailureOr<Value> {
+      assert(age.predicates.size() + age.negatedPredicates.size() == 1 &&
+             "persistent repetition term must be one Boolean literal");
+      if (!age.negatedPredicates.empty())
+        return evaluatePredicate(age.negatedPredicates.front());
+
+      Operation *predicate = age.predicates.front();
+      FailureOr<Value> truth = evaluatePredicate(predicate);
+      if (failed(truth))
+        return failure();
+      Value value = predicateValueCache.lookup(predicate);
+      FailureOr<Value> scalar =
+          toPackedScalar(value, getSemanticLocation(predicate));
+      if (failed(scalar))
+        return failure();
+      if (auto logic = dyn_cast<sim::LogicType>((*scalar).getType())) {
+        IntegerType bits = builder.getIntegerType(logic.getWidth());
+        Value zeroLogic = sim::SimLogicConstantOp::create(
+            builder, location, logic, builder.getIntegerAttr(bits, 0),
+            builder.getIntegerAttr(bits, 0));
+        return sim::SimLogicCompareOp::create(
+                   builder, location, builder.getI1Type(),
+                   sim::CompareKind::CaseEq, *scalar, zeroLogic)
+            .getResult();
+      }
+      return negate(*truth);
     };
     auto selectCount = [&](Value condition, Value count) {
       return arith::SelectOp::create(builder, location, condition, count, zero)
@@ -6931,14 +6964,31 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     for (const TokenState &state : tokenStates)
       amounts.push_back(sim::SimRefLoadOp::create(builder, location, stateType,
                                                   state.storage));
-    addCount(amounts[findTokenState(0, persistentRepetition.minimum == 0 &&
-                                           persistentRepetition.hasTerminal)],
-             entryCount);
+    bool entryPending = persistentRepetition.minimum == 0 &&
+                        persistentRepetition.hasTerminal &&
+                        persistentRepetition.kind !=
+                            semantic::SVSequenceRepetitionKind::Nonconsecutive;
+    addCount(amounts[findTokenState(0, entryPending)], entryCount);
 
     FailureOr<Value> repeated = evaluateAge(persistentRepetition.term);
     if (failed(repeated))
       return failure();
     Value notRepeated = negate(*repeated);
+    Value repeatedUnknown = falseValue;
+    if (persistentRepetition.kind !=
+        semantic::SVSequenceRepetitionKind::Consecutive) {
+      // The derived goto/nonconsecutive gap is !term[*0:$]. Unlike ordinary
+      // sequence non-match, X/Z does not satisfy that logical negation: only
+      // a known zero may wait, while an unknown value kills the trace.
+      FailureOr<Value> strictFalse =
+          evaluateStrictFalse(persistentRepetition.term);
+      if (failed(strictFalse))
+        return failure();
+      notRepeated = *strictFalse;
+      Value repeatedKnown =
+          arith::OrIOp::create(builder, location, *repeated, notRepeated);
+      repeatedUnknown = negate(repeatedKnown);
+    }
     Value terminal = trueValue;
     Value notTerminal = falseValue;
     if (persistentRepetition.hasTerminal) {
@@ -6972,8 +7022,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         if (persistentRepetition.kind ==
             semantic::SVSequenceRepetitionKind::Consecutive)
           fail(amount, notRepeated);
-        else
+        else {
           route(index, amount, notRepeated);
+          fail(amount, repeatedUnknown);
+        }
         continue;
       }
 
@@ -7004,9 +7056,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                                    notTerminal, *repeated);
             Value waits = arith::AndIOp::create(builder, location, notTerminal,
                                                 notRepeated);
+            Value unknown = arith::AndIOp::create(builder, location,
+                                                  notTerminal, repeatedUnknown);
             route(index, amount, consumes);
             route(findTokenState(persistentRepetition.minimum, false), amount,
                   waits);
+            fail(amount, unknown);
             break;
           }
           uint64_t nextCount =
@@ -7015,17 +7070,26 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                nextCount >= persistentRepetition.minimum),
                 amount, *repeated);
           route(index, amount, notRepeated);
+          fail(amount, repeatedUnknown);
           break;
         }
         case semantic::SVSequenceRepetitionKind::Nonconsecutive: {
           if (state.occurrences >= persistentRepetition.minimum) {
             succeed(amount, terminal);
-            route(index, amount, notTerminal);
+            Value remainsKnown = arith::AndIOp::create(
+                builder, location, notTerminal,
+                arith::OrIOp::create(builder, location, *repeated,
+                                     notRepeated));
+            Value unknown = arith::AndIOp::create(builder, location,
+                                                  notTerminal, repeatedUnknown);
+            route(index, amount, remainsKnown);
+            fail(amount, unknown);
             break;
           }
           route(findTokenState(state.occurrences + 1, false), amount,
                 *repeated);
           route(index, amount, notRepeated);
+          fail(amount, repeatedUnknown);
           break;
         }
         }
@@ -7043,11 +7107,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             arith::AndIOp::create(builder, location, remaining, *repeated);
         Value waits =
             arith::AndIOp::create(builder, location, remaining, notRepeated);
+        Value unknown = arith::AndIOp::create(builder, location, remaining,
+                                              repeatedUnknown);
         if (state.occurrences == persistentRepetition.maximum)
           fail(amount, consumes);
         else
           route(findTokenState(state.occurrences + 1, false), amount, consumes);
         route(index, amount, waits);
+        fail(amount, unknown);
         continue;
       }
 
@@ -7056,6 +7123,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         bool nextPending = nextCount >= persistentRepetition.minimum;
         route(findTokenState(nextCount, nextPending), amount, *repeated);
         route(index, amount, notRepeated);
+        fail(amount, repeatedUnknown);
         continue;
       }
 
@@ -7068,8 +7136,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           arith::AndIOp::create(builder, location, notTerminal, *repeated);
       Value waits =
           arith::AndIOp::create(builder, location, notTerminal, notRepeated);
+      Value unknown = arith::AndIOp::create(builder, location, notTerminal,
+                                            repeatedUnknown);
       route(findTokenState(state.occurrences + 1, true), amount, consumes);
       route(findTokenState(state.occurrences, false), amount, waits);
+      fail(amount, unknown);
     }
 
     for (auto [state, nextAmount] : llvm::zip_equal(tokenStates, nextAmounts))
