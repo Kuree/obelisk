@@ -188,7 +188,7 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
   while (usedCodeUnits.contains(evalCodeUnit))
     ++evalCodeUnit;
   uint64_t evalScope = getCodeUnitScope(design, function).value_or(0);
-  sim::SimCodeUnitDeclOp::create(
+  sim::SimCodeUnitDeclOp evalDeclaration = sim::SimCodeUnitDeclOp::create(
       builder, function.getLoc(), evalCodeUnit, evalScope,
       sim::EntryKind::Function, builder.getStringAttr(evalName),
       builder.getStringAttr("generated native eval body"),
@@ -203,6 +203,13 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
       FunctionType::get(design.getContext(),
                         function.getFunctionType().getInputs(), TypeRange{}),
       sim::EntryKind::Function, evalAttributes, argumentAttrs);
+  // Every path that abandons the clone below erases both halves: a code-unit
+  // declaration naming a body that was never materialized would outlive the
+  // rejection and describe a symbol the design does not contain.
+  auto abandon = [&] {
+    evalBody.erase();
+    evalDeclaration.erase();
+  };
   evalBody->setAttr("obelisk.eval.borrowed_captures", builder.getUnitAttr());
   evalBody->setAttr("obelisk.eval.raw_captures", builder.getUnitAttr());
   if (Attribute owners = function->getAttr("obelisk.eval.source_owners"))
@@ -222,7 +229,7 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
                dyn_cast<sim::SimSuspendObserveOp>(wait->getTerminator()))
     activationSite = suspend.getSiteAttr();
   if (!activationSite || activationSite.getId() == 0) {
-    evalBody.erase();
+    abandon();
     return success();
   }
   evalBody->setAttr("obelisk.eval.continuation",
@@ -281,7 +288,7 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
       pending.push_back(successor);
   }
   if (activationBlocks.empty()) {
-    evalBody.erase();
+    abandon();
     return success();
   }
   for (Block *source : activationBlocks) {
@@ -315,6 +322,14 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
     builder.setInsertionPointToEnd(mapping.lookup(source));
     for (Operation &operation : *source) {
       if (isTypedSuspend(&operation) && &operation != source->getTerminator()) {
+        supported = false;
+        break;
+      }
+      // IEEE 1800-2017 13.2: a task may contain time-controlling statements,
+      // and a function cannot enable a task. The eval body is a zero-time
+      // function entry, so an activation that calls a task keeps its
+      // coroutine identity instead.
+      if (isa<sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp>(operation)) {
         supported = false;
         break;
       }
@@ -395,7 +410,7 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
       break;
   }
   if (!supported) {
-    evalBody.erase();
+    abandon();
     return success();
   }
   function->setAttr("obelisk.eval.body",
