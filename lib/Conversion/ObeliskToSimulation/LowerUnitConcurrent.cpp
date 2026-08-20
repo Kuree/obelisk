@@ -701,9 +701,10 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
       });
       if (persistent)
         return diagnose(
-            "first_match over persistent [->]/[=] repetition is not "
-            "executable yet; the aggregate token monitor currently applies "
-            "property-level earliest-success semantics");
+            "first_match over persistent [->]/[=] repetition currently "
+            "requires one direct outer scope without match items; that scope "
+            "uses the aggregate monitor's property-level earliest-success "
+            "semantics");
     }
     if (auto unary = dyn_cast<semantic::SVUnaryAssertionExprOp>(current)) {
       if (unary.getOperatorKind() == semantic::SVAssertionUnaryOperator::Not)
@@ -3158,6 +3159,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
   bool firstMatch = false;
   Operation *outerFirstMatchOperation = nullptr;
+  Operation *outerFirstMatchSequence = nullptr;
   if (auto first = dyn_cast<semantic::SVFirstMatchAssertionExprOp>(property)) {
     SmallVector<Operation *> nested = getChildren(first);
     if (first.getMatchItemCount() != 0 || nested.size() != 1)
@@ -3166,6 +3168,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
              failure();
     firstMatch = true;
     outerFirstMatchOperation = first.getOperation();
+    outerFirstMatchSequence = unwrapAssertionInstance(nested.front());
+    if (!outerFirstMatchSequence)
+      return first.emitError(
+                 "first_match wraps an unsupported assertion instance"),
+             failure();
   }
   auto hasOnlyFirstMatchBoundary = [](const FixedSequence &candidate,
                                       Operation *firstMatchOperation) {
@@ -3307,6 +3314,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   bool consequentAlternativesAdmissionEligible = true;
   bool consequentEndStrengthComposable = true;
   Operation *directFirstMatchConsequent = nullptr;
+  Operation *directFirstMatchConsequentSequence = nullptr;
   Operation *consequentFirstMatchOperation = nullptr;
   bool erasedConsequentFirstMatch = false;
   std::optional<bool> consequentUniformIntrinsicEndStrong;
@@ -3402,8 +3410,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
               dyn_cast<semantic::SVFirstMatchAssertionExprOp>(executableRhs)) {
         SmallVector<Operation *> firstChildren = getChildren(first);
         if (first.getMatchItemCount() == 0 && firstChildren.size() == 1) {
-          directFirstMatchConsequent = executableRhs;
-          consequentFirstMatchOperation = first.getOperation();
+          Operation *sequence = unwrapAssertionInstance(firstChildren.front());
+          if (sequence) {
+            directFirstMatchConsequent = executableRhs;
+            directFirstMatchConsequentSequence = sequence;
+            consequentFirstMatchOperation = first.getOperation();
+          }
         }
       }
     }
@@ -3419,7 +3431,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     FailureOr<PersistentUntilProperty> untilRhs =
         compilePersistentUntil(rhsOperand);
     FailureOr<PersistentRepetitionSequence> repetitionRhs =
-        compilePersistentRepetition(rhsOperand);
+        compilePersistentRepetition(directFirstMatchConsequentSequence
+                                        ? directFirstMatchConsequentSequence
+                                        : rhsOperand);
     if (succeeded(lhs)) {
       bool hasEmpty = llvm::any_of(
           *lhs, [](const FixedSequence &value) { return value.emptyMatch; });
@@ -3500,6 +3514,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
              failure();
     }
     antecedentAlternativeAdmissionCount = lhs->size();
+    if (succeeded(repetitionRhs) && directFirstMatchConsequentSequence) {
+      erasedConsequentFirstMatch = true;
+      function->setAttr("obelisk_sim.consequent_first_match_equivalence",
+                        builder.getUnitAttr());
+    }
     if (succeeded(rhs)) {
       // When both sides branch, an outer consequent first_match wraps a
       // sequence used directly as a property. IEEE 16.12.2 makes both its
@@ -3634,10 +3653,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       // Keep ordinary bounded validation structurally nonempty.
       sequence.ages.resize(1);
     } else if (FailureOr<PersistentRepetitionSequence> persistent =
-                   compilePersistentRepetition(property);
+                   compilePersistentRepetition(outerFirstMatchSequence
+                                                   ? outerFirstMatchSequence
+                                                   : property);
                succeeded(persistent)) {
       persistentRepetition = std::move(*persistent);
       hasPersistentRepetition = true;
+      if (outerFirstMatchSequence)
+        function->setAttr("obelisk_sim.persistent_first_match_equivalence",
+                          builder.getUnitAttr());
       // The persistent monitor owns its own token state below. Keep ordinary
       // bounded validation structurally nonempty without allocating the fixed
       // age bitset.
@@ -3959,7 +3983,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   if (hasPersistentRepetition &&
       (localInstance ||
        (implication && !persistentConsequentImplicationEligible) ||
-       expectMonitor || firstMatch || coverSequence))
+       expectMonitor || coverSequence))
     return emitError(getSemanticLocation(property))
                << "persistent [*]/[->]/[=] repetition currently requires a "
                   "plain assert, assume, cover-property, or restrict "
