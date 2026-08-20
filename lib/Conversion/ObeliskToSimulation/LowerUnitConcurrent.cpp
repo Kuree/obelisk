@@ -585,9 +585,11 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
       if (unbounded) {
         return diagnose(
             Twine("unbounded sequence repetition ") + spelling +
-            " currently requires a positive minimum no greater than 63 "
-            "on one Boolean term, optionally preceded by a deterministic "
-            "bounded prefix and followed by ##1 plus one Boolean term");
+            " currently requires a minimum no greater than 63 on one "
+            "Boolean term, optionally preceded by a deterministic bounded "
+            "prefix and followed by ##1 plus one Boolean term; minimum zero "
+            "is supported only for consecutive [*0:$] with that ##1 "
+            "Boolean continuation so no empty property endpoint remains");
       }
       if (kind == semantic::SVSequenceRepetitionKind::Nonconsecutive) {
         return diagnose(
@@ -1474,7 +1476,6 @@ compilePersistentRepetition(Operation *operation) {
     repetitionIndex = index;
   }
   if (!repetition || !repetition.getRepetitionMin() ||
-      *repetition.getRepetitionMin() <= 0 ||
       *repetition.getRepetitionMin() > 63)
     return failure();
 
@@ -1492,6 +1493,10 @@ compilePersistentRepetition(Operation *operation) {
   result.maximum = unbounded
                        ? result.minimum
                        : static_cast<uint64_t>(*repetition.getRepetitionMax());
+  if (result.minimum == 0 &&
+      (!result.unbounded ||
+       result.kind != semantic::SVSequenceRepetitionKind::Consecutive))
+    return failure();
 
   SmallVector<Operation *> repeatedChildren = getChildren(repetition);
   if (repeatedChildren.size() != 1)
@@ -1526,8 +1531,16 @@ compilePersistentRepetition(Operation *operation) {
       failed(appendFixedSequence(result.entry, entryPoint, *repetitionDelay)))
     return failure();
 
-  if (repetitionIndex + 1 == children.size())
+  // A zero-minimum repetition by itself admits an empty match and therefore
+  // cannot be used as a sequential property (IEEE 1800-2017 16.12.2 and
+  // 16.12.22). A ##1 Boolean continuation eliminates that empty property
+  // endpoint; its zero-occurrence case is evaluated from the saturated
+  // pending state on the repetition entry clock.
+  if (repetitionIndex + 1 == children.size()) {
+    if (result.minimum == 0)
+      return failure();
     return result;
+  }
   if (repetitionIndex + 2 != children.size())
     return failure();
   std::optional<uint64_t> terminalDelay = getFixedDelay(repetitionIndex + 1);
@@ -6797,12 +6810,24 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Value one = arith::ConstantOp::create(builder, location, stateType,
                                           builder.getI64IntegerAttr(1));
     DenseMap<Operation *, Value> predicateCache;
+    DenseMap<Attribute, Value> symbolicPredicateCache;
     auto evaluateAge = [&](const FixedSequenceAge &age) -> FailureOr<Value> {
       Value result = trueValue;
       auto evaluatePredicate = [&](Operation *predicate) -> FailureOr<Value> {
         if (auto found = predicateCache.find(predicate);
             found != predicateCache.end())
           return found->second;
+        Attribute referencedSymbol;
+        if (isa<semantic::SVNamedValueExpressionOp,
+                semantic::SVHierarchicalValueExpressionOp>(predicate))
+          referencedSymbol = predicate->getAttr("referenced_symbol");
+        if (referencedSymbol) {
+          if (auto found = symbolicPredicateCache.find(referencedSymbol);
+              found != symbolicPredicateCache.end()) {
+            predicateCache[predicate] = found->second;
+            return found->second;
+          }
+        }
         FailureOr<Value> value = lowerExpression(predicate);
         if (failed(value))
           return failure();
@@ -6811,6 +6836,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         if (failed(truth))
           return failure();
         predicateCache[predicate] = *truth;
+        if (referencedSymbol)
+          symbolicPredicateCache[referencedSymbol] = *truth;
         return *truth;
       };
       for (Operation *predicate : age.predicates) {
@@ -6904,7 +6931,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     for (const TokenState &state : tokenStates)
       amounts.push_back(sim::SimRefLoadOp::create(builder, location, stateType,
                                                   state.storage));
-    addCount(amounts[findTokenState(0, false)], entryCount);
+    addCount(amounts[findTokenState(0, persistentRepetition.minimum == 0 &&
+                                           persistentRepetition.hasTerminal)],
+             entryCount);
 
     FailureOr<Value> repeated = evaluateAge(persistentRepetition.term);
     if (failed(repeated))
