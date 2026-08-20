@@ -1,6 +1,6 @@
 // RUN: not obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s
 
-// CHECK: error: SVA 'strong' end-of-simulation qualification currently requires one outermost deterministic bounded property without implication/followed-by, branching composition, persistent until, first_match, expect, or cover-sequence per-match accounting
+// CHECK: error: SVA 'strong' end-of-simulation qualification currently requires one outermost bounded sequence property without implication/followed-by, unsupported persistent operators, expect, or cover-sequence per-match accounting
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {
@@ -24,7 +24,7 @@ module {
                 }
               }
               obelisk.sv.assertion.strong_weak attributes {node_id = 13 : i64, strength = 0 : i32} {
-                obelisk.sv.assertion.binary attributes {node_id = 14 : i64, operator_kind = 1 : i32} {
+                obelisk.sv.assertion.binary attributes {node_id = 14 : i64, operator_kind = 12 : i32} {
                   obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 15 : i64, repetition_is_unbounded = false} {
                     obelisk.sv.expression.named_value attributes {node_id = 16 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                     }

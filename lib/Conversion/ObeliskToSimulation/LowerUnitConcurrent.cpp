@@ -525,10 +525,9 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
           Twine("SVA '") +
           semantic::stringifySVAssertionStrength(strong.getStrength()) +
           "' end-of-simulation qualification currently requires one "
-          "outermost deterministic bounded property without "
-          "implication/followed-by, branching composition, persistent "
-          "operators, first_match, expect, or cover-sequence per-match "
-          "accounting");
+          "outermost bounded sequence property without implication/"
+          "followed-by, unsupported persistent operators, expect, or "
+          "cover-sequence per-match accounting");
     if (auto abort = dyn_cast<semantic::SVAbortAssertionExprOp>(current)) {
       std::string spelling =
           (Twine(abort.getIsSynchronous() ? "sync_" : "") +
@@ -2819,17 +2818,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                   "concurrent directive without locals, implication, or "
                   "expect",
            failure();
-  if (endStrength &&
-      (implication || branchingSequence || hasPersistentUntil ||
-       hasPersistentUnary || firstMatch || expectMonitor || coverSequence))
+  if (endStrength && (implication || hasPersistentUntil || hasPersistentUnary ||
+                      expectMonitor || coverSequence))
     return emitError(getSemanticLocation(endStrengthSource))
                << "SVA '"
                << semantic::stringifySVAssertionStrength(
                       endStrength.getStrength())
                << "' end-of-simulation qualification currently requires "
-                  "one outermost deterministic bounded property without "
-                  "implication/followed-by, branching composition, "
-                  "persistent until, first_match, expect, or "
+                  "one outermost bounded sequence property without "
+                  "implication/followed-by, unsupported persistent "
+                  "operators, expect, or "
                   "cover-sequence per-match accounting",
            failure();
   if (temporalNegation &&
@@ -4084,7 +4082,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return success();
   };
 
-  if (endStrengthSource) {
+  auto outlineEndOfSimulationReports = [&](ArrayRef<Value> liveStateStorages,
+                                           size_t horizon) -> LogicalResult {
+    if (!endStrengthSource)
+      return success();
     bool operandStrong = endStrength ? endStrength.getStrength() ==
                                            semantic::SVAssertionStrength::Strong
                                      : cover;
@@ -4105,10 +4106,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                             : semantic::SVAssertionStrength::Weak)));
 
     // A one-cycle property has no incomplete attempt at end of simulation.
-    // For longer deterministic traces every live bit is one distinct attempt.
-    // A final-phase coordinator inspects those bits oldest-first and schedules
-    // one final-phase Reactive action for each strong operand failure or weak
-    // operand success, after applying an outer temporal negation when present.
+    // For longer traces each age bit denotes one distinct property attempt.
+    // Branching alternatives may carry the same attempt in several state
+    // words, so the final coordinator first unions those words and then emits
+    // exactly one completion per live age, oldest-first.
+    //
     // A weak operand completion is vacuous and remains invisible to cover;
     // negating a strong operand failure instead produces a nonvacuous hit.
     bool operandPassed = !operandStrong;
@@ -4117,7 +4119,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     std::optional<ReportCallback> *selectedReport =
         completionPassed ? (cover && vacuousCompletion ? nullptr : &passReport)
                          : &failReport;
-    if (sequence.ages.size() > 1 && selectedReport && *selectedReport) {
+    if (horizon > 1 && !liveStateStorages.empty() && selectedReport &&
+        *selectedReport) {
       auto design = function->getParentOfType<sim::SimDesignOp>();
       if (!design)
         return function.emitError(
@@ -4183,10 +4186,18 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       outlineBuilder.insert(clonedReport);
 
       Value context = function.getBody().front().getArgument(0);
-      SmallVector<Value> captures{context, stateStorage};
+      SmallVector<Value> captures{context};
       DenseMap<Value, unsigned> captureIndices;
       captureIndices.try_emplace(context, 0);
-      captureIndices.try_emplace(stateStorage, 1);
+      SmallVector<unsigned> stateCaptureIndices;
+      stateCaptureIndices.reserve(liveStateStorages.size());
+      for (Value storage : liveStateStorages) {
+        auto [entry, inserted] =
+            captureIndices.try_emplace(storage, captures.size());
+        if (inserted)
+          captures.push_back(storage);
+        stateCaptureIndices.push_back(entry->second);
+      }
       SmallVector<unsigned> reportCaptureIndices;
       reportCaptureIndices.reserve(report.captures.size());
       for (Value capture : report.captures) {
@@ -4285,13 +4296,19 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
       Block *current = &coordinator.getBody().front();
       OpBuilder coordinatorBuilder = OpBuilder::atBlockEnd(current);
-      Value live = sim::SimRefLoadOp::create(
-          coordinatorBuilder, getSemanticLocation(endStrengthSource), stateType,
-          current->getArgument(1));
       Value finalZero = arith::ConstantOp::create(
           coordinatorBuilder, getSemanticLocation(endStrengthSource), stateType,
           coordinatorBuilder.getI64IntegerAttr(0));
-      for (uint64_t age = sequence.ages.size(); age-- > 1;) {
+      Value live = finalZero;
+      for (unsigned index : stateCaptureIndices) {
+        Value alternative = sim::SimRefLoadOp::create(
+            coordinatorBuilder, getSemanticLocation(endStrengthSource),
+            stateType, current->getArgument(index));
+        live = arith::OrIOp::create(coordinatorBuilder,
+                                    getSemanticLocation(endStrengthSource),
+                                    live, alternative);
+      }
+      for (uint64_t age = horizon; age-- > 1;) {
         Block *reportBlock = new Block;
         Block *continuation = new Block;
         coordinator.getBody().push_back(reportBlock);
@@ -4339,7 +4356,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                               coordinator.getSymNameAttr(), captures,
                               ArrayAttr{}, ArrayAttr{});
     }
-  }
+    return success();
+  };
+
+  if (!branchingSequence && failed(outlineEndOfSimulationReports(
+                                {stateStorage}, sequence.ages.size())))
+    return failure();
 
   if (abort && !abort.getIsSynchronous() && !persistentStateOwner) {
     // Asynchronous aborts need a persistent observer in addition to the
@@ -6148,7 +6170,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                         builder.getI64IntegerAttr(vacuousAlternatives));
     SmallVector<Value> alternativeStates;
     alternativeStates.reserve(alternatives.size());
+    size_t horizon = 0;
     for (const FixedSequence &alternative : alternatives) {
+      horizon = std::max(horizon, alternative.ages.size());
       if (alternative.ages.size() == 1 &&
           !(branchingConsequent && nonoverlapped)) {
         alternativeStates.push_back(Value{});
@@ -6163,6 +6187,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       if (storage)
         branchingStateStorages.push_back(storage);
     if (failed(outlineDisableObserver(branchingStateStorages)))
+      return failure();
+    if (branchingSequence &&
+        failed(outlineEndOfSimulationReports(branchingStateStorages, horizon)))
       return failure();
 
     Block *wait = addBlock();
@@ -6192,9 +6219,6 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         builder, location, builder.getI1Type(), builder.getBoolAttr(false));
     Value trueValue = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(true));
-    size_t horizon = 0;
-    for (const FixedSequence &alternative : alternatives)
-      horizon = std::max(horizon, alternative.ages.size());
     SmallVector<Value> activeAny(horizon, falseValue);
     SmallVector<Value> successAny(horizon, falseValue);
     SmallVector<Value> nonvacuousSuccessAny(horizon, falseValue);
