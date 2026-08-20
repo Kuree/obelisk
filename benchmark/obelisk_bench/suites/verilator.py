@@ -169,6 +169,13 @@ THROUGHOUT_TEMPORAL_AND = Exclusion(
     "tick of a `(b ##1 c) and (c ##1 b)` match must satisfy the condition; the "
     "test expects 25 where its own comment records \"All other sims: 36\" and "
     "names the undercount a known limitation of Verilator's SAnd combiner")
+MIXED_VARIABLE_DRIVERS = Exclusion(
+    "IEEE 1800-2017 10.3",
+    "it is an error for a variable driven by a continuous assignment to also "
+    "have a procedural assignment, and the test drives every bit of `tsb.id` "
+    "with `assign` while an initial block writes the same bits; 6.5 splits "
+    "that rule per element, which Obelisk honors for genuinely disjoint "
+    "fields")
 UNNAMED_TYPE_SPELLING = Exclusion(
     "IEEE 1800-2017 20.6.1",
     "$typename spells an unnamed type in an implementation-dependent way, and "
@@ -199,6 +206,8 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_select_negative": UNSIGNED_SELECT_INDEX,
     "t_enum_func": IMPLICIT_SENSITIVITY_STARTUP,
     "t_sequence_sexpr_throughout": THROUGHOUT_TEMPORAL_AND,
+    "t_detectarray_1": MIXED_VARIABLE_DRIVERS,
+    "t_detectarray_2": MIXED_VARIABLE_DRIVERS,
     "t_split_var_4": TWO_STATE_INITIALIZATION,
     "t_param_type5": UNNAMED_TYPE_SPELLING,
     "t_emit_constw": OUT_OF_RANGE_PART_SELECT_READ,
