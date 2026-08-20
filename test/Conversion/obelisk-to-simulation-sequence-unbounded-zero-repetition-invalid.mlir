@@ -1,9 +1,13 @@
 // RUN: %split-file %s %t
 // RUN: not obelisk-opt %t/goto.mlir '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s --check-prefix=GOTO
 // RUN: not obelisk-opt %t/nonconsecutive.mlir '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s --check-prefix=NONCONSECUTIVE
+// RUN: not obelisk-opt %t/finite-goto.mlir '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s --check-prefix=FINITE-GOTO
+// RUN: not obelisk-opt %t/finite-nonconsecutive.mlir '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s --check-prefix=FINITE-NONCONSECUTIVE
 
 // GOTO: error: unbounded sequence repetition [->] currently requires a minimum no greater than 63 on one Boolean term, optionally preceded by a deterministic bounded prefix and followed by ##1 plus one Boolean term; minimum zero requires that ##1 Boolean continuation so no empty property endpoint remains
 // NONCONSECUTIVE: error: unbounded sequence repetition [=] currently requires a minimum no greater than 63 on one Boolean term, optionally preceded by a deterministic bounded prefix and followed by ##1 plus one Boolean term; minimum zero requires that ##1 Boolean continuation so no empty property endpoint remains
+// FINITE-GOTO: error: goto sequence repetition [->] currently requires a finite range no greater than 63 on one boolean term, optionally preceded by a deterministic bounded prefix and followed by ##1 plus one boolean term; minimum zero requires that continuation so no empty property endpoint remains
+// FINITE-NONCONSECUTIVE: error: nonconsecutive sequence repetition [=] currently requires a finite range no greater than 63 on one boolean term, optionally preceded by a deterministic bounded prefix and followed by ##1 plus one boolean term; minimum zero requires that continuation so no empty property endpoint remains
 
 // A standalone zero-minimum goto or nonconsecutive repetition admits an empty
 // match and therefore cannot be promoted directly to a sequential property.
@@ -31,6 +35,72 @@ module {
               }
               obelisk.sv.assertion.simple attributes {has_repetition = true, is_null = false, node_id = 12 : i64, repetition_is_unbounded = true, repetition_kind = 2 : i32, repetition_min = 0 : i64} {
                 obelisk.sv.expression.named_value attributes {node_id = 13 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+//--- finite-goto.mlir
+
+module {
+  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 40 : i64, sym_name = "s0.top"} {
+  }
+  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 41 : i64, sym_name = "s1.$root"} {
+    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 42 : i64, sym_name = "s2"} {
+    }
+    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 43 : i64, referenced_path = "top", referenced_symbol = @s0.top, sym_name = "s3.top"} {
+      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 44 : i64, sym_name = "s4.top"} {
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.clk", lifetime = 1 : i32, name = "clk", node_id = 45 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s5.clk"} {
+        }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.a", lifetime = 1 : i32, name = "a", node_id = 46 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.a"} {
+        }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 47 : i64, procedure_kind = 2 : i32, sym_name = "s7", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 48 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 49 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 50 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 51 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.simple attributes {has_repetition = true, is_null = false, node_id = 52 : i64, repetition_is_unbounded = false, repetition_kind = 2 : i32, repetition_max = 2 : i64, repetition_min = 0 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 53 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+//--- finite-nonconsecutive.mlir
+
+module {
+  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 60 : i64, sym_name = "s0.top"} {
+  }
+  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 61 : i64, sym_name = "s1.$root"} {
+    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 62 : i64, sym_name = "s2"} {
+    }
+    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 63 : i64, referenced_path = "top", referenced_symbol = @s0.top, sym_name = "s3.top"} {
+      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 64 : i64, sym_name = "s4.top"} {
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.clk", lifetime = 1 : i32, name = "clk", node_id = 65 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s5.clk"} {
+        }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.a", lifetime = 1 : i32, name = "a", node_id = 66 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.a"} {
+        }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 67 : i64, procedure_kind = 2 : i32, sym_name = "s7", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 68 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 69 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 70 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 71 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.simple attributes {has_repetition = true, is_null = false, node_id = 72 : i64, repetition_is_unbounded = false, repetition_kind = 1 : i32, repetition_max = 2 : i64, repetition_min = 0 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 73 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                 }
               }
             }

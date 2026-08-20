@@ -594,16 +594,18 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
       if (kind == semantic::SVSequenceRepetitionKind::Nonconsecutive) {
         return diagnose(
             "nonconsecutive sequence repetition [=] currently requires a "
-            "positive finite range no greater than 63 on one boolean term, "
+            "finite range no greater than 63 on one boolean term, "
             "optionally preceded by a deterministic bounded prefix and "
-            "followed by ##1 plus one boolean term");
+            "followed by ##1 plus one boolean term; minimum zero requires "
+            "that continuation so no empty property endpoint remains");
       }
       if (kind == semantic::SVSequenceRepetitionKind::GoTo) {
         return diagnose(
-            "goto sequence repetition [->] currently requires a positive "
-            "finite range no greater than 63 on one boolean term, optionally "
-            "preceded by a deterministic bounded prefix and followed by ##1 "
-            "plus one boolean term");
+            "goto sequence repetition [->] currently requires a finite range "
+            "no greater than 63 on one boolean term, optionally preceded by "
+            "a deterministic bounded prefix and followed by ##1 plus one "
+            "boolean term; minimum zero requires that continuation so no "
+            "empty property endpoint remains");
       }
       if (minimum && *minimum == 0)
         return diagnose(
@@ -1493,8 +1495,6 @@ compilePersistentRepetition(Operation *operation) {
   result.maximum = unbounded
                        ? result.minimum
                        : static_cast<uint64_t>(*repetition.getRepetitionMax());
-  if (result.minimum == 0 && !result.unbounded)
-    return failure();
 
   SmallVector<Operation *> repeatedChildren = getChildren(repetition);
   if (repeatedChildren.size() != 1)
