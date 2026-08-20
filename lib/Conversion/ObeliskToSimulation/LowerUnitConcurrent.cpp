@@ -2426,9 +2426,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (succeeded(delayedRhs)) {
       persistentDelay = std::move(*delayedRhs);
       hasPersistentDelay = true;
-      // The compact implication path below admits the high-frequency
-      // a |-> ##[M:$] b shape. More general consequent prefixes require an
-      // activation-aware bounded-prefix bitset and remain diagnosed below.
+      // The compact implication path below feeds each antecedent match into
+      // the deterministic bounded-prefix pipeline. Prefix attempts remain
+      // one bit per age because at most one new antecedent match starts on a
+      // clock tick; successful prefixes then merge into the delay aggregate.
       sequence.ages.resize(1);
     } else {
       if (rhs->size() == 1)
@@ -2601,14 +2602,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   if (hasPersistentDelay && implication &&
       (branchingAntecedent || antecedentSequence.ages.size() != 1 ||
        !antecedentSequence.ages.front().matchItems.empty() ||
-       !antecedentSequence.ages.front().caseGuards.empty() ||
-       persistentDelay.prefix.ages.size() != 1 ||
-       !persistentDelay.prefix.ages.front().predicates.empty() ||
-       !persistentDelay.prefix.ages.front().negatedPredicates.empty()))
+       !antecedentSequence.ages.front().caseGuards.empty()))
     return emitError(getSemanticLocation(implication))
                << "unbounded implication/followed-by delay currently "
-                  "requires one Boolean antecedent and a leading "
-                  "##[M:$] Boolean consequent without an explicit prefix",
+                  "requires one Boolean antecedent and a deterministic "
+                  "bounded consequent prefix before the final ##[M:$] "
+                  "Boolean terminal",
            failure();
   if (branchingAntecedent &&
       (localInstance || expectMonitor || endStrength))
@@ -4575,12 +4574,24 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Value one = arith::ConstantOp::create(builder, location, stateType,
                                           builder.getI64IntegerAttr(1));
     DenseMap<Operation *, Value> predicateCache;
+    DenseMap<Attribute, Value> symbolicPredicateCache;
     auto evaluateAge = [&](const FixedSequenceAge &age) -> FailureOr<Value> {
       Value result = trueValue;
       auto evaluatePredicate = [&](Operation *predicate) -> FailureOr<Value> {
         if (auto found = predicateCache.find(predicate);
             found != predicateCache.end())
           return found->second;
+        Attribute referencedSymbol;
+        if (isa<semantic::SVNamedValueExpressionOp,
+                semantic::SVHierarchicalValueExpressionOp>(predicate))
+          referencedSymbol = predicate->getAttr("referenced_symbol");
+        if (referencedSymbol) {
+          if (auto found = symbolicPredicateCache.find(referencedSymbol);
+              found != symbolicPredicateCache.end()) {
+            predicateCache[predicate] = found->second;
+            return found->second;
+          }
+        }
         FailureOr<Value> value = lowerExpression(predicate);
         if (failed(value))
           return failure();
@@ -4589,6 +4600,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         if (failed(truth))
           return failure();
         predicateCache[predicate] = *truth;
+        if (referencedSymbol)
+          symbolicPredicateCache[referencedSymbol] = *truth;
         return *truth;
       };
       for (Operation *predicate : age.predicates) {
@@ -4624,6 +4637,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Value nextPrefixState = zero;
     Value completedPrefix = zero;
     Value failedPrefix = zero;
+    Value prefixActive = trueValue;
     Value antecedentResultCount = zero;
     if (implication) {
       FailureOr<Value> antecedent =
@@ -4635,63 +4649,71 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       antecedentResultCount = selectCount(antecedentFails, one);
       Value triggered = selectCount(*antecedent, one);
       if (delayedActivationStorage) {
-        completedPrefix = sim::SimRefLoadOp::create(
+        Value delayedActivation = sim::SimRefLoadOp::create(
             builder, location, stateType, delayedActivationStorage);
+        prefixActive = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, delayedActivation,
+            zero);
         sim::SimRefStoreOp::create(builder, location, triggered,
                                    delayedActivationStorage);
       } else {
-        completedPrefix = triggered;
+        prefixActive = *antecedent;
       }
-    } else {
-      for (uint64_t age = 1; age < persistentDelay.prefix.ages.size(); ++age) {
-        Value mask = arith::ConstantOp::create(
-            builder, location, stateType,
-            builder.getI64IntegerAttr(uint64_t{1} << age));
-        Value present =
-            arith::AndIOp::create(builder, location, prefixState, mask);
-        Value active = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::ne, present, zero);
-        FailureOr<Value> matches =
-            evaluateAge(persistentDelay.prefix.ages[age]);
-        if (failed(matches))
-          return failure();
-        Value advances =
-            arith::AndIOp::create(builder, location, active, *matches);
-        Value notMatches =
-            arith::XOrIOp::create(builder, location, *matches, trueValue);
-        Value fails =
-            arith::AndIOp::create(builder, location, active, notMatches);
-        addCount(failedPrefix, selectCount(fails, one));
-        if (age + 1 == persistentDelay.prefix.ages.size()) {
-          addCount(completedPrefix, selectCount(advances, one));
-        } else {
-          Value nextMask = arith::ConstantOp::create(
-              builder, location, stateType,
-              builder.getI64IntegerAttr(uint64_t{1} << (age + 1)));
-          Value advanced = selectCount(advances, nextMask);
-          nextPrefixState = arith::OrIOp::create(builder, location,
-                                                 nextPrefixState, advanced);
-        }
-      }
+    }
 
-      FailureOr<Value> starts =
-          evaluateAge(persistentDelay.prefix.ages.front());
-      if (failed(starts))
+    for (uint64_t age = 1; age < persistentDelay.prefix.ages.size(); ++age) {
+      Value mask = arith::ConstantOp::create(
+          builder, location, stateType,
+          builder.getI64IntegerAttr(uint64_t{1} << age));
+      Value present =
+          arith::AndIOp::create(builder, location, prefixState, mask);
+      Value active = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, present, zero);
+      FailureOr<Value> matches = evaluateAge(persistentDelay.prefix.ages[age]);
+      if (failed(matches))
         return failure();
-      Value failedStart =
-          arith::XOrIOp::create(builder, location, *starts, trueValue);
-      addCount(failedPrefix, selectCount(failedStart, one));
-      if (persistentDelay.prefix.ages.size() == 1) {
-        addCount(completedPrefix, selectCount(*starts, one));
+      Value advances =
+          arith::AndIOp::create(builder, location, active, *matches);
+      Value notMatches =
+          arith::XOrIOp::create(builder, location, *matches, trueValue);
+      Value fails =
+          arith::AndIOp::create(builder, location, active, notMatches);
+      addCount(failedPrefix, selectCount(fails, one));
+      if (age + 1 == persistentDelay.prefix.ages.size()) {
+        addCount(completedPrefix, selectCount(advances, one));
       } else {
-        Value firstMask = arith::ConstantOp::create(
-            builder, location, stateType, builder.getI64IntegerAttr(2));
-        Value started = selectCount(*starts, firstMask);
+        Value nextMask = arith::ConstantOp::create(
+            builder, location, stateType,
+            builder.getI64IntegerAttr(uint64_t{1} << (age + 1)));
+        Value advanced = selectCount(advances, nextMask);
         nextPrefixState =
-            arith::OrIOp::create(builder, location, nextPrefixState, started);
-        sim::SimRefStoreOp::create(builder, location, nextPrefixState,
-                                   prefixStateStorage);
+            arith::OrIOp::create(builder, location, nextPrefixState, advanced);
       }
+    }
+
+    FailureOr<Value> starts = evaluateAge(persistentDelay.prefix.ages.front());
+    if (failed(starts))
+      return failure();
+    Value advances = *starts;
+    Value failedStart =
+        arith::XOrIOp::create(builder, location, *starts, trueValue);
+    if (implication) {
+      advances = arith::AndIOp::create(builder, location, advances,
+                                       prefixActive);
+      failedStart = arith::AndIOp::create(builder, location, failedStart,
+                                          prefixActive);
+    }
+    addCount(failedPrefix, selectCount(failedStart, one));
+    if (persistentDelay.prefix.ages.size() == 1) {
+      addCount(completedPrefix, selectCount(advances, one));
+    } else {
+      Value firstMask = arith::ConstantOp::create(builder, location, stateType,
+                                                  builder.getI64IntegerAttr(2));
+      Value started = selectCount(advances, firstMask);
+      nextPrefixState =
+          arith::OrIOp::create(builder, location, nextPrefixState, started);
+      sim::SimRefStoreOp::create(builder, location, nextPrefixState,
+                                 prefixStateStorage);
     }
 
     Value matured = completedPrefix;
@@ -4739,6 +4761,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                eligibleStorage);
     scheduleCount(successCount, true);
     if (implication) {
+      scheduleCount(failedPrefix, false);
       if (!cover)
         scheduleCount(antecedentResultCount, !followedBy);
     } else {
