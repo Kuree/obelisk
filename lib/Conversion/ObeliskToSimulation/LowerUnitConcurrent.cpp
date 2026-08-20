@@ -3988,16 +3988,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   if (hasPersistentRepetition &&
       (localInstance ||
        (implication && !persistentConsequentImplicationEligible) ||
-       expectMonitor || (coverSequence && !firstMatch)))
+       expectMonitor))
     return emitError(getSemanticLocation(property))
                << "persistent [*]/[->]/[=] repetition currently requires a "
-                  "plain assert, assume, cover-property, or restrict "
-                  "directive without locals. Implication/followed-by "
+                  "plain concurrent directive without locals; expect remains "
+                  "unsupported. Implication/followed-by "
                   "additionally requires one nonvacuous Boolean or "
                   "guaranteed-empty antecedent without case guards or "
-                  "first_match. A cover sequence requires one direct outer "
-                  "first_match without match items; plain cover-sequence "
-                  "per-match accounting and expect remain unsupported",
+                  "first_match",
            failure();
   if (hasPersistentUntil &&
       (localInstance ||
@@ -7272,6 +7270,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                       builder.getUnitAttr());
     function->setAttr("obelisk_sim.sva_transition_normal_form",
                       builder.getStringAttr("canonical-minimal"));
+    bool retainEveryRepetitionEndpoint = coverSequence && !firstMatch;
+    if (retainEveryRepetitionEndpoint)
+      function->setAttr("obelisk_sim.persistent_repetition_all_matches",
+                        builder.getUnitAttr());
     if (implication) {
       function->setAttr("obelisk_sim.persistent_repetition_implication",
                         builder.getUnitAttr());
@@ -7318,7 +7320,25 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         break;
       }
     } else if (!persistentRepetition.hasTerminal) {
-      for (uint64_t count = 0; count < persistentRepetition.minimum; ++count)
+      uint64_t stateCount = persistentRepetition.minimum;
+      // Property truth and first_match consume the first endpoint. Plain
+      // cover sequence instead retains the counts needed to report every
+      // later legal endpoint. Nonconsecutive repetition also needs its final
+      // eligible count so strictly-false trailing clocks remain observable.
+      if (retainEveryRepetitionEndpoint) {
+        if (persistentRepetition.kind ==
+            semantic::SVSequenceRepetitionKind::GoTo)
+          stateCount = persistentRepetition.unbounded
+                           ? persistentRepetition.minimum
+                           : persistentRepetition.maximum;
+        else if (persistentRepetition.kind ==
+                 semantic::SVSequenceRepetitionKind::Nonconsecutive)
+          stateCount =
+              (persistentRepetition.unbounded ? persistentRepetition.minimum
+                                              : persistentRepetition.maximum) +
+              1;
+      }
+      for (uint64_t count = 0; count < stateCount; ++count)
         addTokenState(count, false);
     } else if (persistentRepetition.kind ==
                semantic::SVSequenceRepetitionKind::Nonconsecutive) {
@@ -7655,8 +7675,54 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     for (auto [index, state] : llvm::enumerate(tokenStates)) {
       Value amount = amounts[index];
       if (!persistentRepetition.hasTerminal) {
+        if (retainEveryRepetitionEndpoint &&
+            persistentRepetition.kind !=
+                semantic::SVSequenceRepetitionKind::Consecutive) {
+          // Goto endpoints occur only on the repeated term. A finite upper
+          // bound therefore consumes the source at its last endpoint; an
+          // unbounded range saturates the state immediately before it.
+          if (persistentRepetition.kind ==
+              semantic::SVSequenceRepetitionKind::GoTo) {
+            uint64_t nextCount = state.occurrences + 1;
+            if (nextCount >= persistentRepetition.minimum)
+              succeed(amount, *repeated);
+            if (persistentRepetition.unbounded)
+              nextCount = std::min(nextCount,
+                                   persistentRepetition.minimum - 1);
+            if (persistentRepetition.unbounded ||
+                nextCount < persistentRepetition.maximum)
+              route(findTokenState(nextCount, false), amount, *repeated);
+            route(index, amount, notRepeated);
+            fail(amount, repeatedUnknown);
+            continue;
+          }
+
+          // Nonconsecutive repetition may also end on any strictly-false
+          // trailing clock. Preserve that eligible count, but let a true
+          // operand beyond a finite maximum terminate the source.
+          bool atMaximum = !persistentRepetition.unbounded &&
+                           state.occurrences == persistentRepetition.maximum;
+          if (atMaximum)
+            fail(amount, *repeated);
+          else {
+            uint64_t nextCount = state.occurrences + 1;
+            if (persistentRepetition.unbounded)
+              nextCount =
+                  std::min(nextCount, persistentRepetition.minimum);
+            if (nextCount >= persistentRepetition.minimum)
+              succeed(amount, *repeated);
+            route(findTokenState(nextCount, false), amount, *repeated);
+          }
+          if (state.occurrences >= persistentRepetition.minimum)
+            succeed(amount, notRepeated);
+          route(index, amount, notRepeated);
+          fail(amount, repeatedUnknown);
+          continue;
+        }
         if (state.occurrences + 1 >= persistentRepetition.minimum) {
           succeed(amount, *repeated);
+          if (retainEveryRepetitionEndpoint)
+            route(index, amount, *repeated);
         } else {
           route(findTokenState(state.occurrences + 1, false), amount,
                 *repeated);
@@ -7683,10 +7749,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             break;
           }
           succeed(amount, terminal);
+          Value remaining =
+              retainEveryRepetitionEndpoint ? trueValue : notTerminal;
           Value continues =
-              arith::AndIOp::create(builder, location, notTerminal, *repeated);
-          Value stops = arith::AndIOp::create(builder, location, notTerminal,
-                                              notRepeated);
+              arith::AndIOp::create(builder, location, remaining, *repeated);
+          Value stops =
+              arith::AndIOp::create(builder, location, remaining, notRepeated);
           route(index, amount, continues);
           fail(amount, stops);
           break;
@@ -7694,12 +7762,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         case semantic::SVSequenceRepetitionKind::GoTo: {
           if (state.pending) {
             succeed(amount, terminal);
-            Value consumes = arith::AndIOp::create(builder, location,
-                                                   notTerminal, *repeated);
-            Value waits = arith::AndIOp::create(builder, location, notTerminal,
+            Value remaining =
+                retainEveryRepetitionEndpoint ? trueValue : notTerminal;
+            Value consumes =
+                arith::AndIOp::create(builder, location, remaining, *repeated);
+            Value waits = arith::AndIOp::create(builder, location, remaining,
                                                 notRepeated);
-            Value unknown = arith::AndIOp::create(builder, location,
-                                                  notTerminal, repeatedUnknown);
+            Value unknown = arith::AndIOp::create(builder, location, remaining,
+                                                  repeatedUnknown);
             route(index, amount, consumes);
             route(findTokenState(persistentRepetition.minimum, false), amount,
                   waits);
@@ -7718,12 +7788,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         case semantic::SVSequenceRepetitionKind::Nonconsecutive: {
           if (state.occurrences >= persistentRepetition.minimum) {
             succeed(amount, terminal);
+            Value remaining =
+                retainEveryRepetitionEndpoint ? trueValue : notTerminal;
             Value remainsKnown = arith::AndIOp::create(
-                builder, location, notTerminal,
+                builder, location, remaining,
                 arith::OrIOp::create(builder, location, *repeated,
                                      notRepeated));
-            Value unknown = arith::AndIOp::create(builder, location,
-                                                  notTerminal, repeatedUnknown);
+            Value unknown = arith::AndIOp::create(builder, location, remaining,
+                                                  repeatedUnknown);
             route(index, amount, remainsKnown);
             fail(amount, unknown);
             break;
@@ -7743,7 +7815,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         Value remaining = trueValue;
         if (state.occurrences >= persistentRepetition.minimum) {
           succeed(amount, terminal);
-          remaining = notTerminal;
+          if (!retainEveryRepetitionEndpoint)
+            remaining = notTerminal;
         }
         Value consumes =
             arith::AndIOp::create(builder, location, remaining, *repeated);
@@ -7774,12 +7847,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         fail(amount, notTerminal);
         continue;
       }
+      Value remaining = retainEveryRepetitionEndpoint ? trueValue : notTerminal;
       Value consumes =
-          arith::AndIOp::create(builder, location, notTerminal, *repeated);
+          arith::AndIOp::create(builder, location, remaining, *repeated);
       Value waits =
-          arith::AndIOp::create(builder, location, notTerminal, notRepeated);
-      Value unknown = arith::AndIOp::create(builder, location, notTerminal,
-                                            repeatedUnknown);
+          arith::AndIOp::create(builder, location, remaining, notRepeated);
+      Value unknown =
+          arith::AndIOp::create(builder, location, remaining, repeatedUnknown);
       route(findTokenState(state.occurrences + 1, true), amount, consumes);
       route(findTokenState(state.occurrences, false), amount, waits);
       fail(amount, unknown);
