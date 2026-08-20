@@ -163,6 +163,12 @@ IMPLICIT_SENSITIVITY_STARTUP = Exclusion(
     "always @* waits for a change on its inferred sensitivity list, unlike "
     "always_comb, which the clause contrasts as executing once at time zero; "
     "the test needs the time-zero settle Verilator gives always @*")
+THROUGHOUT_TEMPORAL_AND = Exclusion(
+    "IEEE 1800-2017 16.9.9",
+    "`exp throughout seq` abbreviates `(exp)[*0:$] intersect seq`, so every "
+    "tick of a `(b ##1 c) and (c ##1 b)` match must satisfy the condition; the "
+    "test expects 25 where its own comment records \"All other sims: 36\" and "
+    "names the undercount a known limitation of Verilator's SAnd combiner")
 UNNAMED_TYPE_SPELLING = Exclusion(
     "IEEE 1800-2017 20.6.1",
     "$typename spells an unnamed type in an implementation-dependent way, and "
@@ -192,6 +198,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_select_plus": PARTIAL_PART_SELECT_WRITE,
     "t_select_negative": UNSIGNED_SELECT_INDEX,
     "t_enum_func": IMPLICIT_SENSITIVITY_STARTUP,
+    "t_sequence_sexpr_throughout": THROUGHOUT_TEMPORAL_AND,
     "t_split_var_4": TWO_STATE_INITIALIZATION,
     "t_param_type5": UNNAMED_TYPE_SPELLING,
     "t_emit_constw": OUT_OF_RANGE_PART_SELECT_READ,
