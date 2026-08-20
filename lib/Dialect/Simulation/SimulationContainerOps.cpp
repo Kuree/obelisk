@@ -139,8 +139,13 @@ std::optional<uint64_t> getProvenanceSpan(Type type) {
     return getProvenanceSpan(net.getElementType());
   if (auto driver = dyn_cast<DriverType>(type))
     return getProvenanceSpan(driver.getElementType());
+  // An event value is the 64-bit identity of its synchronization object, the
+  // same handle width every other simulation handle stores. IEEE 1800-2017
+  // 6.17 gives each event variable its own object, so an array or struct of
+  // events must reserve one whole handle per element: a narrower stride would
+  // overlap neighbouring elements once they are loaded and stored.
   if (isa<EventType>(type))
-    return uint64_t{1};
+    return uint64_t{simulationHandleBitWidth};
   if (isa<ProcessType>(type))
     return uint64_t{64};
   if (isa<VirtualInterfaceType>(type))
