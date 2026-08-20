@@ -27,5 +27,5 @@ endmodule
 
 // MISMATCH: error: $past genuinely alternate clocks are currently executable only in a statically clocked concurrent predicate
 // IFF: error: $rose explicit clocks currently require one direct named-signal edge and an optional direct named iff condition
-// COMPUTED: error: alternate-clock sampled values currently require direct named packed source, condition, and clock signals
+// COMPUTED: error: alternate-clock sampled values currently require direct named packed source, gate, clock-iff condition, and clock signals
 // UNBOUND: error: $changed explicit clock requires a matching statically enclosing direct event control
