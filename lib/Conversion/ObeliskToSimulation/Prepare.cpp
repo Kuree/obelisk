@@ -647,7 +647,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     assertionInventory.push_back(
         {assertion, assertionPath(assertion, scope), scope, 0,
          instanceScopeDepths.lookup(scope), type,
-         directiveMask(assertion.getAssertionKind()), false});
+         directiveMask(assertion.getAssertionKind()), type == 1});
   });
 
   llvm::sort(assertionInventory, [](const AssertionInventoryEntry &left,
@@ -852,8 +852,17 @@ void ObeliskSimPreparePass::runOnOperation() {
         continue;
       if (!entry.supported) {
         emitError(getSemanticLocation(call))
-            << "assertion control selected concurrent assertion '" << entry.path
-            << "', but this slice supports immediate assertions only";
+            << "assertion control selected expect statement '" << entry.path
+            << "', which is not executable by assertion control yet";
+        invalid = true;
+        return;
+      }
+      if (entry.assertionType == 1 && action >= 5) {
+        emitError(getSemanticLocation(call))
+            << "concurrent assertion control currently supports Lock, Unlock, "
+               "On, and Off; control action "
+            << action << " selected concurrent assertion '" << entry.path
+            << "'";
         invalid = true;
         return;
       }

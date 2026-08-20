@@ -159,8 +159,8 @@ struct PersistentUntilProperty {
 
 /// A common unbounded unary property over one Boolean clock sample. Every
 /// clock starts one evaluation attempt. Attempts younger than `minimum` are
-/// represented by one bounded warm-up count; all eligible attempts share one
-/// exact live count because they observe the same future Boolean value.
+/// represented by one bounded warm-up age bitset; all eligible attempts share
+/// one exact live count because they observe the same future Boolean value.
 struct PersistentUnaryProperty {
   FixedSequenceAge operand;
   semantic::SVAssertionUnaryOperator kind =
@@ -739,7 +739,8 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
                 unary.getOperatorKind()) +
             "' currently requires its unbounded/no-range form over one "
             "deterministic one-cycle Boolean operand without locals or "
-            "match items");
+            "match items; an unbounded range minimum must be no greater "
+            "than 63");
       if (unary.getOperatorKind() ==
               semantic::SVAssertionUnaryOperator::SAlways ||
           unary.getOperatorKind() ==
@@ -1149,9 +1150,10 @@ compilePersistentUnary(Operation *operation) {
 
   uint64_t minimum = 0;
   if (unary.getHasRange()) {
-    if (!unary.getRangeIsUnbounded() || !unary.getRangeMin())
+    if (!unary.getRangeIsUnbounded() || !unary.getRangeMin() ||
+        *unary.getRangeMin() > 63)
       return failure();
-    minimum = static_cast<uint64_t>(*unary.getRangeMin());
+    minimum = *unary.getRangeMin();
   }
 
   SmallVector<Operation *> children = getChildren(unary);
@@ -2858,16 +2860,51 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   }
 
   // A source assertion label arrives as a synthetic named block. Preserve its
-  // prepared stable identity for future assertion-control selection without
-  // turning it into a procedural control activation across clock waits.
+  // prepared stable identity for assertion-control selection without turning
+  // it into a procedural control activation across clock waits. Unlabeled
+  // assertions selected through a module scope carry their prepared identity
+  // directly on the directive.
+  IntegerAttr assertionControlID = op->getAttrOfType<IntegerAttr>(
+      "obelisk_sim.assertion_control_target_id");
   if (auto block =
           dyn_cast_or_null<semantic::SVBlockStatementOp>(op->getParentOp())) {
     if (auto path = block.getBlockPathAttr())
       function->setAttr("obelisk_sim.assertion_path", path);
     if (auto target =
-            block->getAttrOfType<IntegerAttr>("obelisk_sim.control_target_id"))
+            block->getAttrOfType<IntegerAttr>("obelisk_sim.control_target_id")) {
       function->setAttr("obelisk_sim.assertion_target_id", target);
+      if (!assertionControlID)
+        assertionControlID = target;
+    }
   }
+  if (assertionControlID)
+    function->setAttr("obelisk_sim.assertion_target_id", assertionControlID);
+  bool attemptControlled =
+      !expectMonitor && op->hasAttr("obelisk_sim.assertion_controlled");
+  if (attemptControlled &&
+      (!assertionControlID ||
+       !assertionControlID.getValue().isStrictlyPositive()))
+    return emitError(location)
+               << "concurrent assertion has no prepared control ID",
+           failure();
+  auto queryAttemptEnabled = [&]() -> Value {
+    if (!attemptControlled)
+      return {};
+    Value context = function.getBody().front().getArgument(0);
+    auto enabled = sim::SimAssertionEnabledOp::create(
+        builder, location, builder.getI1Type(), context, assertionControlID);
+    enabled->setAttr("obelisk_sim.concurrent_attempt_enable",
+                     builder.getUnitAttr());
+    return enabled;
+  };
+  auto gateNewAttempt = [&](Value candidate, Value enabled) -> Value {
+    if (!enabled)
+      return candidate;
+    auto gated = arith::AndIOp::create(builder, location, candidate, enabled);
+    gated->setAttr("obelisk_sim.concurrent_attempt_start",
+                   builder.getUnitAttr());
+    return gated;
+  };
 
   size_t prefix = 0;
   Operation *disable = nullptr;
@@ -3185,6 +3222,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           sim::EventRegionAttr::get(function.getContext(),
                                     sim::EventRegion::Observed));
       setCurrent(start);
+      if (Value enabled = queryAttemptEnabled()) {
+        Block *launch = addBlock();
+        cf::CondBranchOp::create(builder, location, enabled, launch,
+                                 ValueRange{}, wait, ValueRange{});
+        setCurrent(launch);
+      }
       sim::SimSpawnOp::create(builder, location,
                               attempt->first.getSymNameAttr(), attempt->second,
                               ArrayAttr{}, ArrayAttr{});
@@ -4455,6 +4498,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   Type stateType = builder.getI64Type();
   Value zero = arith::ConstantOp::create(builder, location, stateType,
                                          builder.getI64IntegerAttr(0));
+  auto countNewAttempt = [&](Value enabled) -> Value {
+    Value one = arith::ConstantOp::create(builder, location, stateType,
+                                          builder.getI64IntegerAttr(1));
+    if (!enabled)
+      return one;
+    auto count =
+        arith::SelectOp::create(builder, location, enabled, one, zero);
+    count->setAttr("obelisk_sim.concurrent_attempt_start",
+                   builder.getUnitAttr());
+    return count;
+  };
   bool persistentStateOwner = hasPersistentDelay || hasPersistentUnary ||
                               hasPersistentUntil || hasPersistentRepetition;
   bool needsState =
@@ -5558,7 +5612,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
   auto abortPersistentSample =
       [&](Block *wait,
-          const std::optional<PersistentAbortPlan> &plan) -> LogicalResult {
+          const std::optional<PersistentAbortPlan> &plan,
+          Value currentAttemptCount) -> LogicalResult {
     if (!plan)
       return success();
     // Both synchronous and asynchronous abort conditions use the current
@@ -5578,9 +5633,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                              aborted, ValueRange{}, evaluate, ValueRange{});
     setCurrent(aborted);
     SmallVector<Value> dispatcherOperands(plan->operands);
-    dispatcherOperands.push_back(
-        arith::ConstantOp::create(builder, getSemanticLocation(abort),
-                                  stateType, builder.getI64IntegerAttr(1)));
+    dispatcherOperands.push_back(currentAttemptCount);
     sim::SimCallOp::create(builder, getSemanticLocation(abort), TypeRange{},
                            plan->dispatcher, dispatcherOperands, ArrayAttr{},
                            ArrayAttr{});
@@ -6258,7 +6311,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       activeSampledClock = savedSampledClock;
     });
 
-    if (failed(abortPersistentSample(wait, *persistentAbort)))
+    Value attemptEnabled = queryAttemptEnabled();
+    Value currentAttemptCount = countNewAttempt(attemptEnabled);
+    if (failed(abortPersistentSample(wait, *persistentAbort,
+                                     currentAttemptCount)))
       return failure();
 
     Value trueValue = arith::ConstantOp::create(
@@ -6329,7 +6385,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Value nextPrefixState = zero;
     Value completedPrefix = zero;
     Value failedPrefix = zero;
-    Value prefixActive = trueValue;
+    Value prefixActive = attemptEnabled ? attemptEnabled : trueValue;
     Value antecedentResultCount = zero;
     if (implication) {
       FailureOr<Value> antecedent =
@@ -6338,8 +6394,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         return failure();
       Value antecedentFails =
           arith::XOrIOp::create(builder, location, *antecedent, trueValue);
-      antecedentResultCount = selectCount(antecedentFails, one);
-      Value triggered = selectCount(*antecedent, one);
+      Value activeAntecedent =
+          gateNewAttempt(*antecedent, attemptEnabled);
+      Value activeAntecedentFails =
+          gateNewAttempt(antecedentFails, attemptEnabled);
+      antecedentResultCount = selectCount(activeAntecedentFails, one);
+      Value triggered = selectCount(activeAntecedent, one);
       if (delayedActivationStorage) {
         Value delayedActivation = sim::SimRefLoadOp::create(
             builder, location, stateType, delayedActivationStorage);
@@ -6349,7 +6409,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         sim::SimRefStoreOp::create(builder, location, triggered,
                                    delayedActivationStorage);
       } else {
-        prefixActive = *antecedent;
+        prefixActive = activeAntecedent;
       }
     }
 
@@ -6386,15 +6446,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     FailureOr<Value> starts = evaluateAge(persistentDelay.prefix.ages.front());
     if (failed(starts))
       return failure();
-    Value advances = *starts;
+    Value advances =
+        arith::AndIOp::create(builder, location, *starts, prefixActive);
     Value failedStart =
-        arith::XOrIOp::create(builder, location, *starts, trueValue);
-    if (implication) {
-      advances =
-          arith::AndIOp::create(builder, location, advances, prefixActive);
-      failedStart =
-          arith::AndIOp::create(builder, location, failedStart, prefixActive);
-    }
+        arith::AndIOp::create(
+            builder, location,
+            arith::XOrIOp::create(builder, location, *starts, trueValue),
+            prefixActive);
     addCount(failedPrefix, selectCount(failedStart, one));
     if (persistentDelay.prefix.ages.size() == 1) {
       addCount(completedPrefix, selectCount(advances, one));
@@ -6495,18 +6553,21 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (failed(outlineDisableObserver(unaryStateStorages)))
       return failure();
     FailureOr<std::optional<PersistentAbortPlan>> persistentAbort =
-        preparePersistentAbort(unaryStateStorages, /*bitsetStorages=*/{});
+        preparePersistentAbort({eligibleStorage},
+                               immatureStorage ? ArrayRef<Value>{immatureStorage}
+                                               : ArrayRef<Value>{});
     if (failed(persistentAbort))
       return failure();
 
     SmallVector<Value> endCounts{eligibleStorage};
+    SmallVector<Value> endBitsets;
     // An attempt younger than M remains vacuous through property negation,
     // but if the resulting cover property succeeds its pass action still
     // executes. Future counters retain the eligible/immature distinction.
     if (immatureStorage)
-      endCounts.push_back(immatureStorage);
+      endBitsets.push_back(immatureStorage);
     if (failed(outlineCountedEndOfSimulation(
-            endCounts, /*bitsetStorages=*/{},
+            endCounts, endBitsets,
             /*passed=*/!persistentUnary.eventually, spelling, property)))
       return failure();
 
@@ -6533,7 +6594,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       activeSampledClock = savedSampledClock;
     });
 
-    if (failed(abortPersistentSample(wait, *persistentAbort)))
+    Value attemptEnabled = queryAttemptEnabled();
+    Value currentAttemptCount = countNewAttempt(attemptEnabled);
+    if (failed(abortPersistentSample(wait, *persistentAbort,
+                                     currentAttemptCount)))
       return failure();
 
     Value truth = arith::ConstantOp::create(
@@ -6568,21 +6632,34 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Value eligibleNow;
     if (!immatureStorage) {
       // The attempt beginning on this tick is immediately eligible.
-      eligibleNow = arith::AddIOp::create(builder, location, eligible, one);
+      eligibleNow = arith::AddIOp::create(builder, location, eligible,
+                                          currentAttemptCount);
     } else {
+      // Preserve holes created while assertion checking is Off. A scalar
+      // immature count is sufficient only when one attempt begins on every
+      // clock; the age bitset keeps each enabled start's exact M-tick delay.
       Value immature = sim::SimRefLoadOp::create(builder, location, stateType,
                                                  immatureStorage);
-      Value minimum = arith::ConstantOp::create(
+      Value matureMask = arith::ConstantOp::create(
           builder, location, stateType,
-          builder.getI64IntegerAttr(persistentUnary.minimum));
-      Value atCapacity = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::eq, immature, minimum);
+          builder.getI64IntegerAttr(uint64_t{1}
+                                    << (persistentUnary.minimum - 1)));
+      Value matureBit =
+          arith::AndIOp::create(builder, location, immature, matureMask);
+      Value isMature = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, matureBit, zero);
       Value matured =
-          arith::SelectOp::create(builder, location, atCapacity, one, zero);
-      Value incremented =
-          arith::AddIOp::create(builder, location, immature, one);
-      Value nextImmature = arith::SelectOp::create(
-          builder, location, atCapacity, immature, incremented);
+          arith::SelectOp::create(builder, location, isMature, one, zero);
+      Value shifted =
+          arith::ShLIOp::create(builder, location, immature, one);
+      uint64_t queueMask =
+          (uint64_t{1} << persistentUnary.minimum) - uint64_t{1};
+      Value retained = arith::AndIOp::create(
+          builder, location, shifted,
+          arith::ConstantOp::create(builder, location, stateType,
+                                    builder.getI64IntegerAttr(queueMask)));
+      Value nextImmature = arith::OrIOp::create(
+          builder, location, retained, currentAttemptCount);
       sim::SimRefStoreOp::create(builder, location, nextImmature,
                                  immatureStorage);
       eligibleNow = arith::AddIOp::create(builder, location, eligible, matured);
@@ -6667,7 +6744,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       activeSampledClock = savedSampledClock;
     });
 
-    if (failed(abortPersistentSample(wait, *persistentAbort)))
+    Value attemptEnabled = queryAttemptEnabled();
+    Value currentAttemptCount = countNewAttempt(attemptEnabled);
+    if (failed(abortPersistentSample(wait, *persistentAbort,
+                                     currentAttemptCount)))
       return failure();
 
     Value trueValue = arith::ConstantOp::create(
@@ -6732,11 +6812,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       continues = arith::AndIOp::create(builder, location, notRight, *left);
     }
 
-    Value one = arith::ConstantOp::create(builder, location, stateType,
-                                          builder.getI64IntegerAttr(1));
     Value live =
         sim::SimRefLoadOp::create(builder, location, stateType, liveStorage);
-    Value attempts = arith::AddIOp::create(builder, location, live, one);
+    Value attempts = arith::AddIOp::create(builder, location, live,
+                                           currentAttemptCount);
     Value nextLive =
         arith::SelectOp::create(builder, location, continues, attempts, zero);
     sim::SimRefStoreOp::create(builder, location, nextLive, liveStorage);
@@ -6900,7 +6979,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       activeSampledClock = savedSampledClock;
     });
 
-    if (failed(abortPersistentSample(wait, *persistentAbort)))
+    Value attemptEnabled = queryAttemptEnabled();
+    Value currentAttemptCount = countNewAttempt(attemptEnabled);
+    if (failed(abortPersistentSample(wait, *persistentAbort,
+                                     currentAttemptCount)))
       return failure();
 
     Value falseValue = arith::ConstantOp::create(
@@ -7046,15 +7128,18 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         evaluateAge(persistentRepetition.entry.ages.front());
     if (failed(starts))
       return failure();
-    addCount(failureCount, selectCount(negate(*starts), one));
+    Value activeStart = gateNewAttempt(*starts, attemptEnabled);
+    Value failedStart = gateNewAttempt(negate(*starts), attemptEnabled);
+    addCount(failureCount, selectCount(failedStart, one));
     if (persistentRepetition.entry.ages.size() == 1) {
-      addCount(entryCount, selectCount(*starts, one));
+      addCount(entryCount, selectCount(activeStart, one));
     } else {
       Value nextMask = arith::ConstantOp::create(builder, location, stateType,
                                                  builder.getI64IntegerAttr(2));
       nextPrefixState = arith::OrIOp::create(
           builder, location, nextPrefixState,
-          arith::SelectOp::create(builder, location, *starts, nextMask, zero));
+          arith::SelectOp::create(builder, location, activeStart, nextMask,
+                                  zero));
     }
     if (prefixStateStorage)
       sim::SimRefStoreOp::create(builder, location, nextPrefixState,
@@ -7829,10 +7914,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       activeSampledClock = savedSampledClock;
     });
 
+    Value attemptEnabled = queryAttemptEnabled();
     Value falseValue = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(false));
     Value trueValue = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    Value newAttemptActive = attemptEnabled ? attemptEnabled : trueValue;
     SmallVector<Value> antecedentPendingNext(sourceAttemptHorizon, falseValue);
     SmallVector<Value> consequentActive(sourceAttemptHorizon, falseValue);
     SmallVector<Value> consequentPendingNext(sourceAttemptHorizon, falseValue);
@@ -7948,9 +8035,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       FailureOr<Value> start = evaluateAge(alternative.ages.front());
       if (failed(start))
         return failure();
-      starts[alternativeIndex] = *start;
+      starts[alternativeIndex] = gateNewAttempt(*start, attemptEnabled);
       if (alternative.ages.size() == 1)
-        terminalMatches[alternativeIndex] = *start;
+        terminalMatches[alternativeIndex] = starts[alternativeIndex];
 
       if (alternative.ages.size() == 1)
         continue;
@@ -8179,7 +8266,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         priorMatched = arith::CmpIOp::create(
             builder, location, arith::CmpIPredicate::ne, present, zero);
       }
-      Value active = age == 0 ? trueValue : priorMatched;
+      Value active = age == 0 ? newAttemptActive : priorMatched;
       if (age < activeAny.size())
         active =
             arith::OrIOp::create(builder, location, active, activeAny[age]);
@@ -8412,10 +8499,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       activeSampledClock = savedSampledClock;
     });
 
+    Value attemptEnabled = queryAttemptEnabled();
     Value falseValue = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(false));
     Value trueValue = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    Value newAttemptActive = attemptEnabled ? attemptEnabled : trueValue;
     SmallVector<Value> activeAny(horizon, falseValue);
     SmallVector<Value> successAny(horizon, falseValue);
     SmallVector<Value> continueAny(horizon, falseValue);
@@ -8493,12 +8582,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       return result;
     };
 
+    Value rawAntecedentTrigger = trueValue;
     Value antecedentTrigger = trueValue;
     if (branchingConsequent) {
       FailureOr<Value> trigger = evaluateAge(antecedentSequence.ages.front());
       if (failed(trigger))
         return failure();
-      antecedentTrigger = *trigger;
+      rawAntecedentTrigger = *trigger;
+      antecedentTrigger = gateNewAttempt(*trigger, attemptEnabled);
     }
 
     for (auto [alternativeIndex, alternative] : llvm::enumerate(alternatives)) {
@@ -8515,7 +8606,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           gated->setAttr("obelisk_sim.branching_consequent_trigger",
                          builder.getUnitAttr());
           enabled = gated;
-        }
+        } else
+          enabled = gateNewAttempt(enabled, attemptEnabled);
         starts[alternativeIndex] = enabled;
         if (alternative.ages.size() == 1) {
           successAny[0] =
@@ -8700,7 +8792,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     } else {
       if (branchingConsequent && shouldScheduleResult(!followedBy)) {
         Value noAntecedent = arith::XOrIOp::create(
-            builder, location, antecedentTrigger, trueValue);
+            builder, location, rawAntecedentTrigger, trueValue);
+        noAntecedent = gateNewAttempt(noAntecedent, attemptEnabled);
         reportWhen(noAntecedent, !followedBy);
       }
       for (size_t age = 1; age < horizon; ++age) {
@@ -8718,7 +8811,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       Value startActive =
           branchingConsequent
               ? (nonoverlapped ? activeAny[0] : antecedentTrigger)
-              : trueValue;
+              : newAttemptActive;
       Value startFailed = arith::AndIOp::create(
           builder, location, startActive,
           arith::XOrIOp::create(builder, location, startFinished, trueValue));
@@ -9087,6 +9180,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       }
     }
 
+    Block *afterStart = addBlock();
+    afterStart->addArgument(stateType, location);
+    if (Value enabled = queryAttemptEnabled()) {
+      Block *evaluateStart = addBlock();
+      cf::CondBranchOp::create(builder, location, enabled, evaluateStart,
+                               ValueRange{}, afterStart,
+                               ValueRange{nextState});
+      setCurrent(evaluateStart);
+    }
+
     FailureOr<SmallVector<Value>> initialLocals = initializeLocals();
     if (failed(initialLocals))
       return failure();
@@ -9118,8 +9221,6 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     }
 
     Block *startMatched = addBlock();
-    Block *afterStart = addBlock();
-    afterStart->addArgument(stateType, location);
     cf::CondBranchOp::create(builder, location, *starts, startMatched,
                              ValueRange{}, afterStart, ValueRange{nextState});
     setCurrent(startMatched);
@@ -9209,6 +9310,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     activeSampledClock = savedSampledClock;
   });
 
+  Value attemptEnabled = queryAttemptEnabled();
   llvm::DenseMap<Operation *, Value> predicateCache;
   auto conditionalResult = [&](Value condition, bool passed,
                                bool alreadyReported = false) -> LogicalResult {
@@ -9306,8 +9408,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                      /*alreadyReported=*/true)))
           return failure();
       }
-      Value current = arith::ConstantOp::create(
-          builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+      Value current =
+          attemptEnabled
+              ? attemptEnabled
+              : arith::ConstantOp::create(builder, location,
+                                          builder.getI1Type(),
+                                          builder.getBoolAttr(true));
       if (failed(conditionalResult(current, reportedPassed,
                                    /*alreadyReported=*/true)))
         return failure();
@@ -9433,12 +9539,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                 : evaluateAge(sequence.ages.front());
   if (failed(starts))
     return failure();
+  Value activeStart = gateNewAttempt(*starts, attemptEnabled);
 
   if (implication) {
     Value vacuous = arith::XOrIOp::create(
         builder, location, *starts,
         arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                   builder.getBoolAttr(true)));
+    vacuous = gateNewAttempt(vacuous, attemptEnabled);
     // Implication succeeds vacuously when its antecedent is false. Followed-by
     // instead fails vacuously; temporal negation turns that result into a
     // vacuous success whose cover pass action must still execute.
@@ -9446,7 +9554,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         failed(conditionalResult(vacuous, !followedBy)))
       return failure();
     if (antecedentSequence.ages.size() == 1) {
-      if (failed(launchConsequent(*starts)))
+      if (failed(launchConsequent(activeStart)))
         return failure();
     } else {
       uint64_t firstAntecedentAge = sequence.ages.size() + 1;
@@ -9454,7 +9562,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           builder, location, stateType,
           builder.getI64IntegerAttr(uint64_t{1} << firstAntecedentAge));
       Value started =
-          arith::SelectOp::create(builder, location, *starts, firstMask, zero);
+          arith::SelectOp::create(builder, location, activeStart, firstMask,
+                                  zero);
       nextState = arith::OrIOp::create(builder, location, nextState, started);
     }
   } else {
@@ -9464,16 +9573,18 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         builder, location, *starts,
         arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                   builder.getBoolAttr(true)));
+    failedStart = gateNewAttempt(failedStart, attemptEnabled);
     if (failed(conditionalResult(failedStart, false)))
       return failure();
     if (sequence.ages.size() == 1) {
-      if (failed(conditionalResult(*starts, true)))
+      if (failed(conditionalResult(activeStart, true)))
         return failure();
     } else {
       Value nextMask = arith::ConstantOp::create(builder, location, stateType,
                                                  builder.getI64IntegerAttr(2));
       Value started =
-          arith::SelectOp::create(builder, location, *starts, nextMask, zero);
+          arith::SelectOp::create(builder, location, activeStart, nextMask,
+                                  zero);
       nextState = arith::OrIOp::create(builder, location, nextState, started);
     }
   }

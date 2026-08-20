@@ -476,13 +476,19 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // An immature ranged-strong-eventuality attempt remains vacuous through not,
 // but its successful cover-property evaluation still executes the pass
-// action. The separate eligible and immature cells preserve classification
-// for future vacuity counters while one counted callback handles both.
+// action. The eligible count and immature age bitset preserve classification
+// for future vacuity counters while one counted callback handles both. The
+// bitset representation also permits assertion-control Off gaps without
+// changing an attempt's M-clock age.
 // CHECK-LABEL: obelisk_sim.func private @unit_9.$concurrent_eos_count.
 // CHECK: [[ELIGIBLE:%.*]] = obelisk_sim.ref.load %arg1
 // CHECK: [[IMMATURE:%.*]] = obelisk_sim.ref.load %arg2
-// CHECK: arith.addi [[ELIGIBLE]], [[IMMATURE]]
-// CHECK-NOT: obelisk_sim.ref.load
+// CHECK: cf.br [[BIT_LOOP:\^bb[0-9]+]]([[IMMATURE]], [[ELIGIBLE]] : i64, i64)
+// CHECK: [[BIT_LOOP]]([[BITS:%.*]]: i64, [[COUNT:%.*]]: i64)
+// CHECK: [[LESS_ONE:%.*]] = arith.subi [[BITS]],
+// CHECK: [[NEXT_BITS:%.*]] = arith.andi [[BITS]], [[LESS_ONE]] : i64
+// CHECK: [[NEXT_COUNT:%.*]] = arith.addi [[COUNT]],
+// CHECK: cf.br [[BIT_LOOP]]([[NEXT_BITS]], [[NEXT_COUNT]] : i64, i64)
 // CHECK: obelisk_sim.spawn @unit_9.fork.{{[0-9]+}}.0.0
 // CHECK-LABEL: obelisk_sim.func private @unit_9(
 // CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"

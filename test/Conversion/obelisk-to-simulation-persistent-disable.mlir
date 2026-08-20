@@ -223,7 +223,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: cf.cond_br
 // CHECK: obelisk_sim.assert.sampled_read
 
-// s_eventually[1:$] likewise owns its eligible and warm-up counters.
+// s_eventually[1:$] likewise owns its eligible count and warm-up age bitset.
 // CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_cancel.38(
 // CHECK-SAME: obelisk_sim.concurrent_cancel
 // CHECK-COUNT-3: obelisk_sim.ref.store

@@ -89,7 +89,7 @@ module {
           // A false implication antecedent is a vacuous success. Keep this as
           // cover property so the local-flow lowering must schedule its pass
           // action without running antecedent match items.
-          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 36 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 36 : i64, obelisk_sim.assertion_control_target_id = 101 : i64, obelisk_sim.assertion_controlled} {
             obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 37 : i64, repetition_is_unbounded = false} {
               obelisk.sv.expression.assertion_instance attributes {argument_count = 0 : i64, argument_formal_paths = [], argument_formal_symbols = [], argument_kinds = array<i64>, has_expanded_body = true, is_recursive_property = false, is_signed = false, local_variable_count = 2 : i64, local_variable_has_initializer = array<i64: 1, 1>, local_variable_paths = ["t.p.x", "t.p.y"], local_variable_symbols = [@s1.$root::@s3.t::@s4.t::@s9.p::@s13.x, @s1.$root::@s3.t::@s4.t::@s9.p::@s14.y], node_id = 38 : i64, referenced_path = "t.p", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p, semantic_type = !obelisk.property} {
                 obelisk.sv.assertion.clocking attributes {node_id = 39 : i64} {
@@ -200,6 +200,14 @@ module {
 // LOWER: arith.addi
 // LOWER: ^[[EVALUATE]]:
 // LOWER: obelisk_sim.spawn @[[PASS_CALLBACK]]
+
+// Off skips the complete new-attempt path—including local initialization and
+// age-zero match items—but the already-live age state above still advances.
+// LOWER: %[[ENABLED:.*]] = obelisk_sim.assert.enabled %arg0 assertion 101 {obelisk_sim.concurrent_attempt_enable}
+// LOWER-NEXT: cf.cond_br %[[ENABLED]], ^[[START:bb[0-9]+]], ^[[AFTER_START:bb[0-9]+]]({{.*}} : i64)
+// LOWER: ^[[AFTER_START]]({{.*}}: i64):
+// LOWER: obelisk_sim.ref.store
+// LOWER: ^[[START]]:
 
 // Initializers execute in declaration order. Thus y's initializer observes
 // x's sampled initializer value. The successful antecedent then applies its
