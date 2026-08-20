@@ -2517,6 +2517,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   size_t consequentAlternativeAdmissionCount = 1;
   bool consequentAlternativesAdmissionEligible = true;
   bool consequentEndStrengthComposable = true;
+  std::optional<bool> consequentUniformIntrinsicEndStrong;
   auto recordBooleanMinimization = [&](const BooleanMinimizationStats &stats,
                                        StringRef scope) {
     auto accumulate = [&](StringRef name, uint64_t value) {
@@ -2650,41 +2651,69 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             return alternative.hasIntrinsicEndStrength;
           });
       if (hasIntrinsicEndStrength) {
-        // The source-age coalescer currently needs one completion rule for
-        // every pending consequent phase. A single outer bounded temporal
-        // unary over one Boolean sample has exactly that rule. Nested unaries
-        // and Boolean compositions can change strength after an intermediate
-        // clock and need per-progress EOS metadata before they are admitted.
-        auto unary = dyn_cast<semantic::SVUnaryAssertionExprOp>(
-            unwrapAssertionInstance(operands.back()));
-        SmallVector<Operation *> unaryChildren =
-            unary ? getChildren(unary) : SmallVector<Operation *>{};
-        bool supportedUnary =
-            unary &&
-            (unary.getOperatorKind() ==
-                 semantic::SVAssertionUnaryOperator::NextTime ||
-             unary.getOperatorKind() ==
-                 semantic::SVAssertionUnaryOperator::SNextTime ||
-             unary.getOperatorKind() ==
-                 semantic::SVAssertionUnaryOperator::Always ||
-             unary.getOperatorKind() ==
-                 semantic::SVAssertionUnaryOperator::SAlways ||
-             unary.getOperatorKind() ==
-                 semantic::SVAssertionUnaryOperator::Eventually ||
-             unary.getOperatorKind() ==
-                 semantic::SVAssertionUnaryOperator::SEventually) &&
-            unaryChildren.size() == 1 && rhs->size() == 1;
-        if (supportedUnary) {
-          FailureOr<FixedSequenceAlternatives> nested =
-              compileFixedSequenceAlternatives(unaryChildren.front(), clock);
-          supportedUnary = succeeded(nested) && nested->size() == 1 &&
-                           isSingleBooleanAge(nested->front()) &&
-                           nested->front().firstMatchBoundaries.empty() &&
-                           !nested->front().vacuousSuccess &&
-                           !nested->front().intrinsicEndStrong.has_value() &&
-                           !nested->front().hasIntrinsicEndStrength;
-        }
-        consequentEndStrengthComposable = supportedUnary;
+        // One uniform intrinsic completion rule is sufficient for every live
+        // alternative word. Admit a direct bounded temporal unary over an
+        // EOS-insensitive one-cycle Boolean property, plus and/or trees whose
+        // leaves all have that same rule. Mixed or nested strength can change
+        // after an intermediate phase and still requires per-progress
+        // metadata.
+        auto analyzeUniformIntrinsicEndStrength =
+            [&](auto &self, Operation *candidate) -> std::optional<bool> {
+          candidate = unwrapAssertionInstance(candidate);
+          if (!candidate)
+            return std::nullopt;
+          if (auto unary =
+                  dyn_cast<semantic::SVUnaryAssertionExprOp>(candidate)) {
+            bool strong = unary.getOperatorKind() ==
+                              semantic::SVAssertionUnaryOperator::SNextTime ||
+                          unary.getOperatorKind() ==
+                              semantic::SVAssertionUnaryOperator::SAlways ||
+                          unary.getOperatorKind() ==
+                              semantic::SVAssertionUnaryOperator::SEventually;
+            bool temporal = strong ||
+                            unary.getOperatorKind() ==
+                                semantic::SVAssertionUnaryOperator::NextTime ||
+                            unary.getOperatorKind() ==
+                                semantic::SVAssertionUnaryOperator::Always ||
+                            unary.getOperatorKind() ==
+                                semantic::SVAssertionUnaryOperator::Eventually;
+            SmallVector<Operation *> children = getChildren(unary);
+            if (!temporal || children.size() != 1)
+              return std::nullopt;
+            FailureOr<FixedSequenceAlternatives> nested =
+                compileFixedSequenceAlternatives(children.front(), clock);
+            if (failed(nested) || nested->empty() ||
+                llvm::any_of(*nested, [](const FixedSequence &alternative) {
+                  return alternative.ages.size() != 1 ||
+                         alternative.emptyMatch || alternative.vacuousSuccess ||
+                         !alternative.firstMatchBoundaries.empty() ||
+                         !alternative.ages.front().matchItems.empty() ||
+                         alternative.intrinsicEndStrong.has_value() ||
+                         alternative.hasIntrinsicEndStrength;
+                }))
+              return std::nullopt;
+            return strong;
+          }
+          auto binary = dyn_cast<semantic::SVBinaryAssertionExprOp>(candidate);
+          if (!binary || (binary.getOperatorKind() !=
+                              semantic::SVAssertionBinaryOperator::And &&
+                          binary.getOperatorKind() !=
+                              semantic::SVAssertionBinaryOperator::Or))
+            return std::nullopt;
+          SmallVector<Operation *> children = getChildren(binary);
+          if (children.size() != 2)
+            return std::nullopt;
+          std::optional<bool> lhsStrength = self(self, children.front());
+          std::optional<bool> rhsStrength = self(self, children.back());
+          if (!lhsStrength || lhsStrength != rhsStrength)
+            return std::nullopt;
+          return lhsStrength;
+        };
+        consequentUniformIntrinsicEndStrong =
+            analyzeUniformIntrinsicEndStrength(
+                analyzeUniformIntrinsicEndStrength, operands.back());
+        consequentEndStrengthComposable =
+            consequentUniformIntrinsicEndStrong.has_value();
       }
     }
     // Once branching antecedent results are coalesced by source attempt,
@@ -2931,10 +2960,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   if (branchingAntecedent && !consequentEndStrengthComposable)
     return emitError(getSemanticLocation(implication))
                << "branching implication/followed-by consequents with "
-                  "intrinsic temporal strength currently require one "
-                  "outermost bounded nexttime/always/eventually operator "
-                  "over one one-cycle Boolean operand; nested or composed "
-                  "strength requires per-phase end-of-simulation completion",
+                  "mixed or phase-sensitive intrinsic temporal strength "
+                  "require per-progress end-of-simulation completion "
+                  "metadata",
            failure();
   if ((rawCombinedBranching && !rawCombinedBranchingWithinLimit) ||
       (combinedBranching && !combinedBooleanBranching))
@@ -2959,7 +2987,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                << "branching implication/followed-by consequents do not yet "
                   "support match items or assertion-local flow",
            failure();
-  if (branchingConsequent && branchingConsequentHasIntrinsicEndStrength)
+  if (branchingConsequent && branchingConsequentHasIntrinsicEndStrength &&
+      !consequentUniformIntrinsicEndStrong)
     return emitError(getSemanticLocation(implication))
                << "branching implication/followed-by consequents with "
                   "intrinsic temporal strength require per-progress "
@@ -2976,8 +3005,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     endStrengthSource = implication.getOperation();
   if (combinedBooleanBranching)
     // The branching-antecedent monitor owns the exact consequent truth and
-    // per-antecedent match channels. Keep its existing one-age state shape.
+    // per-antecedent match channels. Keep its existing one-age state shape
+    // while retaining a uniform intrinsic EOS rule for the source-age
+    // coalescer.
     sequence.ages.resize(1);
+  if (combinedBooleanBranching && consequentUniformIntrinsicEndStrong) {
+    sequence.intrinsicEndStrong = consequentUniformIntrinsicEndStrong;
+    sequence.hasIntrinsicEndStrength = true;
+  }
   if (hasPersistentRepetition && (localInstance || implication ||
                                   expectMonitor || firstMatch || coverSequence))
     return emitError(getSemanticLocation(property))
@@ -6969,11 +7004,18 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         endStrengthSource = implication.getOperation();
       function->setAttr("obelisk_sim.branching_consequent_eos_coalescer",
                         builder.getUnitAttr());
+      if (consequentUniformIntrinsicEndStrong)
+        function->setAttr(
+            "obelisk_sim.branching_consequent_intrinsic_eos_strength",
+            builder.getStringAttr(
+                *consequentUniformIntrinsicEndStrong ? "strong" : "weak"));
     }
     if ((branchingSequence || branchingConsequent) &&
         failed(outlineEndOfSimulationReports(
             branchingStateStorages, horizon,
-            branchingConsequent && nonoverlapped ? 0 : 1, std::nullopt)))
+            branchingConsequent && nonoverlapped ? 0 : 1,
+            branchingConsequent ? consequentUniformIntrinsicEndStrong
+                                : std::nullopt)))
       return failure();
 
     Block *wait = addBlock();

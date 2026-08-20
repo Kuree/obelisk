@@ -25,10 +25,9 @@ module {
                 obelisk.sv.expression.named_value attributes {node_id = 14 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                 }
               }
-              // a |-> (s_nexttime b or s_nexttime c).  Each alternative has
-              // an intrinsic strong completion rule.  The current EOS union
-              // intentionally admits only directive-default sequence strength
-              // until strength is represented for every progress phase.
+              // a |-> (s_nexttime b or nexttime c). The alternatives have
+              // different EOS results, so one unioned completion rule cannot
+              // represent which alternative remains live.
               obelisk.sv.assertion.binary attributes {node_id = 15 : i64, operator_kind = 11 : i32} {
                 obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 16 : i64, repetition_is_unbounded = false} {
                   obelisk.sv.expression.named_value attributes {node_id = 17 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -41,7 +40,7 @@ module {
                       }
                     }
                   }
-                  obelisk.sv.assertion.unary attributes {has_range = false, node_id = 22 : i64, operator_kind = 2 : i32, range_is_unbounded = false} {
+                  obelisk.sv.assertion.unary attributes {has_range = false, node_id = 22 : i64, operator_kind = 1 : i32, range_is_unbounded = false} {
                     obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 23 : i64, repetition_is_unbounded = false} {
                       obelisk.sv.expression.named_value attributes {node_id = 24 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.c, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                       }
