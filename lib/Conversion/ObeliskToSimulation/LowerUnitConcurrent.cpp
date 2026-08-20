@@ -3240,15 +3240,51 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         compileFixedSequenceAlternatives(operands.back(), clock);
     FailureOr<PersistentDelaySequence> delayedRhs =
         compilePersistentDelay(operands.back());
-    if (succeeded(lhs) && llvm::any_of(*lhs, [](const FixedSequence &value) {
+    if (succeeded(lhs)) {
+      bool hasEmpty = llvm::any_of(*lhs, [](const FixedSequence &value) {
+        return value.emptyMatch;
+      });
+      if (hasEmpty && nonoverlapped) {
+        if (!llvm::all_of(*lhs, [](const FixedSequence &value) {
+              return value.emptyMatch;
+            }))
+          return emitError(getSemanticLocation(operands.front()))
+                     << "mixed empty/nonempty nonoverlapped "
+                        "implication/followed-by antecedents require "
+                        "distinct current- and next-clock consequent "
+                        "obligations",
+                 failure();
+
+        // An empty nonoverlapped match starts its consequent at the nearest
+        // clock tick beginning with the antecedent start. In this singly
+        // clocked monitor that is the current tick. Represent the guaranteed
+        // empty match as a predicate-free one-age activation and suppress the
+        // ordinary one-clock nonoverlap handoff. This retains the implication
+        // result coalescer, consequent strength, temporal negation, and final
+        // completion behavior without ever sampling the empty operand.
+        for (FixedSequence &value : *lhs) {
+          value = FixedSequence{};
+          value.ages.resize(1);
+        }
+        nonoverlapped = false;
+        function->setAttr("obelisk_sim.empty_antecedent_nonoverlap",
+                          builder.getUnitAttr());
+      } else if (hasEmpty) {
+        // Empty matches have no endpoint and therefore do not trigger an
+        // overlapped consequent. A mixed antecedent remains nondegenerate by
+        // virtue of its retained nonempty alternatives.
+        llvm::erase_if(*lhs, [](const FixedSequence &value) {
           return value.emptyMatch;
-        }))
-      return emitError(getSemanticLocation(operands.front()))
-                 << "empty-match implication/followed-by antecedents are not "
-                    "executable yet; overlapping implication requires a "
-                    "nondegenerate antecedent and nonoverlapping empty "
-                    "antecedents require their distinct LRM start semantics",
-             failure();
+        });
+        function->setAttr("obelisk_sim.overlapped_empty_matches_ignored",
+                          builder.getUnitAttr());
+        if (lhs->empty())
+          return emitError(getSemanticLocation(operands.front()))
+                     << "an overlapping implication/followed-by antecedent "
+                        "must admit a nonempty match",
+                 failure();
+      }
+    }
     if (succeeded(rhs) && llvm::any_of(*rhs, [](const FixedSequence &value) {
           return value.emptyMatch;
         }))
@@ -3552,8 +3588,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
        !antecedentSequence.ages.front().caseGuards.empty()))
     return emitError(getSemanticLocation(temporalNegation))
                << "temporal property 'not' over implication/followed-by "
-                  "currently requires one nonvacuous Boolean antecedent "
-                  "without first_match, case guards, or match items",
+                  "currently requires one nonvacuous Boolean or guaranteed "
+                  "empty antecedent without first_match, case guards, or "
+                  "match items",
            failure();
   if (implication && !localInstance &&
       (hasMatchItems(antecedentSequence) ||

@@ -4,8 +4,8 @@
 
 // Pending multi-cycle antecedent state has vacuous property identity, unlike
 // matched consequent state, and therefore remains a separate composition.
-// MULTICYCLE: error: temporal property 'not' over implication/followed-by currently requires one nonvacuous Boolean antecedent without first_match, case guards, or match items
-// BRANCHING: error: temporal property 'not' over implication/followed-by currently requires one nonvacuous Boolean antecedent without first_match, case guards, or match items
+// MULTICYCLE: error: temporal property 'not' over implication/followed-by currently requires one nonvacuous Boolean or guaranteed empty antecedent without first_match, case guards, or match items
+// BRANCHING: error: temporal property 'not' over implication/followed-by currently requires one nonvacuous Boolean or guaranteed empty antecedent without first_match, case guards, or match items
 
 //--- multicycle-antecedent.mlir
 
