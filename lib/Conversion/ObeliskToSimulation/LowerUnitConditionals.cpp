@@ -931,12 +931,48 @@ UnitLowering::lowerCaseLabel(Value selector, Type selectorType,
                              semantic::SVCaseCondition condition) {
   Location location = getSemanticLocation(label);
   bool selectorString = isa<sim::StringType>(selectorType);
-  bool selectorLogic =
-      !selectorString &&
-      isa<sim::LogicType>(sim::getPackedScalarType(selectorType));
+  bool selectorFloat = isa<FloatType>(selectorType);
+  Type selectorScalar = selectorString || selectorFloat
+                            ? Type{}
+                            : sim::getPackedScalarType(selectorType);
+  bool selectorLogic = selectorScalar && isa<sim::LogicType>(selectorScalar);
   auto compareValue =
       [&](Value candidate, sim::CompareKind logicKind,
           arith::CmpIPredicate integerKind) -> FailureOr<Value> {
+    if (selectorFloat) {
+      // Table 11-1 gives real operands the relational and logical-equality
+      // operators, so an ordered comparison carries both plain `case` labels
+      // and the endpoints of a `case ... inside` range. IEEE 1800-2017 11.3.1
+      // makes an expression real when either operand is, so a shortreal
+      // selector still compares a real label in double precision.
+      auto selectorWidth = cast<FloatType>(selectorType).getWidth();
+      Type comparisonType = selectorType;
+      if (auto candidateFloat = dyn_cast<FloatType>(candidate.getType());
+          candidateFloat && candidateFloat.getWidth() > selectorWidth)
+        comparisonType = candidateFloat;
+      FailureOr<Value> comparisonSelector =
+          convert(selector, comparisonType, false, location);
+      FailureOr<Value> comparisonCandidate =
+          convert(candidate, comparisonType, false, location);
+      if (failed(comparisonSelector) || failed(comparisonCandidate))
+        return failure();
+      arith::CmpFPredicate predicate = arith::CmpFPredicate::OEQ;
+      switch (integerKind) {
+      case arith::CmpIPredicate::sge:
+      case arith::CmpIPredicate::uge:
+        predicate = arith::CmpFPredicate::OGE;
+        break;
+      case arith::CmpIPredicate::sle:
+      case arith::CmpIPredicate::ule:
+        predicate = arith::CmpFPredicate::OLE;
+        break;
+      default:
+        break;
+      }
+      return arith::CmpFOp::create(builder, location, predicate,
+                                   *comparisonSelector, *comparisonCandidate)
+          .getResult();
+    }
     FailureOr<Value> normalized =
         convert(candidate, selectorType, false, location);
     if (failed(normalized))
@@ -1120,8 +1156,12 @@ LogicalResult UnitLowering::lowerCase(semantic::SVCaseStatementOp op) {
       lowerContextDeterminedExpression(children.front());
   if (failed(selector))
     return failure();
+  // IEEE 1800-2017 12.5 compares the case expression against each item with
+  // an exact match. Table 11-1 leaves `===` undefined for real and shortreal
+  // while `==` accepts any type, so a floating-point selector matches with
+  // ordinary equality -- a real value has no x or z bits for `===` to add.
   if (!sim::getPackedScalarType((*selector).getType()) &&
-      !isa<sim::StringType>((*selector).getType())) {
+      !isa<sim::StringType, FloatType>((*selector).getType())) {
     emitError(location) << "case selector is not an executable packed value";
     return failure();
   }
