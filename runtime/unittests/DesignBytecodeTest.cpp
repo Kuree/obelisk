@@ -854,7 +854,8 @@ obelisk_rt_status importedLogic(obelisk_rt_context *, uint32_t importID,
   return OBELISK_RT_OK;
 }
 
-std::vector<uint8_t> makeSchedulerBytecode(uint64_t stateHandle = 0) {
+std::vector<uint8_t>
+makeSchedulerBytecode(uint64_t stateHandle = 0, uint64_t eventHandle = 7) {
   constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 4 * 40;
@@ -925,7 +926,7 @@ std::vector<uint8_t> makeSchedulerBytecode(uint64_t stateHandle = 0) {
   instruction(bytes, codeOffset, 3, OBELISK_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
               0);
   instruction(bytes, codeOffset, 4, OBELISK_RT_DB_MAKE_HANDLE, 0, 3,
-              OBELISK_RT_DESCRIPTOR_EVENT, 0, 0, 0, 7);
+              OBELISK_RT_DESCRIPTOR_EVENT, 0, 0, 0, eventHandle);
   instruction(bytes, codeOffset, 5, OBELISK_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
               1);
   instruction(bytes, codeOffset, 6, OBELISK_RT_DB_TERMINATE);
@@ -1434,6 +1435,22 @@ std::vector<uint8_t> makeAutomaticSpawnBytecode(uint32_t childRank = 0) {
     put64(bytes, capture + 16, UINT64_MAX);
     put64(bytes, capture + 24, 8);
   }
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
+std::vector<uint8_t> makePreponedEventSpawnBytecode() {
+  std::vector<uint8_t> bytes = makeAutomaticSpawnBytecode();
+  size_t codeOffset = get64(bytes, 72);
+  // The root reconstructs the canonical event capture and passes it through a
+  // bytecode spawn. The child reconstructs the same capture and terminates.
+  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_LOAD_FRAME,
+              OBELISK_RT_DESCRIPTOR_EVENT, 0, 0, 0, 0, 0, 0);
+  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_LOAD_FRAME,
+              OBELISK_RT_DESCRIPTOR_EVENT, 0, 0, 0, 0, 0, 0);
+  instruction(bytes, codeOffset, 4, OBELISK_RT_DB_NOP);
+  instruction(bytes, codeOffset, 5, OBELISK_RT_DB_NOP);
+  instruction(bytes, codeOffset, 6, OBELISK_RT_DB_NOP);
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
 }
@@ -2616,6 +2633,37 @@ TEST(DesignBytecode, SchedulerCommitsDelayedNBAAndDeferredEvent) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(DesignBytecode, ConstructsReservedPreponedEventHandle) {
+  Fixture fixture;
+  fixture.bytecode = makeSchedulerBytecode(
+      /*stateHandle=*/0, OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT);
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+  fixture.entry = {&fixture.execution, 0, 0};
+  fixture.layout.frame_size = 0;
+  fixture.layout.checksum = frameChecksum(fixture.layout);
+  fixture.descriptor.frame_layout = &fixture.layout;
+  fixture.descriptor.execution = &fixture.execution;
+  fixture.descriptor.design_bytecode = &fixture.entry;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      OBELISK_RT_OK);
+  obelisk_rt_fragment_action_v1 action{};
+  EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
+                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
+            OBELISK_RT_OK);
+  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(DesignBytecode, ResolvesEncodedStaticStateHandlesByIdentity) {
   Fixture fixture;
   uint64_t stateHandle = obelisk_rt_v1_native_state_static_handle(1);
@@ -3394,6 +3442,61 @@ TEST(DesignBytecode, SpawnRetainsStableAutomaticHandlesAndReclaimsTaskState) {
   EXPECT_EQ(obelisk_rt_v1_native_state_load_plane(
                 context, dummy.data(), 65, automatic, 65, 0, 0, value.data()),
             OBELISK_RT_INVALID_HANDLE);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, SpawnRoundTripsReservedPreponedEventHandle) {
+  std::vector<uint8_t> bytecode = makePreponedEventSpawnBytecode();
+  obelisk_rt_execution_descriptor_v1 execution{
+      OBELISK_RT_VERSION,
+      OBELISK_RT_EXECUTION_HAS_BYTECODE,
+      0,
+      bytecode.data(),
+      bytecode.size(),
+      nullptr,
+      0,
+      0,
+      imageChecksum(bytecode)};
+  obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
+  std::array<uint32_t, 1> continuations{{0}};
+  obelisk_rt_frame_layout_v1 layout{
+      OBELISK_RT_VERSION, 0, 8, 8, nullptr, 0, 1, continuations.data(), 0};
+  layout.checksum = frameChecksum(layout);
+  obelisk_rt_process_descriptor_v1 descriptor{
+      {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 72},
+      OBELISK_RT_VERSION,
+      0,
+      OBELISK_RT_TIER_MASK_BYTECODE,
+      0,
+      &layout,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr,
+      &execution,
+      &entry};
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&descriptor, &instance),
+            OBELISK_RT_OK);
+  void *frame = nullptr;
+  uint64_t frameSize = 0;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+            OBELISK_RT_OK);
+  ASSERT_GE(frameSize, sizeof(uint64_t));
+  uint64_t preponed = OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT;
+  std::memcpy(frame, &preponed, sizeof(preponed));
+
+  obelisk_rt_fragment_action_v1 action{};
+  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
+            OBELISK_RT_OK);
+  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
   obelisk_rt_v1_context_destroy(context);
 }
 

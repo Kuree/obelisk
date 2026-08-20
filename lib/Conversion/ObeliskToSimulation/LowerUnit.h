@@ -351,7 +351,8 @@ private:
   lowerEventTrigger(semantic::SVEventTriggerStatementOp op);
   ::mlir::FailureOr<::mlir::Value>
   bindObserver(::mlir::Operation *expression,
-               ::mlir::ValueRange dynamicDependencies = {});
+               ::mlir::ValueRange dynamicDependencies = {},
+               bool includeStaticDependencies = true);
   /// Whether an addressable event expression also lowers to a handle the
   /// scheduler can watch. A net is viewed only through packed windows of its
   /// storage, so selecting an element of an unpacked array of nets has to be

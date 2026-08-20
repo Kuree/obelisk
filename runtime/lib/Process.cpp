@@ -1899,11 +1899,31 @@ extern "C" uint64_t obelisk_rt_v1_scheduler_time(obelisk_rt_context *context) {
   }
 }
 
-// Preponed sampling is a once-per-time-slot service. There are no executable
-// samplers yet, but keeping the hook exact now prevents the assertion and
-// clocking milestones from having to rediscover the initial-time-zero edge.
+// Capture the canonical sampled plane before any executable region, then
+// publish one private event to sampled computed observers. The event is
+// enabled lazily by observer registration, so designs without asynchronous
+// sampled conditions pay no per-slot observer-scan cost.
 obelisk_rt_status runPreponedHooks(obelisk_rt_context *context) {
-  return obelisk_rt_capture_preponed_unlocked(context);
+  obelisk_rt_status status = obelisk_rt_capture_preponed_unlocked(context);
+  if (status != OBELISK_RT_OK || !context->preponedObserverPresent)
+    return status;
+  try {
+    EventState &event =
+        context->events[OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT];
+    if (++event.generation == 0)
+      event.generation = 1;
+    event.lastTriggeredTime = context->schedulerTime;
+    if (!obelisk_rt_notify_observer_event_unlocked(
+            context, OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT))
+      return context->schedulerStatus;
+    if (++context->schedulerEpoch == 0)
+      context->schedulerEpoch = 1;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
 }
 
 obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context,

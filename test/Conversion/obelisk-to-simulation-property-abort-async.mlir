@@ -90,8 +90,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 }
 
 // Accepted asynchronous aborts are vacuous successful cover-property
-// evaluations. The detached Reactive observer watches the unsampled
-// condition, invokes the pass action once per live attempt, and clears state.
+// evaluations. The detached Reactive observer reevaluates the Preponed-sampled
+// condition once per time slot, invokes the pass action once per live attempt,
+// and clears state.
 // CHECK: obelisk_sim.func private @[[ASYNC_PASS:unit_0\.fork\.11\.0\.0]](
 // CHECK: obelisk_sim.ref.load
 // CHECK: obelisk_sim.ref.store
@@ -101,6 +102,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-SAME: obelisk_sim.concurrent_abort
 // CHECK-SAME: obelisk_sim.detached_controls
 // CHECK: obelisk_sim.observer.bind
+// CHECK-SAME: values(%arg1, %arg2 : !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.event) captures 1
 // CHECK: obelisk_sim.suspend.observe
 // CHECK-SAME: obelisk_sim.concurrent_abort_level_true
 // CHECK-SAME: resume_region = 10 : i32
@@ -111,17 +113,17 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: obelisk_sim.ref.store
 // CHECK: cf.br
 
-// The clocked monitor starts the observer with the current unsampled level and
-// tests the abort before any sampled a/b predicate read.
+// The clocked monitor binds the observer to the private Preponed-snapshot event
+// and tests the sampled abort before any sampled a/b predicate read.
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
 // CHECK-SAME: obelisk_sim.asynchronous_property_abort
 // CHECK-SAME: obelisk_sim.property_abort_action = "accept"
-// CHECK: [[RESET:%.*]] = obelisk_sim.ref.load %arg4
-// CHECK: [[RESET_TRUE:%.*]] = obelisk_sim.logic.is_true [[RESET]]
+// CHECK: [[PREPONED:%.*]] = obelisk_sim.context.event %arg0[2305843009213693952]
 // CHECK: obelisk_sim.spawn @unit_0.$concurrent_abort.11
+// CHECK-SAME: [[PREPONED]]
 // CHECK: obelisk_sim.suspend.edge
 // CHECK: obelisk_sim.ref.load {{%.*}} : !obelisk_sim.ref<i64>
-// CHECK-NEXT: [[CLOCK_RESET:%.*]] = obelisk_sim.ref.load %arg4
+// CHECK-NEXT: [[CLOCK_RESET:%.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg4
 // CHECK: [[CLOCK_RESET_TRUE:%.*]] = obelisk_sim.logic.is_true [[CLOCK_RESET]]
 // CHECK: cf.cond_br [[CLOCK_RESET_TRUE]]
 // CHECK: obelisk_sim.assert.sampled_read
@@ -131,6 +133,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_abort.31(
 // CHECK-SAME: home_region = 10 : i32
 // CHECK-SAME: obelisk_sim.concurrent_abort
+// CHECK: obelisk_sim.observer.bind
+// CHECK-SAME: values(%arg1, %arg2 : !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.event) captures 1
 // CHECK: obelisk_sim.suspend.observe
 // CHECK: arith.andi
 // CHECK: cf.cond_br
@@ -139,3 +143,17 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-LABEL: obelisk_sim.func private @unit_1(
 // CHECK-SAME: obelisk_sim.asynchronous_property_abort
 // CHECK-SAME: obelisk_sim.property_abort_action = "reject"
+// CHECK: [[PREPONED1:%.*]] = obelisk_sim.context.event %arg0[2305843009213693952]
+// CHECK: obelisk_sim.spawn @unit_1.$concurrent_abort.31
+// CHECK-SAME: [[PREPONED1]]
+// CHECK: obelisk_sim.suspend.edge
+// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg4
+
+// Both observer evaluators read the global Preponed snapshot, never a raw
+// current value that may have changed later in the time slot.
+// CHECK-LABEL: obelisk_sim.func private @observer_
+// CHECK-SAME: obelisk_sim.concurrent_abort_observer
+// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg1
+// CHECK-LABEL: obelisk_sim.func private @observer_
+// CHECK-SAME: obelisk_sim.concurrent_abort_observer
+// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg1

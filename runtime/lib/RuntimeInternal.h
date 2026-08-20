@@ -963,6 +963,11 @@ struct obelisk_rt_context {
   uint64_t schedulerEpoch = 1;
   uint64_t schedulerTime = 0;
   uint64_t schedulerPreponedTime = UINT64_MAX;
+  // Set once a computed observer registers the compiler-reserved Preponed
+  // event dependency. It remains sticky because those detached observers are
+  // design-lifetime services and the branch keeps unrelated designs free of
+  // per-slot observer scans.
+  bool preponedObserverPresent = false;
   uint64_t schedulerSlotProgress = 0;
   bool schedulerRunningFinals = false;
   bool schedulerFinishRequested = false;

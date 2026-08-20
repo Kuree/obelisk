@@ -829,7 +829,8 @@ void UnitLowering::recordImplicitWrite(Value value) {
 }
 
 FailureOr<Value> UnitLowering::bindObserver(Operation *expression,
-                                            ValueRange dynamicDependencies) {
+                                            ValueRange dynamicDependencies,
+                                            bool includeStaticDependencies) {
   Location location = getSemanticLocation(expression);
   auto evaluator =
       expression->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.observer");
@@ -871,17 +872,20 @@ FailureOr<Value> UnitLowering::bindObserver(Operation *expression,
       return failure();
     captures.push_back(*value);
   }
-  for (Attribute path : dependencyPaths) {
-    FailureOr<Value> value = resolve(path);
-    if (failed(value))
-      return failure();
-    if (!isa<sim::RefType, sim::NetType, sim::EventType>((*value).getType())) {
-      emitError(location) << "observer dependency is not a watchable handle: "
-                          << (*value).getType();
-      return failure();
+  if (includeStaticDependencies)
+    for (Attribute path : dependencyPaths) {
+      FailureOr<Value> value = resolve(path);
+      if (failed(value))
+        return failure();
+      if (!isa<sim::RefType, sim::NetType, sim::EventType>(
+              (*value).getType())) {
+        emitError(location)
+            << "observer dependency is not a watchable handle: "
+            << (*value).getType();
+        return failure();
+      }
+      dependencies.push_back(*value);
     }
-    dependencies.push_back(*value);
-  }
   for (Value dependency : dynamicDependencies) {
     if (!isa<sim::EventType, sim::ManagedWatchType>(dependency.getType())) {
       emitError(location)
@@ -2455,6 +2459,12 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       function.emitError("observer entry requires one expression root");
       return failure();
     }
+    // An asynchronous assertion abort is reevaluated from the design-wide
+    // Preponed plane once per time slot. Lower its observer evaluator with the
+    // same sampled reads as a clocked assertion predicate; its private event
+    // dependency controls when that evaluator is invoked.
+    sampleAssertionValues =
+        roots.front()->hasAttr(sampledObserverAttrName);
     FailureOr<Value> result = lowerExpression(roots.front());
     if (failed(result))
       return failure();

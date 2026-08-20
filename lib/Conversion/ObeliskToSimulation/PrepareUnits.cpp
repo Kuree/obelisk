@@ -452,6 +452,9 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
     candidate.expression->setAttr(
         observerResultAttrName,
         builder.getI32IntegerAttr(static_cast<uint32_t>(candidate.result)));
+    if (candidate.label == "abort")
+      candidate.expression->setAttr(sampledObserverAttrName,
+                                    builder.getUnitAttr());
     result.units.push_back({candidate.expression,
                             id,
                             sim::EntryKind::Observer,

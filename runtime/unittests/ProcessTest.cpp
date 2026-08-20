@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -5110,6 +5111,149 @@ TEST(SampledValues, CapturesCanonicalPreponedPlane) {
   EXPECT_EQ(value[1], UINT8_C(0x02));
   EXPECT_EQ(unknown[0], UINT8_C(0x20));
   EXPECT_EQ(unknown[1], UINT8_C(0x00));
+  obelisk_rt_v1_context_destroy(context);
+}
+
+std::vector<uint32_t> preponedObserverSamples;
+
+obelisk_rt_status preponedObserverEvaluator(
+    obelisk_rt_context *context, const uint64_t *, uint32_t captureCount,
+    uint64_t *value, uint64_t *unknown, uint32_t limbCount) {
+  if (!context || captureCount != 0 || !value || !unknown || limbCount != 1)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  uint8_t sampledValue = 0;
+  uint8_t sampledUnknown = 0;
+  uint64_t handle = obelisk_rt_stable_handle_encode(
+      OBELISK_RT_STABLE_HANDLE_GLOBAL, 0, 0);
+  obelisk_rt_status status = obelisk_rt_v1_sampled_read(
+      context, handle, 1, &sampledValue, &sampledUnknown);
+  if (status != OBELISK_RT_OK)
+    return status;
+  preponedObserverSamples.push_back(
+      static_cast<uint32_t>(sampledValue & 1) |
+      (static_cast<uint32_t>(sampledUnknown & 1) << 1));
+  value[0] = sampledValue & 1;
+  unknown[0] = sampledUnknown & 1;
+  return OBELISK_RT_OK;
+}
+
+TEST(SampledValues, PreponedObserverRunsOncePerTimeSlot) {
+  constexpr uint64_t observerID = 99;
+  obelisk_rt_sampled_range_v1 sampledRange{0, 0, 1};
+  obelisk_rt_execution_extension_v1 extension{
+      OBELISK_RT_EXECUTION_EXTENSION_VERSION,
+      sizeof(obelisk_rt_execution_extension_v1), &sampledRange, 1};
+  obelisk_rt_observer_descriptor_v1 observer{
+      observerID, nullptr, 0, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
+      preponedObserverEvaluator, 0};
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.flags = OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
+  execution.state_bit_count = 1;
+  execution.observers = &observer;
+  execution.observer_count = 1;
+  execution.reserved = reinterpret_cast<uintptr_t>(&extension);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+
+  struct ObserverWait {
+    obelisk_rt_computed_wait_record_v1 wait{};
+    obelisk_rt_computed_observer_v1 observer{};
+    obelisk_rt_computed_dependency_v1 dependency{};
+    obelisk_rt_computed_clause_v1 clause{};
+    uint64_t previousValue = 0;
+    uint64_t previousUnknown = 0;
+  } record;
+  record.wait = {OBELISK_RT_VERSION,
+                 OBELISK_RT_SUSPEND_OBSERVER,
+                 OBELISK_RT_COMPUTED_WAIT_INTERLEAVED,
+                 1,
+                 1,
+                 0,
+                 1,
+                 1,
+                 offsetof(ObserverWait, observer),
+                 offsetof(ObserverWait, dependency),
+                 offsetof(ObserverWait, dependency),
+                 offsetof(ObserverWait, clause),
+                 offsetof(ObserverWait, previousValue),
+                 0,
+                 sizeof(ObserverWait),
+                 0};
+  record.observer = {observerID,
+                     0,
+                     0,
+                     0,
+                     1,
+                     static_cast<uint32_t>(
+                         offsetof(ObserverWait, previousValue)),
+                     0};
+  record.dependency = {OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT,
+                       OBELISK_RT_OBSERVER_DEPENDENCY_EVENT, 1};
+  record.clause = {0, OBELISK_RT_OBSERVER_CONDITION_NONE,
+                   OBELISK_RT_WAIT_EDGE_NEGEDGE, 0};
+  ASSERT_TRUE(obelisk_rt_validate_computed_wait_record(
+      &execution, &record.wait, sizeof(record)));
+
+  obelisk_rt_process_descriptor_v1 descriptor{};
+  descriptor.execution = &execution;
+  obelisk_rt_process_instance_v1 instance{};
+  instance.descriptor = &descriptor;
+  instance.frame = &record;
+  instance.frame_size = sizeof(record);
+  instance.context = context;
+  context->scheduledProcesses.emplace_back();
+  ScheduledProcess &scheduled = context->scheduledProcesses.back();
+  scheduled.instance = &instance;
+  scheduled.token = 1;
+  scheduled.waitSize = sizeof(record);
+  scheduled.suspendKind = OBELISK_RT_SUSPEND_OBSERVER;
+  scheduled.started = true;
+  context->scheduledProcessIndices.emplace(1, 0);
+  ASSERT_TRUE(obelisk_rt_register_computed_signal_wait_unlocked(
+      context, &record.wait, scheduled.token, false,
+      scheduled.signalSubscriptions, scheduled.signalLatch));
+  ASSERT_TRUE(context->preponedObserverPresent);
+
+  preponedObserverSamples.clear();
+  context->stateValue[0] = 0;
+  context->stateUnknown[0] = 0;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(preponedObserverSamples, std::vector<uint32_t>({0}));
+  ASSERT_EQ(context->events[OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT].generation,
+            1u);
+
+  // A late mutation in the same time slot neither republishes the private
+  // event nor changes the already captured sampled plane.
+  context->stateValue[0] = 1;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(preponedObserverSamples, std::vector<uint32_t>({0}));
+  uint8_t sampledValue = 0;
+  uint8_t sampledUnknown = 0;
+  uint64_t handle = obelisk_rt_stable_handle_encode(
+      OBELISK_RT_STABLE_HANDLE_GLOBAL, 0, 0);
+  ASSERT_EQ(obelisk_rt_v1_sampled_read(context, handle, 1, &sampledValue,
+                                       &sampledUnknown),
+            OBELISK_RT_OK);
+  EXPECT_EQ(sampledValue, 0);
+  EXPECT_EQ(sampledUnknown, 0);
+
+  // The next time slot captures the mutation and notifies exactly once.
+  context->schedulerTime = 1;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(preponedObserverSamples, std::vector<uint32_t>({0, 1}));
+  EXPECT_EQ(context->events[OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT].generation,
+            2u);
+  EXPECT_EQ(context->events[OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT]
+                .lastTriggeredTime,
+            1u);
+
+  obelisk_rt_unregister_signal_wait_unlocked(
+      context, scheduled.signalSubscriptions, scheduled.token, false);
+  scheduled.instance = nullptr;
+  context->scheduledProcessIndices.clear();
+  context->scheduledProcesses.clear();
   obelisk_rt_v1_context_destroy(context);
 }
 

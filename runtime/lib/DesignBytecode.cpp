@@ -1057,16 +1057,28 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       std::memset(address, 0, destination.size);
       uint32_t kind = instruction.source0;
       uint64_t width = instruction.source1;
+      // The compiler-reserved Preponed event is deliberately not a decodable
+      // state handle. Admit it only when constructing an exact zero-width
+      // event descriptor; every storage/net/driver path below retains the
+      // ordinary stable-state validation.
+      bool preponedEvent =
+          kind == OBELISK_RT_DESCRIPTOR_EVENT && width == 0 &&
+          obelisk_rt_stable_handle_is_preponed_event(instruction.immediate);
       obelisk_rt_stable_handle_v1 decoded;
-      if (!obelisk_rt_stable_handle_decode(instruction.immediate, &decoded) ||
-          decoded.kind == OBELISK_RT_STABLE_HANDLE_AUTOMATIC ||
-          decoded.offset < 0 ||
-          width > uint64_t{INT64_MAX} - static_cast<uint64_t>(decoded.offset))
+      if (!preponedEvent &&
+          (!obelisk_rt_stable_handle_decode(instruction.immediate, &decoded) ||
+           decoded.kind == OBELISK_RT_STABLE_HANDLE_AUTOMATIC ||
+           decoded.offset < 0 ||
+           width >
+               uint64_t{INT64_MAX} - static_cast<uint64_t>(decoded.offset)))
         return OBELISK_RT_INVALID_HANDLE;
-      int64_t begin = decoded.offset;
+      int64_t begin =
+          preponedEvent ? static_cast<int64_t>(instruction.immediate)
+                        : decoded.offset;
       int64_t end = begin + static_cast<int64_t>(width);
       uint64_t base = static_cast<uint64_t>(begin);
-      if (decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC) {
+      if (!preponedEvent &&
+          decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC) {
         if (!context || kind > OBELISK_RT_DESCRIPTOR_DRIVER)
           return OBELISK_RT_INVALID_HANDLE;
         std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -1078,7 +1090,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         base = encodeStaticHandle(decoded.id, 0);
         if (base == UINT64_MAX)
           return OBELISK_RT_INVALID_HANDLE;
-      } else if (context && kind <= OBELISK_RT_DESCRIPTOR_DRIVER) {
+      } else if (!preponedEvent && context &&
+                 kind <= OBELISK_RT_DESCRIPTOR_DRIVER) {
         // Bytecode encodes canonical plane offsets so a process can execute
         // directly without scheduler-main registration. Once native static
         // state is registered, use its stable identity so mixed-tier waits and

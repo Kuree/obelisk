@@ -322,6 +322,8 @@ inline constexpr ::mlir::StringLiteral observerCapturesAttrName =
     "obelisk_sim.observer_captures";
 inline constexpr ::mlir::StringLiteral observerDependenciesAttrName =
     "obelisk_sim.observer_dependencies";
+inline constexpr ::mlir::StringLiteral sampledObserverAttrName =
+    "obelisk_sim.sampled_observer";
 
 inline std::optional<ObserverResult>
 parseObserverResult(::mlir::IntegerAttr attribute) {

@@ -1,6 +1,6 @@
 // RUN: not obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s
 
-// CHECK: error: SVA property operator 'accept_on' currently requires one outermost abort around a deterministic bounded property or supported aggregate persistent property without locals, match items, implication/followed-by, disable iff, first_match, expect, or cover-sequence per-match accounting
+// CHECK: error: SVA property operator 'accept_on' currently requires one abort and an otherwise deterministic bounded property or supported aggregate persistent property, optionally with one directly adjacent temporal property negation, without locals, match items, implication/followed-by, disable iff, first_match, expect, or cover-sequence per-match accounting
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

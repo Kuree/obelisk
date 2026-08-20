@@ -226,6 +226,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-SAME: obelisk_sim.concurrent_abort
 // CHECK-SAME: obelisk_sim.concurrent_abort_counted
 // CHECK-SAME: obelisk_sim.priority_signal_resume
+// CHECK: obelisk_sim.observer.bind
+// CHECK-SAME: values(%arg1, %arg2 : !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.event) captures 1
 // CHECK: obelisk_sim.suspend.observe
 // CHECK-SAME: obelisk_sim.concurrent_abort_level_true
 // CHECK: [[ASYNC_ZERO:%.*]] = arith.constant {{.*}} 0 : i64
@@ -235,10 +237,12 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-SAME: obelisk_sim.asynchronous_property_abort
 // CHECK-SAME: obelisk_sim.persistent_delay_monitor
 // CHECK-SAME: obelisk_sim.property_abort_action = "accept"
+// CHECK: [[PREPONED_DELAY:%.*]] = obelisk_sim.context.event %arg0[2305843009213693952]
 // CHECK: obelisk_sim.spawn @unit_0.$concurrent_abort.18
+// CHECK-SAME: [[PREPONED_DELAY]]
 // CHECK: obelisk_sim.suspend.edge
-// The asynchronous condition is an unsampled current-value read.
-// CHECK: obelisk_sim.ref.load %arg2
+// The clocked already-true path uses the same Preponed sampled condition.
+// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg2
 // CHECK: [[CLOCK_ONE:%.*]] = arith.constant {{.*}} 1 : i64
 // CHECK: obelisk_sim.call @unit_0.$concurrent_abort_count.18.accept
 // CHECK-SAME: [[CLOCK_ONE]])
@@ -271,11 +275,17 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: obelisk_sim.ref.store [[UNTIL_ZERO]]
 // CHECK: obelisk_sim.spawn @unit_2.fork.56.1.1
 // CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_abort.56(
+// CHECK: obelisk_sim.observer.bind
+// CHECK-SAME: values(%arg1, %arg2 : !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.event) captures 1
 // CHECK: obelisk_sim.call @unit_2.$concurrent_abort_count.56.reject
 // CHECK-LABEL: obelisk_sim.func private @unit_2(
 // CHECK-SAME: obelisk_sim.asynchronous_property_abort
 // CHECK-SAME: obelisk_sim.persistent_until_kind = "s_until"
+// CHECK: [[PREPONED_UNTIL:%.*]] = obelisk_sim.context.event %arg0[2305843009213693952]
 // CHECK: obelisk_sim.spawn @unit_2.$concurrent_abort.56
+// CHECK-SAME: [[PREPONED_UNTIL]]
+// CHECK: obelisk_sim.suspend.edge
+// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg2
 // CHECK: obelisk_sim.call @unit_2.$concurrent_abort_count.56.reject
 
 // The four-state goto DFA is aborted as four aggregate counts. An accepted
@@ -306,5 +316,11 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-SAME: obelisk_sim.synchronous_property_abort
 // CHECK: obelisk_sim.call @unit_3.$concurrent_abort_count.76.accept
 
-// Only the two asynchronous forms need observer evaluators.
-// CHECK-COUNT-2: obelisk_sim.concurrent_abort_observer
+// Only the two asynchronous forms need observer evaluators; both evaluators
+// read the Preponed snapshot.
+// CHECK-LABEL: obelisk_sim.func private @observer_
+// CHECK-SAME: obelisk_sim.concurrent_abort_observer
+// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg1
+// CHECK-LABEL: obelisk_sim.func private @observer_
+// CHECK-SAME: obelisk_sim.concurrent_abort_observer
+// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg1

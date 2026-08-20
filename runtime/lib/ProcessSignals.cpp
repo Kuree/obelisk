@@ -257,6 +257,10 @@ bool obelisk_rt_register_computed_signal_wait_unlocked(
     subscriptions.reserve(wait->dependency_count);
     for (uint32_t index = 0; index != wait->dependency_count; ++index) {
       const obelisk_rt_computed_dependency_v1 &dependency = dependencies[index];
+      if (dependency.kind == OBELISK_RT_OBSERVER_DEPENDENCY_EVENT &&
+          dependency.stable_id ==
+              OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT)
+        context->preponedObserverPresent = true;
       if (dependency.kind != OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL)
         continue;
       if (!appendSignalSubscriptionUnlocked(

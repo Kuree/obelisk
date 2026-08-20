@@ -13,11 +13,22 @@
 // offsets while retaining the nonnegative representation used by bytecode
 // event handles.
 #define OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG (UINT64_C(1) << 61)
+// The otherwise-invalid zero payload in the dynamic-event namespace is
+// reserved for the runtime's once-per-time-slot Preponed snapshot event.
+// Compiler-generated sampled observers may depend on this event; user named
+// events always carry a nonzero dynamic payload or a design-assigned ID.
+#define OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT                              \
+  OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG
 #define OBELISK_RT_STABLE_HANDLE_TAG_MASK                                  \
   (OBELISK_RT_STABLE_HANDLE_AUTOMATIC_TAG |                                \
    OBELISK_RT_STABLE_HANDLE_STATIC_TAG)
 #define OBELISK_RT_STABLE_HANDLE_MAX_AUTOMATIC_ID UINT32_C(0x7ffffffe)
 #define OBELISK_RT_STABLE_HANDLE_MAX_STATIC_ID UINT32_C(0x3fffffff)
+
+static inline int
+obelisk_rt_stable_handle_is_preponed_event(uint64_t handle) {
+  return handle == OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT;
+}
 
 typedef uint32_t obelisk_rt_stable_handle_kind_v1;
 enum {

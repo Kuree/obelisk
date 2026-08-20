@@ -9,6 +9,7 @@
 
 #include "LowerUnit.h"
 
+#include "obelisk/Runtime/StableHandle.h"
 #include "obelisk/Solver/ConstraintSolver.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -26,6 +27,13 @@ using namespace mlir;
 
 namespace obelisk::simlowering {
 namespace {
+
+Value createPreponedSnapshotEvent(OpBuilder &builder, Location location,
+                                  Value context) {
+  return sim::SimContextEventOp::create(
+      builder, location, sim::EventType::get(builder.getContext()), context,
+      builder.getI64IntegerAttr(OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT));
+}
 
 /// One deterministic bounded sequence. Each clock age contains the boolean
 /// expressions that must all hold at that age. Empty ages represent ## gaps.
@@ -2943,6 +2951,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
   semantic::SVAbortAssertionExprOp abort;
   Operation *abortCondition = nullptr;
+  // Distinguish abort(not(P)) from not(abort(P)).  Both retain the same
+  // monitor for P, but only the latter negates the result forced by the abort
+  // condition itself.
+  bool temporalNegationOutsideAbort = false;
   if (auto candidate =
           dyn_cast_or_null<semantic::SVAbortAssertionExprOp>(property)) {
     SmallVector<Operation *> nested = getChildren(candidate);
@@ -2967,6 +2979,26 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (candidate.getHasRange() || nested.size() != 1)
       return candidate.emitError("malformed property negation"), failure();
     Operation *operand = unwrapAssertionInstance(nested.front());
+    semantic::SVAbortAssertionExprOp negatedAbort;
+    Operation *negatedAbortCondition = nullptr;
+    if (!abort && operand) {
+      if (auto nestedAbort =
+              dyn_cast<semantic::SVAbortAssertionExprOp>(operand)) {
+        SmallVector<Operation *> abortChildren = getChildren(nestedAbort);
+        if (abortChildren.size() != 2)
+          return nestedAbort.emitError("malformed property abort expression"),
+                 failure();
+        Operation *abortOperand =
+            unwrapAssertionInstance(abortChildren.back());
+        if (!abortOperand)
+          return nestedAbort.emitError(
+                     "property abort wraps an unsupported assertion instance"),
+                 failure();
+        negatedAbort = nestedAbort;
+        negatedAbortCondition = abortChildren.front();
+        operand = abortOperand;
+      }
+    }
     Operation *fixedOperand = operand;
     bool explicitStrength = false;
     if (auto strength =
@@ -3005,7 +3037,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                               !alternative.ages.empty();
                      });
         temporal = valid &&
-                   (explicitStrength ||
+                   (negatedAbort || explicitStrength ||
                     llvm::any_of(*fixed, [](const FixedSequence &alternative) {
                       return alternative.ages.size() > 1;
                     }));
@@ -3018,6 +3050,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       if (temporal) {
         temporalNegation = candidate;
         property = operand;
+        if (negatedAbort) {
+          abort = negatedAbort;
+          abortCondition = negatedAbortCondition;
+          temporalNegationOutsideAbort = true;
+          function->setAttr(
+              "obelisk_sim.temporal_property_negation_outside_abort",
+              builder.getUnitAttr());
+        }
         function->setAttr("obelisk_sim.temporal_property_negation",
                           builder.getUnitAttr());
       }
@@ -3738,19 +3778,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         llvm::any_of(sequence.ages, [](const FixedSequenceAge &age) {
           return !age.matchItems.empty();
         });
-    if (temporalNegation)
-      return emitError(getSemanticLocation(abort))
-                 << "SVA property operator '" << spelling
-                 << "' does not yet compose with temporal property "
-                    "negation",
-             failure();
     if (localInstance || implication || disable || expectMonitor ||
         firstMatch || coverSequence || branchingSequence || matchItems)
       return emitError(getSemanticLocation(abort))
                  << "SVA property operator '" << spelling
-                 << "' currently requires one outermost abort around a "
+                 << "' currently requires one abort and an otherwise "
                     "deterministic bounded property or supported aggregate "
-                    "persistent property without locals, match items, "
+                    "persistent property, optionally with one directly "
+                    "adjacent temporal property negation, without locals, "
+                    "match items, "
                     "implication/followed-by, disable iff, first_match, "
                     "expect, or cover-sequence per-match accounting",
              failure();
@@ -4790,9 +4826,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       failed(outlineDisableObserver({stateStorage})))
     return failure();
 
-  auto scheduleResult = [&](bool passed) {
-    if (temporalNegation)
-      passed = !passed;
+  auto scheduleReportedResult = [&](bool passed) {
     std::optional<ReportCallback> &report = passed ? passReport : failReport;
     if (!report)
       return;
@@ -4804,12 +4838,18 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                             report->function.getSymNameAttr(), captures,
                             ArrayAttr{}, ArrayAttr{});
   };
+  auto scheduleResult = [&](bool passed) {
+    scheduleReportedResult(temporalNegation ? !passed : passed);
+  };
+  auto shouldScheduleReportedResult = [&](bool passed) {
+    return (passed ? passReport : failReport).has_value();
+  };
   auto shouldScheduleResult = [&](bool operandPassed) {
     bool reportedPassed = temporalNegation ? !operandPassed : operandPassed;
     // A cover-property pass action executes for both vacuous and nonvacuous
     // successful attempts.  Query the actual outlined callback as well, so
     // silent pass/fail directions do not materialize empty conditional CFG.
-    return (reportedPassed ? passReport : failReport).has_value();
+    return shouldScheduleReportedResult(reportedPassed);
   };
   auto scheduleCount = [&](Value count, bool passed) {
     bool reportedPassed = temporalNegation ? !passed : passed;
@@ -5104,8 +5144,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
     bool accepted =
         abort.getAction() == semantic::SVAssertionAbortAction::Accept;
+    bool reportedPassed =
+        temporalNegationOutsideAbort ? !accepted : accepted;
     std::optional<ReportCallback> *selectedReport =
-        accepted ? &passReport : &failReport;
+        reportedPassed ? &passReport : &failReport;
     bool emitReports = selectedReport->has_value();
 
     Value context = function.getBody().front().getArgument(0);
@@ -5336,14 +5378,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (abort.getIsSynchronous())
       return std::optional<PersistentAbortPlan>{std::move(plan)};
 
-    FailureOr<Value> current = lowerExpression(abortCondition);
-    if (failed(current))
-      return failure();
-    FailureOr<Value> truth =
-        truthValue(*current, getSemanticLocation(abortCondition));
-    if (failed(truth))
-      return failure();
-    FailureOr<Value> observer = bindObserver(abortCondition);
+    // IEEE 1800-2017 16.12.14 evaluates an asynchronous abort condition from
+    // sampled values at every simulation time step. The private runtime event
+    // is published immediately after the Preponed plane is captured. Static
+    // signal dependencies are deliberately omitted: their raw changes cannot
+    // change the sampled condition until the next event and would only cause
+    // redundant evaluator work later in the same slot.
+    Value preponedEvent = createPreponedSnapshotEvent(
+        builder, getSemanticLocation(abortCondition), context);
+    FailureOr<Value> observer =
+        bindObserver(abortCondition, preponedEvent,
+                     /*includeStaticDependencies=*/false);
     if (failed(observer))
       return emitError(getSemanticLocation(abortCondition))
                  << "asynchronous property abort expression has no observer; "
@@ -5378,7 +5423,6 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     SmallVector<unsigned> observerIndices;
     for (Value capture : observerBinding.getValues())
       observerIndices.push_back(appendActorCapture(capture));
-    unsigned initialConditionIndex = appendActorCapture(*truth);
     SmallVector<unsigned> dispatcherIndices;
     for (Value operand : plan.operands)
       dispatcherIndices.push_back(appendActorCapture(operand));
@@ -5451,14 +5495,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Block &actorEntry = actor.getBody().front();
     Block *waitAbort = new Block;
     Block *abortLiveAttempts = new Block;
-    waitAbort->addArgument(builder.getI1Type(),
-                           getSemanticLocation(abortCondition));
     actor.getBody().push_back(waitAbort);
     actor.getBody().push_back(abortLiveAttempts);
     OpBuilder actorEntryBuilder = OpBuilder::atBlockEnd(&actorEntry);
-    cf::BranchOp::create(
-        actorEntryBuilder, getSemanticLocation(abort), waitAbort,
-        ValueRange{actorEntry.getArgument(initialConditionIndex)});
+    cf::BranchOp::create(actorEntryBuilder, getSemanticLocation(abort),
+                         waitAbort);
 
     OpBuilder waitBuilder = OpBuilder::atBlockEnd(waitAbort);
     SmallVector<Value> reboundValues;
@@ -5469,8 +5510,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         observerBinding.getResult().getType(),
         observerBinding.getEvaluatorAttr(), reboundValues,
         observerBinding.getCaptureCountAttr());
-    SmallVector<Value> observed{reboundObserver.getResult(),
-                                waitAbort->getArgument(0)};
+    Value initialFalse = arith::ConstantOp::create(
+        waitBuilder, getSemanticLocation(abortCondition),
+        waitBuilder.getI1Type(), waitBuilder.getBoolAttr(false));
+    SmallVector<Value> observed{reboundObserver.getResult(), initialFalse};
     auto abortWait = sim::SimSuspendObserveOp::create(
         waitBuilder, getSemanticLocation(abortCondition), observed, 0,
         ArrayRef<int32_t>{static_cast<int32_t>(sim::EdgeKind::Posedge)},
@@ -5491,11 +5534,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     sim::SimCallOp::create(abortBuilder, getSemanticLocation(abort),
                            TypeRange{}, plan.dispatcher, dispatcherOperands,
                            ArrayAttr{}, ArrayAttr{});
-    Value currentTrue = arith::ConstantOp::create(
-        abortBuilder, getSemanticLocation(abort), builder.getI1Type(),
-        builder.getBoolAttr(true));
-    cf::BranchOp::create(abortBuilder, getSemanticLocation(abort), waitAbort,
-                         ValueRange{currentTrue});
+    cf::BranchOp::create(abortBuilder, getSemanticLocation(abort), waitAbort);
 
     sim::SimSpawnOp::create(builder, getSemanticLocation(abort),
                             actor.getSymNameAttr(), actorCaptures, ArrayAttr{},
@@ -5508,19 +5547,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           const std::optional<PersistentAbortPlan> &plan) -> LogicalResult {
     if (!plan)
       return success();
-    FailureOr<Value> condition = [&]() -> FailureOr<Value> {
-      if (abort.getIsSynchronous())
-        return lowerExpression(abortCondition);
-      bool savedSampleAssertionValues = sampleAssertionValues;
-      Operation *savedSampledClock = activeSampledClock;
-      sampleAssertionValues = false;
-      activeSampledClock = nullptr;
-      llvm::scope_exit restore([&] {
-        sampleAssertionValues = savedSampleAssertionValues;
-        activeSampledClock = savedSampledClock;
-      });
-      return lowerExpression(abortCondition);
-    }();
+    // Both synchronous and asynchronous abort conditions use the current
+    // clock occurrence's Preponed sample. The asynchronous observer covers
+    // every intervening time slot through the private snapshot event.
+    FailureOr<Value> condition = lowerExpression(abortCondition);
     if (failed(condition))
       return failure();
     FailureOr<Value> aborts =
@@ -5851,17 +5881,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
   if (abort && !abort.getIsSynchronous() && !persistentStateOwner) {
     // Asynchronous aborts need a persistent observer in addition to the
-    // clocked monitor. The observer completes only attempts represented by
-    // live state bits; the clocked path below handles the attempt beginning on
-    // a clock where the abort condition is already true.
-    FailureOr<Value> current = lowerExpression(abortCondition);
-    if (failed(current))
-      return failure();
-    FailureOr<Value> truth =
-        truthValue(*current, getSemanticLocation(abortCondition));
-    if (failed(truth))
-      return failure();
-    FailureOr<Value> observer = bindObserver(abortCondition);
+    // clocked monitor. Its evaluator reads only the once-per-slot Preponed
+    // plane and is invoked by the private snapshot event; the clocked path
+    // below handles the attempt beginning on a clock where that sampled
+    // condition is already true.
+    Value context = function.getBody().front().getArgument(0);
+    Value preponedEvent = createPreponedSnapshotEvent(
+        builder, getSemanticLocation(abortCondition), context);
+    FailureOr<Value> observer =
+        bindObserver(abortCondition, preponedEvent,
+                     /*includeStaticDependencies=*/false);
     if (failed(observer))
       return emitError(getSemanticLocation(abortCondition))
                  << "asynchronous property abort expression has no observer; "
@@ -5912,12 +5941,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     std::string hierarchy =
         (Twine(parentHierarchy) + ".$concurrent_abort." + Twine(node)).str();
 
-    Value context = function.getBody().front().getArgument(0);
     SmallVector<Value> captures{context};
     unsigned observerCaptureBegin = captures.size();
     llvm::append_range(captures, observerBinding.getValues());
-    unsigned initialConditionIndex = captures.size();
-    captures.push_back(*truth);
     unsigned stateStorageIndex = captures.size();
     captures.push_back(stateStorage);
     SmallVector<unsigned> passCaptureIndices;
@@ -5996,17 +6022,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Block &entry = actor.getBody().front();
     Block *waitAbort = new Block;
     Block *abortLiveAttempts = new Block;
-    waitAbort->addArgument(builder.getI1Type(),
-                           getSemanticLocation(abortCondition));
     actor.getBody().push_back(waitAbort);
     actor.getBody().push_back(abortLiveAttempts);
     OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
-    cf::BranchOp::create(entryBuilder, getSemanticLocation(abort), waitAbort,
-                         ValueRange{entry.getArgument(initialConditionIndex)});
+    cf::BranchOp::create(entryBuilder, getSemanticLocation(abort), waitAbort);
 
     OpBuilder waitBuilder = OpBuilder::atBlockEnd(waitAbort);
     SmallVector<Value> reboundValues;
-    for (unsigned index = observerCaptureBegin; index != initialConditionIndex;
+    for (unsigned index = observerCaptureBegin; index != stateStorageIndex;
          ++index)
       reboundValues.push_back(entry.getArgument(index));
     auto reboundObserver = sim::SimObserverBindOp::create(
@@ -6014,8 +6037,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         observerBinding.getResult().getType(),
         observerBinding.getEvaluatorAttr(), reboundValues,
         observerBinding.getCaptureCountAttr());
-    SmallVector<Value> observed{reboundObserver.getResult(),
-                                waitAbort->getArgument(0)};
+    Value initialFalse = arith::ConstantOp::create(
+        waitBuilder, getSemanticLocation(abortCondition),
+        waitBuilder.getI1Type(), waitBuilder.getBoolAttr(false));
+    SmallVector<Value> observed{reboundObserver.getResult(), initialFalse};
     auto abortWait = sim::SimSuspendObserveOp::create(
         waitBuilder, getSemanticLocation(abortCondition), observed, 0,
         ArrayRef<int32_t>{static_cast<int32_t>(sim::EdgeKind::Posedge)},
@@ -6028,11 +6053,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
     bool accepted =
         abort.getAction() == semantic::SVAssertionAbortAction::Accept;
+    bool reportedPassed =
+        temporalNegationOutsideAbort ? !accepted : accepted;
     std::optional<ReportCallback> *selectedReport =
-        accepted ? &passReport : &failReport;
+        reportedPassed ? &passReport : &failReport;
     ArrayRef<unsigned> selectedIndices =
-        accepted ? ArrayRef<unsigned>(passCaptureIndices)
-                 : ArrayRef<unsigned>(failCaptureIndices);
+        reportedPassed ? ArrayRef<unsigned>(passCaptureIndices)
+                       : ArrayRef<unsigned>(failCaptureIndices);
     Block *currentBlock = abortLiveAttempts;
     Value liveState;
     {
@@ -6041,8 +6068,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           abortBuilder, getSemanticLocation(abort), stateType,
           entry.getArgument(stateStorageIndex));
     }
-    // Oldest attempts complete first. An accepted abort is vacuous, but its
-    // successful cover-property attempts still execute the pass action.
+    // Oldest attempts complete first. The abort result is vacuous; an outer
+    // temporal negation flips its truth while preserving that classification.
+    // Every resulting cover-property success still executes the pass action.
     if (*selectedReport) {
       for (uint64_t age = sequence.ages.size(); age-- > 1;) {
         Block *reportBlock = new Block;
@@ -6082,11 +6110,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         finishBuilder.getI64IntegerAttr(0));
     sim::SimRefStoreOp::create(finishBuilder, getSemanticLocation(abort),
                                abortZero, entry.getArgument(stateStorageIndex));
-    Value currentTrue = arith::ConstantOp::create(
-        finishBuilder, getSemanticLocation(abort), builder.getI1Type(),
-        builder.getBoolAttr(true));
-    cf::BranchOp::create(finishBuilder, getSemanticLocation(abort), waitAbort,
-                         ValueRange{currentTrue});
+    cf::BranchOp::create(finishBuilder, getSemanticLocation(abort), waitAbort);
 
     sim::SimSpawnOp::create(builder, getSemanticLocation(abort),
                             actor.getSymNameAttr(), captures, ArrayAttr{},
@@ -9149,20 +9173,6 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   if (failed(cancelDisabledSample(wait, {stateStorage})))
     return failure();
 
-  Value asynchronousAbortAtClock;
-  if (abort && !abort.getIsSynchronous()) {
-    // Unlike sync_* aborts, the condition is unsampled. Read its current value
-    // before enabling sampled predicate lowering for the wrapped property.
-    FailureOr<Value> condition = lowerExpression(abortCondition);
-    if (failed(condition))
-      return failure();
-    FailureOr<Value> aborts =
-        truthValue(*condition, getSemanticLocation(abortCondition));
-    if (failed(aborts))
-      return failure();
-    asynchronousAbortAtClock = *aborts;
-  }
-
   bool savedSampleAssertionValues = sampleAssertionValues;
   sampleAssertionValues = true;
   Operation *savedSampledClock = activeSampledClock;
@@ -9173,7 +9183,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   });
 
   llvm::DenseMap<Operation *, Value> predicateCache;
-  auto conditionalResult = [&](Value condition, bool passed) -> LogicalResult {
+  auto conditionalResult = [&](Value condition, bool passed,
+                               bool alreadyReported = false) -> LogicalResult {
     if (!observable)
       return success();
     Block *report = addBlock();
@@ -9181,7 +9192,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     cf::CondBranchOp::create(builder, location, condition, report, ValueRange{},
                              continuation, ValueRange{});
     setCurrent(report);
-    scheduleResult(passed);
+    if (alreadyReported)
+      scheduleReportedResult(passed);
+    else
+      scheduleResult(passed);
     emitBranch(continuation);
     setCurrent(continuation);
     return success();
@@ -9227,23 +9241,21 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   };
 
   if (abort) {
-    Value aborts = asynchronousAbortAtClock;
-    if (abort.getIsSynchronous()) {
-      FailureOr<Value> condition = lowerExpression(abortCondition);
-      if (failed(condition))
-        return failure();
-      FailureOr<Value> sampled =
-          truthValue(*condition, getSemanticLocation(abortCondition));
-      if (failed(sampled))
-        return failure();
-      aborts = *sampled;
-    }
-    if (!aborts)
-      return emitError(getSemanticLocation(abortCondition))
-                 << "property abort condition could not be evaluated",
-             failure();
+    // All four abort operators use the ordinary assertion-sampled value of
+    // their Boolean condition. Async versus sync controls whether additional
+    // time slots are observed, not the value domain at a property clock.
+    FailureOr<Value> condition = lowerExpression(abortCondition);
+    if (failed(condition))
+      return failure();
+    FailureOr<Value> sampled =
+        truthValue(*condition, getSemanticLocation(abortCondition));
+    if (failed(sampled))
+      return failure();
+    Value aborts = *sampled;
     bool accepted =
         abort.getAction() == semantic::SVAssertionAbortAction::Accept;
+    bool reportedPassed =
+        temporalNegationOutsideAbort ? !accepted : accepted;
     Block *aborted = addBlock();
     Block *evaluate = addBlock();
     cf::CondBranchOp::create(builder, location, aborts, aborted, ValueRange{},
@@ -9251,9 +9263,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     setCurrent(aborted);
     // Every live state bit represents one independent property attempt. Abort
     // each exactly once, then include the attempt that starts on this clock.
-    // Accepted abort is a vacuous success. Cover-property pass actions execute
-    // for every successful attempt, including the attempt starting now.
-    if (shouldScheduleResult(accepted)) {
+    // The abort result is vacuous and an enclosing temporal negation flips
+    // its truth. Cover-property pass actions execute for every resulting
+    // success, including the attempt starting now.
+    if (shouldScheduleReportedResult(reportedPassed)) {
       for (uint64_t age = 1; age < sequence.ages.size(); ++age) {
         Value mask = arith::ConstantOp::create(
             builder, location, stateType,
@@ -9262,12 +9275,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             arith::AndIOp::create(builder, location, state, mask);
         Value active = arith::CmpIOp::create(
             builder, location, arith::CmpIPredicate::ne, presentBits, zero);
-        if (failed(conditionalResult(active, accepted)))
+        if (failed(conditionalResult(active, reportedPassed,
+                                     /*alreadyReported=*/true)))
           return failure();
       }
       Value current = arith::ConstantOp::create(
           builder, location, builder.getI1Type(), builder.getBoolAttr(true));
-      if (failed(conditionalResult(current, accepted)))
+      if (failed(conditionalResult(current, reportedPassed,
+                                   /*alreadyReported=*/true)))
         return failure();
     }
     if (stateStorage)
