@@ -35,4 +35,4 @@ module {
   }
 }
 
-// CHECK: expect currently requires one deterministic fixed sequence, optionally with outer first_match, or bounded alternatives without first_match, locals, implication/followed-by, disable iff, or match items
+// CHECK: expect currently requires one deterministic fixed sequence, optionally with outer first_match, or bounded alternatives with at most one outer first_match and without locals, implication/followed-by, disable iff, or match items

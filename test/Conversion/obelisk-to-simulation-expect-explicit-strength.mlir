@@ -91,7 +91,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: obelisk_sim.func private @unit_0.fork.11.0.16(
 // CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
 // CHECK-SAME: obelisk_sim.expect_monitor_actor
-// CHECK-SAME: obelisk_sim.first_match
+// CHECK-SAME: obelisk_sim.first_match_monitor
 // CHECK-SAME: obelisk_sim.strong_weak_monitor
 // CHECK-COUNT-3: obelisk_sim.suspend.edge posedge
 // CHECK: obelisk_sim.func private @unit_0.fork.11.0.16.$expect_eos.11(

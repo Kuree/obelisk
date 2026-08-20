@@ -17,8 +17,8 @@ module {
                 obelisk.sv.expression.named_value attributes {node_id = 10 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                 }
               }
-              obelisk.sv.assertion.first_match attributes {match_item_count = 0 : i64, node_id = 11 : i64} {
-                obelisk.sv.assertion.binary attributes {node_id = 12 : i64, operator_kind = 1 : i32} {
+              obelisk.sv.assertion.binary attributes {node_id = 11 : i64, operator_kind = 1 : i32} {
+                obelisk.sv.assertion.first_match attributes {match_item_count = 0 : i64, node_id = 12 : i64} {
                   obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}], node_id = 13 : i64} {
                     obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 14 : i64, repetition_is_unbounded = false} {
                       obelisk.sv.expression.named_value attributes {node_id = 15 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -29,14 +29,14 @@ module {
                       }
                     }
                   }
-                  obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 2 : i64}], node_id = 18 : i64} {
-                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 19 : i64, repetition_is_unbounded = false} {
-                      obelisk.sv.expression.named_value attributes {node_id = 20 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
-                      }
+                }
+                obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 2 : i64}], node_id = 18 : i64} {
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 19 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 20 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                     }
-                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 21 : i64, repetition_is_unbounded = false} {
-                      obelisk.sv.expression.named_value attributes {node_id = 22 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
-                      }
+                  }
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 21 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 22 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                     }
                   }
                 }
@@ -49,4 +49,4 @@ module {
   }
 }
 
-// CHECK: branching bounded sequences currently require a concurrent directive without locals or implication, or an expect statement without first_match or match items
+// CHECK: branching bounded sequences currently require a concurrent directive without locals or implication, or an expect statement with at most one outer first_match and no match items

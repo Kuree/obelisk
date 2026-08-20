@@ -3018,6 +3018,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           : (temporalNegation ? temporalNegation.getOperation() : nullptr);
 
   bool firstMatch = false;
+  Operation *outerFirstMatchOperation = nullptr;
   if (auto first = dyn_cast<semantic::SVFirstMatchAssertionExprOp>(property)) {
     SmallVector<Operation *> nested = getChildren(first);
     if (first.getMatchItemCount() != 0 || nested.size() != 1)
@@ -3025,7 +3026,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                  << "bounded first_match does not yet support match items",
              failure();
     firstMatch = true;
+    outerFirstMatchOperation = first.getOperation();
   }
+  auto hasOnlyOuterFirstMatchBoundary = [&](const FixedSequence &candidate) {
+    if (!firstMatch || candidate.firstMatchBoundaries.size() != 1)
+      return false;
+    const FirstMatchBoundary &boundary = candidate.firstMatchBoundaries.front();
+    return boundary.groupPath.size() == 1 &&
+           boundary.groupPath.front().operation == outerFirstMatchOperation &&
+           boundary.groupPath.front().activation == 0;
+  };
 
   bool multiClockAttempt =
       op->hasAttr("obelisk_sim.multiclock_sequence_attempt");
@@ -3390,6 +3400,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                    << "; use positive-delay concatenation to eliminate the "
                       "empty endpoint",
                failure();
+      // IEEE 16.12.2 makes strong/weak sequence truth insensitive to an outer
+      // first_match. Expect uses strong(sequence) by default and also admits
+      // explicit strong/weak, so erase exactly that outer boundary before
+      // minimization. Retain any nested boundary for rejection below.
+      if (expectMonitor && firstMatch &&
+          llvm::all_of(*compiled, hasOnlyOuterFirstMatchBoundary))
+        for (FixedSequence &alternative : *compiled)
+          alternative.firstMatchBoundaries.clear();
       if (!coverSequence) {
         if (std::optional<BooleanMinimizationStats> stats =
                 minimizeBooleanAlternatives(*compiled))
@@ -3688,7 +3706,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return emitError(getSemanticLocation(property))
                << "branching bounded sequences currently require a "
                   "concurrent directive without locals or implication, or "
-                  "an expect statement without first_match or match items",
+                  "an expect statement with at most one outer first_match "
+                  "and no match items",
            failure();
   if (endStrength && (implication || hasPersistentUntil || hasPersistentUnary ||
                       coverSequence))
@@ -3732,13 +3751,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   if (expectMonitor) {
     if (localInstance || implication || disable ||
         (branchingSequence && !expectBoundedBranching) ||
+        !sequence.firstMatchBoundaries.empty() ||
         llvm::any_of(sequence.ages,
                      [](const FixedSequenceAge &age) {
                        return !age.matchItems.empty();
                      }) ||
         llvm::any_of(sequenceAlternatives,
                      [](const FixedSequence &alternative) {
-                       return llvm::any_of(alternative.ages,
+                       return !alternative.firstMatchBoundaries.empty() ||
+                              llvm::any_of(alternative.ages,
                                            [](const FixedSequenceAge &age) {
                                              return !age.matchItems.empty();
                                            });
@@ -3746,8 +3767,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       return emitError(location)
                  << "expect currently requires one deterministic fixed "
                     "sequence, optionally with outer first_match, or bounded "
-                    "alternatives without first_match, locals, implication/"
-                    "followed-by, disable iff, or match items",
+                    "alternatives with at most one outer first_match and "
+                    "without locals, implication/followed-by, disable iff, "
+                    "or match items",
              failure();
     auto donePath =
         op->getAttrOfType<StringAttr>("obelisk_sim.expect_done_path");
