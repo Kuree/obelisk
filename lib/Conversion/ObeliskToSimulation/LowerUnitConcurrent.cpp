@@ -3167,13 +3167,20 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     firstMatch = true;
     outerFirstMatchOperation = first.getOperation();
   }
-  auto hasOnlyOuterFirstMatchBoundary = [&](const FixedSequence &candidate) {
-    if (!firstMatch || candidate.firstMatchBoundaries.size() != 1)
+  auto hasOnlyFirstMatchBoundary = [](const FixedSequence &candidate,
+                                      Operation *firstMatchOperation) {
+    if (!firstMatchOperation || candidate.firstMatchBoundaries.size() != 1 ||
+        candidate.ages.empty())
       return false;
     const FirstMatchBoundary &boundary = candidate.firstMatchBoundaries.front();
-    return boundary.groupPath.size() == 1 &&
-           boundary.groupPath.front().operation == outerFirstMatchOperation &&
+    return boundary.age + 1 == candidate.ages.size() &&
+           boundary.groupPath.size() == 1 &&
+           boundary.groupPath.front().operation == firstMatchOperation &&
            boundary.groupPath.front().activation == 0;
+  };
+  auto hasOnlyOuterFirstMatchBoundary = [&](const FixedSequence &candidate) {
+    return firstMatch &&
+           hasOnlyFirstMatchBoundary(candidate, outerFirstMatchOperation);
   };
 
   bool multiClockAttempt =
@@ -3299,6 +3306,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   size_t consequentAlternativeAdmissionCount = 1;
   bool consequentAlternativesAdmissionEligible = true;
   bool consequentEndStrengthComposable = true;
+  Operation *directFirstMatchConsequent = nullptr;
+  Operation *consequentFirstMatchOperation = nullptr;
+  bool erasedConsequentFirstMatch = false;
   std::optional<bool> consequentUniformIntrinsicEndStrong;
   std::optional<bool> expectEndStrong;
   auto recordBooleanMinimization = [&](const BooleanMinimizationStats &stats,
@@ -3387,10 +3397,21 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                    "instance"),
                failure();
     }
+    if (Operation *executableRhs = unwrapAssertionInstance(rhsOperand)) {
+      if (auto first =
+              dyn_cast<semantic::SVFirstMatchAssertionExprOp>(executableRhs)) {
+        SmallVector<Operation *> firstChildren = getChildren(first);
+        if (first.getMatchItemCount() == 0 && firstChildren.size() == 1) {
+          directFirstMatchConsequent = executableRhs;
+          consequentFirstMatchOperation = first.getOperation();
+        }
+      }
+    }
     FailureOr<FixedSequenceAlternatives> lhs =
         compileFixedSequenceAlternatives(operands.front(), clock);
-    FailureOr<FixedSequenceAlternatives> rhs =
-        compileFixedSequenceAlternatives(rhsOperand, clock);
+    FailureOr<FixedSequenceAlternatives> rhs = compileFixedSequenceAlternatives(
+        directFirstMatchConsequent ? directFirstMatchConsequent : rhsOperand,
+        clock);
     FailureOr<PersistentDelaySequence> delayedRhs =
         compilePersistentDelay(rhsOperand);
     FailureOr<PersistentUnaryProperty> unaryRhs =
@@ -3480,6 +3501,23 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     }
     antecedentAlternativeAdmissionCount = lhs->size();
     if (succeeded(rhs)) {
+      // When both sides branch, an outer consequent first_match wraps a
+      // sequence used directly as a property. IEEE 16.12.2 makes both its
+      // strong and weak truth identical to the unwrapped sequence. With match
+      // items already excluded, the property result has no observable
+      // endpoint multiplicity, so erase exactly this outer priority boundary.
+      // Nested boundaries remain attached and retain the existing rejection.
+      if (lhs->size() > 1 && rhs->size() > 1 && consequentFirstMatchOperation &&
+          llvm::all_of(*rhs, [&](const FixedSequence &alternative) {
+            return hasOnlyFirstMatchBoundary(alternative,
+                                             consequentFirstMatchOperation);
+          })) {
+        for (FixedSequence &alternative : *rhs)
+          alternative.firstMatchBoundaries.clear();
+        erasedConsequentFirstMatch = true;
+        function->setAttr("obelisk_sim.consequent_first_match_equivalence",
+                          builder.getUnitAttr());
+      }
       if (consequentEndStrength) {
         for (FixedSequence &alternative : *rhs) {
           alternative.intrinsicEndStrong = *explicitConsequentEndStrong;
@@ -3746,7 +3784,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                      return alternative.ages.size() == 1;
                    });
   bool boundedFirstMatch =
-      firstMatch ||
+      firstMatch || erasedConsequentFirstMatch ||
       llvm::any_of(sequenceAlternatives,
                    [](const FixedSequence &alternative) {
                      return !alternative.firstMatchBoundaries.empty();
@@ -3874,8 +3912,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return emitError(getSemanticLocation(implication))
                << "combined branching implication/followed-by currently "
                   "requires bounded consequent alternatives without "
-                  "first_match, vacuous alternatives, or match items and at "
-                  "most 256 antecedent/consequent alternative pairs",
+                  "retained nested first_match boundaries, vacuous "
+                  "alternatives, or match items and at most 256 "
+                  "antecedent/consequent alternative pairs",
            failure();
   if (branchingConsequent &&
       ((!branchingAntecedent && antecedentSequence.ages.size() != 1) ||

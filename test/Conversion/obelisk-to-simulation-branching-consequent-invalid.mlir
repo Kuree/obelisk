@@ -2,7 +2,7 @@
 
 // A combined bounded consequent may branch temporally, but a nested
 // first_match needs per-obligation priority state and remains diagnosed.
-// CHECK: error: combined branching implication/followed-by currently requires bounded consequent alternatives without first_match, vacuous alternatives, or match items and at most 256 antecedent/consequent alternative pairs
+// CHECK: error: combined branching implication/followed-by currently requires bounded consequent alternatives without retained nested first_match boundaries, vacuous alternatives, or match items and at most 256 antecedent/consequent alternative pairs
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "combined_temporal_invalid", name = "combined_temporal_invalid", node_id = 0 : i64, original_source_range = !obelisk.source_range<"combined-temporal-invalid.sv", 1, 1, "combined-temporal-invalid.sv", 4, 10, "">, source_end_column = 10 : i64, source_end_line = 4 : i64, source_file = "combined-temporal-invalid.sv", source_range = !obelisk.source_range<"combined-temporal-invalid.sv", 1, 1, "combined-temporal-invalid.sv", 4, 10, "">, sym_name = "s0.combined_temporal_invalid"} {
