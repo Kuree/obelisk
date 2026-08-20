@@ -191,6 +191,100 @@ static FixedSequence negateSingleBooleanSequence(FixedSequence sequence) {
   return sequence;
 }
 
+/// Whether an exact trace is one nonvacuous propositional cube. Such cubes
+/// can be complemented and combined without changing a temporal endpoint,
+/// action ordering, or match multiplicity.
+static bool isOneCycleBooleanCube(const FixedSequence &sequence) {
+  if (sequence.ages.size() != 1 || sequence.emptyMatch ||
+      sequence.vacuousSuccess || sequence.hasIntrinsicEndStrength ||
+      !sequence.firstMatchBoundaries.empty() ||
+      !sequence.ages.front().matchItems.empty())
+    return false;
+  const FixedSequenceAge &age = sequence.ages.front();
+  return !age.predicates.empty() || !age.negatedPredicates.empty() ||
+         !age.caseGuards.empty();
+}
+
+/// Complement a DNF of one-cycle Boolean cubes exactly. De Morgan turns each
+/// source cube into a disjunction of inverted literals; distributing those
+/// clauses constructs the complemented DNF. The compiler-side minimizer may
+/// then use Z3 to remove redundant products before monitor SSA is emitted.
+static FailureOr<FixedSequenceAlternatives>
+complementOneCycleBooleanDNF(ArrayRef<FixedSequence> alternatives) {
+  if (alternatives.empty() ||
+      llvm::any_of(alternatives, [](const FixedSequence &alternative) {
+        return !isOneCycleBooleanCube(alternative);
+      }))
+    return failure();
+
+  FixedSequenceAlternatives results(1);
+  results.front().ages.resize(1);
+  for (const FixedSequence &alternative : alternatives) {
+    const FixedSequenceAge &age = alternative.ages.front();
+    size_t literalCount = age.predicates.size() + age.negatedPredicates.size() +
+                          age.caseGuards.size();
+    if (results.size() > maxFixedSequenceAlternatives / literalCount)
+      return failure();
+
+    FixedSequenceAlternatives expanded;
+    expanded.reserve(results.size() * literalCount);
+    for (const FixedSequence &prefix : results) {
+      for (Operation *predicate : age.predicates) {
+        FixedSequence result = prefix;
+        result.ages.front().negatedPredicates.push_back(predicate);
+        expanded.push_back(std::move(result));
+      }
+      for (Operation *predicate : age.negatedPredicates) {
+        FixedSequence result = prefix;
+        result.ages.front().predicates.push_back(predicate);
+        expanded.push_back(std::move(result));
+      }
+      for (FixedSequenceAge::CaseGuard guard : age.caseGuards) {
+        FixedSequence result = prefix;
+        guard.negated = !guard.negated;
+        result.ages.front().caseGuards.push_back(guard);
+        expanded.push_back(std::move(result));
+      }
+    }
+    results = std::move(expanded);
+  }
+  return results;
+}
+
+/// Conjoin two nonvacuous one-cycle Boolean DNFs by Cartesian product. The
+/// resulting traces remain nonvacuous.
+static FailureOr<FixedSequenceAlternatives>
+conjoinOneCycleBooleanDNFs(ArrayRef<FixedSequence> lhs,
+                           ArrayRef<FixedSequence> rhs) {
+  if (lhs.empty() || rhs.empty() ||
+      lhs.size() > maxFixedSequenceAlternatives / rhs.size() ||
+      llvm::any_of(lhs,
+                   [](const FixedSequence &alternative) {
+                     return !isOneCycleBooleanCube(alternative);
+                   }) ||
+      llvm::any_of(rhs, [](const FixedSequence &alternative) {
+        return !isOneCycleBooleanCube(alternative);
+      }))
+    return failure();
+
+  FixedSequenceAlternatives results;
+  results.reserve(lhs.size() * rhs.size());
+  for (const FixedSequence &left : lhs) {
+    for (const FixedSequence &right : rhs) {
+      FixedSequence combined = left;
+      const FixedSequenceAge &rightAge = right.ages.front();
+      FixedSequenceAge &combinedAge = combined.ages.front();
+      llvm::append_range(combinedAge.predicates, rightAge.predicates);
+      llvm::append_range(combinedAge.negatedPredicates,
+                         rightAge.negatedPredicates);
+      llvm::append_range(combinedAge.caseGuards, rightAge.caseGuards);
+      combined.vacuousSuccess |= right.vacuousSuccess;
+      results.push_back(std::move(combined));
+    }
+  }
+  return results;
+}
+
 /// Conjunction of two bounded property completions. `std::nullopt` denotes
 /// the enclosing directive's default sequence strength, so it behaves as the
 /// same symbolic Boolean in both operands.
@@ -208,7 +302,7 @@ conjoinIntrinsicEndStrength(std::optional<bool> lhs, std::optional<bool> rhs) {
 /// solver: alternatives with different lengths, first_match boundaries, or
 /// match-item effects retain their exact source multiplicity and ordering.
 static std::optional<BooleanMinimizationStats>
-minimizeBooleanAlternatives(FixedSequenceAlternatives &alternatives) {
+minimizeUniformBooleanAlternatives(FixedSequenceAlternatives &alternatives) {
   if (alternatives.size() < 2)
     return std::nullopt;
   size_t horizon = alternatives.front().ages.size();
@@ -324,6 +418,88 @@ minimizeBooleanAlternatives(FixedSequenceAlternatives &alternatives) {
   return stats;
 }
 
+/// Minimize independently observable-equivalent Boolean groups. Vacuous and
+/// nonvacuous successes cannot be merged, nor can traces with different
+/// temporal completion metadata, but each same-class DNF can still use Z3.
+/// This is especially useful for `implies`, whose false-LHS cubes are vacuous
+/// while its true-LHS/RHS cubes are nonvacuous.
+static std::optional<BooleanMinimizationStats>
+minimizeBooleanAlternatives(FixedSequenceAlternatives &alternatives) {
+  if (alternatives.size() < 2)
+    return std::nullopt;
+
+  struct Group {
+    size_t horizon = 0;
+    bool vacuousSuccess = false;
+    std::optional<bool> intrinsicEndStrong;
+    bool hasIntrinsicEndStrength = false;
+    FixedSequenceAlternatives alternatives;
+  };
+  SmallVector<Group, 2> groups;
+  auto literalCount = [](const FixedSequence &alternative) {
+    size_t count = 0;
+    for (const FixedSequenceAge &age : alternative.ages)
+      count += age.predicates.size() + age.negatedPredicates.size() +
+               age.caseGuards.size();
+    return count;
+  };
+
+  BooleanMinimizationStats aggregate;
+  aggregate.alternativesBefore = alternatives.size();
+  for (const FixedSequence &alternative : alternatives) {
+    if (alternative.ages.empty() || !alternative.firstMatchBoundaries.empty() ||
+        llvm::any_of(alternative.ages, [](const FixedSequenceAge &age) {
+          return !age.matchItems.empty();
+        }))
+      return std::nullopt;
+    aggregate.literalsBefore += literalCount(alternative);
+    Group *selected = nullptr;
+    for (Group &group : groups) {
+      if (group.horizon == alternative.ages.size() &&
+          group.vacuousSuccess == alternative.vacuousSuccess &&
+          group.intrinsicEndStrong == alternative.intrinsicEndStrong &&
+          group.hasIntrinsicEndStrength ==
+              alternative.hasIntrinsicEndStrength) {
+        selected = &group;
+        break;
+      }
+    }
+    if (!selected) {
+      groups.push_back({alternative.ages.size(),
+                        alternative.vacuousSuccess,
+                        alternative.intrinsicEndStrong,
+                        alternative.hasIntrinsicEndStrength,
+                        {}});
+      selected = &groups.back();
+    }
+    selected->alternatives.push_back(alternative);
+  }
+
+  bool minimizedAnyGroup = false;
+  FixedSequenceAlternatives minimized;
+  minimized.reserve(alternatives.size());
+  for (Group &group : groups) {
+    if (std::optional<BooleanMinimizationStats> stats =
+            minimizeUniformBooleanAlternatives(group.alternatives)) {
+      minimizedAnyGroup = true;
+      aggregate.solverQueries += stats->solverQueries;
+      if (aggregate.backend.empty())
+        aggregate.backend = stats->backend;
+      else if (aggregate.backend != stats->backend)
+        aggregate.backend = "mixed";
+    }
+    for (FixedSequence &alternative : group.alternatives) {
+      aggregate.literalsAfter += literalCount(alternative);
+      minimized.push_back(std::move(alternative));
+    }
+  }
+  if (!minimizedAnyGroup)
+    return std::nullopt;
+  aggregate.alternativesAfter = minimized.size();
+  alternatives = std::move(minimized);
+  return aggregate;
+}
+
 /// Diagnose SVA forms that the bounded monitor compiler intentionally leaves
 /// unsupported. Keep these messages tied to the semantic construct instead of
 /// reporting the generic fixed-trace compilation failure: users need to know
@@ -331,6 +507,21 @@ minimizeBooleanAlternatives(FixedSequenceAlternatives &alternatives) {
 /// or requires a temporal semantic that has not been implemented yet.
 static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
                                                  bool nested = false) {
+  if (auto binary = dyn_cast<semantic::SVBinaryAssertionExprOp>(operation);
+      binary &&
+      (binary.getOperatorKind() == semantic::SVAssertionBinaryOperator::Iff ||
+       binary.getOperatorKind() ==
+           semantic::SVAssertionBinaryOperator::Implies)) {
+    emitError(getSemanticLocation(binary))
+        << "SVA property operator '"
+        << semantic::stringifySVAssertionBinaryOperator(
+               binary.getOperatorKind())
+        << "' currently requires nonvacuous one-cycle Boolean DNF operands "
+           "without first_match or match items and an exact expansion of at "
+           "most 256 alternatives";
+    return true;
+  }
+
   bool diagnosed = false;
   operation->walk([&](Operation *current) -> WalkResult {
     auto diagnose = [&](const Twine &message) {
@@ -531,8 +722,9 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
             Twine("SVA property operator '") +
             semantic::stringifySVAssertionBinaryOperator(
                 binary.getOperatorKind()) +
-            "' currently requires deterministic one-cycle boolean operands "
-            "without match items");
+            "' currently requires nonvacuous one-cycle Boolean DNF operands "
+            "without first_match or match items and an exact expansion of "
+            "at most 256 alternatives");
       case semantic::SVAssertionBinaryOperator::Until:
       case semantic::SVAssertionBinaryOperator::SUntil:
       case semantic::SVAssertionBinaryOperator::UntilWith:
@@ -1533,46 +1725,7 @@ compileFixedSequenceAlternatives(Operation *operation,
       // resulting DNF to the compiler-side Boolean minimizer before monitor
       // SSA is materialized. Temporal endpoints, vacuity, first_match, and
       // match-item effects are deliberately excluded from this transform.
-      FixedSequenceAlternatives results(1);
-      results.front().ages.resize(1);
-      for (const FixedSequence &alternative : *nested) {
-        if (alternative.ages.size() != 1 || alternative.emptyMatch ||
-            alternative.vacuousSuccess || alternative.hasIntrinsicEndStrength ||
-            !alternative.firstMatchBoundaries.empty() ||
-            !alternative.ages.front().matchItems.empty())
-          return failure();
-
-        const FixedSequenceAge &age = alternative.ages.front();
-        size_t literalCount = age.predicates.size() +
-                              age.negatedPredicates.size() +
-                              age.caseGuards.size();
-        if (literalCount == 0 ||
-            results.size() > maxFixedSequenceAlternatives / literalCount)
-          return failure();
-
-        FixedSequenceAlternatives expanded;
-        expanded.reserve(results.size() * literalCount);
-        for (const FixedSequence &prefix : results) {
-          for (Operation *predicate : age.predicates) {
-            FixedSequence result = prefix;
-            result.ages.front().negatedPredicates.push_back(predicate);
-            expanded.push_back(std::move(result));
-          }
-          for (Operation *predicate : age.negatedPredicates) {
-            FixedSequence result = prefix;
-            result.ages.front().predicates.push_back(predicate);
-            expanded.push_back(std::move(result));
-          }
-          for (FixedSequenceAge::CaseGuard guard : age.caseGuards) {
-            FixedSequence result = prefix;
-            guard.negated = !guard.negated;
-            result.ages.front().caseGuards.push_back(guard);
-            expanded.push_back(std::move(result));
-          }
-        }
-        results = std::move(expanded);
-      }
-      return results;
+      return complementOneCycleBooleanDNF(*nested);
     }
 
     int64_t minimum = 0;
@@ -1814,37 +1967,35 @@ compileFixedSequenceAlternatives(Operation *operation,
     return results;
   }
   case semantic::SVAssertionBinaryOperator::Iff: {
-    if (lhs->size() != 1 || rhs->size() != 1 ||
-        !isSingleBooleanAge(lhs->front()) ||
-        !isSingleBooleanAge(rhs->front()) || lhs->front().vacuousSuccess ||
-        rhs->front().vacuousSuccess)
+    FailureOr<FixedSequenceAlternatives> negatedLhs =
+        complementOneCycleBooleanDNF(*lhs);
+    FailureOr<FixedSequenceAlternatives> negatedRhs =
+        complementOneCycleBooleanDNF(*rhs);
+    FailureOr<FixedSequenceAlternatives> bothTrue =
+        conjoinOneCycleBooleanDNFs(*lhs, *rhs);
+    if (failed(negatedLhs) || failed(negatedRhs) || failed(bothTrue))
       return failure();
-    FixedSequence bothTrue = lhs->front();
-    llvm::append_range(bothTrue.ages.front().predicates,
-                       rhs->front().ages.front().predicates);
-    llvm::append_range(bothTrue.ages.front().negatedPredicates,
-                       rhs->front().ages.front().negatedPredicates);
-    FixedSequence bothFalse =
-        negateSingleBooleanSequence(std::move(lhs->front()));
-    FixedSequence negatedRight =
-        negateSingleBooleanSequence(std::move(rhs->front()));
-    llvm::append_range(bothFalse.ages.front().predicates,
-                       negatedRight.ages.front().predicates);
-    llvm::append_range(bothFalse.ages.front().negatedPredicates,
-                       negatedRight.ages.front().negatedPredicates);
-    return FixedSequenceAlternatives{std::move(bothTrue), std::move(bothFalse)};
+    FailureOr<FixedSequenceAlternatives> bothFalse =
+        conjoinOneCycleBooleanDNFs(*negatedLhs, *negatedRhs);
+    if (failed(bothFalse) ||
+        bothTrue->size() > maxFixedSequenceAlternatives - bothFalse->size())
+      return failure();
+    llvm::append_range(*bothTrue, std::move(*bothFalse));
+    return std::move(*bothTrue);
   }
   case semantic::SVAssertionBinaryOperator::Implies: {
-    if (lhs->size() != 1 || rhs->size() != 1 ||
-        !isSingleBooleanAge(lhs->front()) ||
-        !isSingleBooleanAge(rhs->front()) || lhs->front().vacuousSuccess ||
-        rhs->front().vacuousSuccess)
+    FailureOr<FixedSequenceAlternatives> antecedentFalse =
+        complementOneCycleBooleanDNF(*lhs);
+    FailureOr<FixedSequenceAlternatives> consequentTrue =
+        conjoinOneCycleBooleanDNFs(*lhs, *rhs);
+    if (failed(antecedentFalse) || failed(consequentTrue) ||
+        antecedentFalse->size() >
+            maxFixedSequenceAlternatives - consequentTrue->size())
       return failure();
-    FixedSequence antecedentFalse =
-        negateSingleBooleanSequence(std::move(lhs->front()));
-    antecedentFalse.vacuousSuccess = true;
-    return FixedSequenceAlternatives{std::move(antecedentFalse),
-                                     std::move(rhs->front())};
+    for (FixedSequence &alternative : *antecedentFalse)
+      alternative.vacuousSuccess = true;
+    llvm::append_range(*antecedentFalse, std::move(*consequentTrue));
+    return std::move(*antecedentFalse);
   }
   default:
     return failure();
