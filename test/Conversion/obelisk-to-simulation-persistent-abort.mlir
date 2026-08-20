@@ -278,22 +278,27 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: obelisk_sim.spawn @unit_2.$concurrent_abort.56
 // CHECK: obelisk_sim.call @unit_2.$concurrent_abort_count.56.reject
 
-// The four-state goto DFA is aborted as four aggregate counts. This directive
-// is a cover property, so an accepted abort is vacuous: it clears every count
-// without creating either a cover hit or a pass-action callback.
+// The four-state goto DFA is aborted as four aggregate counts. An accepted
+// abort is vacuous, but every successful cover-property evaluation still
+// executes the pass action. The dispatcher adds the current attempt, clears
+// all four states, and invokes the callback once per affected attempt.
 // CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_abort_count.76.accept(
 // CHECK-SAME: obelisk_sim.concurrent_abort_counted
 // CHECK: [[COVER_ZERO:%.*]] = arith.constant 0 : i64
-// CHECK-NOT: obelisk_sim.ref.load
+// CHECK: [[CURRENT:%.*]] = arith.constant 1 : i64
+// CHECK: [[COUNT0:%.*]] = obelisk_sim.ref.load %arg1
+// CHECK: [[WITH_CURRENT:%.*]] = arith.addi [[COUNT0]], [[CURRENT]]
 // CHECK: obelisk_sim.ref.store [[COVER_ZERO]] to %arg1
-// CHECK-NOT: obelisk_sim.ref.load
+// CHECK: [[COUNT1:%.*]] = obelisk_sim.ref.load %arg2
+// CHECK: [[SUM1:%.*]] = arith.addi [[WITH_CURRENT]], [[COUNT1]]
 // CHECK: obelisk_sim.ref.store [[COVER_ZERO]] to %arg2
-// CHECK-NOT: obelisk_sim.ref.load
+// CHECK: [[COUNT2:%.*]] = obelisk_sim.ref.load %arg3
+// CHECK: [[SUM2:%.*]] = arith.addi [[SUM1]], [[COUNT2]]
 // CHECK: obelisk_sim.ref.store [[COVER_ZERO]] to %arg3
-// CHECK-NOT: obelisk_sim.ref.load
+// CHECK: [[COUNT3:%.*]] = obelisk_sim.ref.load %arg4
+// CHECK: arith.addi [[SUM2]], [[COUNT3]]
 // CHECK: obelisk_sim.ref.store [[COVER_ZERO]] to %arg4
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.spawn
+// CHECK: obelisk_sim.spawn @unit_3.fork.76.0.0
 // CHECK-LABEL: obelisk_sim.func private @unit_3(
 // CHECK-SAME: obelisk_sim.persistent_repetition_kind = "goto"
 // CHECK-SAME: obelisk_sim.persistent_repetition_states = 4 : i64

@@ -474,23 +474,25 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: obelisk_sim.spawn @unit_8.$concurrent_cancel.
 // CHECK: obelisk_sim.spawn @unit_8.$concurrent_eos_count.
 
-// Ranged strong eventuality reports only eligible attempts at EOS. An
-// immature attempt has not evaluated its operand inside [2:$], remains
-// vacuous through not, and therefore cannot create a cover hit.
+// An immature ranged-strong-eventuality attempt remains vacuous through not,
+// but its successful cover-property evaluation still executes the pass
+// action. The separate eligible and immature cells preserve classification
+// for future vacuity counters while one counted callback handles both.
 // CHECK-LABEL: obelisk_sim.func private @unit_9.$concurrent_eos_count.
 // CHECK: [[ELIGIBLE:%.*]] = obelisk_sim.ref.load %arg1
-// CHECK-NOT: obelisk_sim.ref.load %arg2
+// CHECK: [[IMMATURE:%.*]] = obelisk_sim.ref.load %arg2
+// CHECK: arith.addi [[ELIGIBLE]], [[IMMATURE]]
+// CHECK-NOT: obelisk_sim.ref.load
 // CHECK: obelisk_sim.spawn @unit_9.fork.{{[0-9]+}}.0.0
 // CHECK-LABEL: obelisk_sim.func private @unit_9(
 // CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
 // CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "strong"
 // CHECK-SAME: obelisk_sim.persistent_unary_minimum = 2 : i64
 // CHECK-SAME: obelisk_sim.temporal_property_negation
-// The uncaptured immature count is promoted to an SSA loop argument; only the
-// eligible count needs addressable storage for the EOS coordinator.
-// CHECK-COUNT-1: obelisk_sim.ref.alloc
+// Both classifications remain addressable for the EOS coordinator.
+// CHECK-COUNT-2: obelisk_sim.ref.alloc
 // CHECK: obelisk_sim.spawn @unit_9.$concurrent_eos_count.
-// CHECK: cf.br {{.*}} : i64, !obelisk_sim.ref<i64>
+// CHECK: cf.br {{.*}} : !obelisk_sim.ref<i64>, !obelisk_sim.ref<i64>
 // CHECK-NOT: obelisk_sim.spawn @unit_9.fork
 
 // Restrict is also a non-assert/assume directive, so a bare sequence operand is

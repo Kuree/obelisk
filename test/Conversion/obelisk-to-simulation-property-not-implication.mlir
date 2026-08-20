@@ -474,7 +474,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // The same nonoverlap handoff is a pending strong operand consequence for
 // cover. Its EOS failure and both live consequent failures are nonvacuous hits;
-// the false implication antecedent remains vacuous and is suppressed.
+// a false implication antecedent inverts to an outer failure and schedules no
+// cover-property pass action.
 // CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos_report.67.weak(
 // CHECK: obelisk_sim.bytes.constant "u3-hit"
 // CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos.67.weak(

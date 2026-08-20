@@ -164,6 +164,39 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
+
+        // Cover implication a |-> ##[2:$] b. A false antecedent is a
+        // successful vacuous evaluation and must execute the pass action.
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 80 : i64, procedure_kind = 2 : i32, sym_name = "s19", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 81 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 82 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 83 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 84 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.binary attributes {node_id = 85 : i64, operator_kind = 11 : i32} {
+                obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 86 : i64, repetition_is_unbounded = false} {
+                  obelisk.sv.expression.named_value attributes {node_id = 87 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                }
+                obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = true, min = 2 : i64}], node_id = 88 : i64} {
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 89 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 90 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s10.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                }
+              }
+            }
+            obelisk.sv.statement.expression_statement attributes {node_id = 91 : i64} {
+              obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 92 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                obelisk.sv.expression.named_value attributes {node_id = 93 : i64, referenced_path = "top.hit", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s12.hit, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+                obelisk.sv.expression.named_value attributes {node_id = 94 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s10.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -212,3 +245,16 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-COUNT-2: obelisk_sim.assert.sampled_read
 // CHECK: arith.select
 // CHECK: obelisk_sim.spawn @unit_2.fork.66.0.0
+
+// Cover implication has one callback for a prior terminal match and one for
+// the current false-antecedent vacuous success. Keeping the two static sites
+// guards both aggregate-result and vacuous scheduling without per-attempt
+// runtime threads.
+// CHECK-LABEL: obelisk_sim.func private @unit_3.fork.81.0.0(
+// CHECK: obelisk_sim.ref.load
+// CHECK: obelisk_sim.ref.store
+// CHECK-LABEL: obelisk_sim.func private @unit_3(
+// CHECK-SAME: obelisk_sim.persistent_delay_implication
+// CHECK-SAME: obelisk_sim.persistent_delay_minimum = 2 : i64
+// CHECK-COUNT-2: obelisk_sim.spawn @unit_3.fork.81.0.0
+// CHECK-NOT: obelisk_sim.spawn @unit_3.fork

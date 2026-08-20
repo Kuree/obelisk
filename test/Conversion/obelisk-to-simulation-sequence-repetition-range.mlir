@@ -352,14 +352,16 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
+        // (a or b) #-# a. Same-endpoint antecedent matches are distinct
+        // existential obligations of one followed-by property attempt.
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 220 : i64, procedure_kind = 2 : i32, sym_name = "s220", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 221 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 221 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 222 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 223 : i64} {
                 obelisk.sv.expression.named_value attributes {node_id = 224 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                 }
               }
-              obelisk.sv.assertion.binary attributes {node_id = 225 : i64, operator_kind = 12 : i32} {
+              obelisk.sv.assertion.binary attributes {node_id = 225 : i64, operator_kind = 13 : i32} {
                 obelisk.sv.assertion.binary attributes {node_id = 226 : i64, operator_kind = 1 : i32} {
                   obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 227 : i64, repetition_is_unbounded = false} {
                     obelisk.sv.expression.named_value attributes {node_id = 228 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -374,6 +376,144 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
                   obelisk.sv.expression.named_value attributes {node_id = 232 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                   }
                 }
+              }
+            }
+            obelisk.sv.statement.expression_statement attributes {node_id = 233 : i64} {
+              obelisk.sv.expression.call attributes {argument_count = 0 : i64, callee_name = "$display", constraint_restrictions = [], defaulted_arguments = array<i64>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 234 : i64, semantic_type = !obelisk.void, subroutine_kind = 1 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s3.top::@s4.top} {
+              }
+            }
+          }
+        }
+        // cover property ((a ##[1:2] b) |-> a). If simulation ends while an
+        // antecedent endpoint is still possible, that path can no longer
+        // match; the implication succeeds vacuously once per source attempt.
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 240 : i64, procedure_kind = 2 : i32, sym_name = "s240", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 241 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 242 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 243 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 244 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.binary attributes {node_id = 245 : i64, operator_kind = 11 : i32} {
+                obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 1 : i64}], node_id = 246 : i64} {
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 247 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 248 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 249 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 250 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s14.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                }
+                obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 251 : i64, repetition_is_unbounded = false} {
+                  obelisk.sv.expression.named_value attributes {node_id = 252 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                }
+              }
+            }
+            obelisk.sv.statement.expression_statement attributes {node_id = 253 : i64} {
+              obelisk.sv.expression.call attributes {argument_count = 0 : i64, callee_name = "$display", constraint_restrictions = [], defaulted_arguments = array<i64>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 254 : i64, semantic_type = !obelisk.void, subroutine_kind = 1 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s3.top::@s4.top} {
+              }
+            }
+          }
+        }
+        // assert property ((a ##[1:2] b) #=# a). At EOS, an already matched
+        // source with its weak nonoverlapped consequent pending succeeds;
+        // a source with only an unfinished antecedent fails existentially.
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 260 : i64, procedure_kind = 2 : i32, sym_name = "s260", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 261 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 262 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 263 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 264 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.binary attributes {node_id = 265 : i64, operator_kind = 14 : i32} {
+                obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 1 : i64}], node_id = 266 : i64} {
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 267 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 268 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 269 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 270 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s14.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                }
+                obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 271 : i64, repetition_is_unbounded = false} {
+                  obelisk.sv.expression.named_value attributes {node_id = 272 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                }
+              }
+            }
+            obelisk.sv.statement.expression_statement attributes {node_id = 273 : i64} {
+              obelisk.sv.expression.call attributes {argument_count = 0 : i64, callee_name = "$display", constraint_restrictions = [], defaulted_arguments = array<i64>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 274 : i64, semantic_type = !obelisk.void, subroutine_kind = 1 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s3.top::@s4.top} {
+              }
+            }
+          }
+        }
+        // Intrinsically strong s_nexttime overrides assert's default weak
+        // sequence completion for a pending implication consequent.
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 280 : i64, procedure_kind = 2 : i32, sym_name = "s280", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 281 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 282 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 283 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 284 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.binary attributes {node_id = 285 : i64, operator_kind = 11 : i32} {
+                obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 1 : i64}], node_id = 286 : i64} {
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 287 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 288 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 289 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 290 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s14.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                }
+                obelisk.sv.assertion.unary attributes {has_range = false, node_id = 291 : i64, operator_kind = 2 : i32, range_is_unbounded = false} {
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 292 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 293 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                }
+              }
+            }
+            obelisk.sv.statement.expression_statement attributes {node_id = 294 : i64} {
+              obelisk.sv.expression.call attributes {argument_count = 0 : i64, callee_name = "$display", constraint_restrictions = [], defaulted_arguments = array<i64>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 295 : i64, semantic_type = !obelisk.void, subroutine_kind = 1 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s3.top::@s4.top} {
+              }
+            }
+          }
+        }
+        // Intrinsically weak nexttime overrides cover property's default
+        // strong sequence completion for a pending implication consequent.
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 300 : i64, procedure_kind = 2 : i32, sym_name = "s300", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 301 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 302 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 303 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 304 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.binary attributes {node_id = 305 : i64, operator_kind = 11 : i32} {
+                obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 1 : i64}], node_id = 306 : i64} {
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 307 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 308 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 309 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 310 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s14.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                }
+                obelisk.sv.assertion.unary attributes {has_range = false, node_id = 311 : i64, operator_kind = 1 : i32, range_is_unbounded = false} {
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 312 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 313 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                }
+              }
+            }
+            obelisk.sv.statement.expression_statement attributes {node_id = 314 : i64} {
+              obelisk.sv.expression.call attributes {argument_count = 0 : i64, callee_name = "$display", constraint_restrictions = [], defaulted_arguments = array<i64>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 315 : i64, semantic_type = !obelisk.void, subroutine_kind = 1 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s3.top::@s4.top} {
               }
             }
           }
@@ -494,30 +634,167 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-SAME: obelisk_sim.first_match_priority_groups = 2 : i64
 
 // A ranged antecedent retains both exact traces and gives each trace its own
-// compact consequent channel. Vacuity is decided only after all live
-// antecedent alternatives for one property attempt are exhausted.
+// compact consequent channel. The source-age coalescer delays success until
+// every later antecedent endpoint and consequent obligation has resolved,
+// reports the first universal failure once, and cancels all remaining state
+// for that source attempt. With a four-age result horizon this produces seven
+// static result sites (three fail plus four pass), rather than one site per
+// channel at each consequence endpoint.
+// CHECK: obelisk_sim.func private @[[RANGE_PASS:unit_11\.fork\.201\.0\.0]](
+// CHECK: obelisk_sim.func private @[[RANGE_FAIL:unit_11\.fork\.201\.1\.2]](
 // CHECK-LABEL: obelisk_sim.func private @unit_11(
 // CHECK-SAME: obelisk_sim.bounded_antecedent_horizon = 3 : i64
 // CHECK-SAME: obelisk_sim.branching_antecedent_alternatives = 2 : i64
 // CHECK-SAME: obelisk_sim.branching_antecedent_match_channels = 2 : i64
 // CHECK-SAME: obelisk_sim.branching_antecedent_monitor
+// CHECK-SAME: obelisk_sim.branching_antecedent_result_coalescer
+// CHECK-SAME: obelisk_sim.branching_antecedent_result_horizon = 4 : i64
 // CHECK: arith.andi {{.*}}obelisk_sim.branching_antecedent_channel = 0 : i64{{.*}}obelisk_sim.branching_antecedent_consequent_trigger
 // CHECK: arith.andi {{.*}}obelisk_sim.branching_antecedent_channel = 1 : i64{{.*}}obelisk_sim.branching_antecedent_consequent_trigger
 // CHECK: arith.select {{.*}}obelisk_sim.branching_antecedent_matched_history
 // CHECK: arith.andi {{.*}}obelisk_sim.branching_antecedent_vacuity
+// CHECK: arith.andi {{.*}}obelisk_sim.branching_antecedent_universal_failure
+// CHECK: arith.ori {{.*}}obelisk_sim.branching_antecedent_universal_success
+// CHECK-DAG: obelisk_sim.spawn @[[RANGE_FAIL]]
+// CHECK-DAG: obelisk_sim.spawn @[[RANGE_FAIL]]
+// CHECK-DAG: obelisk_sim.spawn @[[RANGE_FAIL]]
+// CHECK-DAG: obelisk_sim.spawn @[[RANGE_PASS]]
+// CHECK-DAG: obelisk_sim.spawn @[[RANGE_PASS]]
+// CHECK-DAG: obelisk_sim.spawn @[[RANGE_PASS]]
+// CHECK-DAG: obelisk_sim.spawn @[[RANGE_PASS]]
+// CHECK-NOT: obelisk_sim.spawn @unit_11.fork.201.
+// CHECK: obelisk_sim.branching_antecedent_result_cancel
 // CHECK: cf.br {{.*}}obelisk_sim.branching_antecedent_backedge
 
-// Same-endpoint `or` alternatives retain two nonoverlapped consequent
-// triggers while sharing only the ordinary implication-vacuity history.
+// Same-endpoint `or` alternatives feed one existential followed-by result.
+// Either successful consequent match executes the single pass callback; only
+// exhaustion without either success executes the single default failure.
+// CHECK: obelisk_sim.func private @[[FOLLOW_PASS:unit_12\.fork\.221\.0\.0]](
+// CHECK: obelisk_sim.display
+// CHECK: obelisk_sim.func private @[[FOLLOW_FAIL:unit_12\.fork\.221\.1\.2]](
+// CHECK: obelisk_sim.bytes.constant "ERROR:
 // CHECK-LABEL: obelisk_sim.func private @unit_12(
 // CHECK-SAME: obelisk_sim.branching_antecedent_alternatives = 2 : i64
 // CHECK-SAME: obelisk_sim.branching_antecedent_match_channels = 2 : i64
 // CHECK-SAME: obelisk_sim.branching_antecedent_monitor
+// CHECK-SAME: obelisk_sim.branching_antecedent_result_coalescer
+// CHECK-SAME: obelisk_sim.branching_antecedent_result_horizon = 1 : i64
+// CHECK-SAME: obelisk_sim.followed_by_monitor
 // CHECK: [[A_SAMPLE:%.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg2
 // CHECK: [[A_MATCH:%.*]] = obelisk_sim.logic.is_true [[A_SAMPLE]]
 // CHECK: [[B_SAMPLE:%.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg3
 // CHECK: [[B_MATCH:%.*]] = obelisk_sim.logic.is_true [[B_SAMPLE]]
-// CHECK: [[A_CHANNEL:%.*]] = arith.extui [[A_MATCH]] : i1 to i64
-// CHECK: [[B_CHANNEL:%.*]] = arith.extui [[B_MATCH]] : i1 to i64
-// CHECK: cf.br {{.*}}([[A_CHANNEL]], [[B_CHANNEL]] : i64, i64) {obelisk_sim.branching_antecedent_backedge}
+// CHECK: [[ANTECEDENT_ANY:%.*]] = arith.ori [[A_MATCH]], [[B_MATCH]]
+// CHECK: arith.andi {{.*}}obelisk_sim.branching_antecedent_consequent_trigger
+// CHECK: [[CONSEQUENT_ANY:%.*]] = arith.ori
+// CHECK: [[FOLLOW_FAILED:%.*]] = arith.ori {{.*}} {obelisk_sim.branching_antecedent_existential_failure}
+// CHECK: cf.cond_br [[FOLLOW_FAILED]],
+// CHECK: obelisk_sim.spawn @[[FOLLOW_FAIL]]
+// CHECK: cf.cond_br [[CONSEQUENT_ANY]],
+// CHECK: obelisk_sim.spawn @[[FOLLOW_PASS]]
+// CHECK-NOT: obelisk_sim.spawn @unit_12.fork.221.
+// CHECK: cf.br {{.*}}obelisk_sim.branching_antecedent_backedge
+
+// The strong cover consequent has no pending state, but the two ranged
+// antecedent traces and their matched history do. At EOS the source-age
+// coordinator unions those three words and emits one vacuous cover pass for
+// each of the two still-live source ages, oldest first.
+// CHECK-LABEL: obelisk_sim.func private @unit_13.$concurrent_eos_branch_report.241.pass(
+// CHECK-SAME: obelisk_sim.branching_antecedent_eos_report
+// CHECK: obelisk_sim.display
+// CHECK-LABEL: obelisk_sim.func private @unit_13.$concurrent_eos_branch.241(
+// CHECK-SAME: %arg1: !obelisk_sim.ref<i64>
+// CHECK-SAME: %arg2: !obelisk_sim.ref<i64>
+// CHECK-SAME: %arg3: !obelisk_sim.ref<i64>
+// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
+// CHECK-COUNT-3: obelisk_sim.ref.load
+// CHECK-NOT: obelisk_sim.ref.load
+// CHECK: obelisk_sim.spawn @unit_13.$concurrent_eos_branch_report.241.pass{{.*}}obelisk_sim.branching_antecedent_eos_result = "pass"{{.*}}obelisk_sim.branching_antecedent_eos_source_age = 2 : i64
+// CHECK: obelisk_sim.spawn @unit_13.$concurrent_eos_branch_report.241.pass{{.*}}obelisk_sim.branching_antecedent_eos_result = "pass"{{.*}}obelisk_sim.branching_antecedent_eos_source_age = 1 : i64
+// CHECK-NOT: obelisk_sim.spawn @unit_13.$concurrent_eos_branch_report.241.pass
+// CHECK-NOT: @unit_13.$concurrent_eos_branch_report.241.fail
+// CHECK-LABEL: obelisk_sim.func private @unit_13(
+// CHECK-SAME: obelisk_sim.branching_antecedent_consequent_eos_strength = "strong"
+// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
+// CHECK-SAME: obelisk_sim.branching_antecedent_result_horizon = 3 : i64
+// CHECK-COUNT-3: obelisk_sim.ref.alloc
+// CHECK-NOT: obelisk_sim.ref.alloc
+// CHECK: obelisk_sim.spawn @unit_13.$concurrent_eos_branch.241
+
+// Nonoverlapped followed-by owns two consequent handoff channels in addition
+// to its two ranged-antecedent words and matched history. The weak EOS
+// coordinator selects pass only where a consequent is pending; antecedent-only
+// ages select the one default failure, with no per-channel duplication.
+// CHECK-LABEL: obelisk_sim.func private @unit_14.$concurrent_eos_branch_report.261.pass(
+// CHECK-SAME: obelisk_sim.branching_antecedent_eos_report
+// CHECK: obelisk_sim.display
+// CHECK-LABEL: obelisk_sim.func private @unit_14.$concurrent_eos_branch_report.261.fail(
+// CHECK-SAME: obelisk_sim.branching_antecedent_eos_report
+// CHECK: obelisk_sim.bytes.constant "ERROR:
+// CHECK-LABEL: obelisk_sim.func private @unit_14.$concurrent_eos_branch.261(
+// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
+// CHECK-COUNT-5: obelisk_sim.ref.load
+// CHECK-NOT: obelisk_sim.ref.load
+// CHECK: obelisk_sim.spawn @unit_14.$concurrent_eos_branch_report.261.pass{{.*}}obelisk_sim.branching_antecedent_eos_result = "pass"{{.*}}obelisk_sim.branching_antecedent_eos_source_age = 3 : i64
+// CHECK: obelisk_sim.spawn @unit_14.$concurrent_eos_branch_report.261.fail{{.*}}obelisk_sim.branching_antecedent_eos_result = "fail"{{.*}}obelisk_sim.branching_antecedent_eos_source_age = 3 : i64
+// CHECK: obelisk_sim.spawn @unit_14.$concurrent_eos_branch_report.261.pass{{.*}}obelisk_sim.branching_antecedent_eos_result = "pass"{{.*}}obelisk_sim.branching_antecedent_eos_source_age = 2 : i64
+// CHECK: obelisk_sim.spawn @unit_14.$concurrent_eos_branch_report.261.fail{{.*}}obelisk_sim.branching_antecedent_eos_result = "fail"{{.*}}obelisk_sim.branching_antecedent_eos_source_age = 2 : i64
+// CHECK: obelisk_sim.spawn @unit_14.$concurrent_eos_branch_report.261.fail{{.*}}obelisk_sim.branching_antecedent_eos_result = "fail"{{.*}}obelisk_sim.branching_antecedent_eos_source_age = 1 : i64
+// CHECK-NOT: obelisk_sim.spawn @unit_14.$concurrent_eos_branch_report.261.
+// CHECK-LABEL: obelisk_sim.func private @unit_14(
+// CHECK-SAME: obelisk_sim.branching_antecedent_consequent_eos_strength = "weak"
+// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
+// CHECK-SAME: obelisk_sim.branching_antecedent_result_horizon = 4 : i64
+// CHECK-SAME: obelisk_sim.followed_by_monitor
+// CHECK-COUNT-5: obelisk_sim.ref.alloc
+// CHECK-NOT: obelisk_sim.ref.alloc
+// CHECK: obelisk_sim.spawn @unit_14.$concurrent_eos_branch.261
+
+// An intrinsically strong s_nexttime consequent overrides assert property's
+// default weak sequence completion. At EOS, pending consequents fail while
+// sources with only an unfinished antecedent still pass vacuously, once per
+// source age and oldest first.
+// CHECK-LABEL: obelisk_sim.func private @unit_15.$concurrent_eos_branch_report.281.pass(
+// CHECK-SAME: obelisk_sim.branching_antecedent_eos_report
+// CHECK-LABEL: obelisk_sim.func private @unit_15.$concurrent_eos_branch_report.281.fail(
+// CHECK-SAME: obelisk_sim.branching_antecedent_eos_report
+// CHECK-LABEL: obelisk_sim.func private @unit_15.$concurrent_eos_branch.281(
+// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
+// CHECK-COUNT-5: obelisk_sim.ref.load
+// CHECK-NOT: obelisk_sim.ref.load
+// CHECK: obelisk_sim.spawn @unit_15.$concurrent_eos_branch_report.281.pass{{.*}}obelisk_sim.branching_antecedent_eos_result = "pass"{{.*}}obelisk_sim.branching_antecedent_eos_source_age = 3 : i64
+// CHECK: obelisk_sim.spawn @unit_15.$concurrent_eos_branch_report.281.fail{{.*}}obelisk_sim.branching_antecedent_eos_result = "fail"{{.*}}obelisk_sim.branching_antecedent_eos_source_age = 3 : i64
+// CHECK: obelisk_sim.spawn @unit_15.$concurrent_eos_branch_report.281.pass{{.*}}obelisk_sim.branching_antecedent_eos_result = "pass"{{.*}}obelisk_sim.branching_antecedent_eos_source_age = 2 : i64
+// CHECK: obelisk_sim.spawn @unit_15.$concurrent_eos_branch_report.281.fail{{.*}}obelisk_sim.branching_antecedent_eos_result = "fail"{{.*}}obelisk_sim.branching_antecedent_eos_source_age = 2 : i64
+// CHECK: obelisk_sim.spawn @unit_15.$concurrent_eos_branch_report.281.pass{{.*}}obelisk_sim.branching_antecedent_eos_result = "pass"{{.*}}obelisk_sim.branching_antecedent_eos_source_age = 1 : i64
+// CHECK-NOT: obelisk_sim.spawn @unit_15.$concurrent_eos_branch_report.281.
+// CHECK-LABEL: obelisk_sim.func private @unit_15(
+// CHECK-SAME: obelisk_sim.branching_antecedent_consequent_eos_strength = "strong"
+// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
+// CHECK-SAME: obelisk_sim.branching_antecedent_result_horizon = 4 : i64
+// CHECK-COUNT-5: obelisk_sim.ref.alloc
+// CHECK-NOT: obelisk_sim.ref.alloc
+// CHECK: obelisk_sim.spawn @unit_15.$concurrent_eos_branch.281
+
+// Conversely, intrinsically weak nexttime overrides cover property's default
+// strong sequence completion. Every active source age succeeds at EOS, and
+// no failure report actor or dispatch is emitted.
+// CHECK-LABEL: obelisk_sim.func private @unit_16.$concurrent_eos_branch_report.301.pass(
+// CHECK-SAME: obelisk_sim.branching_antecedent_eos_report
+// CHECK-NOT: @unit_16.$concurrent_eos_branch_report.301.fail
+// CHECK-LABEL: obelisk_sim.func private @unit_16.$concurrent_eos_branch.301(
+// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
+// CHECK-COUNT-5: obelisk_sim.ref.load
+// CHECK-NOT: obelisk_sim.ref.load
+// CHECK: obelisk_sim.spawn @unit_16.$concurrent_eos_branch_report.301.pass{{.*}}obelisk_sim.branching_antecedent_eos_result = "pass"{{.*}}obelisk_sim.branching_antecedent_eos_source_age = 3 : i64
+// CHECK: obelisk_sim.spawn @unit_16.$concurrent_eos_branch_report.301.pass{{.*}}obelisk_sim.branching_antecedent_eos_result = "pass"{{.*}}obelisk_sim.branching_antecedent_eos_source_age = 2 : i64
+// CHECK: obelisk_sim.spawn @unit_16.$concurrent_eos_branch_report.301.pass{{.*}}obelisk_sim.branching_antecedent_eos_result = "pass"{{.*}}obelisk_sim.branching_antecedent_eos_source_age = 1 : i64
+// CHECK-NOT: obelisk_sim.spawn @unit_16.$concurrent_eos_branch_report.301.
+// CHECK-LABEL: obelisk_sim.func private @unit_16(
+// CHECK-SAME: obelisk_sim.branching_antecedent_consequent_eos_strength = "weak"
+// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
+// CHECK-SAME: obelisk_sim.branching_antecedent_result_horizon = 4 : i64
+// CHECK-COUNT-5: obelisk_sim.ref.alloc
+// CHECK-NOT: obelisk_sim.ref.alloc
+// CHECK: obelisk_sim.spawn @unit_16.$concurrent_eos_branch.301
 // CHECK-NOT: obelisk.sv.assertion

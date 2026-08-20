@@ -86,7 +86,10 @@ module {
           }
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "t", node_id = 35 : i64, procedure_kind = 2 : i32, sym_name = "s12", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 36 : i64} {
+          // A false implication antecedent is a vacuous success. Keep this as
+          // cover property so the local-flow lowering must schedule its pass
+          // action without running antecedent match items.
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 36 : i64} {
             obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 37 : i64, repetition_is_unbounded = false} {
               obelisk.sv.expression.assertion_instance attributes {argument_count = 0 : i64, argument_formal_paths = [], argument_formal_symbols = [], argument_kinds = array<i64>, has_expanded_body = true, is_recursive_property = false, is_signed = false, local_variable_count = 2 : i64, local_variable_has_initializer = array<i64: 1, 1>, local_variable_paths = ["t.p.x", "t.p.y"], local_variable_symbols = [@s1.$root::@s3.t::@s4.t::@s9.p::@s13.x, @s1.$root::@s3.t::@s4.t::@s9.p::@s14.y], node_id = 38 : i64, referenced_path = "t.p", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p, semantic_type = !obelisk.property} {
                 obelisk.sv.assertion.clocking attributes {node_id = 39 : i64} {
@@ -143,7 +146,13 @@ module {
                 }
               }
             }
-            obelisk.sv.statement.empty attributes {node_id = 63 : i64} {
+            obelisk.sv.statement.expression_statement attributes {node_id = 63 : i64} {
+              obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 74 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 75 : i64, referenced_path = "t.b", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+                obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 76 : i64, referenced_path = "t.a", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
             }
           }
         }
@@ -157,6 +166,13 @@ module {
 // separated from its executable monitor.
 // PREPARE: local_variable_count = 2 : i64
 // PREPARE-SAME: obelisk_sim.assertion_local_types = [!obelisk_sim.logic<1>, !obelisk_sim.logic<1>]
+
+// The cover-property pass callback performs the observable action in
+// Reactive. Both a completed consequent and a false current antecedent use
+// this callback; the latter does not execute antecedent match items.
+// LOWER: obelisk_sim.func private @[[PASS_CALLBACK:unit_0\.fork\.36\.0\.0]](
+// LOWER: obelisk_sim.ref.load %arg1
+// LOWER: obelisk_sim.ref.store {{.*}} to %arg2
 
 // Match-call arguments are captured after preceding local assignments, while
 // the call itself executes in a detached Reactive callback.
@@ -183,16 +199,19 @@ module {
 // LOWER: obelisk_sim.ref.store {{.*}} to %[[STATE]]
 // LOWER: arith.addi
 // LOWER: ^[[EVALUATE]]:
+// LOWER: obelisk_sim.spawn @[[PASS_CALLBACK]]
 
 // Initializers execute in declaration order. Thus y's initializer observes
 // x's sampled initializer value. The successful antecedent then applies its
 // match assignment to x, while y retains its distinct per-attempt value.
 // LOWER: %[[INIT_X:.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg2
 // LOWER: %[[ANTECEDENT:.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg2
+// LOWER: obelisk_sim.spawn @[[PASS_CALLBACK]]
 // LOWER: %[[MATCH_SOURCE:.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg2
 // LOWER: %[[MATCH_X:.*]] = obelisk_sim.logic.unary logical_not %[[MATCH_SOURCE]]
 // LOWER-NOT: obelisk_sim.display
 // LOWER: obelisk_sim.spawn @[[MATCH_CALL]](%arg0, %[[MATCH_X]])
+// LOWER-NOT: obelisk_sim.spawn @[[PASS_CALLBACK]]
 // LOWER: obelisk_sim.ref.store %[[MATCH_X]] to %[[X_AGE1:.*]]
 // LOWER-NEXT: obelisk_sim.ref.store %[[INIT_X]] to %[[Y_AGE1:.*]]
 // LOWER-NOT: obelisk.sv.

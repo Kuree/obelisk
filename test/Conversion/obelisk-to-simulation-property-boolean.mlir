@@ -227,7 +227,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
           }
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 108 : i64, procedure_kind = 2 : i32, sym_name = "s108", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 210 : i64} {
+          // Keep the consensus formula as a cover property. Cover property
+          // reports one result per attempt, so it is eligible for the same
+          // compiler-side Z3 minimization as assert and assume directives.
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 210 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 211 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 212 : i64} {
                 obelisk.sv.expression.named_value attributes {node_id = 213 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -280,6 +283,14 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
                 }
               }
             }
+            obelisk.sv.statement.expression_statement attributes {node_id = 250 : i64} {
+              obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 251 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                obelisk.sv.expression.named_value attributes {node_id = 252 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+                obelisk.sv.expression.named_value attributes {node_id = 253 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+            }
           }
         }
       }
@@ -329,8 +340,12 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-SAME: obelisk_sim.sva_boolean_alternatives_before = 2 : i64
 // CHECK-SAME: obelisk_sim.sva_boolean_solver = "z3"
 
-// A missing else is a vacuous success when the condition is false. Cover
-// property tracks that alternative separately and does not count it as a hit.
+// A missing else is a vacuous success when the condition is false. The cover
+// pass action executes for either success, while the alternative remains
+// marked separately for future vacuity counters.
+// CHECK: obelisk_sim.func private @[[IF_PASS:unit_5\.fork\.55\.0\.0]](
+// CHECK: obelisk_sim.ref.load
+// CHECK: obelisk_sim.ref.store
 // CHECK-LABEL: obelisk_sim.func private @unit_5(
 // CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
 // CHECK-SAME: obelisk_sim.vacuous_sequence_alternatives = 1 : i64
@@ -338,8 +353,11 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: [[B_TRUTH:%.*]] = obelisk_sim.logic.is_true [[B_BITS]]
 // CHECK: [[A_BITS:%.*]] = obelisk_sim.assert.sampled_read
 // CHECK: [[A_TRUTH:%.*]] = obelisk_sim.logic.is_true [[A_BITS]]
-// CHECK: [[NONVACUOUS_HIT:%.*]] = arith.andi [[B_TRUTH]], [[A_TRUTH]]
-// CHECK: cf.cond_br [[NONVACUOUS_HIT]],
+// CHECK: [[NONVACUOUS_SUCCESS:%.*]] = arith.andi [[B_TRUTH]], [[A_TRUTH]]
+// CHECK: [[VACUOUS_SUCCESS:%.*]] = arith.xori [[A_TRUTH]],
+// CHECK: [[ANY_SUCCESS:%.*]] = arith.ori [[NONVACUOUS_SUCCESS]], [[VACUOUS_SUCCESS]]
+// CHECK: cf.cond_br [[ANY_SUCCESS]],
+// CHECK: obelisk_sim.spawn @[[IF_PASS]]
 
 // Negating a case with identical matching/default bodies flips both positive
 // and negative case guards. The minimizer proves the result is just `!b`,
@@ -353,15 +371,21 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-COUNT-1: obelisk_sim.assert.sampled_read
 // CHECK-NOT: obelisk_sim.logic.compare case_eq
 
-// Without a default, no matching label is vacuous and cannot create a cover
-// hit. The surviving hit requires both the case-equality guard and body.
+// Without a default, no matching label is a vacuous success. The pass action
+// executes for that path as well as for a matching label with a true body.
+// CHECK: obelisk_sim.func private @[[CASE_PASS:unit_7\.fork\.79\.0\.0]](
+// CHECK: obelisk_sim.ref.load
+// CHECK: obelisk_sim.ref.store
 // CHECK-LABEL: obelisk_sim.func private @unit_7(
 // CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
 // CHECK-SAME: obelisk_sim.vacuous_sequence_alternatives = 1 : i64
 // CHECK: [[CASE_BODY:%.*]] = obelisk_sim.logic.is_true
 // CHECK: [[CASE_MATCH:%.*]] = obelisk_sim.logic.compare case_eq
-// CHECK: [[CASE_HIT:%.*]] = arith.andi [[CASE_BODY]], [[CASE_MATCH]]
-// CHECK: cf.cond_br [[CASE_HIT]],
+// CHECK: [[CASE_SUCCESS:%.*]] = arith.andi [[CASE_BODY]], [[CASE_MATCH]]
+// CHECK: [[NO_LABEL:%.*]] = arith.xori [[CASE_MATCH]],
+// CHECK: [[ANY_CASE_SUCCESS:%.*]] = arith.ori [[CASE_SUCCESS]], [[NO_LABEL]]
+// CHECK: cf.cond_br [[ANY_CASE_SUCCESS]],
+// CHECK: obelisk_sim.spawn @[[CASE_PASS]]
 
 // `not (a or b)` distributes into the single exact cube `!a && !b`.
 // CHECK-LABEL: obelisk_sim.func private @unit_8(
@@ -373,9 +397,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: arith.xori
 // CHECK-NOT: obelisk_sim.branching_sequence_monitor
 
-// Negating `(!a && !b) || (a && !c) || (!b && !c)` produces the consensus
-// DNF `(a && c) || (!a && b) || (b && c)`. Duplicate/contradiction cleanup
-// cannot remove the consensus cube; Z3 proves it redundant before lowering.
+// Negating `(!a && !b) || (a && !c) || (!b && !c)` in a cover property
+// produces the consensus DNF `(a && c) || (!a && b) || (b && c)`.
+// Duplicate/contradiction cleanup cannot remove the consensus cube; Z3 proves
+// it redundant before lowering, demonstrating cover-property solver use.
 // CHECK-LABEL: obelisk_sim.func private @unit_9(
 // CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
 // CHECK-SAME: obelisk_sim.branching_sequence_monitor

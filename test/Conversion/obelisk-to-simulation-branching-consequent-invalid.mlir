@@ -25,9 +25,9 @@ module {
                 obelisk.sv.expression.named_value attributes {node_id = 14 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                 }
               }
-              // (a or b) |-> ((b ##1 c) or (b ##1 c)). Boolean
-              // minimization can collapse the duplicate RHS after expansion,
-              // but source admission must still reject its temporal product.
+              // (a or b) |-> ((b ##1 c) or (b ##2 c)). The distinct temporal
+              // RHS alternatives survive minimization, so this remains an
+              // unsupported combined branching shape.
               obelisk.sv.assertion.binary attributes {node_id = 15 : i64, operator_kind = 11 : i32} {
                 obelisk.sv.assertion.binary attributes {node_id = 16 : i64, operator_kind = 1 : i32} {
                   obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 17 : i64, repetition_is_unbounded = false} {
@@ -50,7 +50,7 @@ module {
                       }
                     }
                   }
-                  obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}], node_id = 27 : i64} {
+                  obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 2 : i64}], node_id = 27 : i64} {
                     obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 28 : i64, repetition_is_unbounded = false} {
                       obelisk.sv.expression.named_value attributes {node_id = 29 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                       }

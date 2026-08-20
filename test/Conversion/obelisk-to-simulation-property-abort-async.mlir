@@ -22,10 +22,12 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
         }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.reset", lifetime = 1 : i32, name = "reset", node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s8.reset"} {
         }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.hit", lifetime = 1 : i32, name = "hit", node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s9.hit"} {
+        }
 
-        // accept_on(reset) (a ##1 b)
+        // cover property accept_on(reset) (a ##1 b)
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 10 : i64, procedure_kind = 2 : i32, sym_name = "s10", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 11 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 11 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 12 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 13 : i64} {
                 obelisk.sv.expression.named_value attributes {node_id = 14 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -43,6 +45,14 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
                     obelisk.sv.expression.named_value attributes {node_id = 21 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                     }
                   }
+                }
+              }
+            }
+            obelisk.sv.statement.expression_statement attributes {node_id = 22 : i64} {
+              obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 23 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                obelisk.sv.expression.named_value attributes {node_id = 24 : i64, referenced_path = "top.hit", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s9.hit, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+                obelisk.sv.expression.named_value attributes {node_id = 25 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                 }
               }
             }
@@ -79,8 +89,12 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-// Accepted asynchronous aborts are vacuous. The detached Reactive observer
-// watches the unsampled condition, clears live state, and has no pass report.
+// Accepted asynchronous aborts are vacuous successful cover-property
+// evaluations. The detached Reactive observer watches the unsampled
+// condition, invokes the pass action once per live attempt, and clears state.
+// CHECK: obelisk_sim.func private @[[ASYNC_PASS:unit_0\.fork\.11\.0\.0]](
+// CHECK: obelisk_sim.ref.load
+// CHECK: obelisk_sim.ref.store
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_abort.11(
 // CHECK-SAME: domain = 0 : i32
 // CHECK-SAME: home_region = 10 : i32
@@ -90,7 +104,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: obelisk_sim.suspend.observe
 // CHECK-SAME: obelisk_sim.concurrent_abort_level_true
 // CHECK-SAME: resume_region = 10 : i32
-// CHECK-NOT: obelisk_sim.spawn
+// CHECK: arith.andi
+// CHECK: cf.cond_br
+// CHECK: obelisk_sim.spawn @[[ASYNC_PASS]]
+// CHECK-NOT: obelisk_sim.spawn @[[ASYNC_PASS]]
 // CHECK: obelisk_sim.ref.store
 // CHECK: cf.br
 

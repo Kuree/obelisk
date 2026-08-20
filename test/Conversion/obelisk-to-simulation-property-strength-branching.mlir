@@ -110,7 +110,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
           }
         }
 
-        // Weak completion is vacuous and therefore cannot create a cover hit.
+        // A weak(sequence) evaluation is nonvacuous by IEEE 16.14.8(c).
+        // Both live-clock and successful EOS completion execute the cover
+        // property pass action.
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 70 : i64, procedure_kind = 2 : i32, sym_name = "s70", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 71 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 72 : i64} {
@@ -222,13 +224,21 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-SAME: obelisk_sim.strong_weak_monitor
 // CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos.41.weak
 
-// Weak cover-property completion is vacuous, so no EOS actor is created.
-// CHECK-NOT: @unit_2.$concurrent_eos
+// Weak cover-property completion dispatches one pass for each live start age.
+// The two alternative words are unioned first so overlapping source matches
+// still produce only one property result per attempt.
+// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_report.71.weak(
+// CHECK: obelisk_sim.bytes.constant "cover-weak-branch-pass"
+// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos.71.weak(
+// CHECK-COUNT-2: obelisk_sim.ref.load
+// CHECK: arith.ori
+// CHECK-COUNT-2: obelisk_sim.spawn @unit_2.$concurrent_eos_report.71.weak
 // CHECK-LABEL: obelisk_sim.func private @unit_2(
 // CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
 // CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
 // CHECK-SAME: obelisk_sim.strong_weak_monitor
-// CHECK-NOT: $concurrent_eos
+// CHECK-COUNT-2: obelisk_sim.ref.alloc
+// CHECK: obelisk_sim.spawn @unit_2.$concurrent_eos.71.weak
 
 // One-cycle alternatives retain strength metadata but allocate no monitor
 // state and outline no EOS coordinator.

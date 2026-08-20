@@ -21,9 +21,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.rst", lifetime = 1 : i32, name = "rst", node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s9.rst"} {
         }
 
-        // a |-> ((b or c) or (b and c)); the third trace is subsumed.
+        // cover property a |-> ((b or c) or (b and c)); the third trace is
+        // subsumed and a false antecedent still executes the pass action.
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 10 : i64, procedure_kind = 2 : i32, sym_name = "s10", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 11 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 11 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 12 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 13 : i64} {
                 obelisk.sv.expression.named_value attributes {node_id = 14 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -55,6 +56,14 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
                       }
                     }
                   }
+                }
+              }
+            }
+            obelisk.sv.statement.expression_statement attributes {node_id = 146 : i64} {
+              obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 147 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                obelisk.sv.expression.named_value attributes {node_id = 148 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.c, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+                obelisk.sv.expression.named_value attributes {node_id = 149 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                 }
               }
             }
@@ -93,9 +102,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
           }
         }
 
-        // disable iff (rst) ((a or b) |=> c)
+        // disable iff (rst) ((a or b) |=> c), with an observable weak-EOS
+        // pass whose queued callback must remain epoch-protected.
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 50 : i64, procedure_kind = 2 : i32, sym_name = "s50", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 51 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 51 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 52 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 53 : i64} {
                 obelisk.sv.expression.named_value attributes {node_id = 54 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -119,6 +129,14 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
                     obelisk.sv.expression.named_value attributes {node_id = 64 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.c, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                     }
                   }
+                }
+              }
+            }
+            obelisk.sv.statement.expression_statement attributes {node_id = 65 : i64} {
+              obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 66 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                obelisk.sv.expression.named_value attributes {node_id = 67 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.c, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+                obelisk.sv.expression.named_value attributes {node_id = 68 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                 }
               }
             }
@@ -177,9 +195,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
           }
         }
 
-        // (a or b) |=> (b or c)
+        // cover property (a or b) |=> (b or c). The matched-history word
+        // delays vacuity until both antecedent alternatives are exhausted.
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 110 : i64, procedure_kind = 2 : i32, sym_name = "s110", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 111 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 111 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 112 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 113 : i64} {
                 obelisk.sv.expression.named_value attributes {node_id = 114 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -205,6 +224,14 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
                     obelisk.sv.expression.named_value attributes {node_id = 125 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.c, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                     }
                   }
+                }
+              }
+            }
+            obelisk.sv.statement.expression_statement attributes {node_id = 150 : i64} {
+              obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 151 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                obelisk.sv.expression.named_value attributes {node_id = 152 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.c, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+                obelisk.sv.expression.named_value attributes {node_id = 153 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                 }
               }
             }
@@ -249,8 +276,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-// The overlapped consequent samples both exact alternatives on the antecedent
-// clock. The alternatives share one property result, not one runtime thread.
+// The overlapped cover consequent samples both exact alternatives on the
+// antecedent clock. The alternatives share one property result. Its two pass
+// sites are the false-antecedent vacuous success and the ORed consequent
+// success, not one callback per alternative.
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
 // CHECK-SAME: home_region = 8 : i32
 // CHECK-SAME: obelisk_sim.branching_consequent_alternatives = 2 : i64
@@ -269,6 +298,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: [[C_MATCH:%.*]] = obelisk_sim.logic.is_true [[C_SAMPLE]]
 // CHECK: [[AC:%.*]] = arith.andi [[A_MATCH]], [[C_MATCH]] {{.*}}obelisk_sim.branching_consequent_trigger
 // CHECK: arith.ori [[AB]], [[AC]]
+// CHECK: arith.xori [[A_MATCH]],
+// CHECK-COUNT-2: obelisk_sim.spawn @unit_0.fork.11.0.0
+// CHECK-NOT: obelisk_sim.spawn @unit_0.fork
 
 // Nonoverlap first stores a bit-0 obligation, then independently advances the
 // two ranged exact traces. The asynchronous disable actor clears both exact
@@ -314,18 +346,57 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: obelisk_sim.ref.store [[NEXT1]] to [[NEXT1_REF:%[0-9]+]]
 // CHECK: cf.br {{.*}}({{%[0-9]+}}, [[NEXT0_REF]], [[NEXT1_REF]] : {{.*}}) {{.*}}obelisk_sim.branching_consequent_backedge
 
-// A same-endpoint branching antecedent owns two independent nonoverlapped
-// consequent channels. Its disable actor clears both channels plus the epoch.
+// A same-endpoint branching antecedent owns matched history and two independent
+// nonoverlapped consequent channels. Its disable actor clears all three state
+// words, advances the epoch, and its weak-EOS pass reloads that epoch so a
+// queued callback becomes stale after cancellation.
 // CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_cancel.51(
+// CHECK-SAME: %arg4: !obelisk_sim.ref<i64>
+// CHECK-SAME: %arg5: !obelisk_sim.ref<i64>
+// CHECK-SAME: %arg6: !obelisk_sim.ref<i64>
+// CHECK-SAME: %arg7: !obelisk_sim.ref<i64>
 // CHECK-SAME: obelisk_sim.concurrent_cancel
 // CHECK: [[ANT_ZERO0:%.*]] = arith.constant {{.*}} 0 : i64
 // CHECK-NEXT: obelisk_sim.ref.store [[ANT_ZERO0]] to %arg4
 // CHECK: [[ANT_ZERO1:%.*]] = arith.constant {{.*}} 0 : i64
 // CHECK-NEXT: obelisk_sim.ref.store [[ANT_ZERO1]] to %arg5
+// CHECK: [[ANT_ZERO2:%.*]] = arith.constant {{.*}} 0 : i64
+// CHECK-NEXT: obelisk_sim.ref.store [[ANT_ZERO2]] to %arg6
+// CHECK-NOT: obelisk_sim.ref.store {{.*}} to %arg{{[4-6]}}
+// CHECK: [[ANT_EPOCH:%.*]] = obelisk_sim.ref.load %arg7
+// CHECK: [[ANT_NEXT_EPOCH:%.*]] = arith.addi [[ANT_EPOCH]],
+// CHECK: obelisk_sim.ref.store [[ANT_NEXT_EPOCH]] to %arg7
+// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_branch_report.51.pass(
+// CHECK-SAME: %arg3: !obelisk_sim.ref<i64>
+// CHECK-SAME: %arg4: i64
+// CHECK-SAME: obelisk_sim.branching_antecedent_eos_report
+// CHECK: [[EOS_CURRENT_EPOCH:%.*]] = obelisk_sim.ref.load %arg3
+// CHECK: [[EOS_EPOCH_VALID:%.*]] = arith.cmpi eq, [[EOS_CURRENT_EPOCH]], %arg4
+// CHECK: cf.cond_br [[EOS_EPOCH_VALID]],
+// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_branch.51(
+// CHECK-SAME: %arg1: !obelisk_sim.ref<i64>
+// CHECK-SAME: %arg2: !obelisk_sim.ref<i64>
+// CHECK-SAME: %arg3: !obelisk_sim.ref<i64>
+// CHECK-SAME: %arg6: !obelisk_sim.ref<i64>
+// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
+// CHECK: obelisk_sim.ref.load %arg1
+// CHECK: obelisk_sim.ref.load %arg2
+// CHECK: obelisk_sim.ref.load %arg3
+// CHECK-NOT: obelisk_sim.ref.load %arg{{[1-3]}}
+// CHECK: cf.cond_br [[EOS_WEAK_PASS:%.*]], {{.*}} {obelisk_sim.branching_antecedent_eos_result = "pass"{{.*}}}
+// CHECK: [[EOS_EXPECTED_EPOCH:%.*]] = obelisk_sim.ref.load %arg6
+// CHECK: obelisk_sim.spawn @unit_2.$concurrent_eos_branch_report.51.pass({{.*}}%arg6, [[EOS_EXPECTED_EPOCH]])
+// CHECK-NOT: obelisk_sim.spawn @unit_2.$concurrent_eos_branch_report.51.pass
 // CHECK-LABEL: obelisk_sim.func private @unit_2(
 // CHECK-SAME: obelisk_sim.branching_antecedent_alternatives = 2 : i64
+// CHECK-SAME: obelisk_sim.branching_antecedent_consequent_eos_strength = "weak"
+// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
 // CHECK-SAME: obelisk_sim.branching_antecedent_match_channels = 2 : i64
 // CHECK-SAME: obelisk_sim.branching_antecedent_monitor
+// CHECK-COUNT-4: obelisk_sim.ref.alloc
+// CHECK-NOT: obelisk_sim.ref.alloc
+// CHECK: obelisk_sim.spawn @unit_2.$concurrent_cancel.51
+// CHECK: obelisk_sim.spawn @unit_2.$concurrent_eos_branch.51
 // CHECK: obelisk_sim.suspend.edge posedge
 // CHECK: obelisk_sim.ref.load %arg5
 // CHECK: cf.cond_br
@@ -362,16 +433,21 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // Both sides may branch when the consequent alternatives are one-cycle. Each
 // antecedent match owns its own delayed channel, while B-or-C is sampled and
-// ORed once for all channels on the following clock.
+// ORed once for all channels on the following clock. The source-age coalescer
+// ORs the channel failures, waits for every implication obligation, and emits
+// one property pass rather than one pass per matching antecedent alternative.
+// A second static pass site handles the current no-match vacuous success.
 // CHECK-LABEL: obelisk_sim.func private @unit_5(
 // CHECK-SAME: obelisk_sim.branching_antecedent_alternatives = 2 : i64
 // CHECK-SAME: obelisk_sim.branching_antecedent_match_channels = 2 : i64
 // CHECK-SAME: obelisk_sim.branching_antecedent_monitor
+// CHECK-SAME: obelisk_sim.branching_antecedent_result_coalescer
+// CHECK-SAME: obelisk_sim.branching_antecedent_result_horizon = 2 : i64
 // CHECK-SAME: obelisk_sim.branching_consequent_alternatives = 2 : i64
 // CHECK-SAME: obelisk_sim.combined_boolean_branching_monitor
 // CHECK-SAME: obelisk_sim.combined_boolean_branching_pairs = 4 : i64
 // CHECK: obelisk_sim.suspend.edge posedge
-// CHECK: ^bb{{[0-9]+}}([[BOTH_CHANNEL0:%.*]]: i64, [[BOTH_CHANNEL1:%.*]]: i64):
+// CHECK: ^bb{{[0-9]+}}([[MATCHED_HISTORY:%.*]]: i64, [[BOTH_CHANNEL0:%.*]]: i64, [[BOTH_CHANNEL1:%.*]]: i64):
 // CHECK: [[BOTH_A:%.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg2
 // CHECK: [[BOTH_A_MATCH:%.*]] = obelisk_sim.logic.is_true [[BOTH_A]]
 // CHECK: [[BOTH_B:%.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg3
@@ -381,16 +457,26 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: [[BOTH_C:%.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg4
 // CHECK: [[BOTH_C_MATCH:%.*]] = obelisk_sim.logic.is_true [[BOTH_C]]
 // CHECK: [[CONSEQUENT_OR:%.*]] = arith.ori [[BOTH_B_MATCH]], [[BOTH_C_MATCH]]
-// CHECK: [[CONSEQUENT_FAILED:%.*]] = arith.xori [[CONSEQUENT_OR]], {{%.*}}
-// CHECK: arith.andi [[BOTH_CHANNEL0_ACTIVE]], [[CONSEQUENT_FAILED]]
-// CHECK: cf.cond_br {{%.*}}, {{.*}}([[BOTH_CHANNEL1]] : i64), {{.*}}([[BOTH_CHANNEL1]] : i64)
-// CHECK: ^bb{{[0-9]+}}([[BOTH_CHANNEL1_CARRIED:%.*]]: i64):  // 2 preds
-// CHECK: [[BOTH_CHANNEL1_BIT:%.*]] = arith.andi [[BOTH_CHANNEL1_CARRIED]], {{%.*}} : i64
+// CHECK: [[CONSEQUENT_FAILED:%.*]] = arith.xori [[CONSEQUENT_OR]],
+// CHECK: [[CHANNEL0_FAILED:%.*]] = arith.andi [[BOTH_CHANNEL0_ACTIVE]], [[CONSEQUENT_FAILED]]
+// CHECK: [[BOTH_CHANNEL1_BIT:%.*]] = arith.andi [[BOTH_CHANNEL1]], {{%.*}} : i64
 // CHECK: [[BOTH_CHANNEL1_ACTIVE:%.*]] = arith.cmpi ne, [[BOTH_CHANNEL1_BIT]], {{%.*}} : i64
-// CHECK: arith.andi [[BOTH_CHANNEL1_ACTIVE]], [[CONSEQUENT_FAILED]]
+// CHECK: [[CHANNEL1_FAILED:%.*]] = arith.andi [[BOTH_CHANNEL1_ACTIVE]], [[CONSEQUENT_FAILED]]
+// CHECK: [[ANY_CHANNEL_FAILED:%.*]] = arith.ori [[CHANNEL0_FAILED]], [[CHANNEL1_FAILED]]
 // CHECK: [[BOTH_NEXT0:%.*]] = arith.extui [[BOTH_A_MATCH]] : i1 to i64
+// CHECK: [[ANTECEDENT_OR:%.*]] = arith.ori [[BOTH_A_MATCH]], [[BOTH_B_MATCH]]
 // CHECK: [[BOTH_NEXT1:%.*]] = arith.extui [[BOTH_B_MATCH]] : i1 to i64
-// CHECK: cf.br {{.*}}([[BOTH_NEXT0]], [[BOTH_NEXT1]] : i64, i64) {{.*}}obelisk_sim.branching_antecedent_backedge
+// CHECK: arith.select [[ANTECEDENT_OR]], {{.*}} {obelisk_sim.branching_antecedent_matched_history}
+// CHECK: arith.andi {{.*}} {obelisk_sim.branching_antecedent_vacuity}
+// CHECK: [[COALESCED_SUCCESS:%.*]] = arith.ori {{.*}} {obelisk_sim.branching_antecedent_universal_success}
+// CHECK: cf.cond_br [[COALESCED_SUCCESS]],
+// CHECK: obelisk_sim.spawn @unit_5.fork.111.0.0
+// CHECK: cf.cond_br {{.*}},
+// CHECK: obelisk_sim.spawn @unit_5.fork.111.0.0
+// CHECK-NOT: obelisk_sim.spawn @unit_5.fork.111.0.0
+// CHECK-COUNT-2: obelisk_sim.branching_antecedent_result_cancel
+// CHECK: cf.br {{.*}} : i64, i64, i64) {{.*}}obelisk_sim.branching_antecedent_backedge
+// CHECK-NOT: obelisk_sim.spawn @unit_5.fork.111.0.0
 
 // The overlapped combined form has no consequent state: both exact
 // antecedent matches consume the one shared B-or-C truth on this sample.

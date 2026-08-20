@@ -127,7 +127,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos.11.strong
 
 // Weak finalization mirrors the same two live bits but selects only the pass
-// action. This completion is vacuous; cover-property lowering suppresses it.
+// action. IEEE 16.14.8(c) classifies weak(sequence) as nonvacuous.
 // CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_report.31.weak(
 // CHECK-SAME: entry_kind = 13 : i32
 // CHECK-SAME: home_region = 10 : i32
