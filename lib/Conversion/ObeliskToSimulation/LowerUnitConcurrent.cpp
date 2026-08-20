@@ -3778,8 +3778,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         llvm::any_of(sequence.ages, [](const FixedSequenceAge &age) {
           return !age.matchItems.empty();
         });
-    if (localInstance || implication || disable || expectMonitor ||
-        firstMatch || coverSequence || branchingSequence || matchItems)
+    if (localInstance || implication || expectMonitor || firstMatch ||
+        coverSequence || branchingSequence || matchItems)
       return emitError(getSemanticLocation(abort))
                  << "SVA property operator '" << spelling
                  << "' currently requires one abort and an otherwise "
@@ -3787,7 +3787,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                     "persistent property, optionally with one directly "
                     "adjacent temporal property negation, without locals, "
                     "match items, "
-                    "implication/followed-by, disable iff, first_match, "
+                    "implication/followed-by, first_match, "
                     "expect, or cover-sequence per-match accounting",
              failure();
     function->setAttr(abort.getIsSynchronous()
@@ -5171,6 +5171,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (emitReports)
       for (Value capture : (*selectedReport)->captures)
         reportCaptureIndices.push_back(appendCapture(capture));
+    std::optional<unsigned> disableEpochIndex;
+    if (emitReports && disableEpoch) {
+      auto found = captureIndices.find(disableEpoch);
+      if (found == captureIndices.end())
+        return function.emitError(
+                   "counted abort report is missing its disable epoch "
+                   "capture"),
+               failure();
+      disableEpochIndex = found->second;
+    }
 
     SmallVector<Type> inputTypes;
     SmallVector<DictionaryAttr> argumentAttrs;
@@ -5355,6 +5365,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       SmallVector<Value> reportOperands;
       for (unsigned index : reportCaptureIndices)
         reportOperands.push_back(entry.getArgument(index));
+      if (disableEpochIndex)
+        reportOperands.push_back(sim::SimRefLoadOp::create(
+            bodyBuilder, (*selectedReport)->location, stateType,
+            entry.getArgument(*disableEpochIndex)));
       sim::SimSpawnOp::create(bodyBuilder, (*selectedReport)->location,
                               (*selectedReport)->function.getSymNameAttr(),
                               reportOperands, ArrayAttr{}, ArrayAttr{});
@@ -5941,13 +5955,19 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     std::string hierarchy =
         (Twine(parentHierarchy) + ".$concurrent_abort." + Twine(node)).str();
 
+    bool accepted =
+        abort.getAction() == semantic::SVAssertionAbortAction::Accept;
+    bool reportedPassed =
+        temporalNegationOutsideAbort ? !accepted : accepted;
+    std::optional<ReportCallback> *selectedReport =
+        reportedPassed ? &passReport : &failReport;
+
     SmallVector<Value> captures{context};
     unsigned observerCaptureBegin = captures.size();
     llvm::append_range(captures, observerBinding.getValues());
     unsigned stateStorageIndex = captures.size();
     captures.push_back(stateStorage);
-    SmallVector<unsigned> passCaptureIndices;
-    SmallVector<unsigned> failCaptureIndices;
+    SmallVector<unsigned> selectedCaptureIndices;
     auto appendReportCaptures = [&](const std::optional<ReportCallback> &report,
                                     SmallVector<unsigned> &indices) {
       if (!report)
@@ -5961,8 +5981,20 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         captures.push_back(capture);
       }
     };
-    appendReportCaptures(passReport, passCaptureIndices);
-    appendReportCaptures(failReport, failCaptureIndices);
+    appendReportCaptures(*selectedReport, selectedCaptureIndices);
+    std::optional<unsigned> abortDisableEpochIndex;
+    if (disableEpoch && selectedReport->has_value()) {
+      for (auto [index, capture] : llvm::enumerate(captures))
+        if (capture == disableEpoch) {
+          abortDisableEpochIndex = index;
+          break;
+        }
+      if (!abortDisableEpochIndex)
+        return function.emitError(
+                   "asynchronous abort report is missing its disable epoch "
+                   "capture"),
+               failure();
+    }
 
     SmallVector<Type> inputs;
     SmallVector<DictionaryAttr> argumentAttrs;
@@ -6051,15 +6083,6 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     abortWait->setAttr("obelisk_sim.concurrent_abort_level_true",
                        builder.getUnitAttr());
 
-    bool accepted =
-        abort.getAction() == semantic::SVAssertionAbortAction::Accept;
-    bool reportedPassed =
-        temporalNegationOutsideAbort ? !accepted : accepted;
-    std::optional<ReportCallback> *selectedReport =
-        reportedPassed ? &passReport : &failReport;
-    ArrayRef<unsigned> selectedIndices =
-        reportedPassed ? ArrayRef<unsigned>(passCaptureIndices)
-                       : ArrayRef<unsigned>(failCaptureIndices);
     Block *currentBlock = abortLiveAttempts;
     Value liveState;
     {
@@ -6094,8 +6117,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                  continuation, ValueRange{});
         OpBuilder reportBuilder = OpBuilder::atBlockEnd(reportBlock);
         SmallVector<Value> reportCaptures;
-        for (unsigned index : selectedIndices)
+        for (unsigned index : selectedCaptureIndices)
           reportCaptures.push_back(entry.getArgument(index));
+        if (abortDisableEpochIndex)
+          reportCaptures.push_back(sim::SimRefLoadOp::create(
+              reportBuilder, (*selectedReport)->location, stateType,
+              entry.getArgument(*abortDisableEpochIndex)));
         sim::SimSpawnOp::create(reportBuilder, (*selectedReport)->location,
                                 (*selectedReport)->function.getSymNameAttr(),
                                 reportCaptures, ArrayAttr{}, ArrayAttr{});
