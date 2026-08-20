@@ -3988,15 +3988,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   if (hasPersistentRepetition &&
       (localInstance ||
        (implication && !persistentConsequentImplicationEligible) ||
-       expectMonitor || coverSequence))
+       expectMonitor || (coverSequence && !firstMatch)))
     return emitError(getSemanticLocation(property))
                << "persistent [*]/[->]/[=] repetition currently requires a "
                   "plain assert, assume, cover-property, or restrict "
                   "directive without locals. Implication/followed-by "
                   "additionally requires one nonvacuous Boolean or "
                   "guaranteed-empty antecedent without case guards or "
-                  "first_match; expect and cover-sequence per-match "
-                  "accounting remain unsupported",
+                  "first_match. A cover sequence requires one direct outer "
+                  "first_match without match items; plain cover-sequence "
+                  "per-match accounting and expect remain unsupported",
            failure();
   if (hasPersistentUntil &&
       (localInstance ||
