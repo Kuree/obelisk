@@ -281,6 +281,131 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 170 : i64, procedure_kind = 2 : i32, sym_name = "s170", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          // Z3 reduces the raw two-cube antecedent to a.  The two distinct
+          // temporal consequent traces then use the ordinary branching-
+          // consequent monitor, whose EOS union completes each source attempt
+          // once with the assert directive's default weak sequence semantics.
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 171 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 172 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 173 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 174 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.binary attributes {node_id = 175 : i64, operator_kind = 11 : i32} {
+                obelisk.sv.assertion.binary attributes {node_id = 176 : i64, operator_kind = 1 : i32} {
+                  obelisk.sv.assertion.binary attributes {node_id = 177 : i64, operator_kind = 0 : i32} {
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 178 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 179 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 180 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 181 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                  }
+                  obelisk.sv.assertion.binary attributes {node_id = 182 : i64, operator_kind = 0 : i32} {
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 183 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 184 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                    obelisk.sv.assertion.unary attributes {has_range = false, node_id = 185 : i64, operator_kind = 0 : i32, range_is_unbounded = false} {
+                      obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 186 : i64, repetition_is_unbounded = false} {
+                        obelisk.sv.expression.named_value attributes {node_id = 187 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                        }
+                      }
+                    }
+                  }
+                }
+                obelisk.sv.assertion.binary attributes {node_id = 188 : i64, operator_kind = 1 : i32} {
+                  obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}], node_id = 189 : i64} {
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 190 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 191 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 192 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 193 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.c, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                  }
+                  obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 2 : i64}], node_id = 194 : i64} {
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 195 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 196 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 197 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 198 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.c, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            obelisk.sv.statement.expression_statement attributes {node_id = 199 : i64} {
+              obelisk.sv.expression.call attributes {argument_count = 0 : i64, callee_name = "$display", constraint_restrictions = [], defaulted_arguments = array<i64>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 200 : i64, semantic_type = !obelisk.void, subroutine_kind = 1 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s3.top::@s4.top} {
+              }
+            }
+          }
+        }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 210 : i64, procedure_kind = 2 : i32, sym_name = "s210", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          // Z3 may also reduce raw temporal RHS branching to one trace:
+          // ((b&&c)##1a)||((b&&!c)##1a) becomes b##1a.  The resulting
+          // deterministic implication must retain its weak EOS completion.
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 211 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 212 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 213 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 214 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.binary attributes {node_id = 215 : i64, operator_kind = 11 : i32} {
+                obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 216 : i64, repetition_is_unbounded = false} {
+                  obelisk.sv.expression.named_value attributes {node_id = 217 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                }
+                obelisk.sv.assertion.binary attributes {node_id = 218 : i64, operator_kind = 1 : i32} {
+                  obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}], node_id = 219 : i64} {
+                    obelisk.sv.assertion.binary attributes {node_id = 220 : i64, operator_kind = 0 : i32} {
+                      obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 221 : i64, repetition_is_unbounded = false} {
+                        obelisk.sv.expression.named_value attributes {node_id = 222 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                        }
+                      }
+                      obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 223 : i64, repetition_is_unbounded = false} {
+                        obelisk.sv.expression.named_value attributes {node_id = 224 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.c, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                        }
+                      }
+                    }
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 225 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 226 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                  }
+                  obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}], node_id = 227 : i64} {
+                    obelisk.sv.assertion.binary attributes {node_id = 228 : i64, operator_kind = 0 : i32} {
+                      obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 229 : i64, repetition_is_unbounded = false} {
+                        obelisk.sv.expression.named_value attributes {node_id = 230 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                        }
+                      }
+                      obelisk.sv.assertion.unary attributes {has_range = false, node_id = 231 : i64, operator_kind = 0 : i32, range_is_unbounded = false} {
+                        obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 232 : i64, repetition_is_unbounded = false} {
+                          obelisk.sv.expression.named_value attributes {node_id = 233 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.c, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                          }
+                        }
+                      }
+                    }
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 234 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 235 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            obelisk.sv.statement.expression_statement attributes {node_id = 236 : i64} {
+              obelisk.sv.expression.call attributes {argument_count = 0 : i64, callee_name = "$display", constraint_restrictions = [], defaulted_arguments = array<i64>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 237 : i64, semantic_type = !obelisk.void, subroutine_kind = 1 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s3.top::@s4.top} {
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -422,3 +547,63 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-COUNT-2: obelisk_sim.assert.sampled_read
 // CHECK-NOT: obelisk_sim.assert.sampled_read
 // CHECK-NOT: @unit_4.$concurrent_eos_branch_report.131.fail
+
+// After Z3 collapses unit_5's antecedent, the two temporal RHS traces use the
+// ordinary branching-consequent monitor.  Its final coordinator unions both
+// state words before dispatching one weak success for each relative source
+// age, oldest first.
+// CHECK-LABEL: obelisk_sim.func private @unit_5.$concurrent_eos_report.171.weak(
+// CHECK-SAME: obelisk_sim.concurrent_eos_report
+// CHECK-SAME: obelisk_sim.concurrent_report
+// CHECK-LABEL: obelisk_sim.func private @unit_5.$concurrent_eos.171.weak(
+// CHECK-SAME: obelisk_sim.concurrent_eos_coordinator
+// CHECK-COUNT-2: obelisk_sim.ref.load
+// CHECK-NOT: obelisk_sim.ref.load
+// CHECK-COUNT-2: obelisk_sim.spawn @unit_5.$concurrent_eos_report.171.weak
+// CHECK-NOT: obelisk_sim.spawn @unit_5.$concurrent_eos_report.171.weak
+// CHECK-LABEL: obelisk_sim.func private @unit_5(
+// CHECK-SAME: obelisk_sim.branching_consequent_alternatives = 2 : i64
+// CHECK-SAME: obelisk_sim.branching_consequent_eos_coalescer
+// CHECK-SAME: obelisk_sim.branching_consequent_monitor
+// CHECK-NOT: obelisk_sim.branching_antecedent_monitor
+// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
+// CHECK-SAME: obelisk_sim.strong_weak_monitor
+// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_alternatives_after = 1 : i64
+// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_alternatives_before = 2 : i64
+// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_literals_after = 1 : i64
+// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_literals_before = 4 : i64
+// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_solver = "z3"
+// CHECK-COUNT-2: obelisk_sim.ref.alloc
+// CHECK-NOT: obelisk_sim.ref.alloc
+// CHECK: obelisk_sim.spawn @unit_5.$concurrent_eos.171.weak
+// CHECK-COUNT-3: obelisk_sim.assert.sampled_read
+// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK-NOT: obelisk.sv.assertion
+
+// Unit_6 proves the symmetric post-minimization case: genuine Z3 consensus
+// removes RHS branching, but the remaining deterministic b ##1 a state still
+// owns one weak EOS completion.
+// CHECK-LABEL: obelisk_sim.func private @unit_6.$concurrent_eos_report.211.weak(
+// CHECK-SAME: obelisk_sim.concurrent_eos_report
+// CHECK-SAME: obelisk_sim.concurrent_report
+// CHECK-LABEL: obelisk_sim.func private @unit_6.$concurrent_eos.211.weak(
+// CHECK-SAME: obelisk_sim.concurrent_eos_coordinator
+// CHECK-COUNT-1: obelisk_sim.ref.load
+// CHECK-NOT: obelisk_sim.ref.load
+// CHECK-COUNT-1: obelisk_sim.spawn @unit_6.$concurrent_eos_report.211.weak
+// CHECK-NOT: obelisk_sim.spawn @unit_6.$concurrent_eos_report.211.weak
+// CHECK-LABEL: obelisk_sim.func private @unit_6(
+// CHECK-NOT: obelisk_sim.branching_consequent_monitor
+// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
+// CHECK-SAME: obelisk_sim.strong_weak_monitor
+// CHECK-SAME: obelisk_sim.sva_boolean_consequent_alternatives_after = 1 : i64
+// CHECK-SAME: obelisk_sim.sva_boolean_consequent_alternatives_before = 2 : i64
+// CHECK-SAME: obelisk_sim.sva_boolean_consequent_literals_after = 2 : i64
+// CHECK-SAME: obelisk_sim.sva_boolean_consequent_literals_before = 6 : i64
+// CHECK-SAME: obelisk_sim.sva_boolean_consequent_solver = "z3"
+// CHECK-COUNT-1: obelisk_sim.ref.alloc
+// CHECK-NOT: obelisk_sim.ref.alloc
+// CHECK: obelisk_sim.spawn @unit_6.$concurrent_eos.211.weak
+// CHECK-COUNT-3: obelisk_sim.assert.sampled_read
+// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK-NOT: obelisk.sv.assertion

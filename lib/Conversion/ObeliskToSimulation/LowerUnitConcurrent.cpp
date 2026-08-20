@@ -2516,7 +2516,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   size_t antecedentAlternativeAdmissionCount = 1;
   size_t consequentAlternativeAdmissionCount = 1;
   bool consequentAlternativesAdmissionEligible = true;
-  bool branchingAntecedentConsequentStrengthComposable = true;
+  bool consequentEndStrengthComposable = true;
   auto recordBooleanMinimization = [&](const BooleanMinimizationStats &stats,
                                        StringRef scope) {
     auto accumulate = [&](StringRef name, uint64_t value) {
@@ -2684,7 +2684,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                            !nested->front().intrinsicEndStrong.has_value() &&
                            !nested->front().hasIntrinsicEndStrength;
         }
-        branchingAntecedentConsequentStrengthComposable = supportedUnary;
+        consequentEndStrengthComposable = supportedUnary;
       }
     }
     // Once branching antecedent results are coalesced by source attempt,
@@ -2702,6 +2702,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
               minimizeBooleanAlternatives(*rhs))
         recordBooleanMinimization(*stats, "consequent");
     implication = binary;
+    bool ordinaryBranchingConsequentAfterMinimization =
+        lhs->front().ages.size() == 1 && succeeded(rhs) && rhs->size() > 1;
     bool sourceAttemptCanRemainPending =
         lhs->front().ages.size() > 1 ||
         (succeeded(rhs) &&
@@ -2709,9 +2711,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           llvm::any_of(*rhs, [](const FixedSequence &alternative) {
             return alternative.ages.size() > 1;
           })));
-    bool preserveSourceAgeCoalescer = antecedentAlternativeAdmissionCount > 1 &&
-                                      lhs->size() == 1 &&
-                                      sourceAttemptCanRemainPending;
+    bool preserveSourceAgeCoalescer =
+        antecedentAlternativeAdmissionCount > 1 && lhs->size() == 1 &&
+        sourceAttemptCanRemainPending &&
+        !ordinaryBranchingConsequentAfterMinimization;
     if (lhs->size() == 1 && !preserveSourceAgeCoalescer)
       antecedentSequence = std::move(lhs->front());
     else
@@ -2804,6 +2807,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   bool branchingSequence = !sequenceAlternatives.empty();
   bool branchingAntecedent = !antecedentAlternatives.empty();
   bool branchingConsequent = !consequentAlternatives.empty();
+  bool deterministicImplicationNeedsEOS =
+      implication && !branchingAntecedent && !branchingConsequent &&
+      !hasPersistentDelay && antecedentSequence.ages.size() == 1 &&
+      (nonoverlapped || sequence.ages.size() > 1);
+  bool branchingConsequentHasIntrinsicEndStrength = llvm::any_of(
+      consequentAlternatives, [](const FixedSequence &alternative) {
+        return alternative.hasIntrinsicEndStrength;
+      });
   bool rawCombinedBranching = antecedentAlternativeAdmissionCount > 1 &&
                               consequentAlternativeAdmissionCount > 1;
   bool rawCombinedBranchingWithinLimit =
@@ -2916,7 +2927,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                << "branching implication/followed-by antecedents cannot "
                   "contain vacuous property alternatives",
            failure();
-  if (branchingAntecedent && !branchingAntecedentConsequentStrengthComposable)
+  if (branchingAntecedent && !consequentEndStrengthComposable)
     return emitError(getSemanticLocation(implication))
                << "branching implication/followed-by consequents with "
                   "intrinsic temporal strength currently require one "
@@ -2947,6 +2958,21 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                << "branching implication/followed-by consequents do not yet "
                   "support match items or assertion-local flow",
            failure();
+  if (branchingConsequent && branchingConsequentHasIntrinsicEndStrength)
+    return emitError(getSemanticLocation(implication))
+               << "branching implication/followed-by consequents with "
+                  "intrinsic temporal strength require per-progress "
+                  "end-of-simulation completion metadata",
+           failure();
+  if (deterministicImplicationNeedsEOS && sequence.hasIntrinsicEndStrength &&
+      !consequentEndStrengthComposable)
+    return emitError(getSemanticLocation(implication))
+               << "implication/followed-by consequents with composed "
+                  "intrinsic temporal strength require per-progress "
+                  "end-of-simulation completion metadata",
+           failure();
+  if (deterministicImplicationNeedsEOS && !endStrengthSource)
+    endStrengthSource = implication.getOperation();
   if (combinedBooleanBranching)
     // The branching-antecedent monitor owns the exact consequent truth and
     // per-antecedent match channels. Keep its existing one-age state shape.
@@ -4577,11 +4603,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return success();
   };
 
-  std::optional<bool> intrinsicNegatedOperandStrength;
+  std::optional<bool> intrinsicOperandStrengthOverride;
   if (temporalNegation && hasPersistentUnary)
-    intrinsicNegatedOperandStrength = persistentUnary.eventually;
+    intrinsicOperandStrengthOverride = persistentUnary.eventually;
   else if (temporalNegation && hasPersistentUntil)
-    intrinsicNegatedOperandStrength = persistentUntil.strong;
+    intrinsicOperandStrengthOverride = persistentUntil.strong;
+  else if (deterministicImplicationNeedsEOS &&
+           sequence.intrinsicEndStrong.has_value())
+    intrinsicOperandStrengthOverride = sequence.intrinsicEndStrong;
   // Aggregate monitors own their live state and final dispatcher. Still run
   // the shared setup to record switched strength metadata, but make its
   // bounded-state age range empty so it cannot capture their placeholder
@@ -4592,7 +4621,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   if (!branchingSequence && !branchingAntecedent && !branchingConsequent &&
       failed(outlineEndOfSimulationReports({stateStorage}, sequence.ages.size(),
                                            firstEndOfSimulationAge,
-                                           intrinsicNegatedOperandStrength)))
+                                           intrinsicOperandStrengthOverride)))
     return failure();
 
   if (abort && !abort.getIsSynchronous() && !persistentStateOwner) {
@@ -6930,7 +6959,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         branchingStateStorages.push_back(storage);
     if (failed(outlineDisableObserver(branchingStateStorages)))
       return failure();
-    if ((branchingSequence || (temporalNegation && branchingConsequent)) &&
+    if (branchingConsequent) {
+      // A sequence consequent is weak by default for assert/assume and strong
+      // for cover/restrict.  Use the implication as the semantic source when
+      // no explicit outer strength/negation already supplied one so the
+      // shared finalizer unions alternative words by relative source age.
+      if (!endStrengthSource)
+        endStrengthSource = implication.getOperation();
+      function->setAttr("obelisk_sim.branching_consequent_eos_coalescer",
+                        builder.getUnitAttr());
+    }
+    if ((branchingSequence || branchingConsequent) &&
         failed(outlineEndOfSimulationReports(
             branchingStateStorages, horizon,
             branchingConsequent && nonoverlapped ? 0 : 1, std::nullopt)))
