@@ -3,7 +3,7 @@
 // Nine two-literal DNF cubes make the false-LHS arm of `implies` require a
 // raw 2^9 = 512-product De Morgan expansion. The raw admission cap applies
 // before duplicate/subsumption normalization or optional Z3 minimization.
-// CHECK: error: SVA property operator 'implies' currently requires nonvacuous one-cycle Boolean DNF operands without first_match or match items and an exact expansion of at most 256 alternatives
+// CHECK: error: SVA property operator 'implies' currently requires one-cycle Boolean property operands without temporal strength, first_match, or match items, with at most 256 alternatives in each exact truth/vacuity class and in the emitted success union
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

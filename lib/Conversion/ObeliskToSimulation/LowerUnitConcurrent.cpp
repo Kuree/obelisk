@@ -285,6 +285,35 @@ conjoinOneCycleBooleanDNFs(ArrayRef<FixedSequence> lhs,
   return results;
 }
 
+/// Exact propositional result classes for a one-cycle property. The first
+/// index is truth and the second is vacuity. Alternatives inside a class are
+/// ordinary nonvacuous Boolean cubes; the class index, rather than each cube,
+/// carries the evaluation classification while nested operators are built.
+struct OneCyclePropertyDNF {
+  FixedSequenceAlternatives alternatives[2][2];
+};
+
+static FailureOr<OneCyclePropertyDNF>
+compileOneCyclePropertyDNF(Operation *operation,
+                           Operation *resolvedClock = nullptr);
+
+/// Return the successful half of an exact property partition in the existing
+/// monitor representation. Keeping the two classes separate lets the later
+/// Boolean minimizer use Z3 within, but never across, vacuity identity.
+static FailureOr<FixedSequenceAlternatives>
+flattenOneCyclePropertySuccess(OneCyclePropertyDNF property) {
+  FixedSequenceAlternatives &nonvacuous = property.alternatives[true][false];
+  FixedSequenceAlternatives &vacuous = property.alternatives[true][true];
+  if (nonvacuous.size() > maxFixedSequenceAlternatives - vacuous.size())
+    return failure();
+  for (FixedSequence &alternative : vacuous)
+    alternative.vacuousSuccess = true;
+  llvm::append_range(nonvacuous, std::move(vacuous));
+  if (nonvacuous.empty())
+    return failure();
+  return std::move(nonvacuous);
+}
+
 /// Conjunction of two bounded property completions. `std::nullopt` denotes
 /// the enclosing directive's default sequence strength, so it behaves as the
 /// same symbolic Boolean in both operands.
@@ -516,9 +545,10 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
         << "SVA property operator '"
         << semantic::stringifySVAssertionBinaryOperator(
                binary.getOperatorKind())
-        << "' currently requires nonvacuous one-cycle Boolean DNF operands "
-           "without first_match or match items and an exact expansion of at "
-           "most 256 alternatives";
+        << "' currently requires one-cycle Boolean property operands without "
+           "temporal strength, first_match, or match items, with at most 256 "
+           "alternatives in each exact truth/vacuity class and in the emitted "
+           "success union";
     return true;
   }
 
@@ -653,11 +683,12 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
       if (unary.getOperatorKind() == semantic::SVAssertionUnaryOperator::Not)
         return diagnose(
             "SVA property operator 'not' currently requires either a "
-            "bounded one-cycle boolean operand whose pre-minimization exact "
-            "complement expansion has at most 256 alternatives and has no "
-            "vacuity, first_match, or match items, or one deterministic or "
-            "bounded branching sequence that is multi-cycle or explicitly "
-            "qualified by strong/weak, or a supported aggregate persistent "
+            "bounded one-cycle Boolean property operand whose exact "
+            "truth/vacuity-class expansion has at most 256 alternatives and "
+            "has no temporal strength, first_match, or match items, or one "
+            "deterministic or bounded branching sequence that is multi-cycle "
+            "or explicitly qualified by strong/weak, or a supported "
+            "aggregate persistent "
             "property (final ##[M:$], positive persistent repetition, "
             "unbounded always/s_eventually, or Boolean until), or an "
             "implication/followed-by with one Boolean antecedent and a "
@@ -722,9 +753,10 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
             Twine("SVA property operator '") +
             semantic::stringifySVAssertionBinaryOperator(
                 binary.getOperatorKind()) +
-            "' currently requires nonvacuous one-cycle Boolean DNF operands "
-            "without first_match or match items and an exact expansion of "
-            "at most 256 alternatives");
+            "' currently requires one-cycle Boolean property operands without "
+            "temporal strength, first_match, or match items, with at most 256 "
+            "alternatives in each exact truth/vacuity class and in the emitted "
+            "success union");
       case semantic::SVAssertionBinaryOperator::Until:
       case semantic::SVAssertionBinaryOperator::SUntil:
       case semantic::SVAssertionBinaryOperator::UntilWith:
@@ -835,6 +867,92 @@ getExpandedAssertionBody(semantic::SVAssertionInstanceExpressionOp instance) {
   if (children.size() != expectedChildren)
     return failure();
   return children.front();
+}
+
+/// Return whether a supported one-cycle property can produce a vacuous result
+/// of either truth value. This is deliberately a semantic traversal rather
+/// than an operation walk: assertion invocations execute only their expanded
+/// body, while retained actual/default and local-initializer children are
+/// inventory. False-vacuous results matter even when the existing success-only
+/// representation has no vacuous alternative to carry as a marker.
+static bool mayHaveVacuousResult(Operation *operation) {
+  if (auto instance =
+          dyn_cast<semantic::SVAssertionInstanceExpressionOp>(operation)) {
+    FailureOr<Operation *> body = getExpandedAssertionBody(instance);
+    return failed(body) || mayHaveVacuousResult(*body);
+  }
+
+  if (auto simple = dyn_cast<semantic::SVSimpleAssertionExprOp>(operation)) {
+    SmallVector<Operation *> children = getChildren(simple);
+    if (!simple.getIsNull() && !simple.getHasRepetition() &&
+        children.size() == 1 &&
+        isa<semantic::SVAssertionInstanceExpressionOp>(children.front()))
+      return mayHaveVacuousResult(children.front());
+    return false;
+  }
+
+  if (auto conditional =
+          dyn_cast<semantic::SVConditionalAssertionExprOp>(operation)) {
+    SmallVector<Operation *> children = getChildren(conditional);
+    size_t expectedChildren = conditional.getHasElse() ? 3 : 2;
+    if (children.size() != expectedChildren)
+      return true;
+    return !conditional.getHasElse() ||
+           mayHaveVacuousResult(children[1]) ||
+           mayHaveVacuousResult(children[2]);
+  }
+
+  if (auto caseProperty =
+          dyn_cast<semantic::SVCaseAssertionExprOp>(operation)) {
+    SmallVector<Operation *> children = getChildren(caseProperty);
+    if (children.empty())
+      return true;
+    size_t childIndex = 1;
+    for (Attribute sizeAttr : caseProperty.getItemGroupSizes()) {
+      auto size = dyn_cast<IntegerAttr>(sizeAttr);
+      if (!size || size.getInt() <= 0)
+        return true;
+      size_t labelCount = static_cast<size_t>(size.getInt());
+      if (childIndex + labelCount >= children.size())
+        return true;
+      childIndex += labelCount;
+      if (mayHaveVacuousResult(children[childIndex++]))
+        return true;
+    }
+    if (!caseProperty.getHasDefault())
+      return true;
+    return childIndex >= children.size() ||
+           mayHaveVacuousResult(children[childIndex]);
+  }
+
+  if (auto unary = dyn_cast<semantic::SVUnaryAssertionExprOp>(operation)) {
+    if (unary.getOperatorKind() != semantic::SVAssertionUnaryOperator::Not)
+      return false;
+    SmallVector<Operation *> children = getChildren(unary);
+    return children.size() != 1 || mayHaveVacuousResult(children.front());
+  }
+
+  auto binary = dyn_cast<semantic::SVBinaryAssertionExprOp>(operation);
+  if (!binary)
+    return false;
+  SmallVector<Operation *> operands = getChildren(binary);
+  if (operands.size() != 2)
+    return true;
+  bool lhs = mayHaveVacuousResult(operands.front());
+  bool rhs = mayHaveVacuousResult(operands.back());
+  switch (binary.getOperatorKind()) {
+  case semantic::SVAssertionBinaryOperator::Implies:
+    // A false antecedent makes `implies` vacuously true even when both
+    // operands are otherwise always nonvacuous.
+    return true;
+  case semantic::SVAssertionBinaryOperator::And:
+  case semantic::SVAssertionBinaryOperator::Or:
+  case semantic::SVAssertionBinaryOperator::Iff:
+    // These results are vacuous only when both operand evaluations are.
+    return lhs && rhs;
+  default:
+    return false;
+  }
 }
 
 static FailureOr<FixedSequence> compileFixedSequence(Operation *operation) {
@@ -1719,13 +1837,16 @@ compileFixedSequenceAlternatives(Operation *operation,
           compileFixedSequenceAlternatives(children.front(), resolvedClock);
       if (failed(nested) || nested->empty())
         return failure();
-
-      // A one-cycle property alternative is a Boolean cube. Complement the
-      // union of those cubes with De Morgan distribution, leaving the
-      // resulting DNF to the compiler-side Boolean minimizer before monitor
-      // SSA is materialized. Temporal endpoints, vacuity, first_match, and
-      // match-item effects are deliberately excluded from this transform.
-      return complementOneCycleBooleanDNF(*nested);
+      if (!mayHaveVacuousResult(children.front()) &&
+          llvm::none_of(*nested, [](const FixedSequence &alternative) {
+            return alternative.vacuousSuccess;
+          }))
+        return complementOneCycleBooleanDNF(*nested);
+      FailureOr<OneCyclePropertyDNF> property =
+          compileOneCyclePropertyDNF(operation, resolvedClock);
+      if (failed(property))
+        return failure();
+      return flattenOneCyclePropertySuccess(std::move(*property));
     }
 
     int64_t minimum = 0;
@@ -1857,9 +1978,39 @@ compileFixedSequenceAlternatives(Operation *operation,
   auto hasVacuousAlternative = [](const FixedSequence &sequence) {
     return sequence.vacuousSuccess;
   };
-  if (llvm::any_of(*lhs, hasVacuousAlternative) ||
-      llvm::any_of(*rhs, hasVacuousAlternative))
-    return failure();
+  bool hasVacuousOperand = llvm::any_of(*lhs, hasVacuousAlternative) ||
+                           llvm::any_of(*rhs, hasVacuousAlternative);
+  bool lhsMayBeVacuous = mayHaveVacuousResult(operands.front());
+  bool rhsMayBeVacuous = mayHaveVacuousResult(operands.back());
+  bool hiddenVacuityNeedsExact = false;
+  switch (binary.getOperatorKind()) {
+  case semantic::SVAssertionBinaryOperator::Implies:
+    hiddenVacuityNeedsExact = lhsMayBeVacuous || rhsMayBeVacuous;
+    break;
+  case semantic::SVAssertionBinaryOperator::And:
+  case semantic::SVAssertionBinaryOperator::Or:
+  case semantic::SVAssertionBinaryOperator::Iff:
+    hiddenVacuityNeedsExact = lhsMayBeVacuous && rhsMayBeVacuous;
+    break;
+  default:
+    break;
+  }
+  if (hasVacuousOperand || hiddenVacuityNeedsExact) {
+    switch (binary.getOperatorKind()) {
+    case semantic::SVAssertionBinaryOperator::And:
+    case semantic::SVAssertionBinaryOperator::Or:
+    case semantic::SVAssertionBinaryOperator::Iff:
+    case semantic::SVAssertionBinaryOperator::Implies: {
+      FailureOr<OneCyclePropertyDNF> property =
+          compileOneCyclePropertyDNF(operation, resolvedClock);
+      if (failed(property))
+        return failure();
+      return flattenOneCyclePropertySuccess(std::move(*property));
+    }
+    default:
+      return failure();
+    }
+  }
 
   switch (binary.getOperatorKind()) {
   case semantic::SVAssertionBinaryOperator::Or: {
@@ -2000,6 +2151,271 @@ compileFixedSequenceAlternatives(Operation *operation,
   default:
     return failure();
   }
+}
+
+static FailureOr<OneCyclePropertyDNF>
+compileOneCyclePropertyDNF(Operation *operation, Operation *resolvedClock) {
+  auto appendAlternatives = [&](OneCyclePropertyDNF &property, bool truth,
+                                bool vacuous,
+                                FixedSequenceAlternatives alternatives) {
+    FixedSequenceAlternatives &destination =
+        property.alternatives[truth][vacuous];
+    if (destination.size() > maxFixedSequenceAlternatives - alternatives.size())
+      return failure();
+    llvm::append_range(destination, std::move(alternatives));
+    return success();
+  };
+  auto gatePredicate = [](OneCyclePropertyDNF &property, Operation *predicate,
+                          bool negated) {
+    for (bool truth : {false, true}) {
+      for (bool vacuous : {false, true}) {
+        for (FixedSequence &alternative :
+             property.alternatives[truth][vacuous]) {
+          if (alternative.ages.size() != 1)
+            return failure();
+          if (negated)
+            alternative.ages.front().negatedPredicates.push_back(predicate);
+          else
+            alternative.ages.front().predicates.push_back(predicate);
+        }
+      }
+    }
+    return success();
+  };
+  auto gateCase = [](OneCyclePropertyDNF &property, Operation *selector,
+                     ArrayRef<Operation *> priorLabels, Operation *label) {
+    for (bool truth : {false, true}) {
+      for (bool vacuous : {false, true}) {
+        for (FixedSequence &alternative :
+             property.alternatives[truth][vacuous]) {
+          if (alternative.ages.size() != 1)
+            return failure();
+          for (Operation *prior : priorLabels)
+            alternative.ages.front().caseGuards.push_back(
+                {selector, prior, true});
+          if (label)
+            alternative.ages.front().caseGuards.push_back(
+                {selector, label, false});
+        }
+      }
+    }
+    return success();
+  };
+
+  if (auto instance =
+          dyn_cast<semantic::SVAssertionInstanceExpressionOp>(operation)) {
+    FailureOr<Operation *> body = getExpandedAssertionBody(instance);
+    if (failed(body))
+      return failure();
+    return compileOneCyclePropertyDNF(*body, resolvedClock);
+  }
+
+  if (auto simple = dyn_cast<semantic::SVSimpleAssertionExprOp>(operation)) {
+    SmallVector<Operation *> children = getChildren(simple);
+    if (!simple.getIsNull() && !simple.getHasRepetition() &&
+        children.size() == 1 &&
+        isa<semantic::SVAssertionInstanceExpressionOp>(children.front()))
+      return compileOneCyclePropertyDNF(children.front(), resolvedClock);
+  }
+
+  if (auto conditional =
+          dyn_cast<semantic::SVConditionalAssertionExprOp>(operation)) {
+    SmallVector<Operation *> children = getChildren(conditional);
+    size_t expectedChildren = conditional.getHasElse() ? 3 : 2;
+    if (children.size() != expectedChildren)
+      return failure();
+
+    FailureOr<OneCyclePropertyDNF> thenProperty =
+        compileOneCyclePropertyDNF(children[1], resolvedClock);
+    if (failed(thenProperty) ||
+        failed(gatePredicate(*thenProperty, children.front(), false)))
+      return failure();
+    OneCyclePropertyDNF result = std::move(*thenProperty);
+
+    OneCyclePropertyDNF elseProperty;
+    if (conditional.getHasElse()) {
+      FailureOr<OneCyclePropertyDNF> compiled =
+          compileOneCyclePropertyDNF(children[2], resolvedClock);
+      if (failed(compiled))
+        return failure();
+      elseProperty = std::move(*compiled);
+    } else {
+      FixedSequence vacuous;
+      vacuous.ages.resize(1);
+      elseProperty.alternatives[true][true].push_back(std::move(vacuous));
+    }
+    if (failed(gatePredicate(elseProperty, children.front(), true)))
+      return failure();
+    for (bool truth : {false, true})
+      for (bool vacuous : {false, true})
+        if (failed(appendAlternatives(
+                result, truth, vacuous,
+                std::move(elseProperty.alternatives[truth][vacuous]))))
+          return failure();
+    return result;
+  }
+
+  if (auto caseProperty =
+          dyn_cast<semantic::SVCaseAssertionExprOp>(operation)) {
+    SmallVector<Operation *> children = getChildren(caseProperty);
+    if (children.empty())
+      return failure();
+    Operation *selector = children.front();
+    size_t childIndex = 1;
+    SmallVector<Operation *> priorLabels;
+    OneCyclePropertyDNF result;
+    for (Attribute sizeAttr : caseProperty.getItemGroupSizes()) {
+      auto size = dyn_cast<IntegerAttr>(sizeAttr);
+      if (!size || size.getInt() <= 0)
+        return failure();
+      size_t labelCount = static_cast<size_t>(size.getInt());
+      if (childIndex + labelCount >= children.size())
+        return failure();
+      ArrayRef<Operation *> labels(children.data() + childIndex, labelCount);
+      childIndex += labelCount;
+      FailureOr<OneCyclePropertyDNF> body =
+          compileOneCyclePropertyDNF(children[childIndex++], resolvedClock);
+      if (failed(body))
+        return failure();
+      for (Operation *label : labels) {
+        OneCyclePropertyDNF selected = *body;
+        if (failed(gateCase(selected, selector, priorLabels, label)))
+          return failure();
+        for (bool truth : {false, true})
+          for (bool vacuous : {false, true})
+            if (failed(appendAlternatives(
+                    result, truth, vacuous,
+                    std::move(selected.alternatives[truth][vacuous]))))
+              return failure();
+      }
+      llvm::append_range(priorLabels, labels);
+    }
+
+    OneCyclePropertyDNF fallback;
+    if (caseProperty.getHasDefault()) {
+      if (childIndex >= children.size())
+        return failure();
+      FailureOr<OneCyclePropertyDNF> compiled =
+          compileOneCyclePropertyDNF(children[childIndex++], resolvedClock);
+      if (failed(compiled))
+        return failure();
+      fallback = std::move(*compiled);
+    } else {
+      FixedSequence vacuous;
+      vacuous.ages.resize(1);
+      fallback.alternatives[true][true].push_back(std::move(vacuous));
+    }
+    if (childIndex != children.size() ||
+        failed(gateCase(fallback, selector, priorLabels, nullptr)))
+      return failure();
+    for (bool truth : {false, true})
+      for (bool vacuous : {false, true})
+        if (failed(appendAlternatives(
+                result, truth, vacuous,
+                std::move(fallback.alternatives[truth][vacuous]))))
+          return failure();
+    return result;
+  }
+
+  if (auto unary = dyn_cast<semantic::SVUnaryAssertionExprOp>(operation)) {
+    SmallVector<Operation *> children = getChildren(unary);
+    if (unary.getOperatorKind() == semantic::SVAssertionUnaryOperator::Not) {
+      if (unary.getHasRange() || children.size() != 1)
+        return failure();
+      FailureOr<OneCyclePropertyDNF> operand =
+          compileOneCyclePropertyDNF(children.front(), resolvedClock);
+      if (failed(operand))
+        return failure();
+      OneCyclePropertyDNF result;
+      for (bool truth : {false, true})
+        for (bool vacuous : {false, true})
+          result.alternatives[!truth][vacuous] =
+              std::move(operand->alternatives[truth][vacuous]);
+      return result;
+    }
+  }
+
+  if (auto binary = dyn_cast<semantic::SVBinaryAssertionExprOp>(operation)) {
+    semantic::SVAssertionBinaryOperator kind = binary.getOperatorKind();
+    bool supported = kind == semantic::SVAssertionBinaryOperator::And ||
+                     kind == semantic::SVAssertionBinaryOperator::Or ||
+                     kind == semantic::SVAssertionBinaryOperator::Iff ||
+                     kind == semantic::SVAssertionBinaryOperator::Implies;
+    if (supported) {
+      SmallVector<Operation *> operands = getChildren(binary);
+      if (operands.size() != 2)
+        return failure();
+      FailureOr<OneCyclePropertyDNF> lhs =
+          compileOneCyclePropertyDNF(operands.front(), resolvedClock);
+      FailureOr<OneCyclePropertyDNF> rhs =
+          compileOneCyclePropertyDNF(operands.back(), resolvedClock);
+      if (failed(lhs) || failed(rhs))
+        return failure();
+
+      OneCyclePropertyDNF result;
+      for (bool leftTruth : {false, true}) {
+        for (bool leftVacuous : {false, true}) {
+          ArrayRef<FixedSequence> left =
+              lhs->alternatives[leftTruth][leftVacuous];
+          if (left.empty())
+            continue;
+          for (bool rightTruth : {false, true}) {
+            for (bool rightVacuous : {false, true}) {
+              ArrayRef<FixedSequence> right =
+                  rhs->alternatives[rightTruth][rightVacuous];
+              if (right.empty())
+                continue;
+              bool truth = false;
+              bool vacuous = false;
+              switch (kind) {
+              case semantic::SVAssertionBinaryOperator::And:
+                truth = leftTruth && rightTruth;
+                vacuous = leftVacuous && rightVacuous;
+                break;
+              case semantic::SVAssertionBinaryOperator::Or:
+                truth = leftTruth || rightTruth;
+                vacuous = leftVacuous && rightVacuous;
+                break;
+              case semantic::SVAssertionBinaryOperator::Iff:
+                truth = leftTruth == rightTruth;
+                vacuous = leftVacuous && rightVacuous;
+                break;
+              case semantic::SVAssertionBinaryOperator::Implies:
+                truth = !leftTruth || rightTruth;
+                vacuous = !leftTruth || leftVacuous || rightVacuous;
+                break;
+              default:
+                llvm_unreachable("filtered one-cycle property operator");
+              }
+              FailureOr<FixedSequenceAlternatives> product =
+                  conjoinOneCycleBooleanDNFs(left, right);
+              if (failed(product) ||
+                  failed(appendAlternatives(result, truth, vacuous,
+                                            std::move(*product))))
+                return failure();
+            }
+          }
+        }
+      }
+      return result;
+    }
+  }
+
+  FailureOr<FixedSequenceAlternatives> successful =
+      compileFixedSequenceAlternatives(operation, resolvedClock);
+  if (failed(successful) || successful->empty() ||
+      llvm::any_of(*successful, [](const FixedSequence &alternative) {
+        return !isOneCycleBooleanCube(alternative);
+      }))
+    return failure();
+  FailureOr<FixedSequenceAlternatives> failedProperty =
+      complementOneCycleBooleanDNF(*successful);
+  if (failed(failedProperty))
+    return failure();
+  OneCyclePropertyDNF result;
+  result.alternatives[true][false] = std::move(*successful);
+  result.alternatives[false][false] = std::move(*failedProperty);
+  return result;
 }
 
 static Operation *unwrapAssertionInstance(Operation *operation) {
