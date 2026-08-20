@@ -781,7 +781,7 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
           semantic::stringifySVAssertionStrength(strong.getStrength()) +
           "' end-of-simulation qualification currently requires one "
           "outermost bounded sequence property without implication/"
-          "followed-by, unsupported persistent operators, expect, or "
+          "followed-by, unsupported persistent operators, or "
           "cover-sequence per-match accounting");
     if (auto abort = dyn_cast<semantic::SVAbortAssertionExprOp>(current)) {
       std::string spelling =
@@ -3143,7 +3143,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   bool consequentAlternativesAdmissionEligible = true;
   bool consequentEndStrengthComposable = true;
   std::optional<bool> consequentUniformIntrinsicEndStrong;
-  std::optional<bool> expectUniformIntrinsicEndStrong;
+  std::optional<bool> expectEndStrong;
   auto recordBooleanMinimization = [&](const BooleanMinimizationStats &stats,
                                        StringRef scope) {
     auto accumulate = [&](StringRef name, uint64_t value) {
@@ -3429,10 +3429,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
        llvm::any_of(sequenceAlternatives, [](const FixedSequence &alternative) {
          return alternative.hasIntrinsicEndStrength;
        }));
-  if (expectHasIntrinsicEndStrength) {
-    expectUniformIntrinsicEndStrong =
-        analyzeUniformIntrinsicEndStrength(property, clock);
-    if (!expectUniformIntrinsicEndStrong)
+  if (expectMonitor && endStrength) {
+    expectEndStrong =
+        endStrength.getStrength() == semantic::SVAssertionStrength::Strong;
+  } else if (expectHasIntrinsicEndStrength) {
+    expectEndStrong = analyzeUniformIntrinsicEndStrength(property, clock);
+    if (!expectEndStrong)
       return emitError(getSemanticLocation(property))
                  << "expect over bounded temporal property operators "
                     "currently requires one uniform weak or strong completion "
@@ -3689,7 +3691,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                   "an expect statement without first_match or match items",
            failure();
   if (endStrength && (implication || hasPersistentUntil || hasPersistentUnary ||
-                      expectMonitor || coverSequence))
+                      coverSequence))
     return emitError(getSemanticLocation(endStrengthSource))
                << "SVA '"
                << semantic::stringifySVAssertionStrength(
@@ -3697,8 +3699,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                << "' end-of-simulation qualification currently requires "
                   "one outermost bounded sequence property without "
                   "implication/followed-by, unsupported persistent "
-                  "operators, expect, or "
-                  "cover-sequence per-match accounting",
+                  "operators, or cover-sequence per-match accounting",
            failure();
   if (temporalNegation && (expectMonitor || coverSequence))
     return emitError(getSemanticLocation(temporalNegation))
@@ -3744,9 +3745,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                      }))
       return emitError(location)
                  << "expect currently requires one deterministic fixed "
-                    "sequence or bounded alternatives without first_match, "
-                    "locals, implication/followed-by, disable iff, or match "
-                    "items",
+                    "sequence, optionally with outer first_match, or bounded "
+                    "alternatives without first_match, locals, implication/"
+                    "followed-by, disable iff, or match items",
              failure();
     auto donePath =
         op->getAttrOfType<StringAttr>("obelisk_sim.expect_done_path");
@@ -3888,7 +3889,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                      SymbolTable::Visibility::Private);
     finalCoordinator->setAttr("obelisk_sim.expect_eos_coordinator",
                               builder.getUnitAttr());
-    bool expectOperandStrong = expectUniformIntrinsicEndStrong.value_or(true);
+    bool expectOperandStrong = expectEndStrong.value_or(true);
+    if (endStrength) {
+      function->setAttr("obelisk_sim.strong_weak_monitor",
+                        builder.getUnitAttr());
+      function->setAttr(
+          "obelisk_sim.end_of_simulation_strength",
+          builder.getStringAttr(semantic::stringifySVAssertionStrength(
+              endStrength.getStrength())));
+    }
     finalCoordinator->setAttr(
         "obelisk_sim.expect_operand_strength",
         builder.getStringAttr(expectOperandStrong ? "strong" : "weak"));
