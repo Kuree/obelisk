@@ -3378,6 +3378,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         compilePersistentUnary(operands.back());
     FailureOr<PersistentUntilProperty> untilRhs =
         compilePersistentUntil(operands.back());
+    FailureOr<PersistentRepetitionSequence> repetitionRhs =
+        compilePersistentRepetition(operands.back());
     if (succeeded(lhs)) {
       bool hasEmpty = llvm::any_of(
           *lhs, [](const FixedSequence &value) { return value.emptyMatch; });
@@ -3446,7 +3448,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
          llvm::any_of(
              *rhs,
              [](const FixedSequence &value) { return value.ages.empty(); })) &&
-        failed(delayedRhs) && failed(unaryRhs) && failed(untilRhs)) {
+        failed(delayedRhs) && failed(unaryRhs) && failed(untilRhs) &&
+        failed(repetitionRhs)) {
       if (diagnoseUnsupportedConcurrentFeature(operands.back(),
                                                /*nested=*/true))
         return failure();
@@ -3527,6 +3530,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     } else if (succeeded(untilRhs)) {
       persistentUntil = std::move(*untilRhs);
       hasPersistentUntil = true;
+      sequence.ages.resize(1);
+    } else if (succeeded(repetitionRhs)) {
+      persistentRepetition = std::move(*repetitionRhs);
+      hasPersistentRepetition = true;
       sequence.ages.resize(1);
     } else {
       if (rhs->size() == 1)
@@ -3658,6 +3665,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   bool deterministicImplicationNeedsEOS =
       implication && !branchingAntecedent && !branchingConsequent &&
       !hasPersistentDelay && !hasPersistentUnary && !hasPersistentUntil &&
+      !hasPersistentRepetition &&
       (antecedentSequence.ages.size() > 1 || nonoverlapped ||
        sequence.ages.size() > 1);
   bool branchingConsequentHasIntrinsicEndStrength = llvm::any_of(
@@ -3861,14 +3869,18 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     sequence.intrinsicEndStrong = consequentUniformIntrinsicEndStrong;
     sequence.hasIntrinsicEndStrength = true;
   }
-  if (hasPersistentRepetition && (localInstance || implication ||
-                                  expectMonitor || firstMatch || coverSequence))
+  if (hasPersistentRepetition &&
+      (localInstance ||
+       (implication && !persistentConsequentImplicationEligible) ||
+       expectMonitor || firstMatch || coverSequence))
     return emitError(getSemanticLocation(property))
                << "persistent [*]/[->]/[=] repetition currently requires a "
-                  "plain "
-                  "assert, assume, cover-property, or restrict directive "
-                  "without locals, implication, first_match, "
-                  "expect, or cover-sequence per-match accounting",
+                  "plain assert, assume, cover-property, or restrict "
+                  "directive without locals. Implication/followed-by "
+                  "additionally requires one nonvacuous Boolean or "
+                  "guaranteed-empty antecedent without case guards or "
+                  "first_match; expect and cover-sequence per-match "
+                  "accounting remain unsupported",
            failure();
   if (hasPersistentUntil &&
       (localInstance ||
@@ -4615,6 +4627,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       (!branchingSequence && sequence.ages.size() > 1) ||
       (implication && !branchingAntecedent && !branchingConsequent &&
        !hasPersistentDelay && !hasPersistentUnary && !hasPersistentUntil &&
+       !hasPersistentRepetition &&
        (nonoverlapped || antecedentSequence.ages.size() > 1));
   if (implication && antecedentHorizon > 1)
     function->setAttr("obelisk_sim.bounded_antecedent_horizon",
@@ -7142,6 +7155,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                       builder.getUnitAttr());
     function->setAttr("obelisk_sim.sva_transition_normal_form",
                       builder.getStringAttr("canonical-minimal"));
+    if (implication) {
+      function->setAttr("obelisk_sim.persistent_repetition_implication",
+                        builder.getUnitAttr());
+      if (nonoverlapped)
+        function->setAttr("obelisk_sim.persistent_repetition_nonoverlapped",
+                          builder.getUnitAttr());
+    }
 
     struct TokenState {
       uint64_t occurrences = 0;
@@ -7209,12 +7229,22 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       prefixStateStorage = sim::SimRefAllocOp::create(
           builder, location,
           sim::RefType::get(function.getContext(), stateType), zero);
+    Value handoffStorage;
+    if (implication && nonoverlapped) {
+      handoffStorage = sim::SimRefAllocOp::create(
+          builder, location,
+          sim::RefType::get(function.getContext(), stateType), zero);
+      handoffStorage.getDefiningOp()->setAttr(
+          "obelisk_sim.persistent_implication_handoff", builder.getUnitAttr());
+    }
 
     SmallVector<Value> repetitionStateStorages;
     for (const TokenState &state : tokenStates)
       repetitionStateStorages.push_back(state.storage);
     if (prefixStateStorage)
       repetitionStateStorages.push_back(prefixStateStorage);
+    if (handoffStorage)
+      repetitionStateStorages.push_back(handoffStorage);
     if (failed(outlineDisableObserver(repetitionStateStorages)))
       return failure();
 
@@ -7224,6 +7254,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     SmallVector<Value> abortBitsets;
     if (prefixStateStorage)
       abortBitsets.push_back(prefixStateStorage);
+    if (handoffStorage)
+      abortBitsets.push_back(handoffStorage);
     FailureOr<std::optional<PersistentAbortPlan>> persistentAbort =
         preparePersistentAbort(abortCounts, abortBitsets);
     if (failed(persistentAbort))
@@ -7239,6 +7271,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         endCounts.push_back(state.storage);
       if (prefixStateStorage)
         endBitsets.push_back(prefixStateStorage);
+      if (handoffStorage)
+        endBitsets.push_back(handoffStorage);
     }
     StringRef completionTag =
         weakCompletion ? "repetition_weak" : "repetition_strong";
@@ -7273,12 +7307,6 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       sampleAssertionValues = savedSampleAssertionValues;
       activeSampledClock = savedSampledClock;
     });
-
-    Value attemptEnabled = queryAttemptEnabled();
-    Value currentAttemptCount = countNewAttempt(attemptEnabled);
-    if (failed(
-            abortPersistentSample(wait, *persistentAbort, currentAttemptCount)))
-      return failure();
 
     Value falseValue = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(false));
@@ -7380,6 +7408,23 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       target = arith::AddIOp::create(builder, location, target, count);
     };
 
+    Value attemptEnabled = queryAttemptEnabled();
+    Value antecedentTruth;
+    if (implication) {
+      FailureOr<Value> antecedent =
+          evaluateAge(antecedentSequence.ages.front());
+      if (failed(antecedent))
+        return failure();
+      antecedentTruth = *antecedent;
+    }
+    Value currentAttemptCount = computePersistentAttemptCount(
+        attemptEnabled, antecedentTruth, handoffStorage);
+    if (failed(
+            abortPersistentSample(wait, *persistentAbort, currentAttemptCount)))
+      return failure();
+    Value currentAttemptActive = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne, currentAttemptCount, zero);
+
     Value prefixState =
         prefixStateStorage
             ? sim::SimRefLoadOp::create(builder, location, stateType,
@@ -7423,8 +7468,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         evaluateAge(persistentRepetition.entry.ages.front());
     if (failed(starts))
       return failure();
-    Value activeStart = gateNewAttempt(*starts, attemptEnabled);
-    Value failedStart = gateNewAttempt(negate(*starts), attemptEnabled);
+    Value activeStart =
+        arith::AndIOp::create(builder, location, *starts, currentAttemptActive);
+    Value failedStart = arith::AndIOp::create(
+        builder, location, negate(*starts), currentAttemptActive);
     addCount(failureCount, selectCount(failedStart, one));
     if (persistentRepetition.entry.ages.size() == 1) {
       addCount(entryCount, selectCount(activeStart, one));
