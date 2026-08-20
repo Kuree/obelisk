@@ -79,6 +79,11 @@ struct FixedSequence {
   /// the directive-default sentinel. This preserves the fact that a temporal
   /// unary contributed a phase-sensitive completion rule.
   bool hasIntrinsicEndStrength = false;
+  /// This trace represents the empty match of a mixed nonoverlapped
+  /// antecedent. Its consequent starts on the current tick rather than after
+  /// the ordinary nonempty-match handoff. The marker is introduced only after
+  /// fixed-sequence compilation, so it cannot leak into general composition.
+  bool currentTickConsequentStart = false;
 };
 
 static void appendObserverRequest(sim::SimFuncOp function, StringRef name,
@@ -339,12 +344,16 @@ minimizeUniformBooleanAlternatives(FixedSequenceAlternatives &alternatives) {
   std::optional<bool> intrinsicEndStrong =
       alternatives.front().intrinsicEndStrong;
   bool hasIntrinsicEndStrength = alternatives.front().hasIntrinsicEndStrength;
+  bool currentTickConsequentStart =
+      alternatives.front().currentTickConsequentStart;
   if (horizon == 0 ||
       llvm::any_of(alternatives, [&](const FixedSequence &alternative) {
         return alternative.ages.size() != horizon ||
                alternative.vacuousSuccess != vacuousSuccess ||
                alternative.intrinsicEndStrong != intrinsicEndStrong ||
                alternative.hasIntrinsicEndStrength != hasIntrinsicEndStrength ||
+               alternative.currentTickConsequentStart !=
+                   currentTickConsequentStart ||
                !alternative.firstMatchBoundaries.empty() ||
                llvm::any_of(alternative.ages, [](const FixedSequenceAge &age) {
                  return !age.matchItems.empty();
@@ -423,6 +432,7 @@ minimizeUniformBooleanAlternatives(FixedSequenceAlternatives &alternatives) {
     alternative.vacuousSuccess = vacuousSuccess;
     alternative.intrinsicEndStrong = intrinsicEndStrong;
     alternative.hasIntrinsicEndStrength = hasIntrinsicEndStrength;
+    alternative.currentTickConsequentStart = currentTickConsequentStart;
     for (solver::BooleanLiteral literal : cube) {
       if (literal.variable >= atoms.size())
         return std::nullopt;
@@ -462,6 +472,7 @@ minimizeBooleanAlternatives(FixedSequenceAlternatives &alternatives) {
     bool vacuousSuccess = false;
     std::optional<bool> intrinsicEndStrong;
     bool hasIntrinsicEndStrength = false;
+    bool currentTickConsequentStart = false;
     FixedSequenceAlternatives alternatives;
   };
   SmallVector<Group, 2> groups;
@@ -488,7 +499,9 @@ minimizeBooleanAlternatives(FixedSequenceAlternatives &alternatives) {
           group.vacuousSuccess == alternative.vacuousSuccess &&
           group.intrinsicEndStrong == alternative.intrinsicEndStrong &&
           group.hasIntrinsicEndStrength ==
-              alternative.hasIntrinsicEndStrength) {
+              alternative.hasIntrinsicEndStrength &&
+          group.currentTickConsequentStart ==
+              alternative.currentTickConsequentStart) {
         selected = &group;
         break;
       }
@@ -498,6 +511,7 @@ minimizeBooleanAlternatives(FixedSequenceAlternatives &alternatives) {
                         alternative.vacuousSuccess,
                         alternative.intrinsicEndStrong,
                         alternative.hasIntrinsicEndStrength,
+                        alternative.currentTickConsequentStart,
                         {}});
       selected = &groups.back();
     }
@@ -3241,41 +3255,40 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     FailureOr<PersistentDelaySequence> delayedRhs =
         compilePersistentDelay(operands.back());
     if (succeeded(lhs)) {
-      bool hasEmpty = llvm::any_of(*lhs, [](const FixedSequence &value) {
-        return value.emptyMatch;
-      });
+      bool hasEmpty = llvm::any_of(
+          *lhs, [](const FixedSequence &value) { return value.emptyMatch; });
       if (hasEmpty && nonoverlapped) {
-        if (!llvm::all_of(*lhs, [](const FixedSequence &value) {
-              return value.emptyMatch;
-            }))
-          return emitError(getSemanticLocation(operands.front()))
-                     << "mixed empty/nonempty nonoverlapped "
-                        "implication/followed-by antecedents require "
-                        "distinct current- and next-clock consequent "
-                        "obligations",
-                 failure();
-
+        bool allEmpty = llvm::all_of(
+            *lhs, [](const FixedSequence &value) { return value.emptyMatch; });
         // An empty nonoverlapped match starts its consequent at the nearest
         // clock tick beginning with the antecedent start. In this singly
-        // clocked monitor that is the current tick. Represent the guaranteed
-        // empty match as a predicate-free one-age activation and suppress the
-        // ordinary one-clock nonoverlap handoff. This retains the implication
-        // result coalescer, consequent strength, temporal negation, and final
-        // completion behavior without ever sampling the empty operand.
+        // clocked monitor that is the current tick. Represent each empty match
+        // as a predicate-free one-age activation. For an empty-only antecedent
+        // the ordinary deterministic path can suppress the global handoff. A
+        // mixed antecedent keeps that handoff for its nonempty endpoints and
+        // marks the empty channel for current-tick dispatch by the source-age
+        // coalescer.
         for (FixedSequence &value : *lhs) {
+          if (!value.emptyMatch)
+            continue;
           value = FixedSequence{};
           value.ages.resize(1);
+          value.currentTickConsequentStart = !allEmpty;
         }
-        nonoverlapped = false;
-        function->setAttr("obelisk_sim.empty_antecedent_nonoverlap",
-                          builder.getUnitAttr());
+        if (allEmpty) {
+          nonoverlapped = false;
+          function->setAttr("obelisk_sim.empty_antecedent_nonoverlap",
+                            builder.getUnitAttr());
+        } else {
+          function->setAttr("obelisk_sim.mixed_empty_antecedent_nonoverlap",
+                            builder.getUnitAttr());
+        }
       } else if (hasEmpty) {
         // Empty matches have no endpoint and therefore do not trigger an
         // overlapped consequent. A mixed antecedent remains nondegenerate by
         // virtue of its retained nonempty alternatives.
-        llvm::erase_if(*lhs, [](const FixedSequence &value) {
-          return value.emptyMatch;
-        });
+        llvm::erase_if(
+            *lhs, [](const FixedSequence &value) { return value.emptyMatch; });
         function->setAttr("obelisk_sim.overlapped_empty_matches_ignored",
                           builder.getUnitAttr());
         if (lhs->empty())
@@ -3445,7 +3458,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                            : "a sequence used as a property cannot admit an "
                              "empty match")
                    << "; use positive-delay concatenation to eliminate the "
-                      "empty endpoint",
+                      "empty match",
                failure();
       // IEEE 16.12.2 makes strong/weak sequence truth insensitive to an outer
       // first_match. Expect uses strong(sequence) by default and also admits
@@ -7263,6 +7276,19 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                       builder.getI64IntegerAttr(antecedentAlternatives.size()));
     function->setAttr("obelisk_sim.branching_antecedent_match_channels",
                       builder.getI64IntegerAttr(antecedentAlternatives.size()));
+    size_t currentTickChannels = llvm::count_if(
+        antecedentAlternatives, [](const FixedSequence &alternative) {
+          return alternative.currentTickConsequentStart;
+        });
+    if (currentTickChannels != 0) {
+      function->setAttr(
+          "obelisk_sim.mixed_empty_antecedent_current_tick_channels",
+          builder.getI64IntegerAttr(currentTickChannels));
+      function->setAttr(
+          "obelisk_sim.mixed_empty_antecedent_handoff_channels",
+          builder.getI64IntegerAttr(antecedentAlternatives.size() -
+                                    currentTickChannels));
+    }
     if (combinedBooleanBranching) {
       function->setAttr(
           "obelisk_sim.branching_consequent_alternatives",
@@ -7290,6 +7316,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           builder, location,
           sim::RefType::get(function.getContext(), stateType), zero));
     }
+    auto channelIsNonoverlapped = [&](size_t channel) {
+      return nonoverlapped &&
+             !antecedentAlternatives[channel].currentTickConsequentStart;
+    };
     // One source property attempt may produce several antecedent matches.
     // Their consequent evaluations are obligations of that one attempt, not
     // independent property results.  Retain a saw-match bit by original
@@ -7297,8 +7327,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     // attempt have resolved.  The last possible result age is the last
     // antecedent end point followed by the consequent horizon (plus the
     // nonoverlap handoff).
-    size_t sourceAttemptHorizon =
-        antecedentHorizon + sequence.ages.size() - (nonoverlapped ? 0 : 1);
+    size_t sourceAttemptHorizon = 1;
+    for (auto [channel, alternative] : llvm::enumerate(antecedentAlternatives))
+      sourceAttemptHorizon = std::max(
+          sourceAttemptHorizon, alternative.ages.size() - 1 +
+                                    (channelIsNonoverlapped(channel) ? 1 : 0) +
+                                    sequence.ages.size());
     function->setAttr("obelisk_sim.branching_antecedent_result_horizon",
                       builder.getI64IntegerAttr(sourceAttemptHorizon));
     Value matchedState;
@@ -7307,13 +7341,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           builder, location,
           sim::RefType::get(function.getContext(), stateType), zero);
 
-    bool consequentNeedsState = nonoverlapped || sequence.ages.size() > 1;
+    bool consequentNeedsState =
+        sequence.ages.size() > 1 ||
+        llvm::any_of(llvm::seq<size_t>(0, antecedentAlternatives.size()),
+                     channelIsNonoverlapped);
     SmallVector<Value> consequentStates(antecedentAlternatives.size());
     if (consequentNeedsState)
-      for (Value &storage : consequentStates)
-        storage = sim::SimRefAllocOp::create(
-            builder, location,
-            sim::RefType::get(function.getContext(), stateType), zero);
+      for (size_t channel = 0; channel < consequentStates.size(); ++channel)
+        if (sequence.ages.size() > 1 || channelIsNonoverlapped(channel))
+          consequentStates[channel] = sim::SimRefAllocOp::create(
+              builder, location,
+              sim::RefType::get(function.getContext(), stateType), zero);
 
     SmallVector<Value> branchingStateStorages;
     for (Value storage : alternativeStates)
@@ -7322,7 +7360,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (matchedState)
       branchingStateStorages.push_back(matchedState);
     if (consequentNeedsState)
-      llvm::append_range(branchingStateStorages, consequentStates);
+      for (Value storage : consequentStates)
+        if (storage)
+          branchingStateStorages.push_back(storage);
     if (failed(outlineDisableObserver(branchingStateStorages)))
       return failure();
 
@@ -7655,11 +7695,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             continue;
           uint64_t antecedentEndAge =
               antecedentAlternatives[channel].ages.size() - 1;
-          uint64_t sourceOffset = antecedentEndAge + (nonoverlapped ? 1 : 0);
+          bool channelNonoverlapped = channelIsNonoverlapped(channel);
+          uint64_t sourceOffset =
+              antecedentEndAge + (channelNonoverlapped ? 1 : 0);
           if (sourceAge < sourceOffset)
             continue;
           uint64_t bit = sourceAge - sourceOffset;
-          uint64_t firstBit = nonoverlapped ? 0 : 1;
+          uint64_t firstBit = channelNonoverlapped ? 0 : 1;
           if (bit < firstBit || bit >= sequence.ages.size())
             continue;
           consequentPending =
@@ -7964,13 +8006,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
          ++channel) {
       if (!consequentNeedsState)
         break;
+      if (!consequentStates[channel])
+        continue;
       uint64_t antecedentEndAge =
           antecedentAlternatives[channel].ages.size() - 1;
+      bool channelNonoverlapped = channelIsNonoverlapped(channel);
       Value state = sim::SimRefLoadOp::create(builder, location, stateType,
                                               consequentStates[channel]);
-      uint64_t firstAge = nonoverlapped ? 0 : 1;
+      uint64_t firstAge = channelNonoverlapped ? 0 : 1;
       for (uint64_t age = firstAge; age < sequence.ages.size(); ++age) {
-        uint64_t sourceAge = antecedentEndAge + (nonoverlapped ? 1 : 0) + age;
+        uint64_t sourceAge =
+            antecedentEndAge + (channelNonoverlapped ? 1 : 0) + age;
         assert(sourceAge < sourceAttemptHorizon);
         Value mask = arith::ConstantOp::create(
             builder, location, stateType,
@@ -8020,7 +8066,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       uint64_t sourceAge = antecedentAlternatives[channel].ages.size() - 1;
       antecedentMatched[sourceAge] = arith::OrIOp::create(
           builder, location, antecedentMatched[sourceAge], triggered);
-      if (nonoverlapped) {
+      if (channelIsNonoverlapped(channel)) {
         consequentPendingNext[sourceAge] = arith::OrIOp::create(
             builder, location, consequentPendingNext[sourceAge], triggered);
         Value firstMask = arith::ConstantOp::create(
@@ -8198,13 +8244,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                  matchedState);
     if (consequentNeedsState) {
       for (auto [channel, storage] : llvm::enumerate(consequentStates)) {
+        if (!storage)
+          continue;
         Value nextState = nextConsequentStates[channel];
         uint64_t antecedentEndAge =
             antecedentAlternatives[channel].ages.size() - 1;
-        uint64_t firstBit = nonoverlapped ? 0 : 1;
+        bool channelNonoverlapped = channelIsNonoverlapped(channel);
+        uint64_t firstBit = channelNonoverlapped ? 0 : 1;
         for (uint64_t bit = firstBit; bit < sequence.ages.size(); ++bit) {
           uint64_t sourceAge =
-              antecedentEndAge + (nonoverlapped ? 1 : 0) + bit - 1;
+              antecedentEndAge + (channelNonoverlapped ? 1 : 0) + bit - 1;
           nextState = clearResolvedBit(nextState, bit, sourceAge);
         }
         sim::SimRefStoreOp::create(builder, location, nextState, storage);

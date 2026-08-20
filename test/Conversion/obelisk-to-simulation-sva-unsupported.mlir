@@ -10,7 +10,7 @@
 // NONCONSECUTIVE: error: nonconsecutive sequence repetition [=] currently requires a finite range no greater than 63 on one boolean term, optionally preceded by a deterministic bounded prefix and followed by ##1 plus one boolean term; minimum zero requires that continuation so no empty property endpoint remains
 // ALWAYS: error: SVA property operator 'always' currently requires its unbounded/no-range form over one deterministic one-cycle Boolean operand without locals or match items
 // UNTIL: error: SVA property operator 'until' currently requires two deterministic one-cycle boolean operands without locals, match items, disable iff, or nested property composition
-// EMPTY: error: a sequence used as a property cannot admit an empty match; use positive-delay concatenation to eliminate the empty endpoint
+// EMPTY: error: a sequence used as a property cannot admit an empty match; use positive-delay concatenation to eliminate the empty match
 // UNBOUNDED-ZERO: error: unbounded sequence repetition [*] currently requires a minimum no greater than 63 on one Boolean term, optionally preceded by a deterministic bounded prefix and followed by ##1 plus one Boolean term; minimum zero requires that ##1 Boolean continuation so no empty property endpoint remains
 
 //--- unbounded-delay.mlir
