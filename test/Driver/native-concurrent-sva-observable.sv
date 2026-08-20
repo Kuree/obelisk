@@ -43,8 +43,11 @@ module native_concurrent_sva_observable;
     report_order = report_order * 10 + 4;
   end
 
-  // A false implication antecedent is a vacuous assertion success, but must
-  // not count as a cover hit.
+  // A false implication antecedent succeeds vacuously. IEEE 16.14.3 counts a
+  // vacuous success as a success -- it is tallied separately as "succeeded
+  // because of vacuity" rather than excluded -- and runs the pass statement
+  // once per successful attempt. IEEE 20.12 confirms the pass action executes
+  // on vacuous success by default; $assertvacuousoff is what suppresses it.
   cover property (never |-> b) cover_vacuous = 1;
 
   initial begin
@@ -72,7 +75,7 @@ module native_concurrent_sva_observable;
 endmodule
 
 // CHECK: ERROR: {{.*}}native-concurrent-sva-observable.sv:{{[0-9]+}}: concurrent assertion failed.
-// CHECK: assert=11 assume=11 cover=111111 vacuous=0 order=1234
+// CHECK: assert=11 assume=11 cover=111111 vacuous=1 order=1234
 // SIM-DAG: obelisk_sim.assert.sampled_read
 // SIM-DAG: home_region = 8 : i32
 // SIM-DAG: home_region = 10 : i32
