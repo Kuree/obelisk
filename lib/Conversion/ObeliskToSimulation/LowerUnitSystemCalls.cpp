@@ -34,33 +34,28 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
       gateExpression
           ? dyn_cast<semantic::SVNamedValueExpressionOp>(gateExpression)
           : semantic::SVNamedValueExpressionOp{};
-  auto conditionNode =
+  auto clockConditionNode =
       clockCondition
           ? dyn_cast<semantic::SVNamedValueExpressionOp>(clockCondition)
-          : gateNode;
-  if (!sourceNode || !clockNode ||
-      ((gateExpression || clockCondition) && !conditionNode)) {
+          : semantic::SVNamedValueExpressionOp{};
+  if (!sourceNode || !clockNode || (gateExpression && !gateNode) ||
+      (clockCondition && !clockConditionNode)) {
     emitError(location)
         << "alternate-clock sampled values currently require direct named "
-           "packed source, condition, and clock signals";
-    return failure();
-  }
-  if (gateExpression && clockCondition) {
-    emitError(location)
-        << "alternate-clock $past does not yet support both a gating "
-           "expression and an iff-qualified explicit clock";
+           "packed source, gate, clock-iff condition, and clock signals";
     return failure();
   }
 
   FailureOr<Value> source = lowerExpression(expression, true);
   FailureOr<Value> watched = lowerExpression(clockChildren.front(), true);
-  Operation *conditionExpression =
-      clockCondition ? clockCondition : gateExpression;
-  FailureOr<Value> condition = failure();
-  if (conditionExpression)
-    condition = lowerExpression(conditionExpression, true);
-  if (failed(source) || failed(watched) ||
-      (conditionExpression && failed(condition)))
+  FailureOr<Value> gate = failure();
+  FailureOr<Value> clockQualifier = failure();
+  if (gateExpression)
+    gate = lowerExpression(gateExpression, true);
+  if (clockCondition)
+    clockQualifier = lowerExpression(clockCondition, true);
+  if (failed(source) || failed(watched) || (gateExpression && failed(gate)) ||
+      (clockCondition && failed(clockQualifier)))
     return failure();
 
   auto elementType = [&](Value reference) -> Type {
@@ -69,13 +64,18 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
     return getReferenceElementType(reference);
   };
   Type sourceType = elementType(*source);
-  Type conditionType = conditionExpression ? elementType(*condition) : Type{};
+  Type gateType = gateExpression ? elementType(*gate) : Type{};
+  Type clockConditionType =
+      clockCondition ? elementType(*clockQualifier) : Type{};
+  auto isPackedCondition = [](Type type) {
+    return type && isa<sim::LogicType, IntegerType>(type);
+  };
   if (!sourceType || !sim::getPackedWidth(sourceType) ||
-      (conditionExpression &&
-       (!conditionType || !isa<sim::LogicType, IntegerType>(conditionType)))) {
+      (gateExpression && !isPackedCondition(gateType)) ||
+      (clockCondition && !isPackedCondition(clockConditionType))) {
     emitError(location)
         << "alternate-clock sampled values require packed source storage and "
-           "a packed event condition";
+           "packed gate and clock-iff conditions";
     return failure();
   }
 
@@ -97,14 +97,24 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
   };
   FailureOr<DictionaryAttr> sourceAttrs = captureAttrs(*source);
   FailureOr<DictionaryAttr> clockAttrs = captureAttrs(*watched);
-  FailureOr<DictionaryAttr> conditionAttrs = failure();
-  if (conditionExpression)
-    conditionAttrs = captureAttrs(*condition);
+  DictionaryAttr gateAttrs;
+  DictionaryAttr clockConditionAttrs;
+  if (gateExpression) {
+    FailureOr<DictionaryAttr> captured = captureAttrs(*gate);
+    if (succeeded(captured))
+      gateAttrs = *captured;
+  }
+  if (clockCondition) {
+    FailureOr<DictionaryAttr> captured = captureAttrs(*clockQualifier);
+    if (succeeded(captured))
+      clockConditionAttrs = *captured;
+  }
   if (failed(sourceAttrs) || failed(clockAttrs) ||
-      (conditionExpression && failed(conditionAttrs))) {
+      (gateExpression && !gateAttrs) ||
+      (clockCondition && !clockConditionAttrs)) {
     emitError(location)
         << "alternate-clock sampled values require statically descriptor-"
-           "bound source, condition, and clock signals";
+           "bound source, gate, clock-iff condition, and clock signals";
     return failure();
   }
 
@@ -118,14 +128,25 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
   // Descriptor IDs identify the actual elaborated objects. Source spelling is
   // insufficient here: two instances can both name a local signal `data`,
   // while separate assertion code units referring to the same object should
-  // intentionally share one sampler.
-  std::string key = (Twine(captureKey(*sourceAttrs)) + "|" +
-                     Twine(static_cast<uint32_t>(clock.getEdgeKind())) + "|" +
-                     captureKey(*clockAttrs) + "|" +
-                     (conditionExpression ? Twine(captureKey(*conditionAttrs))
-                                          : Twine("true")) +
-                     "|" + Twine(depth))
-                        .str();
+  // intentionally share one sampler. A gate-only plan and an iff-only plan
+  // using the same condition also share: both lower to one edge-iff suspend
+  // and an unconditional update. Only the simultaneous form has a distinct
+  // update gate.
+  DictionaryAttr suspendConditionAttrs =
+      clockCondition ? clockConditionAttrs
+                     : (gateExpression ? gateAttrs : DictionaryAttr{});
+  DictionaryAttr updateGateAttrs =
+      clockCondition && gateExpression ? gateAttrs : DictionaryAttr{};
+  std::string key =
+      (Twine(captureKey(*sourceAttrs)) + "|" +
+       Twine(static_cast<uint32_t>(clock.getEdgeKind())) + "|" +
+       captureKey(*clockAttrs) + "|condition:" +
+       (suspendConditionAttrs ? Twine(captureKey(suspendConditionAttrs))
+                              : Twine("true")) +
+       "|gate:" +
+       (updateGateAttrs ? Twine(captureKey(updateGateAttrs)) : Twine("true")) +
+       "|" + Twine(depth))
+          .str();
   auto existing = alternateClockSamplePlans.find(key);
   uint64_t siteID = 0;
   if (existing != alternateClockSamplePlans.end()) {
@@ -145,9 +166,17 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
     SmallVector<DictionaryAttr> argumentAttrs{
         captureMetadata(builder, sim::CaptureKind::Context), *sourceAttrs,
         *clockAttrs};
-    if (conditionExpression) {
-      inputs.push_back((*condition).getType());
-      argumentAttrs.push_back(*conditionAttrs);
+    std::optional<unsigned> clockConditionArgument;
+    std::optional<unsigned> gateArgument;
+    if (clockCondition) {
+      clockConditionArgument = inputs.size();
+      inputs.push_back((*clockQualifier).getType());
+      argumentAttrs.push_back(clockConditionAttrs);
+    }
+    if (gateExpression) {
+      gateArgument = inputs.size();
+      inputs.push_back((*gate).getType());
+      argumentAttrs.push_back(gateAttrs);
     }
     std::string symbol =
         (function.getSymName() + ".$clocked_sample." + Twine(siteID)).str();
@@ -194,11 +223,17 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
     cf::BranchOp::create(entryBuilder, location, wait);
     OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
     Operation *suspend = nullptr;
-    if (conditionExpression)
+    // A gate-only plan can use the edge-iff suspension directly. When both
+    // controls are present, the clock's iff decides whether the event occurs,
+    // while the independent $past gate controls the history update below.
+    std::optional<unsigned> suspendConditionArgument =
+        clockConditionArgument ? clockConditionArgument : gateArgument;
+    if (suspendConditionArgument)
       suspend = sim::SimSuspendEdgeIffOp::create(
                     waitBuilder, location,
                     static_cast<sim::EdgeKind>(clock.getEdgeKind()),
-                    entry.getArgument(2), entry.getArgument(3), ValueRange{},
+                    entry.getArgument(2),
+                    entry.getArgument(*suspendConditionArgument), ValueRange{},
                     sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, sample)
                     .getOperation();
     else
@@ -222,6 +257,23 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
     Value gateValue = arith::ConstantOp::create(
         sampleBuilder, location, sampleBuilder.getI1Type(),
         sampleBuilder.getBoolAttr(true));
+    if (clockCondition && gateExpression) {
+      Value sampledGate = sim::SimSampledReadOp::create(
+          sampleBuilder, location, gateType, entry.getArgument(0),
+          entry.getArgument(*gateArgument));
+      if (isa<sim::LogicType>(gateType)) {
+        gateValue = sim::SimLogicIsTrueOp::create(
+            sampleBuilder, location, sampleBuilder.getI1Type(), sampledGate);
+      } else {
+        auto integer = cast<IntegerType>(gateType);
+        Value zero =
+            arith::ConstantOp::create(sampleBuilder, location, integer,
+                                      sampleBuilder.getIntegerAttr(integer, 0));
+        gateValue =
+            arith::CmpIOp::create(sampleBuilder, location,
+                                  arith::CmpIPredicate::ne, sampledGate, zero);
+      }
+    }
     sim::SimClockedSampleUpdateOp::create(
         sampleBuilder, location, entry.getArgument(0), currentSample, gateValue,
         sampleBuilder.getI64IntegerAttr(siteID),
