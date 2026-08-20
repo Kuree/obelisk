@@ -441,7 +441,9 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
             "bounded branching sequence that is multi-cycle or explicitly "
             "qualified by strong/weak, or a supported aggregate persistent "
             "property (final ##[M:$], positive persistent repetition, "
-            "unbounded always/s_eventually, or Boolean until)");
+            "unbounded always/s_eventually, or Boolean until), or an "
+            "implication/followed-by with one Boolean antecedent and a "
+            "supported bounded or final-##[M:$] consequent");
       if (unary.getOperatorKind() ==
               semantic::SVAssertionUnaryOperator::NextTime ||
           unary.getOperatorKind() ==
@@ -2262,23 +2264,37 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     }
     // Keep unqualified one-cycle Boolean negation on the DNF path, where the
     // optional compiler-side solver can minimize the complemented formula.
-    // Temporal negation retains the deterministic, branching, or aggregate
-    // persistent operand monitor and flips its one property result at the
-    // exact clock where that result becomes known.
+    // Temporal negation retains the deterministic, branching, implication,
+    // or aggregate persistent operand monitor and flips its one property
+    // result at the exact clock where that result becomes known.
     if (fixedOperand) {
-      FailureOr<FixedSequenceAlternatives> fixed =
-          compileFixedSequenceAlternatives(fixedOperand, clock);
-      bool valid = succeeded(fixed) && !fixed->empty() &&
-                   llvm::all_of(*fixed, [](const FixedSequence &alternative) {
-                     return !alternative.emptyMatch &&
-                            !alternative.vacuousSuccess &&
-                            !alternative.ages.empty();
-                   });
-      bool temporal =
-          valid && (explicitStrength ||
+      bool temporal = false;
+      if (auto binary =
+              dyn_cast<semantic::SVBinaryAssertionExprOp>(fixedOperand))
+        temporal =
+            binary.getOperatorKind() ==
+                semantic::SVAssertionBinaryOperator::OverlappedImplication ||
+            binary.getOperatorKind() ==
+                semantic::SVAssertionBinaryOperator::NonOverlappedImplication ||
+            binary.getOperatorKind() ==
+                semantic::SVAssertionBinaryOperator::OverlappedFollowedBy ||
+            binary.getOperatorKind() ==
+                semantic::SVAssertionBinaryOperator::NonOverlappedFollowedBy;
+      if (!temporal) {
+        FailureOr<FixedSequenceAlternatives> fixed =
+            compileFixedSequenceAlternatives(fixedOperand, clock);
+        bool valid = succeeded(fixed) && !fixed->empty() &&
+                     llvm::all_of(*fixed, [](const FixedSequence &alternative) {
+                       return !alternative.emptyMatch &&
+                              !alternative.vacuousSuccess &&
+                              !alternative.ages.empty();
+                     });
+        temporal = valid &&
+                   (explicitStrength ||
                     llvm::any_of(*fixed, [](const FixedSequence &alternative) {
                       return alternative.ages.size() > 1;
                     }));
+      }
       if (!temporal)
         temporal = succeeded(compilePersistentDelay(fixedOperand)) ||
                    succeeded(compilePersistentUnary(fixedOperand)) ||
@@ -2699,6 +2715,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       return !age.matchItems.empty();
     });
   };
+  if (temporalNegation && implication &&
+      (branchingAntecedent || antecedentSequence.ages.size() != 1 ||
+       antecedentSequence.vacuousSuccess ||
+       !antecedentSequence.firstMatchBoundaries.empty() ||
+       !antecedentSequence.ages.front().matchItems.empty() ||
+       !antecedentSequence.ages.front().caseGuards.empty()))
+    return emitError(getSemanticLocation(temporalNegation))
+               << "temporal property 'not' over implication/followed-by "
+                  "currently requires one nonvacuous Boolean antecedent "
+                  "without first_match, case guards, or match items",
+           failure();
   if (implication && !localInstance &&
       (hasMatchItems(antecedentSequence) ||
        llvm::any_of(antecedentAlternatives, hasMatchItems)))
@@ -2849,12 +2876,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                   "operators, expect, or "
                   "cover-sequence per-match accounting",
            failure();
-  if (temporalNegation && (implication || expectMonitor || coverSequence))
+  if (temporalNegation && (expectMonitor || coverSequence))
     return emitError(getSemanticLocation(temporalNegation))
                << "temporal property 'not' currently requires one "
-                  "deterministic, bounded branching, or supported aggregate "
-                  "persistent property, optionally qualified by strong/weak, "
-                  "without implication/followed-by, expect, or cover-sequence "
+                  "deterministic or bounded branching property optionally "
+                  "qualified by strong/weak, a supported aggregate "
+                  "persistent property, or an implication/followed-by with "
+                  "one Boolean antecedent, without expect or cover-sequence "
                   "per-match accounting",
            failure();
   if (branchingSequence &&
@@ -4104,16 +4132,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
   auto outlineEndOfSimulationReports =
       [&](ArrayRef<Value> liveStateStorages, size_t horizon,
+          size_t firstLiveAge,
           std::optional<bool> operandStrongOverride) -> LogicalResult {
     if (!endStrengthSource)
       return success();
     bool operandStrong = operandStrongOverride.value_or(
-        endStrength ? endStrength.getStrength() ==
-                          semantic::SVAssertionStrength::Strong
-                    // A sequence is weak by default only as the property of
-                    // assert/assume. Cover-property and restrict use strong
-                    // sequence semantics.
-                    : !assertion);
+        endStrength
+            ? endStrength.getStrength() == semantic::SVAssertionStrength::Strong
+            // A sequence is weak by default only as the property of
+            // assert/assume. Cover-property and restrict use strong
+            // sequence semantics.
+            : !assertion);
     bool outerStrong = temporalNegation ? !operandStrong : operandStrong;
     semantic::SVAssertionStrength outerStrength =
         outerStrong ? semantic::SVAssertionStrength::Strong
@@ -4144,8 +4173,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     std::optional<ReportCallback> *selectedReport =
         completionPassed ? (cover && vacuousCompletion ? nullptr : &passReport)
                          : &failReport;
-    if (horizon > 1 && !liveStateStorages.empty() && selectedReport &&
-        *selectedReport) {
+    if (horizon > firstLiveAge && !liveStateStorages.empty() &&
+        selectedReport && *selectedReport) {
       auto design = function->getParentOfType<sim::SimDesignOp>();
       if (!design)
         return function.emitError(
@@ -4333,7 +4362,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                     getSemanticLocation(endStrengthSource),
                                     live, alternative);
       }
-      for (uint64_t age = horizon; age-- > 1;) {
+      for (uint64_t age = horizon; age-- > firstLiveAge;) {
         Block *reportBlock = new Block;
         Block *continuation = new Block;
         coordinator.getBody().push_back(reportBlock);
@@ -4389,10 +4418,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     intrinsicNegatedOperandStrength = persistentUnary.eventually;
   else if (temporalNegation && hasPersistentUntil)
     intrinsicNegatedOperandStrength = persistentUntil.strong;
-  if (!branchingSequence &&
-      failed(outlineEndOfSimulationReports(
-          {stateStorage}, sequence.ages.size(),
-          intrinsicNegatedOperandStrength)))
+  // Aggregate monitors own their live state and final dispatcher. Still run
+  // the shared setup to record switched strength metadata, but make its
+  // bounded-state age range empty so it cannot capture their placeholder
+  // stateStorage value.
+  size_t firstEndOfSimulationAge = persistentStateOwner ? sequence.ages.size()
+                                   : implication && nonoverlapped ? 0
+                                                                  : 1;
+  if (!branchingSequence && !branchingAntecedent && !branchingConsequent &&
+      failed(outlineEndOfSimulationReports({stateStorage}, sequence.ages.size(),
+                                           firstEndOfSimulationAge,
+                                           intrinsicNegatedOperandStrength)))
     return failure();
 
   if (abort && !abort.getIsSynchronous() && !persistentStateOwner) {
@@ -4949,7 +4985,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     scheduleCount(successCount, true);
     if (implication) {
       scheduleCount(failedPrefix, false);
-      if (!cover)
+      // A false followed-by antecedent is an operand failure. Under temporal
+      // negation it becomes a vacuous outer success, whose cover pass action
+      // still executes even though vacuity is accounted separately.
+      if (!cover || (temporalNegation && followedBy))
         scheduleCount(antecedentResultCount, !followedBy);
     } else {
       scheduleCount(failedPrefix, false);
@@ -6222,9 +6261,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         branchingStateStorages.push_back(storage);
     if (failed(outlineDisableObserver(branchingStateStorages)))
       return failure();
-    if (branchingSequence &&
-        failed(outlineEndOfSimulationReports(branchingStateStorages, horizon,
-                                             std::nullopt)))
+    if ((branchingSequence || (temporalNegation && branchingConsequent)) &&
+        failed(outlineEndOfSimulationReports(
+            branchingStateStorages, horizon,
+            branchingConsequent && nonoverlapped ? 0 : 1, std::nullopt)))
       return failure();
 
     Block *wait = addBlock();
@@ -6548,7 +6588,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         reportWhen(matched, true);
       }
     } else {
-      if (branchingConsequent && !cover) {
+      if (branchingConsequent && (!cover || (temporalNegation && followedBy))) {
         Value noAntecedent = arith::XOrIOp::create(
             builder, location, antecedentTrigger, trueValue);
         reportWhen(noAntecedent, !followedBy);
@@ -6950,7 +6990,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         builder, location, builder.getI1Type(), builder.getBoolAttr(true));
     if (!implication && failed(reportFailure(one, *starts)))
       return failure();
-    if (implication && !cover) {
+    if (implication && (!cover || (temporalNegation && followedBy))) {
       if (followedBy) {
         if (failed(reportFailure(one, *starts)))
           return failure();
@@ -7297,9 +7337,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                   builder.getBoolAttr(true)));
     // Implication succeeds vacuously when its antecedent is false. Followed-by
-    // instead requires an antecedent match and therefore fails. A cover
-    // directive records neither case as a hit.
-    if (!cover && failed(conditionalResult(vacuous, !followedBy)))
+    // instead fails vacuously; temporal negation turns that result into a
+    // vacuous success whose cover pass action must still execute.
+    if ((!cover || (temporalNegation && followedBy)) &&
+        failed(conditionalResult(vacuous, !followedBy)))
       return failure();
     if (antecedentSequence.ages.size() == 1) {
       if (failed(launchConsequent(*starts)))
