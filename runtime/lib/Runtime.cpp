@@ -552,6 +552,7 @@ obelisk_rt_v1_assertion_control(obelisk_rt_context *context, uint32_t action,
     uint8_t state = found == context->assertionControlStates.end()
                         ? 0
                         : found->second;
+    bool killApplied = false;
     if (action == 2) {
       state &= ~kAssertionLocked;
     } else if ((state & kAssertionLocked) != 0) {
@@ -565,8 +566,11 @@ obelisk_rt_v1_assertion_control(obelisk_rt_context *context, uint32_t action,
         state &= ~kAssertionDisabled;
         break;
       case 4:
+        state |= kAssertionDisabled;
+        break;
       case 5:
         state |= kAssertionDisabled;
+        killApplied = true;
         break;
       case 6:
         state &= ~(kAssertionNonvacuousPassDisabled |
@@ -596,9 +600,11 @@ obelisk_rt_v1_assertion_control(obelisk_rt_context *context, uint32_t action,
       context->assertionControlStates.erase(assertionID);
     else
       context->assertionControlStates[assertionID] = state;
-    if (action == 5)
+    if (killApplied) {
+      ++context->assertionKillEpochs[assertionID];
       obelisk_rt_cancel_deferred_immediate_assertion_unlocked(context,
                                                               assertionID);
+    }
     return OBELISK_RT_OK;
   } catch (...) {
     context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
@@ -642,6 +648,21 @@ obelisk_rt_v1_assertion_action_state(obelisk_rt_context *context,
     if ((state & kAssertionFailDisabled) != 0)
       enabled &= ~UINT32_C(4);
     return enabled;
+  } catch (...) {
+    context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+    return 0;
+  }
+}
+
+extern "C" uint64_t
+obelisk_rt_v1_assertion_kill_epoch(obelisk_rt_context *context,
+                                   uint64_t assertionID) {
+  if (!context || assertionID == 0)
+    return 0;
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    auto found = context->assertionKillEpochs.find(assertionID);
+    return found == context->assertionKillEpochs.end() ? 0 : found->second;
   } catch (...) {
     context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
     return 0;

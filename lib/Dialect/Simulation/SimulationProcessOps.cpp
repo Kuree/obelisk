@@ -907,6 +907,11 @@ LogicalResult SimAssertionActionStateOp::verify() {
                         "assertion control target ID");
 }
 
+LogicalResult SimAssertionKillEpochOp::verify() {
+  return verifyPositive(*this, getAssertionIdAttr(),
+                        "assertion control target ID");
+}
+
 LogicalResult SimContextStorageOp::verify() {
   return verifyNonnegative(*this, getIdAttr(), "storage ID");
 }

@@ -1,15 +1,17 @@
 // RUN: %split-file %s %t
-// RUN: not obelisk-opt %t/kill.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=KILL
+// RUN: obelisk-opt %t/kill.mlir '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=KILL
+// RUN: obelisk-opt %t/kill.mlir '--lower-obelisk-to-sim=opt-level=3' -o /dev/null
+// RUN: obelisk-opt %t/kill.mlir '--lower-obelisk-to-sim=opt-level=3' '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
 // RUN: not obelisk-opt %t/action.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=ACTION
 
-// Kill needs cancellation of live monitor state and queued reports; action
-// controls need per-attempt action-state snapshots. Until those later chunks
-// land, selecting a concurrent directive must reject instead of silently
+// Kill invalidates live monitor state and queued reports through a per-target
+// generation. Action controls still need per-attempt action-state snapshots,
+// so selecting a concurrent directive with one must reject instead of silently
 // applying immediate-assertion semantics.
 
 //--- kill.mlir
 
-module {
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent_kill", name = "assertion_control_concurrent_kill", node_id = 0 : i64, original_source_range = !obelisk.source_range<"../../../../tmp/assert_control_concurrent_kill.sv", 1, 1, "../../../../tmp/assert_control_concurrent_kill.sv", 4, 10, "">, source_end_column = 10 : i64, source_end_line = 4 : i64, source_file = "../../../../tmp/assert_control_concurrent_kill.sv", source_range = !obelisk.source_range<"../../../../tmp/assert_control_concurrent_kill.sv", 1, 1, "../../../../tmp/assert_control_concurrent_kill.sv", 4, 10, "">, sym_name = "s0.assertion_control_concurrent_kill"} {
   }
   obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
@@ -124,5 +126,8 @@ module {
   }
 }
 
-// KILL: concurrent assertion control currently supports Lock, Unlock, On, and Off; control action 5 selected concurrent assertion
-// ACTION: concurrent assertion control currently supports Lock, Unlock, On, and Off; control action 7 selected concurrent assertion
+// KILL: obelisk_sim.assert.control {{.*}} action 5 assertion
+// KILL: obelisk_sim.concurrent_report_kill_epoch
+// KILL: obelisk_sim.concurrent_kill_epoch_storage
+// KILL: obelisk_sim.concurrent_kill_epoch_check
+// ACTION: concurrent assertion control currently supports Lock, Unlock, On, Off, and Kill; control action 7 selected concurrent assertion

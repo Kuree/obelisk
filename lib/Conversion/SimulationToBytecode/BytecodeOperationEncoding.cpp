@@ -681,6 +681,11 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         plan, kIntrinsicAssertionActionState,
         {emitU64Constant(plan, static_cast<uint64_t>(op.getAssertionId()))},
         {reg(plan, op.getState())});
+  if (auto op = dyn_cast<sim::SimAssertionKillEpochOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicAssertionKillEpoch,
+        {emitU64Constant(plan, static_cast<uint64_t>(op.getAssertionId()))},
+        {reg(plan, op.getEpoch())});
   if (auto op = dyn_cast<sim::SimDumpOpenOp>(operation))
     return emitIntrinsic(plan, kIntrinsicDumpOpen, {op.getPath()}, {});
   if (auto op = dyn_cast<sim::SimDumpOpenStringOp>(operation))

@@ -2881,7 +2881,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     function->setAttr("obelisk_sim.assertion_target_id", assertionControlID);
   bool attemptControlled =
       !expectMonitor && op->hasAttr("obelisk_sim.assertion_controlled");
-  if (attemptControlled &&
+  bool killControlled =
+      !expectMonitor && op->hasAttr("obelisk_sim.assertion_kill_controlled");
+  if ((attemptControlled || killControlled) &&
       (!assertionControlID ||
        !assertionControlID.getValue().isStrictlyPositive()))
     return emitError(location)
@@ -3155,11 +3157,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       compiledMultiClock->hasLeadingDelay) {
     multiClockSequence = std::move(*compiledMultiClock);
     if (localInstance || disable || expectMonitor || firstMatch ||
+        killControlled ||
         op.getAssertionKind() == semantic::SVAssertionKind::CoverSequence)
       return emitError(getSemanticLocation(property))
                  << "multi-clock sequence handoff currently requires a plain "
-                    "property directive without locals, disable iff, expect, "
-                    "or cover-sequence per-match accounting",
+                    "property directive without locals, disable iff, Kill "
+                    "control, expect, or cover-sequence per-match accounting",
              failure();
     for (const MultiClockSequenceStage &stage : multiClockSequence.stages) {
       if (!isStaticDirectClock(stage.clock))
@@ -4498,6 +4501,19 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   Type stateType = builder.getI64Type();
   Value zero = arith::ConstantOp::create(builder, location, stateType,
                                          builder.getI64IntegerAttr(0));
+  Value killEpochStorage;
+  if (killControlled) {
+    Value context = function.getBody().front().getArgument(0);
+    auto initialKillEpoch = sim::SimAssertionKillEpochOp::create(
+        builder, location, stateType, context, assertionControlID);
+    initialKillEpoch->setAttr("obelisk_sim.concurrent_kill_epoch",
+                              builder.getUnitAttr());
+    killEpochStorage = sim::SimRefAllocOp::create(
+        builder, location,
+        sim::RefType::get(function.getContext(), stateType), initialKillEpoch);
+    killEpochStorage.getDefiningOp()->setAttr(
+        "obelisk_sim.concurrent_kill_epoch_storage", builder.getUnitAttr());
+  }
   auto countNewAttempt = [&](Value enabled) -> Value {
     Value one = arith::ConstantOp::create(builder, location, stateType,
                                           builder.getI64IntegerAttr(1));
@@ -4674,6 +4690,52 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       OpBuilder canceledBuilder = OpBuilder::atBlockEnd(canceled);
       sim::SimReturnOp::create(canceledBuilder, location, ValueRange{});
       callback->second.push_back(disableEpoch);
+    }
+    if (killEpochStorage) {
+      sim::SimFuncOp evaluator = callback->first;
+      SmallVector<Type> inputTypes(evaluator.getFunctionType().getInputs());
+      inputTypes.push_back(killEpochStorage.getType());
+      inputTypes.push_back(stateType);
+      evaluator.setFunctionType(
+          FunctionType::get(function.getContext(), inputTypes, TypeRange{}));
+      Block &entry = evaluator.getBody().front();
+      entry.addArgument(killEpochStorage.getType(), location);
+      BlockArgument expectedEpoch = entry.addArgument(stateType, location);
+      SmallVector<Attribute> argumentAttrs;
+      if (ArrayAttr attrs = evaluator.getArgAttrsAttr())
+        llvm::append_range(argumentAttrs, attrs);
+      while (argumentAttrs.size() + 2 < inputTypes.size())
+        argumentAttrs.push_back(builder.getDictionaryAttr({}));
+      argumentAttrs.push_back(builder.getDictionaryAttr({
+          builder.getNamedAttr(
+              "obelisk_sim.capture_kind",
+              sim::CaptureKindAttr::get(function.getContext(),
+                                        sim::CaptureKind::Formal)),
+          builder.getNamedAttr("obelisk_sim.automatic_reference_capture",
+                               builder.getUnitAttr()),
+      }));
+      argumentAttrs.push_back(builder.getDictionaryAttr({builder.getNamedAttr(
+          "obelisk_sim.capture_kind",
+          sim::CaptureKindAttr::get(function.getContext(),
+                                    sim::CaptureKind::Formal))}));
+      evaluator.setArgAttrsAttr(builder.getArrayAttr(argumentAttrs));
+
+      Block *body = entry.splitBlock(entry.begin());
+      Block *canceled = new Block;
+      evaluator.getBody().push_back(canceled);
+      OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
+      auto currentEpoch = sim::SimAssertionKillEpochOp::create(
+          entryBuilder, location, stateType, entry.getArgument(0),
+          assertionControlID);
+      currentEpoch->setAttr("obelisk_sim.concurrent_report_kill_epoch",
+                            builder.getUnitAttr());
+      Value current = arith::CmpIOp::create(
+          entryBuilder, location, arith::CmpIPredicate::eq, currentEpoch,
+          expectedEpoch);
+      cf::CondBranchOp::create(entryBuilder, location, current, body, canceled);
+      OpBuilder canceledBuilder = OpBuilder::atBlockEnd(canceled);
+      sim::SimReturnOp::create(canceledBuilder, location, ValueRange{});
+      callback->second.push_back(killEpochStorage);
     }
     report.emplace(ReportCallback{callback->first, std::move(callback->second),
                                   getSemanticLocation(outlined)});
@@ -4875,6 +4937,34 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return success();
   };
 
+  auto cancelKilledSample =
+      [&](ArrayRef<Value> stateStorages) -> LogicalResult {
+    if (!killEpochStorage)
+      return success();
+    Value context = function.getBody().front().getArgument(0);
+    auto currentEpoch = sim::SimAssertionKillEpochOp::create(
+        builder, location, stateType, context, assertionControlID);
+    currentEpoch->setAttr("obelisk_sim.concurrent_kill_epoch_check",
+                          builder.getUnitAttr());
+    Value seenEpoch = sim::SimRefLoadOp::create(
+        builder, location, stateType, killEpochStorage);
+    Value current = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, currentEpoch, seenEpoch);
+    Block *cancelLive = addBlock();
+    Block *continueSample = addBlock();
+    cf::CondBranchOp::create(builder, location, current, continueSample,
+                             ValueRange{}, cancelLive, ValueRange{});
+    setCurrent(cancelLive);
+    for (Value storage : stateStorages)
+      if (storage)
+        sim::SimRefStoreOp::create(builder, location, zero, storage);
+    sim::SimRefStoreOp::create(builder, location, currentEpoch,
+                               killEpochStorage);
+    cf::BranchOp::create(builder, location, continueSample);
+    setCurrent(continueSample);
+    return success();
+  };
+
   if (disable && !persistentStateOwner && !branchingSequence &&
       !branchingAntecedent && !branchingConsequent &&
       failed(outlineDisableObserver({stateStorage})))
@@ -4884,10 +4974,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     std::optional<ReportCallback> &report = passed ? passReport : failReport;
     if (!report)
       return;
-    SmallVector<Value> captures(report->captures);
-    if (disableEpoch)
-      captures.push_back(sim::SimRefLoadOp::create(builder, report->location,
-                                                   stateType, disableEpoch));
+    SmallVector<Value> captures;
+    for (Value capture : report->captures) {
+      captures.push_back(capture);
+      if (capture == disableEpoch)
+        captures.push_back(sim::SimRefLoadOp::create(
+            builder, report->location, stateType, disableEpoch));
+      if (capture == killEpochStorage)
+        captures.push_back(sim::SimRefLoadOp::create(
+            builder, report->location, stateType, killEpochStorage));
+    }
     sim::SimSpawnOp::create(builder, report->location,
                             report->function.getSymNameAttr(), captures,
                             ArrayAttr{}, ArrayAttr{});
@@ -4988,17 +5084,6 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         captures.push_back(capture);
       reportCaptureIndices.push_back(entry->second);
     }
-    std::optional<unsigned> disableEpochIndex;
-    if (disableEpoch) {
-      auto found = captureIndices.find(disableEpoch);
-      if (found == captureIndices.end())
-        return function.emitError(
-                   "counted end-of-simulation report is missing its disable "
-                   "epoch capture"),
-               failure();
-      disableEpochIndex = found->second;
-    }
-
     SmallVector<Type> inputTypes;
     SmallVector<DictionaryAttr> argumentAttrs;
     for (auto [index, capture] : llvm::enumerate(captures)) {
@@ -5153,12 +5238,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
     OpBuilder bodyBuilder = OpBuilder::atBlockEnd(body);
     SmallVector<Value> reportOperands;
-    for (unsigned index : reportCaptureIndices)
-      reportOperands.push_back(entry.getArgument(index));
-    if (disableEpochIndex)
-      reportOperands.push_back(
-          sim::SimRefLoadOp::create(bodyBuilder, report->location, stateType,
-                                    entry.getArgument(*disableEpochIndex)));
+    for (auto [capture, index] :
+         llvm::zip_equal(report->captures, reportCaptureIndices)) {
+      Value argument = entry.getArgument(index);
+      reportOperands.push_back(argument);
+      if (capture == disableEpoch || capture == killEpochStorage)
+        reportOperands.push_back(sim::SimRefLoadOp::create(
+            bodyBuilder, report->location, stateType, argument));
+    }
     sim::SimSpawnOp::create(bodyBuilder, report->location,
                             report->function.getSymNameAttr(), reportOperands,
                             ArrayAttr{}, ArrayAttr{});
@@ -5225,17 +5312,6 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (emitReports)
       for (Value capture : (*selectedReport)->captures)
         reportCaptureIndices.push_back(appendCapture(capture));
-    std::optional<unsigned> disableEpochIndex;
-    if (emitReports && disableEpoch) {
-      auto found = captureIndices.find(disableEpoch);
-      if (found == captureIndices.end())
-        return function.emitError(
-                   "counted abort report is missing its disable epoch "
-                   "capture"),
-               failure();
-      disableEpochIndex = found->second;
-    }
-
     SmallVector<Type> inputTypes;
     SmallVector<DictionaryAttr> argumentAttrs;
     for (auto [index, capture] : llvm::enumerate(captures)) {
@@ -5417,12 +5493,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
       OpBuilder bodyBuilder = OpBuilder::atBlockEnd(body);
       SmallVector<Value> reportOperands;
-      for (unsigned index : reportCaptureIndices)
-        reportOperands.push_back(entry.getArgument(index));
-      if (disableEpochIndex)
-        reportOperands.push_back(sim::SimRefLoadOp::create(
-            bodyBuilder, (*selectedReport)->location, stateType,
-            entry.getArgument(*disableEpochIndex)));
+      for (auto [capture, index] : llvm::zip_equal(
+               (*selectedReport)->captures, reportCaptureIndices)) {
+        Value argument = entry.getArgument(index);
+        reportOperands.push_back(argument);
+        if (capture == disableEpoch || capture == killEpochStorage)
+          reportOperands.push_back(sim::SimRefLoadOp::create(
+              bodyBuilder, (*selectedReport)->location, stateType, argument));
+      }
       sim::SimSpawnOp::create(bodyBuilder, (*selectedReport)->location,
                               (*selectedReport)->function.getSymNameAttr(),
                               reportOperands, ArrayAttr{}, ArrayAttr{});
@@ -5773,16 +5851,6 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           captures.push_back(capture);
         reportCaptureIndices.push_back(entry->second);
       }
-      std::optional<unsigned> disableEpochCaptureIndex;
-      if (disableEpoch) {
-        auto found = captureIndices.find(disableEpoch);
-        if (found == captureIndices.end())
-          return function.emitError(
-                     "strong/weak report is missing its disable epoch"),
-                 failure();
-        disableEpochCaptureIndex = found->second;
-      }
-
       SmallVector<Type> inputs;
       SmallVector<DictionaryAttr> argumentAttrs;
       for (auto [index, capture] : llvm::enumerate(captures)) {
@@ -5898,14 +5966,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         SmallVector<Value> reportOperands;
         reportOperands.reserve(reportCaptureIndices.size() +
                                static_cast<size_t>(disableEpoch != nullptr));
-        for (unsigned index : reportCaptureIndices)
-          reportOperands.push_back(
-              coordinator.getBody().front().getArgument(index));
-        if (disableEpochCaptureIndex)
-          reportOperands.push_back(sim::SimRefLoadOp::create(
-              reportBuilder, report.location, stateType,
-              coordinator.getBody().front().getArgument(
-                  *disableEpochCaptureIndex)));
+        for (auto [capture, index] :
+             llvm::zip_equal(report.captures, reportCaptureIndices)) {
+          Value argument =
+              coordinator.getBody().front().getArgument(index);
+          reportOperands.push_back(argument);
+          if (capture == disableEpoch || capture == killEpochStorage)
+            reportOperands.push_back(sim::SimRefLoadOp::create(
+                reportBuilder, report.location, stateType, argument));
+        }
         sim::SimSpawnOp::create(reportBuilder, report.location,
                                 finalReport.getSymNameAttr(), reportOperands,
                                 ArrayAttr{}, ArrayAttr{});
@@ -6035,20 +6104,6 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       }
     };
     appendReportCaptures(*selectedReport, selectedCaptureIndices);
-    std::optional<unsigned> abortDisableEpochIndex;
-    if (disableEpoch && selectedReport->has_value()) {
-      for (auto [index, capture] : llvm::enumerate(captures))
-        if (capture == disableEpoch) {
-          abortDisableEpochIndex = index;
-          break;
-        }
-      if (!abortDisableEpochIndex)
-        return function.emitError(
-                   "asynchronous abort report is missing its disable epoch "
-                   "capture"),
-               failure();
-    }
-
     SmallVector<Type> inputs;
     SmallVector<DictionaryAttr> argumentAttrs;
     for (Value capture : captures) {
@@ -6170,12 +6225,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                  continuation, ValueRange{});
         OpBuilder reportBuilder = OpBuilder::atBlockEnd(reportBlock);
         SmallVector<Value> reportCaptures;
-        for (unsigned index : selectedCaptureIndices)
-          reportCaptures.push_back(entry.getArgument(index));
-        if (abortDisableEpochIndex)
-          reportCaptures.push_back(sim::SimRefLoadOp::create(
-              reportBuilder, (*selectedReport)->location, stateType,
-              entry.getArgument(*abortDisableEpochIndex)));
+        for (auto [capture, index] : llvm::zip_equal(
+                 (*selectedReport)->captures, selectedCaptureIndices)) {
+          Value argument = entry.getArgument(index);
+          reportCaptures.push_back(argument);
+          if (capture == disableEpoch || capture == killEpochStorage)
+            reportCaptures.push_back(sim::SimRefLoadOp::create(
+                reportBuilder, (*selectedReport)->location, stateType,
+                argument));
+        }
         sim::SimSpawnOp::create(reportBuilder, (*selectedReport)->location,
                                 (*selectedReport)->function.getSymNameAttr(),
                                 reportCaptures, ArrayAttr{}, ArrayAttr{});
@@ -6300,6 +6358,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     setCurrent(sample);
 
     if (failed(cancelDisabledSample(wait, delayStateStorages)))
+      return failure();
+    if (failed(cancelKilledSample(delayStateStorages)))
       return failure();
 
     bool savedSampleAssertionValues = sampleAssertionValues;
@@ -6584,6 +6644,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
     if (failed(cancelDisabledSample(wait, unaryStateStorages)))
       return failure();
+    if (failed(cancelKilledSample(unaryStateStorages)))
+      return failure();
 
     bool savedSampleAssertionValues = sampleAssertionValues;
     sampleAssertionValues = true;
@@ -6733,6 +6795,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     setCurrent(sample);
 
     if (failed(cancelDisabledSample(wait, untilStateStorages)))
+      return failure();
+    if (failed(cancelKilledSample(untilStateStorages)))
       return failure();
 
     bool savedSampleAssertionValues = sampleAssertionValues;
@@ -6968,6 +7032,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     setCurrent(sample);
 
     if (failed(cancelDisabledSample(wait, repetitionStateStorages)))
+      return failure();
+    if (failed(cancelKilledSample(repetitionStateStorages)))
       return failure();
 
     bool savedSampleAssertionValues = sampleAssertionValues;
@@ -7606,17 +7672,6 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       if (emitFail)
         finalFail = prepareReportCaptures(*failReport);
 
-      std::optional<unsigned> disableEpochCaptureIndex;
-      if (disableEpoch) {
-        auto found = captureIndices.find(disableEpoch);
-        if (found == captureIndices.end())
-          return function.emitError(
-                     "branching antecedent finalization is missing its "
-                     "disable epoch"),
-                 failure();
-        disableEpochCaptureIndex = found->second;
-      }
-
       SmallVector<Type> inputs;
       SmallVector<DictionaryAttr> argumentAttrs;
       for (auto [index, capture] : llvm::enumerate(captures)) {
@@ -7797,13 +7852,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
         OpBuilder reportBuilder = OpBuilder::atBlockEnd(reportBlock);
         SmallVector<Value> operands;
-        for (unsigned index : info.captureIndices)
-          operands.push_back(coordinator.getBody().front().getArgument(index));
-        if (disableEpochCaptureIndex)
-          operands.push_back(sim::SimRefLoadOp::create(
-              reportBuilder, info.report->location, stateType,
-              coordinator.getBody().front().getArgument(
-                  *disableEpochCaptureIndex)));
+        for (auto [capture, index] :
+             llvm::zip_equal(info.report->captures, info.captureIndices)) {
+          Value argument =
+              coordinator.getBody().front().getArgument(index);
+          operands.push_back(argument);
+          if (capture == disableEpoch || capture == killEpochStorage)
+            operands.push_back(sim::SimRefLoadOp::create(
+                reportBuilder, info.report->location, stateType, argument));
+        }
         auto spawn = sim::SimSpawnOp::create(
             reportBuilder, info.report->location,
             info.function.getSymNameAttr(), operands, ArrayAttr{}, ArrayAttr{});
@@ -7903,6 +7960,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     setCurrent(sample);
 
     if (failed(cancelDisabledSample(wait, branchingStateStorages)))
+      return failure();
+    if (failed(cancelKilledSample(branchingStateStorages)))
       return failure();
 
     bool savedSampleAssertionValues = sampleAssertionValues;
@@ -8488,6 +8547,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     setCurrent(sample);
 
     if (failed(cancelDisabledSample(wait, branchingStateStorages)))
+      return failure();
+    if (failed(cancelKilledSample(branchingStateStorages)))
       return failure();
 
     bool savedSampleAssertionValues = sampleAssertionValues;
@@ -9121,12 +9182,19 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         "resume_region", sim::EventRegionAttr::get(function.getContext(),
                                                    sim::EventRegion::Observed));
     setCurrent(sample);
-    Value state = stateStorage ? sim::SimRefLoadOp::create(
-                                     builder, location, stateType, stateStorage)
-                               : zero;
-
+    Value state;
+    if (!killEpochStorage)
+      state = stateStorage ? sim::SimRefLoadOp::create(
+                                 builder, location, stateType, stateStorage)
+                           : zero;
     if (failed(cancelDisabledSample(wait, {stateStorage})))
       return failure();
+    if (failed(cancelKilledSample({stateStorage})))
+      return failure();
+    if (killEpochStorage)
+      state = stateStorage ? sim::SimRefLoadOp::create(
+                                 builder, location, stateType, stateStorage)
+                           : zero;
 
     bool savedSampleAssertionValues = sampleAssertionValues;
     sampleAssertionValues = true;
@@ -9294,12 +9362,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                                  sim::EventRegion::Observed));
   setCurrent(sample);
   Value state = zero;
-  if (stateStorage)
+  if (stateStorage && !killEpochStorage)
     state =
         sim::SimRefLoadOp::create(builder, location, stateType, stateStorage);
-
   if (failed(cancelDisabledSample(wait, {stateStorage})))
     return failure();
+  if (failed(cancelKilledSample({stateStorage})))
+    return failure();
+  if (stateStorage && killEpochStorage)
+    state =
+        sim::SimRefLoadOp::create(builder, location, stateType, stateStorage);
 
   bool savedSampleAssertionValues = sampleAssertionValues;
   sampleAssertionValues = true;

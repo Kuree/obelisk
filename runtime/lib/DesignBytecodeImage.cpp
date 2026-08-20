@@ -561,6 +561,9 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_ASSERTION_ACTION_STATE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && bits(input(0), 64) && bits(output(0), 32);
+  case OBELISK_RT_INTRINSIC_V1_ASSERTION_KILL_EPOCH:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 1 && bits(input(0), 64) && bits(output(0), 64);
   case OBELISK_RT_INTRINSIC_V1_DUMP_OPEN:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && bytes(input(0));

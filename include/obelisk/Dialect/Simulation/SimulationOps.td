@@ -2257,8 +2257,9 @@ def SimAssertionControlOp : SimOp<"assert.control", [
   let description = [{
     Apply one IEEE assertion control action to a compiler-resolved assertion
     identity. Off preserves existing attempts and deferred reports. Kill
-    additionally cancels pending deferred reports. Action controls affect only
-    attempts that start after the control operation.
+    advances the assertion generation and cancels pending deferred reports;
+    generated concurrent monitors use that generation to invalidate live work.
+    Action controls affect only attempts that start after the control operation.
   }];
   let arguments = (ins SimContextType:$context, I32Attr:$action,
                        I64Attr:$assertion_id);
@@ -2288,6 +2289,22 @@ def SimAssertionActionStateOp : SimOp<"assert.action_state", [
   }];
   let arguments = (ins SimContextType:$context, I64Attr:$assertion_id);
   let results = (outs I32:$state);
+  let assemblyFormat = "$context `assertion` $assertion_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimAssertionKillEpochOp : SimOp<"assert.kill_epoch", [
+    MemoryEffects<[MemRead<SimSchedulerResource>]>
+  ]> {
+  let summary = "read the Kill generation of one assertion identity";
+  let description = [{
+    Return the generation advanced by every effective Kill action. Concurrent
+    monitors snapshot this value for their live attempts and queued reports;
+    an epoch mismatch cancels work that predates Kill without exposing
+    compiler-owned monitor storage to the runtime.
+  }];
+  let arguments = (ins SimContextType:$context, I64Attr:$assertion_id);
+  let results = (outs I64:$epoch);
   let assemblyFormat = "$context `assertion` $assertion_id attr-dict";
   let hasVerifier = 1;
 }

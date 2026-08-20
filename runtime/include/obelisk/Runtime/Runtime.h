@@ -882,6 +882,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_ERROR = UINT32_C(0x00010231),
   OBELISK_RT_INTRINSIC_V1_DUMP_PORTS = UINT32_C(0x00010232),
   OBELISK_RT_INTRINSIC_V1_DUMP_PORTS_CONTROL = UINT32_C(0x00010233),
+  OBELISK_RT_INTRINSIC_V1_ASSERTION_KILL_EPOCH = UINT32_C(0x00010234),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -2744,6 +2745,10 @@ uint32_t obelisk_rt_v1_assertion_enabled(obelisk_rt_context *context,
 // nonvacuous pass, bit 1 is vacuous pass, and bit 2 is fail.
 uint32_t obelisk_rt_v1_assertion_action_state(obelisk_rt_context *context,
                                               uint64_t assertion_id);
+// Return the generation advanced by each effective Kill for one assertion.
+// A locked assertion ignores Kill and therefore retains its generation.
+uint64_t obelisk_rt_v1_assertion_kill_epoch(obelisk_rt_context *context,
+                                            uint64_t assertion_id);
 // Consume a deferred report ticket and return one iff it is still the latest
 // report for its originating process and assertion site.
 uint32_t obelisk_rt_v1_deferred_mature(obelisk_rt_context *context,

@@ -547,6 +547,30 @@ public:
   }
 };
 
+class AssertionKillEpochConversion final
+    : public OpConversionPattern<sim::SimAssertionKillEpochOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimAssertionKillEpochOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location location = operation.getLoc();
+    Value context = loadCurrentRuntimeContext(rewriter, location);
+    Value epoch =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI64Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_assertion_kill_epoch"),
+            ValueRange{context,
+                       llvmConstant(rewriter, location, rewriter.getI64Type(),
+                                    operation.getAssertionId())})
+            .getResult();
+    rewriter.replaceOp(operation, epoch);
+    return success();
+  }
+};
+
 class MonitorRegisterConversion final
     : public OpConversionPattern<sim::SimMonitorRegisterOp> {
 public:
@@ -641,7 +665,8 @@ void populateControlToLLVMConversionPatterns(RewritePatternSet &patterns,
       converter, context, "obelisk_rt_v1_deferred_once");
   patterns.add<DeferredEnqueueConversion, DeferredMatureConversion,
                AssertionControlConversion, AssertionEnabledConversion,
-               AssertionActionStateConversion>(converter, context);
+               AssertionActionStateConversion, AssertionKillEpochConversion>(
+      converter, context);
 }
 
 } // namespace obelisk::detail

@@ -857,10 +857,10 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         return;
       }
-      if (entry.assertionType == 1 && action >= 5) {
+      if (entry.assertionType == 1 && action >= 6) {
         emitError(getSemanticLocation(call))
             << "concurrent assertion control currently supports Lock, Unlock, "
-               "On, and Off; control action "
+               "On, Off, and Kill; control action "
             << action << " selected concurrent assertion '" << entry.path
             << "'";
         invalid = true;
@@ -881,6 +881,9 @@ void ObeliskSimPreparePass::runOnOperation() {
                       IntegerAttr::get(IntegerType::get(context, 64), id));
       if (action >= 3 && action <= 5)
         target->setAttr("obelisk_sim.assertion_controlled",
+                        UnitAttr::get(context));
+      if (action == 5)
+        target->setAttr("obelisk_sim.assertion_kill_controlled",
                         UnitAttr::get(context));
       if (action >= 6 && action <= 11)
         target->setAttr("obelisk_sim.assertion_action_controlled",

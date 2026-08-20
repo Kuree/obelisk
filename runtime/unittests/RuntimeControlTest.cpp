@@ -190,7 +190,10 @@ TEST(RuntimeDeferredAssertion, AssertionControlOffKillAndOn) {
       obelisk_rt_v1_deferred_enqueue_for_assertion(context, 103, 802);
   ASSERT_NE(killed, 0u);
   ASSERT_NE(unrelated, 0u);
+  EXPECT_EQ(obelisk_rt_v1_assertion_kill_epoch(context, 801), 0u);
   EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 5, 801), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_assertion_kill_epoch(context, 801), 1u);
+  EXPECT_EQ(obelisk_rt_v1_assertion_kill_epoch(context, 802), 0u);
   EXPECT_EQ(obelisk_rt_v1_assertion_enabled(context, 801), 0u);
   EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, killed), 0u);
   EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, unrelated), 1u);
@@ -222,12 +225,14 @@ TEST(RuntimeDeferredAssertion, AssertionActionControlsAndLocking) {
   uint64_t lockedTicket =
       obelisk_rt_v1_deferred_enqueue_for_assertion(context, 111, 901);
   ASSERT_NE(lockedTicket, 0u);
+  EXPECT_EQ(obelisk_rt_v1_assertion_kill_epoch(context, 901), 0u);
   for (uint32_t action = 3; action <= 11; ++action) {
     EXPECT_EQ(obelisk_rt_v1_assertion_control(context, action, 901),
               OBELISK_RT_OK);
     EXPECT_EQ(obelisk_rt_v1_assertion_enabled(context, 901), 1u);
     EXPECT_EQ(obelisk_rt_v1_assertion_action_state(context, 901), 7u);
   }
+  EXPECT_EQ(obelisk_rt_v1_assertion_kill_epoch(context, 901), 0u);
   EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, lockedTicket), 1u);
   EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, lockedTicket), 0u);
   EXPECT_EQ(obelisk_rt_v1_assertion_control(context, 2, 901), OBELISK_RT_OK);

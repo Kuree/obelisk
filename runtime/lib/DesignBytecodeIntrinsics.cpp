@@ -2379,6 +2379,15 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     return sentinel(
         0, obelisk_rt_v1_assertion_action_state(context, *assertionID));
   }
+  case OBELISK_RT_INTRINSIC_V1_ASSERTION_KILL_EPOCH: {
+    if (!context)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    std::optional<uint64_t> assertionID = scalar(0);
+    if (!assertionID || *assertionID == 0)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return sentinel(
+        0, obelisk_rt_v1_assertion_kill_epoch(context, *assertionID));
+  }
   case OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER: {
     if (!context)
       return OBELISK_RT_INVALID_ARGUMENT;

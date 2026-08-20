@@ -948,6 +948,10 @@ struct obelisk_rt_context {
   // Per-identity nondefault IEEE assertion-control bits. See Runtime.cpp for
   // the compact bit layout; absent entries have the all-enabled defaults.
   std::unordered_map<uint64_t, uint8_t> assertionControlStates;
+  // Per-identity generation advanced by every effective Kill. Concurrent
+  // monitors and queued reports snapshot this value so Kill can invalidate
+  // live work without exposing compiler-owned state to the runtime.
+  std::unordered_map<uint64_t, uint64_t> assertionKillEpochs;
   std::unordered_map<uint32_t, NativeStaticState> nativeStaticStates;
   // Lazily sorted interval index for reflection/VPI range lookups.
   mutable std::vector<NativeStaticStateRange> nativeStaticStateRanges;

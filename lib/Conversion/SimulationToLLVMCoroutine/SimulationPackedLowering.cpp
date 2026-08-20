@@ -659,6 +659,7 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimDeferredOnceOp, sim::SimDeferredEnqueueOp,
         sim::SimDeferredMatureOp, sim::SimAssertionControlOp,
         sim::SimAssertionEnabledOp, sim::SimAssertionActionStateOp,
+        sim::SimAssertionKillEpochOp,
         sim::SimSampledReadOp, sim::SimSampledHistoryOp,
         sim::SimClockedSampleUpdateOp, sim::SimClockedSampleReadOp,
         sim::SimMonitorRegisterOp, sim::SimMonitorControlOp,

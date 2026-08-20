@@ -457,6 +457,8 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
                            {pointer, i64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_assertion_action_state", i32,
                            {pointer, i64});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_assertion_kill_epoch", i64,
+                           {pointer, i64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_monitor_register_logical",
                            i32, {pointer, i64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_monitor_control", i32,
