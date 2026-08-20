@@ -2711,11 +2711,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           llvm::any_of(*rhs, [](const FixedSequence &alternative) {
             return alternative.ages.size() > 1;
           })));
-    bool preserveSourceAgeCoalescer =
-        antecedentAlternativeAdmissionCount > 1 && lhs->size() == 1 &&
-        sourceAttemptCanRemainPending &&
-        !ordinaryBranchingConsequentAfterMinimization;
-    if (lhs->size() == 1 && !preserveSourceAgeCoalescer)
+    bool useSourceAgeCoalescer = lhs->size() == 1 &&
+                                 sourceAttemptCanRemainPending &&
+                                 (antecedentAlternativeAdmissionCount > 1 ||
+                                  lhs->front().ages.size() > 1) &&
+                                 !ordinaryBranchingConsequentAfterMinimization;
+    if (lhs->size() == 1 && !useSourceAgeCoalescer)
       antecedentSequence = std::move(lhs->front());
     else
       antecedentAlternatives = std::move(*lhs);
