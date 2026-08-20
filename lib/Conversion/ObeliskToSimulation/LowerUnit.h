@@ -328,8 +328,11 @@ private:
   ::mlir::LogicalResult lowerDisable(semantic::SVDisableStatementOp op);
   ::mlir::FailureOr<
       std::pair<sim::SimFuncOp, ::mlir::SmallVector<::mlir::Value>>>
-  outlineForkBranch(::mlir::Operation *branch, uint64_t forkNode,
-                    unsigned branchIndex, bool captureReferences = false);
+  outlineForkBranch(
+      ::mlir::Operation *branch, uint64_t forkNode, unsigned branchIndex,
+      bool captureReferences = false,
+      ::mlir::ArrayRef<std::pair<::mlir::Operation *, ::mlir::Value>>
+          expressionCaptures = {});
   ::mlir::FailureOr<
       std::pair<sim::SimFuncOp, ::mlir::SmallVector<::mlir::Value>>>
   outlinePostponedDisplay(semantic::SVCallExpressionOp call,
@@ -458,6 +461,10 @@ private:
   /// SSA remapping for the short prepared initializer fragment encountered
   /// between semantic constructor statements.
   ::mlir::IRMapping preparedInitializerMapping;
+  /// Values captured before an outlined callback replaces the corresponding
+  /// cloned expression. This is used when an expression's source-region value
+  /// must not be recomputed in the callback's later scheduling region.
+  ::llvm::DenseMap<::mlir::Operation *, ::mlir::Value> expressionCaptures;
   ::llvm::StringMap<::mlir::Value> values;
   ::llvm::StringMap<::mlir::Value> lvalues;
   ::llvm::DenseMap<uint64_t, ::mlir::Value> nodeLvalues;

@@ -9820,28 +9820,74 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                        << "bounded assertion match calls require value-only "
                           "arguments and no implicit receiver",
                    failure();
-          bool unsupportedArgument = false;
-          call->walk([&](Operation *nested) {
-            StringRef path;
-            if (auto named =
-                    dyn_cast<semantic::SVNamedValueExpressionOp>(nested))
-              path = named.getReferencedPath();
-            else if (auto hierarchical =
-                         dyn_cast<semantic::SVHierarchicalValueExpressionOp>(
-                             nested))
-              path = hierarchical.getReferencedPath();
-            else if (auto member =
-                         dyn_cast<semantic::SVMemberAccessExpressionOp>(nested))
-              path = member.getReferencedPath();
-            if (!path.empty() && !localIndices.contains(path))
-              unsupportedArgument = true;
-          });
-          if (unsupportedArgument)
-            return emitError(getSemanticLocation(item))
-                       << "bounded assertion match-call value arguments may "
-                          "reference only assertion locals",
-                   failure();
           bindLocals(localValues);
+          SmallVector<std::pair<Operation *, Value>> sampledArguments;
+          for (Operation *argument : operands) {
+            bool usesNonlocalValue = false;
+            bool hasUnsupportedEvaluation = false;
+            bool hasUnsampledStorage = false;
+            argument->walk([&](Operation *nested) {
+              if (isa<semantic::SVCallExpressionOp,
+                      semantic::SVAssignmentExpressionOp>(nested))
+                hasUnsupportedEvaluation = true;
+              if (auto unary =
+                      dyn_cast<semantic::SVUnaryExpressionOp>(nested)) {
+                semantic::SVUnaryOperator kind = unary.getOperatorKind();
+                hasUnsupportedEvaluation |=
+                    kind == semantic::SVUnaryOperator::Preincrement ||
+                    kind == semantic::SVUnaryOperator::Predecrement ||
+                    kind == semantic::SVUnaryOperator::Postincrement ||
+                    kind == semantic::SVUnaryOperator::Postdecrement;
+              }
+              StringRef path;
+              if (auto named =
+                      dyn_cast<semantic::SVNamedValueExpressionOp>(nested)) {
+                path = named.getReferencedPath();
+                if (named->hasAttr("obelisk_sim.class_field"))
+                  hasUnsupportedEvaluation = true;
+              } else if (auto hierarchical = dyn_cast<
+                             semantic::SVHierarchicalValueExpressionOp>(
+                             nested)) {
+                path = hierarchical.getReferencedPath();
+              } else if (auto member =
+                             dyn_cast<semantic::SVMemberAccessExpressionOp>(
+                                 nested)) {
+                path = member.getReferencedPath();
+                if (member->hasAttr("obelisk_sim.class_field"))
+                  hasUnsupportedEvaluation = true;
+              }
+              bool nonlocal =
+                  !path.empty() && !localIndices.contains(path);
+              usesNonlocalValue |= nonlocal;
+              if (nonlocal) {
+                FailureOr<Type> type = getNormalizedSemanticType(nested);
+                hasUnsampledStorage |=
+                    failed(type) || !sim::getPackedWidth(*type);
+              }
+            });
+            if (!usesNonlocalValue)
+              continue;
+            if (hasUnsupportedEvaluation)
+              return emitError(getSemanticLocation(argument))
+                         << "sampled nonlocal assertion match-call arguments "
+                            "must be side-effect-free value expressions",
+                     failure();
+            if (hasUnsampledStorage)
+              return emitError(getSemanticLocation(argument))
+                         << "sampled nonlocal assertion match-call arguments "
+                            "currently require every referenced storage leaf "
+                            "to have a fixed packed type",
+                     failure();
+            FailureOr<Value> sampled = lowerExpression(argument);
+            if (failed(sampled))
+              return failure();
+            if (!sim::getPackedWidth((*sampled).getType()))
+              return emitError(getSemanticLocation(argument))
+                         << "sampled nonlocal assertion match-call arguments "
+                            "must have a fixed packed value type",
+                     failure();
+            sampledArguments.emplace_back(argument, *sampled);
+          }
           auto itemNode = item->getAttrOfType<IntegerAttr>("node_id");
           uint64_t itemID = itemNode ? itemNode.getValue().getZExtValue() : 0;
           uint64_t occurrence = nextForkOrdinal;
@@ -9856,7 +9902,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
               outlineForkBranch(item, node,
                                 3 + static_cast<unsigned>(occurrence),
-                                /*captureReferences=*/false);
+                                /*captureReferences=*/false, sampledArguments);
           if (previousCodeUnit)
             item->setAttr("obelisk_sim.fork_code_unit_id", previousCodeUnit);
           else

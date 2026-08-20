@@ -828,8 +828,10 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
 }
 
 FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>>
-UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
-                                unsigned branchIndex, bool captureReferences) {
+UnitLowering::outlineForkBranch(
+    Operation *branch, uint64_t forkNode, unsigned branchIndex,
+    bool captureReferences,
+    ArrayRef<std::pair<Operation *, Value>> expressionCaptures) {
   auto design = function->getParentOfType<sim::SimDesignOp>();
   if (!design)
     return function.emitError("fork outlining requires a simulation design"),
@@ -846,6 +848,20 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
   inputs.push_back(processContext.getType());
   captures.push_back(processContext);
   argumentAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Context));
+
+  DenseMap<Operation *, unsigned> expressionCaptureArguments;
+  DenseSet<Operation *> expressionCaptureTrees;
+  for (auto [expression, capture] : expressionCaptures) {
+    if (!expression || !capture ||
+        !expressionCaptureArguments.try_emplace(expression, inputs.size())
+             .second)
+      continue;
+    inputs.push_back(capture.getType());
+    captures.push_back(capture);
+    argumentAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Formal));
+    expression->walk(
+        [&](Operation *nested) { expressionCaptureTrees.insert(nested); });
+  }
 
   llvm::StringSet<> capturedPaths;
   llvm::StringSet<> branchDeclarations;
@@ -898,6 +914,11 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
   llvm::StringSet<> referencedPaths;
   bool branchUsesThis = false;
   branch->walk([&](Operation *nested) {
+    // A captured expression is replaced wholesale in the outlined body. Its
+    // internal references must not retain descriptor-backed bindings that
+    // could accidentally make a later-region reread possible.
+    if (expressionCaptureTrees.contains(nested))
+      return;
     StringRef path;
     if (auto declaration =
             dyn_cast<semantic::SVVariableDeclStatementOp>(nested)) {
@@ -1085,8 +1106,19 @@ UnitLowering::outlineForkBranch(Operation *branch, uint64_t forkNode,
   SymbolTable::setSymbolVisibility(outlined, SymbolTable::Visibility::Private);
 
   OpBuilder bodyBuilder = OpBuilder::atBlockEnd(&outlined.getBody().front());
-  Operation *root = bodyBuilder.clone(*branch);
+  IRMapping mapping;
+  Operation *root = bodyBuilder.clone(*branch, mapping);
   UnitLowering nested(outlined);
+  for (auto [expression, argument] : expressionCaptureArguments) {
+    Operation *cloned = mapping.lookupOrNull(expression);
+    if (!cloned) {
+      outlined.erase();
+      return emitError(location)
+                 << "outlined expression capture is outside the branch",
+             failure();
+    }
+    nested.expressionCaptures[cloned] = outlined.getArgument(argument);
+  }
   if (failed(nested.lower({root}))) {
     outlined.erase();
     return failure();

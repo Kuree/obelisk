@@ -1642,6 +1642,9 @@ FailureOr<Value> UnitLowering::lowerContextDeterminedExpression(Operation *op) {
 }
 
 FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
+  if (!lvalue)
+    if (Value captured = expressionCaptures.lookup(op))
+      return captured;
   if (auto variable = op->getAttrOfType<IntegerAttr>(randomVariableAttrName)) {
     const APInt &indexValue = variable.getValue();
     if (lvalue || indexValue.isNegative() || indexValue.getActiveBits() > 64 ||
