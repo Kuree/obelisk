@@ -437,9 +437,9 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
             "SVA property operator 'not' currently requires either a "
             "bounded one-cycle boolean operand whose pre-minimization exact "
             "complement expansion has at most 256 alternatives and has no "
-            "vacuity, first_match, or match items, or one deterministic "
-            "bounded multi-cycle sequence optionally qualified by "
-            "strong/weak");
+            "vacuity, first_match, or match items, or one deterministic or "
+            "bounded branching sequence that is multi-cycle or explicitly "
+            "qualified by strong/weak");
       if (unary.getOperatorKind() ==
               semantic::SVAssertionUnaryOperator::NextTime ||
           unary.getOperatorKind() ==
@@ -2258,14 +2258,26 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         return strength.emitError("malformed strong/weak property"), failure();
       fixedOperand = unwrapAssertionInstance(strengthChildren.front());
     }
-    // Keep one-cycle Boolean negation on the DNF path, where the optional
-    // compiler-side solver can minimize the complemented formula. Temporal
-    // negation retains the operand monitor and flips its completed result at
-    // the exact clock where that result becomes known.
+    // Keep unqualified one-cycle Boolean negation on the DNF path, where the
+    // optional compiler-side solver can minimize the complemented formula.
+    // Temporal negation retains the deterministic or branching operand
+    // monitor and flips its one property result at the exact clock where that
+    // result becomes known.
     if (fixedOperand) {
-      FailureOr<FixedSequence> fixed = compileFixedSequence(fixedOperand);
-      if (succeeded(fixed) && !fixed->emptyMatch && !fixed->vacuousSuccess &&
-          (fixed->ages.size() > 1 || explicitStrength)) {
+      FailureOr<FixedSequenceAlternatives> fixed =
+          compileFixedSequenceAlternatives(fixedOperand, clock);
+      bool valid = succeeded(fixed) && !fixed->empty() &&
+                   llvm::all_of(*fixed, [](const FixedSequence &alternative) {
+                     return !alternative.emptyMatch &&
+                            !alternative.vacuousSuccess &&
+                            !alternative.ages.empty();
+                   });
+      bool temporal =
+          valid && (explicitStrength ||
+                    llvm::any_of(*fixed, [](const FixedSequence &alternative) {
+                      return alternative.ages.size() > 1;
+                    }));
+      if (temporal) {
         temporalNegation = candidate;
         property = operand;
         function->setAttr("obelisk_sim.temporal_property_negation",
@@ -2831,15 +2843,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                   "cover-sequence per-match accounting",
            failure();
   if (temporalNegation &&
-      (implication || branchingSequence || hasPersistentDelay ||
-       hasPersistentRepetition || hasPersistentUntil || hasPersistentUnary ||
-       firstMatch || expectMonitor || coverSequence))
+      (implication || hasPersistentDelay || hasPersistentRepetition ||
+       hasPersistentUntil || hasPersistentUnary || expectMonitor ||
+       coverSequence))
     return emitError(getSemanticLocation(temporalNegation))
                << "temporal property 'not' currently requires one "
-                  "deterministic bounded sequence, optionally qualified by "
-                  "strong/weak, without implication/followed-by, persistent "
-                  "operators, first_match, expect, or cover-sequence "
-                  "per-match accounting",
+                  "deterministic or bounded branching sequence, optionally "
+                  "qualified by strong/weak, without implication/"
+                  "followed-by, persistent operators, expect, or "
+                  "cover-sequence per-match accounting",
            failure();
   if (branchingSequence &&
       llvm::any_of(sequenceAlternatives, [](const FixedSequence &alternative) {
