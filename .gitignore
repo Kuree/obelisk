@@ -1,6 +1,7 @@
 # Build output
 /build*/
 /dist/
+/tmp/
 /site/
 /.ccache/
 /web/obelisk.js
