@@ -993,7 +993,11 @@ static FailureOr<FixedSequence> compileFixedSequence(Operation *operation) {
 
   if (auto simple = dyn_cast<semantic::SVSimpleAssertionExprOp>(operation)) {
     SmallVector<Operation *> children = getChildren(simple);
-    if (simple.getIsNull() || children.size() != 1)
+    // IEEE 1800-2017 16.7: a single Boolean expression matches at a clock tick
+    // provided the expression evaluates to true there. A constant-false
+    // expression is therefore an ordinary sequence that never matches, not an
+    // unsupported form, so compile its predicate like any other Boolean.
+    if (children.size() != 1)
       return failure();
     uint64_t repetitions = 1;
     if (simple.getHasRepetition()) {
@@ -1622,7 +1626,9 @@ compileFixedSequenceAlternatives(Operation *operation,
 
   if (auto simple = dyn_cast<semantic::SVSimpleAssertionExprOp>(operation)) {
     SmallVector<Operation *> children = getChildren(simple);
-    if (simple.getIsNull() || children.size() != 1)
+    // See the IEEE 1800-2017 16.7 note above: a known-false Boolean is a
+    // regular never-matching sequence here too.
+    if (children.size() != 1)
       return failure();
     if (!simple.getHasRepetition() &&
         isa<semantic::SVAssertionInstanceExpressionOp>(children.front()))
