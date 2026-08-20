@@ -434,10 +434,12 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
     if (auto unary = dyn_cast<semantic::SVUnaryAssertionExprOp>(current)) {
       if (unary.getOperatorKind() == semantic::SVAssertionUnaryOperator::Not)
         return diagnose(
-            "SVA property operator 'not' currently requires a bounded "
-            "one-cycle boolean operand whose pre-minimization exact "
+            "SVA property operator 'not' currently requires either a "
+            "bounded one-cycle boolean operand whose pre-minimization exact "
             "complement expansion has at most 256 alternatives and has no "
-            "vacuity, first_match, or match items");
+            "vacuity, first_match, or match items, or one deterministic "
+            "bounded multi-cycle sequence optionally qualified by "
+            "strong/weak");
       if (unary.getOperatorKind() ==
               semantic::SVAssertionUnaryOperator::NextTime ||
           unary.getOperatorKind() ==
@@ -2238,6 +2240,41 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
              failure();
   }
 
+  semantic::SVUnaryAssertionExprOp temporalNegation;
+  if (auto candidate =
+          dyn_cast_or_null<semantic::SVUnaryAssertionExprOp>(property);
+      candidate &&
+      candidate.getOperatorKind() == semantic::SVAssertionUnaryOperator::Not) {
+    SmallVector<Operation *> nested = getChildren(candidate);
+    if (candidate.getHasRange() || nested.size() != 1)
+      return candidate.emitError("malformed property negation"), failure();
+    Operation *operand = unwrapAssertionInstance(nested.front());
+    Operation *fixedOperand = operand;
+    bool explicitStrength = false;
+    if (auto strength =
+            dyn_cast_or_null<semantic::SVStrongWeakAssertionExprOp>(operand)) {
+      explicitStrength = true;
+      SmallVector<Operation *> strengthChildren = getChildren(strength);
+      if (strengthChildren.size() != 1)
+        return strength.emitError("malformed strong/weak property"), failure();
+      fixedOperand = unwrapAssertionInstance(strengthChildren.front());
+    }
+    // Keep one-cycle Boolean negation on the DNF path, where the optional
+    // compiler-side solver can minimize the complemented formula. Temporal
+    // negation retains the operand monitor and flips its completed result at
+    // the exact clock where that result becomes known.
+    if (fixedOperand) {
+      FailureOr<FixedSequence> fixed = compileFixedSequence(fixedOperand);
+      if (succeeded(fixed) && !fixed->emptyMatch && !fixed->vacuousSuccess &&
+          (fixed->ages.size() > 1 || explicitStrength)) {
+        temporalNegation = candidate;
+        property = operand;
+        function->setAttr("obelisk_sim.temporal_property_negation",
+                          builder.getUnitAttr());
+      }
+    }
+  }
+
   semantic::SVStrongWeakAssertionExprOp endStrength;
   if (auto candidate =
           dyn_cast_or_null<semantic::SVStrongWeakAssertionExprOp>(property)) {
@@ -2251,6 +2288,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                  "strong/weak wraps an unsupported assertion instance"),
              failure();
   }
+  Operation *endStrengthSource =
+      endStrength
+          ? endStrength.getOperation()
+          : (temporalNegation ? temporalNegation.getOperation() : nullptr);
 
   bool firstMatch = false;
   if (auto first = dyn_cast<semantic::SVFirstMatchAssertionExprOp>(property)) {
@@ -2747,6 +2788,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         llvm::any_of(sequence.ages, [](const FixedSequenceAge &age) {
           return !age.matchItems.empty();
         });
+    if (temporalNegation)
+      return emitError(getSemanticLocation(abort))
+                 << "SVA property operator '" << spelling
+                 << "' does not yet compose with bounded temporal property "
+                    "negation",
+             failure();
     if (localInstance || implication || disable || expectMonitor ||
         firstMatch || coverSequence || branchingSequence || matchItems)
       return emitError(getSemanticLocation(abort))
@@ -2766,8 +2813,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         builder.getStringAttr(
             semantic::stringifySVAssertionAbortAction(abort.getAction())));
   }
-  if (branchingSequence &&
-      (localInstance || implication || expectMonitor))
+  if (branchingSequence && (localInstance || implication || expectMonitor))
     return emitError(getSemanticLocation(property))
                << "branching bounded sequences currently require a "
                   "concurrent directive without locals, implication, or "
@@ -2776,7 +2822,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   if (endStrength &&
       (implication || branchingSequence || hasPersistentUntil ||
        hasPersistentUnary || firstMatch || expectMonitor || coverSequence))
-    return emitError(getSemanticLocation(endStrength))
+    return emitError(getSemanticLocation(endStrengthSource))
                << "SVA '"
                << semantic::stringifySVAssertionStrength(
                       endStrength.getStrength())
@@ -2785,6 +2831,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                   "implication/followed-by, branching composition, "
                   "persistent until, first_match, expect, or "
                   "cover-sequence per-match accounting",
+           failure();
+  if (temporalNegation &&
+      (implication || branchingSequence || hasPersistentDelay ||
+       hasPersistentRepetition || hasPersistentUntil || hasPersistentUnary ||
+       firstMatch || expectMonitor || coverSequence))
+    return emitError(getSemanticLocation(temporalNegation))
+               << "temporal property 'not' currently requires one "
+                  "deterministic bounded sequence, optionally qualified by "
+                  "strong/weak, without implication/followed-by, persistent "
+                  "operators, first_match, expect, or cover-sequence "
+                  "per-match accounting",
            failure();
   if (branchingSequence &&
       llvm::any_of(sequenceAlternatives, [](const FixedSequence &alternative) {
@@ -3284,6 +3341,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return failure();
 
   auto scheduleResult = [&](bool passed) {
+    if (temporalNegation)
+      passed = !passed;
     std::optional<ReportCallback> &report = passed ? passReport : failReport;
     if (!report)
       return;
@@ -4025,23 +4084,39 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return success();
   };
 
-  if (endStrength) {
-    bool strong =
-        endStrength.getStrength() == semantic::SVAssertionStrength::Strong;
+  if (endStrengthSource) {
+    bool operandStrong = endStrength ? endStrength.getStrength() ==
+                                           semantic::SVAssertionStrength::Strong
+                                     : cover;
+    bool outerStrong = temporalNegation ? !operandStrong : operandStrong;
+    semantic::SVAssertionStrength outerStrength =
+        outerStrong ? semantic::SVAssertionStrength::Strong
+                    : semantic::SVAssertionStrength::Weak;
     function->setAttr("obelisk_sim.strong_weak_monitor", builder.getUnitAttr());
     function->setAttr(
         "obelisk_sim.end_of_simulation_strength",
         builder.getStringAttr(
-            semantic::stringifySVAssertionStrength(endStrength.getStrength())));
+            semantic::stringifySVAssertionStrength(outerStrength)));
+    if (temporalNegation)
+      function->setAttr(
+          "obelisk_sim.negated_operand_end_of_simulation_strength",
+          builder.getStringAttr(semantic::stringifySVAssertionStrength(
+              operandStrong ? semantic::SVAssertionStrength::Strong
+                            : semantic::SVAssertionStrength::Weak)));
 
     // A one-cycle property has no incomplete attempt at end of simulation.
     // For longer deterministic traces every live bit is one distinct attempt.
     // A final-phase coordinator inspects those bits oldest-first and schedules
-    // one final-phase Reactive action for each strong failure or weak vacuous
-    // success. Weak completion is intentionally invisible to cover-property
-    // hit accounting.
+    // one final-phase Reactive action for each strong operand failure or weak
+    // operand success, after applying an outer temporal negation when present.
+    // A weak operand completion is vacuous and remains invisible to cover;
+    // negating a strong operand failure instead produces a nonvacuous hit.
+    bool operandPassed = !operandStrong;
+    bool completionPassed = temporalNegation ? !operandPassed : operandPassed;
+    bool vacuousCompletion = !operandStrong;
     std::optional<ReportCallback> *selectedReport =
-        strong ? &failReport : (cover ? nullptr : &passReport);
+        completionPassed ? (cover && vacuousCompletion ? nullptr : &passReport)
+                         : &failReport;
     if (sequence.ages.size() > 1 && selectedReport && *selectedReport) {
       auto design = function->getParentOfType<sim::SimDesignOp>();
       if (!design)
@@ -4063,7 +4138,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
       ReportCallback &report = **selectedReport;
       StringRef spelling =
-          semantic::stringifySVAssertionStrength(endStrength.getStrength());
+          semantic::stringifySVAssertionStrength(outerStrength);
       std::string reportSymbol =
           (function.getSymName() + ".$concurrent_eos_report." + Twine(node) +
            "." + spelling)
@@ -4081,8 +4156,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       OpBuilder outlineBuilder(function);
       outlineBuilder.setInsertionPoint(function);
       sim::SimCodeUnitDeclOp::create(
-          outlineBuilder, getSemanticLocation(endStrength), reportCodeUnitID,
-          scopeID, sim::EntryKind::Fork,
+          outlineBuilder, getSemanticLocation(endStrengthSource),
+          reportCodeUnitID, scopeID, sim::EntryKind::Fork,
           outlineBuilder.getStringAttr(reportHierarchy),
           outlineBuilder.getStringAttr(
               "concurrent assertion end-of-simulation report"),
@@ -4171,7 +4246,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
            spelling)
               .str();
       sim::SimCodeUnitDeclOp::create(
-          outlineBuilder, getSemanticLocation(endStrength),
+          outlineBuilder, getSemanticLocation(endStrengthSource),
           coordinatorCodeUnitID, scopeID, sim::EntryKind::Final,
           outlineBuilder.getStringAttr(coordinatorHierarchy),
           outlineBuilder.getStringAttr(
@@ -4197,7 +4272,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
               outlineBuilder.getStringAttr(coordinatorHierarchy)),
       };
       sim::SimFuncOp coordinator = sim::SimFuncOp::create(
-          outlineBuilder, getSemanticLocation(endStrength), coordinatorSymbol,
+          outlineBuilder, getSemanticLocation(endStrengthSource),
+          coordinatorSymbol,
           FunctionType::get(function.getContext(), inputs, TypeRange{}),
           sim::EntryKind::Final, attributes, argumentAttrs);
       SymbolTable::setSymbolVisibility(coordinator,
@@ -4210,10 +4286,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       Block *current = &coordinator.getBody().front();
       OpBuilder coordinatorBuilder = OpBuilder::atBlockEnd(current);
       Value live = sim::SimRefLoadOp::create(
-          coordinatorBuilder, getSemanticLocation(endStrength), stateType,
+          coordinatorBuilder, getSemanticLocation(endStrengthSource), stateType,
           current->getArgument(1));
       Value finalZero = arith::ConstantOp::create(
-          coordinatorBuilder, getSemanticLocation(endStrength), stateType,
+          coordinatorBuilder, getSemanticLocation(endStrengthSource), stateType,
           coordinatorBuilder.getI64IntegerAttr(0));
       for (uint64_t age = sequence.ages.size(); age-- > 1;) {
         Block *reportBlock = new Block;
@@ -4222,15 +4298,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         coordinator.getBody().push_back(continuation);
         coordinatorBuilder.setInsertionPointToEnd(current);
         Value mask = arith::ConstantOp::create(
-            coordinatorBuilder, getSemanticLocation(endStrength), stateType,
+            coordinatorBuilder, getSemanticLocation(endStrengthSource),
+            stateType,
             coordinatorBuilder.getI64IntegerAttr(uint64_t{1} << age));
         Value present = arith::AndIOp::create(
-            coordinatorBuilder, getSemanticLocation(endStrength), live, mask);
+            coordinatorBuilder, getSemanticLocation(endStrengthSource), live,
+            mask);
         Value active = arith::CmpIOp::create(
-            coordinatorBuilder, getSemanticLocation(endStrength),
+            coordinatorBuilder, getSemanticLocation(endStrengthSource),
             arith::CmpIPredicate::ne, present, finalZero);
         cf::CondBranchOp::create(
-            coordinatorBuilder, getSemanticLocation(endStrength), active,
+            coordinatorBuilder, getSemanticLocation(endStrengthSource), active,
             reportBlock, ValueRange{}, continuation, ValueRange{});
 
         OpBuilder reportBuilder = OpBuilder::atBlockEnd(reportBlock);
@@ -4248,15 +4326,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         sim::SimSpawnOp::create(reportBuilder, report.location,
                                 finalReport.getSymNameAttr(), reportOperands,
                                 ArrayAttr{}, ArrayAttr{});
-        cf::BranchOp::create(reportBuilder, getSemanticLocation(endStrength),
+        cf::BranchOp::create(reportBuilder,
+                             getSemanticLocation(endStrengthSource),
                              continuation);
         current = continuation;
       }
       OpBuilder returnBuilder = OpBuilder::atBlockEnd(current);
-      sim::SimReturnOp::create(returnBuilder, getSemanticLocation(endStrength),
-                               ValueRange{});
+      sim::SimReturnOp::create(
+          returnBuilder, getSemanticLocation(endStrengthSource), ValueRange{});
 
-      sim::SimSpawnOp::create(builder, getSemanticLocation(endStrength),
+      sim::SimSpawnOp::create(builder, getSemanticLocation(endStrengthSource),
                               coordinator.getSymNameAttr(), captures,
                               ArrayAttr{}, ArrayAttr{});
     }
