@@ -1,11 +1,33 @@
 // RUN: %split-file %s %t
-// RUN: not obelisk-opt %t/multicycle-antecedent.mlir '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s --check-prefix=MULTICYCLE
-// RUN: not obelisk-opt %t/branching-antecedent.mlir '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BRANCHING
+// RUN: obelisk-opt %t/multicycle-antecedent.mlir '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=MULTICYCLE
+// RUN: obelisk-opt %t/multicycle-antecedent.mlir '--lower-obelisk-to-sim=opt-level=3' | FileCheck %s --check-prefix=MULTICYCLE
+// RUN: obelisk-opt %t/multicycle-antecedent.mlir '--lower-obelisk-to-sim=opt-level=3' --emit-bytecode -o /dev/null
+// RUN: obelisk-opt %t/branching-antecedent.mlir '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=BRANCHING
+// RUN: obelisk-opt %t/branching-antecedent.mlir '--lower-obelisk-to-sim=opt-level=3' | FileCheck %s --check-prefix=BRANCHING
+// RUN: obelisk-opt %t/branching-antecedent.mlir '--lower-obelisk-to-sim=opt-level=3' --emit-bytecode -o /dev/null
 
-// Pending multi-cycle antecedent state has vacuous property identity, unlike
-// matched consequent state, and therefore remains a separate composition.
-// MULTICYCLE: error: temporal property 'not' over implication/followed-by currently requires one nonvacuous Boolean or guaranteed empty antecedent without first_match, case guards, or match items
-// BRANCHING: error: temporal property 'not' over implication/followed-by currently requires one nonvacuous Boolean or guaranteed empty antecedent without first_match, case guards, or match items
+// A single multi-cycle antecedent remains on the source-age coalescer so its
+// pending no-match implication success is inverted once, including at EOS.
+// MULTICYCLE-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_branch_report.14.fail
+// MULTICYCLE-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_branch.14
+// MULTICYCLE: obelisk_sim.branching_antecedent_eos_result = "fail"
+// MULTICYCLE-LABEL: obelisk_sim.func private @unit_0(
+// MULTICYCLE-SAME: obelisk_sim.bounded_antecedent_horizon = 2 : i64
+// MULTICYCLE-SAME: obelisk_sim.branching_antecedent_alternatives = 1 : i64
+// MULTICYCLE-SAME: obelisk_sim.branching_antecedent_result_coalescer
+// MULTICYCLE-SAME: obelisk_sim.temporal_property_negation
+// MULTICYCLE: obelisk_sim.branching_antecedent_universal_success
+
+// The source-age coalescer makes a branching Boolean antecedent one property
+// result before temporal negation. Its two same-clock alternatives remain
+// eligible for the optional compiler-side Boolean minimizer.
+// BRANCHING-LABEL: obelisk_sim.func private @unit_0(
+// BRANCHING-SAME: obelisk_sim.branching_antecedent_alternatives = 2 : i64
+// BRANCHING-SAME: obelisk_sim.branching_antecedent_result_coalescer
+// BRANCHING-SAME: obelisk_sim.sva_boolean_antecedent_solver = "{{(heuristic|z3)}}"
+// BRANCHING-SAME: obelisk_sim.temporal_property_negation
+// BRANCHING: obelisk_sim.branching_antecedent_universal_success
+// BRANCHING: obelisk_sim.spawn @unit_0.fork.14.0.2
 
 //--- multicycle-antecedent.mlir
 

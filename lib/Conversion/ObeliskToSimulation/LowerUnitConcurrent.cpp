@@ -3593,17 +3593,18 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       return !age.matchItems.empty();
     });
   };
-  if (temporalNegation && implication &&
-      (branchingAntecedent || antecedentSequence.ages.size() != 1 ||
+  if (temporalNegation && implication && !branchingAntecedent &&
+      (antecedentSequence.ages.size() != 1 ||
        antecedentSequence.vacuousSuccess ||
        !antecedentSequence.firstMatchBoundaries.empty() ||
        !antecedentSequence.ages.front().matchItems.empty() ||
        !antecedentSequence.ages.front().caseGuards.empty()))
     return emitError(getSemanticLocation(temporalNegation))
                << "temporal property 'not' over implication/followed-by "
-                  "currently requires one nonvacuous Boolean or guaranteed "
-                  "empty antecedent without first_match, case guards, or "
-                  "match items",
+                  "currently requires either a bounded antecedent handled by "
+                  "the source-age coalescer or one nonvacuous Boolean or "
+                  "guaranteed empty antecedent without first_match, case "
+                  "guards, or match items",
            failure();
   if (implication && !localInstance &&
       (hasMatchItems(antecedentSequence) ||
@@ -7380,12 +7381,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       bool operandStrong = sequence.intrinsicEndStrong.value_or(!assertion);
       bool antecedentCanRemainPending = llvm::any_of(
           alternativeStates, [](Value storage) { return bool(storage); });
-      bool passPossible = followedBy
-                              ? !operandStrong
-                              : !operandStrong || antecedentCanRemainPending;
-      bool failPossible = followedBy
-                              ? operandStrong || antecedentCanRemainPending
-                              : operandStrong;
+      bool operandPassPossible =
+          followedBy ? !operandStrong
+                     : !operandStrong || antecedentCanRemainPending;
+      bool operandFailPossible =
+          followedBy ? operandStrong || antecedentCanRemainPending
+                     : operandStrong;
+      bool passPossible = temporalNegation ? operandFailPossible
+                                           : operandPassPossible;
+      bool failPossible = temporalNegation ? operandPassPossible
+                                           : operandFailPossible;
       bool emitPass = passPossible && passReport.has_value();
       bool emitFail = failPossible && failReport.has_value();
       if (!emitPass && !emitFail)
@@ -7716,18 +7721,20 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             finalBuilder, finalLocation, antecedentPending,
             arith::OrIOp::create(finalBuilder, finalLocation, consequentPending,
                                  matched));
-        Value resultPassed;
+        Value operandPassed;
         if (followedBy)
-          resultPassed = operandStrong ? finalFalse : consequentPending;
+          operandPassed = operandStrong ? finalFalse : consequentPending;
         else
-          resultPassed =
+          operandPassed =
               operandStrong
                   ? arith::XOrIOp::create(finalBuilder, finalLocation,
                                           consequentPending, finalTrue)
                         .getResult()
                   : finalTrue;
-        Value resultFailed = arith::XOrIOp::create(finalBuilder, finalLocation,
-                                                   resultPassed, finalTrue);
+        Value operandFailed = arith::XOrIOp::create(
+            finalBuilder, finalLocation, operandPassed, finalTrue);
+        Value resultPassed = temporalNegation ? operandFailed : operandPassed;
+        Value resultFailed = temporalNegation ? operandPassed : operandFailed;
         Value passCondition = arith::AndIOp::create(finalBuilder, finalLocation,
                                                     active, resultPassed);
         Value failCondition = arith::AndIOp::create(finalBuilder, finalLocation,
