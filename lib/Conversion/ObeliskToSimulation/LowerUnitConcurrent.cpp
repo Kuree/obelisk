@@ -3002,6 +3002,28 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     clock = clocked.front();
     property = unwrapAssertionInstance(clocked.back());
   }
+  // IEEE 1800-2017 16.12: `disable iff` attaches to a property_expr, and that
+  // property_expr may itself carry the clocking event -- the 16.14.1 example
+  // writes `disable iff (a==2) @(posedge clk) not (b ##1 c)`. Evaluation of
+  // the disabled property_spec is otherwise that of the property_expr, so take
+  // the clock from inside the disable.
+  if (!clock) {
+    if (auto disabled =
+            dyn_cast_or_null<semantic::SVDisableIffAssertionExprOp>(property)) {
+      SmallVector<Operation *> nested = getChildren(disabled);
+      if (nested.size() != 2)
+        return disabled.emitError("malformed disable iff assertion"), failure();
+      if (auto clocking = dyn_cast_or_null<semantic::SVClockingAssertionExprOp>(
+              unwrapAssertionInstance(nested.back()))) {
+        SmallVector<Operation *> clocked = getChildren(clocking);
+        if (clocked.size() != 2)
+          return clocking.emitError("malformed clocked assertion"), failure();
+        disable = nested.front();
+        clock = clocked.front();
+        property = unwrapAssertionInstance(clocked.back());
+      }
+    }
+  }
   if (!clock)
     return op.emitError("concurrent assertion has no resolved clock"),
            failure();
