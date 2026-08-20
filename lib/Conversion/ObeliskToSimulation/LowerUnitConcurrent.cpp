@@ -3137,6 +3137,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   }
 
   semantic::SVStrongWeakAssertionExprOp endStrength;
+  semantic::SVStrongWeakAssertionExprOp consequentEndStrength;
+  std::optional<bool> explicitConsequentEndStrong;
   if (auto candidate =
           dyn_cast_or_null<semantic::SVStrongWeakAssertionExprOp>(property)) {
     SmallVector<Operation *> nested = getChildren(candidate);
@@ -3368,18 +3370,35 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             semantic::SVAssertionBinaryOperator::OverlappedFollowedBy ||
         binary.getOperatorKind() ==
             semantic::SVAssertionBinaryOperator::NonOverlappedFollowedBy;
+    Operation *rhsOperand = operands.back();
+    if (auto strength =
+            dyn_cast<semantic::SVStrongWeakAssertionExprOp>(rhsOperand)) {
+      SmallVector<Operation *> strengthChildren = getChildren(strength);
+      if (strengthChildren.size() != 1)
+        return strength.emitError("malformed strong/weak consequent"),
+               failure();
+      consequentEndStrength = strength;
+      explicitConsequentEndStrong =
+          strength.getStrength() == semantic::SVAssertionStrength::Strong;
+      rhsOperand = unwrapAssertionInstance(strengthChildren.front());
+      if (!rhsOperand)
+        return strength.emitError(
+                   "strong/weak consequent wraps an unsupported assertion "
+                   "instance"),
+               failure();
+    }
     FailureOr<FixedSequenceAlternatives> lhs =
         compileFixedSequenceAlternatives(operands.front(), clock);
     FailureOr<FixedSequenceAlternatives> rhs =
-        compileFixedSequenceAlternatives(operands.back(), clock);
+        compileFixedSequenceAlternatives(rhsOperand, clock);
     FailureOr<PersistentDelaySequence> delayedRhs =
-        compilePersistentDelay(operands.back());
+        compilePersistentDelay(rhsOperand);
     FailureOr<PersistentUnaryProperty> unaryRhs =
-        compilePersistentUnary(operands.back());
+        compilePersistentUnary(rhsOperand);
     FailureOr<PersistentUntilProperty> untilRhs =
-        compilePersistentUntil(operands.back());
+        compilePersistentUntil(rhsOperand);
     FailureOr<PersistentRepetitionSequence> repetitionRhs =
-        compilePersistentRepetition(operands.back());
+        compilePersistentRepetition(rhsOperand);
     if (succeeded(lhs)) {
       bool hasEmpty = llvm::any_of(
           *lhs, [](const FixedSequence &value) { return value.emptyMatch; });
@@ -3461,6 +3480,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     }
     antecedentAlternativeAdmissionCount = lhs->size();
     if (succeeded(rhs)) {
+      if (consequentEndStrength) {
+        for (FixedSequence &alternative : *rhs) {
+          alternative.intrinsicEndStrong = *explicitConsequentEndStrong;
+          alternative.hasIntrinsicEndStrength = true;
+        }
+      }
       consequentAlternativeAdmissionCount = rhs->size();
       consequentAlternativesAdmissionEligible =
           llvm::all_of(*rhs, [](const FixedSequence &alternative) {
@@ -3476,8 +3501,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             return alternative.hasIntrinsicEndStrength;
           });
       if (hasIntrinsicEndStrength) {
-        consequentUniformIntrinsicEndStrong =
-            analyzeUniformIntrinsicEndStrength(operands.back(), clock);
+        if (explicitConsequentEndStrong)
+          consequentUniformIntrinsicEndStrong = explicitConsequentEndStrong;
+        else
+          consequentUniformIntrinsicEndStrong =
+              analyzeUniformIntrinsicEndStrength(operands.back(), clock);
         consequentEndStrengthComposable =
             consequentUniformIntrinsicEndStrong.has_value();
       }
@@ -3620,6 +3648,26 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         sequenceAlternatives = std::move(*compiled);
     }
   }
+  if (consequentEndStrength) {
+    if (!endStrengthSource)
+      endStrengthSource = consequentEndStrength.getOperation();
+    function->setAttr(
+        "obelisk_sim.consequent_end_of_simulation_strength",
+        builder.getStringAttr(semantic::stringifySVAssertionStrength(
+            consequentEndStrength.getStrength())));
+  }
+  Operation *sequenceCompletionSource = property;
+  if (endStrength)
+    sequenceCompletionSource = endStrength.getOperation();
+  if (consequentEndStrength)
+    sequenceCompletionSource = consequentEndStrength.getOperation();
+  auto usesWeakSequenceCompletion = [&]() {
+    if (explicitConsequentEndStrong)
+      return !*explicitConsequentEndStrong;
+    if (endStrength)
+      return endStrength.getStrength() == semantic::SVAssertionStrength::Weak;
+    return assertion;
+  };
   bool branchingSequence = !sequenceAlternatives.empty();
   bool branchingAntecedent = !antecedentAlternatives.empty();
   bool branchingConsequent = !consequentAlternatives.empty();
@@ -6127,7 +6175,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   };
 
   std::optional<bool> intrinsicOperandStrengthOverride;
-  if (temporalNegation && hasPersistentUnary)
+  if (explicitConsequentEndStrong)
+    intrinsicOperandStrengthOverride = explicitConsequentEndStrong;
+  else if (temporalNegation && hasPersistentUnary)
     intrinsicOperandStrengthOverride = persistentUnary.eventually;
   else if (temporalNegation && hasPersistentUntil)
     intrinsicOperandStrengthOverride = persistentUntil.strong;
@@ -6460,9 +6510,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (failed(persistentAbort))
       return failure();
 
-    bool weakCompletion = endStrength ? endStrength.getStrength() ==
-                                            semantic::SVAssertionStrength::Weak
-                                      : assertion;
+    bool weakCompletion = usesWeakSequenceCompletion();
     SmallVector<Value> endCounts;
     SmallVector<Value> endBitsets;
     // A sequence used by assert/assume is weak unless explicitly qualified;
@@ -6478,11 +6526,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         endBitsets.push_back(delayedActivationStorage);
     }
     StringRef completionTag = weakCompletion ? "delay_weak" : "delay_strong";
-    Operation *completionSource =
-        endStrength ? endStrength.getOperation() : property;
     if (failed(outlineCountedEndOfSimulation(endCounts, endBitsets,
                                              weakCompletion, completionTag,
-                                             completionSource)))
+                                             sequenceCompletionSource)))
       return failure();
 
     Block *wait = addBlock();
@@ -7261,9 +7307,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (failed(persistentAbort))
       return failure();
 
-    bool weakCompletion = endStrength ? endStrength.getStrength() ==
-                                            semantic::SVAssertionStrength::Weak
-                                      : assertion;
+    bool weakCompletion = usesWeakSequenceCompletion();
     SmallVector<Value> endCounts;
     SmallVector<Value> endBitsets;
     if (!weakCompletion || !coverSequence) {
@@ -7276,11 +7320,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     }
     StringRef completionTag =
         weakCompletion ? "repetition_weak" : "repetition_strong";
-    Operation *completionSource =
-        endStrength ? endStrength.getOperation() : property;
     if (failed(outlineCountedEndOfSimulation(endCounts, endBitsets,
                                              weakCompletion, completionTag,
-                                             completionSource)))
+                                             sequenceCompletionSource)))
       return failure();
 
     Block *wait = addBlock();
