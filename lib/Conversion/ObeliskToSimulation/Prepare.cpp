@@ -151,6 +151,21 @@ static bool isSupportedRandomConstraintExpression(Operation *op) {
       semantic::SVDistExpressionOp>(op);
 }
 
+/// Whether a fixed aggregate holds an event anywhere in its element
+/// inventory. IEEE 1800-2017 6.17 gives every such element its own
+/// synchronization object, which the root initializer materializes.
+static bool typeContainsEvent(Type type) {
+  if (isa<sim::EventType>(type))
+    return true;
+  if (!sim::isAggregateType(type))
+    return false;
+  unsigned count = sim::getAggregateNumElements(type);
+  for (unsigned index = 0; index != count; ++index)
+    if (typeContainsEvent(sim::getAggregateElementType(type, index)))
+      return true;
+  return false;
+}
+
 static bool isProgramCodeUnit(Operation *op) {
   if (op->getParentOfType<semantic::SVAnonymousProgramSymbolOp>())
     return true;
@@ -7249,6 +7264,53 @@ void ObeliskSimPreparePass::runOnOperation() {
   OpBuilder rootBuilder =
       OpBuilder::atBlockEnd(&rootInitializer.getBody().front());
   Value simContext = rootInitializer.getBody().front().getArgument(0);
+
+  // IEEE 1800-2017 6.17: an event variable declared without an initial value
+  // "is initialized to a new synchronization object". A scalar event variable
+  // owns an event descriptor, but the events inside an unpacked array or
+  // struct live in ordinary storage, whose slots start as the same null
+  // handle -- triggering one element would then wake the waiters of every
+  // other. Give each slot its own object before any process starts.
+  {
+    std::function<void(Value, Type, SmallVectorImpl<int64_t> &)>
+        initializeEvents = [&](Value storage, Type type,
+                               SmallVectorImpl<int64_t> &indices) {
+          Location loc = rootInitializer.getLoc();
+          if (isa<sim::EventType>(type)) {
+            Value slot = sim::SimRefSubelementOp::create(
+                rootBuilder, loc, sim::RefType::get(context, type), storage,
+                rootBuilder.getDenseI64ArrayAttr(indices));
+            Value event = sim::SimEventCreateOp::create(
+                rootBuilder, loc, sim::EventType::get(context));
+            sim::SimRefStoreOp::create(rootBuilder, loc, event, slot);
+            return;
+          }
+          if (!sim::isAggregateType(type))
+            return;
+          unsigned count = sim::getAggregateNumElements(type);
+          for (unsigned index = 0; index != count; ++index) {
+            indices.push_back(index);
+            initializeEvents(storage, sim::getAggregateElementType(type, index),
+                             indices);
+            indices.pop_back();
+          }
+        };
+    // Walk the emitted declarations rather than the descriptor map: their IR
+    // order is stable, and only design-lifetime storage is elaborated here.
+    for (sim::SimStorageDeclOp declaration :
+         design.getBody().front().getOps<sim::SimStorageDeclOp>()) {
+      Type type = declaration.getType();
+      if (declaration.getLifetime() != sim::Lifetime::Design ||
+          isa<sim::EventType>(type) || !typeContainsEvent(type))
+        continue;
+      Value storage = sim::SimContextStorageOp::create(
+          rootBuilder, rootInitializer.getLoc(),
+          sim::RefType::get(context, type), simContext,
+          rootBuilder.getI64IntegerAttr(declaration.getId()));
+      SmallVector<int64_t> indices;
+      initializeEvents(storage, type, indices);
+    }
+  }
   auto materializeRootOperands =
       [&](PreparedUnit &unit) -> FailureOr<SmallVector<Value>> {
     SmallVector<Value> operands{simContext};
