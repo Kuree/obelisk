@@ -1,5 +1,6 @@
 // RUN: obelisk-opt %s --obelisk-sim-prepare | FileCheck %s --check-prefix=PREPARE
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare,obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=LOWER
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare,obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=NO-PARENT-AWAIT
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' -o /dev/null
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
 
@@ -103,7 +104,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
                     obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 43 : i64, referenced_path = "t.rst", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s8.rst, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                     }
                     obelisk.sv.assertion.binary attributes {node_id = 44 : i64, operator_kind = 11 : i32} {
-                      obelisk.sv.assertion.sequence_with_match attributes {has_repetition = false, match_item_count = 2 : i64, node_id = 45 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.assertion.sequence_with_match attributes {has_repetition = false, match_item_count = 4 : i64, node_id = 45 : i64, repetition_is_unbounded = false} {
                         obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 46 : i64, repetition_is_unbounded = false} {
                           obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 47 : i64, referenced_path = "t.a", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                           }
@@ -118,6 +119,18 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
                         }
                         obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "$display", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 72 : i64, semantic_type = !obelisk.void, subroutine_kind = 1 : i32, system_library_cell = "work.t", system_scope_path = "t", system_scope_symbol = @s1.$root::@s3.t::@s4.t} {
                           obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 73 : i64, referenced_path = "t.p.x", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p::@s13.x, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                          }
+                        }
+                        obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 77 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                          obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 78 : i64, referenced_path = "t.p.x", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p::@s13.x, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                          }
+                          obelisk.sv.expression.unary_op attributes {is_signed = false, node_id = 79 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                            obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 80 : i64, referenced_path = "t.p.x", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p::@s13.x, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                            }
+                          }
+                        }
+                        obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "$display", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 81 : i64, semantic_type = !obelisk.void, subroutine_kind = 1 : i32, system_library_cell = "work.t", system_scope_path = "t", system_scope_symbol = @s1.$root::@s3.t::@s4.t} {
+                          obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 82 : i64, referenced_path = "t.p.x", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p::@s13.x, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                           }
                         }
                       }
@@ -176,27 +189,53 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // LOWER: obelisk_sim.ref.load %arg1
 // LOWER: obelisk_sim.ref.store {{.*}} to %arg2
 
-// Match-call arguments are captured after preceding local assignments, while
-// the call itself executes in a detached Reactive callback. Disable and Kill
-// epochs are checked before its observable effect, just like action reports.
-// LOWER: obelisk_sim.func private @[[MATCH_CALL:[^(]+]](%arg0: !obelisk_sim.context {{.*}}, %arg1: !obelisk_sim.logic<1> {{.*}}, %arg2: !obelisk_sim.ref<i64> {{.*}}, %arg3: i64 {{.*}}, %arg4: !obelisk_sim.ref<i64> {{.*}}, %arg5: i64
+// Match-call arguments are captured after each preceding local assignment.
+// Both calls are independently guarded by the Disable and Kill epochs before
+// their observable effect, just like action reports.
+// LOWER: obelisk_sim.func private @[[MATCH_CALL_0:[^(]+]](%arg0: !obelisk_sim.context {{.*}}, %arg1: !obelisk_sim.logic<1> {{.*}}, %arg2: !obelisk_sim.ref<i64> {{.*}}, %arg3: i64 {{.*}}, %arg4: !obelisk_sim.ref<i64> {{.*}}, %arg5: i64
 // LOWER-SAME: domain = 0 : i32
 // LOWER-SAME: home_region = 10 : i32
 // LOWER-SAME: obelisk_sim.concurrent_match_call
 // LOWER-SAME: obelisk_sim.detached_controls
-// LOWER: %[[CALL_KILL:.*]] = obelisk_sim.assert.kill_epoch %arg0 assertion 101 {obelisk_sim.concurrent_match_call_kill_epoch}
-// LOWER: %[[KILL_CURRENT:.*]] = arith.cmpi eq, %[[CALL_KILL]], %arg5
-// LOWER: cf.cond_br %[[KILL_CURRENT]], ^[[CHECK_DISABLE:bb[0-9]+]], ^[[KILL_CANCELED:bb[0-9]+]]
-// LOWER: ^[[CHECK_DISABLE]]:
-// LOWER: %[[CALL_DISABLE:.*]] = obelisk_sim.ref.load %arg2
-// LOWER: %[[DISABLE_CURRENT:.*]] = arith.cmpi eq, %[[CALL_DISABLE]], %arg3
-// LOWER: cf.cond_br %[[DISABLE_CURRENT]], ^[[CALL_BODY:bb[0-9]+]], ^[[DISABLE_CANCELED:bb[0-9]+]]
-// LOWER: ^[[CALL_BODY]]:
+// LOWER: %[[CALL0_KILL:.*]] = obelisk_sim.assert.kill_epoch %arg0 assertion 101 {obelisk_sim.concurrent_match_call_kill_epoch}
+// LOWER: %[[KILL0_CURRENT:.*]] = arith.cmpi eq, %[[CALL0_KILL]], %arg5
+// LOWER: cf.cond_br %[[KILL0_CURRENT]], ^[[CHECK0_DISABLE:bb[0-9]+]], ^[[KILL0_CANCELED:bb[0-9]+]]
+// LOWER: ^[[CHECK0_DISABLE]]:
+// LOWER: %[[CALL0_DISABLE:.*]] = obelisk_sim.ref.load %arg2
+// LOWER: %[[DISABLE0_CURRENT:.*]] = arith.cmpi eq, %[[CALL0_DISABLE]], %arg3
+// LOWER: cf.cond_br %[[DISABLE0_CURRENT]], ^[[CALL0_BODY:bb[0-9]+]], ^[[DISABLE0_CANCELED:bb[0-9]+]]
+// LOWER: ^[[CALL0_BODY]]:
 // LOWER: obelisk_sim.display %arg0 {{.*}}(%arg1)
-// LOWER: ^[[DISABLE_CANCELED]]:
+// LOWER: ^[[DISABLE0_CANCELED]]:
 // LOWER: obelisk_sim.return
-// LOWER: ^[[KILL_CANCELED]]:
+// LOWER: ^[[KILL0_CANCELED]]:
 // LOWER: obelisk_sim.return
+
+// LOWER: obelisk_sim.func private @[[MATCH_CALL_1:[^(]+]](%arg0: !obelisk_sim.context {{.*}}, %arg1: !obelisk_sim.logic<1> {{.*}}, %arg2: !obelisk_sim.ref<i64> {{.*}}, %arg3: i64 {{.*}}, %arg4: !obelisk_sim.ref<i64> {{.*}}, %arg5: i64
+// LOWER-SAME: obelisk_sim.concurrent_match_call
+// LOWER: %[[CALL1_KILL:.*]] = obelisk_sim.assert.kill_epoch %arg0 assertion 101 {obelisk_sim.concurrent_match_call_kill_epoch}
+// LOWER: %[[KILL1_CURRENT:.*]] = arith.cmpi eq, %[[CALL1_KILL]], %arg5
+// LOWER: cf.cond_br %[[KILL1_CURRENT]], ^[[CHECK1_DISABLE:bb[0-9]+]], ^{{.*}}
+// LOWER: ^[[CHECK1_DISABLE]]:
+// LOWER: %[[CALL1_DISABLE:.*]] = obelisk_sim.ref.load %arg2
+// LOWER: %[[DISABLE1_CURRENT:.*]] = arith.cmpi eq, %[[CALL1_DISABLE]], %arg3
+// LOWER: cf.cond_br %[[DISABLE1_CURRENT]], ^[[CALL1_BODY:bb[0-9]+]], ^{{.*}}
+// LOWER: ^[[CALL1_BODY]]:
+// LOWER: obelisk_sim.display %arg0 {{.*}}(%arg1)
+
+// A detached Reactive coordinator starts the first call and waits for it to
+// finish before starting the second. The assertion monitor only spawns this
+// coordinator and therefore never blocks on match-item execution.
+// LOWER: obelisk_sim.code_unit.decl {{[0-9]+}} {{.*}} debug "ordered assertion match calls"
+// LOWER-NEXT: obelisk_sim.func private @[[MATCH_CHAIN:[^(]+]](
+// LOWER-SAME: home_region = 10 : i32
+// LOWER-SAME: obelisk_sim.concurrent_match_call_chain
+// LOWER: %[[CALL0_PROCESS:.*]] = obelisk_sim.spawn @[[MATCH_CALL_0]](%arg0, %arg1, %arg2, %arg3, %arg4, %arg5)
+// LOWER-NEXT: obelisk_sim.suspend.await %[[CALL0_PROCESS]] to ^[[CALL1_START:bb[0-9]+]]
+// LOWER-SAME: resume_region = 10 : i32
+// LOWER: ^[[CALL1_START]]:
+// LOWER-NEXT: obelisk_sim.spawn @[[MATCH_CALL_1]](%arg0, %arg6, %arg7, %arg8, %arg9, %arg10)
+// LOWER-NEXT: obelisk_sim.return
 
 // Each of the two locals owns a cell at every one of the three sequence ages.
 // LOWER-LABEL: obelisk_sim.func private @unit_0(
@@ -236,10 +275,19 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // LOWER: %[[MATCH_SOURCE:.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg2
 // LOWER: %[[MATCH_X:.*]] = obelisk_sim.logic.unary logical_not %[[MATCH_SOURCE]]
 // LOWER-NOT: obelisk_sim.display
-// LOWER: %[[MATCH_DISABLE_EPOCH:.*]] = obelisk_sim.ref.load %[[DISABLE_EPOCH]]
-// LOWER-NEXT: %[[MATCH_KILL_EPOCH:.*]] = obelisk_sim.ref.load %[[KILL_EPOCH]]
-// LOWER-NEXT: obelisk_sim.spawn @[[MATCH_CALL]](%arg0, %[[MATCH_X]], %[[DISABLE_EPOCH]], %[[MATCH_DISABLE_EPOCH]], %[[KILL_EPOCH]], %[[MATCH_KILL_EPOCH]])
+// LOWER: %[[MATCH0_DISABLE_EPOCH:.*]] = obelisk_sim.ref.load %[[DISABLE_EPOCH]]
+// LOWER-NEXT: %[[MATCH0_KILL_EPOCH:.*]] = obelisk_sim.ref.load %[[KILL_EPOCH]]
+// LOWER-NEXT: %[[MATCH_X_2:.*]] = obelisk_sim.logic.unary logical_not %[[MATCH_X]]
+// LOWER-NEXT: %[[MATCH1_DISABLE_EPOCH:.*]] = obelisk_sim.ref.load %[[DISABLE_EPOCH]]
+// LOWER-NEXT: %[[MATCH1_KILL_EPOCH:.*]] = obelisk_sim.ref.load %[[KILL_EPOCH]]
+// LOWER-NEXT: obelisk_sim.spawn @[[MATCH_CHAIN]](%arg0, %[[MATCH_X]], %[[DISABLE_EPOCH]], %[[MATCH0_DISABLE_EPOCH]], %[[KILL_EPOCH]], %[[MATCH0_KILL_EPOCH]], %[[MATCH_X_2]], %[[DISABLE_EPOCH]], %[[MATCH1_DISABLE_EPOCH]], %[[KILL_EPOCH]], %[[MATCH1_KILL_EPOCH]])
 // LOWER-NOT: obelisk_sim.spawn @[[PASS_CALLBACK]]
-// LOWER: obelisk_sim.ref.store %[[MATCH_X]] to %[[X_AGE1:.*]]
+// LOWER: obelisk_sim.ref.store %[[MATCH_X_2]] to %[[X_AGE1:.*]]
 // LOWER-NEXT: obelisk_sim.ref.store %[[INIT_X]] to %[[Y_AGE1:.*]]
 // LOWER-NOT: obelisk.sv.
+
+// The Observed assertion monitor only starts the detached call coordinator;
+// it never waits for any attached subroutine itself.
+// NO-PARENT-AWAIT-LABEL: obelisk_sim.func private @unit_0(
+// NO-PARENT-AWAIT-NOT: obelisk_sim.suspend.await
+// NO-PARENT-AWAIT: }

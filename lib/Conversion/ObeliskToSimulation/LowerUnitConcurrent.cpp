@@ -9660,21 +9660,151 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       }
       return result;
     };
+    struct OutlinedMatchCall {
+      sim::SimFuncOp function;
+      SmallVector<Value> captures;
+      Location location;
+    };
+    auto scheduleMatchCalls =
+        [&](ArrayRef<OutlinedMatchCall> calls) -> LogicalResult {
+      if (calls.empty())
+        return success();
+      if (calls.size() == 1) {
+        sim::SimSpawnOp::create(
+            builder, calls.front().location,
+            cast<StringAttr>(calls.front().function->getAttr(
+                SymbolTable::getSymbolAttrName())),
+            calls.front().captures, ArrayAttr{}, ArrayAttr{});
+        return success();
+      }
+
+      // IEEE 1800-2017 16.11 requires calls attached to one endpoint to run
+      // in source order, while assertion evaluation itself does not wait for
+      // them. A detached coordinator serializes the already outlined and
+      // epoch-guarded call actors without blocking the Observed monitor.
+      Value context = calls.front().captures.front();
+      SmallVector<Type> inputs{context.getType()};
+      SmallVector<Value> captures{context};
+      SmallVector<DictionaryAttr> argumentAttrs{
+          captureMetadata(builder, sim::CaptureKind::Context)};
+      SmallVector<unsigned> callArgumentStarts;
+      for (const OutlinedMatchCall &call : calls) {
+        assert(!call.captures.empty() && call.captures.front() == context &&
+               "match-call actors must share their monitor context");
+        callArgumentStarts.push_back(inputs.size());
+        for (Value capture : ArrayRef(call.captures).drop_front()) {
+          inputs.push_back(capture.getType());
+          captures.push_back(capture);
+          DictionaryAttr baseMetadata =
+              captureMetadata(builder, sim::CaptureKind::Formal);
+          SmallVector<NamedAttribute> metadata(baseMetadata.begin(),
+                                               baseMetadata.end());
+          if (isa<sim::RefType>(capture.getType()))
+            metadata.push_back(
+                builder.getNamedAttr("obelisk_sim.automatic_reference_capture",
+                                     builder.getUnitAttr()));
+          argumentAttrs.push_back(builder.getDictionaryAttr(metadata));
+        }
+      }
+
+      uint64_t occurrence = nextForkOrdinal++;
+      std::string identity =
+          (function.getSymName() + ".$concurrent_match_chain." + Twine(node) +
+           "." + Twine(occurrence))
+              .str();
+      uint64_t codeUnitID = stableCodeUnitID(identity);
+      uint64_t parentID = function.getCodeUnitId().value_or(0);
+      uint64_t scopeID = 0;
+      std::string parentHierarchy = function.getSymName().str();
+      auto design = function->getParentOfType<sim::SimDesignOp>();
+      if (!design)
+        return function.emitError(
+            "ordered assertion match calls require a simulation design");
+      for (sim::SimCodeUnitDeclOp declaration :
+           design.getBody().front().getOps<sim::SimCodeUnitDeclOp>()) {
+        if (declaration.getId() != parentID)
+          continue;
+        scopeID = declaration.getScopeId();
+        parentHierarchy = declaration.getHierarchicalName().str();
+        break;
+      }
+      std::string hierarchy = (Twine(parentHierarchy) +
+                               ".$concurrent_match_chain." + Twine(occurrence))
+                                  .str();
+
+      OpBuilder outlineBuilder(function);
+      outlineBuilder.setInsertionPoint(function);
+      sim::SimCodeUnitDeclOp::create(
+          outlineBuilder, calls.front().location, codeUnitID, scopeID,
+          sim::EntryKind::Fork, outlineBuilder.getStringAttr(hierarchy),
+          outlineBuilder.getStringAttr("ordered assertion match calls"),
+          outlineBuilder.getUnitAttr());
+      SmallVector<NamedAttribute> attributes{
+          outlineBuilder.getNamedAttr(
+              "code_unit_id", outlineBuilder.getI64IntegerAttr(codeUnitID)),
+          outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
+          outlineBuilder.getNamedAttr(
+              "home_region",
+              sim::EventRegionAttr::get(function.getContext(),
+                                        sim::EventRegion::Reactive)),
+          outlineBuilder.getNamedAttr(
+              "domain",
+              sim::ExecutionDomainAttr::get(function.getContext(),
+                                            sim::ExecutionDomain::Design)),
+          outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
+                                      outlineBuilder.getStringAttr(hierarchy)),
+          outlineBuilder.getNamedAttr("obelisk_sim.concurrent_match_call_chain",
+                                      outlineBuilder.getUnitAttr()),
+          outlineBuilder.getNamedAttr("obelisk_sim.detached_controls",
+                                      outlineBuilder.getUnitAttr()),
+      };
+      auto coordinator = sim::SimFuncOp::create(
+          outlineBuilder, calls.front().location,
+          (function.getSymName() + ".$concurrent_match_chain." +
+           Twine(occurrence))
+              .str(),
+          FunctionType::get(function.getContext(), inputs, TypeRange{}),
+          sim::EntryKind::Fork, attributes, argumentAttrs);
+      SymbolTable::setSymbolVisibility(coordinator,
+                                       SymbolTable::Visibility::Private);
+
+      Block *currentCall = &coordinator.getBody().front();
+      for (auto [index, call] : llvm::enumerate(calls)) {
+        OpBuilder callBuilder = OpBuilder::atBlockEnd(currentCall);
+        SmallVector<Value> operands{coordinator.getArgument(0)};
+        unsigned start = callArgumentStarts[index];
+        unsigned count = call.captures.size() - 1;
+        llvm::append_range(operands,
+                           coordinator.getArguments().slice(start, count));
+        Value process =
+            sim::SimSpawnOp::create(callBuilder, call.location,
+                                    cast<StringAttr>(call.function->getAttr(
+                                        SymbolTable::getSymbolAttrName())),
+                                    operands, ArrayAttr{}, ArrayAttr{});
+        if (index + 1 == calls.size()) {
+          sim::SimReturnOp::create(callBuilder, call.location, ValueRange{});
+          break;
+        }
+        Block *nextCall = new Block();
+        coordinator.getBody().push_back(nextCall);
+        sim::SimSuspendAwaitOp::create(
+            callBuilder, call.location, process, ValueRange{},
+            sim::ContinuationSiteAttr{},
+            sim::EventRegionAttr::get(function.getContext(),
+                                      sim::EventRegion::Reactive),
+            nextCall);
+        currentCall = nextCall;
+      }
+      coordinator->setAttr(sim::metadata::lowered, builder.getUnitAttr());
+      sim::SimSpawnOp::create(builder, calls.front().location,
+                              coordinator.getSymNameAttr(), captures,
+                              ArrayAttr{}, ArrayAttr{});
+      return success();
+    };
     auto applyMatchItems =
         [&](ArrayRef<Operation *> items,
             SmallVector<Value> localValues) -> FailureOr<SmallVector<Value>> {
-      Operation *secondCall = nullptr;
-      unsigned callCount = 0;
-      for (Operation *item : items)
-        if (isa<semantic::SVCallExpressionOp>(item) && ++callCount == 2) {
-          secondCall = item;
-          break;
-        }
-      if (secondCall)
-        return emitError(getSemanticLocation(secondCall))
-                   << "bounded assertion local flow supports at most one "
-                      "subroutine-call match item per endpoint",
-               failure();
+      SmallVector<OutlinedMatchCall> calls;
       for (Operation *item : items) {
         auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(item);
         SmallVector<Operation *> operands = getChildren(item);
@@ -9744,14 +9874,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                    builder.getUnitAttr());
           callback->first->setAttr("obelisk_sim.detached_controls",
                                    builder.getUnitAttr());
-          guardReactiveCallback(
-              callback->first, callback->second, getSemanticLocation(item),
-              "obelisk_sim.concurrent_match_call_kill_epoch");
+          guardReactiveCallback(callback->first, callback->second,
+                                getSemanticLocation(item),
+                                "obelisk_sim.concurrent_match_call_kill_epoch");
           SmallVector<Value> captures = materializeReactiveCallbackCaptures(
               callback->second, getSemanticLocation(item));
-          sim::SimSpawnOp::create(builder, getSemanticLocation(item),
-                                  callback->first.getSymNameAttr(),
-                                  captures, ArrayAttr{}, ArrayAttr{});
+          calls.push_back({callback->first, std::move(captures),
+                           getSemanticLocation(item)});
           continue;
         }
         if (assignment.getHasTimingControl() || assignment.getOperatorKind() ||
@@ -9784,6 +9913,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           return failure();
         localValues[index] = *converted;
       }
+      if (failed(scheduleMatchCalls(calls)))
+        return failure();
       return localValues;
     };
     auto reportFailure = [&](Value enabled, Value matches) -> LogicalResult {
