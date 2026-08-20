@@ -50,6 +50,27 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
+
+        // Temporal not preserves the weak intrinsic completion of nexttime,
+        // then inverts its pending success to an outer strong failure.
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 30 : i64, procedure_kind = 0 : i32, sym_name = "s30", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 5 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 31 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 32 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 33 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 34 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.unary attributes {has_range = false, node_id = 35 : i64, operator_kind = 0 : i32, range_is_unbounded = false} {
+                obelisk.sv.assertion.unary attributes {has_range = false, node_id = 36 : i64, operator_kind = 1 : i32, range_is_unbounded = false} {
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 37 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 38 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -87,4 +108,30 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-NEXT: cf.cond_br %[[STRONG_STARTED]]
 // CHECK: %[[STRONG_RESULT:.*]] = arith.constant {{.*}}false
 // CHECK-NEXT: obelisk_sim.ref.store %[[STRONG_RESULT]]
+// CHECK: obelisk_sim.event.trigger
+
+// Intrinsic weak completion composes with temporal not exactly like explicit
+// weak qualification: live success/failure invert, and pending EOS fails.
+// CHECK: obelisk_sim.func private @unit_2.fork.31.0.16(
+// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
+// CHECK-SAME: obelisk_sim.expect_monitor_actor
+// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "weak"
+// CHECK-SAME: obelisk_sim.strong_weak_monitor
+// CHECK-SAME: obelisk_sim.temporal_property_negation
+// CHECK: ^bb1(
+// CHECK: %[[NOT_NEXT_LIVE_FAIL:.*]] = arith.constant {{.*}}false
+// CHECK-NEXT: obelisk_sim.ref.store %[[NOT_NEXT_LIVE_FAIL]] to %arg4
+// CHECK: obelisk_sim.event.trigger
+// CHECK: %[[NOT_NEXT_LIVE_PASS:.*]] = arith.constant {{.*}}true
+// CHECK-NEXT: obelisk_sim.ref.store %[[NOT_NEXT_LIVE_PASS]] to %arg4
+// CHECK: obelisk_sim.event.trigger
+// CHECK: obelisk_sim.func private @unit_2.fork.31.0.16.$expect_eos.31(
+// CHECK-SAME: obelisk_sim.expect_eos_coordinator
+// CHECK-SAME: obelisk_sim.expect_operand_strength = "weak"
+// CHECK: %[[NOT_NEXT_DONE:.*]] = obelisk_sim.ref.load
+// CHECK-NEXT: cf.cond_br %[[NOT_NEXT_DONE]]
+// CHECK: %[[NOT_NEXT_STARTED:.*]] = obelisk_sim.ref.load
+// CHECK-NEXT: cf.cond_br %[[NOT_NEXT_STARTED]]
+// CHECK: %[[NOT_NEXT_EOS_FAIL:.*]] = arith.constant {{.*}}false
+// CHECK-NEXT: obelisk_sim.ref.store %[[NOT_NEXT_EOS_FAIL]]
 // CHECK: obelisk_sim.event.trigger

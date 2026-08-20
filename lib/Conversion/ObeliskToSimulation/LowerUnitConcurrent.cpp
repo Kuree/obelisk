@@ -3720,14 +3720,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                   "implication/followed-by, unsupported persistent "
                   "operators, or cover-sequence per-match accounting",
            failure();
-  if (temporalNegation && (expectMonitor || coverSequence))
+  if (temporalNegation && coverSequence)
     return emitError(getSemanticLocation(temporalNegation))
                << "temporal property 'not' currently requires one "
                   "deterministic or bounded branching property optionally "
                   "qualified by strong/weak, a supported aggregate "
                   "persistent property, or an implication/followed-by with "
-                  "one Boolean antecedent, without expect or cover-sequence "
-                  "per-match accounting",
+                  "one Boolean antecedent, or a supported expect operand, "
+                  "without cover-sequence per-match accounting",
            failure();
   if (branchingSequence &&
       llvm::any_of(sequenceAlternatives, [](const FixedSequence &alternative) {
@@ -3912,13 +3912,19 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     finalCoordinator->setAttr("obelisk_sim.expect_eos_coordinator",
                               builder.getUnitAttr());
     bool expectOperandStrong = expectEndStrong.value_or(true);
-    if (endStrength) {
+    bool expectOuterStrong =
+        temporalNegation ? !expectOperandStrong : expectOperandStrong;
+    if (endStrength || temporalNegation) {
       function->setAttr("obelisk_sim.strong_weak_monitor",
                         builder.getUnitAttr());
       function->setAttr(
           "obelisk_sim.end_of_simulation_strength",
-          builder.getStringAttr(semantic::stringifySVAssertionStrength(
-              endStrength.getStrength())));
+          builder.getStringAttr(expectOuterStrong ? "strong" : "weak"));
+    }
+    if (temporalNegation) {
+      function->setAttr(
+          "obelisk_sim.negated_operand_end_of_simulation_strength",
+          builder.getStringAttr(expectOperandStrong ? "strong" : "weak"));
     }
     finalCoordinator->setAttr(
         "obelisk_sim.expect_operand_strength",
@@ -3944,7 +3950,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     OpBuilder completeBuilder = OpBuilder::atBlockEnd(completePending);
     Value finalResult = arith::ConstantOp::create(
         completeBuilder, location, builder.getI1Type(),
-        completeBuilder.getBoolAttr(!expectOperandStrong));
+        completeBuilder.getBoolAttr(!expectOuterStrong));
     sim::SimRefStoreOp::create(completeBuilder, location, finalResult,
                                finalEntry.getArgument(2));
     Value nowComplete = arith::ConstantOp::create(
@@ -4338,8 +4344,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                      sim::EventSiteAttr{});
       sim::SimReturnOp::create(builder, location, ValueRange{});
     };
-    finish(successBlock, true);
-    finish(failureBlock, false);
+    finish(successBlock, !temporalNegation);
+    finish(failureBlock, temporalNegation);
     setCurrent(addBlock());
     return success();
   }
