@@ -1819,6 +1819,16 @@ private:
           SET_OP_ATTR(DynamicCastEnumValues, builder.getArrayAttr(values));
         }
       }
+      // IEEE 1800-2017 13.4.1: `void'(some_function())` uses a call as a
+      // statement and discards its return value, so the call keeps its
+      // function semantics. slang drops the void conversion, leaving the
+      // syntax as the only record of the spelling, and 6.24.2 makes the
+      // difference observable: only the task form of $cast reports a failed
+      // cast as a run-time error.
+      if (node.syntax && node.syntax->parent &&
+          node.syntax->parent->kind ==
+              slang::syntax::SyntaxKind::VoidCastedCallStatement)
+        SET_OP_ATTR(IsVoidCasted, builder.getUnitAttr());
       if (node.isSystemCall() &&
           (node.getSubroutineName() == "$readmemb" ||
            node.getSubroutineName() == "$readmemh") &&

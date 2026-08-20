@@ -471,7 +471,13 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       return;
     }
-    if (isa<semantic::SVExpressionStatementOp>(call->getParentOp()))
+    // IEEE 1800-2017 6.24.2: the task form of $cast reports a failed cast as
+    // a run-time error, while the function form reports it through its 0
+    // result. A `void'($cast(...))` statement is still the function form --
+    // 13.4.1 casts a call to void to use it as a statement -- so it must not
+    // take the task form's error path.
+    if (isa<semantic::SVExpressionStatementOp>(call->getParentOp()) &&
+        !call.getIsVoidCasted())
       call->setAttr(dynamicCastTaskAttrName, UnitAttr::get(context));
     if (*kind != semantic::SVDynamicCastKind::EnumMembership)
       return;

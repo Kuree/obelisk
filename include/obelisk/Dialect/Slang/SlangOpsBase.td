@@ -528,7 +528,13 @@ class SlangCallExpressionASTNodeOp<string mnemonic>
         OptionalAttr<StrArrayAttr>:$enum_method_names,
         OptionalAttr<StrAttr>:$typename_spelling,
         OptionalAttr<StrArrayAttr>:$readmem_enum_key_values,
-        OptionalAttr<StrArrayAttr>:$readmem_enum_element_values
+        OptionalAttr<StrArrayAttr>:$readmem_enum_element_values,
+        // IEEE 1800-2017 13.4.1: casting a call to the void type uses the
+        // function as a statement and discards its return value. The call
+        // keeps its function semantics there, which 6.24.2 makes observable
+        // for $cast: the function form reports a failed cast through its 0
+        // result instead of raising the task form's run-time error.
+        UnitAttr:$is_void_casted
       )>;
 
 class SlangNewClassExpressionASTNodeOp<string mnemonic>
