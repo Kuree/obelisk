@@ -3404,6 +3404,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   bool branchingSequence = !sequenceAlternatives.empty();
   bool branchingAntecedent = !antecedentAlternatives.empty();
   bool branchingConsequent = !consequentAlternatives.empty();
+  auto isOneCycleExpectSequence = [](const FixedSequence &candidate) {
+    return candidate.ages.size() == 1 &&
+           candidate.firstMatchBoundaries.empty() &&
+           candidate.ages.front().matchItems.empty();
+  };
+  bool expectOneCycleBoolean =
+      expectMonitor &&
+      (branchingSequence
+           ? llvm::all_of(sequenceAlternatives, isOneCycleExpectSequence)
+           : isOneCycleExpectSequence(sequence));
   bool deterministicImplicationNeedsEOS =
       implication && !branchingAntecedent && !branchingConsequent &&
       !hasPersistentDelay && antecedentSequence.ages.size() == 1 &&
@@ -3644,11 +3654,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         builder.getStringAttr(
             semantic::stringifySVAssertionAbortAction(abort.getAction())));
   }
-  if (branchingSequence && (localInstance || implication || expectMonitor))
+  if (branchingSequence &&
+      (localInstance || implication ||
+       (expectMonitor && !expectOneCycleBoolean)))
     return emitError(getSemanticLocation(property))
                << "branching bounded sequences currently require a "
-                  "concurrent directive without locals, implication, or "
-                  "expect",
+                  "concurrent directive without locals or implication, or "
+                  "an expect statement over one-cycle Boolean alternatives",
            failure();
   if (endStrength && (implication || hasPersistentUntil || hasPersistentUnary ||
                       expectMonitor || coverSequence))
@@ -3692,12 +3704,22 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
   if (expectMonitor) {
     if (localInstance || implication || disable ||
+        (branchingSequence && !expectOneCycleBoolean) ||
         llvm::any_of(sequence.ages, [](const FixedSequenceAge &age) {
           return !age.matchItems.empty();
-        }))
+        }) ||
+        llvm::any_of(sequenceAlternatives,
+                     [](const FixedSequence &alternative) {
+                       return llvm::any_of(
+                           alternative.ages, [](const FixedSequenceAge &age) {
+                             return !age.matchItems.empty();
+                           });
+                     }))
       return emitError(location)
-                 << "expect currently requires a fixed sequence without "
-                    "locals, implication, disable iff, or match items",
+                 << "expect currently requires one deterministic fixed "
+                    "sequence or one-cycle Boolean alternatives without "
+                    "locals, implication/followed-by, disable iff, or match "
+                    "items",
              failure();
     auto donePath =
         op->getAttrOfType<StringAttr>("obelisk_sim.expect_done_path");
@@ -3732,7 +3754,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       sampleAssertionValues = savedSampleAssertionValues;
       activeSampledClock = savedSampledClock;
     });
-    for (auto [age, sequenceAge] : llvm::enumerate(sequence.ages)) {
+
+    if (expectOneCycleBoolean) {
+      if (branchingSequence)
+        function->setAttr("obelisk_sim.expect_one_cycle_branching",
+                          builder.getUnitAttr());
+      function->setAttr(
+          "obelisk_sim.expect_one_cycle_alternatives",
+          builder.getI64IntegerAttr(branchingSequence
+                                        ? sequenceAlternatives.size()
+                                        : 1));
       Block *sample = addBlock();
       setCurrent(wait);
       if (failed(emitEventSuspend(clock, sample)))
@@ -3742,37 +3773,153 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           sim::EventRegionAttr::get(function.getContext(),
                                     sim::EventRegion::Observed));
       setCurrent(sample);
-      Value matches = arith::ConstantOp::create(
+      Value falseValue = arith::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+      Value trueValue = arith::ConstantOp::create(
           builder, location, builder.getI1Type(), builder.getBoolAttr(true));
-      for (Operation *predicate : sequenceAge.predicates) {
-        FailureOr<Value> value = lowerExpression(predicate);
-        if (failed(value))
+      DenseMap<Operation *, Value> predicateCache;
+      DenseMap<Attribute, Value> symbolicPredicateCache;
+      DenseMap<std::pair<Operation *, Operation *>, Value> caseGuardCache;
+      DenseMap<Operation *, Value> caseSelectorCache;
+      auto evaluateAge = [&](const FixedSequenceAge &age) -> FailureOr<Value> {
+        Value result = trueValue;
+        auto evaluatePredicate = [&](Operation *predicate) -> FailureOr<Value> {
+          if (auto found = predicateCache.find(predicate);
+              found != predicateCache.end())
+            return found->second;
+          Attribute referencedSymbol;
+          if (isa<semantic::SVNamedValueExpressionOp,
+                  semantic::SVHierarchicalValueExpressionOp>(predicate))
+            referencedSymbol = predicate->getAttr("referenced_symbol");
+          if (referencedSymbol) {
+            if (auto found = symbolicPredicateCache.find(referencedSymbol);
+                found != symbolicPredicateCache.end()) {
+              predicateCache[predicate] = found->second;
+              return found->second;
+            }
+          }
+          FailureOr<Value> value = lowerExpression(predicate);
+          if (failed(value))
+            return failure();
+          FailureOr<Value> truth =
+              truthValue(*value, getSemanticLocation(predicate));
+          if (failed(truth))
+            return failure();
+          predicateCache[predicate] = *truth;
+          if (referencedSymbol)
+            symbolicPredicateCache[referencedSymbol] = *truth;
+          return *truth;
+        };
+        for (Operation *predicate : age.predicates) {
+          FailureOr<Value> truth = evaluatePredicate(predicate);
+          if (failed(truth))
+            return failure();
+          result = arith::AndIOp::create(builder, location, result, *truth);
+        }
+        for (Operation *predicate : age.negatedPredicates) {
+          FailureOr<Value> truth = evaluatePredicate(predicate);
+          if (failed(truth))
+            return failure();
+          Value negated =
+              arith::XOrIOp::create(builder, location, *truth, trueValue);
+          result = arith::AndIOp::create(builder, location, result, negated);
+        }
+        for (const FixedSequenceAge::CaseGuard &guard : age.caseGuards) {
+          std::pair<Operation *, Operation *> key{guard.selector, guard.label};
+          Value matched;
+          if (auto found = caseGuardCache.find(key);
+              found != caseGuardCache.end()) {
+            matched = found->second;
+          } else {
+            Value selector;
+            if (auto found = caseSelectorCache.find(guard.selector);
+                found != caseSelectorCache.end()) {
+              selector = found->second;
+            } else {
+              FailureOr<Value> lowered = lowerExpression(guard.selector);
+              if (failed(lowered))
+                return failure();
+              selector = *lowered;
+              caseSelectorCache[guard.selector] = selector;
+            }
+            FailureOr<Value> comparison = lowerCaseLabel(
+                selector, selector.getType(), guard.selector, guard.label,
+                semantic::SVCaseCondition::Normal);
+            if (failed(comparison) || !comparison->getType().isInteger(1))
+              return failure();
+            matched = *comparison;
+            caseGuardCache[key] = matched;
+          }
+          if (guard.negated)
+            matched = arith::XOrIOp::create(builder, location, matched,
+                                            trueValue);
+          result = arith::AndIOp::create(builder, location, result, matched);
+        }
+        return result;
+      };
+
+      Value successAny = falseValue;
+      auto accumulateAlternative = [&](const FixedSequence &alternative) {
+        FailureOr<Value> matches = evaluateAge(alternative.ages.front());
+        if (failed(matches))
           return failure();
-        FailureOr<Value> truth =
-            truthValue(*value, getSemanticLocation(predicate));
-        if (failed(truth))
-          return failure();
-        matches = arith::AndIOp::create(builder, location, matches, *truth);
+        successAny =
+            arith::OrIOp::create(builder, location, successAny, *matches);
+        return success();
+      };
+      if (branchingSequence) {
+        for (const FixedSequence &alternative : sequenceAlternatives)
+          if (failed(accumulateAlternative(alternative)))
+            return failure();
+      } else if (failed(accumulateAlternative(sequence))) {
+        return failure();
       }
-      for (Operation *predicate : sequenceAge.negatedPredicates) {
-        FailureOr<Value> value = lowerExpression(predicate);
-        if (failed(value))
-          return failure();
-        FailureOr<Value> truth =
-            truthValue(*value, getSemanticLocation(predicate));
-        if (failed(truth))
-          return failure();
-        Value negated = arith::XOrIOp::create(
-            builder, location, *truth,
-            arith::ConstantOp::create(builder, location, builder.getI1Type(),
-                                      builder.getBoolAttr(true)));
-        matches = arith::AndIOp::create(builder, location, matches, negated);
-      }
-      Block *matched =
-          age + 1 == sequence.ages.size() ? successBlock : addBlock();
-      cf::CondBranchOp::create(builder, location, matches, matched,
+      cf::CondBranchOp::create(builder, location, successAny, successBlock,
                                ValueRange{}, failureBlock, ValueRange{});
-      wait = matched;
+    } else {
+      for (auto [age, sequenceAge] : llvm::enumerate(sequence.ages)) {
+        Block *sample = addBlock();
+        setCurrent(wait);
+        if (failed(emitEventSuspend(clock, sample)))
+          return failure();
+        wait->getTerminator()->setAttr(
+            "resume_region",
+            sim::EventRegionAttr::get(function.getContext(),
+                                      sim::EventRegion::Observed));
+        setCurrent(sample);
+        Value matches = arith::ConstantOp::create(
+            builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+        for (Operation *predicate : sequenceAge.predicates) {
+          FailureOr<Value> value = lowerExpression(predicate);
+          if (failed(value))
+            return failure();
+          FailureOr<Value> truth =
+              truthValue(*value, getSemanticLocation(predicate));
+          if (failed(truth))
+            return failure();
+          matches = arith::AndIOp::create(builder, location, matches, *truth);
+        }
+        for (Operation *predicate : sequenceAge.negatedPredicates) {
+          FailureOr<Value> value = lowerExpression(predicate);
+          if (failed(value))
+            return failure();
+          FailureOr<Value> truth =
+              truthValue(*value, getSemanticLocation(predicate));
+          if (failed(truth))
+            return failure();
+          Value negated = arith::XOrIOp::create(
+              builder, location, *truth,
+              arith::ConstantOp::create(builder, location,
+                                        builder.getI1Type(),
+                                        builder.getBoolAttr(true)));
+          matches = arith::AndIOp::create(builder, location, matches, negated);
+        }
+        Block *matched =
+            age + 1 == sequence.ages.size() ? successBlock : addBlock();
+        cf::CondBranchOp::create(builder, location, matches, matched,
+                                 ValueRange{}, failureBlock, ValueRange{});
+        wait = matched;
+      }
     }
     auto finish = [&](Block *block, bool passed) {
       setCurrent(block);
