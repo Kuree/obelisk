@@ -71,13 +71,13 @@ module attributes {
                 }
               }
               obelisk.sv.symbol.coverpoint attributes {has_iff = false, hierarchical_name = "top.C.cp", name = "cp", node_id = 34 : i64, option_count = 0 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>, sym_name = "s24.cp"} {
-                obelisk.sv.expression.binary_op attributes {is_signed = true, node_id = 35 : i64, operator_kind = 0 : i32, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 5, 22, "../../../../tmp/classcg.sv", 5, 35, "">} {
-                  obelisk.sv.expression.conversion attributes {is_signed = true, node_id = 36 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 5, 22, "../../../../tmp/classcg.sv", 5, 27, "">} {
-                    obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 37 : i64, referenced_path = "top.C::value", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s6.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 5, 22, "../../../../tmp/classcg.sv", 5, 27, "">} {
+                obelisk.sv.expression.binary_op attributes {is_signed = true, node_id = 35 : i64, operator_kind = 0 : i32, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {
+                  obelisk.sv.expression.conversion attributes {is_signed = true, node_id = 36 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {
+                    obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 37 : i64, referenced_path = "top.C::value", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s6.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                     }
                   }
-                  obelisk.sv.expression.conversion attributes {is_signed = true, node_id = 38 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 5, 30, "../../../../tmp/classcg.sv", 5, 35, "">} {
-                    obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 39 : i64, referenced_path = "top.C::extra", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s7::@s8.extra, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 5, 30, "../../../../tmp/classcg.sv", 5, 35, "">} {
+                  obelisk.sv.expression.conversion attributes {is_signed = true, node_id = 38 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {
+                    obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 39 : i64, referenced_path = "top.C::extra", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s7::@s8.extra, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                     }
                   }
                 }
@@ -118,8 +118,8 @@ module attributes {
                   }
                 }
                 obelisk.sv.symbol.coverage_bin attributes {bins_kind = 0 : i32, has_iff = false, has_number_of_bins = false, has_set_coverage = false, has_with = false, hierarchical_name = "top.C.cp.one", is_array = false, is_default = false, is_default_sequence = false, is_wildcard = false, name = "one", node_id = 58 : i64, sym_name = "s35.one", transition_set_count = 0 : i64, value_count = 1 : i64} {
-                  obelisk.sv.expression.conversion attributes {is_signed = true, node_id = 59 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 5, 50, "../../../../tmp/classcg.sv", 5, 51, "">} {
-                    obelisk.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 60 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 5, 50, "../../../../tmp/classcg.sv", 5, 51, "">} {
+                  obelisk.sv.expression.conversion attributes {is_signed = true, node_id = 59 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {
+                    obelisk.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 60 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                     }
                   }
                 }
@@ -129,11 +129,11 @@ module attributes {
           obelisk.sv.symbol.class_property attributes {hierarchical_name = "top.C::cg", is_const, name = "cg", node_id = 61 : i64, semantic_type = !obelisk.covergroup_handle<@s1.$root::@s4.top::@s5.C::@s7>, sym_name = "s36.cg"} {
           }
           obelisk.sv.symbol.subroutine attributes {hierarchical_name = "top.C::new", is_constructor, name = "new", node_id = 62 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s37.new", this_variable_path = "top.C::new.this", this_variable_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s37.new::@s38.this, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-            obelisk.sv.statement.expression_statement attributes {node_id = 63 : i64, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 8, 7, "../../../../tmp/classcg.sv", 8, 16, "">} {
-              obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 64 : i64, semantic_type = !obelisk.covergroup_handle<@s1.$root::@s4.top::@s5.C::@s7>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 8, 7, "../../../../tmp/classcg.sv", 8, 15, "">} {
-                obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 65 : i64, referenced_path = "top.C::cg", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s36.cg, semantic_type = !obelisk.covergroup_handle<@s1.$root::@s4.top::@s5.C::@s7>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 8, 7, "../../../../tmp/classcg.sv", 8, 9, "">} {
+            obelisk.sv.statement.expression_statement attributes {node_id = 63 : i64} {
+              obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 64 : i64, semantic_type = !obelisk.covergroup_handle<@s1.$root::@s4.top::@s5.C::@s7>} {
+                obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 65 : i64, referenced_path = "top.C::cg", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s36.cg, semantic_type = !obelisk.covergroup_handle<@s1.$root::@s4.top::@s5.C::@s7>} {
                 }
-                obelisk.sv.expression.new_covergroup attributes {argument_count = 0 : i64, is_signed = false, node_id = 66 : i64, semantic_type = !obelisk.covergroup_handle<@s1.$root::@s4.top::@s5.C::@s7>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 8, 12, "../../../../tmp/classcg.sv", 8, 15, "">} {
+                obelisk.sv.expression.new_covergroup attributes {argument_count = 0 : i64, is_signed = false, node_id = 66 : i64, semantic_type = !obelisk.covergroup_handle<@s1.$root::@s4.top::@s5.C::@s7>} {
                 }
               }
             }
@@ -141,11 +141,11 @@ module attributes {
             }
           }
           obelisk.sv.symbol.subroutine attributes {hierarchical_name = "top.C::sample_it", name = "sample_it", node_id = 68 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s39.sample_it", this_variable_path = "top.C::sample_it.this", this_variable_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s39.sample_it::@s40.this, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-            obelisk.sv.statement.expression_statement attributes {node_id = 69 : i64, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 11, 7, "../../../../tmp/classcg.sv", 11, 20, "">} {
+            obelisk.sv.statement.expression_statement attributes {node_id = 69 : i64} {
               obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "sample", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_signed = false, is_super_class = false, is_system_call = false, node_id = 70 : i64, referenced_path = "top.C.sample", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s7::@s9::@s22.sample, semantic_type = !obelisk.void, subroutine_kind = 0 : i32} {
-                obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 71 : i64, referenced_path = "top.C::cg", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s36.cg, semantic_type = !obelisk.covergroup_handle<@s1.$root::@s4.top::@s5.C::@s7>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 11, 7, "../../../../tmp/classcg.sv", 11, 9, "">} {
+                obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 71 : i64, referenced_path = "top.C::cg", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s36.cg, semantic_type = !obelisk.covergroup_handle<@s1.$root::@s4.top::@s5.C::@s7>} {
                 }
-                obelisk.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 72 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 11, 17, "../../../../tmp/classcg.sv", 11, 18, "">} {
+                obelisk.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 72 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                 }
               }
             }
@@ -205,13 +205,13 @@ module attributes {
           obelisk.sv.symbol.class_property attributes {hierarchical_name = "top.D::bias", name = "bias", node_id = 98 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s57.bias"} {
           }
           obelisk.sv.symbol.subroutine attributes {hierarchical_name = "top.D::sample_other", name = "sample_other", node_id = 99 : i64, semantic_type = !obelisk.subroutine<(!obelisk.class_handle<@s1.$root::@s4.top::@s5.C>) -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s58.sample_other", this_variable_path = "top.D::sample_other.this", this_variable_symbol = @s1.$root::@s3.top::@s4.top::@s53.D::@s58.sample_other::@s60.this, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-            obelisk.sv.statement.expression_statement attributes {node_id = 100 : i64, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 17, 7, "../../../../tmp/classcg.sv", 17, 29, "">} {
+            obelisk.sv.statement.expression_statement attributes {node_id = 100 : i64} {
               obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "sample", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_signed = false, is_super_class = false, is_system_call = false, node_id = 101 : i64, referenced_path = "top.C.sample", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s7::@s9::@s22.sample, semantic_type = !obelisk.void, subroutine_kind = 0 : i32} {
-                obelisk.sv.expression.member_access attributes {field_ordinal = 4 : i64, is_signed = false, node_id = 102 : i64, packed_offset = 0 : i64, referenced_path = "top.C::cg", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s36.cg, semantic_type = !obelisk.covergroup_handle<@s1.$root::@s4.top::@s5.C::@s7>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 17, 7, "../../../../tmp/classcg.sv", 17, 15, "">} {
-                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 103 : i64, referenced_path = "top.D::sample_other.other", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s53.D::@s58.sample_other::@s59.other, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s5.C>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 17, 7, "../../../../tmp/classcg.sv", 17, 12, "">} {
+                obelisk.sv.expression.member_access attributes {field_ordinal = 4 : i64, is_signed = false, node_id = 102 : i64, packed_offset = 0 : i64, referenced_path = "top.C::cg", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s36.cg, semantic_type = !obelisk.covergroup_handle<@s1.$root::@s4.top::@s5.C::@s7>} {
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 103 : i64, referenced_path = "top.D::sample_other.other", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s53.D::@s58.sample_other::@s59.other, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s5.C>} {
                   }
                 }
-                obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 104 : i64, referenced_path = "top.D::bias", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s53.D::@s57.bias, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 17, 23, "../../../../tmp/classcg.sv", 17, 27, "">} {
+                obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 104 : i64, referenced_path = "top.D::bias", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s53.D::@s57.bias, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                 }
               }
             }
@@ -266,48 +266,48 @@ module attributes {
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.c", lifetime = 1 : i32, name = "c", node_id = 127 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s53.D>, sym_name = "s73.c"} {
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 128 : i64, procedure_kind = 0 : i32, sym_name = "s74", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-          obelisk.sv.statement.block attributes {node_id = 129 : i64, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 21, 11, "../../../../tmp/classcg.sv", 27, 6, "">} {
-            obelisk.sv.statement.list attributes {node_id = 130 : i64, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 21, 11, "../../../../tmp/classcg.sv", 27, 6, "">} {
-              obelisk.sv.statement.expression_statement attributes {node_id = 131 : i64, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 22, 5, "../../../../tmp/classcg.sv", 22, 13, "">} {
-                obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 132 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s53.D>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 22, 5, "../../../../tmp/classcg.sv", 22, 12, "">} {
-                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 133 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s73.c, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s53.D>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 22, 5, "../../../../tmp/classcg.sv", 22, 6, "">} {
+          obelisk.sv.statement.block attributes {node_id = 129 : i64} {
+            obelisk.sv.statement.list attributes {node_id = 130 : i64} {
+              obelisk.sv.statement.expression_statement attributes {node_id = 131 : i64} {
+                obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 132 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s53.D>} {
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 133 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s73.c, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s53.D>} {
                   }
-                  obelisk.sv.expression.new_class attributes {is_signed = false, is_super_class = false, node_id = 134 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s53.D>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 22, 9, "../../../../tmp/classcg.sv", 22, 12, "">} {
+                  obelisk.sv.expression.new_class attributes {is_signed = false, is_super_class = false, node_id = 134 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s53.D>} {
                   }
                 }
               }
-              obelisk.sv.statement.expression_statement attributes {node_id = 135 : i64, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 23, 5, "../../../../tmp/classcg.sv", 23, 17, "">} {
-                obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = true, node_id = 136 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 23, 5, "../../../../tmp/classcg.sv", 23, 16, "">} {
-                  obelisk.sv.expression.member_access attributes {field_ordinal = 90 : i64, is_signed = true, node_id = 137 : i64, packed_offset = 0 : i64, referenced_path = "top.C::value", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s6.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 23, 5, "../../../../tmp/classcg.sv", 23, 12, "">} {
-                    obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 138 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s73.c, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s53.D>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 23, 5, "../../../../tmp/classcg.sv", 23, 6, "">} {
+              obelisk.sv.statement.expression_statement attributes {node_id = 135 : i64} {
+                obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = true, node_id = 136 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  obelisk.sv.expression.member_access attributes {field_ordinal = 90 : i64, is_signed = true, node_id = 137 : i64, packed_offset = 0 : i64, referenced_path = "top.C::value", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s6.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 138 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s73.c, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s53.D>} {
                     }
                   }
-                  obelisk.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 139 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 23, 15, "../../../../tmp/classcg.sv", 23, 16, "">} {
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 139 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                   }
                 }
               }
-              obelisk.sv.statement.expression_statement attributes {node_id = 140 : i64, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 24, 5, "../../../../tmp/classcg.sv", 24, 19, "">} {
+              obelisk.sv.statement.expression_statement attributes {node_id = 140 : i64} {
                 obelisk.sv.expression.call attributes {argument_count = 0 : i64, callee_name = "sample_it", constraint_restrictions = [], defaulted_arguments = array<i64>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_signed = false, is_super_class = false, is_system_call = false, node_id = 141 : i64, referenced_path = "top.C::sample_it", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s39.sample_it, semantic_type = !obelisk.void, subroutine_kind = 0 : i32} {
-                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 142 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s73.c, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s53.D>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 24, 5, "../../../../tmp/classcg.sv", 24, 6, "">} {
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 142 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s73.c, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s53.D>} {
                   }
                 }
               }
-              obelisk.sv.statement.expression_statement attributes {node_id = 143 : i64, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 25, 5, "../../../../tmp/classcg.sv", 25, 20, "">} {
+              obelisk.sv.statement.expression_statement attributes {node_id = 143 : i64} {
                 obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "sample", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_signed = false, is_super_class = false, is_system_call = false, node_id = 144 : i64, referenced_path = "top.C.sample", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s7::@s9::@s22.sample, semantic_type = !obelisk.void, subroutine_kind = 0 : i32} {
-                  obelisk.sv.expression.member_access attributes {field_ordinal = 4 : i64, is_signed = false, node_id = 145 : i64, packed_offset = 0 : i64, referenced_path = "top.C::cg", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s36.cg, semantic_type = !obelisk.covergroup_handle<@s1.$root::@s4.top::@s5.C::@s7>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 25, 5, "../../../../tmp/classcg.sv", 25, 9, "">} {
-                    obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 146 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s73.c, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s53.D>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 25, 5, "../../../../tmp/classcg.sv", 25, 6, "">} {
+                  obelisk.sv.expression.member_access attributes {field_ordinal = 4 : i64, is_signed = false, node_id = 145 : i64, packed_offset = 0 : i64, referenced_path = "top.C::cg", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.C::@s36.cg, semantic_type = !obelisk.covergroup_handle<@s1.$root::@s4.top::@s5.C::@s7>} {
+                    obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 146 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s73.c, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s53.D>} {
                     }
                   }
-                  obelisk.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 147 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 25, 17, "../../../../tmp/classcg.sv", 25, 18, "">} {
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 147 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                   }
                 }
               }
-              obelisk.sv.statement.expression_statement attributes {node_id = 148 : i64, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 26, 5, "../../../../tmp/classcg.sv", 26, 23, "">} {
+              obelisk.sv.statement.expression_statement attributes {node_id = 148 : i64} {
                 obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "sample_other", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_signed = false, is_super_class = false, is_system_call = false, node_id = 149 : i64, referenced_path = "top.D::sample_other", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s53.D::@s58.sample_other, semantic_type = !obelisk.void, subroutine_kind = 0 : i32} {
-                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 150 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s73.c, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s53.D>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 26, 5, "../../../../tmp/classcg.sv", 26, 6, "">} {
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 150 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s73.c, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s53.D>} {
                   }
-                  obelisk.sv.expression.conversion attributes {is_signed = false, node_id = 151 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s5.C>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 26, 20, "../../../../tmp/classcg.sv", 26, 21, "">} {
-                    obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 152 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s73.c, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s53.D>, source_range = !obelisk.source_range<"../../../../tmp/classcg.sv", 26, 20, "../../../../tmp/classcg.sv", 26, 21, "">} {
+                  obelisk.sv.expression.conversion attributes {is_signed = false, node_id = 151 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s5.C>} {
+                    obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 152 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s73.c, semantic_type = !obelisk.class_handle<@s1.$root::@s4.top::@s53.D>} {
                     }
                   }
                 }
@@ -319,7 +319,6 @@ module attributes {
     }
   }
 }
-
 
 // CHECK: obelisk_sim.covergroup.decl
 // CHECK: obelisk_sim.class.decl @[[BASE:[^ ]+]] id 1

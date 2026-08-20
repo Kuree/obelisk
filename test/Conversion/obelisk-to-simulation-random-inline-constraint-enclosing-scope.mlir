@@ -23,19 +23,19 @@ module {
         obelisk.sv.symbol.class_property attributes {hierarchical_name = "B::i", name = "i", node_id = 27 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s19.i"} {
         }
         obelisk.sv.symbol.subroutine attributes {hierarchical_name = "B::r", name = "r", node_id = 28 : i64, semantic_type = !obelisk.subroutine<() -> (), true>, subroutine_kind = 1 : i32, sym_name = "s20.r", this_variable_path = "B::r.this", this_variable_symbol = @s1.$root::@s2::@s17.B::@s20.r::@s21.this, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-          obelisk.sv.statement.expression_statement attributes {node_id = 29 : i64, source_range = !obelisk.source_range<"inline_constraint.sv", 8, 5, "inline_constraint.sv", 8, 41, "">} {
+          obelisk.sv.statement.expression_statement attributes {node_id = 29 : i64} {
             obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = true, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = true, is_super_class = false, is_system_call = true, node_id = 30 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.$unit", system_scope_path = "B::r", system_scope_symbol = @s1.$root::@s2::@s17.B::@s20.r} {
-              obelisk.sv.constraint.list attributes {item_count = 1 : i64, node_id = 31 : i64, source_range = !obelisk.source_range<"inline_constraint.sv", 8, 30, "inline_constraint.sv", 8, 39, "">} {
-                obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 32 : i64, source_range = !obelisk.source_range<"inline_constraint.sv", 8, 31, "inline_constraint.sv", 8, 38, "">} {
-                  obelisk.sv.expression.binary_op attributes {is_signed = false, node_id = 33 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>, source_range = !obelisk.source_range<"inline_constraint.sv", 8, 31, "inline_constraint.sv", 8, 37, "">} {
-                    obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 34 : i64, referenced_path = "A::j", referenced_symbol = @s1.$root::@s2::@s3.A::@s4.j, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"inline_constraint.sv", 8, 31, "inline_constraint.sv", 8, 32, "">} {
+              obelisk.sv.constraint.list attributes {item_count = 1 : i64, node_id = 31 : i64} {
+                obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 32 : i64} {
+                  obelisk.sv.expression.binary_op attributes {is_signed = false, node_id = 33 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+                    obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 34 : i64, referenced_path = "A::j", referenced_symbol = @s1.$root::@s2::@s3.A::@s4.j, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                     }
-                    obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 35 : i64, referenced_path = "B::i", referenced_symbol = @s1.$root::@s2::@s17.B::@s19.i, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"inline_constraint.sv", 8, 36, "inline_constraint.sv", 8, 37, "">} {
+                    obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 35 : i64, referenced_path = "B::i", referenced_symbol = @s1.$root::@s2::@s17.B::@s19.i, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                     }
                   }
                 }
               }
-              obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 36 : i64, referenced_path = "B::a", referenced_symbol = @s1.$root::@s2::@s17.B::@s18.a, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.A>, source_range = !obelisk.source_range<"inline_constraint.sv", 8, 11, "inline_constraint.sv", 8, 12, "">} {
+              obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 36 : i64, referenced_path = "B::a", referenced_symbol = @s1.$root::@s2::@s17.B::@s18.a, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.A>} {
               }
             }
           }
@@ -51,29 +51,29 @@ module {
         obelisk.sv.symbol.variable attributes {hierarchical_name = "m.b", lifetime = 1 : i32, name = "b", node_id = 60 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s17.B>, sym_name = "s36.b"} {
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "m", node_id = 61 : i64, procedure_kind = 0 : i32, sym_name = "s37", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-          obelisk.sv.statement.block attributes {node_id = 62 : i64, source_range = !obelisk.source_range<"inline_constraint.sv", 13, 11, "inline_constraint.sv", 13, 47, "">} {
-            obelisk.sv.statement.list attributes {node_id = 63 : i64, source_range = !obelisk.source_range<"inline_constraint.sv", 13, 11, "inline_constraint.sv", 13, 47, "">} {
-              obelisk.sv.statement.expression_statement attributes {node_id = 64 : i64, source_range = !obelisk.source_range<"inline_constraint.sv", 13, 17, "inline_constraint.sv", 13, 25, "">} {
-                obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 65 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s17.B>, source_range = !obelisk.source_range<"inline_constraint.sv", 13, 17, "inline_constraint.sv", 13, 24, "">} {
-                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 66 : i64, referenced_path = "m.b", referenced_symbol = @s1.$root::@s34.m::@s35.m::@s36.b, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s17.B>, source_range = !obelisk.source_range<"inline_constraint.sv", 13, 17, "inline_constraint.sv", 13, 18, "">} {
+          obelisk.sv.statement.block attributes {node_id = 62 : i64} {
+            obelisk.sv.statement.list attributes {node_id = 63 : i64} {
+              obelisk.sv.statement.expression_statement attributes {node_id = 64 : i64} {
+                obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 65 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s17.B>} {
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 66 : i64, referenced_path = "m.b", referenced_symbol = @s1.$root::@s34.m::@s35.m::@s36.b, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s17.B>} {
                   }
-                  obelisk.sv.expression.new_class attributes {is_signed = false, is_super_class = false, node_id = 67 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s17.B>, source_range = !obelisk.source_range<"inline_constraint.sv", 13, 21, "inline_constraint.sv", 13, 24, "">} {
+                  obelisk.sv.expression.new_class attributes {is_signed = false, is_super_class = false, node_id = 67 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s17.B>} {
                   }
                 }
               }
-              obelisk.sv.statement.expression_statement attributes {node_id = 68 : i64, source_range = !obelisk.source_range<"inline_constraint.sv", 13, 26, "inline_constraint.sv", 13, 36, "">} {
-                obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 69 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.A>, source_range = !obelisk.source_range<"inline_constraint.sv", 13, 26, "inline_constraint.sv", 13, 35, "">} {
-                  obelisk.sv.expression.member_access attributes {is_signed = false, member_name = "a", node_id = 70 : i64, referenced_path = "B::a", referenced_symbol = @s1.$root::@s2::@s17.B::@s18.a, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.A>, source_range = !obelisk.source_range<"inline_constraint.sv", 13, 26, "inline_constraint.sv", 13, 29, "">} {
-                    obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 71 : i64, referenced_path = "m.b", referenced_symbol = @s1.$root::@s34.m::@s35.m::@s36.b, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s17.B>, source_range = !obelisk.source_range<"inline_constraint.sv", 13, 26, "inline_constraint.sv", 13, 27, "">} {
+              obelisk.sv.statement.expression_statement attributes {node_id = 68 : i64} {
+                obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 69 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.A>} {
+                  obelisk.sv.expression.member_access attributes {is_signed = false, member_name = "a", node_id = 70 : i64, referenced_path = "B::a", referenced_symbol = @s1.$root::@s2::@s17.B::@s18.a, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.A>} {
+                    obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 71 : i64, referenced_path = "m.b", referenced_symbol = @s1.$root::@s34.m::@s35.m::@s36.b, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s17.B>} {
                     }
                   }
-                  obelisk.sv.expression.new_class attributes {is_signed = false, is_super_class = false, node_id = 72 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.A>, source_range = !obelisk.source_range<"inline_constraint.sv", 13, 32, "inline_constraint.sv", 13, 35, "">} {
+                  obelisk.sv.expression.new_class attributes {is_signed = false, is_super_class = false, node_id = 72 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.A>} {
                   }
                 }
               }
-              obelisk.sv.statement.expression_statement attributes {node_id = 73 : i64, source_range = !obelisk.source_range<"inline_constraint.sv", 13, 37, "inline_constraint.sv", 13, 43, "">} {
+              obelisk.sv.statement.expression_statement attributes {node_id = 73 : i64} {
                 obelisk.sv.expression.call attributes {argument_count = 0 : i64, callee_name = "r", constraint_restrictions = [], defaulted_arguments = array<i64>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_signed = false, is_super_class = false, is_system_call = false, node_id = 74 : i64, referenced_path = "B::r", referenced_symbol = @s1.$root::@s2::@s17.B::@s20.r, semantic_type = !obelisk.void, subroutine_kind = 1 : i32} {
-                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 75 : i64, referenced_path = "m.b", referenced_symbol = @s1.$root::@s34.m::@s35.m::@s36.b, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s17.B>, source_range = !obelisk.source_range<"inline_constraint.sv", 13, 37, "inline_constraint.sv", 13, 38, "">} {
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 75 : i64, referenced_path = "m.b", referenced_symbol = @s1.$root::@s34.m::@s35.m::@s36.b, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s17.B>} {
                   }
                 }
               }
@@ -84,7 +84,6 @@ module {
     }
   }
 }
-
 
 // CHECK-LABEL: obelisk_sim.func private @unit_0
 // The randomize receiver is loaded out of the enclosing object, and the

@@ -180,7 +180,6 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-
 // The normalized types are frozen before the declaration inventory is
 // separated from its executable monitor.
 // PREPARE: local_variable_count = 2 : i64
