@@ -218,17 +218,17 @@ void ObeliskSimPreparePass::runOnOperation() {
       Operation *target =
           found == semanticSymbols.end() ? nullptr : found->second;
       semantic::SVDefinitionSymbolOp definition;
-      if (auto instance = dyn_cast_or_null<semantic::SVInstanceSymbolOp>(target)) {
+      if (auto instance =
+              dyn_cast_or_null<semantic::SVInstanceSymbolOp>(target)) {
         if (auto reference = instance.getReferencedSymbolAttr()) {
-          auto source =
-              semanticSymbols.find(reference.getLeafReference());
+          auto source = semanticSymbols.find(reference.getLeafReference());
           if (source != semanticSymbols.end())
             definition =
                 dyn_cast<semantic::SVDefinitionSymbolOp>(source->second);
         }
       }
-      if (definition && definition.getDefinitionKind() ==
-                            semantic::SVDefinitionKind::Module)
+      if (definition &&
+          definition.getDefinitionKind() == semantic::SVDefinitionKind::Module)
         selection->setAttr("obelisk_sim.dumpports_scope",
                            UnitAttr::get(context));
     }
@@ -854,15 +854,6 @@ void ObeliskSimPreparePass::runOnOperation() {
         emitError(getSemanticLocation(call))
             << "assertion control selected expect statement '" << entry.path
             << "', which is not executable by assertion control yet";
-        invalid = true;
-        return;
-      }
-      if (entry.assertionType == 1 && action >= 6) {
-        emitError(getSemanticLocation(call))
-            << "concurrent assertion control currently supports Lock, Unlock, "
-               "On, Off, and Kill; control action "
-            << action << " selected concurrent assertion '" << entry.path
-            << "'";
         invalid = true;
         return;
       }
@@ -5323,8 +5314,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     call->setAttr(calleeReadCapturesAttrName,
                   builder.getArrayAttr(readCapturePaths));
     call->setAttr(calleeWrittenCapturesAttrName,
-                  builder.getArrayAttr(
-                      writtenCaptureAttributes(targetSource)));
+                  builder.getArrayAttr(writtenCaptureAttributes(targetSource)));
     if (!virtualTargets.empty()) {
       SmallVector<Attribute> candidates;
       for (Operation *candidate : virtualTargets) {
@@ -6116,11 +6106,10 @@ void ObeliskSimPreparePass::runOnOperation() {
     // because no ordinary reactive work may be introduced during finalization.
     bool finalProcedure = unit.entryKind == sim::EntryKind::Final;
     functionAttrs.push_back(builder.getNamedAttr(
-        "home_region", sim::EventRegionAttr::get(
-                           context,
-                           programDomain && !finalProcedure
-                               ? sim::EventRegion::Reactive
-                               : sim::EventRegion::Active)));
+        "home_region",
+        sim::EventRegionAttr::get(context, programDomain && !finalProcedure
+                                               ? sim::EventRegion::Reactive
+                                               : sim::EventRegion::Active)));
     functionAttrs.push_back(builder.getNamedAttr(
         "domain", sim::ExecutionDomainAttr::get(
                       context, programDomain ? sim::ExecutionDomain::Program
@@ -6199,8 +6188,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
     } else {
       auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
-      auto owner = subroutine ? getOwningClass(subroutine)
-                              : semantic::SVClassTypeOp{};
+      auto owner =
+          subroutine ? getOwningClass(subroutine) : semantic::SVClassTypeOp{};
       auto clonePropertyInitializers = [&](OpBuilder &initializerBuilder,
                                            bool nestedAfterSuper = false) {
         if (!owner)

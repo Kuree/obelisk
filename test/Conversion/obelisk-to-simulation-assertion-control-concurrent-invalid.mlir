@@ -5,9 +5,9 @@
 // RUN: not obelisk-opt %t/action.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=ACTION
 
 // Kill invalidates live monitor state and queued reports through a per-target
-// generation. Action controls still need per-attempt action-state snapshots,
-// so selecting a concurrent directive with one must reject instead of silently
-// applying immediate-assertion semantics.
+// generation. Action controls support one-cycle concurrent evaluations; a
+// multi-cycle selection must reject until its start-time snapshot is carried
+// through temporal state.
 
 //--- kill.mlir
 
@@ -130,4 +130,4 @@ module {
 // KILL: obelisk_sim.concurrent_report_kill_epoch
 // KILL: obelisk_sim.concurrent_kill_epoch_storage
 // KILL: obelisk_sim.concurrent_kill_epoch_check
-// ACTION: concurrent assertion control currently supports Lock, Unlock, On, Off, and Kill; control action 7 selected concurrent assertion
+// ACTION: concurrent assertion action control currently requires a single-clock one-cycle directive without expect, abort, locals, persistent state, nonoverlapped handoff, or a vacuous branching-antecedent consequent
