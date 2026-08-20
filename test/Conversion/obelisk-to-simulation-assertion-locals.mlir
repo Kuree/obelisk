@@ -1,7 +1,9 @@
 // RUN: obelisk-opt %s --obelisk-sim-prepare | FileCheck %s --check-prefix=PREPARE
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare,obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=LOWER
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' -o /dev/null
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
 
-module {
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "t", name = "t", node_id = 0 : i64, sym_name = "s0.t"} {
   }
   obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
@@ -89,7 +91,7 @@ module {
           // A false implication antecedent is a vacuous success. Keep this as
           // cover property so the local-flow lowering must schedule its pass
           // action without running antecedent match items.
-          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 36 : i64, obelisk_sim.assertion_control_target_id = 101 : i64, obelisk_sim.assertion_controlled} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 36 : i64, obelisk_sim.assertion_control_target_id = 101 : i64, obelisk_sim.assertion_controlled, obelisk_sim.assertion_kill_controlled} {
             obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 37 : i64, repetition_is_unbounded = false} {
               obelisk.sv.expression.assertion_instance attributes {argument_count = 0 : i64, argument_formal_paths = [], argument_formal_symbols = [], argument_kinds = array<i64>, has_expanded_body = true, is_recursive_property = false, is_signed = false, local_variable_count = 2 : i64, local_variable_has_initializer = array<i64: 1, 1>, local_variable_paths = ["t.p.x", "t.p.y"], local_variable_symbols = [@s1.$root::@s3.t::@s4.t::@s9.p::@s13.x, @s1.$root::@s3.t::@s4.t::@s9.p::@s14.y], node_id = 38 : i64, referenced_path = "t.p", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p, semantic_type = !obelisk.property} {
                 obelisk.sv.assertion.clocking attributes {node_id = 39 : i64} {
@@ -175,17 +177,33 @@ module {
 // LOWER: obelisk_sim.ref.store {{.*}} to %arg2
 
 // Match-call arguments are captured after preceding local assignments, while
-// the call itself executes in a detached Reactive callback.
-// LOWER: obelisk_sim.func private @[[MATCH_CALL:[^(]+]](%arg0: !obelisk_sim.context {{.*}}, %arg1: !obelisk_sim.logic<1>
+// the call itself executes in a detached Reactive callback. Disable and Kill
+// epochs are checked before its observable effect, just like action reports.
+// LOWER: obelisk_sim.func private @[[MATCH_CALL:[^(]+]](%arg0: !obelisk_sim.context {{.*}}, %arg1: !obelisk_sim.logic<1> {{.*}}, %arg2: !obelisk_sim.ref<i64> {{.*}}, %arg3: i64 {{.*}}, %arg4: !obelisk_sim.ref<i64> {{.*}}, %arg5: i64
 // LOWER-SAME: domain = 0 : i32
 // LOWER-SAME: home_region = 10 : i32
 // LOWER-SAME: obelisk_sim.concurrent_match_call
 // LOWER-SAME: obelisk_sim.detached_controls
+// LOWER: %[[CALL_KILL:.*]] = obelisk_sim.assert.kill_epoch %arg0 assertion 101 {obelisk_sim.concurrent_match_call_kill_epoch}
+// LOWER: %[[KILL_CURRENT:.*]] = arith.cmpi eq, %[[CALL_KILL]], %arg5
+// LOWER: cf.cond_br %[[KILL_CURRENT]], ^[[CHECK_DISABLE:bb[0-9]+]], ^[[KILL_CANCELED:bb[0-9]+]]
+// LOWER: ^[[CHECK_DISABLE]]:
+// LOWER: %[[CALL_DISABLE:.*]] = obelisk_sim.ref.load %arg2
+// LOWER: %[[DISABLE_CURRENT:.*]] = arith.cmpi eq, %[[CALL_DISABLE]], %arg3
+// LOWER: cf.cond_br %[[DISABLE_CURRENT]], ^[[CALL_BODY:bb[0-9]+]], ^[[DISABLE_CANCELED:bb[0-9]+]]
+// LOWER: ^[[CALL_BODY]]:
 // LOWER: obelisk_sim.display %arg0 {{.*}}(%arg1)
+// LOWER: ^[[DISABLE_CANCELED]]:
+// LOWER: obelisk_sim.return
+// LOWER: ^[[KILL_CANCELED]]:
+// LOWER: obelisk_sim.return
 
 // Each of the two locals owns a cell at every one of the three sequence ages.
 // LOWER-LABEL: obelisk_sim.func private @unit_0(
-// LOWER: %[[STATE:.*]] = obelisk_sim.ref.alloc {{.*}} -> !obelisk_sim.ref<i64>
+// LOWER: %[[INITIAL_KILL:.*]] = obelisk_sim.assert.kill_epoch %arg0 assertion 101 {obelisk_sim.concurrent_kill_epoch}
+// LOWER-NEXT: %[[KILL_EPOCH:.*]] = obelisk_sim.ref.alloc %[[INITIAL_KILL]] {obelisk_sim.concurrent_kill_epoch_storage}
+// LOWER-NEXT: %[[STATE:.*]] = obelisk_sim.ref.alloc {{.*}} -> !obelisk_sim.ref<i64>
+// LOWER: %[[DISABLE_EPOCH:.*]] = obelisk_sim.ref.alloc {{.*}} -> !obelisk_sim.ref<i64>
 // LOWER-COUNT-6: obelisk_sim.ref.alloc {{.*}} -> !obelisk_sim.ref<!obelisk_sim.logic<1>>
 // LOWER: obelisk_sim.suspend.edge posedge
 // LOWER-SAME: resume_region = 8 : i32
@@ -218,7 +236,9 @@ module {
 // LOWER: %[[MATCH_SOURCE:.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg2
 // LOWER: %[[MATCH_X:.*]] = obelisk_sim.logic.unary logical_not %[[MATCH_SOURCE]]
 // LOWER-NOT: obelisk_sim.display
-// LOWER: obelisk_sim.spawn @[[MATCH_CALL]](%arg0, %[[MATCH_X]])
+// LOWER: %[[MATCH_DISABLE_EPOCH:.*]] = obelisk_sim.ref.load %[[DISABLE_EPOCH]]
+// LOWER-NEXT: %[[MATCH_KILL_EPOCH:.*]] = obelisk_sim.ref.load %[[KILL_EPOCH]]
+// LOWER-NEXT: obelisk_sim.spawn @[[MATCH_CALL]](%arg0, %[[MATCH_X]], %[[DISABLE_EPOCH]], %[[MATCH_DISABLE_EPOCH]], %[[KILL_EPOCH]], %[[MATCH_KILL_EPOCH]])
 // LOWER-NOT: obelisk_sim.spawn @[[PASS_CALLBACK]]
 // LOWER: obelisk_sim.ref.store %[[MATCH_X]] to %[[X_AGE1:.*]]
 // LOWER-NEXT: obelisk_sim.ref.store %[[INIT_X]] to %[[Y_AGE1:.*]]
