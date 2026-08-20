@@ -434,8 +434,10 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
     if (auto unary = dyn_cast<semantic::SVUnaryAssertionExprOp>(current)) {
       if (unary.getOperatorKind() == semantic::SVAssertionUnaryOperator::Not)
         return diagnose(
-            "SVA property operator 'not' currently requires one "
-            "deterministic one-cycle boolean operand without match items");
+            "SVA property operator 'not' currently requires a bounded "
+            "one-cycle boolean operand whose pre-minimization exact "
+            "complement expansion has at most 256 alternatives and has no "
+            "vacuity, first_match, or match items");
       if (unary.getOperatorKind() ==
               semantic::SVAssertionUnaryOperator::NextTime ||
           unary.getOperatorKind() ==
@@ -1469,9 +1471,61 @@ compileFixedSequenceAlternatives(Operation *operation,
 
   if (auto unary = dyn_cast<semantic::SVUnaryAssertionExprOp>(operation)) {
     SmallVector<Operation *> children = getChildren(unary);
-    if (children.size() != 1 ||
-        unary.getOperatorKind() == semantic::SVAssertionUnaryOperator::Not)
+    if (children.size() != 1)
       return failure();
+
+    if (unary.getOperatorKind() == semantic::SVAssertionUnaryOperator::Not) {
+      FailureOr<FixedSequenceAlternatives> nested =
+          compileFixedSequenceAlternatives(children.front(), resolvedClock);
+      if (failed(nested) || nested->empty())
+        return failure();
+
+      // A one-cycle property alternative is a Boolean cube. Complement the
+      // union of those cubes with De Morgan distribution, leaving the
+      // resulting DNF to the compiler-side Boolean minimizer before monitor
+      // SSA is materialized. Temporal endpoints, vacuity, first_match, and
+      // match-item effects are deliberately excluded from this transform.
+      FixedSequenceAlternatives results(1);
+      results.front().ages.resize(1);
+      for (const FixedSequence &alternative : *nested) {
+        if (alternative.ages.size() != 1 || alternative.emptyMatch ||
+            alternative.vacuousSuccess ||
+            !alternative.firstMatchBoundaries.empty() ||
+            !alternative.ages.front().matchItems.empty())
+          return failure();
+
+        const FixedSequenceAge &age = alternative.ages.front();
+        size_t literalCount = age.predicates.size() +
+                              age.negatedPredicates.size() +
+                              age.caseGuards.size();
+        if (literalCount == 0 ||
+            results.size() > maxFixedSequenceAlternatives / literalCount)
+          return failure();
+
+        FixedSequenceAlternatives expanded;
+        expanded.reserve(results.size() * literalCount);
+        for (const FixedSequence &prefix : results) {
+          for (Operation *predicate : age.predicates) {
+            FixedSequence result = prefix;
+            result.ages.front().negatedPredicates.push_back(predicate);
+            expanded.push_back(std::move(result));
+          }
+          for (Operation *predicate : age.negatedPredicates) {
+            FixedSequence result = prefix;
+            result.ages.front().predicates.push_back(predicate);
+            expanded.push_back(std::move(result));
+          }
+          for (FixedSequenceAge::CaseGuard guard : age.caseGuards) {
+            FixedSequence result = prefix;
+            guard.negated = !guard.negated;
+            result.ages.front().caseGuards.push_back(guard);
+            expanded.push_back(std::move(result));
+          }
+        }
+        results = std::move(expanded);
+      }
+      return results;
+    }
 
     int64_t minimum = 0;
     int64_t maximum = 0;

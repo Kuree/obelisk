@@ -20,6 +20,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
         }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.b", lifetime = 1 : i32, name = "b", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s7.b"} {
         }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.c", lifetime = 1 : i32, name = "c", node_id = 223 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s223.c"} {
+        }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 8 : i64, procedure_kind = 2 : i32, sym_name = "s8", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 9 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 10 : i64} {
@@ -155,17 +157,19 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
                 obelisk.sv.expression.named_value attributes {node_id = 70 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                 }
               }
-              obelisk.sv.assertion.case attributes {has_default = true, item_group_sizes = [1], node_id = 71 : i64} {
-                obelisk.sv.expression.named_value attributes {node_id = 72 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
-                }
-                obelisk.sv.expression.integer_literal attributes {constant_value = "1'b0", node_id = 73 : i64, semantic_type = !obelisk.ranged_packed_array<0 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
-                }
-                obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 74 : i64, repetition_is_unbounded = false} {
-                  obelisk.sv.expression.named_value attributes {node_id = 75 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+              obelisk.sv.assertion.unary attributes {has_range = false, node_id = 246 : i64, operator_kind = 0 : i32, range_is_unbounded = false} {
+                obelisk.sv.assertion.case attributes {has_default = true, item_group_sizes = [1], node_id = 71 : i64} {
+                  obelisk.sv.expression.named_value attributes {node_id = 72 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                   }
-                }
-                obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 76 : i64, repetition_is_unbounded = false} {
-                  obelisk.sv.expression.named_value attributes {node_id = 78 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "1'b0", node_id = 73 : i64, semantic_type = !obelisk.ranged_packed_array<0 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  }
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 74 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 75 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 76 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 78 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
                   }
                 }
               }
@@ -195,6 +199,84 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
                 obelisk.sv.expression.named_value attributes {node_id = 90 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                 }
                 obelisk.sv.expression.named_value attributes {node_id = 91 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+            }
+          }
+        }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 107 : i64, procedure_kind = 2 : i32, sym_name = "s107", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 200 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 201 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 202 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 203 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.unary attributes {has_range = false, node_id = 204 : i64, operator_kind = 0 : i32, range_is_unbounded = false} {
+                obelisk.sv.assertion.binary attributes {node_id = 205 : i64, operator_kind = 1 : i32} {
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 206 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 207 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 208 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {node_id = 209 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 108 : i64, procedure_kind = 2 : i32, sym_name = "s108", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 210 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 211 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 212 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 213 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.unary attributes {has_range = false, node_id = 214 : i64, operator_kind = 0 : i32, range_is_unbounded = false} {
+                obelisk.sv.assertion.binary attributes {node_id = 224 : i64, operator_kind = 1 : i32} {
+                  obelisk.sv.assertion.binary attributes {node_id = 225 : i64, operator_kind = 1 : i32} {
+                    obelisk.sv.assertion.binary attributes {node_id = 226 : i64, operator_kind = 0 : i32} {
+                      obelisk.sv.assertion.unary attributes {has_range = false, node_id = 227 : i64, operator_kind = 0 : i32, range_is_unbounded = false} {
+                        obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 228 : i64, repetition_is_unbounded = false} {
+                          obelisk.sv.expression.named_value attributes {node_id = 229 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                          }
+                        }
+                      }
+                      obelisk.sv.assertion.unary attributes {has_range = false, node_id = 230 : i64, operator_kind = 0 : i32, range_is_unbounded = false} {
+                        obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 231 : i64, repetition_is_unbounded = false} {
+                          obelisk.sv.expression.named_value attributes {node_id = 232 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                          }
+                        }
+                      }
+                    }
+                    obelisk.sv.assertion.binary attributes {node_id = 233 : i64, operator_kind = 0 : i32} {
+                      obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 234 : i64, repetition_is_unbounded = false} {
+                        obelisk.sv.expression.named_value attributes {node_id = 235 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                        }
+                      }
+                      obelisk.sv.assertion.unary attributes {has_range = false, node_id = 236 : i64, operator_kind = 0 : i32, range_is_unbounded = false} {
+                        obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 237 : i64, repetition_is_unbounded = false} {
+                          obelisk.sv.expression.named_value attributes {node_id = 238 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s223.c, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                          }
+                        }
+                      }
+                    }
+                  }
+                  obelisk.sv.assertion.binary attributes {node_id = 239 : i64, operator_kind = 0 : i32} {
+                    obelisk.sv.assertion.unary attributes {has_range = false, node_id = 240 : i64, operator_kind = 0 : i32, range_is_unbounded = false} {
+                      obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 241 : i64, repetition_is_unbounded = false} {
+                        obelisk.sv.expression.named_value attributes {node_id = 242 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                        }
+                      }
+                    }
+                    obelisk.sv.assertion.unary attributes {has_range = false, node_id = 243 : i64, operator_kind = 0 : i32, range_is_unbounded = false} {
+                      obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 244 : i64, repetition_is_unbounded = false} {
+                        obelisk.sv.expression.named_value attributes {node_id = 245 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s223.c, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -259,13 +341,14 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: [[NONVACUOUS_HIT:%.*]] = arith.andi [[B_TRUTH]], [[A_TRUTH]]
 // CHECK: cf.cond_br [[NONVACUOUS_HIT]],
 
-// Z3 proves that both the matching and default case arms require the same
-// predicate, eliminating the selector and its four-state equality guard.
+// Negating a case with identical matching/default bodies flips both positive
+// and negative case guards. The minimizer proves the result is just `!b`,
+// eliminating the selector and its four-state equality guard.
 // CHECK-LABEL: obelisk_sim.func private @unit_6(
 // CHECK-SAME: obelisk_sim.sva_boolean_alternatives_after = 1 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_before = 2 : i64
+// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_before = 4 : i64
 // CHECK-SAME: obelisk_sim.sva_boolean_literals_after = 1 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_before = 4 : i64
+// CHECK-SAME: obelisk_sim.sva_boolean_literals_before = 8 : i64
 // CHECK-SAME: obelisk_sim.sva_boolean_solver = "z3"
 // CHECK-COUNT-1: obelisk_sim.assert.sampled_read
 // CHECK-NOT: obelisk_sim.logic.compare case_eq
@@ -279,3 +362,27 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: [[CASE_MATCH:%.*]] = obelisk_sim.logic.compare case_eq
 // CHECK: [[CASE_HIT:%.*]] = arith.andi [[CASE_BODY]], [[CASE_MATCH]]
 // CHECK: cf.cond_br [[CASE_HIT]],
+
+// `not (a or b)` distributes into the single exact cube `!a && !b`.
+// CHECK-LABEL: obelisk_sim.func private @unit_8(
+// CHECK: obelisk_sim.assert.sampled_read
+// CHECK: arith.xori
+// CHECK: obelisk_sim.assert.sampled_read
+// CHECK: arith.xori
+// CHECK: arith.andi
+// CHECK: arith.xori
+// CHECK-NOT: obelisk_sim.branching_sequence_monitor
+
+// Negating `(!a && !b) || (a && !c) || (!b && !c)` produces the consensus
+// DNF `(a && c) || (!a && b) || (b && c)`. Duplicate/contradiction cleanup
+// cannot remove the consensus cube; Z3 proves it redundant before lowering.
+// CHECK-LABEL: obelisk_sim.func private @unit_9(
+// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
+// CHECK-SAME: obelisk_sim.branching_sequence_monitor
+// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_after = 2 : i64
+// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_before = 8 : i64
+// CHECK-SAME: obelisk_sim.sva_boolean_literals_after = 4 : i64
+// CHECK-SAME: obelisk_sim.sva_boolean_literals_before = 24 : i64
+// CHECK-SAME: obelisk_sim.sva_boolean_solver = "z3"
+// CHECK-COUNT-3: obelisk_sim.assert.sampled_read
+// CHECK-NOT: obelisk_sim.assert.sampled_read
