@@ -1,10 +1,10 @@
-// RUN: not obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
 
-// `cover sequence` observes every successful endpoint, so the strong/weak
-// property equivalence cannot erase first_match for this directive.
-// CHECK: one direct outer first_match without match items is allowed for a sequence property, but not cover sequence
-
-module {
+// Direct first_match changes cover-sequence endpoint multiplicity: every
+// source attempt is consumed on its earliest eligible terminal match.
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {
   }
   obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
@@ -48,3 +48,32 @@ module {
     }
   }
 }
+
+// The direct wrapper selects the aggregate monitor but deliberately omits the
+// plain-cover all-endpoints mode. Terminal success is both reported and used
+// to clear the eligible count, so a later true terminal cannot report the
+// same source attempt again.
+// CHECK-NOT: @unit_0.$concurrent_eos
+// CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK-SAME: obelisk_sim.first_match_monitor
+// CHECK-SAME: obelisk_sim.persistent_delay_aggregate_tokens
+// CHECK-SAME: obelisk_sim.persistent_delay_minimum = 1 : i64
+// CHECK-SAME: obelisk_sim.persistent_delay_prefix_horizon = 1 : i64
+// CHECK-SAME: obelisk_sim.persistent_first_match_equivalence
+// CHECK-NOT: obelisk_sim.persistent_delay_all_matches
+// CHECK-NOT: obelisk_sim.ref.alloc
+// CHECK: obelisk_sim.assert.sampled_read
+// CHECK: obelisk_sim.logic.is_true
+// CHECK: obelisk_sim.assert.sampled_read
+// CHECK-NEXT: %[[TERMINAL:[[:alnum:]_]+]] = obelisk_sim.logic.is_true
+// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK-NEXT: %[[SUCCESS_ZERO:[[:alnum:]_]+]] = arith.constant {{.*}}0 : i64
+// CHECK-NEXT: %[[SUCCESS:[[:alnum:]_]+]] = arith.select %[[TERMINAL]], %[[ELIGIBLE:[[:alnum:]_]+]], %[[SUCCESS_ZERO]] : i64
+// CHECK-NEXT: %[[NEXT_ZERO:[[:alnum:]_]+]] = arith.constant {{.*}}0 : i64
+// CHECK-NEXT: %[[NEXT:[[:alnum:]_]+]] = arith.select %[[TERMINAL]], %[[NEXT_ZERO]], %[[ELIGIBLE]] : i64
+// CHECK: cf.br ^{{.*}}(%[[SUCCESS]] : i64)
+// CHECK: cf.cond_br %{{.*}}, ^{{.*}}, ^{{.*}}(%{{.*}}, %[[NEXT]] : i64, i64)
+// CHECK-COUNT-1: obelisk_sim.spawn @unit_0.fork.9.0.0
+// CHECK-NOT: obelisk_sim.spawn @unit_0.fork.9.0.0
+// CHECK-NOT: obelisk_sim.first_match_priority
+// CHECK-NOT: obelisk.sv.assertion

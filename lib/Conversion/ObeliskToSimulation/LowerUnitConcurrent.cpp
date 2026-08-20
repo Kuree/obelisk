@@ -3899,13 +3899,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                << "implication/followed-by antecedent match items require "
                   "assertion local flow",
            failure();
-  if (hasPersistentDelay &&
-      (localInstance || expectMonitor || (firstMatch && coverSequence)))
+  if (hasPersistentDelay && (localInstance || expectMonitor))
     return emitError(getSemanticLocation(property))
                << "unbounded sequence delay ##[M:$] currently requires one "
                   "deterministic sequence without locals or expect; one "
-                  "direct outer first_match without match items is allowed "
-                  "for a sequence property, but not cover sequence",
+                  "direct outer first_match without match items is allowed",
            failure();
   if (hasPersistentDelay && implication &&
       (branchingAntecedent || antecedentSequence.ages.size() != 1 ||
@@ -6533,7 +6531,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         function->setAttr("obelisk_sim.persistent_delay_nonoverlapped",
                           builder.getUnitAttr());
     }
-    if (coverSequence)
+    bool retainEveryCoverEndpoint = coverSequence && !firstMatch;
+    if (retainEveryCoverEndpoint)
       function->setAttr("obelisk_sim.persistent_delay_all_matches",
                         builder.getUnitAttr());
 
@@ -6816,10 +6815,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       return failure();
     Value successCount = selectCount(*terminal, eligibleNow);
     Value nextEligible =
-        coverSequence ? eligibleNow
-                      : arith::SelectOp::create(builder, location, *terminal,
-                                                zero, eligibleNow)
-                            .getResult();
+        retainEveryCoverEndpoint
+            ? eligibleNow
+            : arith::SelectOp::create(builder, location, *terminal, zero,
+                                      eligibleNow)
+                  .getResult();
     sim::SimRefStoreOp::create(builder, location, nextEligible,
                                eligibleStorage);
     scheduleCount(successCount, true);
