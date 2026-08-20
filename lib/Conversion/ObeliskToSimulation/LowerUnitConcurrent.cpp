@@ -3424,8 +3424,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     FailureOr<FixedSequenceAlternatives> rhs = compileFixedSequenceAlternatives(
         directFirstMatchConsequent ? directFirstMatchConsequent : rhsOperand,
         clock);
-    FailureOr<PersistentDelaySequence> delayedRhs =
-        compilePersistentDelay(rhsOperand);
+    FailureOr<PersistentDelaySequence> delayedRhs = compilePersistentDelay(
+        directFirstMatchConsequentSequence ? directFirstMatchConsequentSequence
+                                           : rhsOperand);
     FailureOr<PersistentUnaryProperty> unaryRhs =
         compilePersistentUnary(rhsOperand);
     FailureOr<PersistentUntilProperty> untilRhs =
@@ -3514,7 +3515,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
              failure();
     }
     antecedentAlternativeAdmissionCount = lhs->size();
-    if (succeeded(repetitionRhs) && directFirstMatchConsequentSequence) {
+    if ((succeeded(delayedRhs) || succeeded(repetitionRhs)) &&
+        directFirstMatchConsequentSequence) {
       erasedConsequentFirstMatch = true;
       function->setAttr("obelisk_sim.consequent_first_match_equivalence",
                         builder.getUnitAttr());
@@ -3630,11 +3632,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       function->setAttr("obelisk_sim.followed_by_monitor",
                         builder.getUnitAttr());
   } else {
-    if (FailureOr<PersistentDelaySequence> delay =
-            compilePersistentDelay(property);
+    if (FailureOr<PersistentDelaySequence> delay = compilePersistentDelay(
+            outerFirstMatchSequence ? outerFirstMatchSequence : property);
         succeeded(delay)) {
       persistentDelay = std::move(*delay);
       hasPersistentDelay = true;
+      if (outerFirstMatchSequence)
+        function->setAttr("obelisk_sim.persistent_first_match_equivalence",
+                          builder.getUnitAttr());
       sequence.ages.resize(1);
     } else if (FailureOr<PersistentUnaryProperty> unary =
                    compilePersistentUnary(property);
@@ -3894,11 +3899,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                << "implication/followed-by antecedent match items require "
                   "assertion local flow",
            failure();
-  if (hasPersistentDelay && (localInstance || expectMonitor || firstMatch))
+  if (hasPersistentDelay &&
+      (localInstance || expectMonitor || (firstMatch && coverSequence)))
     return emitError(getSemanticLocation(property))
                << "unbounded sequence delay ##[M:$] currently requires one "
-                  "deterministic sequence without locals, first_match, or "
-                  "expect",
+                  "deterministic sequence without locals or expect; one "
+                  "direct outer first_match without match items is allowed "
+                  "for a sequence property, but not cover sequence",
            failure();
   if (hasPersistentDelay && implication &&
       (branchingAntecedent || antecedentSequence.ages.size() != 1 ||
