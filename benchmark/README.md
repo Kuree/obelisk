@@ -29,7 +29,9 @@ each suite. The two suites differ only in what a "test" is:
   Verilator's `driver.py` would produce) so clocked designs advance. Each test
   runs in its own temporary directory, with `t/` linked to the corpus and
   `TEST_OBJ_DIR` pointing at that directory, so a test reads its data file and
-  writes its log where upstream's driver puts them. A handful are **skipped**:
+  writes its log where upstream's driver puts them. A descriptor asking for
+  `timing_loop=True` gets driver.py's other shell, which clocks the design once
+  per time unit instead of once per five. A handful are **skipped**:
   see *Skipped tests* below.
 - **ivtest** — Icarus's `ivltests` corpus, described by per-test list entries in
   JSON, legacy inline, or VPI-regression form. VPI entries build their C/C++

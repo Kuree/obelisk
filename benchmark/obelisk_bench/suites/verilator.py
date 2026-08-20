@@ -49,6 +49,12 @@ SIM_TIME_CYCLES = re.compile(
 CYCLES_DEFAULT = re.compile(
     r"^\s*test\.cycles\s*=\s*\(.*?\bif\s+test\.benchmark\s+else\s+(\d+)\s*\)\s*$",
     re.MULTILINE)
+# `test.compile(timing_loop=True)` asks driver.py for a main loop that clocks
+# the design once per time unit and lets pending events set the next time slot,
+# instead of the five-substep loop below. That clock runs five times faster, so
+# a design counting to a late cycle only reaches it under this spelling.
+TIMING_LOOP = re.compile(r"^\s*test\.compile\(.*\btiming_loop\s*=\s*True",
+                         re.MULTILINE)
 TRACE_DUMPFILE = "simx.vcd"
 
 EXPECTED_ERROR = re.compile(r"_(bad|unsup|fail\d*)$")
@@ -317,7 +323,16 @@ def detect_sim_time(descriptor: Path) -> int:
     return SIM_TIME
 
 
-def make_top_shell(inputs: list[str], sim_time: int = SIM_TIME) -> str:
+def detect_timing_loop(descriptor: Path) -> bool:
+    """Return whether the test's descriptor asks for driver.py's timing loop."""
+    if not descriptor.exists():
+        return False
+    return bool(TIMING_LOOP.search(
+        descriptor.read_text(encoding="utf-8", errors="replace")))
+
+
+def make_top_shell(inputs: list[str], sim_time: int = SIM_TIME,
+                   timing_loop: bool = False) -> str:
     """Generate the clock-driving top module, matching driver.py's _make_top_v."""
     lines = ["module top;"]
     for name in sorted(inputs):
@@ -334,6 +349,20 @@ def make_top_shell(inputs: list[str], sim_time: int = SIM_TIME) -> str:
         lines.append("        fastclk = 0;")
     if "clk" in inputs:
         lines.append("        clk = 0;")
+    if timing_loop:
+        # driver.py's timing-loop main starts at time zero and toggles `clk`
+        # once per time unit, leaving `fastclk` at its initial value. Delays
+        # inside the design already place its own events, so the SystemVerilog
+        # scheduler covers what the C++ loop does with nextTimeSlot().
+        lines.append(f"        while ($time < {sim_time}) begin")
+        if "clk" in inputs:
+            lines.append("          #1 clk = !clk;")
+        else:
+            lines.append("          #1;")
+        lines.append("        end")
+        lines.append("    end")
+        lines.append("endmodule")
+        return "\n".join(lines) + "\n"
     lines.append("        #10;")
     lines.append(f"        while ($time < {sim_time}) begin")
     # driver.py's main loop: five sub-steps of one time unit, `fastclk` toggling
@@ -392,7 +421,8 @@ def judge_one(obelisk: str, top: Path, timeout: float,
         shell = Path(tmp) / "top.v"
         shell.write_text(
             make_top_shell(detect_inputs(top_text),
-                           detect_sim_time(top.with_suffix(".py"))),
+                           detect_sim_time(top.with_suffix(".py")),
+                           detect_timing_loop(top.with_suffix(".py"))),
             encoding="utf-8")
         binary = Path(tmp) / "sim"
         # -y/+libext lets separate submodule files resolve; +incdir for includes.

@@ -95,10 +95,38 @@ class TopShellTest(unittest.TestCase):
         body = shell.split("while", 1)[1]
         self.assertEqual(body.count("fastclk = !fastclk;"), 5)
 
+    def test_timing_loop_clocks_once_per_time_unit(self):
+        # driver.py's timing-loop main toggles clk every time unit and starts
+        # at time zero, so a posedge lands every 2 units instead of every 10.
+        shell = verilator.make_top_shell(["clk"], timing_loop=True)
+        self.assertNotIn("#10;", shell)
+        body = shell.split("while", 1)[1]
+        self.assertEqual(body.count("#1 clk = !clk;"), 1)
+
     def test_ports_are_declared_and_connected(self):
         shell = verilator.make_top_shell(["clk"])
         self.assertIn("reg clk;", shell)
         self.assertIn(".clk (clk)", shell)
+
+
+class TimingLoopDescriptorTest(unittest.TestCase):
+    def descriptor(self, text: str) -> bool:
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            path = Path(tmp) / "t_x.py"
+            path.write_text(text, encoding="utf-8")
+            return verilator.detect_timing_loop(path)
+
+    def test_compile_asking_for_the_timing_loop_is_detected(self):
+        self.assertTrue(self.descriptor(
+            "test.compile(timing_loop=True, verilator_flags2=['--timing'])\n"))
+
+    def test_an_ordinary_compile_keeps_the_sub_step_loop(self):
+        self.assertFalse(self.descriptor("test.compile()\n"))
+
+    def test_a_missing_descriptor_keeps_the_sub_step_loop(self):
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            self.assertFalse(
+                verilator.detect_timing_loop(Path(tmp) / "absent.py"))
 
 
 class TraceDumpfileTest(unittest.TestCase):
