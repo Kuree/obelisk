@@ -124,20 +124,35 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-SAME: resume_region = 8 : i32
 // CHECK: %[[SUCCESS:.*]] = arith.constant {{.*}}true
 // CHECK: obelisk_sim.ref.store %[[SUCCESS]]
+// CHECK: obelisk_sim.ref.store {{.*}}true
 // CHECK-NOT: obelisk_sim.ref.store
 // CHECK: obelisk_sim.event.trigger
 // CHECK-NOT: obelisk_sim.ref.store
 // CHECK-NOT: obelisk_sim.event.trigger
 // CHECK: %[[FAILURE:.*]] = arith.constant {{.*}}false
 // CHECK: obelisk_sim.ref.store %[[FAILURE]]
+// CHECK: obelisk_sim.ref.store {{.*}}true
 // CHECK-NOT: obelisk_sim.ref.store
 // CHECK: obelisk_sim.event.trigger
-// CHECK-NOT: obelisk_sim.ref.store
 // CHECK-NOT: obelisk_sim.event.trigger
+// The first sampled clock marks the evaluation started for EOS handling.
+// CHECK: obelisk_sim.ref.store {{.*}}true
+// CHECK-NOT: obelisk_sim.ref.store
 // CHECK-COUNT-4: obelisk_sim.assert.sampled_read
 // CHECK-NOT: obelisk_sim.assert.sampled_read
 // CHECK: cf.cond_br
 // CHECK-NOT: obelisk_sim.suspend.edge
+
+// CHECK: obelisk_sim.func private @[[MONITOR]].$expect_eos.11(
+// CHECK-SAME: obelisk_sim.expect_eos_coordinator
+// CHECK-SAME: obelisk_sim.expect_operand_strength = "strong"
+// CHECK: obelisk_sim.ref.load
+// CHECK: cf.cond_br
+// CHECK: arith.constant {{.*}}false
+// CHECK: obelisk_sim.ref.store
+// CHECK: arith.constant {{.*}}true
+// CHECK: obelisk_sim.ref.store
+// CHECK: obelisk_sim.event.trigger
 
 // The procedural caller blocks on the monitor's private event, resumes in
 // Reactive, and dispatches the selected pass/fail action exactly once.

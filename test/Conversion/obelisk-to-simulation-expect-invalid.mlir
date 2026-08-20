@@ -35,4 +35,4 @@ module {
   }
 }
 
-// CHECK: expect currently requires one deterministic fixed sequence or one-cycle Boolean alternatives without locals, implication/followed-by, disable iff, or match items
+// CHECK: expect currently requires one deterministic fixed sequence or bounded alternatives without first_match, locals, implication/followed-by, disable iff, or match items

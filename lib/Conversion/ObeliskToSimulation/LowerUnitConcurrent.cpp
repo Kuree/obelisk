@@ -2441,6 +2441,64 @@ static Operation *unwrapAssertionInstance(Operation *operation) {
   }
 }
 
+/// Return the uniform intrinsic end strength of a directly bounded temporal
+/// property, or std::nullopt when its completion depends on progress phase.
+/// A direct temporal unary over an EOS-insensitive one-cycle property is
+/// uniform. An and/or tree is uniform only when every leaf has the same rule.
+static std::optional<bool>
+analyzeUniformIntrinsicEndStrength(Operation *candidate,
+                                   Operation *resolvedClock) {
+  candidate = unwrapAssertionInstance(candidate);
+  if (!candidate)
+    return std::nullopt;
+  if (auto unary = dyn_cast<semantic::SVUnaryAssertionExprOp>(candidate)) {
+    bool strong = unary.getOperatorKind() ==
+                      semantic::SVAssertionUnaryOperator::SNextTime ||
+                  unary.getOperatorKind() ==
+                      semantic::SVAssertionUnaryOperator::SAlways ||
+                  unary.getOperatorKind() ==
+                      semantic::SVAssertionUnaryOperator::SEventually;
+    bool temporal =
+        strong ||
+        unary.getOperatorKind() ==
+            semantic::SVAssertionUnaryOperator::NextTime ||
+        unary.getOperatorKind() == semantic::SVAssertionUnaryOperator::Always ||
+        unary.getOperatorKind() ==
+            semantic::SVAssertionUnaryOperator::Eventually;
+    SmallVector<Operation *> children = getChildren(unary);
+    if (!temporal || children.size() != 1)
+      return std::nullopt;
+    FailureOr<FixedSequenceAlternatives> nested =
+        compileFixedSequenceAlternatives(children.front(), resolvedClock);
+    if (failed(nested) || nested->empty() ||
+        llvm::any_of(*nested, [](const FixedSequence &alternative) {
+          return alternative.ages.size() != 1 || alternative.emptyMatch ||
+                 alternative.vacuousSuccess ||
+                 !alternative.firstMatchBoundaries.empty() ||
+                 !alternative.ages.front().matchItems.empty() ||
+                 alternative.intrinsicEndStrong.has_value() ||
+                 alternative.hasIntrinsicEndStrength;
+        }))
+      return std::nullopt;
+    return strong;
+  }
+  auto binary = dyn_cast<semantic::SVBinaryAssertionExprOp>(candidate);
+  if (!binary ||
+      (binary.getOperatorKind() != semantic::SVAssertionBinaryOperator::And &&
+       binary.getOperatorKind() != semantic::SVAssertionBinaryOperator::Or))
+    return std::nullopt;
+  SmallVector<Operation *> children = getChildren(binary);
+  if (children.size() != 2)
+    return std::nullopt;
+  std::optional<bool> lhs =
+      analyzeUniformIntrinsicEndStrength(children.front(), resolvedClock);
+  std::optional<bool> rhs =
+      analyzeUniformIntrinsicEndStrength(children.back(), resolvedClock);
+  if (!lhs || lhs != rhs)
+    return std::nullopt;
+  return lhs;
+}
+
 } // namespace
 
 LogicalResult
@@ -3085,6 +3143,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   bool consequentAlternativesAdmissionEligible = true;
   bool consequentEndStrengthComposable = true;
   std::optional<bool> consequentUniformIntrinsicEndStrong;
+  std::optional<bool> expectUniformIntrinsicEndStrong;
   auto recordBooleanMinimization = [&](const BooleanMinimizationStats &stats,
                                        StringRef scope) {
     auto accumulate = [&](StringRef name, uint64_t value) {
@@ -3218,67 +3277,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             return alternative.hasIntrinsicEndStrength;
           });
       if (hasIntrinsicEndStrength) {
-        // One uniform intrinsic completion rule is sufficient for every live
-        // alternative word. Admit a direct bounded temporal unary over an
-        // EOS-insensitive one-cycle Boolean property, plus and/or trees whose
-        // leaves all have that same rule. Mixed or nested strength can change
-        // after an intermediate phase and still requires per-progress
-        // metadata.
-        auto analyzeUniformIntrinsicEndStrength =
-            [&](auto &self, Operation *candidate) -> std::optional<bool> {
-          candidate = unwrapAssertionInstance(candidate);
-          if (!candidate)
-            return std::nullopt;
-          if (auto unary =
-                  dyn_cast<semantic::SVUnaryAssertionExprOp>(candidate)) {
-            bool strong = unary.getOperatorKind() ==
-                              semantic::SVAssertionUnaryOperator::SNextTime ||
-                          unary.getOperatorKind() ==
-                              semantic::SVAssertionUnaryOperator::SAlways ||
-                          unary.getOperatorKind() ==
-                              semantic::SVAssertionUnaryOperator::SEventually;
-            bool temporal = strong ||
-                            unary.getOperatorKind() ==
-                                semantic::SVAssertionUnaryOperator::NextTime ||
-                            unary.getOperatorKind() ==
-                                semantic::SVAssertionUnaryOperator::Always ||
-                            unary.getOperatorKind() ==
-                                semantic::SVAssertionUnaryOperator::Eventually;
-            SmallVector<Operation *> children = getChildren(unary);
-            if (!temporal || children.size() != 1)
-              return std::nullopt;
-            FailureOr<FixedSequenceAlternatives> nested =
-                compileFixedSequenceAlternatives(children.front(), clock);
-            if (failed(nested) || nested->empty() ||
-                llvm::any_of(*nested, [](const FixedSequence &alternative) {
-                  return alternative.ages.size() != 1 ||
-                         alternative.emptyMatch || alternative.vacuousSuccess ||
-                         !alternative.firstMatchBoundaries.empty() ||
-                         !alternative.ages.front().matchItems.empty() ||
-                         alternative.intrinsicEndStrong.has_value() ||
-                         alternative.hasIntrinsicEndStrength;
-                }))
-              return std::nullopt;
-            return strong;
-          }
-          auto binary = dyn_cast<semantic::SVBinaryAssertionExprOp>(candidate);
-          if (!binary || (binary.getOperatorKind() !=
-                              semantic::SVAssertionBinaryOperator::And &&
-                          binary.getOperatorKind() !=
-                              semantic::SVAssertionBinaryOperator::Or))
-            return std::nullopt;
-          SmallVector<Operation *> children = getChildren(binary);
-          if (children.size() != 2)
-            return std::nullopt;
-          std::optional<bool> lhsStrength = self(self, children.front());
-          std::optional<bool> rhsStrength = self(self, children.back());
-          if (!lhsStrength || lhsStrength != rhsStrength)
-            return std::nullopt;
-          return lhsStrength;
-        };
         consequentUniformIntrinsicEndStrong =
-            analyzeUniformIntrinsicEndStrength(
-                analyzeUniformIntrinsicEndStrength, operands.back());
+            analyzeUniformIntrinsicEndStrength(operands.back(), clock);
         consequentEndStrengthComposable =
             consequentUniformIntrinsicEndStrong.has_value();
       }
@@ -3409,11 +3409,38 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
            candidate.firstMatchBoundaries.empty() &&
            candidate.ages.front().matchItems.empty();
   };
+  auto isBoundedBranchingExpectSequence = [](const FixedSequence &candidate) {
+    return !candidate.ages.empty() && candidate.firstMatchBoundaries.empty() &&
+           llvm::all_of(candidate.ages, [](const FixedSequenceAge &age) {
+             return age.matchItems.empty();
+           });
+  };
   bool expectOneCycleBoolean =
       expectMonitor &&
       (branchingSequence
            ? llvm::all_of(sequenceAlternatives, isOneCycleExpectSequence)
            : isOneCycleExpectSequence(sequence));
+  bool expectBoundedBranching =
+      expectMonitor && branchingSequence &&
+      llvm::all_of(sequenceAlternatives, isBoundedBranchingExpectSequence);
+  bool expectHasIntrinsicEndStrength =
+      expectMonitor &&
+      (sequence.hasIntrinsicEndStrength ||
+       llvm::any_of(sequenceAlternatives, [](const FixedSequence &alternative) {
+         return alternative.hasIntrinsicEndStrength;
+       }));
+  if (expectHasIntrinsicEndStrength) {
+    expectUniformIntrinsicEndStrong =
+        analyzeUniformIntrinsicEndStrength(property, clock);
+    if (!expectUniformIntrinsicEndStrong)
+      return emitError(getSemanticLocation(property))
+                 << "expect over bounded temporal property operators "
+                    "currently requires one uniform weak or strong completion "
+                    "rule composed from direct operators; mixed or "
+                    "phase-sensitive intrinsic strength requires per-progress "
+                    "end-of-simulation state",
+             failure();
+  }
   bool deterministicImplicationNeedsEOS =
       implication && !branchingAntecedent && !branchingConsequent &&
       !hasPersistentDelay && antecedentSequence.ages.size() == 1 &&
@@ -3654,13 +3681,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         builder.getStringAttr(
             semantic::stringifySVAssertionAbortAction(abort.getAction())));
   }
-  if (branchingSequence &&
-      (localInstance || implication ||
-       (expectMonitor && !expectOneCycleBoolean)))
+  if (branchingSequence && (localInstance || implication ||
+                            (expectMonitor && !expectBoundedBranching)))
     return emitError(getSemanticLocation(property))
                << "branching bounded sequences currently require a "
                   "concurrent directive without locals or implication, or "
-                  "an expect statement over one-cycle Boolean alternatives",
+                  "an expect statement without first_match or match items",
            failure();
   if (endStrength && (implication || hasPersistentUntil || hasPersistentUnary ||
                       expectMonitor || coverSequence))
@@ -3704,20 +3730,21 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
   if (expectMonitor) {
     if (localInstance || implication || disable ||
-        (branchingSequence && !expectOneCycleBoolean) ||
-        llvm::any_of(sequence.ages, [](const FixedSequenceAge &age) {
-          return !age.matchItems.empty();
-        }) ||
+        (branchingSequence && !expectBoundedBranching) ||
+        llvm::any_of(sequence.ages,
+                     [](const FixedSequenceAge &age) {
+                       return !age.matchItems.empty();
+                     }) ||
         llvm::any_of(sequenceAlternatives,
                      [](const FixedSequence &alternative) {
-                       return llvm::any_of(
-                           alternative.ages, [](const FixedSequenceAge &age) {
-                             return !age.matchItems.empty();
-                           });
+                       return llvm::any_of(alternative.ages,
+                                           [](const FixedSequenceAge &age) {
+                                             return !age.matchItems.empty();
+                                           });
                      }))
       return emitError(location)
                  << "expect currently requires one deterministic fixed "
-                    "sequence or one-cycle Boolean alternatives without "
+                    "sequence or bounded alternatives without first_match, "
                     "locals, implication/followed-by, disable iff, or match "
                     "items",
              failure();
@@ -3744,6 +3771,165 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Block *successBlock = addBlock();
     Block *failureBlock = addBlock();
     Block *wait = addBlock();
+    Type expectStateType = builder.getI64Type();
+    Value expectZero;
+    SmallVector<Value> expectBranchingStateWords;
+    if (expectBoundedBranching && !expectOneCycleBoolean) {
+      expectZero = arith::ConstantOp::create(builder, location, expectStateType,
+                                             builder.getI64IntegerAttr(0));
+      size_t wordCount = (sequenceAlternatives.size() + 63) / 64;
+      expectBranchingStateWords.reserve(wordCount);
+      for (size_t word = 0; word < wordCount; ++word)
+        expectBranchingStateWords.push_back(sim::SimRefAllocOp::create(
+            builder, location,
+            sim::RefType::get(function.getContext(), expectStateType),
+            expectZero));
+    }
+
+    // Keep private start/completion bits so a final-phase coordinator can
+    // close a started, still-pending one-shot evaluation with its implicit or
+    // intrinsic strength without duplicating an ordinary-clock result.
+    Value expectNotDone = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+    Value expectDoneStorage = sim::SimRefAllocOp::create(
+        builder, location,
+        sim::RefType::get(function.getContext(), builder.getI1Type()),
+        expectNotDone);
+    Value expectStartedStorage = sim::SimRefAllocOp::create(
+        builder, location,
+        sim::RefType::get(function.getContext(), builder.getI1Type()),
+        expectNotDone);
+    auto design = function->getParentOfType<sim::SimDesignOp>();
+    if (!design)
+      return function.emitError(
+                 "expect end-of-simulation completion requires a design"),
+             failure();
+    uint64_t expectNode = 0;
+    if (auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id"))
+      expectNode = nodeAttr.getValue().getZExtValue();
+    uint64_t scopeID = 0;
+    std::string parentHierarchy = function.getSymName().str();
+    uint64_t parentID = function.getCodeUnitId().value_or(0);
+    for (sim::SimCodeUnitDeclOp declaration :
+         design.getBody().front().getOps<sim::SimCodeUnitDeclOp>()) {
+      if (declaration.getId() != parentID)
+        continue;
+      scopeID = declaration.getScopeId();
+      parentHierarchy = declaration.getHierarchicalName().str();
+      break;
+    }
+
+    std::string finalSymbol =
+        (function.getSymName() + ".$expect_eos." + Twine(expectNode)).str();
+    std::string finalIdentity =
+        (function.getSymName() + ".$expect_eos_identity." + Twine(expectNode))
+            .str();
+    uint64_t finalCodeUnitID = stableCodeUnitID(finalIdentity);
+    std::string finalHierarchy =
+        (Twine(parentHierarchy) + ".$expect_eos." + Twine(expectNode)).str();
+    Value context = function.getBody().front().getArgument(0);
+    SmallVector<Value> finalCaptures{context, completed, resultStorage,
+                                     expectDoneStorage, expectStartedStorage};
+    SmallVector<Type> finalInputs;
+    SmallVector<DictionaryAttr> finalArgumentAttrs;
+    for (auto [index, capture] : llvm::enumerate(finalCaptures)) {
+      finalInputs.push_back(capture.getType());
+      SmallVector<NamedAttribute> metadata;
+      if (auto argument = dyn_cast<BlockArgument>(capture);
+          argument && argument.getOwner() == &function.getBody().front()) {
+        if (DictionaryAttr source =
+                function.getArgAttrDict(argument.getArgNumber()))
+          llvm::append_range(metadata, source);
+      }
+      if (metadata.empty())
+        metadata.push_back(builder.getNamedAttr(
+            "obelisk_sim.capture_kind",
+            sim::CaptureKindAttr::get(function.getContext(),
+                                      index == 0 ? sim::CaptureKind::Context
+                                                 : sim::CaptureKind::Formal)));
+      if (isa<sim::RefType>(capture.getType()) &&
+          !isStaticallyAllocatedOverrideTarget(capture) &&
+          llvm::none_of(metadata, [](NamedAttribute attribute) {
+            return attribute.getName() ==
+                   "obelisk_sim.automatic_reference_capture";
+          }))
+        metadata.push_back(builder.getNamedAttr(
+            "obelisk_sim.automatic_reference_capture", builder.getUnitAttr()));
+      finalArgumentAttrs.push_back(builder.getDictionaryAttr(metadata));
+    }
+
+    OpBuilder finalBuilder(function);
+    finalBuilder.setInsertionPointAfter(function);
+    sim::SimCodeUnitDeclOp::create(
+        finalBuilder, location, finalCodeUnitID, scopeID, sim::EntryKind::Final,
+        finalBuilder.getStringAttr(finalHierarchy),
+        finalBuilder.getStringAttr("expect end-of-simulation coordinator"),
+        finalBuilder.getUnitAttr());
+    SmallVector<NamedAttribute> finalAttributes{
+        finalBuilder.getNamedAttr(bindingsAttrName,
+                                  finalBuilder.getArrayAttr({})),
+        finalBuilder.getNamedAttr(
+            "code_unit_id", finalBuilder.getI64IntegerAttr(finalCodeUnitID)),
+        finalBuilder.getNamedAttr("internal", finalBuilder.getUnitAttr()),
+        finalBuilder.getNamedAttr(
+            "home_region", sim::EventRegionAttr::get(function.getContext(),
+                                                     sim::EventRegion::Active)),
+        finalBuilder.getNamedAttr(
+            "domain", sim::ExecutionDomainAttr::get(
+                          function.getContext(), sim::ExecutionDomain::Design)),
+        finalBuilder.getNamedAttr(sim::metadata::hierarchicalName,
+                                  finalBuilder.getStringAttr(finalHierarchy)),
+    };
+    sim::SimFuncOp finalCoordinator = sim::SimFuncOp::create(
+        finalBuilder, location, finalSymbol,
+        FunctionType::get(function.getContext(), finalInputs, TypeRange{}),
+        sim::EntryKind::Final, finalAttributes, finalArgumentAttrs);
+    SymbolTable::setSymbolVisibility(finalCoordinator,
+                                     SymbolTable::Visibility::Private);
+    finalCoordinator->setAttr("obelisk_sim.expect_eos_coordinator",
+                              builder.getUnitAttr());
+    bool expectOperandStrong = expectUniformIntrinsicEndStrong.value_or(true);
+    finalCoordinator->setAttr(
+        "obelisk_sim.expect_operand_strength",
+        builder.getStringAttr(expectOperandStrong ? "strong" : "weak"));
+    Block &finalEntry = finalCoordinator.getBody().front();
+    Block *checkPending = new Block;
+    Block *completePending = new Block;
+    Block *alreadyComplete = new Block;
+    finalCoordinator.getBody().push_back(checkPending);
+    finalCoordinator.getBody().push_back(completePending);
+    finalCoordinator.getBody().push_back(alreadyComplete);
+    OpBuilder finalEntryBuilder = OpBuilder::atBlockEnd(&finalEntry);
+    Value wasCompleted = sim::SimRefLoadOp::create(finalEntryBuilder, location,
+                                                   builder.getI1Type(),
+                                                   finalEntry.getArgument(3));
+    cf::CondBranchOp::create(finalEntryBuilder, location, wasCompleted,
+                             alreadyComplete, checkPending);
+    OpBuilder checkBuilder = OpBuilder::atBlockEnd(checkPending);
+    Value wasStarted = sim::SimRefLoadOp::create(
+        checkBuilder, location, builder.getI1Type(), finalEntry.getArgument(4));
+    cf::CondBranchOp::create(checkBuilder, location, wasStarted,
+                             completePending, alreadyComplete);
+    OpBuilder completeBuilder = OpBuilder::atBlockEnd(completePending);
+    Value finalResult = arith::ConstantOp::create(
+        completeBuilder, location, builder.getI1Type(),
+        completeBuilder.getBoolAttr(!expectOperandStrong));
+    sim::SimRefStoreOp::create(completeBuilder, location, finalResult,
+                               finalEntry.getArgument(2));
+    Value nowComplete = arith::ConstantOp::create(
+        completeBuilder, location, builder.getI1Type(),
+        completeBuilder.getBoolAttr(true));
+    sim::SimRefStoreOp::create(completeBuilder, location, nowComplete,
+                               finalEntry.getArgument(3));
+    sim::SimEventTriggerOp::create(
+        completeBuilder, location, finalEntry.getArgument(1), Value{},
+        completeBuilder.getBoolAttr(false), sim::EventSiteAttr{});
+    sim::SimReturnOp::create(completeBuilder, location, ValueRange{});
+    OpBuilder alreadyCompleteBuilder = OpBuilder::atBlockEnd(alreadyComplete);
+    sim::SimReturnOp::create(alreadyCompleteBuilder, location, ValueRange{});
+    sim::SimSpawnOp::create(builder, location,
+                            finalCoordinator.getSymNameAttr(), finalCaptures,
+                            ArrayAttr{}, ArrayAttr{});
     emitBranch(wait);
 
     bool savedSampleAssertionValues = sampleAssertionValues;
@@ -3754,6 +3940,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       sampleAssertionValues = savedSampleAssertionValues;
       activeSampledClock = savedSampledClock;
     });
+    auto markExpectStarted = [&] {
+      Value started = arith::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+      sim::SimRefStoreOp::create(builder, location, started,
+                                 expectStartedStorage);
+    };
 
     if (expectOneCycleBoolean) {
       if (branchingSequence)
@@ -3761,9 +3953,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                           builder.getUnitAttr());
       function->setAttr(
           "obelisk_sim.expect_one_cycle_alternatives",
-          builder.getI64IntegerAttr(branchingSequence
-                                        ? sequenceAlternatives.size()
-                                        : 1));
+          builder.getI64IntegerAttr(
+              branchingSequence ? sequenceAlternatives.size() : 1));
       Block *sample = addBlock();
       setCurrent(wait);
       if (failed(emitEventSuspend(clock, sample)))
@@ -3773,6 +3964,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           sim::EventRegionAttr::get(function.getContext(),
                                     sim::EventRegion::Observed));
       setCurrent(sample);
+      markExpectStarted();
       Value falseValue = arith::ConstantOp::create(
           builder, location, builder.getI1Type(), builder.getBoolAttr(false));
       Value trueValue = arith::ConstantOp::create(
@@ -3842,17 +4034,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
               selector = *lowered;
               caseSelectorCache[guard.selector] = selector;
             }
-            FailureOr<Value> comparison = lowerCaseLabel(
-                selector, selector.getType(), guard.selector, guard.label,
-                semantic::SVCaseCondition::Normal);
+            FailureOr<Value> comparison =
+                lowerCaseLabel(selector, selector.getType(), guard.selector,
+                               guard.label, semantic::SVCaseCondition::Normal);
             if (failed(comparison) || !comparison->getType().isInteger(1))
               return failure();
             matched = *comparison;
             caseGuardCache[key] = matched;
           }
           if (guard.negated)
-            matched = arith::XOrIOp::create(builder, location, matched,
-                                            trueValue);
+            matched =
+                arith::XOrIOp::create(builder, location, matched, trueValue);
           result = arith::AndIOp::create(builder, location, result, matched);
         }
         return result;
@@ -3876,6 +4068,186 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       }
       cf::CondBranchOp::create(builder, location, successAny, successBlock,
                                ValueRange{}, failureBlock, ValueRange{});
+    } else if (expectBoundedBranching) {
+      size_t horizon = 0;
+      for (const FixedSequence &alternative : sequenceAlternatives)
+        horizon = std::max(horizon, alternative.ages.size());
+      function->setAttr("obelisk_sim.expect_bounded_branching",
+                        builder.getUnitAttr());
+      function->setAttr("obelisk_sim.expect_bounded_alternatives",
+                        builder.getI64IntegerAttr(sequenceAlternatives.size()));
+      function->setAttr("obelisk_sim.expect_bounded_horizon",
+                        builder.getI64IntegerAttr(horizon));
+      function->setAttr(
+          "obelisk_sim.expect_bounded_state_words",
+          builder.getI64IntegerAttr(expectBranchingStateWords.size()));
+
+      Block *ageWait = wait;
+      for (size_t age = 0; age < horizon; ++age) {
+        Block *sample = addBlock();
+        setCurrent(ageWait);
+        if (failed(emitEventSuspend(clock, sample)))
+          return failure();
+        ageWait->getTerminator()->setAttr(
+            "resume_region",
+            sim::EventRegionAttr::get(function.getContext(),
+                                      sim::EventRegion::Observed));
+        setCurrent(sample);
+        if (age == 0)
+          markExpectStarted();
+
+        Value falseValue = arith::ConstantOp::create(
+            builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+        Value trueValue = arith::ConstantOp::create(
+            builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+        SmallVector<Value> currentWords;
+        if (age != 0)
+          for (Value storage : expectBranchingStateWords)
+            currentWords.push_back(sim::SimRefLoadOp::create(
+                builder, location, expectStateType, storage));
+        SmallVector<Value> nextWords(expectBranchingStateWords.size(),
+                                     expectZero);
+        Value successAny = falseValue;
+        Value continueAny = falseValue;
+        DenseMap<Operation *, Value> predicateCache;
+        DenseMap<Attribute, Value> symbolicPredicateCache;
+        DenseMap<std::pair<Operation *, Operation *>, Value> caseGuardCache;
+        DenseMap<Operation *, Value> caseSelectorCache;
+        auto evaluateAge =
+            [&](const FixedSequenceAge &sequenceAge) -> FailureOr<Value> {
+          Value result = trueValue;
+          auto evaluatePredicate =
+              [&](Operation *predicate) -> FailureOr<Value> {
+            if (auto found = predicateCache.find(predicate);
+                found != predicateCache.end())
+              return found->second;
+            Attribute referencedSymbol;
+            if (isa<semantic::SVNamedValueExpressionOp,
+                    semantic::SVHierarchicalValueExpressionOp>(predicate))
+              referencedSymbol = predicate->getAttr("referenced_symbol");
+            if (referencedSymbol) {
+              if (auto found = symbolicPredicateCache.find(referencedSymbol);
+                  found != symbolicPredicateCache.end()) {
+                predicateCache[predicate] = found->second;
+                return found->second;
+              }
+            }
+            FailureOr<Value> value = lowerExpression(predicate);
+            if (failed(value))
+              return failure();
+            FailureOr<Value> truth =
+                truthValue(*value, getSemanticLocation(predicate));
+            if (failed(truth))
+              return failure();
+            predicateCache[predicate] = *truth;
+            if (referencedSymbol)
+              symbolicPredicateCache[referencedSymbol] = *truth;
+            return *truth;
+          };
+          for (Operation *predicate : sequenceAge.predicates) {
+            FailureOr<Value> truth = evaluatePredicate(predicate);
+            if (failed(truth))
+              return failure();
+            result = arith::AndIOp::create(builder, location, result, *truth);
+          }
+          for (Operation *predicate : sequenceAge.negatedPredicates) {
+            FailureOr<Value> truth = evaluatePredicate(predicate);
+            if (failed(truth))
+              return failure();
+            Value negated =
+                arith::XOrIOp::create(builder, location, *truth, trueValue);
+            result = arith::AndIOp::create(builder, location, result, negated);
+          }
+          for (const FixedSequenceAge::CaseGuard &guard :
+               sequenceAge.caseGuards) {
+            std::pair<Operation *, Operation *> key{guard.selector,
+                                                    guard.label};
+            Value matched;
+            if (auto found = caseGuardCache.find(key);
+                found != caseGuardCache.end()) {
+              matched = found->second;
+            } else {
+              Value selector;
+              if (auto found = caseSelectorCache.find(guard.selector);
+                  found != caseSelectorCache.end()) {
+                selector = found->second;
+              } else {
+                FailureOr<Value> lowered = lowerExpression(guard.selector);
+                if (failed(lowered))
+                  return failure();
+                selector = *lowered;
+                caseSelectorCache[guard.selector] = selector;
+              }
+              FailureOr<Value> comparison = lowerCaseLabel(
+                  selector, selector.getType(), guard.selector, guard.label,
+                  semantic::SVCaseCondition::Normal);
+              if (failed(comparison) || !comparison->getType().isInteger(1))
+                return failure();
+              matched = *comparison;
+              caseGuardCache[key] = matched;
+            }
+            if (guard.negated)
+              matched =
+                  arith::XOrIOp::create(builder, location, matched, trueValue);
+            result = arith::AndIOp::create(builder, location, result, matched);
+          }
+          return result;
+        };
+
+        for (auto [alternativeIndex, alternative] :
+             llvm::enumerate(sequenceAlternatives)) {
+          if (age >= alternative.ages.size())
+            continue;
+          Value active = trueValue;
+          size_t wordIndex = alternativeIndex / 64;
+          uint64_t bit = uint64_t{1} << (alternativeIndex % 64);
+          Value mask =
+              arith::ConstantOp::create(builder, location, expectStateType,
+                                        builder.getI64IntegerAttr(bit));
+          if (age != 0) {
+            Value present = arith::AndIOp::create(
+                builder, location, currentWords[wordIndex], mask);
+            active = arith::CmpIOp::create(builder, location,
+                                           arith::CmpIPredicate::ne, present,
+                                           expectZero);
+          }
+          FailureOr<Value> matches = evaluateAge(alternative.ages[age]);
+          if (failed(matches))
+            return failure();
+          Value advances =
+              arith::AndIOp::create(builder, location, active, *matches);
+          if (age + 1 == alternative.ages.size()) {
+            successAny =
+                arith::OrIOp::create(builder, location, successAny, advances);
+          } else {
+            continueAny =
+                arith::OrIOp::create(builder, location, continueAny, advances);
+            Value retained = arith::SelectOp::create(
+                builder, location, advances, mask, expectZero);
+            nextWords[wordIndex] = arith::OrIOp::create(
+                builder, location, nextWords[wordIndex], retained);
+          }
+        }
+
+        if (age + 1 != horizon)
+          for (auto [storage, nextWord] :
+               llvm::zip_equal(expectBranchingStateWords, nextWords))
+            sim::SimRefStoreOp::create(builder, location, nextWord, storage);
+
+        if (age + 1 == horizon) {
+          cf::CondBranchOp::create(builder, location, successAny, successBlock,
+                                   ValueRange{}, failureBlock, ValueRange{});
+          continue;
+        }
+        Block *notSuccessful = addBlock();
+        Block *nextWait = addBlock();
+        cf::CondBranchOp::create(builder, location, successAny, successBlock,
+                                 ValueRange{}, notSuccessful, ValueRange{});
+        setCurrent(notSuccessful);
+        cf::CondBranchOp::create(builder, location, continueAny, nextWait,
+                                 ValueRange{}, failureBlock, ValueRange{});
+        ageWait = nextWait;
+      }
     } else {
       for (auto [age, sequenceAge] : llvm::enumerate(sequence.ages)) {
         Block *sample = addBlock();
@@ -3887,6 +4259,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             sim::EventRegionAttr::get(function.getContext(),
                                       sim::EventRegion::Observed));
         setCurrent(sample);
+        if (age == 0)
+          markExpectStarted();
         Value matches = arith::ConstantOp::create(
             builder, location, builder.getI1Type(), builder.getBoolAttr(true));
         for (Operation *predicate : sequenceAge.predicates) {
@@ -3909,8 +4283,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             return failure();
           Value negated = arith::XOrIOp::create(
               builder, location, *truth,
-              arith::ConstantOp::create(builder, location,
-                                        builder.getI1Type(),
+              arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                         builder.getBoolAttr(true)));
           matches = arith::AndIOp::create(builder, location, matches, negated);
         }
@@ -3926,6 +4299,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       Value result = arith::ConstantOp::create(
           builder, location, builder.getI1Type(), builder.getBoolAttr(passed));
       sim::SimRefStoreOp::create(builder, location, result, resultStorage);
+      Value done = arith::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+      sim::SimRefStoreOp::create(builder, location, done, expectDoneStorage);
       sim::SimEventTriggerOp::create(builder, location, completed, Value{},
                                      builder.getBoolAttr(false),
                                      sim::EventSiteAttr{});
