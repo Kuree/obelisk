@@ -529,11 +529,14 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: [[BOTH_C:%.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg4
 // CHECK: [[BOTH_C_MATCH:%.*]] = obelisk_sim.logic.is_true [[BOTH_C]]
 // CHECK: [[CONSEQUENT_OR:%.*]] = arith.ori [[BOTH_B_MATCH]], [[BOTH_C_MATCH]]
-// CHECK: [[CONSEQUENT_FAILED:%.*]] = arith.xori [[CONSEQUENT_OR]],
-// CHECK: [[CHANNEL0_FAILED:%.*]] = arith.andi [[BOTH_CHANNEL0_ACTIVE]], [[CONSEQUENT_FAILED]]
+// CHECK: [[CHANNEL0_SUCCEEDED:%.*]] = arith.andi [[BOTH_CHANNEL0_ACTIVE]], [[CONSEQUENT_OR]]
+// CHECK: [[CHANNEL0_NOT_SUCCEEDED:%.*]] = arith.xori [[CHANNEL0_SUCCEEDED]],
+// CHECK: [[CHANNEL0_FAILED:%.*]] = arith.andi [[BOTH_CHANNEL0_ACTIVE]], [[CHANNEL0_NOT_SUCCEEDED]]
 // CHECK: [[BOTH_CHANNEL1_BIT:%.*]] = arith.andi [[BOTH_CHANNEL1]], {{%.*}} : i64
 // CHECK: [[BOTH_CHANNEL1_ACTIVE:%.*]] = arith.cmpi ne, [[BOTH_CHANNEL1_BIT]], {{%.*}} : i64
-// CHECK: [[CHANNEL1_FAILED:%.*]] = arith.andi [[BOTH_CHANNEL1_ACTIVE]], [[CONSEQUENT_FAILED]]
+// CHECK: [[CHANNEL1_SUCCEEDED:%.*]] = arith.andi [[BOTH_CHANNEL1_ACTIVE]], [[CONSEQUENT_OR]]
+// CHECK: [[CHANNEL1_NOT_SUCCEEDED:%.*]] = arith.xori [[CHANNEL1_SUCCEEDED]],
+// CHECK: [[CHANNEL1_FAILED:%.*]] = arith.andi [[BOTH_CHANNEL1_ACTIVE]], [[CHANNEL1_NOT_SUCCEEDED]]
 // CHECK: [[ANY_CHANNEL_FAILED:%.*]] = arith.ori [[CHANNEL0_FAILED]], [[CHANNEL1_FAILED]]
 // CHECK: [[BOTH_NEXT0:%.*]] = arith.extui [[BOTH_A_MATCH]] : i1 to i64
 // CHECK: [[ANTECEDENT_OR:%.*]] = arith.ori [[BOTH_A_MATCH]], [[BOTH_B_MATCH]]
@@ -567,9 +570,12 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: [[OVERLAP_C:%.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg4
 // CHECK: [[OVERLAP_C_MATCH:%.*]] = obelisk_sim.logic.is_true [[OVERLAP_C]]
 // CHECK: [[OVERLAP_OR:%.*]] = arith.ori [[OVERLAP_B_MATCH]], [[OVERLAP_C_MATCH]]
-// CHECK: [[OVERLAP_FAILED:%.*]] = arith.xori [[OVERLAP_OR]], {{%.*}}
-// CHECK: arith.andi [[OVERLAP_A_MATCH]], [[OVERLAP_FAILED]]
-// CHECK: arith.andi [[OVERLAP_B_MATCH]], [[OVERLAP_FAILED]]
+// CHECK: [[OVERLAP_TRIGGER0:%.*]] = arith.andi [[OVERLAP_A_MATCH]], [[OVERLAP_OR]]
+// CHECK: [[OVERLAP_FAILED0:%.*]] = arith.xori [[OVERLAP_TRIGGER0]], {{%.*}}
+// CHECK: arith.andi [[OVERLAP_A_MATCH]], [[OVERLAP_FAILED0]]
+// CHECK: [[OVERLAP_TRIGGER1:%.*]] = arith.andi [[OVERLAP_B_MATCH]], [[OVERLAP_OR]]
+// CHECK: [[OVERLAP_FAILED1:%.*]] = arith.xori [[OVERLAP_TRIGGER1]], {{%.*}}
+// CHECK: arith.andi [[OVERLAP_B_MATCH]], [[OVERLAP_FAILED1]]
 // CHECK-NOT: obelisk.sv.assertion
 
 // A cover-property sequence consequent is strong by default.  Its two

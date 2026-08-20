@@ -606,9 +606,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-NOT: obelisk_sim.ref.alloc
 // CHECK: obelisk_sim.spawn @unit_4.$concurrent_eos_branch.51
 // CHECK: obelisk_sim.branching_antecedent_vacuity
+// CHECK: obelisk_sim.branching_antecedent_matched_history
 // CHECK: obelisk_sim.branching_antecedent_universal_failure
 // CHECK: obelisk_sim.branching_antecedent_universal_success
-// CHECK: obelisk_sim.branching_antecedent_matched_history
 // CHECK: obelisk_sim.branching_antecedent_result_cancel
 // CHECK: cf.br {{.*}}obelisk_sim.branching_antecedent_backedge
 

@@ -423,7 +423,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-SAME: obelisk_sim.sva_boolean_antecedent_literals_before = 6 : i64
 // CHECK-SAME: obelisk_sim.sva_boolean_antecedent_solver = "z3"
 // CHECK-SAME: obelisk_sim.sva_boolean_solver = "z3"
-// CHECK-COUNT-3: obelisk_sim.assert.sampled_read
+// The a&&c antecedent channel makes its consequent `a` tautologically pass.
+// With no observable pass action, canonicalization removes that dead channel's
+// sampled c read after the Z3-proven antecedent reduction.
+// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
 // CHECK-NOT: obelisk_sim.assert.sampled_read
 // CHECK-COUNT-1: obelisk_sim.spawn @unit_0.fork.10.0.2
 // CHECK-NOT: obelisk_sim.spawn @unit_0.fork.10.0.2

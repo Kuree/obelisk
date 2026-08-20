@@ -3457,10 +3457,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       consequentAlternativeAdmissionCount = rhs->size();
       consequentAlternativesAdmissionEligible =
           llvm::all_of(*rhs, [](const FixedSequence &alternative) {
-            return alternative.ages.size() == 1 &&
-                   !alternative.vacuousSuccess &&
+            return !alternative.ages.empty() && !alternative.vacuousSuccess &&
                    alternative.firstMatchBoundaries.empty() &&
-                   alternative.ages.front().matchItems.empty();
+                   llvm::all_of(alternative.ages,
+                                [](const FixedSequenceAge &age) {
+                                  return age.matchItems.empty();
+                                });
           });
       bool hasIntrinsicEndStrength =
           llvm::any_of(*rhs, [](const FixedSequence &alternative) {
@@ -3656,15 +3658,23 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       antecedentAlternativeAdmissionCount <=
           maxFixedSequenceAlternatives / consequentAlternativeAdmissionCount;
   bool combinedBranching = branchingAntecedent && branchingConsequent;
-  bool combinedBooleanBranching =
+  bool combinedBoundedBranching =
       combinedBranching && rawCombinedBranchingWithinLimit &&
       consequentAlternativesAdmissionEligible &&
+      llvm::all_of(
+          consequentAlternatives, [](const FixedSequence &alternative) {
+            return !alternative.ages.empty() && !alternative.vacuousSuccess &&
+                   alternative.firstMatchBoundaries.empty() &&
+                   llvm::all_of(alternative.ages,
+                                [](const FixedSequenceAge &age) {
+                                  return age.matchItems.empty();
+                                });
+          });
+  bool combinedBooleanBranching =
+      combinedBoundedBranching &&
       llvm::all_of(consequentAlternatives,
                    [](const FixedSequence &alternative) {
-                     return alternative.ages.size() == 1 &&
-                            !alternative.vacuousSuccess &&
-                            alternative.firstMatchBoundaries.empty() &&
-                            alternative.ages.front().matchItems.empty();
+                     return alternative.ages.size() == 1;
                    });
   bool boundedFirstMatch =
       firstMatch ||
@@ -3785,10 +3795,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                   "metadata",
            failure();
   if ((rawCombinedBranching && !rawCombinedBranchingWithinLimit) ||
-      (combinedBranching && !combinedBooleanBranching))
+      (combinedBranching && !combinedBoundedBranching))
     return emitError(getSemanticLocation(implication))
                << "combined branching implication/followed-by currently "
-                  "requires a one-cycle bounded consequent without "
+                  "requires bounded consequent alternatives without "
                   "first_match, vacuous alternatives, or match items and at "
                   "most 256 antecedent/consequent alternative pairs",
            failure();
@@ -3823,13 +3833,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
            failure();
   if (deterministicImplicationNeedsEOS && !endStrengthSource)
     endStrengthSource = implication.getOperation();
-  if (combinedBooleanBranching)
+  if (combinedBoundedBranching)
     // The branching-antecedent monitor owns the exact consequent truth and
-    // per-antecedent match channels. Keep its existing one-age state shape
-    // while retaining a uniform intrinsic EOS rule for the source-age
-    // coalescer.
+    // per-antecedent match channels. Keep an ordinary placeholder state shape
+    // while the source-age coalescer owns all bounded consequent alternatives.
     sequence.ages.resize(1);
-  if (combinedBooleanBranching && consequentUniformIntrinsicEndStrong) {
+  if (combinedBoundedBranching && consequentUniformIntrinsicEndStrong) {
     sequence.intrinsicEndStrong = consequentUniformIntrinsicEndStrong;
     sequence.hasIntrinsicEndStrength = true;
   }
@@ -7533,21 +7542,43 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           builder.getI64IntegerAttr(antecedentAlternatives.size() -
                                     currentTickChannels));
     }
-    if (combinedBooleanBranching) {
+    if (combinedBoundedBranching) {
       function->setAttr(
           "obelisk_sim.branching_consequent_alternatives",
           builder.getI64IntegerAttr(consequentAlternatives.size()));
       function->setAttr(
-          "obelisk_sim.combined_boolean_branching_pairs",
+          "obelisk_sim.combined_bounded_branching_pairs",
           builder.getI64IntegerAttr(antecedentAlternatives.size() *
                                     consequentAlternatives.size()));
       function->setAttr(
-          "obelisk_sim.combined_boolean_branching_pairs_before_minimization",
+          "obelisk_sim.combined_bounded_branching_pairs_before_minimization",
           builder.getI64IntegerAttr(antecedentAlternativeAdmissionCount *
                                     consequentAlternativeAdmissionCount));
-      function->setAttr("obelisk_sim.combined_boolean_branching_monitor",
+      function->setAttr("obelisk_sim.combined_bounded_branching_monitor",
                         builder.getUnitAttr());
+      if (combinedBooleanBranching) {
+        function->setAttr("obelisk_sim.combined_boolean_branching_monitor",
+                          builder.getUnitAttr());
+        function->setAttr(
+            "obelisk_sim.combined_boolean_branching_pairs",
+            builder.getI64IntegerAttr(antecedentAlternatives.size() *
+                                      consequentAlternatives.size()));
+        function->setAttr(
+            "obelisk_sim.combined_boolean_branching_pairs_before_minimization",
+            builder.getI64IntegerAttr(antecedentAlternativeAdmissionCount *
+                                      consequentAlternativeAdmissionCount));
+      }
     }
+
+    size_t consequentAlternativeCount =
+        combinedBoundedBranching && !combinedBooleanBranching
+            ? consequentAlternatives.size()
+            : 1;
+    auto getConsequentAlternative = [&](size_t index) -> const FixedSequence & {
+      return combinedBoundedBranching && !combinedBooleanBranching
+                 ? consequentAlternatives[index]
+                 : sequence;
+    };
 
     SmallVector<Value> alternativeStates;
     alternativeStates.reserve(antecedentAlternatives.size());
@@ -7573,10 +7604,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     // nonoverlap handoff).
     size_t sourceAttemptHorizon = 1;
     for (auto [channel, alternative] : llvm::enumerate(antecedentAlternatives))
-      sourceAttemptHorizon = std::max(
-          sourceAttemptHorizon, alternative.ages.size() - 1 +
-                                    (channelIsNonoverlapped(channel) ? 1 : 0) +
-                                    sequence.ages.size());
+      for (size_t consequentIndex = 0;
+           consequentIndex < consequentAlternativeCount; ++consequentIndex)
+        sourceAttemptHorizon =
+            std::max(sourceAttemptHorizon,
+                     alternative.ages.size() - 1 +
+                         (channelIsNonoverlapped(channel) ? 1 : 0) +
+                         getConsequentAlternative(consequentIndex).ages.size());
     function->setAttr("obelisk_sim.branching_antecedent_result_horizon",
                       builder.getI64IntegerAttr(sourceAttemptHorizon));
     Value matchedState;
@@ -7585,17 +7619,25 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           builder, location,
           sim::RefType::get(function.getContext(), stateType), zero);
 
-    bool consequentNeedsState =
-        sequence.ages.size() > 1 ||
-        llvm::any_of(llvm::seq<size_t>(0, antecedentAlternatives.size()),
-                     channelIsNonoverlapped);
-    SmallVector<Value> consequentStates(antecedentAlternatives.size());
-    if (consequentNeedsState)
-      for (size_t channel = 0; channel < consequentStates.size(); ++channel)
-        if (sequence.ages.size() > 1 || channelIsNonoverlapped(channel))
-          consequentStates[channel] = sim::SimRefAllocOp::create(
-              builder, location,
-              sim::RefType::get(function.getContext(), stateType), zero);
+    auto consequentStateIndex = [&](size_t channel, size_t consequentIndex) {
+      return channel * consequentAlternativeCount + consequentIndex;
+    };
+    bool consequentNeedsState = false;
+    SmallVector<Value> consequentStates(antecedentAlternatives.size() *
+                                        consequentAlternativeCount);
+    for (size_t channel = 0; channel < antecedentAlternatives.size(); ++channel)
+      for (size_t consequentIndex = 0;
+           consequentIndex < consequentAlternativeCount; ++consequentIndex) {
+        const FixedSequence &consequent =
+            getConsequentAlternative(consequentIndex);
+        if (consequent.ages.size() == 1 && !channelIsNonoverlapped(channel))
+          continue;
+        consequentNeedsState = true;
+        consequentStates[consequentStateIndex(channel, consequentIndex)] =
+            sim::SimRefAllocOp::create(
+                builder, location,
+                sim::RefType::get(function.getContext(), stateType), zero);
+      }
 
     SmallVector<Value> branchingStateStorages;
     for (Value storage : alternativeStates)
@@ -7928,24 +7970,31 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         }
 
         Value consequentPending = finalFalse;
-        for (auto [channel, state] : llvm::enumerate(finalConsequentStates)) {
-          if (!state)
-            continue;
-          uint64_t antecedentEndAge =
-              antecedentAlternatives[channel].ages.size() - 1;
-          bool channelNonoverlapped = channelIsNonoverlapped(channel);
-          uint64_t sourceOffset =
-              antecedentEndAge + (channelNonoverlapped ? 1 : 0);
-          if (sourceAge < sourceOffset)
-            continue;
-          uint64_t bit = sourceAge - sourceOffset;
-          uint64_t firstBit = channelNonoverlapped ? 0 : 1;
-          if (bit < firstBit || bit >= sequence.ages.size())
-            continue;
-          consequentPending =
-              arith::OrIOp::create(finalBuilder, finalLocation,
-                                   consequentPending, bitIsSet(state, bit));
-        }
+        for (size_t channel = 0; channel < antecedentAlternatives.size();
+             ++channel)
+          for (size_t consequentIndex = 0;
+               consequentIndex < consequentAlternativeCount;
+               ++consequentIndex) {
+            Value state = finalConsequentStates[consequentStateIndex(
+                channel, consequentIndex)];
+            if (!state)
+              continue;
+            uint64_t antecedentEndAge =
+                antecedentAlternatives[channel].ages.size() - 1;
+            bool channelNonoverlapped = channelIsNonoverlapped(channel);
+            uint64_t sourceOffset =
+                antecedentEndAge + (channelNonoverlapped ? 1 : 0);
+            if (sourceAge < sourceOffset)
+              continue;
+            uint64_t bit = sourceAge - sourceOffset;
+            uint64_t firstBit = channelNonoverlapped ? 0 : 1;
+            if (bit < firstBit ||
+                bit >= getConsequentAlternative(consequentIndex).ages.size())
+              continue;
+            consequentPending =
+                arith::OrIOp::create(finalBuilder, finalLocation,
+                                     consequentPending, bitIsSet(state, bit));
+          }
 
         Value matched = finalMatchedState
                             ? bitIsSet(finalMatchedState, sourceAge)
@@ -8025,6 +8074,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     SmallVector<Value> consequentPendingNext(sourceAttemptHorizon, falseValue);
     SmallVector<Value> consequentSucceeded(sourceAttemptHorizon, falseValue);
     SmallVector<Value> consequentFailed(sourceAttemptHorizon, falseValue);
+    SmallVector<SmallVector<Value>> consequentChannelSucceeded(
+        antecedentAlternatives.size(),
+        SmallVector<Value>(sourceAttemptHorizon, falseValue));
     SmallVector<Value> antecedentMatched(sourceAttemptHorizon, falseValue);
     llvm::DenseMap<Operation *, Value> predicateCache;
     llvm::DenseMap<std::pair<Operation *, Operation *>, Value> caseGuardCache;
@@ -8093,21 +8145,27 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       return result;
     };
     std::optional<Value> combinedConsequentTruth;
-    auto evaluateConsequentAge = [&](uint64_t age) -> FailureOr<Value> {
-      if (!combinedBooleanBranching)
-        return evaluateAge(sequence.ages[age]);
-      assert(age == 0 && "combined Boolean consequent has one age");
-      if (combinedConsequentTruth)
-        return *combinedConsequentTruth;
-      Value result = falseValue;
-      for (const FixedSequence &alternative : consequentAlternatives) {
-        FailureOr<Value> matched = evaluateAge(alternative.ages.front());
-        if (failed(matched))
-          return failure();
-        result = arith::OrIOp::create(builder, location, result, *matched);
+    auto evaluateConsequentAge = [&](size_t consequentIndex,
+                                     uint64_t age) -> FailureOr<Value> {
+      if (combinedBooleanBranching) {
+        assert(consequentIndex == 0 && age == 0 &&
+               "combined Boolean consequent has one shared age");
+        if (combinedConsequentTruth)
+          return *combinedConsequentTruth;
+        Value result = falseValue;
+        for (const FixedSequence &alternative : consequentAlternatives) {
+          FailureOr<Value> matched = evaluateAge(alternative.ages.front());
+          if (failed(matched))
+            return failure();
+          result = arith::OrIOp::create(builder, location, result, *matched);
+        }
+        combinedConsequentTruth = result;
+        return result;
       }
-      combinedConsequentTruth = result;
-      return result;
+      const FixedSequence &consequent =
+          getConsequentAlternative(consequentIndex);
+      assert(age < consequent.ages.size() && "consequent age out of range");
+      return evaluateAge(consequent.ages[age]);
     };
     auto reportWhen = [&](Value condition, bool passed, bool vacuous = false) {
       if (!observable)
@@ -8248,67 +8306,95 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       nextAlternativeStates[alternativeIndex] = nextState;
     }
 
-    SmallVector<Value> nextConsequentStates(antecedentAlternatives.size(),
-                                            zero);
+    SmallVector<Value> nextConsequentStates(consequentStates.size(), zero);
     for (size_t channel = 0; channel < antecedentAlternatives.size();
          ++channel) {
-      if (!consequentNeedsState)
-        break;
-      if (!consequentStates[channel])
-        continue;
       uint64_t antecedentEndAge =
           antecedentAlternatives[channel].ages.size() - 1;
       bool channelNonoverlapped = channelIsNonoverlapped(channel);
-      Value state = sim::SimRefLoadOp::create(builder, location, stateType,
-                                              consequentStates[channel]);
-      uint64_t firstAge = channelNonoverlapped ? 0 : 1;
-      for (uint64_t age = firstAge; age < sequence.ages.size(); ++age) {
-        uint64_t sourceAge =
-            antecedentEndAge + (channelNonoverlapped ? 1 : 0) + age;
-        assert(sourceAge < sourceAttemptHorizon);
-        Value mask = arith::ConstantOp::create(
-            builder, location, stateType,
-            builder.getI64IntegerAttr(uint64_t{1} << age));
-        Value present = arith::AndIOp::create(builder, location, state, mask);
-        Value active = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::ne, present, zero);
-        consequentActive[sourceAge] = arith::OrIOp::create(
-            builder, location, consequentActive[sourceAge], active);
-        FailureOr<Value> matches = evaluateConsequentAge(age);
-        if (failed(matches))
-          return failure();
-        Value advances =
-            arith::AndIOp::create(builder, location, active, *matches);
-        Value fails = arith::AndIOp::create(
-            builder, location, active,
-            arith::XOrIOp::create(builder, location, *matches, trueValue));
-        consequentFailed[sourceAge] = arith::OrIOp::create(
-            builder, location, consequentFailed[sourceAge], fails);
-        if (age + 1 == sequence.ages.size()) {
-          consequentSucceeded[sourceAge] = arith::OrIOp::create(
-              builder, location, consequentSucceeded[sourceAge], advances);
-        } else {
-          consequentPendingNext[sourceAge] = arith::OrIOp::create(
-              builder, location, consequentPendingNext[sourceAge], advances);
-          Value nextMask = arith::ConstantOp::create(
+      SmallVector<Value> channelActive(sourceAttemptHorizon, falseValue);
+      SmallVector<Value> channelSucceeded(sourceAttemptHorizon, falseValue);
+      SmallVector<Value> channelPending(sourceAttemptHorizon, falseValue);
+      for (size_t consequentIndex = 0;
+           consequentIndex < consequentAlternativeCount; ++consequentIndex) {
+        size_t stateIndex = consequentStateIndex(channel, consequentIndex);
+        if (!consequentStates[stateIndex])
+          continue;
+        const FixedSequence &consequent =
+            getConsequentAlternative(consequentIndex);
+        Value state = sim::SimRefLoadOp::create(builder, location, stateType,
+                                                consequentStates[stateIndex]);
+        uint64_t firstAge = channelNonoverlapped ? 0 : 1;
+        for (uint64_t age = firstAge; age < consequent.ages.size(); ++age) {
+          uint64_t sourceAge =
+              antecedentEndAge + (channelNonoverlapped ? 1 : 0) + age;
+          assert(sourceAge < sourceAttemptHorizon);
+          Value mask = arith::ConstantOp::create(
               builder, location, stateType,
-              builder.getI64IntegerAttr(uint64_t{1} << (age + 1)));
-          nextConsequentStates[channel] = arith::OrIOp::create(
-              builder, location, nextConsequentStates[channel],
-              arith::SelectOp::create(builder, location, advances, nextMask,
-                                      zero));
+              builder.getI64IntegerAttr(uint64_t{1} << age));
+          Value present = arith::AndIOp::create(builder, location, state, mask);
+          Value active = arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::ne, present, zero);
+          channelActive[sourceAge] = arith::OrIOp::create(
+              builder, location, channelActive[sourceAge], active);
+          FailureOr<Value> matches =
+              evaluateConsequentAge(consequentIndex, age);
+          if (failed(matches))
+            return failure();
+          Value advances =
+              arith::AndIOp::create(builder, location, active, *matches);
+          if (age + 1 == consequent.ages.size()) {
+            channelSucceeded[sourceAge] = arith::OrIOp::create(
+                builder, location, channelSucceeded[sourceAge], advances);
+          } else {
+            channelPending[sourceAge] = arith::OrIOp::create(
+                builder, location, channelPending[sourceAge], advances);
+            Value nextMask = arith::ConstantOp::create(
+                builder, location, stateType,
+                builder.getI64IntegerAttr(uint64_t{1} << (age + 1)));
+            nextConsequentStates[stateIndex] = arith::OrIOp::create(
+                builder, location, nextConsequentStates[stateIndex],
+                arith::SelectOp::create(builder, location, advances, nextMask,
+                                        zero));
+          }
         }
+      }
+      for (uint64_t sourceAge = 0; sourceAge < sourceAttemptHorizon;
+           ++sourceAge) {
+        consequentChannelSucceeded[channel][sourceAge] =
+            channelSucceeded[sourceAge];
+        Value channelNotSucceeded = arith::XOrIOp::create(
+            builder, location, channelSucceeded[sourceAge], trueValue);
+        Value effectivePending = arith::AndIOp::create(
+            builder, location, channelPending[sourceAge], channelNotSucceeded);
+        consequentActive[sourceAge] =
+            arith::OrIOp::create(builder, location, consequentActive[sourceAge],
+                                 channelActive[sourceAge]);
+        consequentSucceeded[sourceAge] = arith::OrIOp::create(
+            builder, location, consequentSucceeded[sourceAge],
+            channelSucceeded[sourceAge]);
+        consequentPendingNext[sourceAge] = arith::OrIOp::create(
+            builder, location, consequentPendingNext[sourceAge],
+            effectivePending);
+        Value channelResolved = arith::OrIOp::create(
+            builder, location, channelSucceeded[sourceAge], effectivePending);
+        Value channelFailed = arith::AndIOp::create(
+            builder, location, channelActive[sourceAge],
+            arith::XOrIOp::create(builder, location, channelResolved,
+                                  trueValue));
+        consequentFailed[sourceAge] = arith::OrIOp::create(
+            builder, location, consequentFailed[sourceAge], channelFailed);
       }
     }
 
-    FailureOr<Value> consequentStart = evaluateConsequentAge(0);
-    if (failed(consequentStart))
-      return failure();
-    auto markConsequentTrigger = [&](Operation *operation, size_t channel) {
+    auto markConsequentTrigger = [&](Operation *operation, size_t channel,
+                                     size_t consequentIndex) {
       operation->setAttr("obelisk_sim.branching_antecedent_consequent_trigger",
                          builder.getUnitAttr());
       operation->setAttr("obelisk_sim.branching_antecedent_channel",
                          builder.getI64IntegerAttr(channel));
+      operation->setAttr("obelisk_sim.branching_consequent_alternative",
+                         builder.getI64IntegerAttr(consequentIndex));
     };
     for (auto [channel, triggered] : llvm::enumerate(terminalMatches)) {
       uint64_t sourceAge = antecedentAlternatives[channel].ages.size() - 1;
@@ -8319,35 +8405,62 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             builder, location, consequentPendingNext[sourceAge], triggered);
         Value firstMask = arith::ConstantOp::create(
             builder, location, stateType, builder.getI64IntegerAttr(1));
-        auto launched = arith::SelectOp::create(builder, location, triggered,
-                                                firstMask, zero);
-        markConsequentTrigger(launched, channel);
-        nextConsequentStates[channel] = arith::OrIOp::create(
-            builder, location, nextConsequentStates[channel], launched);
+        for (size_t consequentIndex = 0;
+             consequentIndex < consequentAlternativeCount; ++consequentIndex) {
+          size_t stateIndex = consequentStateIndex(channel, consequentIndex);
+          auto launched = arith::SelectOp::create(builder, location, triggered,
+                                                  firstMask, zero);
+          markConsequentTrigger(launched, channel, consequentIndex);
+          nextConsequentStates[stateIndex] = arith::OrIOp::create(
+              builder, location, nextConsequentStates[stateIndex], launched);
+        }
         continue;
       }
-      Value matches =
-          arith::AndIOp::create(builder, location, triggered, *consequentStart);
-      markConsequentTrigger(matches.getDefiningOp(), channel);
-      Value fails = arith::AndIOp::create(
-          builder, location, triggered,
-          arith::XOrIOp::create(builder, location, *consequentStart,
-                                trueValue));
-      consequentFailed[sourceAge] = arith::OrIOp::create(
-          builder, location, consequentFailed[sourceAge], fails);
-      if (sequence.ages.size() == 1) {
-        consequentSucceeded[sourceAge] = arith::OrIOp::create(
-            builder, location, consequentSucceeded[sourceAge], matches);
-      } else {
-        consequentPendingNext[sourceAge] = arith::OrIOp::create(
-            builder, location, consequentPendingNext[sourceAge], matches);
-        Value nextMask = arith::ConstantOp::create(
-            builder, location, stateType, builder.getI64IntegerAttr(2));
-        nextConsequentStates[channel] = arith::OrIOp::create(
-            builder, location, nextConsequentStates[channel],
-            arith::SelectOp::create(builder, location, matches, nextMask,
-                                    zero));
+      Value startSucceeded = falseValue;
+      Value startPending = falseValue;
+      for (size_t consequentIndex = 0;
+           consequentIndex < consequentAlternativeCount; ++consequentIndex) {
+        const FixedSequence &consequent =
+            getConsequentAlternative(consequentIndex);
+        FailureOr<Value> consequentStart =
+            evaluateConsequentAge(consequentIndex, 0);
+        if (failed(consequentStart))
+          return failure();
+        Value matches = arith::AndIOp::create(builder, location, triggered,
+                                              *consequentStart);
+        markConsequentTrigger(matches.getDefiningOp(), channel,
+                              consequentIndex);
+        if (consequent.ages.size() == 1) {
+          startSucceeded =
+              arith::OrIOp::create(builder, location, startSucceeded, matches);
+        } else {
+          startPending =
+              arith::OrIOp::create(builder, location, startPending, matches);
+          Value nextMask = arith::ConstantOp::create(
+              builder, location, stateType, builder.getI64IntegerAttr(2));
+          size_t stateIndex = consequentStateIndex(channel, consequentIndex);
+          nextConsequentStates[stateIndex] = arith::OrIOp::create(
+              builder, location, nextConsequentStates[stateIndex],
+              arith::SelectOp::create(builder, location, matches, nextMask,
+                                      zero));
+        }
       }
+      consequentSucceeded[sourceAge] = arith::OrIOp::create(
+          builder, location, consequentSucceeded[sourceAge], startSucceeded);
+      consequentChannelSucceeded[channel][sourceAge] = startSucceeded;
+      Value startNotSucceeded =
+          arith::XOrIOp::create(builder, location, startSucceeded, trueValue);
+      startPending = arith::AndIOp::create(builder, location, startPending,
+                                           startNotSucceeded);
+      consequentPendingNext[sourceAge] = arith::OrIOp::create(
+          builder, location, consequentPendingNext[sourceAge], startPending);
+      Value startResolved =
+          arith::OrIOp::create(builder, location, startSucceeded, startPending);
+      Value startFailed = arith::AndIOp::create(
+          builder, location, triggered,
+          arith::XOrIOp::create(builder, location, startResolved, trueValue));
+      consequentFailed[sourceAge] = arith::OrIOp::create(
+          builder, location, consequentFailed[sourceAge], startFailed);
     }
 
     Value priorMatchedState =
@@ -8473,21 +8586,24 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       }
     }
 
-    auto clearResolvedBit = [&](Value state, uint64_t bit, uint64_t sourceAge) {
-      assert(bit < 64 && sourceAge < sourceAttemptHorizon);
+    auto clearBitWhen = [&](Value state, uint64_t bit, Value condition,
+                            StringRef reason) {
+      assert(bit < 64);
       Value keepMask = arith::ConstantOp::create(
           builder, location, stateType,
           builder.getI64IntegerAttr(
               static_cast<int64_t>(~(uint64_t{1} << bit))));
       Value cleared = arith::AndIOp::create(builder, location, state, keepMask);
-      cleared.getDefiningOp()->setAttr(
-          "obelisk_sim.branching_antecedent_result_cancel",
-          builder.getUnitAttr());
-      auto selected = arith::SelectOp::create(
-          builder, location, resultResolved[sourceAge], cleared, state);
-      selected->setAttr("obelisk_sim.branching_antecedent_result_cancel",
-                        builder.getUnitAttr());
+      cleared.getDefiningOp()->setAttr(reason, builder.getUnitAttr());
+      auto selected =
+          arith::SelectOp::create(builder, location, condition, cleared, state);
+      selected->setAttr(reason, builder.getUnitAttr());
       return selected.getResult();
+    };
+    auto clearResolvedBit = [&](Value state, uint64_t bit, uint64_t sourceAge) {
+      assert(sourceAge < sourceAttemptHorizon);
+      return clearBitWhen(state, bit, resultResolved[sourceAge],
+                          "obelisk_sim.branching_antecedent_result_cancel");
     };
 
     for (auto [index, storage] : llvm::enumerate(alternativeStates)) {
@@ -8503,21 +8619,31 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       sim::SimRefStoreOp::create(builder, location, nextMatchedState,
                                  matchedState);
     if (consequentNeedsState) {
-      for (auto [channel, storage] : llvm::enumerate(consequentStates)) {
-        if (!storage)
-          continue;
-        Value nextState = nextConsequentStates[channel];
-        uint64_t antecedentEndAge =
-            antecedentAlternatives[channel].ages.size() - 1;
-        bool channelNonoverlapped = channelIsNonoverlapped(channel);
-        uint64_t firstBit = channelNonoverlapped ? 0 : 1;
-        for (uint64_t bit = firstBit; bit < sequence.ages.size(); ++bit) {
-          uint64_t sourceAge =
-              antecedentEndAge + (channelNonoverlapped ? 1 : 0) + bit - 1;
-          nextState = clearResolvedBit(nextState, bit, sourceAge);
+      for (size_t channel = 0; channel < antecedentAlternatives.size();
+           ++channel)
+        for (size_t consequentIndex = 0;
+             consequentIndex < consequentAlternativeCount; ++consequentIndex) {
+          size_t stateIndex = consequentStateIndex(channel, consequentIndex);
+          Value storage = consequentStates[stateIndex];
+          if (!storage)
+            continue;
+          Value nextState = nextConsequentStates[stateIndex];
+          uint64_t antecedentEndAge =
+              antecedentAlternatives[channel].ages.size() - 1;
+          bool channelNonoverlapped = channelIsNonoverlapped(channel);
+          uint64_t firstBit = channelNonoverlapped ? 0 : 1;
+          const FixedSequence &consequent =
+              getConsequentAlternative(consequentIndex);
+          for (uint64_t bit = firstBit; bit < consequent.ages.size(); ++bit) {
+            uint64_t sourceAge =
+                antecedentEndAge + (channelNonoverlapped ? 1 : 0) + bit - 1;
+            nextState = clearResolvedBit(nextState, bit, sourceAge);
+            nextState = clearBitWhen(
+                nextState, bit, consequentChannelSucceeded[channel][sourceAge],
+                "obelisk_sim.branching_consequent_alternative_cancel");
+          }
+          sim::SimRefStoreOp::create(builder, location, nextState, storage);
         }
-        sim::SimRefStoreOp::create(builder, location, nextState, storage);
-      }
     }
     auto backedge = cf::BranchOp::create(builder, location, wait);
     backedge->setAttr("obelisk_sim.branching_antecedent_backedge",
