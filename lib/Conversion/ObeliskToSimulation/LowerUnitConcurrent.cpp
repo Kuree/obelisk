@@ -3374,6 +3374,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         compileFixedSequenceAlternatives(operands.back(), clock);
     FailureOr<PersistentDelaySequence> delayedRhs =
         compilePersistentDelay(operands.back());
+    FailureOr<PersistentUnaryProperty> unaryRhs =
+        compilePersistentUnary(operands.back());
     if (succeeded(lhs)) {
       bool hasEmpty = llvm::any_of(
           *lhs, [](const FixedSequence &value) { return value.emptyMatch; });
@@ -3442,7 +3444,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
          llvm::any_of(
              *rhs,
              [](const FixedSequence &value) { return value.ages.empty(); })) &&
-        failed(delayedRhs)) {
+        failed(delayedRhs) && failed(unaryRhs)) {
       if (diagnoseUnsupportedConcurrentFeature(operands.back(),
                                                /*nested=*/true))
         return failure();
@@ -3516,6 +3518,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       // the deterministic bounded-prefix pipeline. Prefix attempts remain
       // one bit per age because at most one new antecedent match starts on a
       // clock tick; successful prefixes then merge into the delay aggregate.
+      sequence.ages.resize(1);
+    } else if (succeeded(unaryRhs)) {
+      persistentUnary = std::move(*unaryRhs);
+      hasPersistentUnary = true;
       sequence.ages.resize(1);
     } else {
       if (rhs->size() == 1)
@@ -3646,7 +3652,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   }
   bool deterministicImplicationNeedsEOS =
       implication && !branchingAntecedent && !branchingConsequent &&
-      !hasPersistentDelay &&
+      !hasPersistentDelay && !hasPersistentUnary &&
       (antecedentSequence.ages.size() > 1 || nonoverlapped ||
        sequence.ages.size() > 1);
   bool branchingConsequentHasIntrinsicEndStrength = llvm::any_of(
@@ -3738,6 +3744,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       return !age.matchItems.empty();
     });
   };
+  bool persistentUnaryImplicationEligible =
+      implication && !branchingAntecedent && !branchingConsequent &&
+      antecedentSequence.ages.size() == 1 &&
+      !antecedentSequence.vacuousSuccess &&
+      antecedentSequence.firstMatchBoundaries.empty() &&
+      antecedentSequence.ages.front().matchItems.empty() &&
+      antecedentSequence.ages.front().caseGuards.empty();
   if (temporalNegation && implication && !branchingAntecedent &&
       (antecedentSequence.ages.size() != 1 ||
        antecedentSequence.vacuousSuccess ||
@@ -3861,17 +3874,20 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                   "cover-sequence per-match "
                   "accounting",
            failure();
-  if (hasPersistentUnary && (localInstance || implication || expectMonitor ||
-                             firstMatch || coverSequence))
+  if (hasPersistentUnary &&
+      (localInstance ||
+       (implication && !persistentUnaryImplicationEligible) ||
+       expectMonitor || firstMatch || coverSequence))
     return emitError(getSemanticLocation(property))
                << "persistent property operator '"
                << semantic::stringifySVAssertionUnaryOperator(
                       persistentUnary.kind)
                << "' currently requires one outermost unbounded form over "
                   "a deterministic one-cycle Boolean operand without "
-                  "locals, match items, implication/followed-by, first_match, "
-                  "expect, or cover-sequence "
-                  "per-match accounting",
+                  "locals or match items. Implication/followed-by additionally "
+                  "requires one nonvacuous Boolean or guaranteed-empty "
+                  "antecedent without case guards or first_match; expect and "
+                  "cover-sequence per-match accounting remain unsupported",
            failure();
   if (abort) {
     std::string spelling =
@@ -4590,7 +4606,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       (abort && !abort.getIsSynchronous() && !persistentStateOwner) ||
       (!branchingSequence && sequence.ages.size() > 1) ||
       (implication && !branchingAntecedent && !branchingConsequent &&
-       !hasPersistentDelay &&
+       !hasPersistentDelay && !hasPersistentUnary &&
        (nonoverlapped || antecedentSequence.ages.size() > 1));
   if (implication && antecedentHorizon > 1)
     function->setAttr("obelisk_sim.bounded_antecedent_horizon",
@@ -6659,6 +6675,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                       builder.getUnitAttr());
     function->setAttr("obelisk_sim.sva_transition_normal_form",
                       builder.getStringAttr("canonical-minimal"));
+    if (implication) {
+      function->setAttr("obelisk_sim.persistent_unary_implication",
+                        builder.getUnitAttr());
+      if (nonoverlapped)
+        function->setAttr("obelisk_sim.persistent_unary_nonoverlapped",
+                          builder.getUnitAttr());
+    }
 
     Value eligibleStorage = sim::SimRefAllocOp::create(
         builder, location, sim::RefType::get(function.getContext(), stateType),
@@ -6668,17 +6691,30 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       immatureStorage = sim::SimRefAllocOp::create(
           builder, location,
           sim::RefType::get(function.getContext(), stateType), zero);
+    Value handoffStorage;
+    if (implication && nonoverlapped) {
+      handoffStorage = sim::SimRefAllocOp::create(
+          builder, location,
+          sim::RefType::get(function.getContext(), stateType), zero);
+      handoffStorage.getDefiningOp()->setAttr(
+          "obelisk_sim.persistent_implication_handoff",
+          builder.getUnitAttr());
+    }
 
     SmallVector<Value> unaryStateStorages{eligibleStorage};
     if (immatureStorage)
       unaryStateStorages.push_back(immatureStorage);
+    if (handoffStorage)
+      unaryStateStorages.push_back(handoffStorage);
     if (failed(outlineDisableObserver(unaryStateStorages)))
       return failure();
+    SmallVector<Value> unaryBitsetStorages;
+    if (immatureStorage)
+      unaryBitsetStorages.push_back(immatureStorage);
+    if (handoffStorage)
+      unaryBitsetStorages.push_back(handoffStorage);
     FailureOr<std::optional<PersistentAbortPlan>> persistentAbort =
-        preparePersistentAbort({eligibleStorage},
-                               immatureStorage
-                                   ? ArrayRef<Value>{immatureStorage}
-                                   : ArrayRef<Value>{});
+        preparePersistentAbort({eligibleStorage}, unaryBitsetStorages);
     if (failed(persistentAbort))
       return failure();
 
@@ -6689,6 +6725,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     // executes. Future counters retain the eligible/immature distinction.
     if (immatureStorage)
       endBitsets.push_back(immatureStorage);
+    if (handoffStorage)
+      endBitsets.push_back(handoffStorage);
     if (failed(outlineCountedEndOfSimulation(
             endCounts, endBitsets,
             /*passed=*/!persistentUnary.eventually, spelling, property)))
@@ -6719,36 +6757,110 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       activeSampledClock = savedSampledClock;
     });
 
-    Value attemptEnabled = queryAttemptEnabled();
-    Value currentAttemptCount = countNewAttempt(attemptEnabled);
-    if (failed(
-            abortPersistentSample(wait, *persistentAbort, currentAttemptCount)))
-      return failure();
-
-    Value truth = arith::ConstantOp::create(
+    Value trueValue = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    DenseMap<Operation *, Value> predicateCache;
+    DenseMap<Attribute, Value> symbolicPredicateCache;
     auto evaluatePredicate = [&](Operation *predicate) -> FailureOr<Value> {
+      if (auto found = predicateCache.find(predicate);
+          found != predicateCache.end())
+        return found->second;
+      Attribute referencedSymbol;
+      if (isa<semantic::SVNamedValueExpressionOp,
+              semantic::SVHierarchicalValueExpressionOp>(predicate))
+        referencedSymbol = predicate->getAttr("referenced_symbol");
+      // Direct references to the same static symbol observe one Preponed
+      // snapshot, even when the antecedent and consequent own distinct AST
+      // nodes. Share their assertion-truth conversion within this transition.
+      if (referencedSymbol) {
+        if (auto found = symbolicPredicateCache.find(referencedSymbol);
+            found != symbolicPredicateCache.end()) {
+          predicateCache[predicate] = found->second;
+          return found->second;
+        }
+      }
       FailureOr<Value> value = lowerExpression(predicate);
       if (failed(value))
         return failure();
-      return truthValue(*value, getSemanticLocation(predicate));
+      FailureOr<Value> result =
+          truthValue(*value, getSemanticLocation(predicate));
+      if (failed(result))
+        return failure();
+      predicateCache[predicate] = *result;
+      if (referencedSymbol)
+        symbolicPredicateCache[referencedSymbol] = *result;
+      return *result;
     };
-    for (Operation *predicate : persistentUnary.operand.predicates) {
-      FailureOr<Value> value = evaluatePredicate(predicate);
-      if (failed(value))
+    auto evaluateAge = [&](const FixedSequenceAge &age) -> FailureOr<Value> {
+      Value result = trueValue;
+      for (Operation *predicate : age.predicates) {
+        FailureOr<Value> value = evaluatePredicate(predicate);
+        if (failed(value))
+          return failure();
+        result = arith::AndIOp::create(builder, location, result, *value);
+      }
+      for (Operation *predicate : age.negatedPredicates) {
+        FailureOr<Value> value = evaluatePredicate(predicate);
+        if (failed(value))
+          return failure();
+        Value negated = arith::XOrIOp::create(builder, location, *value,
+                                              trueValue);
+        result = arith::AndIOp::create(builder, location, result, negated);
+      }
+      return result;
+    };
+    FailureOr<Value> truth = evaluateAge(persistentUnary.operand);
+    if (failed(truth))
+      return failure();
+
+    // Produce this clock's aggregate attempt count. Overlapped implication
+    // starts the consequent immediately; nonoverlapped implication shifts the
+    // activation through a one-clock handoff cell.
+    auto computeCurrentAttemptCount =
+        [&](Value attemptEnabled) -> FailureOr<Value> {
+      if (!implication)
+        return countNewAttempt(attemptEnabled);
+
+      FailureOr<Value> antecedent =
+          evaluateAge(antecedentSequence.ages.front());
+      if (failed(antecedent))
         return failure();
-      truth = arith::AndIOp::create(builder, location, truth, *value);
-    }
-    for (Operation *predicate : persistentUnary.operand.negatedPredicates) {
-      FailureOr<Value> value = evaluatePredicate(predicate);
-      if (failed(value))
-        return failure();
-      Value negated = arith::XOrIOp::create(
-          builder, location, *value,
-          arith::ConstantOp::create(builder, location, builder.getI1Type(),
-                                    builder.getBoolAttr(true)));
-      truth = arith::AndIOp::create(builder, location, truth, negated);
-    }
+      Value activeAntecedent = gateNewAttempt(*antecedent, attemptEnabled);
+      Value antecedentFailed =
+          arith::XOrIOp::create(builder, location, *antecedent, trueValue);
+      Value activeAntecedentFailure =
+          gateNewAttempt(antecedentFailed, attemptEnabled);
+      Value one = arith::ConstantOp::create(builder, location, stateType,
+                                            builder.getI64IntegerAttr(1));
+      Value activation = arith::SelectOp::create(builder, location,
+                                                 activeAntecedent, one, zero);
+      activation.getDefiningOp()->setAttr(
+          "obelisk_sim.persistent_implication_activation",
+          builder.getUnitAttr());
+      Value antecedentResultCount = arith::SelectOp::create(
+          builder, location, activeAntecedentFailure, one, zero);
+      antecedentResultCount.getDefiningOp()->setAttr(
+          "obelisk_sim.persistent_implication_antecedent_result",
+          builder.getUnitAttr());
+      scheduleCount(antecedentResultCount, !followedBy);
+
+      if (!handoffStorage)
+        return activation;
+      Value handoffActivation = sim::SimRefLoadOp::create(
+          builder, location, stateType, handoffStorage);
+      sim::SimRefStoreOp::create(builder, location, activation, handoffStorage);
+      return handoffActivation;
+    };
+
+    Value attemptEnabled = queryAttemptEnabled();
+    FailureOr<Value> newAttemptCount =
+        computeCurrentAttemptCount(attemptEnabled);
+    if (failed(newAttemptCount))
+      return failure();
+    Value currentAttemptCount = *newAttemptCount;
+    if (failed(
+            abortPersistentSample(wait, *persistentAbort, currentAttemptCount)))
+      return failure();
 
     Value one = arith::ConstantOp::create(builder, location, stateType,
                                           builder.getI64IntegerAttr(1));
@@ -6793,14 +6905,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Value nextEligible;
     if (persistentUnary.eventually) {
       terminalCount =
-          arith::SelectOp::create(builder, location, truth, eligibleNow, zero);
+          arith::SelectOp::create(builder, location, *truth, eligibleNow, zero);
       nextEligible =
-          arith::SelectOp::create(builder, location, truth, zero, eligibleNow);
+          arith::SelectOp::create(builder, location, *truth, zero, eligibleNow);
     } else {
       terminalCount =
-          arith::SelectOp::create(builder, location, truth, zero, eligibleNow);
+          arith::SelectOp::create(builder, location, *truth, zero, eligibleNow);
       nextEligible =
-          arith::SelectOp::create(builder, location, truth, eligibleNow, zero);
+          arith::SelectOp::create(builder, location, *truth, eligibleNow, zero);
     }
     scheduleCount(terminalCount, persistentUnary.eventually);
     sim::SimRefStoreOp::create(builder, location, nextEligible,
