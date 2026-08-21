@@ -67,7 +67,7 @@ module {
 // changes publish after the event's Observed sampling boundary, so an event
 // exactly at source-change-plus-skew still sees the Preponed source value.
 // SKEW-LABEL: obelisk_sim.func private @unit_0.$clocking_input_delay.{{[0-9]+}}.commit
-// SKEW: obelisk_sim.time.constant 2000000
+// SKEW: obelisk_sim.time.constant 2{{$|[^0-9]}}
 // SKEW: obelisk_sim.suspend.delay
 // SKEW-SAME: resume_region = 16 : i32
 // SKEW: obelisk_sim.assert.clocked_sample_update
@@ -83,6 +83,6 @@ module {
 // SKEW-NOT: obelisk.sv.
 
 // Real skews round to the clocking block's timeprecision.
-// REAL-SKEW: obelisk_sim.time.constant 2000000
+// REAL-SKEW: obelisk_sim.time.constant 2{{$|[^0-9]}}
 // BAD-SKEW: clocking input skew is not a known nonnegative value
 // OUTPUT-READ: cannot read an output clocking variable

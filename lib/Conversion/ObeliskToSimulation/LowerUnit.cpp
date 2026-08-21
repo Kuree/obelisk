@@ -512,6 +512,20 @@ void UnitLowering::ensureCoverageInventory() {
   }
 }
 
+// One design-precision tick, in femtoseconds. Simulation time is counted in
+// these ticks, so a duration that IEEE 1800-2017 states in a scope's own time
+// units -- a clocking skew, per 14.4 -- has to be divided by this to become a
+// delay the scheduler can use.
+FailureOr<uint64_t> UnitLowering::designTimePrecisionFemtoseconds(
+    Location location) {
+  auto design = function->getParentOfType<sim::SimDesignOp>();
+  IntegerAttr precisionFs = design ? design.getTimePrecisionFsAttr() : nullptr;
+  if (!precisionFs || !precisionFs.getValue().isStrictlyPositive())
+    return emitError(location) << "design has no frozen time precision",
+           failure();
+  return precisionFs.getValue().getZExtValue();
+}
+
 Block *UnitLowering::addBlock() {
   Block *block = new Block();
   function.getBody().push_back(block);

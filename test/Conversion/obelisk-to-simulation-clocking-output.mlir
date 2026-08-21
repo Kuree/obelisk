@@ -111,7 +111,7 @@ module {
 
 // Positive output skew is expressed as a delayed NBA in precision ticks.
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.47
-// CHECK: obelisk_sim.time.constant 2000000
+// CHECK: obelisk_sim.time.constant 2{{$|[^0-9]}}
 // CHECK: obelisk_sim.nba.enqueue {{.*}} after
 
 // The current occurrence of cb does not synchronize a same-edge cb2 drive.

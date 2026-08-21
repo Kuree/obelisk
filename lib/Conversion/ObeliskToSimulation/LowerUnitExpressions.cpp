@@ -61,6 +61,7 @@ FailureOr<uint64_t> parseClockingInputSkew(Operation *op, StringRef delayName,
                                            StringRef delayIsRealName,
                                            StringRef timeUnitName,
                                            StringRef timePrecisionName,
+                                           uint64_t designPrecisionFS,
                                            Location location) {
   auto spelling = op->getAttrOfType<StringAttr>(delayName);
   auto unit = op->getAttrOfType<IntegerAttr>(timeUnitName);
@@ -95,6 +96,10 @@ FailureOr<uint64_t> parseClockingInputSkew(Operation *op, StringRef delayName,
              failure();
     scaled = static_cast<long double>(parsed->value.getZExtValue()) * unitFS;
   }
+  // IEEE 1800-2017 14.4 counts a bare skew in the clocking scope's own time
+  // units, which `scaled` has resolved to femtoseconds. Simulation delays are
+  // counted in design-precision ticks.
+  scaled /= static_cast<long double>(designPrecisionFS);
   if (scaled > std::numeric_limits<uint64_t>::max())
     return emitError(location) << "clocking input skew exceeds simulation time",
            failure();
@@ -181,10 +186,14 @@ UnitLowering::lowerStaticClockingVariable(Operation *op, bool lvalue) {
   bool zeroDelay = delay && delay.getValue() == "0";
   uint64_t skewTicks = 0;
   if (!oneStep && !edgeOnly && !zeroDelay) {
+    FailureOr<uint64_t> designPrecisionFS =
+        designTimePrecisionFemtoseconds(location);
+    if (failed(designPrecisionFS))
+      return failure();
     FailureOr<uint64_t> parsed = parseClockingInputSkew(
         op, clockingInputSkewDelayAttrName,
         clockingInputSkewDelayIsRealAttrName, clockingTimeUnitAttrName,
-        clockingTimePrecisionAttrName, location);
+        clockingTimePrecisionAttrName, *designPrecisionFS, location);
     if (failed(parsed))
       return failure();
     skewTicks = *parsed;
@@ -2818,11 +2827,16 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
     auto delay = op->getAttrOfType<StringAttr>(
         "virtual_interface_clock_input_skew_delay");
     if (!oneStep && !edgeOnly && delay && delay.getValue() != "0") {
+      FailureOr<uint64_t> designPrecisionFS =
+          designTimePrecisionFemtoseconds(location);
+      if (failed(designPrecisionFS))
+        return failure();
       FailureOr<uint64_t> parsed = parseClockingInputSkew(
           op, "virtual_interface_clock_input_skew_delay",
           "virtual_interface_clock_input_skew_delay_is_real",
           "virtual_interface_clock_time_unit_fs",
-          "virtual_interface_clock_time_precision_fs", location);
+          "virtual_interface_clock_time_precision_fs", *designPrecisionFS,
+          location);
       if (failed(parsed))
         return failure();
       skewTicks = *parsed;

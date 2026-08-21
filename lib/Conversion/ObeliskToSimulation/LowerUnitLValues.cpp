@@ -1667,6 +1667,14 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
         scaled =
             static_cast<long double>(parsed->value.getZExtValue()) * unitFS;
     }
+    // IEEE 1800-2017 14.4 counts a bare skew in the clocking scope's own time
+    // units, which `scaled` has resolved to femtoseconds. Simulation delays are
+    // counted in design-precision ticks.
+    FailureOr<uint64_t> designPrecisionFS =
+        designTimePrecisionFemtoseconds(location);
+    if (failed(designPrecisionFS))
+      return failure();
+    scaled /= static_cast<long double>(*designPrecisionFS);
     if (scaled > std::numeric_limits<uint64_t>::max()) {
       emitError(location) << "clocking output skew exceeds simulation time";
       return failure();

@@ -430,6 +430,10 @@ private:
   formatUnpackedAggregatePattern(::mlir::Value value,
                                  ::mlir::Location location);
   ::mlir::IntegerAttr designTimePrecisionExponent();
+  // One design-precision tick in femtoseconds, the unit every lowered
+  // simulation delay is counted in.
+  ::mlir::FailureOr<uint64_t>
+  designTimePrecisionFemtoseconds(::mlir::Location location);
   // Map an assignment-pattern index key onto the element ordinal the aggregate
   // stores it at. IEEE 1800-2017 10.9.1 writes the key in the array's own
   // declared index range, which may descend and may start below zero.

@@ -242,7 +242,7 @@ module {
 // selected instance's conditioned clock sampler reads that mirror.
 // INPUT-SKEW-COUNT-2: always hierarchy "unit_0.$clocking_input_delay.
 // INPUT-SKEW-LABEL: obelisk_sim.func private @unit_0.$clocking_input_delay.{{[0-9]+}}.commit
-// INPUT-SKEW: obelisk_sim.time.constant 2000000
+// INPUT-SKEW: obelisk_sim.time.constant 2{{$|[^0-9]}}
 // INPUT-SKEW: obelisk_sim.suspend.delay
 // INPUT-SKEW-SAME: resume_region = 16 : i32
 // INPUT-SKEW: obelisk_sim.assert.clocked_sample_update
