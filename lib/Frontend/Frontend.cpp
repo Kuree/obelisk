@@ -2791,6 +2791,12 @@ private:
     } else if constexpr (std::same_as<T, slang::ast::Delay3Control>) {
       int64_t delayCount = node.expr3 ? 3 : node.expr2 ? 2 : 1;
       SET_OP_ATTR(DelayCount, builder.getI64IntegerAttr(delayCount));
+    } else if constexpr (std::same_as<T, slang::ast::CycleDelayControl>) {
+      if (const slang::ast::Scope *scope = getCurrentScope())
+        if (const slang::ast::Symbol *clocking =
+                compilation.getDefaultClocking(*scope))
+          addStaticClockingEventDescriptor(
+              attrs, clocking->as<slang::ast::ClockingBlockSymbol>());
     } else if constexpr (std::same_as<T, slang::ast::SignalEventControl>) {
       SET_OP_ATTR(EdgeKind, slangir::EdgeKindAttr::get(builder.getContext(),
                                                        convertEnum(node.edge)));

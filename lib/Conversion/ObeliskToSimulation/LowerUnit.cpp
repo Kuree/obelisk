@@ -483,28 +483,39 @@ Block *UnitLowering::addBlock() {
   return block;
 }
 
-bool UnitLowering::isCurrentClockingOccurrence(Block *block,
-                                               Value clock) const {
+std::optional<Value>
+UnitLowering::getCurrentClockingOccurrence(Block *block, Value clock) const {
   DenseSet<Block *> visiting;
-  std::function<bool(Block *)> reachesOccurrence = [&](Block *candidate) {
+  std::function<std::optional<Value>(Block *)> reachesOccurrence =
+      [&](Block *candidate) -> std::optional<Value> {
     if (auto occurrence = clockingEventContinuations.find(candidate);
         occurrence != clockingEventContinuations.end())
-      return !clock || occurrence->second == clock;
+      return !clock || occurrence->second.clock == clock
+                 ? std::optional<Value>(occurrence->second.predicate)
+                 : std::nullopt;
     if (timingBoundaryContinuations.contains(candidate))
-      return false;
+      return std::nullopt;
     // A backedge within the currently inspected predecessor SCC does not
     // introduce a new entry path. Its external predecessors decide whether
     // the whole zero-time loop remains in the clocking occurrence.
     if (!visiting.insert(candidate).second)
-      return true;
+      return Value{};
     auto predecessors = candidate->getPredecessors();
     if (predecessors.empty()) {
       visiting.erase(candidate);
-      return false;
+      return std::nullopt;
     }
-    bool all = llvm::all_of(predecessors, reachesOccurrence);
+    std::optional<Value> common;
+    for (Block *predecessor : predecessors) {
+      std::optional<Value> occurrence = reachesOccurrence(predecessor);
+      if (!occurrence || (common && *common != *occurrence)) {
+        visiting.erase(candidate);
+        return std::nullopt;
+      }
+      common = occurrence;
+    }
     visiting.erase(candidate);
-    return all;
+    return common;
   };
   return reachesOccurrence(block);
 }

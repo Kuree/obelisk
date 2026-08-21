@@ -358,6 +358,9 @@ private:
   emitRepeatedEventSuspend(::mlir::Operation *control,
                            ::mlir::Block *continuation,
                            ::mlir::ValueRange continuationOperands = {});
+  ::mlir::LogicalResult
+  emitCycleDelaySuspend(semantic::SVCycleDelayControlOp control,
+                        ::mlir::Block *continuation);
   ::mlir::FailureOr<::mlir::Value> lowerDelayValue(::mlir::Operation *control);
   ::mlir::LogicalResult lowerWait(semantic::SVWaitStatementOp op);
   ::mlir::LogicalResult
@@ -459,8 +462,9 @@ private:
                      bool resultSigned = false);
   ::mlir::Block *addBlock();
   void setCurrent(::mlir::Block *block);
-  bool isCurrentClockingOccurrence(::mlir::Block *block,
-                                   ::mlir::Value clock = {}) const;
+  std::optional<::mlir::Value>
+  getCurrentClockingOccurrence(::mlir::Block *block,
+                               ::mlir::Value clock = {}) const;
   void emitBranch(::mlir::Block *destination);
   void emitControlLeaves(size_t first, ::mlir::Location location);
   ::mlir::InFlightDiagnostic unsupported(::mlir::Operation *op);
@@ -505,7 +509,12 @@ private:
   ::llvm::DenseMap<uint64_t, ::mlir::Type> virtualInterfaceNetTypes;
   ::llvm::SetVector<::mlir::Value> virtualInterfaceReadSensitivity;
   ::llvm::SetVector<::mlir::Value> virtualInterfaceWrittenSensitivity;
-  ::llvm::DenseMap<::mlir::Block *, ::mlir::Value>
+  struct ClockingOccurrence {
+    ::mlir::Value clock;
+    /// Null means that every path into the block is clock-synchronized.
+    ::mlir::Value predicate;
+  };
+  ::llvm::DenseMap<::mlir::Block *, ClockingOccurrence>
       clockingEventContinuations;
   ::llvm::DenseSet<::mlir::Block *> timingBoundaryContinuations;
   bool coverageInventoryReady = false;

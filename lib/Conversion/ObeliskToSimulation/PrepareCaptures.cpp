@@ -237,6 +237,20 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       return localPath;
     };
     std::function<void(Operation *)> collectBinding = [&](Operation *nested) {
+      if (isa<semantic::SVCycleDelayControlOp>(nested)) {
+        auto path =
+            nested->getAttrOfType<StringAttr>(clockingEventPathAttrName);
+        if (!path)
+          return;
+        auto descriptor = descriptors.find(path.getValue());
+        if (descriptor == descriptors.end())
+          return;
+        if (seenPaths.insert(path.getValue()).second)
+          result.descriptors[unit.source].push_back(
+              {path.getValue().str(), descriptor->second});
+        result.readDescriptors[unit.source].insert(path.getValue());
+        return;
+      }
       if (nested->hasAttr(clockingVariableAttrName)) {
         auto captureDescriptor = [&](StringLiteral pathName, bool read,
                                      bool written) {

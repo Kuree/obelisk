@@ -1309,10 +1309,13 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
           ? skewEdge.getValue()
           : eventEdge.getValue();
   sim::EdgeKind edge = static_cast<sim::EdgeKind>(selectedEdge);
-  bool synchronizedToCurrentEvent =
-      selectedEdge == eventEdge.getValue() &&
-      isCurrentClockingOccurrence(current,
-                                  virtualInterface ? Value{} : clock);
+  std::optional<Value> currentOccurrence;
+  if (selectedEdge == eventEdge.getValue())
+    currentOccurrence = getCurrentClockingOccurrence(
+        current, virtualInterface ? Value{} : clock);
+  bool alwaysSynchronized = currentOccurrence && !*currentOccurrence;
+  Value synchronizationPredicate =
+      currentOccurrence ? *currentOccurrence : Value{};
 
   uint64_t delayTicks = 0;
   if (auto spelling =
@@ -1395,13 +1398,18 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
       captureMetadata(outlineBuilder, sim::CaptureKind::Formal),
       captureMetadata(outlineBuilder, sim::CaptureKind::Formal),
       captureMetadata(outlineBuilder, sim::CaptureKind::Value)};
+  if (synchronizationPredicate) {
+    inputs.push_back(synchronizationPredicate.getType());
+    argumentAttrs.push_back(
+        captureMetadata(outlineBuilder, sim::CaptureKind::Value));
+  }
   SmallVector<NamedAttribute> attributes{
       outlineBuilder.getNamedAttr("code_unit_id",
                                   outlineBuilder.getI64IntegerAttr(codeUnitID)),
       outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
       outlineBuilder.getNamedAttr(
           "home_region",
-          synchronizedToCurrentEvent
+          currentOccurrence
               ? sim::EventRegionAttr::get(context, sim::EventRegion::Reactive)
               : function.getHomeRegionAttr()),
       outlineBuilder.getNamedAttr("domain", function.getDomainAttr()),
@@ -1413,14 +1421,18 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
                              sim::EntryKind::Fork, attributes, argumentAttrs);
   SymbolTable::setSymbolVisibility(driver, SymbolTable::Visibility::Private);
   Block &entry = driver.getBody().front();
-  Block *wait = synchronizedToCurrentEvent ? nullptr : new Block();
+  Block *wait = alwaysSynchronized ? nullptr : new Block();
   Block *drive = new Block();
   if (wait)
     driver.getBody().push_back(wait);
   driver.getBody().push_back(drive);
   OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
   if (wait) {
-    cf::BranchOp::create(entryBuilder, location, wait);
+    if (synchronizationPredicate)
+      cf::CondBranchOp::create(entryBuilder, location, entry.getArgument(4),
+                               drive, ValueRange{}, wait, ValueRange{});
+    else
+      cf::BranchOp::create(entryBuilder, location, wait);
     OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
     sim::SimSuspendEdgeOp::create(
         waitBuilder, location, edge, entry.getArgument(2), ValueRange{},
@@ -1441,9 +1453,11 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
   sim::SimReturnOp::create(driveBuilder, location, ValueRange{});
   driver->setAttr(sim::metadata::lowered, builder.getUnitAttr());
   Value processContext = function.getBody().front().getArgument(0);
+  SmallVector<Value> spawnInputs{processContext, target, clock, value};
+  if (synchronizationPredicate)
+    spawnInputs.push_back(synchronizationPredicate);
   sim::SimSpawnOp::create(builder, location, driver.getSymNameAttr(),
-                          ValueRange{processContext, target, clock, value},
-                          ArrayAttr{}, ArrayAttr{});
+                          spawnInputs, ArrayAttr{}, ArrayAttr{});
   return success();
 }
 

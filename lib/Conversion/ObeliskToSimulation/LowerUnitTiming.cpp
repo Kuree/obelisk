@@ -413,7 +413,7 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
               : sim::EventRegionAttr{};
       emitDirect(*handle, edge, continuation, continuationOperands, resume);
       if (clockingBlockEvent)
-        clockingEventContinuations[continuation] = *handle;
+        clockingEventContinuations[continuation] = {*handle, {}};
       return success();
     }
 
@@ -550,6 +550,183 @@ UnitLowering::emitRepeatedEventSuspend(Operation *control, Block *continuation,
   return success();
 }
 
+LogicalResult UnitLowering::emitCycleDelaySuspend(
+    semantic::SVCycleDelayControlOp control, Block *continuation) {
+  Location location = getSemanticLocation(control);
+  SmallVector<Operation *> children = getChildren(control);
+  if (children.size() != 1) {
+    unsupported(control) << " (cycle-delay inventory)";
+    return failure();
+  }
+  if (control->hasAttr(clockingEventHasIffAttrName)) {
+    emitError(location)
+        << "cycle delays with iff default clock events are not yet supported";
+    return failure();
+  }
+  auto clockPath =
+      control->getAttrOfType<StringAttr>(clockingEventPathAttrName);
+  auto eventEdge =
+      control->getAttrOfType<semantic::EdgeKindAttr>(clockingEventEdgeAttrName);
+  if (!clockPath || !eventEdge) {
+    emitError(location) << "cycle delay has no supported default clocking event";
+    return failure();
+  }
+  FailureOr<Value> clock = lowerReferencedValue(
+      control, clockPath.getValue(), /*lvalue=*/true);
+  if (failed(clock))
+    return failure();
+  std::optional<Value> incomingOccurrence =
+      getCurrentClockingOccurrence(current, *clock);
+
+  auto emitClockWait = [&](OpBuilder &waitBuilder, Block *successor,
+                           ValueRange operands) {
+    sim::EventRegionAttr reactive = sim::EventRegionAttr::get(
+        function.getContext(), sim::EventRegion::Reactive);
+    sim::EdgeKind edge = static_cast<sim::EdgeKind>(eventEdge.getValue());
+    if (edge == sim::EdgeKind::Change)
+      sim::SimSuspendChangeOp::create(
+          waitBuilder, location, *clock, operands,
+          sim::ContinuationSiteAttr{}, reactive, successor);
+    else
+      sim::SimSuspendEdgeOp::create(
+          waitBuilder, location, edge, *clock, operands,
+          sim::ContinuationSiteAttr{}, reactive, successor);
+  };
+
+  std::optional<uint64_t> constantCount;
+  if (std::optional<StringRef> spelling =
+          getConstantSpelling(children.front())) {
+    FailureOr<Type> type = getNormalizedSemanticType(children.front());
+    std::optional<unsigned> width =
+        succeeded(type) ? sim::getPackedWidth(*type) : std::nullopt;
+    if (failed(type) || !width)
+      return failure();
+    FailureOr<ParsedConstant> parsed =
+        parseSVInteger(*spelling, *width, location);
+    if (failed(parsed))
+      return failure();
+    if (!parsed->unknown.isZero() ||
+        (isSignedNode(children.front()) && parsed->value.isNegative())) {
+      constantCount = 0;
+    } else if (parsed->value.getActiveBits() > 64) {
+      emitError(location) << "cycle delay count exceeds 64 bits";
+      return failure();
+    } else {
+      constantCount = parsed->value.getZExtValue();
+    }
+  }
+
+  if (constantCount && *constantCount == 0) {
+    // ##0 does not cross an event boundary. Preserve any clocking occurrence
+    // inherited from an immediately preceding @(clocking_block).
+    timingBoundaryContinuations.erase(continuation);
+    cf::BranchOp::create(builder, location, continuation);
+    return success();
+  }
+  if (constantCount && *constantCount == 1) {
+    emitClockWait(builder, continuation, ValueRange{});
+    clockingEventContinuations[continuation] = {*clock, {}};
+    return success();
+  }
+
+  Type countType = builder.getI64Type();
+  Value count;
+  Value positive;
+  if (constantCount) {
+    count = arith::ConstantOp::create(
+        builder, location, countType,
+        builder.getI64IntegerAttr(*constantCount));
+  } else {
+    FailureOr<Value> value = lowerExpression(children.front());
+    FailureOr<Value> scalar =
+        succeeded(value) ? toPackedScalar(*value, location)
+                         : FailureOr<Value>(failure());
+    std::optional<unsigned> scalarWidth =
+        succeeded(scalar) ? sim::getPackedWidth((*scalar).getType())
+                          : std::nullopt;
+    if (succeeded(scalar) && (!scalarWidth || *scalarWidth > 64)) {
+      emitError(location)
+          << "dynamic cycle delay count currently requires at most 64 bits";
+      return failure();
+    }
+    FailureOr<Value> normalized =
+        succeeded(scalar)
+            ? convert(*scalar, countType, isSignedNode(children.front()),
+                      location)
+            : FailureOr<Value>(failure());
+    if (failed(normalized))
+      return failure();
+    count = *normalized;
+    Value zero = arith::ConstantOp::create(builder, location, countType,
+                                           builder.getI64IntegerAttr(0));
+    positive = arith::CmpIOp::create(
+        builder, location,
+        isSignedNode(children.front()) ? arith::CmpIPredicate::sgt
+                                       : arith::CmpIPredicate::ne,
+        count, zero);
+    if (!incomingOccurrence || *incomingOccurrence)
+      continuation->addArgument(builder.getI1Type(), location);
+  }
+
+  Block *wait = addBlock();
+  wait->addArgument(countType, location);
+  Block *resume = addBlock();
+  resume->addArgument(countType, location);
+  if (constantCount) {
+    cf::BranchOp::create(builder, location, wait, ValueRange{count});
+  } else {
+    if (continuation->getNumArguments() == 0) {
+      cf::CondBranchOp::create(builder, location, positive, wait,
+                               ValueRange{count}, continuation, ValueRange{});
+    } else {
+      Value didNotWait =
+          incomingOccurrence && *incomingOccurrence
+              ? *incomingOccurrence
+              : arith::ConstantOp::create(builder, location,
+                                          builder.getI1Type(),
+                                          builder.getBoolAttr(false));
+      cf::CondBranchOp::create(builder, location, positive, wait,
+                               ValueRange{count}, continuation,
+                               ValueRange{didNotWait});
+    }
+  }
+
+  OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
+  emitClockWait(waitBuilder, resume, wait->getArguments());
+  OpBuilder resumeBuilder = OpBuilder::atBlockEnd(resume);
+  Value one = arith::ConstantOp::create(resumeBuilder, location, countType,
+                                        resumeBuilder.getI64IntegerAttr(1));
+  Value zero = arith::ConstantOp::create(resumeBuilder, location, countType,
+                                         resumeBuilder.getI64IntegerAttr(0));
+  Value remaining = arith::SubIOp::create(
+      resumeBuilder, location, resume->getArgument(0), one);
+  Value more = arith::CmpIOp::create(resumeBuilder, location,
+                                     arith::CmpIPredicate::ne, remaining, zero);
+  if (constantCount) {
+    cf::CondBranchOp::create(resumeBuilder, location, more, wait,
+                             ValueRange{remaining}, continuation,
+                             ValueRange{});
+    clockingEventContinuations[continuation] = {*clock, {}};
+  } else {
+    if (continuation->getNumArguments() == 0) {
+      cf::CondBranchOp::create(resumeBuilder, location, more, wait,
+                               ValueRange{remaining}, continuation,
+                               ValueRange{});
+      clockingEventContinuations[continuation] = {*clock, {}};
+    } else {
+      Value didWait = arith::ConstantOp::create(
+          resumeBuilder, location, builder.getI1Type(),
+          resumeBuilder.getBoolAttr(true));
+      cf::CondBranchOp::create(resumeBuilder, location, more, wait,
+                               ValueRange{remaining}, continuation,
+                               ValueRange{didWait});
+      clockingEventContinuations[continuation] = {
+          *clock, continuation->getArgument(0)};
+    }
+  }
+  return success();
+}
+
 LogicalResult UnitLowering::lowerTiming(Operation *control,
                                         Operation *statement) {
   Location location = getSemanticLocation(control);
@@ -642,6 +819,9 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
     sim::SimSuspendDelayOp::create(
         builder, location, delay, sim::TimingSiteAttr{}, ValueRange{},
         sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
+  } else if (auto cycle = dyn_cast<semantic::SVCycleDelayControlOp>(control)) {
+    if (failed(emitCycleDelaySuspend(cycle, continuation)))
+      return failure();
   } else if (isa<semantic::SVSignalEventControlOp,
                  semantic::SVEventListControlOp>(control)) {
     if (failed(emitEventSuspend(control, continuation)))
