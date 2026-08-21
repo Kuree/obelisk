@@ -2724,7 +2724,8 @@ def SimNBAEnqueueOp : SimOp<"nba.enqueue", [
   ]> {
   let arguments = (ins AnyType:$value, AnyType:$destination,
                        Optional<SimTimeType>:$delay,
-                       OptionalAttr<SimNBASiteAttr>:$site);
+                       OptionalAttr<SimNBASiteAttr>:$site,
+                       OptionalAttr<I64Attr>:$clocking_output);
   let assemblyFormat = [{$value `to` $destination (`after` $delay^)? attr-dict
     `:` functional-type(operands, results)}];
   let hasVerifier = 1;

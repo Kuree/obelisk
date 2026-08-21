@@ -472,12 +472,12 @@ void UnitLowering::ensureVirtualInterfaceInventory() {
       auto scope = interfaceScopes.find(driver.getScopeId());
       StringAttr member = driver->getAttrOfType<StringAttr>(
           "obelisk_sim.virtual_interface_member");
-      IntegerAttr site = driver->getAttrOfType<IntegerAttr>(
-          "obelisk_sim.virtual_interface_clocking_site");
-      if (scope != interfaceScopes.end() && member && site) {
+      StringAttr output = driver->getAttrOfType<StringAttr>(
+          "obelisk_sim.virtual_interface_clocking_output");
+      if (scope != interfaceScopes.end() && member && output) {
         std::string key =
             (Twine(memberKey(scope->second.getValue(), member.getValue())) +
-             "\n" + Twine(site.getValue().getZExtValue()))
+             "\n" + output.getValue())
                 .str();
         virtualInterfaceDriverMembers[key].push_back(
             {driver.getScopeId(), driver.getId()});

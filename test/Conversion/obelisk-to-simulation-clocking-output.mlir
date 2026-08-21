@@ -78,14 +78,15 @@ module {
 
 // An asynchronous drive waits for the clocking edge and then schedules NBA.
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.25
+// CHECK-SAME: home_region = 10 : i32
 // CHECK: obelisk_sim.suspend.edge posedge
-// CHECK: obelisk_sim.nba.enqueue
+// CHECK: obelisk_sim.nba.enqueue {{.*}} {clocking_output = [[Q_GROUP:[0-9]+]] : i64
 
 // A same-edge drive following @(cb); ##0 remains in the current event.
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.35
 // CHECK-SAME: home_region = 10 : i32
 // CHECK-NOT: obelisk_sim.suspend.edge
-// CHECK: obelisk_sim.nba.enqueue
+// CHECK: obelisk_sim.nba.enqueue {{.*}} {clocking_output = [[Q_GROUP]] : i64
 
 // A distinct output edge remains a future synchronization point after @(cb).
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.41

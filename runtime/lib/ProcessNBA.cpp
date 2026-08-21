@@ -93,7 +93,8 @@ schedulerNBA(obelisk_rt_context *context, uint8_t *valuePlane,
              uint8_t *unknownPlane, uint64_t planeBitCount, uint64_t bitOffset,
              uint64_t bitWidth, uint64_t delay, const uint8_t *value,
              const uint8_t *unknown, bool stringValue,
-             uint64_t staticSite = UINT64_MAX, bool driver = false) {
+             uint64_t staticSite = UINT64_MAX, bool driver = false,
+             uint64_t clockingOutput = UINT64_MAX) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
   auto fail = [&](obelisk_rt_status status) {
@@ -137,6 +138,7 @@ schedulerNBA(obelisk_rt_context *context, uint8_t *valuePlane,
     update.planeBitCount = planeBitCount;
     update.bitOffset = bitOffset;
     update.bitWidth = bitWidth;
+    update.clockingOutput = clockingOutput;
     update.stringValue = stringValue;
     update.driver = driver;
     update.rootedString = queuedString;
@@ -376,6 +378,30 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_driver_nba(
   return schedulerNBA(context, valuePlane, unknownPlane, planeBitCount,
                       bitOffset, bitWidth, delay, value, unknown, false,
                       UINT64_MAX, true);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_clocking_nba(
+    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+    uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
+    uint64_t delay, const uint8_t *value, const uint8_t *unknown,
+    uint64_t clockingOutput) {
+  if (clockingOutput == UINT64_MAX)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return schedulerNBA(context, valuePlane, unknownPlane, planeBitCount,
+                      bitOffset, bitWidth, delay, value, unknown, false,
+                      UINT64_MAX, false, clockingOutput);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_clocking_driver_nba(
+    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+    uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
+    uint64_t delay, const uint8_t *value, const uint8_t *unknown,
+    uint64_t clockingOutput) {
+  if (clockingOutput == UINT64_MAX)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return schedulerNBA(context, valuePlane, unknownPlane, planeBitCount,
+                      bitOffset, bitWidth, delay, value, unknown, false,
+                      UINT64_MAX, true, clockingOutput);
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_static_nba(
@@ -1462,6 +1488,107 @@ extern "C" void obelisk_rt_v1_static_nba_account_generated_commits(
   context->signalDiagnostics.aotNBACommits += count;
 }
 
+obelisk_rt_status
+resolveClockingDriveConflictsUnlocked(obelisk_rt_context *context,
+                                      uint32_t barrierRegion) {
+  struct RootPosition {
+    uint32_t kind;
+    uint32_t id;
+    int64_t offset;
+  };
+  auto locate = [](const ScheduledNBA &update, RootPosition &position) -> bool {
+    if (decodeNativeAutomatic(update.bitOffset, position.id, position.offset)) {
+      position.kind = 2;
+      return true;
+    }
+    if (decodeNativeStatic(update.bitOffset, position.id, position.offset)) {
+      position.kind = 1;
+      return true;
+    }
+    if (decodeNativeGlobal(update.bitOffset, position.offset)) {
+      position.kind = 0;
+      position.id = 0;
+      return true;
+    }
+    return false;
+  };
+  auto fourState = [](const ScheduledNBA &update) {
+    return update.unknownPlane || !update.unknown.empty();
+  };
+  auto readBit = [](const ScheduledNBA &update, uint64_t bit,
+                    bool unknown) -> bool {
+    if (update.inlinePacked)
+      return (((unknown ? update.inlineUnknown : update.inlineValue) >> bit) &
+              uint64_t{1}) != 0;
+    const std::vector<uint8_t> &plane = unknown ? update.unknown : update.value;
+    return bit / 8 < plane.size() && byteBit(plane.data(), bit);
+  };
+  auto writeConflict = [&](ScheduledNBA &update, uint64_t bit) {
+    bool unknown = fourState(update);
+    if (update.inlinePacked) {
+      uint64_t mask = uint64_t{1} << bit;
+      update.inlineValue &= ~mask;
+      if (unknown)
+        update.inlineUnknown |= mask;
+      return;
+    }
+    setByteBit(update.value.data(), bit, false);
+    if (unknown)
+      setByteBit(update.unknown.data(), bit, true);
+  };
+
+  bool conflict = false;
+  for (size_t lhsIndex = 0; lhsIndex != context->scheduledNBAs.size();
+       ++lhsIndex) {
+    ScheduledNBA &lhs = context->scheduledNBAs[lhsIndex];
+    if (lhs.clockingOutput == UINT64_MAX ||
+        lhs.dueTime > context->schedulerTime || lhs.execRegion != barrierRegion)
+      continue;
+    RootPosition lhsPosition{};
+    if (!locate(lhs, lhsPosition))
+      return OBELISK_RT_INVALID_HANDLE;
+    for (size_t rhsIndex = lhsIndex + 1;
+         rhsIndex != context->scheduledNBAs.size(); ++rhsIndex) {
+      ScheduledNBA &rhs = context->scheduledNBAs[rhsIndex];
+      if (rhs.clockingOutput != lhs.clockingOutput ||
+          rhs.dueTime != lhs.dueTime || rhs.execRegion != barrierRegion)
+        continue;
+      RootPosition rhsPosition{};
+      if (!locate(rhs, rhsPosition))
+        return OBELISK_RT_INVALID_HANDLE;
+      if (lhsPosition.kind != rhsPosition.kind ||
+          lhsPosition.id != rhsPosition.id)
+        continue;
+      __int128 begin =
+          std::max<__int128>(lhsPosition.offset, rhsPosition.offset);
+      __int128 end = std::min<__int128>(
+          static_cast<__int128>(lhsPosition.offset) + lhs.bitWidth,
+          static_cast<__int128>(rhsPosition.offset) + rhs.bitWidth);
+      for (__int128 rootBit = begin; rootBit < end; ++rootBit) {
+        uint64_t lhsBit = static_cast<uint64_t>(rootBit - lhsPosition.offset);
+        uint64_t rhsBit = static_cast<uint64_t>(rootBit - rhsPosition.offset);
+        bool lhsValue = readBit(lhs, lhsBit, false);
+        bool rhsValue = readBit(rhs, rhsBit, false);
+        bool lhsUnknown = readBit(lhs, lhsBit, true);
+        bool rhsUnknown = readBit(rhs, rhsBit, true);
+        if (lhsValue == rhsValue && lhsUnknown == rhsUnknown)
+          continue;
+        conflict = true;
+        writeConflict(lhs, lhsBit);
+        writeConflict(rhs, rhsBit);
+      }
+    }
+  }
+  if (conflict) {
+    std::fprintf(stderr,
+                 "error: conflicting synchronous clocking drives at time "
+                 "%llu\n",
+                 static_cast<unsigned long long>(context->schedulerTime));
+    context->schedulerFinishStatus = OBELISK_RT_FATAL;
+  }
+  return OBELISK_RT_OK;
+}
+
 bool canCommitInlineNativeNBABarrierUnlocked(obelisk_rt_context *context,
                                              uint32_t barrierRegion) {
   if (!context->execution ||
@@ -1475,8 +1602,8 @@ bool canCommitInlineNativeNBABarrierUnlocked(obelisk_rt_context *context,
       continue;
     uint32_t staticID = 0;
     int64_t offset = 0;
-    if (update.driver || !update.inlinePacked || update.stringValue ||
-        update.managedValue ||
+    if (update.clockingOutput != UINT64_MAX || update.driver ||
+        !update.inlinePacked || update.stringValue || update.managedValue ||
         update.retainedAutomaticID != 0 || update.bitWidth == 0 ||
         update.bitWidth > 64 ||
         update.planeBitCount != context->execution->state_bit_count ||

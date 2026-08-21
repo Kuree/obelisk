@@ -447,6 +447,7 @@ struct NativeStaticStateRange {
 struct ScheduledNBA {
   uint64_t sequence = 0;
   uint64_t dueTime = 0;
+  uint64_t clockingOutput = UINT64_MAX;
   uint32_t execRegion = OBELISK_RT_REGION_NBA;
   uint32_t retainedAutomaticID = 0;
   uint8_t *valuePlane = nullptr;

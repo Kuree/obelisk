@@ -662,7 +662,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
       if (nonblocking)
         sim::SimNBAEnqueueOp::create(builder, location, published,
                                      destination.reference, delay,
-                                     sim::NBASiteAttr{});
+                                     sim::NBASiteAttr{}, IntegerAttr{});
       else {
         auto store = sim::SimRefStoreOp::create(builder, location, published,
                                                 destination.reference);
@@ -1473,6 +1473,14 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
   std::string identity =
       (function.getSymName() + ".$clocking_output." + Twine(node)).str();
   uint64_t codeUnitID = stableCodeUnitID(identity);
+  auto clockingOutputPath =
+      destination->getAttrOfType<StringAttr>("referenced_path");
+  if (!clockingOutputPath)
+    return emitError(location)
+           << "clocking output has no stable clock-variable identity";
+  uint64_t clockingOutputID = stableCodeUnitID(
+      (Twine("clocking-output-resolution|") + clockingOutputPath.getValue())
+          .str());
   uint64_t scopeID = 0;
   if (auto parentID = function.getCodeUnitId())
     for (sim::SimCodeUnitDeclOp declaration :
@@ -1544,9 +1552,7 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
       outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
       outlineBuilder.getNamedAttr(
           "home_region",
-          currentOccurrence
-              ? sim::EventRegionAttr::get(context, sim::EventRegion::Reactive)
-              : function.getHomeRegionAttr()),
+          sim::EventRegionAttr::get(context, sim::EventRegion::Reactive)),
       outlineBuilder.getNamedAttr("domain", function.getDomainAttr()),
       outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
                                   outlineBuilder.getStringAttr(identity))};
@@ -1653,8 +1659,9 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
     delay = sim::SimTimeConstantOp::create(
         driveBuilder, location, sim::TimeType::get(context),
         driveBuilder.getI64IntegerAttr(delayTicks));
-  sim::SimNBAEnqueueOp::create(driveBuilder, location, entry.getArgument(3),
-                               entry.getArgument(1), delay, sim::NBASiteAttr{});
+  sim::SimNBAEnqueueOp::create(
+      driveBuilder, location, entry.getArgument(3), entry.getArgument(1), delay,
+      sim::NBASiteAttr{}, driveBuilder.getI64IntegerAttr(clockingOutputID));
   sim::SimReturnOp::create(driveBuilder, location, ValueRange{});
   driver->setAttr(sim::metadata::lowered, builder.getUnitAttr());
   Value processContext = function.getBody().front().getArgument(0);

@@ -1,4 +1,5 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode -o /dev/null
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -23,6 +24,10 @@ module attributes {
           (!obelisk_sim.logic<8>,
            !obelisk_sim.ref<!obelisk_sim.logic<8>>,
            !obelisk_sim.time) -> ()
+      obelisk_sim.nba.enqueue %value to %destination
+          {clocking_output = 42 : i64} :
+          (!obelisk_sim.logic<8>,
+           !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
       obelisk_sim.return
     }
   }
@@ -30,5 +35,6 @@ module attributes {
 
 // CHECK-LABEL: llvm.func @enqueue
 // CHECK-COUNT-2: llvm.call @obelisk_rt_v1_scheduler_nba
-// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_scheduler_fail
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_clocking_nba
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
 // CHECK-NOT: obelisk_sim.nba.enqueue

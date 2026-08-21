@@ -484,12 +484,16 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
   else
     module->removeAttr("obelisk.debug.native_timing");
   bool hasLanguageOverride = false;
+  bool hasDriverNBA = false;
   module.walk([&](mlir::Operation *operation) {
     if (mlir::isa<obelisk::sim::SimOverrideOp,
                   obelisk::sim::SimReleaseOverrideOp>(operation))
       hasLanguageOverride = true;
+    if (auto enqueue = mlir::dyn_cast<obelisk::sim::SimNBAEnqueueOp>(operation))
+      hasDriverNBA |= mlir::isa<obelisk::sim::DriverType>(
+          enqueue.getDestination().getType());
   });
-  requiresStateSync = vpi != "off" || hasLanguageOverride;
+  requiresStateSync = vpi != "off" || hasLanguageOverride || hasDriverNBA;
   module->setAttr("obelisk.native_scheduler",
                   obelisk::sim::NativeSchedulerModeAttr::get(
                       module.getContext(), nativeScheduler));
@@ -515,7 +519,8 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
         operation);
   });
   bool needsDesignEncoding = bytecode || needsHybridBytecode || vpi != "off" ||
-                             hasLanguageOverride || needsWaveformMetadata;
+                             hasLanguageOverride || needsWaveformMetadata ||
+                             hasDriverNBA;
   requiresStateSync |= needsSampledStatePlan && !needsDesignEncoding;
   if (needsDesignEncoding) {
     // Bytecode and native lowering must observe the same suspension-safe SSA

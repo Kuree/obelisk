@@ -64,7 +64,8 @@ module attributes {
           !obelisk_sim.driver<!obelisk_sim.logic<2>>
       %value = obelisk_sim.logic.constant 2 : i2, 0 : i2 :
           !obelisk_sim.logic<2>
-      obelisk_sim.nba.enqueue %value to %driver :
+      obelisk_sim.nba.enqueue %value to %driver
+          {clocking_output = 42 : i64} :
           (!obelisk_sim.logic<2>,
            !obelisk_sim.driver<!obelisk_sim.logic<2>>) -> ()
       obelisk_sim.return
@@ -100,5 +101,5 @@ module attributes {
 // CHECK-NOT: obelisk_sim.driver.drive
 
 // CHECK-LABEL: llvm.func @drive_nba
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_driver_nba
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_clocking_driver_nba
 // CHECK-NOT: obelisk_sim.nba.enqueue

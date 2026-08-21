@@ -274,20 +274,15 @@ module {
 // PROGRAM-SAME: domain = 1 : i32
 // PROGRAM-SAME: home_region = 10 : i32
 // PROGRAM: obelisk_sim.nba.enqueue
-// A net output gets one procedural driver per syntactic site and elaborated
-// interface instance. The virtual handle selects that driver at runtime.
-// NET-OUTPUT-DAG: hierarchy "top.bus.ready.$clocking_output.36" debug "virtual clocking output"
-// NET-OUTPUT-DAG: hierarchy "top.other.ready.$clocking_output.36" debug "virtual clocking output"
-// NET-OUTPUT-DAG: hierarchy "top.bus.ready.$clocking_output.79" debug "virtual clocking output"
-// NET-OUTPUT-DAG: hierarchy "top.other.ready.$clocking_output.79" debug "virtual clocking output"
+// A net output gets one persistent procedural driver per clocking output and
+// elaborated interface instance. All syntactic sites select the shared driver.
+// NET-OUTPUT-DAG: hierarchy "top.bus.ready.$clocking_output.top.bus_if.signal" debug "virtual clocking output"
+// NET-OUTPUT-DAG: hierarchy "top.other.ready.$clocking_output.top.bus_if.signal" debug "virtual clocking output"
 // NET-OUTPUT-LABEL: obelisk_sim.func private @unit_0.$clocking_output.36
 // NET-OUTPUT-SAME: %{{.*}}: !obelisk_sim.driver<!obelisk_sim.logic<1>>
 // NET-OUTPUT: obelisk_sim.nba.enqueue
 // NET-OUTPUT-SAME: !obelisk_sim.driver<!obelisk_sim.logic<1>>
 // NET-OUTPUT-LABEL: obelisk_sim.func private @unit_0(
-// NET-OUTPUT-DAG: obelisk_sim.context.driver
-// NET-OUTPUT-DAG: obelisk_sim.context.driver
-// NET-OUTPUT-DAG: obelisk_sim.context.driver
-// NET-OUTPUT-DAG: obelisk_sim.context.driver
+// NET-OUTPUT-COUNT-2: obelisk_sim.context.driver
 // NET-OUTPUT: obelisk_sim.spawn @unit_0.$clocking_output.36
 // NET-OUTPUT-SAME: !obelisk_sim.driver<!obelisk_sim.logic<1>>

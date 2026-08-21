@@ -883,6 +883,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_DUMP_PORTS = UINT32_C(0x00010232),
   OBELISK_RT_INTRINSIC_V1_DUMP_PORTS_CONTROL = UINT32_C(0x00010233),
   OBELISK_RT_INTRINSIC_V1_ASSERTION_KILL_EPOCH = UINT32_C(0x00010234),
+  OBELISK_RT_INTRINSIC_V1_CLOCKING_NBA = UINT32_C(0x00010235),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -2766,6 +2767,18 @@ obelisk_rt_status obelisk_rt_v1_scheduler_driver_nba(
     obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
     uint64_t plane_bit_count, uint64_t bit_offset, uint64_t bit_width,
     uint64_t delay, const uint8_t *value, const uint8_t *unknown);
+// Clocking-output forms retain the clock-variable identity so coincident
+// synchronous drives can be checked and resolved bitwise at the NBA barrier.
+obelisk_rt_status obelisk_rt_v1_scheduler_clocking_nba(
+    obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
+    uint64_t plane_bit_count, uint64_t bit_offset, uint64_t bit_width,
+    uint64_t delay, const uint8_t *value, const uint8_t *unknown,
+    uint64_t clocking_output);
+obelisk_rt_status obelisk_rt_v1_scheduler_clocking_driver_nba(
+    obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
+    uint64_t plane_bit_count, uint64_t bit_offset, uint64_t bit_width,
+    uint64_t delay, const uint8_t *value, const uint8_t *unknown,
+    uint64_t clocking_output);
 // Site-aware form shared by native and design-bytecode fragments. The site
 // identity is validated against an installed static schedule when one is
 // present; otherwise this has exactly the generic scheduler semantics.

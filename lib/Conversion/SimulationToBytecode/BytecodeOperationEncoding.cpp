@@ -234,6 +234,18 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     SmallVector<Value> inputs{op.getValue(), op.getDestination()};
     if (op.getDelay())
       inputs.push_back(op.getDelay());
+    if (auto clockingOutput = op.getClockingOutputAttr()) {
+      uint32_t identity =
+          emitU64Constant(plan, clockingOutput.getValue().getZExtValue());
+      if (identity == kInvalidRegister)
+        return op.emitOpError("cannot encode clocking output identity");
+      SmallVector<uint32_t> inputRegisters;
+      llvm::transform(inputs, std::back_inserter(inputRegisters),
+                      [&](Value value) { return reg(plan, value); });
+      inputRegisters.push_back(identity);
+      return emitIntrinsicRegisters(plan, kIntrinsicClockingNBA, inputRegisters,
+                                    {});
+    }
     sim::NBASiteAttr site = op.getSiteAttr();
     bool staticallyStaged =
         site && staticNBASites.contains(site.getId()) &&

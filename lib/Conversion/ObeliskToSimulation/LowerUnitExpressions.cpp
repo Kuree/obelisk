@@ -2664,13 +2664,13 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
     } else if (auto found = virtualInterfaceNetMembers.find(key);
                found != virtualInterfaceNetMembers.end()) {
       if (lvalue && op->hasAttr("virtual_interface_clocking")) {
-        auto node = op->getAttrOfType<IntegerAttr>("node_id");
-        if (!node) {
-          emitError(location) << "virtual clocking output has no stable site";
+        auto output = op->getAttrOfType<StringAttr>("referenced_path");
+        if (!output) {
+          emitError(location)
+              << "virtual clocking output has no stable identity";
           return failure();
         }
-        std::string driverKey =
-            (Twine(key) + "\n" + Twine(node.getValue().getZExtValue())).str();
+        std::string driverKey = (Twine(key) + "\n" + output.getValue()).str();
         auto drivers = virtualInterfaceDriverMembers.find(driverKey);
         if (drivers == virtualInterfaceDriverMembers.end()) {
           emitError(location)

@@ -63,7 +63,8 @@ bool hasConcreteHandleValues(
 
 bool isEligibleNBA(sim::SimNBAEnqueueOp enqueue) {
   sim::NBASiteAttr site = enqueue.getSiteAttr();
-  return site && !enqueue.getDelay() && !site.getTiming() &&
+  return site && !enqueue.getClockingOutputAttr() && !enqueue.getDelay() &&
+         !site.getTiming() &&
          (site.getStorage() == sim::ComputeNBAStorageKind::FixedSlot ||
           site.getStorage() == sim::ComputeNBAStorageKind::RootAccumulator);
 }

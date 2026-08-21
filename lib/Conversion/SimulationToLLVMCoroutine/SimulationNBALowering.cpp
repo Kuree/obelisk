@@ -68,8 +68,8 @@ public:
         resolveCFGConstantInteger(adaptor.getDestination().front());
     obelisk_rt_stable_handle_v1 decoded{};
     bool packedStaticStage =
-        !driverDestination && site && staticPlan &&
-        staticRoot != staticPlan->siteRoots.end() &&
+        !op.getClockingOutputAttr() && !driverDestination && site &&
+        staticPlan && staticRoot != staticPlan->siteRoots.end() &&
         staticRoot->second < staticPlan->roots.size() &&
         adaptor.getDelay().empty() && !site.getTiming() &&
         site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier &&
@@ -420,7 +420,8 @@ public:
                            ValueRange{runtimeContext, status});
     } else {
       bool staticallyStaged =
-          !driverDestination && staticSitesEnabled && staticPlan && site &&
+          !op.getClockingOutputAttr() && !driverDestination &&
+          staticSitesEnabled && staticPlan && site &&
           staticPlan->siteRoots.contains(site.getId()) &&
           adaptor.getDelay().empty() && !site.getTiming() &&
           site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier;
@@ -438,15 +439,21 @@ public:
         arguments.push_back(delay);
       arguments.push_back(value);
       arguments.push_back(unknown);
+      if (auto clockingOutput = op.getClockingOutputAttr())
+        arguments.push_back(llvmConstant(
+            rewriter, location, i64, clockingOutput.getValue().getZExtValue()));
       Value status =
           LLVM::CallOp::create(
               rewriter, location, TypeRange{i32},
-              SymbolRefAttr::get(rewriter.getContext(),
-                                 driverDestination
-                                     ? "obelisk_rt_v1_scheduler_driver_nba"
-                                 : staticallyStaged
-                                     ? "obelisk_rt_v1_scheduler_static_nba"
-                                     : "obelisk_rt_v1_scheduler_nba"),
+              SymbolRefAttr::get(
+                  rewriter.getContext(),
+                  op.getClockingOutputAttr()
+                      ? driverDestination
+                            ? "obelisk_rt_v1_scheduler_clocking_driver_nba"
+                            : "obelisk_rt_v1_scheduler_clocking_nba"
+                  : driverDestination ? "obelisk_rt_v1_scheduler_driver_nba"
+                  : staticallyStaged  ? "obelisk_rt_v1_scheduler_static_nba"
+                                      : "obelisk_rt_v1_scheduler_nba"),
               arguments)
               .getResult();
       LLVM::CallOp::create(rewriter, location, TypeRange{},

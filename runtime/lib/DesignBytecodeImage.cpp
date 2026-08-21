@@ -471,6 +471,12 @@ bool validIntrinsic(const Image &image, const Function &function,
            (numeric(input(0)) || floating(input(0)) || string(input(0)) ||
             managed(input(0))) &&
            handle(input(1)) && (site.inputCount == 2 || bits(input(2), 64));
+  case OBELISK_RT_INTRINSIC_V1_CLOCKING_NBA:
+    return signature.flags == 0 &&
+           (site.inputCount == 3 || site.inputCount == 4) &&
+           site.outputCount == 0 && numeric(input(0)) && handle(input(1)) &&
+           (site.inputCount == 3 || bits(input(2), 64)) &&
+           bits(input(site.inputCount - 1), 64);
   case OBELISK_RT_INTRINSIC_V1_STATIC_NBA:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 0 &&

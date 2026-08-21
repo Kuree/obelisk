@@ -58,7 +58,8 @@ struct RegionRoot {
 
 bool isRegionLocalAccumulator(sim::SimNBAEnqueueOp enqueue) {
   sim::NBASiteAttr site = enqueue.getSiteAttr();
-  return site && !enqueue.getDelay() && !site.getTiming() &&
+  return site && !enqueue.getClockingOutputAttr() && !enqueue.getDelay() &&
+         !site.getTiming() &&
          site.getStorage() == sim::ComputeNBAStorageKind::RootAccumulator;
 }
 
@@ -390,9 +391,9 @@ bool forwardRegionNextState(sim::SimFuncOp function, uint64_t &rootCount,
                                state->first, emit, ValueRange{}, next,
                                ValueRange{});
       builder.setInsertionPointToStart(emit);
-      sim::SimNBAEnqueueOp::create(
-          builder, root.representativeLocation, state->second,
-          root.destination, Value{}, root.representativeSite);
+      sim::SimNBAEnqueueOp::create(builder, root.representativeLocation,
+                                   state->second, root.destination, Value{},
+                                   root.representativeSite, IntegerAttr{});
       cf::BranchOp::create(builder, root.representativeLocation, next);
       test = next;
     }

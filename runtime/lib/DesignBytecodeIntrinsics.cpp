@@ -1943,7 +1943,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     return OBELISK_RT_OK;
   }
   case OBELISK_RT_INTRINSIC_V1_NBA:
-  case OBELISK_RT_INTRINSIC_V1_STATIC_NBA: {
+  case OBELISK_RT_INTRINSIC_V1_STATIC_NBA:
+  case OBELISK_RT_INTRINSIC_V1_CLOCKING_NBA: {
     if (!context || !context->execution)
       return OBELISK_RT_INVALID_ARGUMENT;
     Layout destination = layoutAt(image, frame.function, inputRegister(1));
@@ -1985,8 +1986,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     Logic value = readLogic(frame.data, valueLayout);
     uint64_t delay = 0;
     bool staticSite = signature.id == OBELISK_RT_INTRINSIC_V1_STATIC_NBA;
+    bool clocking = signature.id == OBELISK_RT_INTRINSIC_V1_CLOCKING_NBA;
     uint64_t staticSiteID = UINT64_MAX;
-    uint32_t delayInputCount = staticSite ? 2 : site.inputCount;
+    uint64_t clockingOutput = UINT64_MAX;
+    uint32_t delayInputCount = staticSite ? 2
+                               : clocking ? site.inputCount - 1
+                                          : site.inputCount;
     if (delayInputCount == 3) {
       auto encodedDelay = scalar(2);
       if (!encodedDelay)
@@ -1998,6 +2003,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       if (!encodedSite || *encodedSite == UINT64_MAX)
         return OBELISK_RT_INVALID_BYTECODE;
       staticSiteID = *encodedSite;
+    }
+    if (clocking) {
+      auto encodedOutput = scalar(site.inputCount - 1);
+      if (!encodedOutput || *encodedOutput == UINT64_MAX)
+        return OBELISK_RT_INVALID_BYTECODE;
+      clockingOutput = *encodedOutput;
     }
     if (managedValue || automatic || boundedStatic) {
       if (driver && (managedValue || automatic || !boundedStatic))
@@ -2049,6 +2060,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                        : context->execution->state_bit_count;
       update.bitOffset = stable;
       update.bitWidth = selectedWidth;
+      update.clockingOutput = clockingOutput;
       update.stringValue = stringValue;
       update.managedValue = managedValue;
       update.driver = driver;
@@ -2108,6 +2120,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         ++context->nativeAutomaticStates.find(objectID)->second.referenceCount;
       return OBELISK_RT_OK;
     }
+    if (clocking)
+      return OBELISK_RT_INVALID_HANDLE;
     if (stringValue && (value.width != 64 || start < begin || start < 0 ||
                         end < start || end - start < 64))
       return OBELISK_RT_INVALID_BYTECODE;

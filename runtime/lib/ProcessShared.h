@@ -216,6 +216,9 @@ bool staticNBARootNeedsTransitions(const obelisk_rt_context *context,
 obelisk_rt_status
 commitStaticNBAAccumulatorsUnlocked(obelisk_rt_context *context,
                                     uint32_t barrierRegion, bool &changed);
+obelisk_rt_status
+resolveClockingDriveConflictsUnlocked(obelisk_rt_context *context,
+                                      uint32_t barrierRegion);
 bool canCommitInlineNativeNBABarrierUnlocked(obelisk_rt_context *context,
                                              uint32_t barrierRegion);
 obelisk_rt_status

@@ -564,7 +564,7 @@ uint64_t ifConvertConditionalNBAWrites(sim::SimFuncOp function,
           break;
         }
       }
-      if (!first || first.getDelay())
+      if (!first || first.getClockingOutputAttr() || first.getDelay())
         continue;
       bool safeTail = true;
       for (Operation *operation = first->getNextNode();
@@ -588,7 +588,8 @@ uint64_t ifConvertConditionalNBAWrites(sim::SimFuncOp function,
         safeOverwrite &=
             isMemoryEffectFree(&operation) && isSpeculatable(&operation);
       }
-      if (!safeOverwrite || !second || second.getDelay() ||
+      if (!safeOverwrite || !second || second.getClockingOutputAttr() ||
+          second.getDelay() ||
           first.getDestination() != second.getDestination() ||
           first.getValue().getType() != second.getValue().getType())
         continue;
@@ -615,8 +616,8 @@ uint64_t ifConvertConditionalNBAWrites(sim::SimFuncOp function,
           builder, conditional.getLoc(), conditional.getCondition(),
           second.getValue(), first.getValue());
       sim::SimNBAEnqueueOp::create(builder, second.getLoc(), selected,
-                                   second.getDestination(), Value{},
-                                   secondSite);
+                                   second.getDestination(), Value{}, secondSite,
+                                   IntegerAttr{});
       first.erase();
       second.erase();
       cf::BranchOp::create(builder, conditional.getLoc(), continuation);

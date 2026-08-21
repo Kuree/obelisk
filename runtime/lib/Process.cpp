@@ -2569,6 +2569,10 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           barrierRegion != UINT32_MAX) {
         bool changed = false;
         bool eventTriggered = false;
+        obelisk_rt_status clockingStatus =
+            resolveClockingDriveConflictsUnlocked(context, barrierRegion);
+        if (clockingStatus != OBELISK_RT_OK)
+          return clockingStatus;
         auto applyNative = [&](const ScheduledNBA &update) {
           bool publicationChanged = false;
           uint32_t automaticID = 0;

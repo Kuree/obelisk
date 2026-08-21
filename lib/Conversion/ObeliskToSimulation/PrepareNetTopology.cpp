@@ -526,10 +526,12 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
   }
 
   // A clocking output that names a net contributes one procedural driver per
-  // syntactic lvalue. Attach that driver to the enclosing executable unit and
-  // retain the lvalue node ID, leaving ordinary reads bound to the net itself.
+  // clocking-block output. Every syntactic drive site captures that shared
+  // driver by its own lvalue node ID, while ordinary reads remain bound to the
+  // resolved net itself.
   llvm::DenseSet<Operation *> sourceUnitSet(sourceUnits.begin(),
                                             sourceUnits.end());
+  llvm::StringMap<DescriptorInfo> staticClockingDrivers;
   for (Operation *unit : sourceUnits) {
     unit->walk<WalkOrder::PreOrder>([&](Operation *nested) -> WalkResult {
       if (nested != unit && sourceUnitSet.contains(nested))
@@ -550,8 +552,10 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
         return WalkResult::advance();
       auto path = destination->getAttrOfType<StringAttr>(
           clockingSourcePathAttrName);
+      auto clockingPath =
+          destination->getAttrOfType<StringAttr>("referenced_path");
       auto node = destination->getAttrOfType<IntegerAttr>("node_id");
-      if (!path || !node)
+      if (!path || !clockingPath || !node)
         return WalkResult::advance();
       auto sink = descriptors.find(path.getValue());
       if (sink == descriptors.end() ||
@@ -565,19 +569,31 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
         invalid = true;
         return WalkResult::interrupt();
       }
-      uint64_t id = nextDriverId++;
-      uint64_t scopeId = scopes.lookup(unit);
-      DescriptorInfo info{DescriptorInfo::Kind::Driver, id, scopeId,
-                          sink->second.type, sink->second.netKind};
-      info.rootType = sink->second.type;
-      continuousDrivers[unit].push_back(
-          {path.getValue().str(), info, node.getValue().getZExtValue(), 0,
-           *width});
-      sim::SimDriverDeclOp::create(
-          builder, getSemanticLocation(destination), id, scopeId,
-          sink->second.id, sink->second.type, sim::Lifetime::Design, path,
-          builder.getStringAttr("clocking output"),
-          builder.getI64IntegerAttr(0), builder.getI64IntegerAttr(*width));
+      auto shared = staticClockingDrivers.find(clockingPath.getValue());
+      if (shared == staticClockingDrivers.end()) {
+        uint64_t id = nextDriverId++;
+        DescriptorInfo info{DescriptorInfo::Kind::Driver, id,
+                            sink->second.scopeId, sink->second.type,
+                            sink->second.netKind};
+        info.rootType = sink->second.type;
+        shared =
+            staticClockingDrivers.try_emplace(clockingPath.getValue(), info)
+                .first;
+        sim::SimDriverDeclOp::create(
+            builder, getSemanticLocation(destination), id, sink->second.scopeId,
+            sink->second.id, sink->second.type, sim::Lifetime::Design, path,
+            builder.getStringAttr("clocking output"),
+            builder.getI64IntegerAttr(0), builder.getI64IntegerAttr(*width));
+      } else if (shared->second.type != sink->second.type ||
+                 shared->second.scopeId != sink->second.scopeId) {
+        emitError(getSemanticLocation(destination))
+            << "clocking output net resolves to inconsistent targets";
+        invalid = true;
+        return WalkResult::interrupt();
+      }
+      continuousDrivers[unit].push_back({path.getValue().str(), shared->second,
+                                         node.getValue().getZExtValue(), 0,
+                                         *width});
       return WalkResult::advance();
     });
     if (invalid)
@@ -610,6 +626,11 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     interfaceNets[key].push_back(net);
   }
 
+  struct VirtualClockingDriver {
+    DescriptorInfo descriptor;
+    uint64_t netID;
+  };
+  llvm::StringMap<VirtualClockingDriver> virtualClockingDrivers;
   for (Operation *unit : sourceUnits) {
     unit->walk<WalkOrder::PreOrder>([&](Operation *nested) -> WalkResult {
       if (nested != unit && sourceUnitSet.contains(nested))
@@ -633,6 +654,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
               "virtual_interface_clocking_signal_member"))
         member = source;
       auto node = destination->getAttrOfType<IntegerAttr>("node_id");
+      auto clockingPath =
+          destination->getAttrOfType<StringAttr>("referenced_path");
       SmallVector<Operation *> receiver = getChildren(destination);
       size_t expectedReceiverChildren =
           destination->hasAttr("virtual_interface_clock_event_has_iff") ? 3
@@ -647,7 +670,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
               : sim::VirtualInterfaceType{};
       if (!direction ||
           direction.getValue() == semantic::SVArgumentDirection::In ||
-          !member || !node || !interfaceType)
+          !member || !node || !clockingPath || !interfaceType)
         return WalkResult::advance();
       std::string key = (Twine(interfaceType.getInterfaceName().getValue()) +
                          "\n" + member.getValue())
@@ -665,23 +688,41 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
           return WalkResult::interrupt();
         }
         StringRef path = net.getHierarchicalName().value_or(StringRef{});
-        uint64_t id = nextDriverId++;
-        DescriptorInfo info{DescriptorInfo::Kind::Driver, id, net.getScopeId(),
-                            net.getType(), net.getResolutionKind()};
-        info.rootType = net.getType();
+        std::string driverKey =
+            (Twine(clockingPath.getValue()) + "\n" + Twine(net.getScopeId()))
+                .str();
+        auto shared = virtualClockingDrivers.find(driverKey);
+        if (shared == virtualClockingDrivers.end()) {
+          uint64_t id = nextDriverId++;
+          DescriptorInfo info{DescriptorInfo::Kind::Driver, id,
+                              net.getScopeId(), net.getType(),
+                              net.getResolutionKind()};
+          info.rootType = net.getType();
+          shared = virtualClockingDrivers
+                       .try_emplace(driverKey,
+                                    VirtualClockingDriver{info, net.getId()})
+                       .first;
+          std::string hierarchy =
+              (Twine(path) + ".$clocking_output." + clockingPath.getValue())
+                  .str();
+          auto driver = sim::SimDriverDeclOp::create(
+              builder, getSemanticLocation(destination), id, net.getScopeId(),
+              net.getId(), net.getType(), sim::Lifetime::Design,
+              builder.getStringAttr(hierarchy),
+              builder.getStringAttr("virtual clocking output"),
+              builder.getI64IntegerAttr(0), builder.getI64IntegerAttr(*width));
+          driver->setAttr("obelisk_sim.virtual_interface_member", member);
+          driver->setAttr("obelisk_sim.virtual_interface_clocking_output",
+                          clockingPath);
+        } else if (shared->second.netID != net.getId() ||
+                   shared->second.descriptor.type != net.getType()) {
+          emitError(getSemanticLocation(destination))
+              << "virtual clocking output resolves to inconsistent targets";
+          invalid = true;
+          return WalkResult::interrupt();
+        }
         continuousDrivers[destination].push_back(
-            {path.str(), info, std::nullopt, 0, *width});
-        std::string hierarchy = (Twine(path) + ".$clocking_output." +
-                                 Twine(node.getValue().getZExtValue()))
-                                    .str();
-        auto driver = sim::SimDriverDeclOp::create(
-            builder, getSemanticLocation(destination), id, net.getScopeId(),
-            net.getId(), net.getType(), sim::Lifetime::Design,
-            builder.getStringAttr(hierarchy),
-            builder.getStringAttr("virtual clocking output"),
-            builder.getI64IntegerAttr(0), builder.getI64IntegerAttr(*width));
-        driver->setAttr("obelisk_sim.virtual_interface_member", member);
-        driver->setAttr("obelisk_sim.virtual_interface_clocking_site", node);
+            {path.str(), shared->second.descriptor, std::nullopt, 0, *width});
       }
       return WalkResult::advance();
     });
