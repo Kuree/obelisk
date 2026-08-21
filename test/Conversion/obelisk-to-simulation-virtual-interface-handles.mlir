@@ -262,9 +262,10 @@ module {
 // INPUT-EDGE: obelisk_sim.suspend.observe
 // INPUT-EDGE-SAME: conditions 1 edges [2] indices [0]
 // INPUT-EDGE: obelisk_sim.assert.clocked_sample_update
-// An output edge distinct from @(vif.cb)'s event cannot reuse that occurrence.
+// A drive after @(vif.cb) reuses that qualified occurrence, but a distinct
+// output edge remains a future synchronization point in Reactive.
 // OUTPUT-EDGE-LABEL: obelisk_sim.func private @unit_0.$clocking_output.79
-// OUTPUT-EDGE-NOT: home_region = 10 : i32
+// OUTPUT-EDGE-SAME: home_region = 10 : i32
 // OUTPUT-EDGE: obelisk_sim.suspend.edge negedge
 // OUTPUT-EDGE: obelisk_sim.nba.enqueue
 // Program-domain clocking output helpers preserve Reactive/Program so their

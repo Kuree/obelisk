@@ -1280,6 +1280,26 @@ private:
       setSymbolReference(attrs, clocking,
                          builder.getStringAttr("clocking_event_symbol"),
                          builder.getStringAttr("clocking_event_path"));
+      if (const auto *event =
+              clocking.getEvent().as_if<slang::ast::SignalEventControl>()) {
+        const slang::ast::Symbol *clockSymbol = nullptr;
+        if (auto *named =
+                event->expr.as_if<slang::ast::NamedValueExpression>())
+          clockSymbol = &named->symbol;
+        else if (auto *hierarchical =
+                     event->expr
+                         .as_if<slang::ast::HierarchicalValueExpression>())
+          clockSymbol = &hierarchical->symbol;
+        if (clockSymbol) {
+          attrs.set("clocking_event_raw_edge",
+                    slangir::EdgeKindAttr::get(builder.getContext(),
+                                               convertEnum(event->edge)));
+          setSymbolReference(
+              attrs, *clockSymbol,
+              builder.getStringAttr("clocking_event_raw_symbol"),
+              builder.getStringAttr("clocking_event_raw_path"));
+        }
+      }
       return;
     }
     const auto *event =
@@ -1318,6 +1338,24 @@ private:
                     builder.getContext(), slangir::EdgeKind::None));
       attrs.set("virtual_interface_clock_member",
                 builder.getStringAttr(clocking.name));
+      if (const auto *event =
+              clocking.getEvent().as_if<slang::ast::SignalEventControl>()) {
+        const slang::ast::Symbol *clockSymbol = nullptr;
+        if (auto *named =
+                event->expr.as_if<slang::ast::NamedValueExpression>())
+          clockSymbol = &named->symbol;
+        else if (auto *hierarchical =
+                     event->expr
+                         .as_if<slang::ast::HierarchicalValueExpression>())
+          clockSymbol = &hierarchical->symbol;
+        if (clockSymbol) {
+          attrs.set("virtual_interface_clock_raw_event_edge",
+                    slangir::EdgeKindAttr::get(builder.getContext(),
+                                               convertEnum(event->edge)));
+          attrs.set("virtual_interface_clock_raw_member",
+                    builder.getStringAttr(clockSymbol->name));
+        }
+      }
       return;
     }
     const auto *event =

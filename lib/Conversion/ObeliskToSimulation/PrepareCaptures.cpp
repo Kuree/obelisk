@@ -291,6 +291,8 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
                           !isWriteOnlyReferenceUse(nested), written);
         captureDescriptor(clockingEventPathAttrName, /*read=*/true,
                           /*written=*/false);
+        captureDescriptor(clockingEventRawPathAttrName, /*read=*/true,
+                          /*written=*/false);
         return;
       }
       StringRef path;

@@ -1236,9 +1236,18 @@ LogicalResult UnitLowering::lowerClockingOutputAssignment(
   FailureOr<Value> clock = lowerVirtualInterfaceClock(destination, *interface);
   if (failed(target) || failed(clock))
     return failure();
+  Value edgeSkewClock;
+  if (auto rawMember = destination->getAttrOfType<StringAttr>(
+          "virtual_interface_clock_raw_member")) {
+    FailureOr<Value> raw = lowerVirtualInterfaceSignal(
+        *interface, rawMember.getValue(), location);
+    if (failed(raw))
+      return failure();
+    edgeSkewClock = *raw;
+  }
   return emitClockingOutputDrive(destination, *target, *clock, value,
                                  /*virtualInterface=*/true, location,
-                                 *interface);
+                                 *interface, edgeSkewClock);
 }
 
 LogicalResult UnitLowering::lowerStaticClockingOutputAssignment(
@@ -1270,8 +1279,20 @@ LogicalResult UnitLowering::lowerStaticClockingOutputAssignment(
                           << clockPath.getValue();
     return failure();
   }
+  Value edgeSkewClock;
+  if (auto rawPath = destination->getAttrOfType<StringAttr>(
+          clockingEventRawPathAttrName)) {
+    edgeSkewClock = lvalues.lookup(rawPath.getValue());
+    if (!edgeSkewClock)
+      edgeSkewClock = values.lookup(rawPath.getValue());
+    if (!edgeSkewClock)
+      return emitError(location)
+             << "clocking output has no raw edge clock binding: "
+             << rawPath.getValue();
+  }
   return emitClockingOutputDrive(destination, *target, clock, value,
-                                 /*virtualInterface=*/false, location);
+                                 /*virtualInterface=*/false, location,
+                                 Value{}, edgeSkewClock);
 }
 
 LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
@@ -1279,7 +1300,8 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
                                                     Value value,
                                                     bool virtualInterface,
                                                     Location location,
-                                                    Value virtualInterfaceHandle) {
+                                                    Value virtualInterfaceHandle,
+                                                    Value edgeSkewClock) {
   auto targetRef = dyn_cast<sim::RefType>(target.getType());
   auto targetDriver = dyn_cast<sim::DriverType>(target.getType());
   if (!targetRef && !targetDriver)
@@ -1292,6 +1314,9 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
   StringRef eventIffName = virtualInterface
                                ? "virtual_interface_clock_event_has_iff"
                                : StringRef(clockingEventHasIffAttrName);
+  StringRef rawEventEdgeName =
+      virtualInterface ? "virtual_interface_clock_raw_event_edge"
+                       : StringRef(clockingEventRawEdgeAttrName);
   StringRef skewEdgeName = virtualInterface
                                ? "virtual_interface_clock_output_skew_edge"
                                : StringRef(clockingOutputSkewEdgeAttrName);
@@ -1314,6 +1339,8 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
       destination->getAttrOfType<semantic::EdgeKindAttr>(eventEdgeName);
   auto skewEdge =
       destination->getAttrOfType<semantic::EdgeKindAttr>(skewEdgeName);
+  auto rawEventEdge =
+      destination->getAttrOfType<semantic::EdgeKindAttr>(rawEventEdgeName);
   bool hasIff = destination->hasAttr(eventIffName);
   if (!eventEdge) {
     emitError(location) << "clocking output has no supported static event";
@@ -1325,20 +1352,23 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
       skewEdge && skewEdge.getValue() != semantic::EdgeKind::Change
           ? skewEdge.getValue()
           : eventEdge.getValue();
-  if (isa<sim::EventType>(clock.getType()) &&
-      selectedEdge != semantic::EdgeKind::Change)
+  semantic::EdgeKind baseSignalEdge =
+      rawEventEdge ? rawEventEdge.getValue() : eventEdge.getValue();
+  bool distinctEdgeSkew =
+      skewEdge && skewEdge.getValue() != semantic::EdgeKind::Change &&
+      skewEdge.getValue() != baseSignalEdge;
+  Value selectedEdgeClock = edgeSkewClock ? edgeSkewClock : clock;
+  if (distinctEdgeSkew && isa<sim::EventType>(selectedEdgeClock.getType()))
     return emitError(location)
            << "an edge-only output skew requires a single-signal clocking "
               "event";
-  if (hasIff && selectedEdge != eventEdge.getValue())
+  if (hasIff && distinctEdgeSkew)
     return emitError(location)
-           << "clocking outputs with iff and a distinct edge skew are not "
-              "yet supported";
+           << "legacy clocking outputs with iff cannot use a distinct edge "
+              "skew";
   sim::EdgeKind edge = static_cast<sim::EdgeKind>(selectedEdge);
-  std::optional<Value> currentOccurrence;
-  if (selectedEdge == eventEdge.getValue())
-    currentOccurrence = getCurrentClockingOccurrence(
-        current, virtualInterface ? Value{} : clock);
+  std::optional<Value> currentOccurrence = getCurrentClockingOccurrence(
+      current, virtualInterface ? Value{} : clock);
   bool alwaysSynchronized = currentOccurrence && !*currentOccurrence;
   Value synchronizationPredicate =
       currentOccurrence ? *currentOccurrence : Value{};
@@ -1470,10 +1500,19 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
       captureMetadata(outlineBuilder, sim::CaptureKind::Formal),
       captureMetadata(outlineBuilder, sim::CaptureKind::Formal),
       captureMetadata(outlineBuilder, sim::CaptureKind::Value)};
+  std::optional<unsigned> synchronizationPredicateIndex;
   if (synchronizationPredicate) {
+    synchronizationPredicateIndex = inputs.size();
     inputs.push_back(synchronizationPredicate.getType());
     argumentAttrs.push_back(
         captureMetadata(outlineBuilder, sim::CaptureKind::Value));
+  }
+  std::optional<unsigned> edgeSkewClockIndex;
+  if (distinctEdgeSkew) {
+    edgeSkewClockIndex = inputs.size();
+    inputs.push_back(selectedEdgeClock.getType());
+    argumentAttrs.push_back(
+        captureMetadata(outlineBuilder, sim::CaptureKind::Formal));
   }
   SmallVector<std::pair<Value, unsigned>> observerArguments{{target, 1},
                                                             {clock, 2}};
@@ -1518,10 +1557,14 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
   SymbolTable::setSymbolVisibility(driver, SymbolTable::Visibility::Private);
   Block &entry = driver.getBody().front();
   Block *wait = alwaysSynchronized ? nullptr : new Block();
+  Block *edgeWait = distinctEdgeSkew ? new Block() : nullptr;
   Block *drive = new Block();
   if (wait)
     driver.getBody().push_back(wait);
+  if (edgeWait)
+    driver.getBody().push_back(edgeWait);
   driver.getBody().push_back(drive);
+  Block *afterOccurrence = edgeWait ? edgeWait : drive;
   OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
   auto bindInDriver = [&](ObserverPlan &plan) {
     SmallVector<Value> operands;
@@ -1543,11 +1586,15 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
   }
   if (wait) {
     if (synchronizationPredicate)
-      cf::CondBranchOp::create(entryBuilder, location, entry.getArgument(4),
-                               drive, ValueRange{}, wait, ValueRange{});
+      cf::CondBranchOp::create(
+          entryBuilder, location,
+          entry.getArgument(*synchronizationPredicateIndex), afterOccurrence,
+          ValueRange{}, wait, ValueRange{});
     else
       cf::BranchOp::create(entryBuilder, location, wait);
     OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
+    sim::EdgeKind occurrenceEdge =
+        static_cast<sim::EdgeKind>(eventEdge.getValue());
     if (localPrimaryObserver) {
       auto primaryType =
           cast<sim::ObserverType>(localPrimaryObserver.getType());
@@ -1568,27 +1615,37 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
       sim::SimSuspendObserveOp::create(
           waitBuilder, location,
           ValueRange{localPrimaryObserver, initial, localConditionObserver}, 1,
-          ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{0},
-          sim::ContinuationSiteAttr{},
+          ArrayRef<int32_t>{static_cast<int32_t>(occurrenceEdge)},
+          ArrayRef<int32_t>{0}, sim::ContinuationSiteAttr{},
           sim::EventRegionAttr::get(context, sim::EventRegion::Reactive),
-          drive);
+          afterOccurrence);
     } else if (isa<sim::EventType>(clock.getType())) {
       sim::SimSuspendEventOp::create(
           waitBuilder, location, entry.getArgument(2), ValueRange{},
-          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, drive);
-    } else if (edge == sim::EdgeKind::Change) {
+          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{},
+          afterOccurrence);
+    } else if (occurrenceEdge == sim::EdgeKind::Change) {
       sim::SimSuspendChangeOp::create(
           waitBuilder, location, entry.getArgument(2), ValueRange{},
-          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, drive);
+          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{},
+          afterOccurrence);
     } else {
       sim::SimSuspendEdgeOp::create(
-          waitBuilder, location, edge, entry.getArgument(2), ValueRange{},
-          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, drive);
+          waitBuilder, location, occurrenceEdge, entry.getArgument(2),
+          ValueRange{}, sim::ContinuationSiteAttr{}, sim::EventRegionAttr{},
+          afterOccurrence);
     }
   } else {
     // A drive issued by a continuation of @(clocking_block) belongs to that
     // clocking occurrence. Waiting here would silently move it one cycle.
-    cf::BranchOp::create(entryBuilder, location, drive);
+    cf::BranchOp::create(entryBuilder, location, afterOccurrence);
+  }
+  if (edgeWait) {
+    OpBuilder edgeBuilder = OpBuilder::atBlockEnd(edgeWait);
+    sim::SimSuspendEdgeOp::create(
+        edgeBuilder, location, edge, entry.getArgument(*edgeSkewClockIndex),
+        ValueRange{}, sim::ContinuationSiteAttr{}, sim::EventRegionAttr{},
+        drive);
   }
   OpBuilder driveBuilder = OpBuilder::atBlockEnd(drive);
   Value delay;
@@ -1604,6 +1661,8 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
   SmallVector<Value> spawnInputs{processContext, target, clock, value};
   if (synchronizationPredicate)
     spawnInputs.push_back(synchronizationPredicate);
+  if (distinctEdgeSkew)
+    spawnInputs.push_back(selectedEdgeClock);
   llvm::append_range(spawnInputs, observerSpawnOperands);
   sim::SimSpawnOp::create(builder, location, driver.getSymNameAttr(),
                           spawnInputs, ArrayAttr{}, ArrayAttr{});

@@ -339,6 +339,12 @@ inline constexpr ::mlir::StringLiteral clockingEventPathAttrName =
     "clocking_event_path";
 inline constexpr ::mlir::StringLiteral clockingEventSymbolAttrName =
     "clocking_event_symbol";
+inline constexpr ::mlir::StringLiteral clockingEventRawEdgeAttrName =
+    "clocking_event_raw_edge";
+inline constexpr ::mlir::StringLiteral clockingEventRawPathAttrName =
+    "clocking_event_raw_path";
+inline constexpr ::mlir::StringLiteral clockingEventRawSymbolAttrName =
+    "clocking_event_raw_symbol";
 /// Marks a clocking block whose event needs a private named-event descriptor
 /// driven by one shared monitor (for example, an event list or computed event
 /// expression).
