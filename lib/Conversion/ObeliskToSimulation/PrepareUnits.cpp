@@ -41,7 +41,8 @@ static FailureOr<sim::EntryKind> getEntryKind(Operation *op) {
   if (op->hasAttr(sequenceEndpointEventAttrName))
     return sim::EntryKind::Always;
   if (isa<semantic::SVClockingBlockSymbolOp>(op) &&
-      op->hasAttr(clockingEventListAttrName))
+      (op->hasAttr(clockingEventMonitorRequiredAttrName) ||
+       op->hasAttr(clockingEventListAttrName)))
     return sim::EntryKind::Always;
   if (isa<semantic::SVVariableSymbolOp>(op))
     return sim::EntryKind::Function;
@@ -96,7 +97,8 @@ static std::string getCodeUnitHierarchy(Operation *op) {
   if (op->hasAttr(sequenceEndpointEventAttrName))
     return (getHierarchyName(op) + ".$sequence_endpoint").str();
   if (isa<semantic::SVClockingBlockSymbolOp>(op) &&
-      op->hasAttr(clockingEventListAttrName))
+      (op->hasAttr(clockingEventMonitorRequiredAttrName) ||
+       op->hasAttr(clockingEventListAttrName)))
     return (getHierarchyName(op) + ".$event_monitor").str();
   if (isa<semantic::SVVariableSymbolOp, semantic::SVClassPropertySymbolOp>(op))
     return (getHierarchyName(op) + ".$static_initializer").str();

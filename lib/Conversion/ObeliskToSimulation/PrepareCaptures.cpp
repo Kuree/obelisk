@@ -206,7 +206,8 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
     llvm::StringSet<> seenConstants;
     bool clockingEventMonitor =
         isa<semantic::SVClockingBlockSymbolOp>(unit.source) &&
-        unit.source->hasAttr(clockingEventListAttrName);
+        (unit.source->hasAttr(clockingEventMonitorRequiredAttrName) ||
+         unit.source->hasAttr(clockingEventListAttrName));
     if (clockingEventMonitor) {
       StringRef path = getHierarchyName(unit.source);
       auto descriptor = descriptors.find(path);

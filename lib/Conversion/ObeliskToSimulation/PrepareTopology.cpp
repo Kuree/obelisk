@@ -322,7 +322,8 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     if (storage || isa<semantic::SVNetSymbolOp>(op) ||
         op->hasAttr(sequenceEndpointEventAttrName) ||
         (isa<semantic::SVClockingBlockSymbolOp>(op) &&
-         op->hasAttr(clockingEventListAttrName)))
+         (op->hasAttr(clockingEventMonitorRequiredAttrName) ||
+          op->hasAttr(clockingEventListAttrName))))
       designObjects.push_back(op);
   });
 
@@ -340,7 +341,8 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     if (descriptors.count(path))
       return;
     if (isa<semantic::SVClockingBlockSymbolOp>(op) &&
-        op->hasAttr(clockingEventListAttrName)) {
+        (op->hasAttr(clockingEventMonitorRequiredAttrName) ||
+         op->hasAttr(clockingEventListAttrName))) {
       Type type = sim::EventType::get(builder.getContext());
       uint64_t id = nextEventId++;
       uint64_t scopeId = scopes.lookup(op);

@@ -576,9 +576,10 @@ LogicalResult UnitLowering::lowerClockingEventMonitor(
   auto path = function->getAttrOfType<StringAttr>(
       clockingEventMonitorPathAttrName);
   if (!path || roots.size() != 1 ||
-      !isa<semantic::SVEventListControlOp>(roots.front()))
+      !isa<semantic::SVSignalEventControlOp,
+           semantic::SVEventListControlOp>(roots.front()))
     return function.emitError(
-        "clocking event monitor requires one frozen event list");
+        "clocking event monitor requires one frozen event control");
   Value event = values.lookup(path.getValue());
   if (!event || !isa<sim::EventType>(event.getType()))
     return function.emitError(

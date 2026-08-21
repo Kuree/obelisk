@@ -1253,15 +1253,27 @@ private:
     }
   }
 
+  bool requiresClockingEventMonitor(
+      const slang::ast::ClockingBlockSymbol &clocking) const {
+    const slang::ast::TimingControl &control = clocking.getEvent();
+    if (control.as_if<slang::ast::EventListControl>())
+      return true;
+    const auto *event = control.as_if<slang::ast::SignalEventControl>();
+    if (!event)
+      return false;
+    bool direct = event->expr.as_if<slang::ast::NamedValueExpression>() ||
+                  event->expr
+                      .as_if<slang::ast::HierarchicalValueExpression>();
+    return !direct || (event->iffCondition && event->expr.type->isEvent());
+  }
+
   void addStaticClockingEventDescriptor(
       NamedAttrList &attrs,
       const slang::ast::ClockingBlockSymbol &clocking) {
-    const auto *event =
-        clocking.getEvent().as_if<slang::ast::SignalEventControl>();
-    if (!event) {
-      if (!clocking.getEvent().as_if<slang::ast::EventListControl>())
-        return;
-      attrs.set("clocking_event_list", builder.getUnitAttr());
+    if (requiresClockingEventMonitor(clocking)) {
+      if (clocking.getEvent().as_if<slang::ast::EventListControl>())
+        attrs.set("clocking_event_list", builder.getUnitAttr());
+      attrs.set("clocking_event_monitor", builder.getUnitAttr());
       attrs.set("clocking_event_edge",
                 slangir::EdgeKindAttr::get(
                     builder.getContext(), slangir::EdgeKind::None));
@@ -1270,6 +1282,10 @@ private:
                          builder.getStringAttr("clocking_event_path"));
       return;
     }
+    const auto *event =
+        clocking.getEvent().as_if<slang::ast::SignalEventControl>();
+    if (!event)
+      return;
     attrs.set("clocking_event_edge",
               slangir::EdgeKindAttr::get(builder.getContext(),
                                          convertEnum(event->edge)));
@@ -1286,6 +1302,42 @@ private:
     setSymbolReference(attrs, *clockSymbol,
                        builder.getStringAttr("clocking_event_symbol"),
                        builder.getStringAttr("clocking_event_path"));
+  }
+
+  void addVirtualClockingEventDescriptor(
+      NamedAttrList &attrs,
+      const slang::ast::ClockingBlockSymbol &clocking) {
+    if (requiresClockingEventMonitor(clocking)) {
+      if (clocking.getEvent().as_if<slang::ast::EventListControl>())
+        attrs.set("virtual_interface_clock_event_list",
+                  builder.getUnitAttr());
+      attrs.set("virtual_interface_clock_event_edge",
+                slangir::EdgeKindAttr::get(
+                    builder.getContext(), slangir::EdgeKind::None));
+      attrs.set("virtual_interface_clock_member",
+                builder.getStringAttr(clocking.name));
+      return;
+    }
+    const auto *event =
+        clocking.getEvent().as_if<slang::ast::SignalEventControl>();
+    if (!event)
+      return;
+    attrs.set("virtual_interface_clock_event_edge",
+              slangir::EdgeKindAttr::get(builder.getContext(),
+                                         convertEnum(event->edge)));
+    const slang::ast::Symbol *clockSymbol = nullptr;
+    if (auto *named = event->expr.as_if<slang::ast::NamedValueExpression>())
+      clockSymbol = &named->symbol;
+    else if (auto *hierarchical =
+                 event->expr
+                     .as_if<slang::ast::HierarchicalValueExpression>())
+      clockSymbol = &hierarchical->symbol;
+    if (clockSymbol)
+      attrs.set("virtual_interface_clock_member",
+                builder.getStringAttr(clockSymbol->name));
+    if (event->iffCondition)
+      attrs.set("virtual_interface_clock_event_has_iff",
+                builder.getUnitAttr());
   }
 
   /// Freeze the directly addressable event selected by an ordinary clocking
@@ -1680,36 +1732,7 @@ private:
                     builder.getStringAttr(scope->asSymbol().name));
           const auto &clocking =
               scope->asSymbol().as<slang::ast::ClockingBlockSymbol>();
-          const auto *event =
-              clocking.getEvent().as_if<slang::ast::SignalEventControl>();
-          if (event) {
-            attrs.set("virtual_interface_clock_event_edge",
-                      slangir::EdgeKindAttr::get(builder.getContext(),
-                                                 convertEnum(event->edge)));
-            const slang::ast::Symbol *clockSymbol = nullptr;
-            if (auto *named =
-                    event->expr.as_if<slang::ast::NamedValueExpression>())
-              clockSymbol = &named->symbol;
-            else if (auto *hierarchical =
-                         event->expr
-                             .as_if<slang::ast::HierarchicalValueExpression>())
-              clockSymbol = &hierarchical->symbol;
-            if (clockSymbol)
-              attrs.set("virtual_interface_clock_member",
-                        builder.getStringAttr(clockSymbol->name));
-            if (event->iffCondition)
-              attrs.set("virtual_interface_clock_event_has_iff",
-                        builder.getUnitAttr());
-          } else if (clocking.getEvent()
-                         .as_if<slang::ast::EventListControl>()) {
-            attrs.set("virtual_interface_clock_event_list",
-                      builder.getUnitAttr());
-            attrs.set("virtual_interface_clock_event_edge",
-                      slangir::EdgeKindAttr::get(
-                          builder.getContext(), slangir::EdgeKind::None));
-            attrs.set("virtual_interface_clock_member",
-                      builder.getStringAttr(clocking.name));
-          }
+          addVirtualClockingEventDescriptor(attrs, clocking);
 
           slang::TimeScale scale =
               scope->getTimeScale().value_or(slang::TimeScale{});
@@ -1779,37 +1802,7 @@ private:
             attrs.set("virtual_interface_modport",
                       builder.getStringAttr(virtualType.modport->name));
         }
-        if (const auto *event =
-                clocking.getEvent()
-                    .template as_if<slang::ast::SignalEventControl>()) {
-          attrs.set("virtual_interface_clock_event_edge",
-                    slangir::EdgeKindAttr::get(builder.getContext(),
-                                               convertEnum(event->edge)));
-          const slang::ast::Symbol *clockSymbol = nullptr;
-          if (auto *named =
-                  event->expr
-                      .template as_if<slang::ast::NamedValueExpression>())
-            clockSymbol = &named->symbol;
-          else if (auto *hierarchical =
-                       event->expr.template as_if<
-                           slang::ast::HierarchicalValueExpression>())
-            clockSymbol = &hierarchical->symbol;
-          if (clockSymbol)
-            attrs.set("virtual_interface_clock_member",
-                      builder.getStringAttr(clockSymbol->name));
-          if (event->iffCondition)
-            attrs.set("virtual_interface_clock_event_has_iff",
-                      builder.getUnitAttr());
-        } else if (clocking.getEvent()
-                       .template as_if<slang::ast::EventListControl>()) {
-          attrs.set("virtual_interface_clock_event_list",
-                    builder.getUnitAttr());
-          attrs.set("virtual_interface_clock_event_edge",
-                    slangir::EdgeKindAttr::get(
-                        builder.getContext(), slangir::EdgeKind::None));
-          attrs.set("virtual_interface_clock_member",
-                    builder.getStringAttr(clocking.name));
-        }
+        addVirtualClockingEventDescriptor(attrs, clocking);
       }
       if (node.member.kind == slang::ast::SymbolKind::Field) {
         const auto &field = node.member.template as<slang::ast::FieldSymbol>();
@@ -2369,8 +2362,11 @@ private:
     } else if constexpr (std::same_as<T, slang::ast::ClockingBlockSymbol>) {
       SET_OP_ATTR(IsDefault, builder.getBoolAttr(node.isDefault));
       SET_OP_ATTR(IsGlobal, builder.getBoolAttr(node.isGlobal));
-      if (node.getEvent().template as_if<slang::ast::EventListControl>())
-        attrs.set("clocking_event_list", builder.getUnitAttr());
+      if (requiresClockingEventMonitor(node)) {
+        attrs.set("clocking_event_monitor", builder.getUnitAttr());
+        if (node.getEvent().template as_if<slang::ast::EventListControl>())
+          attrs.set("clocking_event_list", builder.getUnitAttr());
+      }
     } else if constexpr (std::same_as<T, slang::ast::AssertionPortSymbol>) {
       if (node.direction)
         SET_OP_ATTR(Direction,
@@ -3128,7 +3124,8 @@ private:
         if (const auto *event =
                 clocking.getEvent()
                     .template as_if<slang::ast::SignalEventControl>();
-            event && event->iffCondition) {
+            event && event->iffCondition &&
+            !requiresClockingEventMonitor(clocking)) {
           event->expr.visit(*this);
           event->iffCondition->visit(*this);
         }
@@ -3151,7 +3148,8 @@ private:
         if (const auto *event =
                 clocking->getEvent()
                     .template as_if<slang::ast::SignalEventControl>();
-            event && event->iffCondition) {
+            event && event->iffCondition &&
+            !requiresClockingEventMonitor(*clocking)) {
           event->expr.visit(*this);
           event->iffCondition->visit(*this);
         }
@@ -3166,7 +3164,8 @@ private:
         if (const auto *event =
                 clocking.getEvent()
                     .template as_if<slang::ast::SignalEventControl>();
-            event && event->iffCondition) {
+            event && event->iffCondition &&
+            !requiresClockingEventMonitor(clocking)) {
           event->expr.visit(*this);
           event->iffCondition->visit(*this);
         }
@@ -3180,7 +3179,9 @@ private:
                   clocking->as<slang::ast::ClockingBlockSymbol>()
                       .getEvent()
                       .template as_if<slang::ast::SignalEventControl>();
-              event && event->iffCondition) {
+              event && event->iffCondition &&
+              !requiresClockingEventMonitor(
+                  clocking->as<slang::ast::ClockingBlockSymbol>())) {
             event->expr.visit(*this);
             event->iffCondition->visit(*this);
           }

@@ -380,7 +380,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         designInitializer || netInitializer ||
         op->hasAttr(sequenceEndpointEventAttrName) ||
         (isa<semantic::SVClockingBlockSymbolOp>(op) &&
-         op->hasAttr(clockingEventListAttrName)))
+         (op->hasAttr(clockingEventMonitorRequiredAttrName) ||
+          op->hasAttr(clockingEventListAttrName))))
       sourceUnits.push_back(op);
   });
 
@@ -6112,7 +6113,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     bool clockingEventMonitor =
         isa<semantic::SVClockingBlockSymbolOp>(unit.source) &&
-        unit.source->hasAttr(clockingEventListAttrName);
+        (unit.source->hasAttr(clockingEventMonitorRequiredAttrName) ||
+         unit.source->hasAttr(clockingEventListAttrName));
     if (clockingEventMonitor) {
       functionAttrs.push_back(builder.getNamedAttr(
           clockingEventMonitorAttrName, builder.getUnitAttr()));
