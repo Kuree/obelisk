@@ -631,9 +631,13 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       auto member = destination->getAttrOfType<StringAttr>("member_name");
       auto node = destination->getAttrOfType<IntegerAttr>("node_id");
       SmallVector<Operation *> receiver = getChildren(destination);
+      size_t expectedReceiverChildren =
+          destination->hasAttr("virtual_interface_clock_event_has_iff") ? 3
+                                                                         : 1;
       FailureOr<Type> receiverType =
-          receiver.size() == 1 ? getNormalizedSemanticType(receiver.front())
-                               : FailureOr<Type>(failure());
+          receiver.size() == expectedReceiverChildren
+              ? getNormalizedSemanticType(receiver.front())
+              : FailureOr<Type>(failure());
       auto interfaceType =
           succeeded(receiverType)
               ? dyn_cast<sim::VirtualInterfaceType>(*receiverType)

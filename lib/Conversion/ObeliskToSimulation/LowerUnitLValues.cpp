@@ -1222,7 +1222,10 @@ LogicalResult UnitLowering::lowerClockingOutputAssignment(
     semantic::SVMemberAccessExpressionOp destination, Value value,
     Location location) {
   SmallVector<Operation *> children = getChildren(destination);
-  if (children.size() != 1)
+  bool hasIff =
+      destination->hasAttr("virtual_interface_clock_event_has_iff");
+  size_t expectedChildren = hasIff ? 3 : 1;
+  if (children.size() != expectedChildren)
     return emitError(location) << "clocking output has no interface receiver";
   FailureOr<Value> interface = lowerExpression(children.front());
   FailureOr<Type> elementType = getNormalizedSemanticType(destination);
@@ -1234,7 +1237,8 @@ LogicalResult UnitLowering::lowerClockingOutputAssignment(
   if (failed(target) || failed(clock))
     return failure();
   return emitClockingOutputDrive(destination, *target, *clock, value,
-                                 /*virtualInterface=*/true, location);
+                                 /*virtualInterface=*/true, location,
+                                 *interface);
 }
 
 LogicalResult UnitLowering::lowerStaticClockingOutputAssignment(
@@ -1269,7 +1273,8 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
                                                     Value target, Value clock,
                                                     Value value,
                                                     bool virtualInterface,
-                                                    Location location) {
+                                                    Location location,
+                                                    Value virtualInterfaceHandle) {
   auto targetRef = dyn_cast<sim::RefType>(target.getType());
   auto targetDriver = dyn_cast<sim::DriverType>(target.getType());
   if (!targetRef && !targetDriver)
@@ -1305,7 +1310,7 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
   auto skewEdge =
       destination->getAttrOfType<semantic::EdgeKindAttr>(skewEdgeName);
   bool hasIff = destination->hasAttr(eventIffName);
-  if (!eventEdge || (virtualInterface && hasIff)) {
+  if (!eventEdge) {
     emitError(location) << "clocking output has no supported static event";
     return failure();
   }
@@ -1339,12 +1344,26 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
   std::optional<ObserverPlan> conditionObserver;
   if (hasIff && !alwaysSynchronized) {
     SmallVector<Operation *> children = getChildren(destination);
-    if (children.size() != 2)
+    size_t expectedChildren = virtualInterface ? 3 : 2;
+    if (children.size() != expectedChildren)
       return emitError(location)
              << "clocking output with iff has no frozen clock and condition "
                 "expressions";
-    FailureOr<Value> primary = bindObserver(children[0]);
-    FailureOr<Value> condition = bindObserver(children[1]);
+    FailureOr<Value> primary = failure();
+    FailureOr<Value> condition = failure();
+    if (virtualInterface) {
+      auto access = dyn_cast<semantic::SVMemberAccessExpressionOp>(destination);
+      if (!access || !virtualInterfaceHandle)
+        return emitError(location)
+               << "virtual clocking output has no selected interface";
+      primary = bindVirtualClockingObserver(
+          children[1], access, virtualInterfaceHandle, clock);
+      condition = bindVirtualClockingObserver(
+          children[2], access, virtualInterfaceHandle, clock);
+    } else {
+      primary = bindObserver(children[0]);
+      condition = bindObserver(children[1]);
+    }
     if (failed(primary) || failed(condition))
       return failure();
     auto savePlan = [&](Value observer) -> ObserverPlan {

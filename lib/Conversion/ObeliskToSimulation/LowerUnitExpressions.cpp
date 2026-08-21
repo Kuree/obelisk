@@ -1888,13 +1888,8 @@ FailureOr<Value> UnitLowering::bindVirtualClockingObserver(
   std::string marker = (Twine(".") + clockingBlock.getValue()).str();
   size_t markerOffset = accessPath.rfind(marker);
   if (markerOffset == StringRef::npos &&
-      access->hasAttr("virtual_interface_clocking")) {
-    auto member = access->getAttrOfType<StringAttr>("member_name");
-    std::string memberMarker =
-        member ? (Twine(".") + member.getValue()).str() : std::string{};
-    if (!memberMarker.empty() && accessPath.ends_with(memberMarker))
-      markerOffset = accessPath.size() - memberMarker.size();
-  }
+      access->hasAttr("virtual_interface_clocking"))
+    markerOffset = accessPath.rfind('.');
   if (markerOffset == StringRef::npos)
     return emitError(location)
                << "virtual clocking observer path has no interface prefix",

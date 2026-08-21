@@ -180,7 +180,7 @@ private:
   ::mlir::LogicalResult emitClockingOutputDrive(
       ::mlir::Operation *destination, ::mlir::Value target,
       ::mlir::Value clock, ::mlir::Value value, bool virtualInterface,
-      ::mlir::Location location);
+      ::mlir::Location location, ::mlir::Value virtualInterfaceHandle = {});
   ::mlir::FailureOr<CapturedLValue>
   captureLValue(::mlir::Operation *destination, ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
