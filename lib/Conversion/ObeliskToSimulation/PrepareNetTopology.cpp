@@ -19,6 +19,17 @@ using namespace mlir;
 
 namespace obelisk::simlowering {
 
+static Operation *peelClockingOutputSelects(Operation *destination) {
+  while (isa<semantic::SVElementSelectExpressionOp,
+             semantic::SVRangeSelectExpressionOp>(destination)) {
+    SmallVector<Operation *> children = getChildren(destination);
+    if (children.empty())
+      return nullptr;
+    destination = children.front();
+  }
+  return destination;
+}
+
 FailureOr<ContinuousDriverMap>
 materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
                        ArrayRef<semantic::SVPortConnectionOp> portConnections,
@@ -543,7 +554,10 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       size_t destinationIndex = assignment.getHasTimingControl() ? 1 : 0;
       if (children.size() <= destinationIndex)
         return WalkResult::advance();
-      Operation *destination = children[destinationIndex];
+      Operation *destination =
+          peelClockingOutputSelects(children[destinationIndex]);
+      if (!destination)
+        return WalkResult::advance();
       auto direction =
           destination->getAttrOfType<semantic::SVArgumentDirectionAttr>(
               clockingAccessDirectionAttrName);
@@ -555,45 +569,77 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       auto clockingPath =
           destination->getAttrOfType<StringAttr>("referenced_path");
       auto node = destination->getAttrOfType<IntegerAttr>("node_id");
-      if (!path || !clockingPath || !node)
+      if (!clockingPath || !node)
         return WalkResult::advance();
-      auto sink = descriptors.find(path.getValue());
-      if (sink == descriptors.end() ||
-          sink->second.kind != DescriptorInfo::Kind::Net)
-        return WalkResult::advance();
-      std::optional<unsigned> width =
-          analysis::getSimulationStorageBitWidth(sink->second.type);
-      if (!width) {
-        emitError(getSemanticLocation(destination))
-            << "clocking output net has no fixed storage width";
-        invalid = true;
-        return WalkResult::interrupt();
+      SmallVector<std::pair<StringAttr, uint64_t>> netLeaves;
+      if (path) {
+        netLeaves.emplace_back(path, node.getValue().getZExtValue());
+      } else {
+        auto reference =
+            destination->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+        semantic::SVClockVarSymbolOp declaration;
+        if (reference)
+          destination->getParentOfType<ModuleOp>().walk(
+              [&](semantic::SVClockVarSymbolOp candidate) {
+                if (!declaration && candidate.getSymName() ==
+                                        reference.getLeafReference().getValue())
+                  declaration = candidate;
+              });
+        SmallVector<Operation *> declarationChildren =
+            declaration ? getChildren(declaration) : SmallVector<Operation *>{};
+        if (declarationChildren.size() == 1)
+          declarationChildren.front()->walk([&](Operation *expression) {
+            auto leafPath =
+                expression->getAttrOfType<StringAttr>("referenced_path");
+            auto leafNode = expression->getAttrOfType<IntegerAttr>("node_id");
+            if (!leafPath || !leafNode)
+              return;
+            auto descriptor = descriptors.find(leafPath.getValue());
+            if (descriptor != descriptors.end() &&
+                descriptor->second.kind == DescriptorInfo::Kind::Net)
+              netLeaves.emplace_back(leafPath,
+                                     leafNode.getValue().getZExtValue());
+          });
       }
-      auto shared = staticClockingDrivers.find(clockingPath.getValue());
-      if (shared == staticClockingDrivers.end()) {
-        uint64_t id = nextDriverId++;
-        DescriptorInfo info{DescriptorInfo::Kind::Driver, id,
-                            sink->second.scopeId, sink->second.type,
-                            sink->second.netKind};
-        info.rootType = sink->second.type;
-        shared =
-            staticClockingDrivers.try_emplace(clockingPath.getValue(), info)
-                .first;
-        sim::SimDriverDeclOp::create(
-            builder, getSemanticLocation(destination), id, sink->second.scopeId,
-            sink->second.id, sink->second.type, sim::Lifetime::Design, path,
-            builder.getStringAttr("clocking output"),
-            builder.getI64IntegerAttr(0), builder.getI64IntegerAttr(*width));
-      } else if (shared->second.type != sink->second.type ||
-                 shared->second.scopeId != sink->second.scopeId) {
-        emitError(getSemanticLocation(destination))
-            << "clocking output net resolves to inconsistent targets";
-        invalid = true;
-        return WalkResult::interrupt();
+      for (auto [leafPath, leafNode] : netLeaves) {
+        auto sink = descriptors.find(leafPath.getValue());
+        if (sink == descriptors.end() ||
+            sink->second.kind != DescriptorInfo::Kind::Net)
+          continue;
+        std::optional<unsigned> width =
+            analysis::getSimulationStorageBitWidth(sink->second.type);
+        if (!width) {
+          emitError(getSemanticLocation(destination))
+              << "clocking output net has no fixed storage width";
+          invalid = true;
+          return WalkResult::interrupt();
+        }
+        std::string driverKey =
+            (Twine(clockingPath.getValue()) + "\n" + leafPath.getValue()).str();
+        auto shared = staticClockingDrivers.find(driverKey);
+        if (shared == staticClockingDrivers.end()) {
+          uint64_t id = nextDriverId++;
+          DescriptorInfo info{DescriptorInfo::Kind::Driver, id,
+                              sink->second.scopeId, sink->second.type,
+                              sink->second.netKind};
+          info.rootType = sink->second.type;
+          shared = staticClockingDrivers.try_emplace(driverKey, info).first;
+          sim::SimDriverDeclOp::create(
+              builder, getSemanticLocation(destination), id,
+              sink->second.scopeId, sink->second.id, sink->second.type,
+              sim::Lifetime::Design, leafPath,
+              builder.getStringAttr("clocking output"),
+              builder.getI64IntegerAttr(0), builder.getI64IntegerAttr(*width));
+        } else if (shared->second.type != sink->second.type ||
+                   shared->second.scopeId != sink->second.scopeId) {
+          emitError(getSemanticLocation(destination))
+              << "clocking output net resolves to inconsistent targets";
+          invalid = true;
+          return WalkResult::interrupt();
+        }
+        continuousDrivers[unit].push_back(
+            {leafPath.getValue().str(), shared->second, leafNode, 0, *width});
       }
-      continuousDrivers[unit].push_back({path.getValue().str(), shared->second,
-                                         node.getValue().getZExtValue(), 0,
-                                         *width});
       return WalkResult::advance();
     });
     if (invalid)
@@ -642,8 +688,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       size_t destinationIndex = assignment.getHasTimingControl() ? 1 : 0;
       if (children.size() <= destinationIndex)
         return WalkResult::advance();
-      auto destination = dyn_cast<semantic::SVMemberAccessExpressionOp>(
-          children[destinationIndex]);
+      auto destination = dyn_cast_or_null<semantic::SVMemberAccessExpressionOp>(
+          peelClockingOutputSelects(children[destinationIndex]));
       if (!destination || !destination->hasAttr("virtual_interface_clocking"))
         return WalkResult::advance();
       auto direction =

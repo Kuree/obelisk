@@ -97,13 +97,14 @@ module {
 // STRUCT-NOT: obelisk.sv.
 
 // An intra-assignment ## retains its pre-delay RHS and does not add another
-// output-edge wait after its final clock cycle.
+// output-edge wait after its final clock cycle. The cycle counter runs in the
+// outlined drive process so the issuing process does not suspend.
 // CHECK-LABEL: obelisk_sim.func private @unit_1.$clocking_output.55
 // CHECK-SAME: home_region = 10 : i32
-// CHECK-NOT: obelisk_sim.suspend.edge
+// CHECK: obelisk_sim.suspend.edge posedge {{.*}}resume_region = 10 : i32
 // CHECK: obelisk_sim.nba.enqueue
 // CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-DAG: obelisk_sim.suspend.edge posedge {{.*}}resume_region = 10 : i32
-// CHECK-DAG: obelisk_sim.spawn @unit_1.$clocking_output.55
+// CHECK-NOT: obelisk_sim.suspend.edge
+// CHECK: obelisk_sim.spawn @unit_1.$clocking_output.55
 
 // NEGEDGE-COUNT-5: obelisk_sim.suspend.edge negedge

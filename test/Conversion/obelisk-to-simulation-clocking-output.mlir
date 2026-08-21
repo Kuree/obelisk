@@ -15,6 +15,7 @@ module {
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.s", lifetime = 1 : i32, name = "s", node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s8.s"} {}
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.clk2", lifetime = 1 : i32, name = "clk2", node_id = 49 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s14.clk2"} {}
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.t", lifetime = 1 : i32, name = "t", node_id = 50 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s15.t"} {}
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.marker", lifetime = 1 : i32, name = "marker", node_id = 70 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s18.marker"} {}
         obelisk.sv.symbol.clocking_block attributes {hierarchical_name = "top.cb", is_default = true, is_global = false, name = "cb", node_id = 9 : i64, sym_name = "s9.cb"} {
           obelisk.sv.symbol.clock_var attributes {direction = 1 : i32, has_input_delay = false, has_output_delay = false, hierarchical_name = "top.cb.q", input_edge = 0 : i32, lifetime = 1 : i32, name = "q", node_id = 12 : i64, output_edge = 0 : i32, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s10.q"} {}
           obelisk.sv.symbol.clock_var attributes {direction = 1 : i32, has_input_delay = false, has_output_delay = false, hierarchical_name = "top.cb.r", input_edge = 0 : i32, lifetime = 1 : i32, name = "r", node_id = 14 : i64, output_edge = 2 : i32, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s11.r"} {}
@@ -68,6 +69,21 @@ module {
                   obelisk.sv.expression.integer_literal attributes {constant_value = "1'b1", node_id = 56 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
                 }
               }
+              obelisk.sv.statement.expression_statement attributes {node_id = 71 : i64} {
+                obelisk.sv.expression.assignment attributes {assignment_kind = 1 : i32, has_timing_control = true, node_id = 72 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  obelisk.sv.timing.cycle_delay attributes {clocking_event_edge = 1 : i32, clocking_event_path = "top.clk", clocking_event_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, node_id = 73 : i64} {
+                    obelisk.sv.expression.integer_literal attributes {constant_value = "2", is_signed = true, node_id = 74 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {}
+                  }
+                  obelisk.sv.expression.named_value attributes {clocking_access_direction = 1 : i32, clocking_event_edge = 1 : i32, clocking_event_path = "top.clk", clocking_event_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, clocking_output_skew_delay = "0", clocking_output_skew_edge = 0 : i32, clocking_source_path = "top.q", clocking_source_symbol = @s1.$root::@s3.top::@s4.top::@s6.q, clocking_time_precision_fs = 1000000 : i64, clocking_time_unit_fs = 1000000 : i64, clocking_variable, node_id = 75 : i64, referenced_path = "top.cb.q", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s9.cb::@s10.q, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "1'b1", node_id = 76 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
+                }
+              }
+              obelisk.sv.statement.expression_statement attributes {node_id = 77 : i64} {
+                obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 78 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  obelisk.sv.expression.named_value attributes {node_id = 79 : i64, referenced_path = "top.marker", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s18.marker, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "1'b1", node_id = 80 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
+                }
+              }
             }
           }
         }
@@ -103,6 +119,17 @@ module {
 // CHECK: obelisk_sim.suspend.edge posedge
 // CHECK: obelisk_sim.nba.enqueue
 
+// An intra-assignment cycle delay runs in the drive process. It captures the
+// RHS, counts events there, and does not suspend the issuing process.
+// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.75
+// CHECK: {{^ *}}^[[WAIT:bb[0-9]+]](%[[COUNT:[a-zA-Z0-9_]+]]: i32)
+// CHECK: obelisk_sim.suspend.edge posedge {{.*}} to ^[[RESUME:bb[0-9]+]](%[[COUNT]] : i32)
+// CHECK: {{^ *}}^[[RESUME]](%[[RESUMED:[a-zA-Z0-9_]+]]: i32)
+// CHECK: %[[REMAINING:.*]] = arith.subi %[[RESUMED]]
+// CHECK: cf.cond_br {{.*}}, ^[[WAIT]](%[[REMAINING]] : i32), ^[[DRIVE:bb[0-9]+]]
+// CHECK: {{^ *}}^[[DRIVE]]
+// CHECK: obelisk_sim.nba.enqueue
+
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
 // CHECK: obelisk_sim.spawn @unit_0.$clocking_output.25
 // CHECK: obelisk_sim.suspend.edge posedge
@@ -111,6 +138,9 @@ module {
 // CHECK: obelisk_sim.spawn @unit_0.$clocking_output.41
 // CHECK: obelisk_sim.spawn @unit_0.$clocking_output.47
 // CHECK: obelisk_sim.spawn @unit_0.$clocking_output.55
+// CHECK: obelisk_sim.spawn @unit_0.$clocking_output.75
+// CHECK-NOT: obelisk_sim.suspend
+// CHECK: obelisk_sim.ref.store
 // CHECK-NOT: obelisk.sv.
 
 // INOUT: obelisk_sim.func private @unit_0.$clocking_output.25

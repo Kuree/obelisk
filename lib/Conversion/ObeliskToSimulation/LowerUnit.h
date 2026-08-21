@@ -172,16 +172,29 @@ private:
   readBitStreamValue(::mlir::Value stream, ::mlir::Value start,
                      ::mlir::Type type, ::mlir::Location location);
   ::mlir::LogicalResult lowerClockingOutputAssignment(
-      semantic::SVMemberAccessExpressionOp destination, ::mlir::Value value,
-      ::mlir::Location location);
-  ::mlir::LogicalResult lowerStaticClockingOutputAssignment(
+      semantic::SVMemberAccessExpressionOp clockingVariable,
       ::mlir::Operation *destination, ::mlir::Value value,
-      ::mlir::Location location);
+      ::mlir::Location location,
+      semantic::SVCycleDelayControlOp cycleDelay = {});
+  ::mlir::LogicalResult lowerStaticClockingOutputAssignment(
+      ::mlir::Operation *clockingVariable, ::mlir::Operation *destination,
+      ::mlir::Value value, ::mlir::Location location,
+      semantic::SVCycleDelayControlOp cycleDelay = {});
+  ::mlir::FailureOr<::mlir::Value>
+  lowerClockingOutputTarget(::mlir::Operation *destination,
+                            ::mlir::Operation *clockingVariable,
+                            ::mlir::Value target);
+  ::mlir::LogicalResult emitCapturedClockingOutputDrive(
+      ::mlir::Operation *destination, CapturedLValue &target,
+      ::mlir::Value clock, ::mlir::Value value, ::mlir::Location location,
+      semantic::SVCycleDelayControlOp cycleDelay, ::mlir::Value edgeSkewClock,
+      unsigned &component);
   ::mlir::LogicalResult emitClockingOutputDrive(
-      ::mlir::Operation *destination, ::mlir::Value target,
-      ::mlir::Value clock, ::mlir::Value value, bool virtualInterface,
-      ::mlir::Location location, ::mlir::Value virtualInterfaceHandle = {},
-      ::mlir::Value edgeSkewClock = {});
+      ::mlir::Operation *destination, ::mlir::Value target, ::mlir::Value clock,
+      ::mlir::Value value, bool virtualInterface, ::mlir::Location location,
+      ::mlir::Value virtualInterfaceHandle = {},
+      ::mlir::Value edgeSkewClock = {},
+      semantic::SVCycleDelayControlOp cycleDelay = {}, unsigned component = 0);
   ::mlir::FailureOr<CapturedLValue>
   captureLValue(::mlir::Operation *destination, ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
@@ -503,6 +516,9 @@ private:
   /// cloned expression. This is used when an expression's source-region value
   /// must not be recomputed in the callback's later scheduling region.
   ::llvm::DenseMap<::mlir::Operation *, ::mlir::Value> expressionCaptures;
+  /// Lvalue roots replaced while applying a clocking-output selection to its
+  /// real source storage or persistent net driver.
+  ::llvm::DenseMap<::mlir::Operation *, ::mlir::Value> lvalueExpressionCaptures;
   ::llvm::StringMap<::mlir::Value> values;
   ::llvm::StringMap<::mlir::Value> lvalues;
   ::llvm::StringMap<uint64_t> descriptorIDs;

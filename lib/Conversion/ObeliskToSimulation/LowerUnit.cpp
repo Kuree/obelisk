@@ -1696,6 +1696,9 @@ FailureOr<Value> UnitLowering::lowerContextDeterminedExpression(Operation *op) {
 }
 
 FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
+  if (lvalue)
+    if (Value captured = lvalueExpressionCaptures.lookup(op))
+      return captured;
   if (!lvalue)
     if (Value captured = expressionCaptures.lookup(op))
       return captured;

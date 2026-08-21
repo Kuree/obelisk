@@ -70,6 +70,24 @@ bool isClassPropertySubvalue(Operation *expression) {
   return false;
 }
 
+/// Peel the selects that SystemVerilog permits on the destination of a
+/// clocking output drive and return the clocking-variable access at their
+/// root. Other lvalue shapes are not clocking drives.
+Operation *findClockingOutputRoot(Operation *destination) {
+  while (isa<semantic::SVElementSelectExpressionOp,
+             semantic::SVRangeSelectExpressionOp>(destination)) {
+    SmallVector<Operation *> children = getChildren(destination);
+    if (children.empty())
+      return nullptr;
+    destination = children.front();
+  }
+  if (destination->hasAttr(clockingVariableAttrName))
+    return destination;
+  auto member = dyn_cast<semantic::SVMemberAccessExpressionOp>(destination);
+  return member && member->hasAttr("virtual_interface_clocking") ? destination
+                                                                 : nullptr;
+}
+
 } // namespace
 
 FailureOr<UnitLowering::CapturedLValue>
@@ -1218,53 +1236,162 @@ LogicalResult UnitLowering::writeLValue(Operation *destination, Value value,
                              location, delay);
 }
 
+FailureOr<Value> UnitLowering::lowerClockingOutputTarget(
+    Operation *destination, Operation *clockingVariable, Value target) {
+  if (destination == clockingVariable)
+    return target;
+  assert(!lvalueExpressionCaptures.contains(clockingVariable));
+  lvalueExpressionCaptures[clockingVariable] = target;
+  FailureOr<Value> selected = lowerExpression(destination, /*lvalue=*/true);
+  lvalueExpressionCaptures.erase(clockingVariable);
+  return selected;
+}
+
+LogicalResult UnitLowering::emitCapturedClockingOutputDrive(
+    Operation *destination, CapturedLValue &target, Value clock, Value value,
+    Location location, semantic::SVCycleDelayControlOp cycleDelay,
+    Value edgeSkewClock, unsigned &component) {
+  if (target.kind == CapturedLValue::Kind::Reference) {
+    FailureOr<Value> converted = convert(value, target.type, false, location,
+                                         isSignedNode(target.semanticNode));
+    if (failed(converted))
+      return failure();
+    return emitClockingOutputDrive(
+        destination, target.reference, clock, *converted,
+        /*virtualInterface=*/false, location, Value{}, edgeSkewClock,
+        cycleDelay, ++component);
+  }
+  if (target.kind != CapturedLValue::Kind::Concatenation ||
+      target.children.empty())
+    return emitError(location)
+           << "clocking output expression has no first-class lvalue target";
+
+  FailureOr<Value> converted = convert(value, target.type, false, location,
+                                       isSignedNode(target.semanticNode));
+  FailureOr<Value> scalar = succeeded(converted)
+                                ? toPackedScalar(*converted, location)
+                                : FailureOr<Value>(failure());
+  std::optional<unsigned> totalWidth =
+      succeeded(scalar) ? sim::getPackedWidth((*scalar).getType())
+                        : std::nullopt;
+  if (failed(scalar) || !totalWidth)
+    return failure();
+  uint64_t trailing = *totalWidth;
+  for (CapturedLValue &child : target.children) {
+    std::optional<unsigned> childWidth = sim::getPackedWidth(child.type);
+    if (!childWidth || *childWidth > trailing)
+      return emitError(location)
+             << "clocking output concatenation width is inconsistent";
+    trailing -= *childWidth;
+    Value part;
+    if (auto logic = dyn_cast<sim::LogicType>((*scalar).getType())) {
+      part = sim::SimLogicExtractOp::create(
+          builder, location,
+          sim::LogicType::get(function.getContext(), *childWidth), *scalar,
+          builder.getI64IntegerAttr(trailing));
+    } else {
+      auto integer = dyn_cast<IntegerType>((*scalar).getType());
+      if (!integer)
+        return failure();
+      Value amount =
+          arith::ConstantOp::create(builder, location, integer,
+                                    builder.getIntegerAttr(integer, trailing));
+      Value shifted =
+          arith::ShRUIOp::create(builder, location, *scalar, amount);
+      Type selected = builder.getIntegerType(*childWidth);
+      part = selected == integer ? shifted
+                                 : Value(arith::TruncIOp::create(
+                                       builder, location, selected, shifted));
+    }
+    if (failed(emitCapturedClockingOutputDrive(destination, child, clock, part,
+                                               location, cycleDelay,
+                                               edgeSkewClock, component)))
+      return failure();
+  }
+  if (trailing)
+    return emitError(location)
+           << "clocking output concatenation does not consume its value";
+  return success();
+}
+
 LogicalResult UnitLowering::lowerClockingOutputAssignment(
-    semantic::SVMemberAccessExpressionOp destination, Value value,
-    Location location) {
-  SmallVector<Operation *> children = getChildren(destination);
+    semantic::SVMemberAccessExpressionOp clockingVariable,
+    Operation *destination, Value value, Location location,
+    semantic::SVCycleDelayControlOp cycleDelay) {
+  SmallVector<Operation *> children = getChildren(clockingVariable);
   bool hasIff =
-      destination->hasAttr("virtual_interface_clock_event_has_iff");
+      clockingVariable->hasAttr("virtual_interface_clock_event_has_iff");
   size_t expectedChildren = hasIff ? 3 : 1;
   if (children.size() != expectedChildren)
     return emitError(location) << "clocking output has no interface receiver";
   FailureOr<Value> interface = lowerExpression(children.front());
-  FailureOr<Type> elementType = getNormalizedSemanticType(destination);
+  FailureOr<Type> elementType = getNormalizedSemanticType(clockingVariable);
   if (failed(interface) || failed(elementType))
     return failure();
   FailureOr<Value> target = lowerVirtualInterfaceMember(
-      destination, *interface, *elementType, /*lvalue=*/true);
-  FailureOr<Value> clock = lowerVirtualInterfaceClock(destination, *interface);
+      clockingVariable, *interface, *elementType, /*lvalue=*/true);
+  FailureOr<Value> clock =
+      lowerVirtualInterfaceClock(clockingVariable, *interface);
   if (failed(target) || failed(clock))
     return failure();
+  target = lowerClockingOutputTarget(destination, clockingVariable, *target);
+  if (failed(target))
+    return failure();
   Value edgeSkewClock;
-  if (auto rawMember = destination->getAttrOfType<StringAttr>(
+  if (auto rawMember = clockingVariable->getAttrOfType<StringAttr>(
           "virtual_interface_clock_raw_member")) {
-    FailureOr<Value> raw = lowerVirtualInterfaceSignal(
-        *interface, rawMember.getValue(), location);
+    FailureOr<Value> raw =
+        lowerVirtualInterfaceSignal(*interface, rawMember.getValue(), location);
     if (failed(raw))
       return failure();
     edgeSkewClock = *raw;
   }
-  return emitClockingOutputDrive(destination, *target, *clock, value,
+  return emitClockingOutputDrive(clockingVariable, *target, *clock, value,
                                  /*virtualInterface=*/true, location,
-                                 *interface, edgeSkewClock);
+                                 *interface, edgeSkewClock, cycleDelay);
 }
 
 LogicalResult UnitLowering::lowerStaticClockingOutputAssignment(
-    Operation *destination, Value value, Location location) {
-  auto direction = destination->getAttrOfType<semantic::SVArgumentDirectionAttr>(
-      clockingAccessDirectionAttrName);
+    Operation *clockingVariable, Operation *destination, Value value,
+    Location location, semantic::SVCycleDelayControlOp cycleDelay) {
+  auto direction =
+      clockingVariable->getAttrOfType<semantic::SVArgumentDirectionAttr>(
+          clockingAccessDirectionAttrName);
   if (!direction || direction.getValue() == semantic::SVArgumentDirection::In)
     return emitError(location) << "cannot write an input clocking variable";
   auto sourcePath =
-      destination->getAttrOfType<StringAttr>(clockingSourcePathAttrName);
+      clockingVariable->getAttrOfType<StringAttr>(clockingSourcePathAttrName);
   auto clockPath =
-      destination->getAttrOfType<StringAttr>(clockingEventPathAttrName);
-  if (!sourcePath || !clockPath)
-    return emitError(location)
-           << "clocking output has no directly addressable target and clock";
-  FailureOr<Value> target = lowerReferencedValue(
-      destination, sourcePath.getValue(), /*lvalue=*/true);
+      clockingVariable->getAttrOfType<StringAttr>(clockingEventPathAttrName);
+  if (!clockPath)
+    return emitError(location) << "clocking output has no addressable clock";
+  FailureOr<Value> target = failure();
+  std::optional<CapturedLValue> expressionTarget;
+  if (sourcePath) {
+    target = lowerReferencedValue(clockingVariable, sourcePath.getValue(),
+                                  /*lvalue=*/true);
+  } else {
+    auto reference =
+        clockingVariable->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+    semantic::SVClockVarSymbolOp declaration;
+    if (reference)
+      clockingVariable->getParentOfType<ModuleOp>().walk(
+          [&](semantic::SVClockVarSymbolOp candidate) {
+            if (!declaration && candidate.getSymName() ==
+                                    reference.getLeafReference().getValue())
+              declaration = candidate;
+          });
+    SmallVector<Operation *> declarationChildren =
+        declaration ? getChildren(declaration) : SmallVector<Operation *>{};
+    if (declarationChildren.size() != 1)
+      return emitError(location)
+             << "clocking output has no addressable output expression";
+    FailureOr<CapturedLValue> captured =
+        captureLValue(declarationChildren.front(), location);
+    if (failed(captured))
+      return failure();
+    expressionTarget = std::move(*captured);
+  }
   // A net output has a node-specific driver binding. Resolve the separate
   // event clock by path so that binding cannot substitute for the clock.
   Value clock = lvalues.lookup(clockPath.getValue());
@@ -1273,14 +1400,22 @@ LogicalResult UnitLowering::lowerStaticClockingOutputAssignment(
     if (event && isa<sim::EventType>(event.getType()))
       clock = event;
   }
-  if (failed(target) || !clock) {
+  if ((!expressionTarget && failed(target)) || !clock) {
     if (!clock)
       emitError(location) << "clocking output has no frozen clock binding: "
                           << clockPath.getValue();
     return failure();
   }
+  if (!expressionTarget) {
+    target = lowerClockingOutputTarget(destination, clockingVariable, *target);
+    if (failed(target))
+      return failure();
+  } else if (destination != clockingVariable) {
+    return emitError(location)
+           << "a selected clocking output requires a direct output lvalue";
+  }
   Value edgeSkewClock;
-  if (auto rawPath = destination->getAttrOfType<StringAttr>(
+  if (auto rawPath = clockingVariable->getAttrOfType<StringAttr>(
           clockingEventRawPathAttrName)) {
     edgeSkewClock = lvalues.lookup(rawPath.getValue());
     if (!edgeSkewClock)
@@ -1290,18 +1425,36 @@ LogicalResult UnitLowering::lowerStaticClockingOutputAssignment(
              << "clocking output has no raw edge clock binding: "
              << rawPath.getValue();
   }
-  return emitClockingOutputDrive(destination, *target, clock, value,
-                                 /*virtualInterface=*/false, location,
-                                 Value{}, edgeSkewClock);
+  if (expressionTarget) {
+    unsigned component = 0;
+    Operation *cycleCountExpression = nullptr;
+    if (cycleDelay) {
+      SmallVector<Operation *> cycleChildren = getChildren(cycleDelay);
+      if (!cycleChildren.empty()) {
+        cycleCountExpression = cycleChildren.front();
+        FailureOr<Value> count = lowerExpression(cycleCountExpression);
+        if (failed(count))
+          return failure();
+        expressionCaptures[cycleCountExpression] = *count;
+      }
+    }
+    LogicalResult result = emitCapturedClockingOutputDrive(
+        clockingVariable, *expressionTarget, clock, value, location, cycleDelay,
+        edgeSkewClock, component);
+    if (cycleCountExpression)
+      expressionCaptures.erase(cycleCountExpression);
+    return result;
+  }
+  return emitClockingOutputDrive(clockingVariable, *target, clock, value,
+                                 /*virtualInterface=*/false, location, Value{},
+                                 edgeSkewClock, cycleDelay);
 }
 
-LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
-                                                    Value target, Value clock,
-                                                    Value value,
-                                                    bool virtualInterface,
-                                                    Location location,
-                                                    Value virtualInterfaceHandle,
-                                                    Value edgeSkewClock) {
+LogicalResult UnitLowering::emitClockingOutputDrive(
+    Operation *destination, Value target, Value clock, Value value,
+    bool virtualInterface, Location location, Value virtualInterfaceHandle,
+    Value edgeSkewClock, semantic::SVCycleDelayControlOp cycleDelay,
+    unsigned component) {
   auto targetRef = dyn_cast<sim::RefType>(target.getType());
   auto targetDriver = dyn_cast<sim::DriverType>(target.getType());
   if (!targetRef && !targetDriver)
@@ -1314,9 +1467,9 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
   StringRef eventIffName = virtualInterface
                                ? "virtual_interface_clock_event_has_iff"
                                : StringRef(clockingEventHasIffAttrName);
-  StringRef rawEventEdgeName =
-      virtualInterface ? "virtual_interface_clock_raw_event_edge"
-                       : StringRef(clockingEventRawEdgeAttrName);
+  StringRef rawEventEdgeName = virtualInterface
+                                   ? "virtual_interface_clock_raw_event_edge"
+                                   : StringRef(clockingEventRawEdgeAttrName);
   StringRef skewEdgeName = virtualInterface
                                ? "virtual_interface_clock_output_skew_edge"
                                : StringRef(clockingOutputSkewEdgeAttrName);
@@ -1354,9 +1507,9 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
           : eventEdge.getValue();
   semantic::EdgeKind baseSignalEdge =
       rawEventEdge ? rawEventEdge.getValue() : eventEdge.getValue();
-  bool distinctEdgeSkew =
-      skewEdge && skewEdge.getValue() != semantic::EdgeKind::Change &&
-      skewEdge.getValue() != baseSignalEdge;
+  bool distinctEdgeSkew = skewEdge &&
+                          skewEdge.getValue() != semantic::EdgeKind::Change &&
+                          skewEdge.getValue() != baseSignalEdge;
   Value selectedEdgeClock = edgeSkewClock ? edgeSkewClock : clock;
   if (distinctEdgeSkew && isa<sim::EventType>(selectedEdgeClock.getType()))
     return emitError(location)
@@ -1367,8 +1520,8 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
            << "legacy clocking outputs with iff cannot use a distinct edge "
               "skew";
   sim::EdgeKind edge = static_cast<sim::EdgeKind>(selectedEdge);
-  std::optional<Value> currentOccurrence = getCurrentClockingOccurrence(
-      current, virtualInterface ? Value{} : clock);
+  std::optional<Value> currentOccurrence =
+      getCurrentClockingOccurrence(current, virtualInterface ? Value{} : clock);
   bool alwaysSynchronized = currentOccurrence && !*currentOccurrence;
   Value synchronizationPredicate =
       currentOccurrence ? *currentOccurrence : Value{};
@@ -1380,9 +1533,21 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
     SmallVector<unsigned> argumentIndices;
     bool eventPrimary = false;
   };
+  auto saveObserverPlan = [&](Value observer) -> ObserverPlan {
+    auto binding = observer.getDefiningOp<sim::SimObserverBindOp>();
+    assert(binding && "bound observer must be produced by observer.bind");
+    ObserverPlan plan{binding.getEvaluatorAttr(),
+                      cast<sim::ObserverType>(observer.getType()),
+                      binding.getCaptureCountAttr(),
+                      SmallVector<Value>(binding.getValues()),
+                      {},
+                      binding->hasAttr(observerEventPrimaryAttrName)};
+    binding.erase();
+    return plan;
+  };
   std::optional<ObserverPlan> primaryObserver;
   std::optional<ObserverPlan> conditionObserver;
-  if (hasIff && !alwaysSynchronized) {
+  if (hasIff && (!alwaysSynchronized || cycleDelay)) {
     SmallVector<Operation *> children = getChildren(destination);
     size_t expectedChildren = virtualInterface ? 3 : 2;
     if (children.size() != expectedChildren)
@@ -1396,30 +1561,74 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
       if (!access || !virtualInterfaceHandle)
         return emitError(location)
                << "virtual clocking output has no selected interface";
-      primary = bindVirtualClockingObserver(
-          children[1], access, virtualInterfaceHandle, clock);
-      condition = bindVirtualClockingObserver(
-          children[2], access, virtualInterfaceHandle, clock);
+      primary = bindVirtualClockingObserver(children[1], access,
+                                            virtualInterfaceHandle, clock);
+      condition = bindVirtualClockingObserver(children[2], access,
+                                              virtualInterfaceHandle, clock);
     } else {
       primary = bindObserver(children[0]);
       condition = bindObserver(children[1]);
     }
     if (failed(primary) || failed(condition))
       return failure();
-    auto savePlan = [&](Value observer) -> ObserverPlan {
-      auto binding = observer.getDefiningOp<sim::SimObserverBindOp>();
-      assert(binding && "bound observer must be produced by observer.bind");
-      ObserverPlan plan{binding.getEvaluatorAttr(),
-                        cast<sim::ObserverType>(observer.getType()),
-                        binding.getCaptureCountAttr(),
-                        SmallVector<Value>(binding.getValues()),
-                        {},
-                        binding->hasAttr(observerEventPrimaryAttrName)};
-      binding.erase();
-      return plan;
-    };
-    primaryObserver = savePlan(*primary);
-    conditionObserver = savePlan(*condition);
+    primaryObserver = saveObserverPlan(*primary);
+    conditionObserver = saveObserverPlan(*condition);
+  }
+
+  Value cycleClock;
+  Value cycleCount;
+  bool cycleCountSigned = false;
+  bool cycleHasIff = false;
+  semantic::EdgeKind cycleEdge = semantic::EdgeKind::Change;
+  std::optional<ObserverPlan> cyclePrimaryObserver;
+  std::optional<ObserverPlan> cycleConditionObserver;
+  bool cycleMatchesOutput = false;
+  if (cycleDelay) {
+    SmallVector<Operation *> cycleChildren = getChildren(cycleDelay);
+    cycleHasIff = cycleDelay->hasAttr(clockingEventHasIffAttrName);
+    size_t expectedChildren = cycleHasIff ? 3 : 1;
+    if (cycleChildren.size() != expectedChildren)
+      return emitError(location)
+             << "clocking output cycle delay has no frozen event";
+    auto cyclePath =
+        cycleDelay->getAttrOfType<StringAttr>(clockingEventPathAttrName);
+    auto cycleEventEdge = cycleDelay->getAttrOfType<semantic::EdgeKindAttr>(
+        clockingEventEdgeAttrName);
+    if (!cyclePath || !cycleEventEdge)
+      return emitError(location)
+             << "clocking output cycle delay has no supported event";
+    FailureOr<Value> loweredClock =
+        lowerReferencedValue(cycleDelay, cyclePath.getValue(), /*lvalue=*/true);
+    FailureOr<Value> loweredCount = lowerExpression(cycleChildren.front());
+    FailureOr<Value> scalarCount = succeeded(loweredCount)
+                                       ? toPackedScalar(*loweredCount, location)
+                                       : FailureOr<Value>(failure());
+    std::optional<unsigned> countWidth =
+        succeeded(scalarCount) ? sim::getPackedWidth((*scalarCount).getType())
+                               : std::nullopt;
+    if (failed(loweredClock) || failed(scalarCount) || !countWidth ||
+        *countWidth == 0)
+      return failure();
+    Type countType = builder.getIntegerType(*countWidth);
+    FailureOr<Value> normalizedCount = convert(
+        *scalarCount, countType, isSignedNode(cycleChildren.front()), location);
+    if (failed(normalizedCount))
+      return failure();
+    cycleClock = *loweredClock;
+    cycleCount = *normalizedCount;
+    cycleCountSigned = isSignedNode(cycleChildren.front());
+    cycleEdge = cycleEventEdge.getValue();
+    if (cycleHasIff) {
+      FailureOr<Value> primary = bindObserver(cycleChildren[1]);
+      FailureOr<Value> condition = bindObserver(cycleChildren[2]);
+      if (failed(primary) || failed(condition))
+        return failure();
+      cyclePrimaryObserver = saveObserverPlan(*primary);
+      cycleConditionObserver = saveObserverPlan(*condition);
+    }
+    cycleMatchesOutput = cycleClock == clock &&
+                         cycleEdge == eventEdge.getValue() &&
+                         cycleHasIff == hasIff;
   }
 
   uint64_t delayTicks = 0;
@@ -1472,6 +1681,8 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
                       : 0;
   std::string identity =
       (function.getSymName() + ".$clocking_output." + Twine(node)).str();
+  if (component)
+    identity += (Twine(".") + Twine(component)).str();
   uint64_t codeUnitID = stableCodeUnitID(identity);
   auto clockingOutputPath =
       destination->getAttrOfType<StringAttr>("referenced_path");
@@ -1508,6 +1719,10 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
       captureMetadata(outlineBuilder, sim::CaptureKind::Formal),
       captureMetadata(outlineBuilder, sim::CaptureKind::Formal),
       captureMetadata(outlineBuilder, sim::CaptureKind::Value)};
+  if (cycleDelay && !synchronizationPredicate)
+    synchronizationPredicate =
+        arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                  builder.getBoolAttr(alwaysSynchronized));
   std::optional<unsigned> synchronizationPredicateIndex;
   if (synchronizationPredicate) {
     synchronizationPredicateIndex = inputs.size();
@@ -1522,8 +1737,22 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
     argumentAttrs.push_back(
         captureMetadata(outlineBuilder, sim::CaptureKind::Formal));
   }
+  std::optional<unsigned> cycleClockIndex;
+  std::optional<unsigned> cycleCountIndex;
+  if (cycleDelay) {
+    cycleClockIndex = inputs.size();
+    inputs.push_back(cycleClock.getType());
+    argumentAttrs.push_back(
+        captureMetadata(outlineBuilder, sim::CaptureKind::Formal));
+    cycleCountIndex = inputs.size();
+    inputs.push_back(cycleCount.getType());
+    argumentAttrs.push_back(
+        captureMetadata(outlineBuilder, sim::CaptureKind::Value));
+  }
   SmallVector<std::pair<Value, unsigned>> observerArguments{{target, 1},
                                                             {clock, 2}};
+  if (cycleDelay)
+    observerArguments.emplace_back(cycleClock, *cycleClockIndex);
   SmallVector<Value> observerSpawnOperands;
   auto appendObserverArguments = [&](ObserverPlan &plan) {
     for (Value operand : plan.values) {
@@ -1546,6 +1775,10 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
     appendObserverArguments(*primaryObserver);
     appendObserverArguments(*conditionObserver);
   }
+  if (cyclePrimaryObserver) {
+    appendObserverArguments(*cyclePrimaryObserver);
+    appendObserverArguments(*cycleConditionObserver);
+  }
   SmallVector<NamedAttribute> attributes{
       outlineBuilder.getNamedAttr("code_unit_id",
                                   outlineBuilder.getI64IntegerAttr(codeUnitID)),
@@ -1562,9 +1795,19 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
                              sim::EntryKind::Fork, attributes, argumentAttrs);
   SymbolTable::setSymbolVisibility(driver, SymbolTable::Visibility::Private);
   Block &entry = driver.getBody().front();
-  Block *wait = alwaysSynchronized ? nullptr : new Block();
+  Block *cycleWait = cycleDelay ? new Block() : nullptr;
+  Block *cycleResume = cycleDelay ? new Block() : nullptr;
+  Block *cycleZero = cycleDelay ? new Block() : nullptr;
+  Block *wait = alwaysSynchronized && !cycleDelay ? nullptr : new Block();
   Block *edgeWait = distinctEdgeSkew ? new Block() : nullptr;
   Block *drive = new Block();
+  if (cycleWait) {
+    cycleWait->addArgument(cycleCount.getType(), location);
+    cycleResume->addArgument(cycleCount.getType(), location);
+    driver.getBody().push_back(cycleWait);
+    driver.getBody().push_back(cycleResume);
+    driver.getBody().push_back(cycleZero);
+  }
   if (wait)
     driver.getBody().push_back(wait);
   if (edgeWait)
@@ -1590,7 +1833,89 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
     localPrimaryObserver = bindInDriver(*primaryObserver);
     localConditionObserver = bindInDriver(*conditionObserver);
   }
-  if (wait) {
+  Value localCyclePrimaryObserver;
+  Value localCycleConditionObserver;
+  if (cyclePrimaryObserver) {
+    localCyclePrimaryObserver = bindInDriver(*cyclePrimaryObserver);
+    localCycleConditionObserver = bindInDriver(*cycleConditionObserver);
+  }
+  if (cycleDelay) {
+    Value zero = arith::ConstantOp::create(
+        entryBuilder, location, cycleCount.getType(),
+        entryBuilder.getZeroAttr(cycleCount.getType()));
+    Value positive = arith::CmpIOp::create(
+        entryBuilder, location,
+        cycleCountSigned ? arith::CmpIPredicate::sgt : arith::CmpIPredicate::ne,
+        entry.getArgument(*cycleCountIndex), zero);
+    cf::CondBranchOp::create(entryBuilder, location, positive, cycleWait,
+                             ValueRange{entry.getArgument(*cycleCountIndex)},
+                             cycleZero, ValueRange{});
+
+    OpBuilder zeroBuilder = OpBuilder::atBlockEnd(cycleZero);
+    cf::CondBranchOp::create(zeroBuilder, location,
+                             entry.getArgument(*synchronizationPredicateIndex),
+                             afterOccurrence, ValueRange{}, wait, ValueRange{});
+
+    OpBuilder cycleWaitBuilder = OpBuilder::atBlockEnd(cycleWait);
+    ValueRange forwarded{cycleWait->getArgument(0)};
+    sim::EventRegionAttr reactive =
+        sim::EventRegionAttr::get(context, sim::EventRegion::Reactive);
+    sim::EdgeKind delayedEdge = static_cast<sim::EdgeKind>(cycleEdge);
+    if (localCyclePrimaryObserver) {
+      auto primaryType =
+          cast<sim::ObserverType>(localCyclePrimaryObserver.getType());
+      Value initial;
+      Type clockType = cycleClock.getType();
+      if (auto reference = dyn_cast<sim::RefType>(clockType))
+        initial = sim::SimRefLoadOp::create(
+            cycleWaitBuilder, location, reference.getElementType(),
+            entry.getArgument(*cycleClockIndex));
+      else if (auto net = dyn_cast<sim::NetType>(clockType))
+        initial = sim::SimNetReadOp::create(
+            cycleWaitBuilder, location, net.getElementType(),
+            entry.getArgument(*cycleClockIndex));
+      if (!initial)
+        return emitError(location)
+               << "clocking output cycle-delay clock is not directly "
+                  "readable";
+      if (initial.getType() != primaryType.getResultType())
+        initial = sim::SimPackedFlattenOp::create(
+            cycleWaitBuilder, location, primaryType.getResultType(), initial);
+      sim::SimSuspendObserveOp::create(
+          cycleWaitBuilder, location,
+          ValueRange{localCyclePrimaryObserver, initial,
+                     localCycleConditionObserver, cycleWait->getArgument(0)},
+          1, ArrayRef<int32_t>{static_cast<int32_t>(delayedEdge)},
+          ArrayRef<int32_t>{0}, sim::ContinuationSiteAttr{}, reactive,
+          cycleResume);
+    } else if (isa<sim::EventType>(cycleClock.getType())) {
+      sim::SimSuspendEventOp::create(
+          cycleWaitBuilder, location, entry.getArgument(*cycleClockIndex),
+          forwarded, sim::ContinuationSiteAttr{}, reactive, cycleResume);
+    } else if (delayedEdge == sim::EdgeKind::Change) {
+      sim::SimSuspendChangeOp::create(
+          cycleWaitBuilder, location, entry.getArgument(*cycleClockIndex),
+          forwarded, sim::ContinuationSiteAttr{}, reactive, cycleResume);
+    } else {
+      sim::SimSuspendEdgeOp::create(cycleWaitBuilder, location, delayedEdge,
+                                    entry.getArgument(*cycleClockIndex),
+                                    forwarded, sim::ContinuationSiteAttr{},
+                                    reactive, cycleResume);
+    }
+
+    OpBuilder resumeBuilder = OpBuilder::atBlockEnd(cycleResume);
+    Value one = arith::ConstantOp::create(
+        resumeBuilder, location, cycleCount.getType(),
+        resumeBuilder.getIntegerAttr(cycleCount.getType(), 1));
+    Value remaining = arith::SubIOp::create(resumeBuilder, location,
+                                            cycleResume->getArgument(0), one);
+    Value more = arith::CmpIOp::create(
+        resumeBuilder, location, arith::CmpIPredicate::ne, remaining, zero);
+    Block *completedCycle = cycleMatchesOutput ? afterOccurrence : wait;
+    cf::CondBranchOp::create(resumeBuilder, location, more, cycleWait,
+                             ValueRange{remaining}, completedCycle,
+                             ValueRange{});
+  } else if (wait) {
     if (synchronizationPredicate)
       cf::CondBranchOp::create(
           entryBuilder, location,
@@ -1598,6 +1923,8 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
           ValueRange{}, wait, ValueRange{});
     else
       cf::BranchOp::create(entryBuilder, location, wait);
+  }
+  if (wait) {
     OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
     sim::EdgeKind occurrenceEdge =
         static_cast<sim::EdgeKind>(eventEdge.getValue());
@@ -1628,30 +1955,28 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
     } else if (isa<sim::EventType>(clock.getType())) {
       sim::SimSuspendEventOp::create(
           waitBuilder, location, entry.getArgument(2), ValueRange{},
-          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{},
-          afterOccurrence);
+          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, afterOccurrence);
     } else if (occurrenceEdge == sim::EdgeKind::Change) {
       sim::SimSuspendChangeOp::create(
           waitBuilder, location, entry.getArgument(2), ValueRange{},
-          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{},
-          afterOccurrence);
+          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, afterOccurrence);
     } else {
-      sim::SimSuspendEdgeOp::create(
-          waitBuilder, location, occurrenceEdge, entry.getArgument(2),
-          ValueRange{}, sim::ContinuationSiteAttr{}, sim::EventRegionAttr{},
-          afterOccurrence);
+      sim::SimSuspendEdgeOp::create(waitBuilder, location, occurrenceEdge,
+                                    entry.getArgument(2), ValueRange{},
+                                    sim::ContinuationSiteAttr{},
+                                    sim::EventRegionAttr{}, afterOccurrence);
     }
-  } else {
+  } else if (!cycleDelay) {
     // A drive issued by a continuation of @(clocking_block) belongs to that
     // clocking occurrence. Waiting here would silently move it one cycle.
     cf::BranchOp::create(entryBuilder, location, afterOccurrence);
   }
   if (edgeWait) {
     OpBuilder edgeBuilder = OpBuilder::atBlockEnd(edgeWait);
-    sim::SimSuspendEdgeOp::create(
-        edgeBuilder, location, edge, entry.getArgument(*edgeSkewClockIndex),
-        ValueRange{}, sim::ContinuationSiteAttr{}, sim::EventRegionAttr{},
-        drive);
+    sim::SimSuspendEdgeOp::create(edgeBuilder, location, edge,
+                                  entry.getArgument(*edgeSkewClockIndex),
+                                  ValueRange{}, sim::ContinuationSiteAttr{},
+                                  sim::EventRegionAttr{}, drive);
   }
   OpBuilder driveBuilder = OpBuilder::atBlockEnd(drive);
   Value delay;
@@ -1670,6 +1995,10 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
     spawnInputs.push_back(synchronizationPredicate);
   if (distinctEdgeSkew)
     spawnInputs.push_back(selectedEdgeClock);
+  if (cycleDelay) {
+    spawnInputs.push_back(cycleClock);
+    spawnInputs.push_back(cycleCount);
+  }
   llvm::append_range(spawnInputs, observerSpawnOperands);
   sim::SimSpawnOp::create(builder, location, driver.getSymNameAttr(),
                           spawnInputs, ArrayAttr{}, ArrayAttr{});
@@ -2192,39 +2521,33 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
                                    location, isSignedNode(destination));
   if (failed(value))
     return failure();
+  Operation *clockingRoot = findClockingOutputRoot(destination);
   auto clockingMember =
-      dyn_cast<semantic::SVMemberAccessExpressionOp>(destination);
+      dyn_cast_or_null<semantic::SVMemberAccessExpressionOp>(clockingRoot);
   bool virtualClocking =
       clockingMember && clockingMember->hasAttr("virtual_interface_clocking");
-  bool staticClocking = destination->hasAttr(clockingVariableAttrName);
+  bool staticClocking =
+      clockingRoot && clockingRoot->hasAttr(clockingVariableAttrName);
   if (virtualClocking || staticClocking) {
-    Value drivenValue = *value;
+    semantic::SVCycleDelayControlOp cycle;
     if (timed) {
-      auto cycle = dyn_cast<semantic::SVCycleDelayControlOp>(control);
+      cycle = dyn_cast<semantic::SVCycleDelayControlOp>(control);
       if (!cycle) {
         emitError(location)
             << "a clocking output assignment timing control must be a cycle "
                "delay";
         return failure();
       }
-      Block *continuation = addBlock();
-      continuation->addArgument(drivenValue.getType(), location);
-      timingBoundaryContinuations.insert(continuation);
-      if (failed(emitCycleDelaySuspend(cycle, continuation,
-                                       ValueRange{drivenValue})))
-        return failure();
-      setCurrent(continuation);
-      drivenValue = continuation->getArgument(0);
     }
     LogicalResult driven =
         virtualClocking
-            ? lowerClockingOutputAssignment(clockingMember, drivenValue,
-                                             location)
-            : lowerStaticClockingOutputAssignment(destination, drivenValue,
-                                                   location);
+            ? lowerClockingOutputAssignment(clockingMember, destination, *value,
+                                            location, cycle)
+            : lowerStaticClockingOutputAssignment(clockingRoot, destination,
+                                                  *value, location, cycle);
     if (failed(driven))
       return failure();
-    return drivenValue;
+    return *value;
   }
   if (!timed) {
     LogicalResult written =

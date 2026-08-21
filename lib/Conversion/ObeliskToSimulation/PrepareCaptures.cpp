@@ -293,6 +293,19 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
                           /*written=*/false);
         captureDescriptor(clockingEventRawPathAttrName, /*read=*/true,
                           /*written=*/false);
+        if (written &&
+            !nested->getAttrOfType<StringAttr>(clockingSourcePathAttrName)) {
+          auto reference =
+              nested->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+          auto symbol = reference
+                            ? semanticSymbols.find(reference.getLeafReference())
+                            : semanticSymbols.end();
+          if (symbol != semanticSymbols.end() &&
+              isa<semantic::SVClockVarSymbolOp>(symbol->second))
+            for (Operation *expression : getChildren(symbol->second))
+              expression->walk<WalkOrder::PreOrder>(
+                  [&](Operation *child) { collectBinding(child); });
+        }
         return;
       }
       StringRef path;
