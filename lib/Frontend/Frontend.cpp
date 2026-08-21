@@ -3103,6 +3103,29 @@ private:
           event->iffCondition->visit(*this);
         }
       }
+    } else if constexpr (std::same_as<T, slang::ast::MemberAccessExpression>) {
+      this->visitDefault(node);
+      if (node.member.kind == slang::ast::SymbolKind::ClockVar ||
+          node.member.kind == slang::ast::SymbolKind::ClockingBlock) {
+        const slang::ast::ClockingBlockSymbol *clocking = nullptr;
+        if (node.member.kind == slang::ast::SymbolKind::ClockVar) {
+          const auto &clockVar =
+              node.member.template as<slang::ast::ClockVarSymbol>();
+          clocking = &clockVar.getParentScope()
+                          ->asSymbol()
+                          .template as<slang::ast::ClockingBlockSymbol>();
+        } else {
+          clocking =
+              &node.member.template as<slang::ast::ClockingBlockSymbol>();
+        }
+        if (const auto *event =
+                clocking->getEvent()
+                    .template as_if<slang::ast::SignalEventControl>();
+            event && event->iffCondition) {
+          event->expr.visit(*this);
+          event->iffCondition->visit(*this);
+        }
+      }
     } else if constexpr (std::same_as<
                              T, slang::ast::ArbitrarySymbolExpression>) {
       this->visitDefault(node);

@@ -341,12 +341,8 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
         children.front()->hasAttr("virtual_interface_clock_event_has_iff");
     bool staticClockingIff =
         children.front()->hasAttr(clockingEventHasIffAttrName);
-    if (virtualClockingBlockEvent && virtualClockingIff) {
-      emitError(location)
-          << "virtual clocking-block events with iff are not yet supported";
-      return failure();
-    }
-    if (staticClockingBlockEvent && staticClockingIff && event.getHasIff()) {
+    if (clockingBlockEvent && (virtualClockingIff || staticClockingIff) &&
+        event.getHasIff()) {
       emitError(location)
           << "a clocking block with a declared iff cannot yet be combined "
              "with an additional event-control iff";
@@ -371,8 +367,30 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
                                 isa<sim::EventType>(*watchedType))));
     if (computed)
       return emitObserved(ArrayRef<semantic::SVSignalEventControlOp>(event));
-    FailureOr<Value> handle =
-        lowerExpression(children.front(), !isa<sim::EventType>(*watchedType));
+    FailureOr<Value> handle = failure();
+    Value virtualInterface;
+    auto virtualClockingAccess =
+        dyn_cast<semantic::SVMemberAccessExpressionOp>(children.front());
+    if (virtualClockingBlockEvent && virtualClockingAccess) {
+      SmallVector<Operation *> clockingChildren =
+          getChildren(virtualClockingAccess);
+      size_t expectedClockingChildren = virtualClockingIff ? 3 : 1;
+      if (clockingChildren.size() != expectedClockingChildren) {
+        emitError(location)
+            << "virtual clocking-block event has no frozen receiver and event "
+               "expressions";
+        return failure();
+      }
+      FailureOr<Value> receiver = lowerExpression(clockingChildren.front());
+      if (failed(receiver))
+        return failure();
+      virtualInterface = *receiver;
+      handle =
+          lowerVirtualInterfaceClock(virtualClockingAccess, virtualInterface);
+    } else {
+      handle =
+          lowerExpression(children.front(), !isa<sim::EventType>(*watchedType));
+    }
     if (failed(handle))
       return failure();
     auto edge = static_cast<sim::EdgeKind>(event.getEdgeKind());
@@ -384,9 +402,35 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
                  children.front()->getAttrOfType<semantic::EdgeKindAttr>(
                      clockingEventEdgeAttrName))
       edge = static_cast<sim::EdgeKind>(clockingEdge.getValue());
-    if (staticClockingBlockEvent && staticClockingIff) {
+    if (virtualClockingBlockEvent && virtualClockingIff) {
       SmallVector<Operation *> clockingChildren =
-          getChildren(children.front());
+          getChildren(virtualClockingAccess);
+      FailureOr<Value> initial = loadReference(*handle, location);
+      FailureOr<Value> primary = bindVirtualClockingObserver(
+          clockingChildren[1], virtualClockingAccess, virtualInterface,
+          *handle);
+      FailureOr<Value> condition = bindVirtualClockingObserver(
+          clockingChildren[2], virtualClockingAccess, virtualInterface,
+          *handle);
+      if (failed(initial) || failed(primary) || failed(condition))
+        return failure();
+      FailureOr<Value> scalar = toPackedScalar(*initial, location);
+      if (failed(scalar))
+        return failure();
+      SmallVector<Value> observerValues{*primary, *scalar, *condition};
+      llvm::append_range(observerValues, continuationOperands);
+      sim::SimSuspendObserveOp::create(
+          builder, location, observerValues, 1,
+          ArrayRef<int32_t>{static_cast<int32_t>(edge)},
+          ArrayRef<int32_t>{0}, sim::ContinuationSiteAttr{},
+          sim::EventRegionAttr::get(function.getContext(),
+                                    sim::EventRegion::Reactive),
+          continuation);
+      clockingEventContinuations[continuation] = {*handle, {}};
+      return success();
+    }
+    if (staticClockingBlockEvent && staticClockingIff) {
+      SmallVector<Operation *> clockingChildren = getChildren(children.front());
       if (clockingChildren.size() != 2) {
         emitError(location)
             << "clocking-block event with iff has no frozen clock and "

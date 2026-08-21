@@ -1738,30 +1738,19 @@ FailureOr<Value> UnitLowering::lowerReplication(Operation *op) {
   return convert(combined, *resultType, false, location);
 }
 
-FailureOr<Value> UnitLowering::lowerVirtualInterfaceClock(
-    semantic::SVMemberAccessExpressionOp op, Value interface) {
+FailureOr<Value>
+UnitLowering::lowerVirtualInterfaceSignal(Value interface, StringRef member,
+                                          Location location,
+                                          std::optional<uint64_t> scopeID) {
   ensureVirtualInterfaceInventory();
-  Location location = getSemanticLocation(op);
   auto interfaceType = dyn_cast<sim::VirtualInterfaceType>(interface.getType());
-  auto clockMember =
-      op->getAttrOfType<StringAttr>("virtual_interface_clock_member");
-  if (!interfaceType || !clockMember) {
-    emitError(location) << "clocking variable has no static clock member";
+  if (!interfaceType || member.empty()) {
+    emitError(location) << "virtual interface signal has no static member";
     return failure();
   }
-  if (auto required =
-          op->getAttrOfType<StringAttr>("virtual_interface_modport")) {
-    StringRef selected = interfaceType.getModport().getValue();
-    if (selected.empty() || selected != required.getValue()) {
-      emitError(location) << "clocking block requires modport '"
-                          << required.getValue() << "' but the handle selects '"
-                          << selected << "'";
-      return failure();
-    }
-  }
-  std::string key = (Twine(interfaceType.getInterfaceName().getValue()) + "\n" +
-                     clockMember.getValue())
-                        .str();
+  std::string key =
+      (Twine(interfaceType.getInterfaceName().getValue()) + "\n" + member)
+          .str();
   VirtualMemberTargets *targets = nullptr;
   bool isNet = false;
   if (auto found = virtualInterfaceStorageMembers.find(key);
@@ -1772,50 +1761,66 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceClock(
     targets = &found->second;
     isNet = true;
   }
-  if (!targets || targets->empty()) {
-    emitError(location) << "clocking variable clock '" << clockMember.getValue()
-                        << "' has no elaborated descriptor";
-    return failure();
-  }
+  if (!targets || targets->empty())
+    return emitError(location) << "virtual interface signal '" << member
+                               << "' has no elaborated descriptor",
+           failure();
   llvm::sort(*targets);
   DenseMap<uint64_t, Value> &cache =
       isNet ? virtualInterfaceNetHandles : virtualInterfaceStorageHandles;
   DenseMap<uint64_t, Type> &types =
       isNet ? virtualInterfaceNetTypes : virtualInterfaceStorageTypes;
-  SmallVector<Value> handles;
-  for (auto [scopeID, descriptorID] : *targets) {
-    (void)scopeID;
+  auto materialize = [&](uint64_t descriptorID) -> FailureOr<Value> {
     Value handle = cache.lookup(descriptorID);
-    if (!handle) {
-      Type elementType = types.lookup(descriptorID);
-      if (!elementType)
-        return emitError(location) << "clocking event descriptor has no type",
-               failure();
-      Type handleType =
-          isNet ? Type(sim::NetType::get(function.getContext(), elementType))
-                : Type(sim::RefType::get(function.getContext(), elementType));
-      OpBuilder entryBuilder(function.getContext());
-      entryBuilder.setInsertionPointToStart(&function.getBody().front());
-      Value context = function.getBody().front().getArgument(0);
-      handle = isNet ? Value(sim::SimContextNetOp::create(
-                           entryBuilder, location, handleType, context,
-                           entryBuilder.getI64IntegerAttr(descriptorID)))
-                     : Value(sim::SimContextStorageOp::create(
-                           entryBuilder, location, handleType, context,
-                           entryBuilder.getI64IntegerAttr(descriptorID)));
-      cache[descriptorID] = handle;
-    }
-    handles.push_back(handle);
+    if (handle)
+      return handle;
+    Type elementType = types.lookup(descriptorID);
+    if (!elementType)
+      return emitError(location)
+                 << "virtual interface signal descriptor has no type",
+             failure();
+    Type handleType =
+        isNet ? Type(sim::NetType::get(function.getContext(), elementType))
+              : Type(sim::RefType::get(function.getContext(), elementType));
+    OpBuilder entryBuilder(function.getContext());
+    entryBuilder.setInsertionPointToStart(&function.getBody().front());
+    Value context = function.getBody().front().getArgument(0);
+    handle = isNet ? Value(sim::SimContextNetOp::create(
+                         entryBuilder, location, handleType, context,
+                         entryBuilder.getI64IntegerAttr(descriptorID)))
+                   : Value(sim::SimContextStorageOp::create(
+                         entryBuilder, location, handleType, context,
+                         entryBuilder.getI64IntegerAttr(descriptorID)));
+    cache[descriptorID] = handle;
+    return handle;
+  };
+  if (scopeID) {
+    auto target = llvm::find_if(
+        *targets, [&](auto candidate) { return candidate.first == *scopeID; });
+    if (target == targets->end())
+      return emitError(location)
+                 << "virtual interface signal '" << member
+                 << "' has no descriptor in selected interface scope",
+             failure();
+    return materialize(target->second);
+  }
+  SmallVector<Value> handles;
+  for (auto [targetScope, descriptorID] : *targets) {
+    (void)targetScope;
+    FailureOr<Value> handle = materialize(descriptorID);
+    if (failed(handle))
+      return failure();
+    handles.push_back(*handle);
   }
   if (handles.empty())
     return failure();
   Type selectedType = handles.front().getType();
   for (Value handle : handles)
-    if (handle.getType() != selectedType) {
-      emitError(location)
-          << "clocking event has inconsistent types across interface instances";
-      return failure();
-    }
+    if (handle.getType() != selectedType)
+      return emitError(location)
+                 << "virtual interface signal has inconsistent types across "
+                    "interface instances",
+             failure();
   Value scope = sim::SimVirtualInterfaceScopeOp::create(
       builder, location, builder.getI64Type(), interface);
   Block *merge = addBlock();
@@ -1836,10 +1841,103 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceClock(
   }
   if (failed(emitRuntimeFatal(
           location,
-          "clocking variable access used a null or invalid interface handle.")))
+          "virtual interface signal used a null or invalid interface handle.")))
     return failure();
   setCurrent(merge);
   return merge->getArgument(0);
+}
+
+FailureOr<Value> UnitLowering::lowerVirtualInterfaceClock(
+    semantic::SVMemberAccessExpressionOp op, Value interface) {
+  Location location = getSemanticLocation(op);
+  auto interfaceType = dyn_cast<sim::VirtualInterfaceType>(interface.getType());
+  auto clockMember =
+      op->getAttrOfType<StringAttr>("virtual_interface_clock_member");
+  if (!interfaceType || !clockMember) {
+    emitError(location) << "clocking variable has no static clock member";
+    return failure();
+  }
+  if (auto required =
+          op->getAttrOfType<StringAttr>("virtual_interface_modport")) {
+    StringRef selected = interfaceType.getModport().getValue();
+    if (selected.empty() || selected != required.getValue()) {
+      emitError(location) << "clocking block requires modport '"
+                          << required.getValue() << "' but the handle selects '"
+                          << selected << "'";
+      return failure();
+    }
+  }
+  return lowerVirtualInterfaceSignal(interface, clockMember.getValue(),
+                                     location);
+}
+
+FailureOr<Value> UnitLowering::bindVirtualClockingObserver(
+    Operation *expression, semantic::SVMemberAccessExpressionOp access,
+    Value interface, Value selectedClock, std::optional<uint64_t> scopeID) {
+  Location location = getSemanticLocation(expression);
+  StringAttr clockingBlock =
+      access->getAttrOfType<StringAttr>("virtual_interface_clocking_block");
+  if (!clockingBlock &&
+      access->hasAttr("virtual_interface_clocking_block_event"))
+    clockingBlock = access->getAttrOfType<StringAttr>("member_name");
+  StringRef accessPath = access.getReferencedPath();
+  if (!clockingBlock || accessPath.empty())
+    return emitError(location)
+               << "virtual clocking observer has no static block identity",
+           failure();
+  std::string marker = (Twine(".") + clockingBlock.getValue()).str();
+  size_t markerOffset = accessPath.rfind(marker);
+  if (markerOffset == StringRef::npos)
+    return emitError(location)
+               << "virtual clocking observer path does not contain its block",
+           failure();
+  StringRef interfacePath = accessPath.take_front(markerOffset);
+  auto captures =
+      expression->getAttrOfType<ArrayAttr>(observerCapturesAttrName);
+  auto dependencies =
+      expression->getAttrOfType<ArrayAttr>(observerDependenciesAttrName);
+  if (!captures || !dependencies)
+    return emitError(location)
+               << "virtual clocking expression has no observer inventory",
+           failure();
+  llvm::StringMap<Value> overrides;
+  auto resolve = [&](Attribute attribute) -> LogicalResult {
+    auto path = dyn_cast<StringAttr>(attribute);
+    if (!path)
+      return emitError(location) << "virtual observer path is not a string";
+    if (overrides.contains(path.getValue()))
+      return success();
+    StringRef relative = path.getValue();
+    if (!relative.consume_front(interfacePath) || !relative.consume_front("."))
+      return success();
+    if (relative.empty() || relative.contains('.'))
+      return emitError(location)
+             << "virtual clocking observer requires a direct interface member, "
+                "but captured '"
+             << path.getValue() << "'";
+    Value handle;
+    auto clockMember =
+        access->getAttrOfType<StringAttr>("virtual_interface_clock_member");
+    if (selectedClock && clockMember && relative == clockMember.getValue())
+      handle = selectedClock;
+    else {
+      FailureOr<Value> selected =
+          lowerVirtualInterfaceSignal(interface, relative, location, scopeID);
+      if (failed(selected))
+        return failure();
+      handle = *selected;
+    }
+    overrides[path.getValue()] = handle;
+    return success();
+  };
+  for (Attribute path : captures)
+    if (failed(resolve(path)))
+      return failure();
+  for (Attribute path : dependencies)
+    if (failed(resolve(path)))
+      return failure();
+  return bindObserver(expression, ValueRange{},
+                      /*includeStaticDependencies=*/true, &overrides);
 }
 
 FailureOr<Value> UnitLowering::lowerClockingInputSample(
@@ -2367,7 +2465,12 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
     return lowerLiteral(op);
   }
   SmallVector<Operation *> children = getChildren(op);
-  if (children.size() != 1) {
+  bool hasVirtualClockingIff =
+      op->hasAttr("virtual_interface_clock_event_has_iff") &&
+      (op->hasAttr("virtual_interface_clocking") ||
+       op->hasAttr("virtual_interface_clocking_block_event"));
+  size_t expectedChildren = hasVirtualClockingIff ? 3 : 1;
+  if (children.size() != expectedChildren) {
     unsupported(op) << " (member access arity)";
     return failure();
   }

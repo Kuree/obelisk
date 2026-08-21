@@ -387,22 +387,28 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
                                         "wait", unit.id, unit.hierarchy});
         return;
       }
-      if (nested->hasAttr(clockingVariableAttrName) &&
-          nested->hasAttr(clockingEventHasIffAttrName)) {
+      bool staticClockingVariableIff =
+          nested->hasAttr(clockingVariableAttrName) &&
+          nested->hasAttr(clockingEventHasIffAttrName);
+      bool virtualClockingVariableIff =
+          nested->hasAttr("virtual_interface_clocking") &&
+          nested->hasAttr("virtual_interface_clock_event_has_iff");
+      if (staticClockingVariableIff || virtualClockingVariableIff) {
         SmallVector<Operation *> children = getChildren(nested);
-        if (children.size() != 2) {
+        size_t expressionOffset = virtualClockingVariableIff ? 1 : 0;
+        if (children.size() != expressionOffset + 2) {
           emitError(getSemanticLocation(nested))
               << "clocking variable with iff has no frozen clock and condition "
                  "expressions";
           invalid = true;
           return;
         }
-        observerCandidates.push_back(
-            {children[0], ObserverResult::Value, "clocking_primary", unit.id,
-             unit.hierarchy});
-        observerCandidates.push_back(
-            {children[1], ObserverResult::Truth, "clocking_iff", unit.id,
-             unit.hierarchy});
+        observerCandidates.push_back({children[expressionOffset],
+                                      ObserverResult::Value, "clocking_primary",
+                                      unit.id, unit.hierarchy});
+        observerCandidates.push_back({children[expressionOffset + 1],
+                                      ObserverResult::Truth, "clocking_iff",
+                                      unit.id, unit.hierarchy});
         return;
       }
       if (auto cycle = dyn_cast<semantic::SVCycleDelayControlOp>(nested)) {
@@ -442,10 +448,15 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
       // interface, its receiver handle).
       if (children.front()->hasAttr("virtual_interface_clocking_block_event") ||
           children.front()->hasAttr(clockingBlockEventAttrName)) {
-        if (children.front()->hasAttr(clockingEventHasIffAttrName)) {
+        bool virtualClockingIff =
+            children.front()->hasAttr("virtual_interface_clock_event_has_iff");
+        bool staticClockingIff =
+            children.front()->hasAttr(clockingEventHasIffAttrName);
+        if (virtualClockingIff || staticClockingIff) {
           SmallVector<Operation *> clockingChildren =
               getChildren(children.front());
-          if (clockingChildren.size() != 2) {
+          size_t expressionOffset = virtualClockingIff ? 1 : 0;
+          if (clockingChildren.size() != expressionOffset + 2) {
             emitError(getSemanticLocation(children.front()))
                 << "clocking-block event with iff has no frozen clock and "
                    "condition expressions";
@@ -453,11 +464,11 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
             return;
           }
           observerCandidates.push_back(
-              {clockingChildren[0], ObserverResult::Value, "clocking_primary",
-               unit.id, unit.hierarchy});
-          observerCandidates.push_back(
-              {clockingChildren[1], ObserverResult::Truth, "clocking_iff",
-               unit.id, unit.hierarchy});
+              {clockingChildren[expressionOffset], ObserverResult::Value,
+               "clocking_primary", unit.id, unit.hierarchy});
+          observerCandidates.push_back({clockingChildren[expressionOffset + 1],
+                                        ObserverResult::Truth, "clocking_iff",
+                                        unit.id, unit.hierarchy});
         }
         return;
       }

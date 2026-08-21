@@ -371,7 +371,8 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   bindObserver(::mlir::Operation *expression,
                ::mlir::ValueRange dynamicDependencies = {},
-               bool includeStaticDependencies = true);
+               bool includeStaticDependencies = true,
+               const ::llvm::StringMap<::mlir::Value> *overrides = nullptr);
   /// Whether an addressable event expression also lowers to a handle the
   /// scheduler can watch. A net is viewed only through packed windows of its
   /// storage, so selecting an element of an unpacked array of nets has to be
@@ -473,6 +474,14 @@ private:
   ::mlir::InFlightDiagnostic unsupported(::mlir::Operation *op);
   void recordImplicitWrite(::mlir::Value value);
   void ensureVirtualInterfaceInventory();
+  ::mlir::FailureOr<::mlir::Value>
+  lowerVirtualInterfaceSignal(::mlir::Value interface, ::mlir::StringRef member,
+                              ::mlir::Location location,
+                              std::optional<uint64_t> scopeID = {});
+  ::mlir::FailureOr<::mlir::Value> bindVirtualClockingObserver(
+      ::mlir::Operation *expression,
+      semantic::SVMemberAccessExpressionOp access, ::mlir::Value interface,
+      ::mlir::Value selectedClock = {}, std::optional<uint64_t> scopeID = {});
   void ensureCoverageInventory();
 
   static bool isSignedNode(::mlir::Operation *op) {

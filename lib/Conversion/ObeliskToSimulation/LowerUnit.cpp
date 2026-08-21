@@ -861,9 +861,9 @@ void UnitLowering::recordImplicitWrite(Value value) {
     observedWrites->insert(value);
 }
 
-FailureOr<Value> UnitLowering::bindObserver(Operation *expression,
-                                            ValueRange dynamicDependencies,
-                                            bool includeStaticDependencies) {
+FailureOr<Value> UnitLowering::bindObserver(
+    Operation *expression, ValueRange dynamicDependencies,
+    bool includeStaticDependencies, const llvm::StringMap<Value> *overrides) {
   Location location = getSemanticLocation(expression);
   auto evaluator =
       expression->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.observer");
@@ -889,7 +889,9 @@ FailureOr<Value> UnitLowering::bindObserver(Operation *expression,
     auto path = dyn_cast<StringAttr>(pathAttr);
     if (!path)
       return emitError(location) << "observer path is not a string", failure();
-    Value value = values.lookup(path.getValue());
+    Value value = overrides ? overrides->lookup(path.getValue()) : Value{};
+    if (!value)
+      value = values.lookup(path.getValue());
     if (!value)
       value = lvalues.lookup(path.getValue());
     if (!value)
