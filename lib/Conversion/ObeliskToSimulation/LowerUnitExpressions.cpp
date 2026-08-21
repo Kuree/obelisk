@@ -149,6 +149,8 @@ UnitLowering::lowerStaticClockingVariable(Operation *op, bool lvalue) {
   auto clockPath = op->getAttrOfType<StringAttr>(clockingEventPathAttrName);
   auto eventEdge =
       op->getAttrOfType<semantic::EdgeKindAttr>(clockingEventEdgeAttrName);
+  auto rawEventEdge =
+      op->getAttrOfType<semantic::EdgeKindAttr>(clockingEventRawEdgeAttrName);
   auto skewEdge =
       op->getAttrOfType<semantic::EdgeKindAttr>(clockingInputSkewEdgeAttrName);
   if (!sourcePath || !clockPath || !eventEdge || !skewEdge) {
@@ -174,6 +176,15 @@ UnitLowering::lowerStaticClockingVariable(Operation *op, bool lvalue) {
       skewEdge.getValue() != semantic::EdgeKind::Change
           ? skewEdge.getValue()
           : eventEdge.getValue();
+  semantic::EdgeKind baseSignalEdge =
+      rawEventEdge ? rawEventEdge.getValue() : eventEdge.getValue();
+  bool distinctEdgeSkew =
+      edgeOnly && skewEdge.getValue() != semantic::EdgeKind::Change &&
+      skewEdge.getValue() != baseSignalEdge;
+  if (distinctEdgeSkew)
+    if (auto rawPath =
+            op->getAttrOfType<StringAttr>(clockingEventRawPathAttrName))
+      clockPath = rawPath;
   FailureOr<Value> source =
       lowerReferencedValue(op, sourcePath.getValue(), /*lvalue=*/true);
   FailureOr<Value> clock =
@@ -2617,6 +2628,30 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
   if (clockedRead) {
     auto clockMember =
         op->getAttrOfType<StringAttr>("virtual_interface_clock_member");
+    bool oneStep =
+        op->hasAttr("virtual_interface_clock_input_skew_one_step");
+    bool edgeOnly =
+        op->hasAttr("virtual_interface_clock_input_skew_edge_only");
+    auto eventEdge = op->getAttrOfType<semantic::EdgeKindAttr>(
+        "virtual_interface_clock_event_edge");
+    auto rawEventEdge = op->getAttrOfType<semantic::EdgeKindAttr>(
+        "virtual_interface_clock_raw_event_edge");
+    auto skewEdge = op->getAttrOfType<semantic::EdgeKindAttr>(
+        "virtual_interface_clock_input_skew_edge");
+    semantic::EdgeKind selectedEdge =
+        skewEdge && skewEdge.getValue() != semantic::EdgeKind::Change
+            ? skewEdge.getValue()
+            : eventEdge.getValue();
+    semantic::EdgeKind baseSignalEdge =
+        rawEventEdge ? rawEventEdge.getValue() : eventEdge.getValue();
+    bool distinctEdgeSkew =
+        edgeOnly && skewEdge &&
+        skewEdge.getValue() != semantic::EdgeKind::Change &&
+        skewEdge.getValue() != baseSignalEdge;
+    if (distinctEdgeSkew)
+      if (auto rawMember = op->getAttrOfType<StringAttr>(
+              "virtual_interface_clock_raw_member"))
+        clockMember = rawMember;
     std::string clockKey = (Twine(interfaceType.getInterfaceName().getValue()) +
                             "\n" + clockMember.getValue())
                                .str();
@@ -2638,9 +2673,6 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
     if (!clockTargets)
       return failure();
     llvm::sort(*clockTargets);
-    bool oneStep = op->hasAttr("virtual_interface_clock_input_skew_one_step");
-    bool edgeOnly =
-        op->hasAttr("virtual_interface_clock_input_skew_edge_only");
     uint64_t skewTicks = 0;
     auto delay = op->getAttrOfType<StringAttr>(
         "virtual_interface_clock_input_skew_delay");
@@ -2654,15 +2686,6 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
         return failure();
       skewTicks = *parsed;
     }
-    auto edgeAttr = op->getAttrOfType<semantic::EdgeKindAttr>(
-        "virtual_interface_clock_event_edge");
-    auto skewEdgeAttr = op->getAttrOfType<semantic::EdgeKindAttr>(
-        "virtual_interface_clock_input_skew_edge");
-    semantic::EdgeKind selectedEdge =
-        skewEdgeAttr &&
-                skewEdgeAttr.getValue() != semantic::EdgeKind::Change
-            ? skewEdgeAttr.getValue()
-            : edgeAttr.getValue();
     for (auto [index, target] : llvm::enumerate(*targets)) {
       auto clockTarget = llvm::find_if(*clockTargets, [&](auto candidate) {
         return candidate.first == target.first;
