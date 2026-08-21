@@ -191,6 +191,13 @@ SHORTREAL_COMPARISON_PRECISION = Exclusion(
     "`$bitstoshortreal($shortrealtobits(1.414))` widens to 1.4139999151229858 "
     "before it meets the real literal 1.414 and compares unequal; the test "
     "expects Verilator's comparison in shortreal precision")
+FOUR_STATE_CLOCK_STARTUP = Exclusion(
+    "IEEE 1800-2017 9.4.2",
+    "Table 9-2 detects a negedge on a transition from x or z to 0, and 6.5 "
+    "starts an undriven net at z, so the first drive onto a clock port is an "
+    "edge that a two-state simulator never has; the test counts every clk "
+    "edge and needs that edge-free startup (with the startup transition gone, "
+    "every one of its twelve expectations matches)")
 UNNAMED_TYPE_SPELLING = Exclusion(
     "IEEE 1800-2017 20.6.1",
     "$typename spells an unnamed type in an implementation-dependent way, and "
@@ -203,6 +210,12 @@ UNNAMED_TYPE_SPELLING = Exclusion(
 # the clause applies: a test that merely looks unfamiliar belongs in the failure
 # list, where it stays visible as something to explain or fix. A test this
 # runner cannot set up is not a skip either -- that one is the harness's to fix.
+ACTION_BLOCK_PER_ATTEMPT = Exclusion(
+    "IEEE 1800-2017 16.12.12",
+    "`p until q` fails once for each attempt that reaches a tick where q is "
+    "still false and p has stopped holding, so a run of the test's own stimulus "
+    "fails eight times; the test expects seven and its own comment records "
+    "\"Other sims: 8\" beside Verilator's cycle-aggregated count")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dynarray": PATTERN_RADIX,
     "t_dynarray_method": PATTERN_RADIX,
@@ -211,10 +224,13 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_struct_nest_uarray": PATTERN_RADIX,
     "t_class_enum": CLASS_PATTERN,
     "t_display_class": CLASS_PATTERN,
+    "t_always_nosplit": TWO_STATE_INITIALIZATION,
     "t_case_unique_overlap": TWO_STATE_INITIALIZATION,
     "t_math_cmp": TWO_STATE_INITIALIZATION,
     "t_static_task_args": STATIC_SUBROUTINE_RECURSION,
     "t_param_avec": ARRAY_ASSIGNMENT_ORDER,
+    "t_property_until": FOUR_STATE_CLOCK_STARTUP,
+    "t_property_until_implication": ACTION_BLOCK_PER_ATTEMPT,
     "t_queue_slice": BOUNDED_QUEUE_CAPACITY,
     "t_sys_readmem": READMEM_HASH_COMMENT,
     "t_select_plus": PARTIAL_PART_SELECT_WRITE,
