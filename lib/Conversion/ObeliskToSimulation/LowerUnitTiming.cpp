@@ -551,7 +551,8 @@ UnitLowering::emitRepeatedEventSuspend(Operation *control, Block *continuation,
 }
 
 LogicalResult UnitLowering::emitCycleDelaySuspend(
-    semantic::SVCycleDelayControlOp control, Block *continuation) {
+    semantic::SVCycleDelayControlOp control, Block *continuation,
+    ValueRange continuationOperands) {
   Location location = getSemanticLocation(control);
   SmallVector<Operation *> children = getChildren(control);
   if (children.size() != 1) {
@@ -620,11 +621,12 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
     // ##0 does not cross an event boundary. Preserve any clocking occurrence
     // inherited from an immediately preceding @(clocking_block).
     timingBoundaryContinuations.erase(continuation);
-    cf::BranchOp::create(builder, location, continuation);
+    cf::BranchOp::create(builder, location, continuation,
+                         continuationOperands);
     return success();
   }
   if (constantCount && *constantCount == 1) {
-    emitClockWait(builder, continuation, ValueRange{});
+    emitClockWait(builder, continuation, continuationOperands);
     clockingEventContinuations[continuation] = {*clock, {}};
     return success();
   }
@@ -670,14 +672,21 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
 
   Block *wait = addBlock();
   wait->addArgument(countType, location);
+  for (Value operand : continuationOperands)
+    wait->addArgument(operand.getType(), location);
   Block *resume = addBlock();
   resume->addArgument(countType, location);
+  for (Value operand : continuationOperands)
+    resume->addArgument(operand.getType(), location);
+  SmallVector<Value> initialWaitOperands{count};
+  llvm::append_range(initialWaitOperands, continuationOperands);
   if (constantCount) {
-    cf::BranchOp::create(builder, location, wait, ValueRange{count});
+    cf::BranchOp::create(builder, location, wait, initialWaitOperands);
   } else {
-    if (continuation->getNumArguments() == 0) {
+    if (continuation->getNumArguments() == continuationOperands.size()) {
       cf::CondBranchOp::create(builder, location, positive, wait,
-                               ValueRange{count}, continuation, ValueRange{});
+                               initialWaitOperands, continuation,
+                               continuationOperands);
     } else {
       Value didNotWait =
           incomingOccurrence && *incomingOccurrence
@@ -685,9 +694,10 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
               : arith::ConstantOp::create(builder, location,
                                           builder.getI1Type(),
                                           builder.getBoolAttr(false));
+      SmallVector<Value> zeroOperands(continuationOperands);
+      zeroOperands.push_back(didNotWait);
       cf::CondBranchOp::create(builder, location, positive, wait,
-                               ValueRange{count}, continuation,
-                               ValueRange{didNotWait});
+                               initialWaitOperands, continuation, zeroOperands);
     }
   }
 
@@ -702,26 +712,28 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
       resumeBuilder, location, resume->getArgument(0), one);
   Value more = arith::CmpIOp::create(resumeBuilder, location,
                                      arith::CmpIPredicate::ne, remaining, zero);
+  SmallVector<Value> nextWaitOperands{remaining};
+  llvm::append_range(nextWaitOperands, resume->getArguments().drop_front());
+  ValueRange finalOperands = resume->getArguments().drop_front();
   if (constantCount) {
     cf::CondBranchOp::create(resumeBuilder, location, more, wait,
-                             ValueRange{remaining}, continuation,
-                             ValueRange{});
+                             nextWaitOperands, continuation, finalOperands);
     clockingEventContinuations[continuation] = {*clock, {}};
   } else {
-    if (continuation->getNumArguments() == 0) {
+    if (continuation->getNumArguments() == continuationOperands.size()) {
       cf::CondBranchOp::create(resumeBuilder, location, more, wait,
-                               ValueRange{remaining}, continuation,
-                               ValueRange{});
+                               nextWaitOperands, continuation, finalOperands);
       clockingEventContinuations[continuation] = {*clock, {}};
     } else {
       Value didWait = arith::ConstantOp::create(
           resumeBuilder, location, builder.getI1Type(),
           resumeBuilder.getBoolAttr(true));
+      SmallVector<Value> waitedOperands(finalOperands);
+      waitedOperands.push_back(didWait);
       cf::CondBranchOp::create(resumeBuilder, location, more, wait,
-                               ValueRange{remaining}, continuation,
-                               ValueRange{didWait});
+                               nextWaitOperands, continuation, waitedOperands);
       clockingEventContinuations[continuation] = {
-          *clock, continuation->getArgument(0)};
+          *clock, continuation->getArgument(continuationOperands.size())};
     }
   }
   return success();

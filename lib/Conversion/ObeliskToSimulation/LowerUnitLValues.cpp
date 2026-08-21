@@ -1977,27 +1977,39 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
                                    location, isSignedNode(destination));
   if (failed(value))
     return failure();
-  if (auto member = dyn_cast<semantic::SVMemberAccessExpressionOp>(destination);
-      member && member->hasAttr("virtual_interface_clocking")) {
+  auto clockingMember =
+      dyn_cast<semantic::SVMemberAccessExpressionOp>(destination);
+  bool virtualClocking =
+      clockingMember && clockingMember->hasAttr("virtual_interface_clocking");
+  bool staticClocking = destination->hasAttr(clockingVariableAttrName);
+  if (virtualClocking || staticClocking) {
+    Value drivenValue = *value;
     if (timed) {
-      emitError(location) << "an assignment timing control cannot be combined "
-                             "with a clocking output";
-      return failure();
+      auto cycle = dyn_cast<semantic::SVCycleDelayControlOp>(control);
+      if (!cycle) {
+        emitError(location)
+            << "a clocking output assignment timing control must be a cycle "
+               "delay";
+        return failure();
+      }
+      Block *continuation = addBlock();
+      continuation->addArgument(drivenValue.getType(), location);
+      timingBoundaryContinuations.insert(continuation);
+      if (failed(emitCycleDelaySuspend(cycle, continuation,
+                                       ValueRange{drivenValue})))
+        return failure();
+      setCurrent(continuation);
+      drivenValue = continuation->getArgument(0);
     }
-    if (failed(lowerClockingOutputAssignment(member, *value, location)))
+    LogicalResult driven =
+        virtualClocking
+            ? lowerClockingOutputAssignment(clockingMember, drivenValue,
+                                             location)
+            : lowerStaticClockingOutputAssignment(destination, drivenValue,
+                                                   location);
+    if (failed(driven))
       return failure();
-    return *value;
-  }
-  if (destination->hasAttr(clockingVariableAttrName)) {
-    if (timed) {
-      emitError(location) << "an assignment timing control cannot be combined "
-                             "with a clocking output";
-      return failure();
-    }
-    if (failed(
-            lowerStaticClockingOutputAssignment(destination, *value, location)))
-      return failure();
-    return *value;
+    return drivenValue;
   }
   if (!timed) {
     LogicalResult written =

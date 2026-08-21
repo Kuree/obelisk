@@ -360,7 +360,8 @@ private:
                            ::mlir::ValueRange continuationOperands = {});
   ::mlir::LogicalResult
   emitCycleDelaySuspend(semantic::SVCycleDelayControlOp control,
-                        ::mlir::Block *continuation);
+                        ::mlir::Block *continuation,
+                        ::mlir::ValueRange continuationOperands = {});
   ::mlir::FailureOr<::mlir::Value> lowerDelayValue(::mlir::Operation *control);
   ::mlir::LogicalResult lowerWait(semantic::SVWaitStatementOp op);
   ::mlir::LogicalResult

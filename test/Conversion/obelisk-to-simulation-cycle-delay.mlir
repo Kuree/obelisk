@@ -57,6 +57,17 @@ module {
             }
           }
         }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 50 : i64, procedure_kind = 0 : i32, sym_name = "s11", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.expression_statement attributes {node_id = 51 : i64} {
+            obelisk.sv.expression.assignment attributes {assignment_kind = 1 : i32, has_timing_control = true, node_id = 52 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+              obelisk.sv.timing.cycle_delay attributes {clocking_event_edge = 1 : i32, clocking_event_path = "top.clk", clocking_event_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, node_id = 53 : i64} {
+                obelisk.sv.expression.integer_literal attributes {constant_value = "2", is_signed = true, node_id = 54 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {}
+              }
+              obelisk.sv.expression.named_value attributes {clocking_access_direction = 1 : i32, clocking_event_edge = 1 : i32, clocking_event_path = "top.clk", clocking_event_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, clocking_output_skew_delay = "0", clocking_output_skew_edge = 0 : i32, clocking_source_path = "top.q", clocking_source_symbol = @s1.$root::@s3.top::@s4.top::@s6.q, clocking_time_precision_fs = 1000000 : i64, clocking_time_unit_fs = 1000000 : i64, clocking_variable, node_id = 55 : i64, referenced_path = "top.cb.q", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.cb::@s9.q, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
+              obelisk.sv.expression.integer_literal attributes {constant_value = "1'b1", node_id = 56 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
+            }
+          }
+        }
       }
     }
   }
@@ -85,5 +96,15 @@ module {
 // STRUCT-DAG: obelisk_sim.spawn @unit_0.$clocking_output.31({{.*}}) : {{.*}}, i1
 // STRUCT-NOT: obelisk.sv.
 
-// NEGEDGE-COUNT-4: obelisk_sim.suspend.edge negedge
+// An intra-assignment ## retains its pre-delay RHS and does not add another
+// output-edge wait after its final clock cycle.
+// CHECK-LABEL: obelisk_sim.func private @unit_1.$clocking_output.55
+// CHECK-SAME: home_region = 10 : i32
+// CHECK-NOT: obelisk_sim.suspend.edge
+// CHECK: obelisk_sim.nba.enqueue
+// CHECK-LABEL: obelisk_sim.func private @unit_1(
+// CHECK-DAG: obelisk_sim.suspend.edge posedge {{.*}}resume_region = 10 : i32
+// CHECK-DAG: obelisk_sim.spawn @unit_1.$clocking_output.55
+
+// NEGEDGE-COUNT-5: obelisk_sim.suspend.edge negedge
 // IFF: cycle delays with iff default clock events are not yet supported
