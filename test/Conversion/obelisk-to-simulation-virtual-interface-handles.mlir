@@ -1,5 +1,6 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 // RUN: sed 's/virtual_interface_clock_input_skew_one_step/virtual_interface_clock_input_skew_delay = "0"/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=INPUT-ZERO
+// RUN: sed 's/virtual_interface_clock_input_skew_edge = 0 : i32, virtual_interface_clock_input_skew_one_step/virtual_interface_clock_input_skew_edge = 2 : i32, virtual_interface_clock_input_skew_edge_only/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=INPUT-EDGE
 // RUN: sed 's/virtual_interface_clock_input_skew_one_step/virtual_interface_clock_input_skew_delay = "2"/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=INPUT-SKEW
 // RUN: sed 's/virtual_interface_clocking_block_event/virtual_interface_clock_event_has_iff, virtual_interface_clocking_block_event/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=CLOCK-IFF
 // RUN: sed 's/definition_kind = 0 : i32/definition_kind = 2 : i32/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=PROGRAM
@@ -207,10 +208,12 @@ module {
 // sensitivity; the final two operands are loop-carried rematerializations.
 // CHECK: obelisk_sim.suspend.any {{.*}} edges [0, 0, 0]
 // CHECK-NOT: obelisk.sv.
-// INPUT-SKEW: clocking input skew currently requires #1step or #0
+// INPUT-SKEW: clocking input skew currently requires #1step, #0, or an edge
 // CLOCK-IFF: virtual clocking-block events with iff are not yet supported
 // INPUT-ZERO: obelisk_sim.assert.clocked_sample_update
 // INPUT-ZERO: obelisk_sim.net.read
+// INPUT-EDGE: obelisk_sim.suspend.edge negedge
+// INPUT-EDGE: obelisk_sim.assert.clocked_sample_update
 // Program-domain clocking output helpers preserve Reactive/Program so their
 // NBA is committed through the Re-NBA path.
 // PROGRAM-LABEL: obelisk_sim.func private @unit_0.$clocking_output.79

@@ -339,6 +339,38 @@ inline constexpr ::mlir::StringLiteral clockingEventPathAttrName =
     "clocking_event_path";
 inline constexpr ::mlir::StringLiteral clockingEventSymbolAttrName =
     "clocking_event_symbol";
+inline constexpr ::mlir::StringLiteral clockingVariableAttrName =
+    "clocking_variable";
+inline constexpr ::mlir::StringLiteral clockingAccessDirectionAttrName =
+    "clocking_access_direction";
+inline constexpr ::mlir::StringLiteral clockingSourcePathAttrName =
+    "clocking_source_path";
+inline constexpr ::mlir::StringLiteral clockingSourceSymbolAttrName =
+    "clocking_source_symbol";
+inline constexpr ::mlir::StringLiteral clockingInputSkewEdgeAttrName =
+    "clocking_input_skew_edge";
+inline constexpr ::mlir::StringLiteral clockingInputSkewEdgeOnlyAttrName =
+    "clocking_input_skew_edge_only";
+inline constexpr ::mlir::StringLiteral clockingInputSkewOneStepAttrName =
+    "clocking_input_skew_one_step";
+inline constexpr ::mlir::StringLiteral clockingInputSkewDelayAttrName =
+    "clocking_input_skew_delay";
+inline constexpr ::mlir::StringLiteral clockingInputSkewDelayIsRealAttrName =
+    "clocking_input_skew_delay_is_real";
+inline constexpr ::mlir::StringLiteral clockingOutputSkewEdgeAttrName =
+    "clocking_output_skew_edge";
+inline constexpr ::mlir::StringLiteral clockingOutputSkewEdgeOnlyAttrName =
+    "clocking_output_skew_edge_only";
+inline constexpr ::mlir::StringLiteral clockingOutputSkewOneStepAttrName =
+    "clocking_output_skew_one_step";
+inline constexpr ::mlir::StringLiteral clockingOutputSkewDelayAttrName =
+    "clocking_output_skew_delay";
+inline constexpr ::mlir::StringLiteral clockingOutputSkewDelayIsRealAttrName =
+    "clocking_output_skew_delay_is_real";
+inline constexpr ::mlir::StringLiteral clockingTimeUnitAttrName =
+    "clocking_time_unit_fs";
+inline constexpr ::mlir::StringLiteral clockingTimePrecisionAttrName =
+    "clocking_time_precision_fs";
 
 inline std::optional<ObserverResult>
 parseObserverResult(::mlir::IntegerAttr attribute) {

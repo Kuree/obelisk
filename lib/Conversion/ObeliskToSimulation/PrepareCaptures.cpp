@@ -237,6 +237,30 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       return localPath;
     };
     std::function<void(Operation *)> collectBinding = [&](Operation *nested) {
+      if (nested->hasAttr(clockingVariableAttrName)) {
+        auto captureDescriptor = [&](StringLiteral pathName, bool read,
+                                     bool written) {
+          auto path = nested->getAttrOfType<StringAttr>(pathName);
+          if (!path)
+            return;
+          auto descriptor = descriptors.find(path.getValue());
+          if (descriptor == descriptors.end())
+            return;
+          if (seenPaths.insert(path.getValue()).second)
+            result.descriptors[unit.source].push_back(
+                {path.getValue().str(), descriptor->second});
+          if (read)
+            result.readDescriptors[unit.source].insert(path.getValue());
+          if (written)
+            writtenDescriptors[unit.source].insert(path.getValue());
+        };
+        bool written = isWrittenReferenceUse(nested);
+        captureDescriptor(clockingSourcePathAttrName,
+                          !isWriteOnlyReferenceUse(nested), written);
+        captureDescriptor(clockingEventPathAttrName, /*read=*/true,
+                          /*written=*/false);
+        return;
+      }
       StringRef path;
       SymbolRefAttr reference;
       if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(nested)) {

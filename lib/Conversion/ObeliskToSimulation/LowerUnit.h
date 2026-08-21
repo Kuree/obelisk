@@ -118,6 +118,8 @@ private:
   lowerContextDeterminedExpression(::mlir::Operation *op);
   ::mlir::FailureOr<::mlir::Value>
   lowerNamedValue(semantic::SVNamedValueExpressionOp op, bool lvalue);
+  ::mlir::FailureOr<::mlir::Value>
+  lowerStaticClockingVariable(::mlir::Operation *op, bool lvalue);
   ::mlir::FailureOr<::mlir::Value> lowerReferencedValue(::mlir::Operation *op,
                                                         ::mlir::StringRef path,
                                                         bool lvalue);
@@ -477,6 +479,7 @@ private:
   ::llvm::DenseMap<::mlir::Operation *, ::mlir::Value> expressionCaptures;
   ::llvm::StringMap<::mlir::Value> values;
   ::llvm::StringMap<::mlir::Value> lvalues;
+  ::llvm::StringMap<uint64_t> descriptorIDs;
   ::llvm::DenseMap<uint64_t, ::mlir::Value> nodeLvalues;
   ::llvm::StringMap<::mlir::Value> localDefaults;
   ::llvm::StringSet<> automaticLocals;

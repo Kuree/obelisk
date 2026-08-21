@@ -1253,13 +1253,9 @@ private:
     }
   }
 
-  /// Freeze the directly addressable event selected by an ordinary clocking
-  /// block.  Clocking-block references have void expression type in Slang;
-  /// retaining the event signal separately lets executable lowering watch the
-  /// actual storage while preserving the clocking block's symbol identity.
-  void addStaticClockingEvent(NamedAttrList &attrs,
-                              const slang::ast::ClockingBlockSymbol &clocking) {
-    attrs.set("clocking_block_event", builder.getUnitAttr());
+  void addStaticClockingEventDescriptor(
+      NamedAttrList &attrs,
+      const slang::ast::ClockingBlockSymbol &clocking) {
     const auto *event =
         clocking.getEvent().as_if<slang::ast::SignalEventControl>();
     if (!event)
@@ -1280,6 +1276,95 @@ private:
     setSymbolReference(attrs, *clockSymbol,
                        builder.getStringAttr("clocking_event_symbol"),
                        builder.getStringAttr("clocking_event_path"));
+  }
+
+  /// Freeze the directly addressable event selected by an ordinary clocking
+  /// block. Clocking-block references have void expression type in Slang;
+  /// retaining the event signal separately lets executable lowering watch the
+  /// actual storage while preserving the clocking block's symbol identity.
+  void addStaticClockingEvent(NamedAttrList &attrs,
+                              const slang::ast::ClockingBlockSymbol &clocking) {
+    attrs.set("clocking_block_event", builder.getUnitAttr());
+    addStaticClockingEventDescriptor(attrs, clocking);
+  }
+
+  void addStaticClockingSkew(NamedAttrList &attrs, StringRef prefix,
+                             const slang::ast::ClockingSkew &skew,
+                             bool defaultOneStep,
+                             const slang::ast::ClockVarSymbol &clockVar) {
+    attrs.set((prefix + "_edge").str(),
+              slangir::EdgeKindAttr::get(builder.getContext(),
+                                         convertEnum(skew.edge)));
+    if (!skew.delay) {
+      if (!skew.hasValue() && defaultOneStep)
+        attrs.set((prefix + "_one_step").str(), builder.getUnitAttr());
+      else if (!skew.hasValue())
+        attrs.set((prefix + "_delay").str(), builder.getStringAttr("0"));
+      else
+        attrs.set((prefix + "_edge_only").str(), builder.getUnitAttr());
+      return;
+    }
+    if (skew.delay->kind == slang::ast::TimingControlKind::OneStepDelay) {
+      attrs.set((prefix + "_one_step").str(), builder.getUnitAttr());
+      return;
+    }
+    if (const auto *delay =
+            skew.delay->as_if<slang::ast::DelayControl>()) {
+      slang::ast::EvalContext evalContext(clockVar);
+      slang::ConstantValue value = delay->expr.eval(evalContext);
+      if (value) {
+        attrs.set((prefix + "_delay").str(),
+                  builder.getStringAttr(formatConstant(value)));
+        attrs.set((prefix + "_delay_is_real").str(),
+                  builder.getBoolAttr(value.isReal() || value.isShortReal()));
+      }
+    }
+  }
+
+  void addStaticClockingVariable(NamedAttrList &attrs,
+                                 const slang::ast::ClockVarSymbol &clockVar) {
+    attrs.set("clocking_variable", builder.getUnitAttr());
+    attrs.set("clocking_access_direction",
+              slangir::ArgumentDirectionAttr::get(
+                  builder.getContext(), convertEnum(clockVar.direction)));
+    const slang::ast::Expression *source = clockVar.getInitializer();
+    const slang::ast::Symbol *sourceSymbol = nullptr;
+    if (auto *named =
+            source ? source->as_if<slang::ast::NamedValueExpression>()
+                   : nullptr)
+      sourceSymbol = &named->symbol;
+    else if (auto *hierarchical =
+                 source ? source->as_if<
+                              slang::ast::HierarchicalValueExpression>()
+                        : nullptr)
+      sourceSymbol = &hierarchical->symbol;
+    if (sourceSymbol)
+      setSymbolReference(attrs, *sourceSymbol,
+                         builder.getStringAttr("clocking_source_symbol"),
+                         builder.getStringAttr("clocking_source_path"));
+
+    const auto &clocking =
+        clockVar.getParentScope()
+            ->asSymbol()
+            .template as<slang::ast::ClockingBlockSymbol>();
+    addStaticClockingEventDescriptor(attrs, clocking);
+    slang::TimeScale scale = clockVar.getParentScope()
+                                 ->getTimeScale()
+                                 .value_or(slang::TimeScale{});
+    attrs.set("clocking_time_unit_fs",
+              builder.getI64IntegerAttr(getFemtoseconds(scale.base)));
+    attrs.set("clocking_time_precision_fs",
+              builder.getI64IntegerAttr(getFemtoseconds(scale.precision)));
+    slang::ast::ClockingSkew inputSkew =
+        clockVar.inputSkew.hasValue() ? clockVar.inputSkew
+                                      : clocking.getDefaultInputSkew();
+    slang::ast::ClockingSkew outputSkew =
+        clockVar.outputSkew.hasValue() ? clockVar.outputSkew
+                                       : clocking.getDefaultOutputSkew();
+    addStaticClockingSkew(attrs, "clocking_input_skew", inputSkew,
+                          /*defaultOneStep=*/true, clockVar);
+    addStaticClockingSkew(attrs, "clocking_output_skew", outputSkew,
+                          /*defaultOneStep=*/false, clockVar);
   }
 
   template <typename Node>
@@ -1543,6 +1628,9 @@ private:
     if constexpr (std::same_as<T, slang::ast::NamedValueExpression> ||
                   std::same_as<T, slang::ast::HierarchicalValueExpression>) {
       setReferencedSymbol<Op>(attrs, node.symbol);
+      if (node.symbol.kind == slang::ast::SymbolKind::ClockVar)
+        addStaticClockingVariable(
+            attrs, node.symbol.template as<slang::ast::ClockVarSymbol>());
     } else if constexpr (std::same_as<T,
                                       slang::ast::ArbitrarySymbolExpression>) {
       setReferencedSymbol<Op>(attrs, *node.symbol);
@@ -1623,6 +1711,8 @@ private:
               attrs.set((prefix + "_one_step").str(), builder.getUnitAttr());
             else if (!skew.hasValue())
               attrs.set((prefix + "_delay").str(), builder.getStringAttr("0"));
+            else
+              attrs.set((prefix + "_edge_only").str(), builder.getUnitAttr());
             return;
           }
           if (skew.delay->kind == slang::ast::TimingControlKind::OneStepDelay) {

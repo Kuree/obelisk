@@ -63,6 +63,74 @@ bool isTaggedUnionType(Type type) {
 //===----------------------------------------------------------------------===//
 
 FailureOr<Value>
+UnitLowering::lowerStaticClockingVariable(Operation *op, bool lvalue) {
+  Location location = getSemanticLocation(op);
+  auto direction = op->getAttrOfType<semantic::SVArgumentDirectionAttr>(
+      clockingAccessDirectionAttrName);
+  if (!direction) {
+    emitError(location) << "clocking variable has no access direction";
+    return failure();
+  }
+  if (lvalue) {
+    emitError(location)
+        << (direction.getValue() == semantic::SVArgumentDirection::In
+                ? "cannot write an input clocking variable"
+                : "clocking output requires clocking-drive lowering");
+    return failure();
+  }
+  if (direction.getValue() == semantic::SVArgumentDirection::Out) {
+    emitError(location) << "cannot read an output clocking variable";
+    return failure();
+  }
+  if (op->hasAttr(clockingEventHasIffAttrName)) {
+    emitError(location)
+        << "clocking variables with iff clock events are not yet supported";
+    return failure();
+  }
+  auto sourcePath =
+      op->getAttrOfType<StringAttr>(clockingSourcePathAttrName);
+  auto clockPath = op->getAttrOfType<StringAttr>(clockingEventPathAttrName);
+  auto eventEdge =
+      op->getAttrOfType<semantic::EdgeKindAttr>(clockingEventEdgeAttrName);
+  auto skewEdge =
+      op->getAttrOfType<semantic::EdgeKindAttr>(clockingInputSkewEdgeAttrName);
+  if (!sourcePath || !clockPath || !eventEdge || !skewEdge) {
+    emitError(location)
+        << "clocking input has no directly addressable source and clock";
+    return failure();
+  }
+  bool oneStep = op->hasAttr(clockingInputSkewOneStepAttrName);
+  bool edgeOnly = op->hasAttr(clockingInputSkewEdgeOnlyAttrName);
+  auto delay = op->getAttrOfType<StringAttr>(clockingInputSkewDelayAttrName);
+  bool zeroDelay = delay && delay.getValue() == "0";
+  if (!oneStep && !edgeOnly && !zeroDelay) {
+    emitError(location)
+        << "clocking input skew currently requires #1step, #0, or an edge";
+    return failure();
+  }
+  semantic::EdgeKind selectedEdge =
+      skewEdge.getValue() != semantic::EdgeKind::Change
+          ? skewEdge.getValue()
+          : eventEdge.getValue();
+  FailureOr<Value> source =
+      lowerReferencedValue(op, sourcePath.getValue(), /*lvalue=*/true);
+  FailureOr<Value> clock =
+      lowerReferencedValue(op, clockPath.getValue(), /*lvalue=*/true);
+  auto sourceDescriptor = descriptorIDs.find(sourcePath.getValue());
+  auto clockDescriptor = descriptorIDs.find(clockPath.getValue());
+  if (failed(source) || failed(clock))
+    return failure();
+  if (sourceDescriptor == descriptorIDs.end() ||
+      clockDescriptor == descriptorIDs.end()) {
+    emitError(location) << "clocking input has no frozen storage descriptor";
+    return failure();
+  }
+  return lowerClockingInputSample(
+      *source, sourceDescriptor->second, *clock, clockDescriptor->second,
+      static_cast<sim::EdgeKind>(selectedEdge), oneStep, location);
+}
+
+FailureOr<Value>
 UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
                               bool lvalue) {
   if (auto objectField = op->getAttrOfType<FlatSymbolRefAttr>(
@@ -1936,12 +2004,16 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
           << "clocking variable has no supported static clock event";
       return failure();
     }
-    if (!op->hasAttr("virtual_interface_clock_input_skew_one_step")) {
+    bool oneStep =
+        op->hasAttr("virtual_interface_clock_input_skew_one_step");
+    bool edgeOnly =
+        op->hasAttr("virtual_interface_clock_input_skew_edge_only");
+    if (!oneStep && !edgeOnly) {
       auto delay = op->getAttrOfType<StringAttr>(
           "virtual_interface_clock_input_skew_delay");
       if (!delay || delay.getValue() != "0") {
         emitError(location)
-            << "clocking input skew currently requires #1step or #0";
+            << "clocking input skew currently requires #1step, #0, or an edge";
         return failure();
       }
     }
@@ -1996,6 +2068,13 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
     bool oneStep = op->hasAttr("virtual_interface_clock_input_skew_one_step");
     auto edgeAttr = op->getAttrOfType<semantic::EdgeKindAttr>(
         "virtual_interface_clock_event_edge");
+    auto skewEdgeAttr = op->getAttrOfType<semantic::EdgeKindAttr>(
+        "virtual_interface_clock_input_skew_edge");
+    semantic::EdgeKind selectedEdge =
+        skewEdgeAttr &&
+                skewEdgeAttr.getValue() != semantic::EdgeKind::Change
+            ? skewEdgeAttr.getValue()
+            : edgeAttr.getValue();
     for (auto [index, target] : llvm::enumerate(*targets)) {
       auto clockTarget = llvm::find_if(*clockTargets, [&](auto candidate) {
         return candidate.first == target.first;
@@ -2032,7 +2111,7 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
       }
       FailureOr<Value> sample = lowerClockingInputSample(
           staticTargets[index], target.second, clockHandle, clockDescriptor,
-          static_cast<sim::EdgeKind>(edgeAttr.getValue()), oneStep, location);
+          static_cast<sim::EdgeKind>(selectedEdge), oneStep, location);
       if (failed(sample))
         return failure();
       clockedSamples.push_back(*sample);

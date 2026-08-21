@@ -289,6 +289,7 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
       }
       values[path] = storage;
       lvalues[path] = storage;
+      descriptorIDs[path] = descriptor.getDescriptor();
       continue;
     }
     if (auto argument = dyn_cast<sim::ArgumentBindingAttr>(attr)) {
@@ -339,6 +340,9 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
         }
       }
       values[path] = value;
+      if (auto descriptor = function.getArgAttrOfType<IntegerAttr>(
+              argument.getArgument(), sim::metadata::descriptorId))
+        descriptorIDs[path] = descriptor.getValue().getZExtValue();
       if (isa<sim::RefType, sim::ArgumentRefType, sim::NetType,
               sim::DriverType>(value.getType()))
         lvalues.try_emplace(path, value);
@@ -1687,6 +1691,8 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
     }
     return lowerLiteral(op);
   }
+  if (op->hasAttr(clockingVariableAttrName))
+    return lowerStaticClockingVariable(op, lvalue);
   if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(op))
     return lowerNamedValue(named, lvalue);
   if (auto interface = dyn_cast<semantic::SVArbitrarySymbolExpressionOp>(op)) {
