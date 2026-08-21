@@ -2474,6 +2474,11 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
     emitError(location) << "virtual interface member has no static identity";
     return failure();
   }
+  StringAttr selectedMember = member;
+  if (op->hasAttr("virtual_interface_clocking"))
+    if (auto source = op->getAttrOfType<StringAttr>(
+            "virtual_interface_clocking_signal_member"))
+      selectedMember = source;
   if (auto required =
           op->getAttrOfType<StringAttr>("virtual_interface_modport")) {
     StringRef selected = interfaceType.getModport().getValue();
@@ -2497,7 +2502,7 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
     }
   }
   std::string key = (Twine(interfaceType.getInterfaceName().getValue()) + "\n" +
-                     member.getValue())
+                     selectedMember.getValue())
                         .str();
   VirtualMemberTargets *targets = nullptr;
   Type selectedType;
@@ -2533,7 +2538,8 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
     }
   }
   if (!targets || targets->empty()) {
-    emitError(location) << "virtual interface member '" << member.getValue()
+    emitError(location) << "virtual interface member '"
+                        << selectedMember.getValue()
                         << "' has no elaborated descriptor";
     return failure();
   }

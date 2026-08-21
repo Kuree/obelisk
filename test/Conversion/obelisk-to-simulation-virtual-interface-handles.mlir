@@ -5,6 +5,7 @@
 // RUN: sed -e 's/test_output_iff, virtual_interface_clock_event_has_iff, //' -e '/test_output_iff_child/d' -e 's/virtual_interface_clock_output_skew_edge = 0 : i32/virtual_interface_clock_output_skew_edge = 2 : i32/g' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=OUTPUT-EDGE
 // RUN: sed 's/definition_kind = 0 : i32/definition_kind = 2 : i32/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=PROGRAM
 // RUN: sed -e 's/member_name = "signal", node_id = 36/member_name = "ready", node_id = 36/' -e 's/member_name = "signal", node_id = 79/member_name = "ready", node_id = 79/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=NET-OUTPUT
+// RUN: sed -e 's/member_name = "signal", node_id = 36/member_name = "driven", node_id = 36, virtual_interface_clocking_signal_member = "ready"/' -e 's/member_name = "ready", node_id = 38/member_name = "sampled", node_id = 38, virtual_interface_clocking_signal_member = "ready"/' -e 's/member_name = "signal", node_id = 79/member_name = "driven", node_id = 79, virtual_interface_clocking_signal_member = "ready"/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 1 : i32, hierarchical_name = "bus_if", name = "bus_if", node_id = 0 : i64, sym_name = "s0.bus_if"} {}

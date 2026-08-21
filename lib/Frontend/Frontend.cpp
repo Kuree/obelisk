@@ -1716,6 +1716,19 @@ private:
       } else if (node.member.kind == slang::ast::SymbolKind::ClockVar) {
         const auto &clockVar =
             node.member.template as<slang::ast::ClockVarSymbol>();
+        if (const slang::ast::Expression *source = clockVar.getInitializer()) {
+          const slang::ast::Symbol *sourceSymbol = nullptr;
+          if (auto *named =
+                  source->as_if<slang::ast::NamedValueExpression>())
+            sourceSymbol = &named->symbol;
+          else if (auto *hierarchical =
+                       source->as_if<
+                           slang::ast::HierarchicalValueExpression>())
+            sourceSymbol = &hierarchical->symbol;
+          if (sourceSymbol)
+            attrs.set("virtual_interface_clocking_signal_member",
+                      builder.getStringAttr(sourceSymbol->name));
+        }
         attrs.set("virtual_interface_access_direction",
                   slangir::ArgumentDirectionAttr::get(
                       builder.getContext(), convertEnum(clockVar.direction)));

@@ -629,6 +629,9 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
           destination->getAttrOfType<semantic::SVArgumentDirectionAttr>(
               "virtual_interface_access_direction");
       auto member = destination->getAttrOfType<StringAttr>("member_name");
+      if (auto source = destination->getAttrOfType<StringAttr>(
+              "virtual_interface_clocking_signal_member"))
+        member = source;
       auto node = destination->getAttrOfType<IntegerAttr>("node_id");
       SmallVector<Operation *> receiver = getChildren(destination);
       size_t expectedReceiverChildren =
