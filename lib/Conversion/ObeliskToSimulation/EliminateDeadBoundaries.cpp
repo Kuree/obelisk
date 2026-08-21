@@ -360,7 +360,8 @@ LogicalResult BoundaryEliminator::run() {
         bool valid = site.getOperandTypes() == calleeType.getInputs();
         if constexpr (std::is_same_v<decltype(site), sim::SimCallOp>)
           valid &= site.getResultTypes() == calleeType.getResults() &&
-                   callee.getEntryKind() == sim::EntryKind::Function;
+                   (callee.getEntryKind() == sim::EntryKind::Function ||
+                    callee.getEntryKind() == sim::EntryKind::Observer);
         else
           valid &= calleeType.getResults().empty() &&
                    callee.getEntryKind() != sim::EntryKind::Function &&

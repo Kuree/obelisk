@@ -1444,6 +1444,8 @@ private:
       setSymbolReference(attrs, *sourceSymbol,
                          builder.getStringAttr("clocking_source_symbol"),
                          builder.getStringAttr("clocking_source_path"));
+    else if (source && clockVar.direction != slang::ast::ArgumentDirection::Out)
+      attrs.set("clocking_source_expression", builder.getUnitAttr());
 
     const auto &clocking =
         clockVar.getParentScope()
@@ -1766,6 +1768,9 @@ private:
           if (sourceSymbol)
             attrs.set("virtual_interface_clocking_signal_member",
                       builder.getStringAttr(sourceSymbol->name));
+          else if (clockVar.direction != slang::ast::ArgumentDirection::Out)
+            attrs.set("virtual_interface_clocking_source_expression",
+                      builder.getUnitAttr());
         }
         attrs.set("virtual_interface_access_direction",
                   slangir::ArgumentDirectionAttr::get(
@@ -3170,6 +3175,13 @@ private:
       if (node.symbol.kind == slang::ast::SymbolKind::ClockVar) {
         const auto &clockVar =
             node.symbol.template as<slang::ast::ClockVarSymbol>();
+        const slang::ast::Expression *source = clockVar.getInitializer();
+        if (source &&
+            !source->template as_if<slang::ast::NamedValueExpression>() &&
+            !source
+                 ->template as_if<slang::ast::HierarchicalValueExpression>() &&
+            clockVar.direction != slang::ast::ArgumentDirection::Out)
+          source->visit(*this);
         const auto &clocking = clockVar.getParentScope()
                                    ->asSymbol()
                                    .template as<
@@ -3191,6 +3203,13 @@ private:
         if (node.member.kind == slang::ast::SymbolKind::ClockVar) {
           const auto &clockVar =
               node.member.template as<slang::ast::ClockVarSymbol>();
+          const slang::ast::Expression *source = clockVar.getInitializer();
+          if (source &&
+              !source->template as_if<slang::ast::NamedValueExpression>() &&
+              !source->template as_if<
+                  slang::ast::HierarchicalValueExpression>() &&
+              clockVar.direction != slang::ast::ArgumentDirection::Out)
+            source->visit(*this);
           clocking = &clockVar.getParentScope()
                           ->asSymbol()
                           .template as<slang::ast::ClockingBlockSymbol>();

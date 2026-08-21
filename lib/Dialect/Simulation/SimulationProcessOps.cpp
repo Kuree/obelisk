@@ -431,8 +431,9 @@ LogicalResult SimCallOp::verify() {
 LogicalResult SimCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto callee = symbolTable.lookupNearestSymbolFrom<SimFuncOp>(getOperation(),
                                                                getCalleeAttr());
-  if (!callee || callee.getEntryKind() != EntryKind::Function)
-    return emitOpError("callee must name a sibling function entry");
+  if (!callee || (callee.getEntryKind() != EntryKind::Function &&
+                  callee.getEntryKind() != EntryKind::Observer))
+    return emitOpError("callee must name a sibling function or observer entry");
   if (getOperandTypes() != callee.getFunctionType().getInputs() ||
       getResultTypes() != callee.getFunctionType().getResults())
     return emitOpError("operand and result types must match callee signature");

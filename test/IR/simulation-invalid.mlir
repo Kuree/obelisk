@@ -1025,7 +1025,7 @@ module {
     obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.unknown_callee.caller.9000001"
     obelisk_sim.scope.decl 0
     obelisk_sim.func @caller(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      // expected-error @+1 {{callee must name a sibling function entry}}
+      // expected-error @+1 {{callee must name a sibling function or observer entry}}
       obelisk_sim.call @missing(%ctx) : (!obelisk_sim.context) -> ()
       obelisk_sim.return
     }
@@ -1043,7 +1043,7 @@ module {
       obelisk_sim.return
     }
     obelisk_sim.func @caller(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
-      // expected-error @+1 {{callee must name a sibling function entry}}
+      // expected-error @+1 {{callee must name a sibling function or observer entry}}
       obelisk_sim.call @process(%ctx) : (!obelisk_sim.context) -> ()
       obelisk_sim.return
     }

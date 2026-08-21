@@ -254,13 +254,12 @@ private:
       ::mlir::Operation *expression, ::mlir::Operation *gateExpression,
       semantic::SVSignalEventControlOp clock, uint64_t depth, uint64_t age,
       ::mlir::Location location);
-  ::mlir::FailureOr<::mlir::Value>
-  lowerClockingInputSample(::mlir::Value source, uint64_t sourceDescriptor,
-                           ::mlir::Value clock, uint64_t clockDescriptor,
-                           sim::EdgeKind edge, bool oneStep,
-                           uint64_t skewTicks, ::mlir::Location location,
-                           ::mlir::Value primaryObserver = {},
-                           ::mlir::Value conditionObserver = {});
+  ::mlir::FailureOr<::mlir::Value> lowerClockingInputSample(
+      ::mlir::Value source, uint64_t sourceDescriptor, ::mlir::Value clock,
+      uint64_t clockDescriptor, sim::EdgeKind edge, bool oneStep,
+      uint64_t skewTicks, ::mlir::Location location,
+      ::mlir::Value sourceObserver = {}, ::mlir::Value primaryObserver = {},
+      ::mlir::Value conditionObserver = {});
   ::mlir::FailureOr<::mlir::Value>
   lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>

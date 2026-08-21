@@ -348,6 +348,7 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
     std::string label;
     uint64_t parentID;
     std::string parentHierarchy;
+    bool sampled = false;
   };
   SmallVector<ObserverCandidate> observerCandidates;
   auto isManagedMemberExpression = [&](Operation *expression) {
@@ -402,22 +403,46 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
       bool virtualClockingVariableIff =
           nested->hasAttr("virtual_interface_clocking") &&
           nested->hasAttr("virtual_interface_clock_event_has_iff");
-      if (staticClockingVariableIff || virtualClockingVariableIff) {
+      bool staticClockingSource = nested->hasAttr(clockingVariableAttrName) &&
+                                  nested->hasAttr("clocking_source_expression");
+      bool virtualClockingSource =
+          nested->hasAttr("virtual_interface_clocking") &&
+          nested->hasAttr("virtual_interface_clocking_source_expression");
+      if (staticClockingVariableIff || virtualClockingVariableIff ||
+          staticClockingSource || virtualClockingSource) {
         SmallVector<Operation *> children = getChildren(nested);
-        size_t expressionOffset = virtualClockingVariableIff ? 1 : 0;
-        if (children.size() != expressionOffset + 2) {
+        bool virtualClocking =
+            virtualClockingVariableIff || virtualClockingSource;
+        size_t expressionOffset = virtualClocking ? 1 : 0;
+        size_t sourceCount =
+            static_cast<size_t>(staticClockingSource || virtualClockingSource);
+        size_t iffCount = static_cast<size_t>(staticClockingVariableIff ||
+                                              virtualClockingVariableIff) *
+                          2;
+        if (children.size() != expressionOffset + sourceCount + iffCount) {
           emitError(getSemanticLocation(nested))
-              << "clocking variable with iff has no frozen clock and condition "
-                 "expressions";
+              << "clocking variable has an invalid frozen source/event "
+                 "expression inventory";
           invalid = true;
           return;
         }
-        observerCandidates.push_back({children[expressionOffset],
-                                      ObserverResult::Value, "clocking_primary",
-                                      unit.id, unit.hierarchy});
-        observerCandidates.push_back({children[expressionOffset + 1],
-                                      ObserverResult::Truth, "clocking_iff",
-                                      unit.id, unit.hierarchy});
+        if (sourceCount) {
+          bool sampled =
+              nested->hasAttr(clockingInputSkewOneStepAttrName) ||
+              nested->hasAttr("virtual_interface_clock_input_skew_one_step");
+          observerCandidates.push_back(
+              {children[expressionOffset], ObserverResult::Value,
+               "clocking_source", unit.id, unit.hierarchy, sampled});
+          expressionOffset += sourceCount;
+        }
+        if (iffCount) {
+          observerCandidates.push_back(
+              {children[expressionOffset], ObserverResult::Value,
+               "clocking_primary", unit.id, unit.hierarchy});
+          observerCandidates.push_back({children[expressionOffset + 1],
+                                        ObserverResult::Truth, "clocking_iff",
+                                        unit.id, unit.hierarchy});
+        }
         return;
       }
       if (auto cycle = dyn_cast<semantic::SVCycleDelayControlOp>(nested)) {
@@ -548,7 +573,7 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
     candidate.expression->setAttr(
         observerResultAttrName,
         builder.getI32IntegerAttr(static_cast<uint32_t>(candidate.result)));
-    if (candidate.label == "abort")
+    if (candidate.label == "abort" || candidate.sampled)
       candidate.expression->setAttr(sampledObserverAttrName,
                                     builder.getUnitAttr());
     result.units.push_back({candidate.expression,
