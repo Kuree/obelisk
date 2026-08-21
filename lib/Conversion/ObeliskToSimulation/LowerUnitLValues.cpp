@@ -1265,36 +1265,38 @@ LogicalResult UnitLowering::lowerStaticClockingOutputAssignment(
                                  /*virtualInterface=*/false, location);
 }
 
-LogicalResult UnitLowering::emitClockingOutputDrive(
-    Operation *destination, Value target, Value clock, Value value,
-    bool virtualInterface, Location location) {
+LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
+                                                    Value target, Value clock,
+                                                    Value value,
+                                                    bool virtualInterface,
+                                                    Location location) {
   auto targetRef = dyn_cast<sim::RefType>(target.getType());
   auto targetDriver = dyn_cast<sim::DriverType>(target.getType());
   if (!targetRef && !targetDriver)
     return emitError(location)
            << "clocking output target is not variable storage or a net driver";
 
-  StringRef eventEdgeName =
-      virtualInterface ? "virtual_interface_clock_event_edge"
-                       : StringRef(clockingEventEdgeAttrName);
-  StringRef eventIffName =
-      virtualInterface ? "virtual_interface_clock_event_has_iff"
-                       : StringRef(clockingEventHasIffAttrName);
-  StringRef skewEdgeName =
-      virtualInterface ? "virtual_interface_clock_output_skew_edge"
-                       : StringRef(clockingOutputSkewEdgeAttrName);
+  StringRef eventEdgeName = virtualInterface
+                                ? "virtual_interface_clock_event_edge"
+                                : StringRef(clockingEventEdgeAttrName);
+  StringRef eventIffName = virtualInterface
+                               ? "virtual_interface_clock_event_has_iff"
+                               : StringRef(clockingEventHasIffAttrName);
+  StringRef skewEdgeName = virtualInterface
+                               ? "virtual_interface_clock_output_skew_edge"
+                               : StringRef(clockingOutputSkewEdgeAttrName);
   StringRef skewOneStepName =
       virtualInterface ? "virtual_interface_clock_output_skew_one_step"
                        : StringRef(clockingOutputSkewOneStepAttrName);
-  StringRef skewDelayName =
-      virtualInterface ? "virtual_interface_clock_output_skew_delay"
-                       : StringRef(clockingOutputSkewDelayAttrName);
+  StringRef skewDelayName = virtualInterface
+                                ? "virtual_interface_clock_output_skew_delay"
+                                : StringRef(clockingOutputSkewDelayAttrName);
   StringRef skewDelayIsRealName =
       virtualInterface ? "virtual_interface_clock_output_skew_delay_is_real"
                        : StringRef(clockingOutputSkewDelayIsRealAttrName);
-  StringRef timeUnitName =
-      virtualInterface ? "virtual_interface_clock_time_unit_fs"
-                       : StringRef(clockingTimeUnitAttrName);
+  StringRef timeUnitName = virtualInterface
+                               ? "virtual_interface_clock_time_unit_fs"
+                               : StringRef(clockingTimeUnitAttrName);
   StringRef timePrecisionName =
       virtualInterface ? "virtual_interface_clock_time_precision_fs"
                        : StringRef(clockingTimePrecisionAttrName);
@@ -1302,7 +1304,8 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
       destination->getAttrOfType<semantic::EdgeKindAttr>(eventEdgeName);
   auto skewEdge =
       destination->getAttrOfType<semantic::EdgeKindAttr>(skewEdgeName);
-  if (!eventEdge || destination->hasAttr(eventIffName)) {
+  bool hasIff = destination->hasAttr(eventIffName);
+  if (!eventEdge || (virtualInterface && hasIff)) {
     emitError(location) << "clocking output has no supported static event";
     return failure();
   }
@@ -1312,6 +1315,10 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
       skewEdge && skewEdge.getValue() != semantic::EdgeKind::Change
           ? skewEdge.getValue()
           : eventEdge.getValue();
+  if (hasIff && selectedEdge != eventEdge.getValue())
+    return emitError(location)
+           << "clocking outputs with iff and a distinct edge skew are not "
+              "yet supported";
   sim::EdgeKind edge = static_cast<sim::EdgeKind>(selectedEdge);
   std::optional<Value> currentOccurrence;
   if (selectedEdge == eventEdge.getValue())
@@ -1320,13 +1327,46 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
   bool alwaysSynchronized = currentOccurrence && !*currentOccurrence;
   Value synchronizationPredicate =
       currentOccurrence ? *currentOccurrence : Value{};
+  struct ObserverPlan {
+    FlatSymbolRefAttr evaluator;
+    sim::ObserverType type;
+    IntegerAttr captureCount;
+    SmallVector<Value> values;
+    SmallVector<unsigned> argumentIndices;
+    bool eventPrimary = false;
+  };
+  std::optional<ObserverPlan> primaryObserver;
+  std::optional<ObserverPlan> conditionObserver;
+  if (hasIff && !alwaysSynchronized) {
+    SmallVector<Operation *> children = getChildren(destination);
+    if (children.size() != 2)
+      return emitError(location)
+             << "clocking output with iff has no frozen clock and condition "
+                "expressions";
+    FailureOr<Value> primary = bindObserver(children[0]);
+    FailureOr<Value> condition = bindObserver(children[1]);
+    if (failed(primary) || failed(condition))
+      return failure();
+    auto savePlan = [&](Value observer) -> ObserverPlan {
+      auto binding = observer.getDefiningOp<sim::SimObserverBindOp>();
+      assert(binding && "bound observer must be produced by observer.bind");
+      ObserverPlan plan{binding.getEvaluatorAttr(),
+                        cast<sim::ObserverType>(observer.getType()),
+                        binding.getCaptureCountAttr(),
+                        SmallVector<Value>(binding.getValues()),
+                        {},
+                        binding->hasAttr(observerEventPrimaryAttrName)};
+      binding.erase();
+      return plan;
+    };
+    primaryObserver = savePlan(*primary);
+    conditionObserver = savePlan(*condition);
+  }
 
   uint64_t delayTicks = 0;
-  if (auto spelling =
-          destination->getAttrOfType<StringAttr>(skewDelayName)) {
+  if (auto spelling = destination->getAttrOfType<StringAttr>(skewDelayName)) {
     auto unit = destination->getAttrOfType<IntegerAttr>(timeUnitName);
-    auto precision =
-        destination->getAttrOfType<IntegerAttr>(timePrecisionName);
+    auto precision = destination->getAttrOfType<IntegerAttr>(timePrecisionName);
     if (!unit || !precision || unit.getValue().isZero() ||
         precision.getValue().isZero()) {
       emitError(location) << "clocking output has invalid time scale";
@@ -1334,8 +1374,7 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
     }
     uint64_t unitFS = unit.getValue().getZExtValue();
     uint64_t precisionFS = precision.getValue().getZExtValue();
-    auto isRealAttr =
-        destination->getAttrOfType<BoolAttr>(skewDelayIsRealName);
+    auto isRealAttr = destination->getAttrOfType<BoolAttr>(skewDelayIsRealName);
     bool isReal = isRealAttr && isRealAttr.getValue();
     long double scaled = 0;
     if (isReal) {
@@ -1407,6 +1446,30 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
     argumentAttrs.push_back(
         captureMetadata(outlineBuilder, sim::CaptureKind::Value));
   }
+  SmallVector<std::pair<Value, unsigned>> observerArguments{{target, 1},
+                                                            {clock, 2}};
+  SmallVector<Value> observerSpawnOperands;
+  auto appendObserverArguments = [&](ObserverPlan &plan) {
+    for (Value operand : plan.values) {
+      auto existing = llvm::find_if(observerArguments, [&](const auto &entry) {
+        return entry.first == operand;
+      });
+      if (existing != observerArguments.end()) {
+        plan.argumentIndices.push_back(existing->second);
+        continue;
+      }
+      plan.argumentIndices.push_back(inputs.size());
+      observerArguments.emplace_back(operand, inputs.size());
+      observerSpawnOperands.push_back(operand);
+      inputs.push_back(operand.getType());
+      argumentAttrs.push_back(
+          captureMetadata(outlineBuilder, sim::CaptureKind::Formal));
+    }
+  };
+  if (primaryObserver) {
+    appendObserverArguments(*primaryObserver);
+    appendObserverArguments(*conditionObserver);
+  }
   SmallVector<NamedAttribute> attributes{
       outlineBuilder.getNamedAttr("code_unit_id",
                                   outlineBuilder.getI64IntegerAttr(codeUnitID)),
@@ -1431,6 +1494,24 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
     driver.getBody().push_back(wait);
   driver.getBody().push_back(drive);
   OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
+  auto bindInDriver = [&](ObserverPlan &plan) {
+    SmallVector<Value> operands;
+    for (unsigned index : plan.argumentIndices)
+      operands.push_back(entry.getArgument(index));
+    auto binding = sim::SimObserverBindOp::create(entryBuilder, location,
+                                                  plan.type, plan.evaluator,
+                                                  operands, plan.captureCount);
+    if (plan.eventPrimary)
+      binding->setAttr(observerEventPrimaryAttrName,
+                       entryBuilder.getUnitAttr());
+    return binding.getResult();
+  };
+  Value localPrimaryObserver;
+  Value localConditionObserver;
+  if (primaryObserver) {
+    localPrimaryObserver = bindInDriver(*primaryObserver);
+    localConditionObserver = bindInDriver(*conditionObserver);
+  }
   if (wait) {
     if (synchronizationPredicate)
       cf::CondBranchOp::create(entryBuilder, location, entry.getArgument(4),
@@ -1438,9 +1519,35 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
     else
       cf::BranchOp::create(entryBuilder, location, wait);
     OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
-    sim::SimSuspendEdgeOp::create(
-        waitBuilder, location, edge, entry.getArgument(2), ValueRange{},
-        sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, drive);
+    if (localPrimaryObserver) {
+      auto primaryType =
+          cast<sim::ObserverType>(localPrimaryObserver.getType());
+      Value initial;
+      if (auto reference = dyn_cast<sim::RefType>(clock.getType()))
+        initial = sim::SimRefLoadOp::create(waitBuilder, location,
+                                            reference.getElementType(),
+                                            entry.getArgument(2));
+      else if (auto net = dyn_cast<sim::NetType>(clock.getType()))
+        initial = sim::SimNetReadOp::create(
+            waitBuilder, location, net.getElementType(), entry.getArgument(2));
+      if (!initial)
+        return emitError(location)
+               << "clocking output clock is not directly readable";
+      if (initial.getType() != primaryType.getResultType())
+        initial = sim::SimPackedFlattenOp::create(
+            waitBuilder, location, primaryType.getResultType(), initial);
+      sim::SimSuspendObserveOp::create(
+          waitBuilder, location,
+          ValueRange{localPrimaryObserver, initial, localConditionObserver}, 1,
+          ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{0},
+          sim::ContinuationSiteAttr{},
+          sim::EventRegionAttr::get(context, sim::EventRegion::Reactive),
+          drive);
+    } else {
+      sim::SimSuspendEdgeOp::create(
+          waitBuilder, location, edge, entry.getArgument(2), ValueRange{},
+          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, drive);
+    }
   } else {
     // A drive issued by a continuation of @(clocking_block) belongs to that
     // clocking occurrence. Waiting here would silently move it one cycle.
@@ -1460,6 +1567,7 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
   SmallVector<Value> spawnInputs{processContext, target, clock, value};
   if (synchronizationPredicate)
     spawnInputs.push_back(synchronizationPredicate);
+  llvm::append_range(spawnInputs, observerSpawnOperands);
   sim::SimSpawnOp::create(builder, location, driver.getSymNameAttr(),
                           spawnInputs, ArrayAttr{}, ArrayAttr{});
   return success();

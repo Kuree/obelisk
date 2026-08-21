@@ -387,6 +387,30 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
                                         "wait", unit.id, unit.hierarchy});
         return;
       }
+      if (nested->hasAttr(clockingVariableAttrName) &&
+          nested->hasAttr(clockingEventHasIffAttrName)) {
+        auto direction =
+            nested->getAttrOfType<semantic::SVArgumentDirectionAttr>(
+                clockingAccessDirectionAttrName);
+        if (!direction ||
+            direction.getValue() == semantic::SVArgumentDirection::In)
+          return;
+        SmallVector<Operation *> children = getChildren(nested);
+        if (children.size() != 2) {
+          emitError(getSemanticLocation(nested))
+              << "clocking output with iff has no frozen clock and condition "
+                 "expressions";
+          invalid = true;
+          return;
+        }
+        observerCandidates.push_back(
+            {children[0], ObserverResult::Value, "clocking_primary", unit.id,
+             unit.hierarchy});
+        observerCandidates.push_back(
+            {children[1], ObserverResult::Truth, "clocking_iff", unit.id,
+             unit.hierarchy});
+        return;
+      }
       if (auto cycle = dyn_cast<semantic::SVCycleDelayControlOp>(nested)) {
         if (!cycle->hasAttr(clockingEventHasIffAttrName))
           return;

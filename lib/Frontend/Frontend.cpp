@@ -3084,6 +3084,25 @@ private:
     } else if constexpr (std::same_as<T, slang::ast::InstanceSymbol>) {
       importPortConnections(node);
       node.body.visit(*this);
+    } else if constexpr (
+        std::same_as<T, slang::ast::NamedValueExpression> ||
+        std::same_as<T, slang::ast::HierarchicalValueExpression>) {
+      this->visitDefault(node);
+      if (node.symbol.kind == slang::ast::SymbolKind::ClockVar) {
+        const auto &clockVar =
+            node.symbol.template as<slang::ast::ClockVarSymbol>();
+        const auto &clocking = clockVar.getParentScope()
+                                   ->asSymbol()
+                                   .template as<
+                                       slang::ast::ClockingBlockSymbol>();
+        if (const auto *event =
+                clocking.getEvent()
+                    .template as_if<slang::ast::SignalEventControl>();
+            event && event->iffCondition) {
+          event->expr.visit(*this);
+          event->iffCondition->visit(*this);
+        }
+      }
     } else if constexpr (std::same_as<
                              T, slang::ast::ArbitrarySymbolExpression>) {
       this->visitDefault(node);
