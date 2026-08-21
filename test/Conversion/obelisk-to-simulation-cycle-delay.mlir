@@ -1,7 +1,6 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=STRUCT
 // RUN: sed 's/clocking_event_edge = 1 : i32/clocking_event_edge = 2 : i32/g' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=NEGEDGE
-// RUN: sed 's/clocking_event_edge = 1 : i32/clocking_event_edge = 1 : i32, clocking_event_has_iff/g' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=IFF
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {}
@@ -108,4 +107,3 @@ module {
 // CHECK-DAG: obelisk_sim.spawn @unit_1.$clocking_output.55
 
 // NEGEDGE-COUNT-5: obelisk_sim.suspend.edge negedge
-// IFF: cycle delays with iff default clock events are not yet supported

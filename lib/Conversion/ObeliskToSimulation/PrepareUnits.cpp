@@ -387,6 +387,25 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
                                         "wait", unit.id, unit.hierarchy});
         return;
       }
+      if (auto cycle = dyn_cast<semantic::SVCycleDelayControlOp>(nested)) {
+        if (!cycle->hasAttr(clockingEventHasIffAttrName))
+          return;
+        SmallVector<Operation *> children = getChildren(cycle);
+        if (children.size() != 3) {
+          emitError(getSemanticLocation(cycle))
+              << "cycle delay with iff has no frozen clock and condition "
+                 "expressions";
+          invalid = true;
+          return;
+        }
+        observerCandidates.push_back(
+            {children[1], ObserverResult::Value, "clocking_primary", unit.id,
+             unit.hierarchy});
+        observerCandidates.push_back(
+            {children[2], ObserverResult::Truth, "clocking_iff", unit.id,
+             unit.hierarchy});
+        return;
+      }
       auto event = dyn_cast<semantic::SVSignalEventControlOp>(nested);
       if (!event)
         return;

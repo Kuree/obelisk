@@ -3099,6 +3099,19 @@ private:
           event->iffCondition->visit(*this);
         }
       }
+    } else if constexpr (std::same_as<T, slang::ast::CycleDelayControl>) {
+      this->visitDefault(node);
+      if (const slang::ast::Scope *scope = getCurrentScope())
+        if (const slang::ast::Symbol *clocking =
+                compilation.getDefaultClocking(*scope))
+          if (const auto *event =
+                  clocking->as<slang::ast::ClockingBlockSymbol>()
+                      .getEvent()
+                      .template as_if<slang::ast::SignalEventControl>();
+              event && event->iffCondition) {
+            event->expr.visit(*this);
+            event->iffCondition->visit(*this);
+          }
     } else if constexpr (std::same_as<T, slang::ast::VariableSymbol>) {
       this->visitDefault(node);
       if (!node.getInitializer()) {

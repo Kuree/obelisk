@@ -590,13 +590,10 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
     ValueRange continuationOperands) {
   Location location = getSemanticLocation(control);
   SmallVector<Operation *> children = getChildren(control);
-  if (children.size() != 1) {
+  bool hasIff = control->hasAttr(clockingEventHasIffAttrName);
+  size_t expectedChildren = hasIff ? 3 : 1;
+  if (children.size() != expectedChildren) {
     unsupported(control) << " (cycle-delay inventory)";
-    return failure();
-  }
-  if (control->hasAttr(clockingEventHasIffAttrName)) {
-    emitError(location)
-        << "cycle delays with iff default clock events are not yet supported";
     return failure();
   }
   auto clockPath =
@@ -614,11 +611,39 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
   std::optional<Value> incomingOccurrence =
       getCurrentClockingOccurrence(current, *clock);
 
+  Value primaryObserver;
+  Value conditionObserver;
+
   auto emitClockWait = [&](OpBuilder &waitBuilder, Block *successor,
-                           ValueRange operands) {
+                           ValueRange operands) -> LogicalResult {
     sim::EventRegionAttr reactive = sim::EventRegionAttr::get(
         function.getContext(), sim::EventRegion::Reactive);
     sim::EdgeKind edge = static_cast<sim::EdgeKind>(eventEdge.getValue());
+    if (hasIff) {
+      auto primaryType = cast<sim::ObserverType>(primaryObserver.getType());
+      Value initial;
+      if (auto reference = dyn_cast<sim::RefType>((*clock).getType()))
+        initial = sim::SimRefLoadOp::create(
+            waitBuilder, location, reference.getElementType(), *clock);
+      else if (auto net = dyn_cast<sim::NetType>((*clock).getType()))
+        initial = sim::SimNetReadOp::create(
+            waitBuilder, location, net.getElementType(), *clock);
+      if (!initial) {
+        emitError(location) << "cycle-delay clock is not directly readable";
+        return failure();
+      }
+      if (initial.getType() != primaryType.getResultType())
+        initial = sim::SimPackedFlattenOp::create(
+            waitBuilder, location, primaryType.getResultType(), initial);
+      SmallVector<Value> values{primaryObserver, initial, conditionObserver};
+      llvm::append_range(values, operands);
+      sim::SimSuspendObserveOp::create(
+          waitBuilder, location, values, 1,
+          ArrayRef<int32_t>{static_cast<int32_t>(edge)},
+          ArrayRef<int32_t>{0}, sim::ContinuationSiteAttr{}, reactive,
+          successor);
+      return success();
+    }
     if (edge == sim::EdgeKind::Change)
       sim::SimSuspendChangeOp::create(
           waitBuilder, location, *clock, operands,
@@ -627,6 +652,7 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
       sim::SimSuspendEdgeOp::create(
           waitBuilder, location, edge, *clock, operands,
           sim::ContinuationSiteAttr{}, reactive, successor);
+    return success();
   };
 
   FailureOr<Type> expressionType =
@@ -660,8 +686,17 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
                          continuationOperands);
     return success();
   }
+  if (hasIff) {
+    FailureOr<Value> primary = bindObserver(children[1]);
+    FailureOr<Value> condition = bindObserver(children[2]);
+    if (failed(primary) || failed(condition))
+      return failure();
+    primaryObserver = *primary;
+    conditionObserver = *condition;
+  }
   if (constantCount && constantCount->isOne()) {
-    emitClockWait(builder, continuation, continuationOperands);
+    if (failed(emitClockWait(builder, continuation, continuationOperands)))
+      return failure();
     clockingEventContinuations[continuation] = {*clock, {}};
     return success();
   }
@@ -730,7 +765,8 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
   }
 
   OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
-  emitClockWait(waitBuilder, resume, wait->getArguments());
+  if (failed(emitClockWait(waitBuilder, resume, wait->getArguments())))
+    return failure();
   OpBuilder resumeBuilder = OpBuilder::atBlockEnd(resume);
   Value one = arith::ConstantOp::create(
       resumeBuilder, location, countType,
