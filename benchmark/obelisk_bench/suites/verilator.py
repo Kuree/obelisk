@@ -224,6 +224,12 @@ SAME_VALUE_WRITE = Exclusion(
     "the test needs Verilator's triggering on the write itself (making "
     "`next_nba` static, so the value really changes, runs the test to its "
     "marker unchanged)")
+UNTIMED_ALWAYS = Exclusion(
+    "IEEE 1800-2017 9.2.2.1",
+    "\"If an always procedure has no control for simulation time to advance, "
+    "it will create a simulation deadlock condition\", and the test's design "
+    "spells its combinational logic as exactly that; the test needs "
+    "Verilator's inference of a sensitivity list for an untimed always")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dynarray": PATTERN_RADIX,
     "t_dynarray_method": PATTERN_RADIX,
@@ -237,7 +243,11 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_assigndly_dynamic": SAME_VALUE_WRITE,
     "t_case_unique_overlap": TWO_STATE_INITIALIZATION,
     "t_math_cmp": TWO_STATE_INITIALIZATION,
+    "t_split_var_types": UNTIMED_ALWAYS,
     "t_static_task_args": STATIC_SUBROUTINE_RECURSION,
+    "t_timing_write_expr": UNTIMED_ALWAYS,
+    "t_tri_cond_eqcase_with_1": UNTIMED_ALWAYS,
+    "t_tri_eqcase_input": UNTIMED_ALWAYS,
     "t_param_avec": ARRAY_ASSIGNMENT_ORDER,
     "t_property_until": FOUR_STATE_CLOCK_STARTUP,
     "t_property_until_implication": ACTION_BLOCK_PER_ATTEMPT,
