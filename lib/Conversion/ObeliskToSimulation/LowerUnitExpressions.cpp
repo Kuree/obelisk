@@ -1978,15 +1978,35 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
   VirtualMemberTargets *targets = nullptr;
   Type selectedType;
   bool isNet = false;
+  bool isDriver = false;
   if (auto found = virtualInterfaceStorageMembers.find(key);
       found != virtualInterfaceStorageMembers.end()) {
     targets = &found->second;
     selectedType = sim::RefType::get(function.getContext(), elementType);
   } else if (auto found = virtualInterfaceNetMembers.find(key);
              found != virtualInterfaceNetMembers.end()) {
-    targets = &found->second;
-    selectedType = sim::NetType::get(function.getContext(), elementType);
-    isNet = true;
+    if (lvalue && op->hasAttr("virtual_interface_clocking")) {
+      auto node = op->getAttrOfType<IntegerAttr>("node_id");
+      if (!node) {
+        emitError(location) << "virtual clocking output has no stable site";
+        return failure();
+      }
+      std::string driverKey =
+          (Twine(key) + "\n" + Twine(node.getValue().getZExtValue())).str();
+      auto drivers = virtualInterfaceDriverMembers.find(driverKey);
+      if (drivers == virtualInterfaceDriverMembers.end()) {
+        emitError(location)
+            << "virtual clocking output net has no procedural driver";
+        return failure();
+      }
+      targets = &drivers->second;
+      selectedType = sim::DriverType::get(function.getContext(), elementType);
+      isDriver = true;
+    } else {
+      targets = &found->second;
+      selectedType = sim::NetType::get(function.getContext(), elementType);
+      isNet = true;
+    }
   }
   if (!targets || targets->empty()) {
     emitError(location) << "virtual interface member '" << member.getValue()
@@ -2022,7 +2042,9 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
   SmallVector<Value> staticTargets;
   staticTargets.reserve(targets->size());
   DenseMap<uint64_t, Value> &handleCache =
-      isNet ? virtualInterfaceNetHandles : virtualInterfaceStorageHandles;
+      isDriver ? virtualInterfaceDriverHandles
+      : isNet  ? virtualInterfaceNetHandles
+               : virtualInterfaceStorageHandles;
   for (auto [scopeID, descriptorID] : *targets) {
     (void)scopeID;
     Value selected = handleCache.lookup(descriptorID);
@@ -2030,12 +2052,18 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
       OpBuilder entryBuilder(function.getContext());
       entryBuilder.setInsertionPointToStart(&function.getBody().front());
       Value context = function.getBody().front().getArgument(0);
-      selected = isNet ? Value(sim::SimContextNetOp::create(
-                             entryBuilder, location, selectedType, context,
-                             entryBuilder.getI64IntegerAttr(descriptorID)))
-                       : Value(sim::SimContextStorageOp::create(
-                             entryBuilder, location, selectedType, context,
-                             entryBuilder.getI64IntegerAttr(descriptorID)));
+      if (isDriver)
+        selected = sim::SimContextDriverOp::create(
+            entryBuilder, location, selectedType, context,
+            entryBuilder.getI64IntegerAttr(descriptorID));
+      else if (isNet)
+        selected = sim::SimContextNetOp::create(
+            entryBuilder, location, selectedType, context,
+            entryBuilder.getI64IntegerAttr(descriptorID));
+      else
+        selected = sim::SimContextStorageOp::create(
+            entryBuilder, location, selectedType, context,
+            entryBuilder.getI64IntegerAttr(descriptorID));
       handleCache[descriptorID] = selected;
     }
     staticTargets.push_back(selected);

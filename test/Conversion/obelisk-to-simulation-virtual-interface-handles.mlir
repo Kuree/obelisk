@@ -5,6 +5,7 @@
 // RUN: sed 's/virtual_interface_clock_output_skew_edge = 0 : i32/virtual_interface_clock_output_skew_edge = 2 : i32/g' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=OUTPUT-EDGE
 // RUN: sed 's/virtual_interface_clocking_block_event/virtual_interface_clock_event_has_iff, virtual_interface_clocking_block_event/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=CLOCK-IFF
 // RUN: sed 's/definition_kind = 0 : i32/definition_kind = 2 : i32/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=PROGRAM
+// RUN: sed -e 's/member_name = "signal", node_id = 36/member_name = "ready", node_id = 36/' -e 's/member_name = "signal", node_id = 79/member_name = "ready", node_id = 79/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=NET-OUTPUT
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 1 : i32, hierarchical_name = "bus_if", name = "bus_if", node_id = 0 : i64, sym_name = "s0.bus_if"} {}
@@ -226,3 +227,20 @@ module {
 // PROGRAM-SAME: domain = 1 : i32
 // PROGRAM-SAME: home_region = 10 : i32
 // PROGRAM: obelisk_sim.nba.enqueue
+// A net output gets one procedural driver per syntactic site and elaborated
+// interface instance. The virtual handle selects that driver at runtime.
+// NET-OUTPUT-DAG: hierarchy "top.bus.ready.$clocking_output.36" debug "virtual clocking output"
+// NET-OUTPUT-DAG: hierarchy "top.other.ready.$clocking_output.36" debug "virtual clocking output"
+// NET-OUTPUT-DAG: hierarchy "top.bus.ready.$clocking_output.79" debug "virtual clocking output"
+// NET-OUTPUT-DAG: hierarchy "top.other.ready.$clocking_output.79" debug "virtual clocking output"
+// NET-OUTPUT-LABEL: obelisk_sim.func private @unit_0.$clocking_output.36
+// NET-OUTPUT-SAME: %{{.*}}: !obelisk_sim.driver<!obelisk_sim.logic<1>>
+// NET-OUTPUT: obelisk_sim.nba.enqueue
+// NET-OUTPUT-SAME: !obelisk_sim.driver<!obelisk_sim.logic<1>>
+// NET-OUTPUT-LABEL: obelisk_sim.func private @unit_0(
+// NET-OUTPUT-DAG: obelisk_sim.context.driver
+// NET-OUTPUT-DAG: obelisk_sim.context.driver
+// NET-OUTPUT-DAG: obelisk_sim.context.driver
+// NET-OUTPUT-DAG: obelisk_sim.context.driver
+// NET-OUTPUT: obelisk_sim.spawn @unit_0.$clocking_output.36
+// NET-OUTPUT-SAME: !obelisk_sim.driver<!obelisk_sim.logic<1>>

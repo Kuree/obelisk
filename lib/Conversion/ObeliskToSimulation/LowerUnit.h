@@ -504,8 +504,10 @@ private:
       ::mlir::SmallVector<std::pair<uint64_t, uint64_t>>;
   ::llvm::StringMap<VirtualMemberTargets> virtualInterfaceStorageMembers;
   ::llvm::StringMap<VirtualMemberTargets> virtualInterfaceNetMembers;
+  ::llvm::StringMap<VirtualMemberTargets> virtualInterfaceDriverMembers;
   ::llvm::DenseMap<uint64_t, ::mlir::Value> virtualInterfaceStorageHandles;
   ::llvm::DenseMap<uint64_t, ::mlir::Value> virtualInterfaceNetHandles;
+  ::llvm::DenseMap<uint64_t, ::mlir::Value> virtualInterfaceDriverHandles;
   ::llvm::DenseMap<uint64_t, ::mlir::Type> virtualInterfaceStorageTypes;
   ::llvm::DenseMap<uint64_t, ::mlir::Type> virtualInterfaceNetTypes;
   ::llvm::SetVector<::mlir::Value> virtualInterfaceReadSensitivity;

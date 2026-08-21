@@ -447,6 +447,22 @@ void UnitLowering::ensureVirtualInterfaceInventory() {
         virtualInterfaceNetMembers[memberKey(scope->second.getValue(),
                                              member.getValue())]
             .push_back({net.getScopeId(), net.getId()});
+      continue;
+    }
+    if (auto driver = dyn_cast<sim::SimDriverDeclOp>(operation)) {
+      auto scope = interfaceScopes.find(driver.getScopeId());
+      StringAttr member = driver->getAttrOfType<StringAttr>(
+          "obelisk_sim.virtual_interface_member");
+      IntegerAttr site = driver->getAttrOfType<IntegerAttr>(
+          "obelisk_sim.virtual_interface_clocking_site");
+      if (scope != interfaceScopes.end() && member && site) {
+        std::string key =
+            (Twine(memberKey(scope->second.getValue(), member.getValue())) +
+             "\n" + Twine(site.getValue().getZExtValue()))
+                .str();
+        virtualInterfaceDriverMembers[key].push_back(
+            {driver.getScopeId(), driver.getId()});
+      }
     }
   }
 }

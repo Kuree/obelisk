@@ -585,6 +585,104 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
   }
   if (invalid)
     return failure();
+
+  // A virtual-interface clocking output can select any elaborated interface
+  // instance at runtime. Give each syntactic output site one driver in every
+  // matching instance; unit lowering selects the driver by the handle's scope.
+  DenseMap<uint64_t, StringAttr> interfaceScopes;
+  llvm::StringMap<SmallVector<sim::SimNetDeclOp>> interfaceNets;
+  Block *inventory = builder.getInsertionBlock();
+  for (Operation &operation : *inventory)
+    if (auto scope = dyn_cast<sim::SimScopeDeclOp>(operation))
+      if (StringAttr identity = scope.getInterfaceTypeAttr())
+        interfaceScopes[scope.getId()] = identity;
+  for (Operation &operation : *inventory) {
+    auto net = dyn_cast<sim::SimNetDeclOp>(operation);
+    if (!net)
+      continue;
+    auto scope = interfaceScopes.find(net.getScopeId());
+    StringAttr member =
+        net->getAttrOfType<StringAttr>("obelisk_sim.virtual_interface_member");
+    if (scope == interfaceScopes.end() || !member)
+      continue;
+    std::string key =
+        (Twine(scope->second.getValue()) + "\n" + member.getValue()).str();
+    interfaceNets[key].push_back(net);
+  }
+
+  for (Operation *unit : sourceUnits) {
+    unit->walk<WalkOrder::PreOrder>([&](Operation *nested) -> WalkResult {
+      if (nested != unit && sourceUnitSet.contains(nested))
+        return WalkResult::skip();
+      auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(nested);
+      if (!assignment)
+        return WalkResult::advance();
+      SmallVector<Operation *> children = getChildren(assignment);
+      size_t destinationIndex = assignment.getHasTimingControl() ? 1 : 0;
+      if (children.size() <= destinationIndex)
+        return WalkResult::advance();
+      auto destination = dyn_cast<semantic::SVMemberAccessExpressionOp>(
+          children[destinationIndex]);
+      if (!destination || !destination->hasAttr("virtual_interface_clocking"))
+        return WalkResult::advance();
+      auto direction =
+          destination->getAttrOfType<semantic::SVArgumentDirectionAttr>(
+              "virtual_interface_access_direction");
+      auto member = destination->getAttrOfType<StringAttr>("member_name");
+      auto node = destination->getAttrOfType<IntegerAttr>("node_id");
+      SmallVector<Operation *> receiver = getChildren(destination);
+      FailureOr<Type> receiverType =
+          receiver.size() == 1 ? getNormalizedSemanticType(receiver.front())
+                               : FailureOr<Type>(failure());
+      auto interfaceType =
+          succeeded(receiverType)
+              ? dyn_cast<sim::VirtualInterfaceType>(*receiverType)
+              : sim::VirtualInterfaceType{};
+      if (!direction ||
+          direction.getValue() == semantic::SVArgumentDirection::In ||
+          !member || !node || !interfaceType)
+        return WalkResult::advance();
+      std::string key = (Twine(interfaceType.getInterfaceName().getValue()) +
+                         "\n" + member.getValue())
+                            .str();
+      auto targets = interfaceNets.find(key);
+      if (targets == interfaceNets.end())
+        return WalkResult::advance();
+      for (sim::SimNetDeclOp net : targets->second) {
+        std::optional<unsigned> width =
+            analysis::getSimulationStorageBitWidth(net.getType());
+        if (!width) {
+          emitError(getSemanticLocation(destination))
+              << "virtual clocking output net has no fixed storage width";
+          invalid = true;
+          return WalkResult::interrupt();
+        }
+        StringRef path = net.getHierarchicalName().value_or(StringRef{});
+        uint64_t id = nextDriverId++;
+        DescriptorInfo info{DescriptorInfo::Kind::Driver, id, net.getScopeId(),
+                            net.getType(), net.getResolutionKind()};
+        info.rootType = net.getType();
+        continuousDrivers[destination].push_back(
+            {path.str(), info, std::nullopt, 0, *width});
+        std::string hierarchy = (Twine(path) + ".$clocking_output." +
+                                 Twine(node.getValue().getZExtValue()))
+                                    .str();
+        auto driver = sim::SimDriverDeclOp::create(
+            builder, getSemanticLocation(destination), id, net.getScopeId(),
+            net.getId(), net.getType(), sim::Lifetime::Design,
+            builder.getStringAttr(hierarchy),
+            builder.getStringAttr("virtual clocking output"),
+            builder.getI64IntegerAttr(0), builder.getI64IntegerAttr(*width));
+        driver->setAttr("obelisk_sim.virtual_interface_member", member);
+        driver->setAttr("obelisk_sim.virtual_interface_clocking_site", node);
+      }
+      return WalkResult::advance();
+    });
+    if (invalid)
+      break;
+  }
+  if (invalid)
+    return failure();
   return continuousDrivers;
 }
 
