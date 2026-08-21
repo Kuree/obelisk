@@ -337,13 +337,19 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
         children.front()->hasAttr(clockingBlockEventAttrName);
     bool clockingBlockEvent =
         virtualClockingBlockEvent || staticClockingBlockEvent;
-    if (clockingBlockEvent &&
-        (children.front()->hasAttr("virtual_interface_clock_event_has_iff") ||
-         children.front()->hasAttr(clockingEventHasIffAttrName))) {
-      emitError(location) << (virtualClockingBlockEvent
-                                  ? "virtual clocking-block events"
-                                  : "clocking-block events")
-                          << " with iff are not yet supported";
+    bool virtualClockingIff =
+        children.front()->hasAttr("virtual_interface_clock_event_has_iff");
+    bool staticClockingIff =
+        children.front()->hasAttr(clockingEventHasIffAttrName);
+    if (virtualClockingBlockEvent && virtualClockingIff) {
+      emitError(location)
+          << "virtual clocking-block events with iff are not yet supported";
+      return failure();
+    }
+    if (staticClockingBlockEvent && staticClockingIff && event.getHasIff()) {
+      emitError(location)
+          << "a clocking block with a declared iff cannot yet be combined "
+             "with an additional event-control iff";
       return failure();
     }
     FailureOr<Type> watchedType =
@@ -378,6 +384,35 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
                  children.front()->getAttrOfType<semantic::EdgeKindAttr>(
                      clockingEventEdgeAttrName))
       edge = static_cast<sim::EdgeKind>(clockingEdge.getValue());
+    if (staticClockingBlockEvent && staticClockingIff) {
+      SmallVector<Operation *> clockingChildren =
+          getChildren(children.front());
+      if (clockingChildren.size() != 2) {
+        emitError(location)
+            << "clocking-block event with iff has no frozen clock and "
+               "condition expressions";
+        return failure();
+      }
+      SmallVector<Value> dynamicDependencies;
+      FailureOr<Value> initial =
+          evaluateInitial(clockingChildren[0], dynamicDependencies);
+      FailureOr<Value> primary =
+          bindObserver(clockingChildren[0], dynamicDependencies);
+      FailureOr<Value> condition = bindObserver(clockingChildren[1]);
+      if (failed(initial) || failed(primary) || failed(condition))
+        return failure();
+      SmallVector<Value> observerValues{*primary, *initial, *condition};
+      llvm::append_range(observerValues, continuationOperands);
+      sim::SimSuspendObserveOp::create(
+          builder, location, observerValues, 1,
+          ArrayRef<int32_t>{static_cast<int32_t>(edge)},
+          ArrayRef<int32_t>{0}, sim::ContinuationSiteAttr{},
+          sim::EventRegionAttr::get(function.getContext(),
+                                    sim::EventRegion::Reactive),
+          continuation);
+      clockingEventContinuations[continuation] = {*handle, {}};
+      return success();
+    }
     if (!event.getHasIff() && isa<sim::ManagedRefType>((*handle).getType())) {
       // IEEE 1800-2017 9.4.2 permits event controls on object members. A
       // managed reference cannot survive a suspension as an interior pointer,

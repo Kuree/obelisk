@@ -404,8 +404,26 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
       // observer would lose the frozen event identity (and, for a virtual
       // interface, its receiver handle).
       if (children.front()->hasAttr("virtual_interface_clocking_block_event") ||
-          children.front()->hasAttr(clockingBlockEventAttrName))
+          children.front()->hasAttr(clockingBlockEventAttrName)) {
+        if (children.front()->hasAttr(clockingEventHasIffAttrName)) {
+          SmallVector<Operation *> clockingChildren =
+              getChildren(children.front());
+          if (clockingChildren.size() != 2) {
+            emitError(getSemanticLocation(children.front()))
+                << "clocking-block event with iff has no frozen clock and "
+                   "condition expressions";
+            invalid = true;
+            return;
+          }
+          observerCandidates.push_back(
+              {clockingChildren[0], ObserverResult::Value, "clocking_primary",
+               unit.id, unit.hierarchy});
+          observerCandidates.push_back(
+              {clockingChildren[1], ObserverResult::Truth, "clocking_iff",
+               unit.id, unit.hierarchy});
+        }
         return;
+      }
       ObserverResult primaryResult = ObserverResult::Value;
       FailureOr<Type> primaryType =
           children.front()->hasAttr("virtual_interface_clocking_block_event")
