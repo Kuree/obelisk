@@ -389,16 +389,10 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
       }
       if (nested->hasAttr(clockingVariableAttrName) &&
           nested->hasAttr(clockingEventHasIffAttrName)) {
-        auto direction =
-            nested->getAttrOfType<semantic::SVArgumentDirectionAttr>(
-                clockingAccessDirectionAttrName);
-        if (!direction ||
-            direction.getValue() == semantic::SVArgumentDirection::In)
-          return;
         SmallVector<Operation *> children = getChildren(nested);
         if (children.size() != 2) {
           emitError(getSemanticLocation(nested))
-              << "clocking output with iff has no frozen clock and condition "
+              << "clocking variable with iff has no frozen clock and condition "
                  "expressions";
           invalid = true;
           return;

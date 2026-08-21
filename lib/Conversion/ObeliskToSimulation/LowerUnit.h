@@ -257,7 +257,9 @@ private:
   lowerClockingInputSample(::mlir::Value source, uint64_t sourceDescriptor,
                            ::mlir::Value clock, uint64_t clockDescriptor,
                            sim::EdgeKind edge, bool oneStep,
-                           ::mlir::Location location);
+                           ::mlir::Location location,
+                           ::mlir::Value primaryObserver = {},
+                           ::mlir::Value conditionObserver = {});
   ::mlir::FailureOr<::mlir::Value>
   lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
