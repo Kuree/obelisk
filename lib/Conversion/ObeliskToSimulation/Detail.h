@@ -325,6 +325,21 @@ inline constexpr ::mlir::StringLiteral observerDependenciesAttrName =
 inline constexpr ::mlir::StringLiteral sampledObserverAttrName =
     "obelisk_sim.sampled_observer";
 
+/// Frozen descriptor for an ordinary (non-virtual) clocking-block event.
+/// The frontend retains the clocking-block symbol as the expression's normal
+/// reference and records the statically resolved event signal separately so
+/// preparation can capture the signal without reopening Slang's AST.
+inline constexpr ::mlir::StringLiteral clockingBlockEventAttrName =
+    "clocking_block_event";
+inline constexpr ::mlir::StringLiteral clockingEventEdgeAttrName =
+    "clocking_event_edge";
+inline constexpr ::mlir::StringLiteral clockingEventHasIffAttrName =
+    "clocking_event_has_iff";
+inline constexpr ::mlir::StringLiteral clockingEventPathAttrName =
+    "clocking_event_path";
+inline constexpr ::mlir::StringLiteral clockingEventSymbolAttrName =
+    "clocking_event_symbol";
+
 inline std::optional<ObserverResult>
 parseObserverResult(::mlir::IntegerAttr attribute) {
   if (!attribute)

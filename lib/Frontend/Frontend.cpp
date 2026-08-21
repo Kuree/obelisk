@@ -1253,6 +1253,35 @@ private:
     }
   }
 
+  /// Freeze the directly addressable event selected by an ordinary clocking
+  /// block.  Clocking-block references have void expression type in Slang;
+  /// retaining the event signal separately lets executable lowering watch the
+  /// actual storage while preserving the clocking block's symbol identity.
+  void addStaticClockingEvent(NamedAttrList &attrs,
+                              const slang::ast::ClockingBlockSymbol &clocking) {
+    attrs.set("clocking_block_event", builder.getUnitAttr());
+    const auto *event =
+        clocking.getEvent().as_if<slang::ast::SignalEventControl>();
+    if (!event)
+      return;
+    attrs.set("clocking_event_edge",
+              slangir::EdgeKindAttr::get(builder.getContext(),
+                                         convertEnum(event->edge)));
+    if (event->iffCondition)
+      attrs.set("clocking_event_has_iff", builder.getUnitAttr());
+    const slang::ast::Symbol *clockSymbol = nullptr;
+    if (auto *named = event->expr.as_if<slang::ast::NamedValueExpression>())
+      clockSymbol = &named->symbol;
+    else if (auto *hierarchical =
+                 event->expr.as_if<slang::ast::HierarchicalValueExpression>())
+      clockSymbol = &hierarchical->symbol;
+    if (!clockSymbol)
+      return;
+    setSymbolReference(attrs, *clockSymbol,
+                       builder.getStringAttr("clocking_event_symbol"),
+                       builder.getStringAttr("clocking_event_path"));
+  }
+
   template <typename Node>
   static bool canMakeDefaultAssertionInstance(const Node &node) {
     return std::ranges::all_of(node.ports, [](const auto *port) {
@@ -1517,6 +1546,9 @@ private:
     } else if constexpr (std::same_as<T,
                                       slang::ast::ArbitrarySymbolExpression>) {
       setReferencedSymbol<Op>(attrs, *node.symbol);
+      if (node.symbol->kind == slang::ast::SymbolKind::ClockingBlock)
+        addStaticClockingEvent(
+            attrs, node.symbol->template as<slang::ast::ClockingBlockSymbol>());
     } else if constexpr (std::same_as<T, slang::ast::MemberAccessExpression>) {
       setReferencedSymbol<Op>(attrs, node.member);
       attrs.set("member_name", builder.getStringAttr(node.member.name));

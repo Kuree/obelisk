@@ -331,16 +331,23 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
         return success();
       }
     }
-    bool clockingBlockEvent =
+    bool virtualClockingBlockEvent =
         children.front()->hasAttr("virtual_interface_clocking_block_event");
+    bool staticClockingBlockEvent =
+        children.front()->hasAttr(clockingBlockEventAttrName);
+    bool clockingBlockEvent =
+        virtualClockingBlockEvent || staticClockingBlockEvent;
     if (clockingBlockEvent &&
-        children.front()->hasAttr("virtual_interface_clock_event_has_iff")) {
-      emitError(location)
-          << "virtual clocking-block events with iff are not yet supported";
+        (children.front()->hasAttr("virtual_interface_clock_event_has_iff") ||
+         children.front()->hasAttr(clockingEventHasIffAttrName))) {
+      emitError(location) << (virtualClockingBlockEvent
+                                  ? "virtual clocking-block events"
+                                  : "clocking-block events")
+                          << " with iff are not yet supported";
       return failure();
     }
     FailureOr<Type> watchedType =
-        children.front()->hasAttr("virtual_interface_clocking_block_event")
+        clockingBlockEvent
             ? FailureOr<Type>(sim::LogicType::get(function.getContext(), 1))
             : getNormalizedSemanticType(children.front());
     if (failed(watchedType))
@@ -350,11 +357,12 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
     // has no watchable handle is re-evaluated by an observer instead, which
     // reports a change in exactly that value.
     bool computed =
-        !isAddressableExpression(children.front()) ||
-        !hasWatchableSignalHandle(children.front()) ||
-        (event.getHasIff() && (!isAddressableExpression(children[1]) ||
-                               !hasWatchableSignalHandle(children[1]) ||
-                               isa<sim::EventType>(*watchedType)));
+        !clockingBlockEvent &&
+        (!isAddressableExpression(children.front()) ||
+         !hasWatchableSignalHandle(children.front()) ||
+         (event.getHasIff() && (!isAddressableExpression(children[1]) ||
+                                !hasWatchableSignalHandle(children[1]) ||
+                                isa<sim::EventType>(*watchedType))));
     if (computed)
       return emitObserved(ArrayRef<semantic::SVSignalEventControlOp>(event));
     FailureOr<Value> handle =
@@ -365,6 +373,10 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
     if (auto clockingEdge =
             children.front()->getAttrOfType<semantic::EdgeKindAttr>(
                 "virtual_interface_clock_event_edge"))
+      edge = static_cast<sim::EdgeKind>(clockingEdge.getValue());
+    else if (auto clockingEdge =
+                 children.front()->getAttrOfType<semantic::EdgeKindAttr>(
+                     clockingEventEdgeAttrName))
       edge = static_cast<sim::EdgeKind>(clockingEdge.getValue());
     if (!event.getHasIff() && isa<sim::ManagedRefType>((*handle).getType())) {
       // IEEE 1800-2017 9.4.2 permits event controls on object members. A

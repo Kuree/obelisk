@@ -399,10 +399,12 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
                 instance->getAttrOfType<TypeAttr>("semantic_type");
             type && isa<semantic::SequenceType>(type.getValue()))
           return;
-      // A virtual clocking-block event is lowered directly to the dynamically
-      // selected clock descriptor. Outlining its void-typed surface
-      // expression as a value observer would lose that interface handle.
-      if (children.front()->hasAttr("virtual_interface_clocking_block_event"))
+      // A clocking-block event is lowered directly to its selected clock
+      // descriptor. Outlining its void-typed surface expression as a value
+      // observer would lose the frozen event identity (and, for a virtual
+      // interface, its receiver handle).
+      if (children.front()->hasAttr("virtual_interface_clocking_block_event") ||
+          children.front()->hasAttr(clockingBlockEventAttrName))
         return;
       ObserverResult primaryResult = ObserverResult::Value;
       FailureOr<Type> primaryType =
