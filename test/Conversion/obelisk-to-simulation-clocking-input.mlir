@@ -1,6 +1,8 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 // RUN: sed 's/clocking_input_skew_one_step/clocking_input_skew_delay = "0"/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=ZERO
-// RUN: sed 's/clocking_input_skew_one_step/clocking_input_skew_delay = "2"/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=SKEW
+// RUN: sed 's/clocking_input_skew_one_step/clocking_input_skew_delay = "2"/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=SKEW
+// RUN: sed 's/clocking_input_skew_one_step/clocking_input_skew_delay = "1.5", clocking_input_skew_delay_is_real = true/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=REAL-SKEW
+// RUN: sed 's/clocking_input_skew_one_step/clocking_input_skew_delay = "-1"/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=BAD-SKEW
 // RUN: sed 's/clocking_access_direction = 0 : i32, clocking_event_edge/clocking_access_direction = 1 : i32, clocking_event_edge/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=OUTPUT-READ
 
 module {
@@ -61,5 +63,26 @@ module {
 // ZERO: obelisk_sim.suspend.edge posedge
 // ZERO: obelisk_sim.ref.load
 // ZERO: obelisk_sim.assert.clocked_sample_update
-// SKEW: clocking input skew currently requires #1step, #0, or an edge
+// A positive skew maintains a transport-delayed mirror of the source. Delayed
+// changes publish after the event's Observed sampling boundary, so an event
+// exactly at source-change-plus-skew still sees the Preponed source value.
+// SKEW-LABEL: obelisk_sim.func private @unit_0.$clocking_input_delay.{{[0-9]+}}.commit
+// SKEW: obelisk_sim.time.constant 2000000
+// SKEW: obelisk_sim.suspend.delay
+// SKEW-SAME: resume_region = 16 : i32
+// SKEW: obelisk_sim.assert.clocked_sample_update
+// SKEW-LABEL: obelisk_sim.func private @unit_0.$clocking_input_delay.{{[0-9]+}}(
+// SKEW: obelisk_sim.assert.sampled_read
+// SKEW: obelisk_sim.suspend.change
+// SKEW: obelisk_sim.ref.load
+// SKEW: obelisk_sim.spawn @unit_0.$clocking_input_delay.{{[0-9]+}}.commit
+// SKEW-LABEL: obelisk_sim.func private @unit_0.$clocking_input.{{[0-9]+}}
+// SKEW: obelisk_sim.suspend.edge posedge
+// SKEW: obelisk_sim.assert.clocked_sample_read
+// SKEW: obelisk_sim.assert.clocked_sample_update
+// SKEW-NOT: obelisk.sv.
+
+// Real skews round to the clocking block's timeprecision.
+// REAL-SKEW: obelisk_sim.time.constant 2000000
+// BAD-SKEW: clocking input skew is not a known nonnegative value
 // OUTPUT-READ: cannot read an output clocking variable

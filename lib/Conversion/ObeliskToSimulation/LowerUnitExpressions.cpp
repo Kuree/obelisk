@@ -9,6 +9,7 @@
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <limits>
 #include <optional>
@@ -54,6 +55,50 @@ bool isTaggedUnionType(Type type) {
   if (auto unpacked = dyn_cast<sim::UnpackedUnionType>(type))
     return unpacked.getIsTagged();
   return false;
+}
+
+FailureOr<uint64_t> parseClockingInputSkew(Operation *op, StringRef delayName,
+                                           StringRef delayIsRealName,
+                                           StringRef timeUnitName,
+                                           StringRef timePrecisionName,
+                                           Location location) {
+  auto spelling = op->getAttrOfType<StringAttr>(delayName);
+  auto unit = op->getAttrOfType<IntegerAttr>(timeUnitName);
+  auto precision = op->getAttrOfType<IntegerAttr>(timePrecisionName);
+  if (!spelling || !unit || !precision || unit.getValue().isZero() ||
+      precision.getValue().isZero())
+    return emitError(location) << "clocking input has invalid numeric skew",
+           failure();
+  uint64_t unitFS = unit.getValue().getZExtValue();
+  uint64_t precisionFS = precision.getValue().getZExtValue();
+  auto isRealAttr = op->getAttrOfType<BoolAttr>(delayIsRealName);
+  bool isReal = isRealAttr && isRealAttr.getValue();
+  long double scaled = 0;
+  if (isReal) {
+    double amount = 0;
+    if (spelling.getValue().getAsDouble(amount) || !std::isfinite(amount) ||
+        amount < 0)
+      return emitError(location)
+                 << "clocking input skew is not finite and nonnegative",
+             failure();
+    scaled = std::round(amount * static_cast<long double>(unitFS) /
+                        static_cast<long double>(precisionFS)) *
+             precisionFS;
+  } else {
+    FailureOr<ParsedConstant> parsed =
+        parseSVInteger(spelling.getValue(), 64, location);
+    if (failed(parsed))
+      return failure();
+    if (!parsed->unknown.isZero() || parsed->value.isNegative())
+      return emitError(location)
+                 << "clocking input skew is not a known nonnegative value",
+             failure();
+    scaled = static_cast<long double>(parsed->value.getZExtValue()) * unitFS;
+  }
+  if (scaled > std::numeric_limits<uint64_t>::max())
+    return emitError(location) << "clocking input skew exceeds simulation time",
+           failure();
+  return static_cast<uint64_t>(scaled);
 }
 
 } // namespace
@@ -115,10 +160,15 @@ UnitLowering::lowerStaticClockingVariable(Operation *op, bool lvalue) {
   bool edgeOnly = op->hasAttr(clockingInputSkewEdgeOnlyAttrName);
   auto delay = op->getAttrOfType<StringAttr>(clockingInputSkewDelayAttrName);
   bool zeroDelay = delay && delay.getValue() == "0";
+  uint64_t skewTicks = 0;
   if (!oneStep && !edgeOnly && !zeroDelay) {
-    emitError(location)
-        << "clocking input skew currently requires #1step, #0, or an edge";
-    return failure();
+    FailureOr<uint64_t> parsed = parseClockingInputSkew(
+        op, clockingInputSkewDelayAttrName,
+        clockingInputSkewDelayIsRealAttrName, clockingTimeUnitAttrName,
+        clockingTimePrecisionAttrName, location);
+    if (failed(parsed))
+      return failure();
+    skewTicks = *parsed;
   }
   semantic::EdgeKind selectedEdge =
       skewEdge.getValue() != semantic::EdgeKind::Change
@@ -139,7 +189,7 @@ UnitLowering::lowerStaticClockingVariable(Operation *op, bool lvalue) {
   }
   return lowerClockingInputSample(
       *source, sourceDescriptor->second, *clock, clockDescriptor->second,
-      static_cast<sim::EdgeKind>(selectedEdge), oneStep, location,
+      static_cast<sim::EdgeKind>(selectedEdge), oneStep, skewTicks, location,
       primaryObserver, conditionObserver);
 }
 
@@ -1946,7 +1996,8 @@ FailureOr<Value> UnitLowering::bindVirtualClockingObserver(
 FailureOr<Value> UnitLowering::lowerClockingInputSample(
     Value source, uint64_t sourceDescriptor, Value clock,
     uint64_t clockDescriptor, sim::EdgeKind edge, bool oneStep,
-    Location location, Value primaryObserver, Value conditionObserver) {
+    uint64_t skewTicks, Location location, Value primaryObserver,
+    Value conditionObserver) {
   Type sourceType = getReferenceElementType(source);
   if (auto net = dyn_cast<sim::NetType>(source.getType()))
     sourceType = net.getElementType();
@@ -2038,6 +2089,151 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
     primaryPlan = std::move(*primary);
     conditionPlan = std::move(*condition);
   }
+
+  uint64_t delayedSiteID = 0;
+  if (skewTicks) {
+    std::string delayKey = (function.getSymName() + "|clocking-input-delay|" +
+                            Twine(sourceDescriptor) + "|" + Twine(skewTicks))
+                               .str();
+    delayedSiteID = stableCodeUnitID(delayKey);
+    if (!alternateClockSamplePlans.contains(delayKey)) {
+      alternateClockSamplePlans[delayKey] = {delayedSiteID, 1, sourceType};
+      MLIRContext *context = function.getContext();
+      std::string monitorSymbol =
+          (function.getSymName() + ".$clocking_input_delay." +
+           Twine(delayedSiteID))
+              .str();
+      std::string monitorHierarchy =
+          (function.getSymName() + ".$clocking_input_delay." +
+           Twine(delayedSiteID))
+              .str();
+      std::string commitSymbol = monitorSymbol + ".commit";
+      uint64_t commitID = stableCodeUnitID(commitSymbol);
+      OpBuilder outlineBuilder(function);
+      outlineBuilder.setInsertionPoint(function);
+
+      sim::SimCodeUnitDeclOp::create(
+          outlineBuilder, location, commitID, uint64_t{0}, sim::EntryKind::Fork,
+          outlineBuilder.getStringAttr(commitSymbol),
+          outlineBuilder.getStringAttr("delayed clocking input sample"),
+          outlineBuilder.getUnitAttr());
+      SmallVector<DictionaryAttr> commitArgAttrs{
+          captureMetadata(outlineBuilder, sim::CaptureKind::Context),
+          captureMetadata(outlineBuilder, sim::CaptureKind::Value)};
+      SmallVector<NamedAttribute> commitAttrs{
+          outlineBuilder.getNamedAttr(
+              "code_unit_id", outlineBuilder.getI64IntegerAttr(commitID)),
+          outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
+          outlineBuilder.getNamedAttr(
+              "home_region",
+              sim::EventRegionAttr::get(context, sim::EventRegion::Active)),
+          outlineBuilder.getNamedAttr(
+              "domain", sim::ExecutionDomainAttr::get(
+                            context, sim::ExecutionDomain::Design)),
+          outlineBuilder.getNamedAttr(
+              sim::metadata::hierarchicalName,
+              outlineBuilder.getStringAttr(commitSymbol))};
+      sim::SimFuncOp commit = sim::SimFuncOp::create(
+          outlineBuilder, location, commitSymbol,
+          FunctionType::get(
+              context, TypeRange{sim::ContextType::get(context), sourceType},
+              TypeRange{}),
+          sim::EntryKind::Fork, commitAttrs, commitArgAttrs);
+      SymbolTable::setSymbolVisibility(commit,
+                                       SymbolTable::Visibility::Private);
+      Block &commitEntry = commit.getBody().front();
+      Block *publish = new Block();
+      publish->addArgument(sourceType, location);
+      commit.getBody().push_back(publish);
+      OpBuilder commitBuilder = OpBuilder::atBlockEnd(&commitEntry);
+      Value delay = sim::SimTimeConstantOp::create(
+          commitBuilder, location, sim::TimeType::get(context),
+          commitBuilder.getI64IntegerAttr(skewTicks));
+      sim::SimSuspendDelayOp::create(
+          commitBuilder, location, delay, sim::TimingSiteAttr{},
+          ValueRange{commitEntry.getArgument(1)}, sim::ContinuationSiteAttr{},
+          sim::EventRegionAttr::get(context, sim::EventRegion::Postponed),
+          publish);
+      OpBuilder publishBuilder = OpBuilder::atBlockEnd(publish);
+      Value publishGate = arith::ConstantOp::create(
+          publishBuilder, location, publishBuilder.getI1Type(),
+          publishBuilder.getBoolAttr(true));
+      sim::SimClockedSampleUpdateOp::create(
+          publishBuilder, location, commitEntry.getArgument(0),
+          publish->getArgument(0), publishGate,
+          publishBuilder.getI64IntegerAttr(delayedSiteID),
+          publishBuilder.getI64IntegerAttr(1));
+      sim::SimReturnOp::create(publishBuilder, location, ValueRange{});
+      commit->setAttr(sim::metadata::lowered, outlineBuilder.getUnitAttr());
+
+      SmallVector<Type> monitorInputs{sim::ContextType::get(context),
+                                      source.getType()};
+      SmallVector<DictionaryAttr> monitorArgAttrs{
+          captureMetadata(outlineBuilder, sim::CaptureKind::Context),
+          sourceAttrs};
+      SmallVector<NamedAttribute> monitorAttrs{
+          outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
+          outlineBuilder.getNamedAttr(
+              "home_region",
+              sim::EventRegionAttr::get(context, sim::EventRegion::Active)),
+          outlineBuilder.getNamedAttr(
+              "domain", sim::ExecutionDomainAttr::get(
+                            context, sim::ExecutionDomain::Design)),
+          outlineBuilder.getNamedAttr(
+              "obelisk_sim.clocked_sample_plan",
+              outlineBuilder.getDictionaryAttr(
+                  {outlineBuilder.getNamedAttr(
+                       "key", outlineBuilder.getStringAttr(delayKey)),
+                   outlineBuilder.getNamedAttr(
+                       "id", outlineBuilder.getI64IntegerAttr(delayedSiteID)),
+                   outlineBuilder.getNamedAttr(
+                       "hierarchy",
+                       outlineBuilder.getStringAttr(monitorHierarchy))})),
+          outlineBuilder.getNamedAttr(
+              sim::metadata::hierarchicalName,
+              outlineBuilder.getStringAttr(monitorHierarchy))};
+      sim::SimFuncOp monitor = sim::SimFuncOp::create(
+          outlineBuilder, location, monitorSymbol,
+          FunctionType::get(context, monitorInputs, TypeRange{}),
+          sim::EntryKind::Always, monitorAttrs, monitorArgAttrs);
+      SymbolTable::setSymbolVisibility(monitor,
+                                       SymbolTable::Visibility::Private);
+      Block &monitorEntry = monitor.getBody().front();
+      Block *wait = new Block();
+      Block *changed = new Block();
+      monitor.getBody().push_back(wait);
+      monitor.getBody().push_back(changed);
+      OpBuilder monitorBuilder = OpBuilder::atBlockEnd(&monitorEntry);
+      Value initial = sim::SimSampledReadOp::create(
+          monitorBuilder, location, sourceType, monitorEntry.getArgument(0),
+          monitorEntry.getArgument(1));
+      Value initialGate = arith::ConstantOp::create(
+          monitorBuilder, location, monitorBuilder.getI1Type(),
+          monitorBuilder.getBoolAttr(true));
+      sim::SimClockedSampleUpdateOp::create(
+          monitorBuilder, location, monitorEntry.getArgument(0), initial,
+          initialGate, monitorBuilder.getI64IntegerAttr(delayedSiteID),
+          monitorBuilder.getI64IntegerAttr(1));
+      cf::BranchOp::create(monitorBuilder, location, wait);
+      OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
+      sim::SimSuspendChangeOp::create(
+          waitBuilder, location, monitorEntry.getArgument(1), ValueRange{},
+          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, changed);
+      OpBuilder changedBuilder = OpBuilder::atBlockEnd(changed);
+      Value current;
+      if (isa<sim::NetType>(source.getType()))
+        current = sim::SimNetReadOp::create(
+            changedBuilder, location, sourceType, monitorEntry.getArgument(1));
+      else
+        current = sim::SimRefLoadOp::create(
+            changedBuilder, location, sourceType, monitorEntry.getArgument(1));
+      sim::SimSpawnOp::create(changedBuilder, location, commit.getSymNameAttr(),
+                              ValueRange{monitorEntry.getArgument(0), current},
+                              ArrayAttr{}, ArrayAttr{});
+      cf::BranchOp::create(changedBuilder, location, wait);
+      monitor->setAttr(sim::metadata::lowered, outlineBuilder.getUnitAttr());
+    }
+  }
   auto captureKey = [&](DictionaryAttr attrs) {
     auto kind = cast<sim::CaptureKindAttr>(attrs.get(captureKindAttrName));
     auto descriptor = attrs.getAs<IntegerAttr>(descriptorIdAttrName);
@@ -2045,10 +2241,14 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
             Twine(descriptor.getValue().getZExtValue()))
         .str();
   };
+  std::string samplingKey =
+      oneStep ? "1step"
+              : skewTicks ? (Twine("skew:") + Twine(skewTicks)).str()
+                          : "zero";
   std::string key =
       (Twine("clocking-input|") + Twine(sourceDescriptor) + "|" +
        Twine(clockDescriptor) + "|" + Twine(static_cast<uint32_t>(edge)) + "|" +
-       (oneStep ? "1step" : "zero"))
+       samplingKey)
           .str();
   auto appendPlanKey = [&](StringRef name, const ObserverPlan &plan) {
     key += (Twine("|") + name + ":" + plan.evaluator.getValue()).str();
@@ -2194,6 +2394,12 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
       sampled = sim::SimSampledReadOp::create(sampleBuilder, location,
                                               sourceType, entry.getArgument(0),
                                               entry.getArgument(1));
+    else if (skewTicks)
+      sampled = sim::SimClockedSampleReadOp::create(
+          sampleBuilder, location, sourceType, entry.getArgument(0),
+          sampleBuilder.getI64IntegerAttr(delayedSiteID),
+          sampleBuilder.getI64IntegerAttr(1),
+          sampleBuilder.getI64IntegerAttr(0));
     else if (isa<sim::NetType>(source.getType()))
       sampled = sim::SimNetReadOp::create(sampleBuilder, location, sourceType,
                                           entry.getArgument(1));
@@ -2321,11 +2527,10 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
     if (!oneStep && !edgeOnly) {
       auto delay = op->getAttrOfType<StringAttr>(
           "virtual_interface_clock_input_skew_delay");
-      if (!delay || delay.getValue() != "0") {
-        emitError(location)
-            << "clocking input skew currently requires #1step, #0, or an edge";
-        return failure();
-      }
+      if (!delay)
+        return emitError(location)
+                   << "virtual clocking input has no frozen skew",
+               failure();
     }
   }
 
@@ -2384,6 +2589,21 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
       return failure();
     llvm::sort(*clockTargets);
     bool oneStep = op->hasAttr("virtual_interface_clock_input_skew_one_step");
+    bool edgeOnly =
+        op->hasAttr("virtual_interface_clock_input_skew_edge_only");
+    uint64_t skewTicks = 0;
+    auto delay = op->getAttrOfType<StringAttr>(
+        "virtual_interface_clock_input_skew_delay");
+    if (!oneStep && !edgeOnly && delay && delay.getValue() != "0") {
+      FailureOr<uint64_t> parsed = parseClockingInputSkew(
+          op, "virtual_interface_clock_input_skew_delay",
+          "virtual_interface_clock_input_skew_delay_is_real",
+          "virtual_interface_clock_time_unit_fs",
+          "virtual_interface_clock_time_precision_fs", location);
+      if (failed(parsed))
+        return failure();
+      skewTicks = *parsed;
+    }
     auto edgeAttr = op->getAttrOfType<semantic::EdgeKindAttr>(
         "virtual_interface_clock_event_edge");
     auto skewEdgeAttr = op->getAttrOfType<semantic::EdgeKindAttr>(
@@ -2441,8 +2661,8 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
       }
       FailureOr<Value> sample = lowerClockingInputSample(
           staticTargets[index], target.second, clockHandle, clockDescriptor,
-          static_cast<sim::EdgeKind>(selectedEdge), oneStep, location,
-          primaryObserver, conditionObserver);
+          static_cast<sim::EdgeKind>(selectedEdge), oneStep, skewTicks,
+          location, primaryObserver, conditionObserver);
       if (failed(sample))
         return failure();
       clockedSamples.push_back(*sample);

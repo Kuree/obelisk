@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 // RUN: sed 's/virtual_interface_clock_input_skew_one_step/virtual_interface_clock_input_skew_delay = "0"/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=INPUT-ZERO
 // RUN: sed 's/virtual_interface_clock_input_skew_edge = 0 : i32, virtual_interface_clock_input_skew_one_step/virtual_interface_clock_input_skew_edge = 2 : i32, virtual_interface_clock_input_skew_edge_only/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=INPUT-EDGE
-// RUN: sed 's/virtual_interface_clock_input_skew_one_step/virtual_interface_clock_input_skew_delay = "2"/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=INPUT-SKEW
+// RUN: sed 's/virtual_interface_clock_input_skew_one_step/virtual_interface_clock_input_skew_delay = "2"/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=INPUT-SKEW
 // RUN: sed -e 's/test_output_iff, virtual_interface_clock_event_has_iff, //' -e '/test_output_iff_child/d' -e 's/virtual_interface_clock_output_skew_edge = 0 : i32/virtual_interface_clock_output_skew_edge = 2 : i32/g' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=OUTPUT-EDGE
 // RUN: sed 's/definition_kind = 0 : i32/definition_kind = 2 : i32/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=PROGRAM
 // RUN: sed -e 's/member_name = "signal", node_id = 36/member_name = "ready", node_id = 36/' -e 's/member_name = "signal", node_id = 79/member_name = "ready", node_id = 79/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=NET-OUTPUT
@@ -237,7 +237,25 @@ module {
 // sensitivity; the final two operands are loop-carried rematerializations.
 // CHECK: obelisk_sim.suspend.any {{.*}} edges [0, 0, 0]
 // CHECK-NOT: obelisk.sv.
-// INPUT-SKEW: clocking input skew currently requires #1step, #0, or an edge
+// Each possible interface instance maintains its own delayed net mirror. The
+// selected instance's conditioned clock sampler reads that mirror.
+// INPUT-SKEW-COUNT-2: always hierarchy "unit_0.$clocking_input_delay.
+// INPUT-SKEW-LABEL: obelisk_sim.func private @unit_0.$clocking_input_delay.{{[0-9]+}}.commit
+// INPUT-SKEW: obelisk_sim.time.constant 2000000
+// INPUT-SKEW: obelisk_sim.suspend.delay
+// INPUT-SKEW-SAME: resume_region = 16 : i32
+// INPUT-SKEW: obelisk_sim.assert.clocked_sample_update
+// INPUT-SKEW-LABEL: obelisk_sim.func private @unit_0.$clocking_input_delay.{{[0-9]+}}(
+// INPUT-SKEW: obelisk_sim.assert.sampled_read
+// INPUT-SKEW: obelisk_sim.suspend.change
+// INPUT-SKEW: obelisk_sim.net.read
+// INPUT-SKEW: obelisk_sim.spawn @unit_0.$clocking_input_delay.{{[0-9]+}}.commit
+// INPUT-SKEW-LABEL: obelisk_sim.func private @unit_0.$clocking_input.{{[0-9]+}}
+// INPUT-SKEW: obelisk_sim.suspend.observe
+// INPUT-SKEW-SAME: conditions 1 edges [1] indices [0]
+// INPUT-SKEW: obelisk_sim.assert.clocked_sample_read
+// INPUT-SKEW: obelisk_sim.assert.clocked_sample_update
+// INPUT-SKEW-NOT: obelisk.sv.
 // INPUT-ZERO: obelisk_sim.assert.clocked_sample_update
 // INPUT-ZERO: obelisk_sim.net.read
 // INPUT-EDGE: obelisk_sim.suspend.observe
