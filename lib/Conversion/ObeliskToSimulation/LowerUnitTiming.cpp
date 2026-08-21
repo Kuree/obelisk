@@ -632,6 +632,12 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       emitDirect(*handle, edge, continuation, continuationOperands, resume);
       if (clockingBlockEvent)
         clockingEventContinuations[continuation] = {*handle, {}};
+      else
+        // IEEE 1800-2017 14.16 makes coincidence with the clocking event, not
+        // the syntax used to wait for it, what decides when a synchronous
+        // drive matures. Record the edge so a clocking block on this very
+        // signal and edge recognizes its own occurrence here.
+        clockingEventContinuations[continuation] = {*handle, {}, edge, false};
       return success();
     }
 
@@ -820,8 +826,9 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
       control, clockPath.getValue(), /*lvalue=*/true);
   if (failed(clock))
     return failure();
-  std::optional<Value> incomingOccurrence =
-      getCurrentClockingOccurrence(current, *clock);
+  std::optional<Value> incomingOccurrence = getCurrentClockingOccurrence(
+      current, *clock, static_cast<sim::EdgeKind>(eventEdge.getValue()),
+      hasIff);
 
   Value primaryObserver;
   Value conditionObserver;

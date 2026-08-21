@@ -532,14 +532,25 @@ Block *UnitLowering::addBlock() {
   return block;
 }
 
-std::optional<Value>
-UnitLowering::getCurrentClockingOccurrence(Block *block, Value clock) const {
+std::optional<Value> UnitLowering::getCurrentClockingOccurrence(
+    Block *block, Value clock, std::optional<sim::EdgeKind> edge,
+    bool clockingBlockOnly) const {
   DenseSet<Block *> visiting;
+  auto matches = [&](const ClockingOccurrence &occurrence) {
+    if (clock && occurrence.clock != clock)
+      return false;
+    if (occurrence.fromClockingBlock)
+      return true;
+    // A plain event control names a signal, not a clocking block, so it stands
+    // in for the block's event only when it is the very same edge of the very
+    // same signal.
+    return !clockingBlockOnly && clock && edge && occurrence.edge == *edge;
+  };
   std::function<std::optional<Value>(Block *)> reachesOccurrence =
       [&](Block *candidate) -> std::optional<Value> {
     if (auto occurrence = clockingEventContinuations.find(candidate);
         occurrence != clockingEventContinuations.end())
-      return !clock || occurrence->second.clock == clock
+      return matches(occurrence->second)
                  ? std::optional<Value>(occurrence->second.predicate)
                  : std::nullopt;
     if (timingBoundaryContinuations.contains(candidate))

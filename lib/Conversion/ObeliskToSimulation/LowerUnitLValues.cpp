@@ -1520,8 +1520,9 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
            << "legacy clocking outputs with iff cannot use a distinct edge "
               "skew";
   sim::EdgeKind edge = static_cast<sim::EdgeKind>(selectedEdge);
-  std::optional<Value> currentOccurrence =
-      getCurrentClockingOccurrence(current, virtualInterface ? Value{} : clock);
+  std::optional<Value> currentOccurrence = getCurrentClockingOccurrence(
+      current, virtualInterface ? Value{} : clock,
+      static_cast<sim::EdgeKind>(baseSignalEdge), hasIff);
   bool alwaysSynchronized = currentOccurrence && !*currentOccurrence;
   Value synchronizationPredicate =
       currentOccurrence ? *currentOccurrence : Value{};

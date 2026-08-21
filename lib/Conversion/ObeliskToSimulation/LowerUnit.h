@@ -485,9 +485,17 @@ private:
                      bool resultSigned = false);
   ::mlir::Block *addBlock();
   void setCurrent(::mlir::Block *block);
-  std::optional<::mlir::Value>
-  getCurrentClockingOccurrence(::mlir::Block *block,
-                               ::mlir::Value clock = {}) const;
+  // Whether `block` runs inside an occurrence of the clocking event given by
+  // `clock` and `edge`: nullopt when it does not, a null Value when every path
+  // into it does, and a predicate when only some do. A plain event control on
+  // the same signal and edge counts as the occurrence, per IEEE 1800-2017
+  // 14.16, unless `clockingBlockOnly` demands the clocking block itself --
+  // which an event qualified by an iff does, because the plain control proves
+  // nothing about the condition.
+  std::optional<::mlir::Value> getCurrentClockingOccurrence(
+      ::mlir::Block *block, ::mlir::Value clock = {},
+      std::optional<sim::EdgeKind> edge = std::nullopt,
+      bool clockingBlockOnly = false) const;
   void emitBranch(::mlir::Block *destination);
   void emitControlLeaves(size_t first, ::mlir::Location location);
   ::mlir::InFlightDiagnostic unsupported(::mlir::Operation *op);
@@ -551,6 +559,13 @@ private:
     ::mlir::Value clock;
     /// Null means that every path into the block is clock-synchronized.
     ::mlir::Value predicate;
+    /// The edge the block was reached on. Only consulted for an occurrence a
+    /// plain event control established, where the edge is what decides whether
+    /// the process is coincident with a clocking block's event.
+    sim::EdgeKind edge = sim::EdgeKind::Change;
+    /// Whether @(clocking_block) or ## established the occurrence, rather than
+    /// a plain event control that happens to name the same signal and edge.
+    bool fromClockingBlock = true;
   };
   ::llvm::DenseMap<::mlir::Block *, ClockingOccurrence>
       clockingEventContinuations;
