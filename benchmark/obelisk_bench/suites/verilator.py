@@ -216,6 +216,14 @@ ACTION_BLOCK_PER_ATTEMPT = Exclusion(
     "still false and p has stopped holding, so a run of the test's own stimulus "
     "fails eight times; the test expects seven and its own comment records "
     "\"Other sims: 8\" beside Verilator's cycle-aggregated count")
+SAME_VALUE_WRITE = Exclusion(
+    "IEEE 1800-2017 9.4.2",
+    "an event control synchronizes with a value *change*, and 8.6 makes a "
+    "class method's locals automatic, so the test's `next_nba` restarts at "
+    "zero and its second `nba <= next_nba` rewrites the value already there; "
+    "the test needs Verilator's triggering on the write itself (making "
+    "`next_nba` static, so the value really changes, runs the test to its "
+    "marker unchanged)")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dynarray": PATTERN_RADIX,
     "t_dynarray_method": PATTERN_RADIX,
@@ -223,8 +231,10 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_stream_dynamic": PATTERN_RADIX,
     "t_struct_nest_uarray": PATTERN_RADIX,
     "t_class_enum": CLASS_PATTERN,
+    "t_class_param_extends": CLASS_PATTERN,
     "t_display_class": CLASS_PATTERN,
     "t_always_nosplit": TWO_STATE_INITIALIZATION,
+    "t_assigndly_dynamic": SAME_VALUE_WRITE,
     "t_case_unique_overlap": TWO_STATE_INITIALIZATION,
     "t_math_cmp": TWO_STATE_INITIALIZATION,
     "t_static_task_args": STATIC_SUBROUTINE_RECURSION,
