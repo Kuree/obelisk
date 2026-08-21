@@ -1258,8 +1258,18 @@ private:
       const slang::ast::ClockingBlockSymbol &clocking) {
     const auto *event =
         clocking.getEvent().as_if<slang::ast::SignalEventControl>();
-    if (!event)
+    if (!event) {
+      if (!clocking.getEvent().as_if<slang::ast::EventListControl>())
+        return;
+      attrs.set("clocking_event_list", builder.getUnitAttr());
+      attrs.set("clocking_event_edge",
+                slangir::EdgeKindAttr::get(
+                    builder.getContext(), slangir::EdgeKind::None));
+      setSymbolReference(attrs, clocking,
+                         builder.getStringAttr("clocking_event_symbol"),
+                         builder.getStringAttr("clocking_event_path"));
       return;
+    }
     attrs.set("clocking_event_edge",
               slangir::EdgeKindAttr::get(builder.getContext(),
                                          convertEnum(event->edge)));
@@ -1690,6 +1700,15 @@ private:
             if (event->iffCondition)
               attrs.set("virtual_interface_clock_event_has_iff",
                         builder.getUnitAttr());
+          } else if (clocking.getEvent()
+                         .as_if<slang::ast::EventListControl>()) {
+            attrs.set("virtual_interface_clock_event_list",
+                      builder.getUnitAttr());
+            attrs.set("virtual_interface_clock_event_edge",
+                      slangir::EdgeKindAttr::get(
+                          builder.getContext(), slangir::EdgeKind::None));
+            attrs.set("virtual_interface_clock_member",
+                      builder.getStringAttr(clocking.name));
           }
 
           slang::TimeScale scale =
@@ -1781,6 +1800,15 @@ private:
           if (event->iffCondition)
             attrs.set("virtual_interface_clock_event_has_iff",
                       builder.getUnitAttr());
+        } else if (clocking.getEvent()
+                       .template as_if<slang::ast::EventListControl>()) {
+          attrs.set("virtual_interface_clock_event_list",
+                    builder.getUnitAttr());
+          attrs.set("virtual_interface_clock_event_edge",
+                    slangir::EdgeKindAttr::get(
+                        builder.getContext(), slangir::EdgeKind::None));
+          attrs.set("virtual_interface_clock_member",
+                    builder.getStringAttr(clocking.name));
         }
       }
       if (node.member.kind == slang::ast::SymbolKind::Field) {
@@ -2341,6 +2369,8 @@ private:
     } else if constexpr (std::same_as<T, slang::ast::ClockingBlockSymbol>) {
       SET_OP_ATTR(IsDefault, builder.getBoolAttr(node.isDefault));
       SET_OP_ATTR(IsGlobal, builder.getBoolAttr(node.isGlobal));
+      if (node.getEvent().template as_if<slang::ast::EventListControl>())
+        attrs.set("clocking_event_list", builder.getUnitAttr());
     } else if constexpr (std::same_as<T, slang::ast::AssertionPortSymbol>) {
       if (node.direction)
         SET_OP_ATTR(Direction,

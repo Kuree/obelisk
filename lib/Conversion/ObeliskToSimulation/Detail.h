@@ -339,6 +339,16 @@ inline constexpr ::mlir::StringLiteral clockingEventPathAttrName =
     "clocking_event_path";
 inline constexpr ::mlir::StringLiteral clockingEventSymbolAttrName =
     "clocking_event_symbol";
+/// Marks a clocking block whose event is an event list. Such blocks receive a
+/// private named-event descriptor driven by one shared monitor.
+inline constexpr ::mlir::StringLiteral clockingEventListAttrName =
+    "clocking_event_list";
+inline constexpr ::mlir::StringLiteral clockingEventMonitorAttrName =
+    "obelisk_sim.clocking_event_monitor";
+inline constexpr ::mlir::StringLiteral clockingEventMonitorPathAttrName =
+    "obelisk_sim.clocking_event_monitor_path";
+inline constexpr ::mlir::StringLiteral virtualInterfaceClockEventMembersAttrName =
+    "obelisk_sim.virtual_interface_clock_events";
 inline constexpr ::mlir::StringLiteral clockingVariableAttrName =
     "clocking_variable";
 inline constexpr ::mlir::StringLiteral clockingAccessDirectionAttrName =

@@ -358,6 +358,11 @@ UnitLowering::lowerReferencedValue(Operation *op, StringRef path, bool lvalue) {
       value = nodeLvalues.lookup(node.getValue().getZExtValue());
   if (!value)
     value = lvalue ? lvalues.lookup(path) : values.lookup(path);
+  if (!value && lvalue) {
+    Value event = values.lookup(path);
+    if (event && isa<sim::EventType>(event.getType()))
+      value = event;
+  }
   if (!value && thisObject && path.ends_with(".this"))
     value = thisObject;
   if (!value) {
@@ -1803,6 +1808,7 @@ UnitLowering::lowerVirtualInterfaceSignal(Value interface, StringRef member,
           .str();
   VirtualMemberTargets *targets = nullptr;
   bool isNet = false;
+  bool isEvent = false;
   if (auto found = virtualInterfaceStorageMembers.find(key);
       found != virtualInterfaceStorageMembers.end())
     targets = &found->second;
@@ -1810,38 +1816,54 @@ UnitLowering::lowerVirtualInterfaceSignal(Value interface, StringRef member,
            found != virtualInterfaceNetMembers.end()) {
     targets = &found->second;
     isNet = true;
+  } else if (auto found = virtualInterfaceEventMembers.find(key);
+             found != virtualInterfaceEventMembers.end()) {
+    targets = &found->second;
+    isEvent = true;
   }
   if (!targets || targets->empty())
     return emitError(location) << "virtual interface signal '" << member
                                << "' has no elaborated descriptor",
            failure();
   llvm::sort(*targets);
-  DenseMap<uint64_t, Value> &cache =
-      isNet ? virtualInterfaceNetHandles : virtualInterfaceStorageHandles;
-  DenseMap<uint64_t, Type> &types =
-      isNet ? virtualInterfaceNetTypes : virtualInterfaceStorageTypes;
+  DenseMap<uint64_t, Value> *cache =
+      isEvent ? &virtualInterfaceEventHandles
+              : isNet ? &virtualInterfaceNetHandles
+                      : &virtualInterfaceStorageHandles;
+  DenseMap<uint64_t, Type> *types =
+      isNet ? &virtualInterfaceNetTypes : &virtualInterfaceStorageTypes;
   auto materialize = [&](uint64_t descriptorID) -> FailureOr<Value> {
-    Value handle = cache.lookup(descriptorID);
+    Value handle = cache->lookup(descriptorID);
     if (handle)
       return handle;
-    Type elementType = types.lookup(descriptorID);
-    if (!elementType)
+    Type elementType = isEvent ? Type{} : types->lookup(descriptorID);
+    if (!isEvent && !elementType)
       return emitError(location)
                  << "virtual interface signal descriptor has no type",
              failure();
-    Type handleType =
-        isNet ? Type(sim::NetType::get(function.getContext(), elementType))
-              : Type(sim::RefType::get(function.getContext(), elementType));
+    Type handleType = isEvent
+                          ? Type(sim::EventType::get(function.getContext()))
+                      : isNet
+                          ? Type(sim::NetType::get(function.getContext(),
+                                                  elementType))
+                          : Type(sim::RefType::get(function.getContext(),
+                                                  elementType));
     OpBuilder entryBuilder(function.getContext());
     entryBuilder.setInsertionPointToStart(&function.getBody().front());
     Value context = function.getBody().front().getArgument(0);
-    handle = isNet ? Value(sim::SimContextNetOp::create(
-                         entryBuilder, location, handleType, context,
-                         entryBuilder.getI64IntegerAttr(descriptorID)))
-                   : Value(sim::SimContextStorageOp::create(
-                         entryBuilder, location, handleType, context,
-                         entryBuilder.getI64IntegerAttr(descriptorID)));
-    cache[descriptorID] = handle;
+    if (isEvent)
+      handle = sim::SimContextEventOp::create(
+          entryBuilder, location, handleType, context,
+          entryBuilder.getI64IntegerAttr(descriptorID));
+    else if (isNet)
+      handle = sim::SimContextNetOp::create(
+          entryBuilder, location, handleType, context,
+          entryBuilder.getI64IntegerAttr(descriptorID));
+    else
+      handle = sim::SimContextStorageOp::create(
+          entryBuilder, location, handleType, context,
+          entryBuilder.getI64IntegerAttr(descriptorID));
+    (*cache)[descriptorID] = handle;
     return handle;
   };
   if (scopeID) {
@@ -2003,6 +2025,11 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
     sourceType = net.getElementType();
   if (!sourceType)
     return failure();
+  if (isa<sim::EventType>(clock.getType()) && edge != sim::EdgeKind::Change)
+    return emitError(location)
+               << "an edge-only input skew requires a single-signal "
+                  "clocking event",
+           failure();
   if (static_cast<bool>(primaryObserver) !=
       static_cast<bool>(conditionObserver))
     return emitError(location)
@@ -2012,7 +2039,9 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
   auto sourceKind = isa<sim::NetType>(source.getType())
                         ? sim::CaptureKind::Net
                         : sim::CaptureKind::Storage;
-  auto clockKind = isa<sim::NetType>(clock.getType())
+  auto clockKind = isa<sim::EventType>(clock.getType())
+                       ? sim::CaptureKind::Event
+                   : isa<sim::NetType>(clock.getType())
                        ? sim::CaptureKind::Net
                        : sim::CaptureKind::Storage;
   DictionaryAttr sourceAttrs =
@@ -2031,6 +2060,9 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
     if (auto net = value.getDefiningOp<sim::SimContextNetOp>())
       return captureMetadata(builder, sim::CaptureKind::Net,
                              net.getIdAttr().getValue().getZExtValue());
+    if (auto event = value.getDefiningOp<sim::SimContextEventOp>())
+      return captureMetadata(builder, sim::CaptureKind::Event,
+                             event.getIdAttr().getValue().getZExtValue());
     auto argument = dyn_cast<BlockArgument>(value);
     if (!argument || argument.getOwner() != &function.getBody().front())
       return failure();
@@ -2042,7 +2074,8 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
         attrs ? attrs.getAs<IntegerAttr>(descriptorIdAttrName) : IntegerAttr{};
     if (!kind || !descriptor ||
         (kind.getValue() != sim::CaptureKind::Storage &&
-         kind.getValue() != sim::CaptureKind::Net))
+         kind.getValue() != sim::CaptureKind::Net &&
+         kind.getValue() != sim::CaptureKind::Event))
       return failure();
     return attrs;
   };
@@ -2377,6 +2410,12 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
               ArrayRef<int32_t>{0}, sim::ContinuationSiteAttr{},
               sim::EventRegionAttr{}, sample)
               .getOperation();
+    } else if (isa<sim::EventType>(clock.getType())) {
+      suspend = sim::SimSuspendEventOp::create(
+                    waitBuilder, location, entry.getArgument(2), ValueRange{},
+                    sim::ContinuationSiteAttr{}, sim::EventRegionAttr{},
+                    sample)
+                    .getOperation();
     } else {
       suspend =
           sim::SimSuspendEdgeOp::create(
@@ -2577,6 +2616,7 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
                                .str();
     VirtualMemberTargets *clockTargets = nullptr;
     bool clockIsNet = false;
+    bool clockIsEvent = false;
     if (auto found = virtualInterfaceStorageMembers.find(clockKey);
         found != virtualInterfaceStorageMembers.end())
       clockTargets = &found->second;
@@ -2584,6 +2624,10 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
              found != virtualInterfaceNetMembers.end()) {
       clockTargets = &found->second;
       clockIsNet = true;
+    } else if (auto found = virtualInterfaceEventMembers.find(clockKey);
+               found != virtualInterfaceEventMembers.end()) {
+      clockTargets = &found->second;
+      clockIsEvent = true;
     }
     if (!clockTargets)
       return failure();
@@ -2622,30 +2666,39 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
                    << "clocking input source and clock instances do not match",
                failure();
       uint64_t clockDescriptor = clockTarget->second;
-      DenseMap<uint64_t, Value> &clockCache =
-          clockIsNet ? virtualInterfaceNetHandles
-                     : virtualInterfaceStorageHandles;
-      Value clockHandle = clockCache.lookup(clockDescriptor);
+      DenseMap<uint64_t, Value> *clockCache =
+          clockIsEvent ? &virtualInterfaceEventHandles
+                       : clockIsNet ? &virtualInterfaceNetHandles
+                                    : &virtualInterfaceStorageHandles;
+      Value clockHandle = clockCache->lookup(clockDescriptor);
       if (!clockHandle) {
-        DenseMap<uint64_t, Type> &clockTypes =
-            clockIsNet ? virtualInterfaceNetTypes
-                       : virtualInterfaceStorageTypes;
-        Type clockElement = clockTypes.lookup(clockDescriptor);
+        DenseMap<uint64_t, Type> *clockTypes =
+            clockIsNet ? &virtualInterfaceNetTypes
+                       : &virtualInterfaceStorageTypes;
+        Type clockElement =
+            clockIsEvent ? Type{} : clockTypes->lookup(clockDescriptor);
         Type clockType =
-            clockIsNet
+            clockIsEvent
+                ? Type(sim::EventType::get(function.getContext()))
+            : clockIsNet
                 ? Type(sim::NetType::get(function.getContext(), clockElement))
                 : Type(sim::RefType::get(function.getContext(), clockElement));
         OpBuilder entryBuilder(function.getContext());
         entryBuilder.setInsertionPointToStart(&function.getBody().front());
         Value context = function.getBody().front().getArgument(0);
-        clockHandle =
-            clockIsNet ? Value(sim::SimContextNetOp::create(
-                             entryBuilder, location, clockType, context,
-                             entryBuilder.getI64IntegerAttr(clockDescriptor)))
-                       : Value(sim::SimContextStorageOp::create(
-                             entryBuilder, location, clockType, context,
-                             entryBuilder.getI64IntegerAttr(clockDescriptor)));
-        clockCache[clockDescriptor] = clockHandle;
+        if (clockIsEvent)
+          clockHandle = sim::SimContextEventOp::create(
+              entryBuilder, location, clockType, context,
+              entryBuilder.getI64IntegerAttr(clockDescriptor));
+        else if (clockIsNet)
+          clockHandle = sim::SimContextNetOp::create(
+              entryBuilder, location, clockType, context,
+              entryBuilder.getI64IntegerAttr(clockDescriptor));
+        else
+          clockHandle = sim::SimContextStorageOp::create(
+              entryBuilder, location, clockType, context,
+              entryBuilder.getI64IntegerAttr(clockDescriptor));
+        (*clockCache)[clockDescriptor] = clockHandle;
       }
       Value primaryObserver;
       Value conditionObserver;

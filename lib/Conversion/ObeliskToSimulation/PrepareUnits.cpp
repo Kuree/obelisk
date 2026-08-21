@@ -40,6 +40,9 @@ static bool isAddressableTimingExpression(Operation *op) {
 static FailureOr<sim::EntryKind> getEntryKind(Operation *op) {
   if (op->hasAttr(sequenceEndpointEventAttrName))
     return sim::EntryKind::Always;
+  if (isa<semantic::SVClockingBlockSymbolOp>(op) &&
+      op->hasAttr(clockingEventListAttrName))
+    return sim::EntryKind::Always;
   if (isa<semantic::SVVariableSymbolOp>(op))
     return sim::EntryKind::Function;
   if (auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(op);
@@ -92,6 +95,9 @@ static FailureOr<sim::EntryKind> getEntryKind(Operation *op) {
 static std::string getCodeUnitHierarchy(Operation *op) {
   if (op->hasAttr(sequenceEndpointEventAttrName))
     return (getHierarchyName(op) + ".$sequence_endpoint").str();
+  if (isa<semantic::SVClockingBlockSymbolOp>(op) &&
+      op->hasAttr(clockingEventListAttrName))
+    return (getHierarchyName(op) + ".$event_monitor").str();
   if (isa<semantic::SVVariableSymbolOp, semantic::SVClassPropertySymbolOp>(op))
     return (getHierarchyName(op) + ".$static_initializer").str();
   if (isa<semantic::SVNetSymbolOp>(op))
@@ -287,7 +293,8 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
     }
     if (!isa<semantic::SVPortConnectionOp, semantic::SVVariableSymbolOp,
              semantic::SVNetSymbolOp, semantic::SVClassPropertySymbolOp,
-             semantic::SVSequenceSymbolOp>(source)) {
+             semantic::SVSequenceSymbolOp,
+             semantic::SVClockingBlockSymbolOp>(source)) {
       result.directCalleeSources[hierarchy] = source;
       result.directCalleeNames[source] = symbol;
     }

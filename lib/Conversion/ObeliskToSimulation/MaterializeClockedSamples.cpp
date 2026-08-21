@@ -181,10 +181,14 @@ public:
                  kind.getValue() == sim::CaptureKind::Net)
           value = sim::SimContextNetOp::create(rootBuilder, sampler.getLoc(),
                                                type, context, descriptor);
+        else if (kind && descriptor &&
+                 kind.getValue() == sim::CaptureKind::Event)
+          value = sim::SimContextEventOp::create(rootBuilder, sampler.getLoc(),
+                                                 type, context, descriptor);
         if (!value) {
           sampler.emitError()
               << "alternate-clock sampler argument #" << index
-              << " is not a direct storage or net descriptor capture";
+              << " is not a direct storage, net, or event descriptor capture";
           invalid = true;
           break;
         }

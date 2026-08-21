@@ -204,6 +204,23 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
     llvm::StringSet<> seenPaths;
     llvm::StringSet<> seenLocals;
     llvm::StringSet<> seenConstants;
+    bool clockingEventMonitor =
+        isa<semantic::SVClockingBlockSymbolOp>(unit.source) &&
+        unit.source->hasAttr(clockingEventListAttrName);
+    if (clockingEventMonitor) {
+      StringRef path = getHierarchyName(unit.source);
+      auto descriptor = descriptors.find(path);
+      if (path.empty() || descriptor == descriptors.end() ||
+          descriptor->second.kind != DescriptorInfo::Kind::Event) {
+        emitError(getSemanticLocation(unit.source))
+            << "clocking event monitor has no event descriptor";
+        invalid = true;
+      } else {
+        seenPaths.insert(path);
+        result.descriptors[unit.source].push_back(
+            {path.str(), descriptor->second});
+      }
+    }
     if (unit.entryKind == sim::EntryKind::Observer) {
       semantic::SVSubroutineSymbolOp subroutine =
           getOwningSubroutine(unit.source);
@@ -480,8 +497,17 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
             {path.str(), descriptor->second});
       }
     }
-    unit.source->walk<WalkOrder::PreOrder>(
-        [&](Operation *nested) { collectBinding(nested); });
+    if (clockingEventMonitor) {
+      for (Operation *child : getChildren(unit.source)) {
+        if (isa<semantic::SVClockVarSymbolOp>(child))
+          continue;
+        child->walk<WalkOrder::PreOrder>(
+            [&](Operation *nested) { collectBinding(nested); });
+      }
+    } else {
+      unit.source->walk<WalkOrder::PreOrder>(
+          [&](Operation *nested) { collectBinding(nested); });
+    }
 
     // Explicit randomize property names are compile-time selectors and are
     // erased before this analysis. Static selections still need their

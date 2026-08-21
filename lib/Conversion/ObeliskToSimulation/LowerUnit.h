@@ -364,6 +364,8 @@ private:
   emitCycleDelaySuspend(semantic::SVCycleDelayControlOp control,
                         ::mlir::Block *continuation,
                         ::mlir::ValueRange continuationOperands = {});
+  ::mlir::LogicalResult
+  lowerClockingEventMonitor(::mlir::ArrayRef<::mlir::Operation *> roots);
   ::mlir::FailureOr<::mlir::Value> lowerDelayValue(::mlir::Operation *control);
   ::mlir::LogicalResult lowerWait(semantic::SVWaitStatementOp op);
   ::mlir::LogicalResult
@@ -515,9 +517,11 @@ private:
       ::mlir::SmallVector<std::pair<uint64_t, uint64_t>>;
   ::llvm::StringMap<VirtualMemberTargets> virtualInterfaceStorageMembers;
   ::llvm::StringMap<VirtualMemberTargets> virtualInterfaceNetMembers;
+  ::llvm::StringMap<VirtualMemberTargets> virtualInterfaceEventMembers;
   ::llvm::StringMap<VirtualMemberTargets> virtualInterfaceDriverMembers;
   ::llvm::DenseMap<uint64_t, ::mlir::Value> virtualInterfaceStorageHandles;
   ::llvm::DenseMap<uint64_t, ::mlir::Value> virtualInterfaceNetHandles;
+  ::llvm::DenseMap<uint64_t, ::mlir::Value> virtualInterfaceEventHandles;
   ::llvm::DenseMap<uint64_t, ::mlir::Value> virtualInterfaceDriverHandles;
   ::llvm::DenseMap<uint64_t, ::mlir::Type> virtualInterfaceStorageTypes;
   ::llvm::DenseMap<uint64_t, ::mlir::Type> virtualInterfaceNetTypes;

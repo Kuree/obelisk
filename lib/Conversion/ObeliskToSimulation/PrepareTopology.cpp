@@ -10,6 +10,7 @@
 #include "Detail.h"
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSet.h"
 
 #include <functional>
@@ -319,7 +320,9 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
                     !isAutomaticLocalSymbol(op)) ||
                    isStaticFormal(op) || staticClassProperty;
     if (storage || isa<semantic::SVNetSymbolOp>(op) ||
-        op->hasAttr(sequenceEndpointEventAttrName))
+        op->hasAttr(sequenceEndpointEventAttrName) ||
+        (isa<semantic::SVClockingBlockSymbolOp>(op) &&
+         op->hasAttr(clockingEventListAttrName)))
       designObjects.push_back(op);
   });
 
@@ -336,6 +339,36 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     }
     if (descriptors.count(path))
       return;
+    if (isa<semantic::SVClockingBlockSymbolOp>(op) &&
+        op->hasAttr(clockingEventListAttrName)) {
+      Type type = sim::EventType::get(builder.getContext());
+      uint64_t id = nextEventId++;
+      uint64_t scopeId = scopes.lookup(op);
+      descriptors[path] = {DescriptorInfo::Kind::Event, id, scopeId, type,
+                           sim::NetResolutionKind::Wire};
+      descriptors[path].rootType = type;
+
+      // Event descriptors have no standalone declaration operation. Record
+      // interface-owned clocking events on their scope declaration so
+      // virtual-interface lowering can select the right event object.
+      for (sim::SimScopeDeclOp scope : scopes.declarations) {
+        if (scope.getId() != scopeId || !scope.getInterfaceTypeAttr())
+          continue;
+        SmallVector<Attribute> members;
+        if (auto existing = scope->getAttrOfType<ArrayAttr>(
+                virtualInterfaceClockEventMembersAttrName))
+          llvm::append_range(members, existing);
+        members.push_back(builder.getDictionaryAttr(
+            {builder.getNamedAttr("member",
+                                  builder.getStringAttr(getDebugName(op))),
+             builder.getNamedAttr("descriptor",
+                                  builder.getI64IntegerAttr(id))}));
+        scope->setAttr(virtualInterfaceClockEventMembersAttrName,
+                       builder.getArrayAttr(members));
+        break;
+      }
+      return;
+    }
     if (op->hasAttr(sequenceEndpointEventAttrName)) {
       Type type = sim::EventType::get(builder.getContext());
       uint64_t id = nextEventId++;

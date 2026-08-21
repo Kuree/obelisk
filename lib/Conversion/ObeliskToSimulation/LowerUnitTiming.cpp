@@ -571,6 +571,34 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
   return success();
 }
 
+LogicalResult UnitLowering::lowerClockingEventMonitor(
+    ArrayRef<Operation *> roots) {
+  auto path = function->getAttrOfType<StringAttr>(
+      clockingEventMonitorPathAttrName);
+  if (!path || roots.size() != 1 ||
+      !isa<semantic::SVEventListControlOp>(roots.front()))
+    return function.emitError(
+        "clocking event monitor requires one frozen event list");
+  Value event = values.lookup(path.getValue());
+  if (!event || !isa<sim::EventType>(event.getType()))
+    return function.emitError(
+        "clocking event monitor has no bound event descriptor");
+
+  Location location = getSemanticLocation(roots.front());
+  Block *wait = addBlock();
+  cf::BranchOp::create(builder, location, wait);
+  setCurrent(wait);
+  Block *trigger = addBlock();
+  if (failed(emitEventSuspend(roots.front(), trigger)))
+    return failure();
+  setCurrent(trigger);
+  sim::SimEventTriggerOp::create(builder, location, event, Value{},
+                                 builder.getBoolAttr(false),
+                                 sim::EventSiteAttr{});
+  cf::BranchOp::create(builder, location, wait);
+  return success();
+}
+
 LogicalResult
 UnitLowering::emitRepeatedEventSuspend(Operation *control, Block *continuation,
                                        ValueRange continuationOperands) {
@@ -688,7 +716,11 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
           successor);
       return success();
     }
-    if (edge == sim::EdgeKind::Change)
+    if (isa<sim::EventType>((*clock).getType()))
+      sim::SimSuspendEventOp::create(
+          waitBuilder, location, *clock, operands,
+          sim::ContinuationSiteAttr{}, reactive, successor);
+    else if (edge == sim::EdgeKind::Change)
       sim::SimSuspendChangeOp::create(
           waitBuilder, location, *clock, operands,
           sim::ContinuationSiteAttr{}, reactive, successor);

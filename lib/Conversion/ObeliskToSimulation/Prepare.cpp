@@ -378,7 +378,9 @@ void ObeliskSimPreparePass::runOnOperation() {
     bool netInitializer = net && !getChildren(net).empty();
     if (isCodeUnit(op) || staticInitializer || initializedStaticLocal ||
         designInitializer || netInitializer ||
-        op->hasAttr(sequenceEndpointEventAttrName))
+        op->hasAttr(sequenceEndpointEventAttrName) ||
+        (isa<semantic::SVClockingBlockSymbolOp>(op) &&
+         op->hasAttr(clockingEventListAttrName)))
       sourceUnits.push_back(op);
   });
 
@@ -6108,6 +6110,16 @@ void ObeliskSimPreparePass::runOnOperation() {
           sequenceEndpointPathAttrName,
           builder.getStringAttr(getHierarchyName(unit.source))));
     }
+    bool clockingEventMonitor =
+        isa<semantic::SVClockingBlockSymbolOp>(unit.source) &&
+        unit.source->hasAttr(clockingEventListAttrName);
+    if (clockingEventMonitor) {
+      functionAttrs.push_back(builder.getNamedAttr(
+          clockingEventMonitorAttrName, builder.getUnitAttr()));
+      functionAttrs.push_back(builder.getNamedAttr(
+          clockingEventMonitorPathAttrName,
+          builder.getStringAttr(getHierarchyName(unit.source))));
+    }
     StringRef hierarchy = isa<semantic::SVPortConnectionOp>(unit.source)
                               ? getHierarchyName(unit.source->getParentOp())
                               : getHierarchyName(unit.source);
@@ -6119,7 +6131,11 @@ void ObeliskSimPreparePass::runOnOperation() {
               "obelisk_sim.control_target_id"))
         functionAttrs.push_back(
             builder.getNamedAttr("obelisk_sim.control_target_id", targetID));
-    bool programDomain = isProgramCodeUnit(unit.source);
+    // Clocking inputs must be sampled before program-domain Reactive work.
+    // Keep the shared event-list monitor in the design domain even when the
+    // clocking block is declared lexically inside a program.
+    bool programDomain =
+        !clockingEventMonitor && isProgramCodeUnit(unit.source);
     // Final procedures are held in the runtime's end-of-simulation phase; the
     // compute graph independently places their executable fragment in its
     // postponed plan.  Their process ABI home must remain Active even when the

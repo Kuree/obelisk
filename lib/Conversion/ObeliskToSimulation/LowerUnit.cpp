@@ -427,6 +427,25 @@ void UnitLowering::ensureVirtualInterfaceInventory() {
     return (Twine(identity) + "\n" + member).str();
   };
   for (Operation &operation : design.getBody().front()) {
+    if (auto scope = dyn_cast<sim::SimScopeDeclOp>(operation)) {
+      StringAttr identity = scope.getInterfaceTypeAttr();
+      auto events = scope->getAttrOfType<ArrayAttr>(
+          virtualInterfaceClockEventMembersAttrName);
+      if (!identity || !events)
+        continue;
+      for (Attribute attribute : events) {
+        auto member = dyn_cast<DictionaryAttr>(attribute);
+        auto name = member ? member.getAs<StringAttr>("member") : StringAttr{};
+        auto descriptor =
+            member ? member.getAs<IntegerAttr>("descriptor") : IntegerAttr{};
+        if (name && descriptor)
+          virtualInterfaceEventMembers[
+              memberKey(identity.getValue(), name.getValue())]
+              .push_back(
+                  {scope.getId(), descriptor.getValue().getZExtValue()});
+      }
+      continue;
+    }
     if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
       virtualInterfaceStorageTypes[storage.getId()] = storage.getType();
       auto scope = interfaceScopes.find(storage.getScopeId());
@@ -2498,6 +2517,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   setCurrent(&function.getBody().front());
   if (function->hasAttr(sequenceEndpointMonitorAttrName))
     return lowerSequenceEndpointMonitor(roots);
+  if (function->hasAttr(clockingEventMonitorAttrName))
+    return lowerClockingEventMonitor(roots);
   sim::EntryKind entryKind = function.getEntryKind();
   continuousStore = entryKind == sim::EntryKind::Continuous ||
                     entryKind == sim::EntryKind::AlwaysComb ||

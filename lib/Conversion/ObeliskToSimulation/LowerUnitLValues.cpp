@@ -1259,6 +1259,11 @@ LogicalResult UnitLowering::lowerStaticClockingOutputAssignment(
   // A net output has a node-specific driver binding. Resolve the separate
   // event clock by path so that binding cannot substitute for the clock.
   Value clock = lvalues.lookup(clockPath.getValue());
+  if (!clock) {
+    Value event = values.lookup(clockPath.getValue());
+    if (event && isa<sim::EventType>(event.getType()))
+      clock = event;
+  }
   if (failed(target) || !clock) {
     if (!clock)
       emitError(location) << "clocking output has no frozen clock binding: "
@@ -1320,6 +1325,11 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
       skewEdge && skewEdge.getValue() != semantic::EdgeKind::Change
           ? skewEdge.getValue()
           : eventEdge.getValue();
+  if (isa<sim::EventType>(clock.getType()) &&
+      selectedEdge != semantic::EdgeKind::Change)
+    return emitError(location)
+           << "an edge-only output skew requires a single-signal clocking "
+              "event";
   if (hasIff && selectedEdge != eventEdge.getValue())
     return emitError(location)
            << "clocking outputs with iff and a distinct edge skew are not "
@@ -1562,6 +1572,14 @@ LogicalResult UnitLowering::emitClockingOutputDrive(Operation *destination,
           sim::ContinuationSiteAttr{},
           sim::EventRegionAttr::get(context, sim::EventRegion::Reactive),
           drive);
+    } else if (isa<sim::EventType>(clock.getType())) {
+      sim::SimSuspendEventOp::create(
+          waitBuilder, location, entry.getArgument(2), ValueRange{},
+          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, drive);
+    } else if (edge == sim::EdgeKind::Change) {
+      sim::SimSuspendChangeOp::create(
+          waitBuilder, location, entry.getArgument(2), ValueRange{},
+          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, drive);
     } else {
       sim::SimSuspendEdgeOp::create(
           waitBuilder, location, edge, entry.getArgument(2), ValueRange{},
