@@ -483,11 +483,13 @@ Block *UnitLowering::addBlock() {
   return block;
 }
 
-bool UnitLowering::isCurrentClockingOccurrence(Block *block) const {
+bool UnitLowering::isCurrentClockingOccurrence(Block *block,
+                                               Value clock) const {
   DenseSet<Block *> visiting;
   std::function<bool(Block *)> reachesOccurrence = [&](Block *candidate) {
-    if (clockingEventContinuations.contains(candidate))
-      return true;
+    if (auto occurrence = clockingEventContinuations.find(candidate);
+        occurrence != clockingEventContinuations.end())
+      return !clock || occurrence->second == clock;
     if (timingBoundaryContinuations.contains(candidate))
       return false;
     // A backedge within the currently inspected predecessor SCC does not

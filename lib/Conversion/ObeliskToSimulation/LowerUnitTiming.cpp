@@ -413,7 +413,7 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
               : sim::EventRegionAttr{};
       emitDirect(*handle, edge, continuation, continuationOperands, resume);
       if (clockingBlockEvent)
-        clockingEventContinuations.insert(continuation);
+        clockingEventContinuations[continuation] = *handle;
       return success();
     }
 

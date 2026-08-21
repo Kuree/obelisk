@@ -1221,7 +1221,6 @@ LogicalResult UnitLowering::writeLValue(Operation *destination, Value value,
 LogicalResult UnitLowering::lowerClockingOutputAssignment(
     semantic::SVMemberAccessExpressionOp destination, Value value,
     Location location) {
-  bool synchronizedToCurrentEvent = isCurrentClockingOccurrence(current);
   SmallVector<Operation *> children = getChildren(destination);
   if (children.size() != 1)
     return emitError(location) << "clocking output has no interface receiver";
@@ -1234,35 +1233,93 @@ LogicalResult UnitLowering::lowerClockingOutputAssignment(
   FailureOr<Value> clock = lowerVirtualInterfaceClock(destination, *interface);
   if (failed(target) || failed(clock))
     return failure();
-  auto targetRef = dyn_cast<sim::RefType>((*target).getType());
+  return emitClockingOutputDrive(destination, *target, *clock, value,
+                                 /*virtualInterface=*/true, location);
+}
+
+LogicalResult UnitLowering::lowerStaticClockingOutputAssignment(
+    Operation *destination, Value value, Location location) {
+  auto direction = destination->getAttrOfType<semantic::SVArgumentDirectionAttr>(
+      clockingAccessDirectionAttrName);
+  if (!direction || direction.getValue() == semantic::SVArgumentDirection::In)
+    return emitError(location) << "cannot write an input clocking variable";
+  auto sourcePath =
+      destination->getAttrOfType<StringAttr>(clockingSourcePathAttrName);
+  auto clockPath =
+      destination->getAttrOfType<StringAttr>(clockingEventPathAttrName);
+  if (!sourcePath || !clockPath)
+    return emitError(location)
+           << "clocking output has no directly addressable target and clock";
+  FailureOr<Value> target = lowerReferencedValue(
+      destination, sourcePath.getValue(), /*lvalue=*/true);
+  FailureOr<Value> clock = lowerReferencedValue(
+      destination, clockPath.getValue(), /*lvalue=*/true);
+  if (failed(target) || failed(clock))
+    return failure();
+  return emitClockingOutputDrive(destination, *target, *clock, value,
+                                 /*virtualInterface=*/false, location);
+}
+
+LogicalResult UnitLowering::emitClockingOutputDrive(
+    Operation *destination, Value target, Value clock, Value value,
+    bool virtualInterface, Location location) {
+  auto targetRef = dyn_cast<sim::RefType>(target.getType());
   if (!targetRef) {
     emitError(location)
         << "clocking output to a resolved net is not yet supported";
     return failure();
   }
 
-  auto eventEdge = destination->getAttrOfType<semantic::EdgeKindAttr>(
-      "virtual_interface_clock_event_edge");
-  auto skewEdge = destination->getAttrOfType<semantic::EdgeKindAttr>(
-      "virtual_interface_clock_output_skew_edge");
-  if (!eventEdge ||
-      destination->hasAttr("virtual_interface_clock_event_has_iff")) {
+  StringRef eventEdgeName =
+      virtualInterface ? "virtual_interface_clock_event_edge"
+                       : StringRef(clockingEventEdgeAttrName);
+  StringRef eventIffName =
+      virtualInterface ? "virtual_interface_clock_event_has_iff"
+                       : StringRef(clockingEventHasIffAttrName);
+  StringRef skewEdgeName =
+      virtualInterface ? "virtual_interface_clock_output_skew_edge"
+                       : StringRef(clockingOutputSkewEdgeAttrName);
+  StringRef skewOneStepName =
+      virtualInterface ? "virtual_interface_clock_output_skew_one_step"
+                       : StringRef(clockingOutputSkewOneStepAttrName);
+  StringRef skewDelayName =
+      virtualInterface ? "virtual_interface_clock_output_skew_delay"
+                       : StringRef(clockingOutputSkewDelayAttrName);
+  StringRef skewDelayIsRealName =
+      virtualInterface ? "virtual_interface_clock_output_skew_delay_is_real"
+                       : StringRef(clockingOutputSkewDelayIsRealAttrName);
+  StringRef timeUnitName =
+      virtualInterface ? "virtual_interface_clock_time_unit_fs"
+                       : StringRef(clockingTimeUnitAttrName);
+  StringRef timePrecisionName =
+      virtualInterface ? "virtual_interface_clock_time_precision_fs"
+                       : StringRef(clockingTimePrecisionAttrName);
+  auto eventEdge =
+      destination->getAttrOfType<semantic::EdgeKindAttr>(eventEdgeName);
+  auto skewEdge =
+      destination->getAttrOfType<semantic::EdgeKindAttr>(skewEdgeName);
+  if (!eventEdge || destination->hasAttr(eventIffName)) {
     emitError(location) << "clocking output has no supported static event";
     return failure();
   }
+  if (destination->hasAttr(skewOneStepName))
+    return emitError(location) << "#1step is not a valid clocking output skew";
   semantic::EdgeKind selectedEdge =
       skewEdge && skewEdge.getValue() != semantic::EdgeKind::Change
           ? skewEdge.getValue()
           : eventEdge.getValue();
   sim::EdgeKind edge = static_cast<sim::EdgeKind>(selectedEdge);
+  bool synchronizedToCurrentEvent =
+      selectedEdge == eventEdge.getValue() &&
+      isCurrentClockingOccurrence(current,
+                                  virtualInterface ? Value{} : clock);
 
   uint64_t delayTicks = 0;
-  if (auto spelling = destination->getAttrOfType<StringAttr>(
-          "virtual_interface_clock_output_skew_delay")) {
-    auto unit = destination->getAttrOfType<IntegerAttr>(
-        "virtual_interface_clock_time_unit_fs");
-    auto precision = destination->getAttrOfType<IntegerAttr>(
-        "virtual_interface_clock_time_precision_fs");
+  if (auto spelling =
+          destination->getAttrOfType<StringAttr>(skewDelayName)) {
+    auto unit = destination->getAttrOfType<IntegerAttr>(timeUnitName);
+    auto precision =
+        destination->getAttrOfType<IntegerAttr>(timePrecisionName);
     if (!unit || !precision || unit.getValue().isZero() ||
         precision.getValue().isZero()) {
       emitError(location) << "clocking output has invalid time scale";
@@ -1270,8 +1327,8 @@ LogicalResult UnitLowering::lowerClockingOutputAssignment(
     }
     uint64_t unitFS = unit.getValue().getZExtValue();
     uint64_t precisionFS = precision.getValue().getZExtValue();
-    auto isRealAttr = destination->getAttrOfType<BoolAttr>(
-        "virtual_interface_clock_output_skew_delay_is_real");
+    auto isRealAttr =
+        destination->getAttrOfType<BoolAttr>(skewDelayIsRealName);
     bool isReal = isRealAttr && isRealAttr.getValue();
     long double scaled = 0;
     if (isReal) {
@@ -1332,8 +1389,7 @@ LogicalResult UnitLowering::lowerClockingOutputAssignment(
       outlineBuilder.getUnitAttr());
   MLIRContext *context = function.getContext();
   SmallVector<Type> inputs{function.getBody().front().getArgument(0).getType(),
-                           (*target).getType(), (*clock).getType(),
-                           value.getType()};
+                           target.getType(), clock.getType(), value.getType()};
   SmallVector<DictionaryAttr> argumentAttrs{
       captureMetadata(outlineBuilder, sim::CaptureKind::Context),
       captureMetadata(outlineBuilder, sim::CaptureKind::Formal),
@@ -1386,7 +1442,7 @@ LogicalResult UnitLowering::lowerClockingOutputAssignment(
   driver->setAttr(sim::metadata::lowered, builder.getUnitAttr());
   Value processContext = function.getBody().front().getArgument(0);
   sim::SimSpawnOp::create(builder, location, driver.getSymNameAttr(),
-                          ValueRange{processContext, *target, *clock, value},
+                          ValueRange{processContext, target, clock, value},
                           ArrayAttr{}, ArrayAttr{});
   return success();
 }
@@ -1915,6 +1971,17 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
       return failure();
     }
     if (failed(lowerClockingOutputAssignment(member, *value, location)))
+      return failure();
+    return *value;
+  }
+  if (destination->hasAttr(clockingVariableAttrName)) {
+    if (timed) {
+      emitError(location) << "an assignment timing control cannot be combined "
+                             "with a clocking output";
+      return failure();
+    }
+    if (failed(
+            lowerStaticClockingOutputAssignment(destination, *value, location)))
       return failure();
     return *value;
   }

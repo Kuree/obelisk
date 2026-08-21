@@ -174,6 +174,13 @@ private:
   ::mlir::LogicalResult lowerClockingOutputAssignment(
       semantic::SVMemberAccessExpressionOp destination, ::mlir::Value value,
       ::mlir::Location location);
+  ::mlir::LogicalResult lowerStaticClockingOutputAssignment(
+      ::mlir::Operation *destination, ::mlir::Value value,
+      ::mlir::Location location);
+  ::mlir::LogicalResult emitClockingOutputDrive(
+      ::mlir::Operation *destination, ::mlir::Value target,
+      ::mlir::Value clock, ::mlir::Value value, bool virtualInterface,
+      ::mlir::Location location);
   ::mlir::FailureOr<CapturedLValue>
   captureLValue(::mlir::Operation *destination, ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
@@ -452,7 +459,8 @@ private:
                      bool resultSigned = false);
   ::mlir::Block *addBlock();
   void setCurrent(::mlir::Block *block);
-  bool isCurrentClockingOccurrence(::mlir::Block *block) const;
+  bool isCurrentClockingOccurrence(::mlir::Block *block,
+                                   ::mlir::Value clock = {}) const;
   void emitBranch(::mlir::Block *destination);
   void emitControlLeaves(size_t first, ::mlir::Location location);
   ::mlir::InFlightDiagnostic unsupported(::mlir::Operation *op);
@@ -497,7 +505,8 @@ private:
   ::llvm::DenseMap<uint64_t, ::mlir::Type> virtualInterfaceNetTypes;
   ::llvm::SetVector<::mlir::Value> virtualInterfaceReadSensitivity;
   ::llvm::SetVector<::mlir::Value> virtualInterfaceWrittenSensitivity;
-  ::llvm::DenseSet<::mlir::Block *> clockingEventContinuations;
+  ::llvm::DenseMap<::mlir::Block *, ::mlir::Value>
+      clockingEventContinuations;
   ::llvm::DenseSet<::mlir::Block *> timingBoundaryContinuations;
   bool coverageInventoryReady = false;
   ::llvm::StringMap<semantic::SVCovergroupTypeOp> semanticCovergroups;

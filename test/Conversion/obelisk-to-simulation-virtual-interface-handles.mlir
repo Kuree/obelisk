@@ -2,6 +2,7 @@
 // RUN: sed 's/virtual_interface_clock_input_skew_one_step/virtual_interface_clock_input_skew_delay = "0"/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=INPUT-ZERO
 // RUN: sed 's/virtual_interface_clock_input_skew_edge = 0 : i32, virtual_interface_clock_input_skew_one_step/virtual_interface_clock_input_skew_edge = 2 : i32, virtual_interface_clock_input_skew_edge_only/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=INPUT-EDGE
 // RUN: sed 's/virtual_interface_clock_input_skew_one_step/virtual_interface_clock_input_skew_delay = "2"/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=INPUT-SKEW
+// RUN: sed 's/virtual_interface_clock_output_skew_edge = 0 : i32/virtual_interface_clock_output_skew_edge = 2 : i32/g' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=OUTPUT-EDGE
 // RUN: sed 's/virtual_interface_clocking_block_event/virtual_interface_clock_event_has_iff, virtual_interface_clocking_block_event/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=CLOCK-IFF
 // RUN: sed 's/definition_kind = 0 : i32/definition_kind = 2 : i32/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=PROGRAM
 
@@ -214,6 +215,11 @@ module {
 // INPUT-ZERO: obelisk_sim.net.read
 // INPUT-EDGE: obelisk_sim.suspend.edge negedge
 // INPUT-EDGE: obelisk_sim.assert.clocked_sample_update
+// An output edge distinct from @(vif.cb)'s event cannot reuse that occurrence.
+// OUTPUT-EDGE-LABEL: obelisk_sim.func private @unit_0.$clocking_output.79
+// OUTPUT-EDGE-NOT: home_region = 10 : i32
+// OUTPUT-EDGE: obelisk_sim.suspend.edge negedge
+// OUTPUT-EDGE: obelisk_sim.nba.enqueue
 // Program-domain clocking output helpers preserve Reactive/Program so their
 // NBA is committed through the Re-NBA path.
 // PROGRAM-LABEL: obelisk_sim.func private @unit_0.$clocking_output.79
