@@ -594,30 +594,30 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
           sim::ContinuationSiteAttr{}, reactive, successor);
   };
 
-  std::optional<uint64_t> constantCount;
+  FailureOr<Type> expressionType =
+      getNormalizedSemanticType(children.front());
+  std::optional<unsigned> countWidth =
+      succeeded(expressionType) ? sim::getPackedWidth(*expressionType)
+                                : std::nullopt;
+  if (failed(expressionType) || !countWidth || *countWidth == 0)
+    return failure();
+
+  std::optional<APInt> constantCount;
   if (std::optional<StringRef> spelling =
           getConstantSpelling(children.front())) {
-    FailureOr<Type> type = getNormalizedSemanticType(children.front());
-    std::optional<unsigned> width =
-        succeeded(type) ? sim::getPackedWidth(*type) : std::nullopt;
-    if (failed(type) || !width)
-      return failure();
     FailureOr<ParsedConstant> parsed =
-        parseSVInteger(*spelling, *width, location);
+        parseSVInteger(*spelling, *countWidth, location);
     if (failed(parsed))
       return failure();
     if (!parsed->unknown.isZero() ||
         (isSignedNode(children.front()) && parsed->value.isNegative())) {
-      constantCount = 0;
-    } else if (parsed->value.getActiveBits() > 64) {
-      emitError(location) << "cycle delay count exceeds 64 bits";
-      return failure();
+      constantCount = APInt(*countWidth, 0);
     } else {
-      constantCount = parsed->value.getZExtValue();
+      constantCount = parsed->value;
     }
   }
 
-  if (constantCount && *constantCount == 0) {
+  if (constantCount && constantCount->isZero()) {
     // ##0 does not cross an event boundary. Preserve any clocking occurrence
     // inherited from an immediately preceding @(clocking_block).
     timingBoundaryContinuations.erase(continuation);
@@ -625,32 +625,24 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
                          continuationOperands);
     return success();
   }
-  if (constantCount && *constantCount == 1) {
+  if (constantCount && constantCount->isOne()) {
     emitClockWait(builder, continuation, continuationOperands);
     clockingEventContinuations[continuation] = {*clock, {}};
     return success();
   }
 
-  Type countType = builder.getI64Type();
+  Type countType = builder.getIntegerType(*countWidth);
   Value count;
   Value positive;
   if (constantCount) {
     count = arith::ConstantOp::create(
         builder, location, countType,
-        builder.getI64IntegerAttr(*constantCount));
+        builder.getIntegerAttr(countType, *constantCount));
   } else {
     FailureOr<Value> value = lowerExpression(children.front());
     FailureOr<Value> scalar =
         succeeded(value) ? toPackedScalar(*value, location)
                          : FailureOr<Value>(failure());
-    std::optional<unsigned> scalarWidth =
-        succeeded(scalar) ? sim::getPackedWidth((*scalar).getType())
-                          : std::nullopt;
-    if (succeeded(scalar) && (!scalarWidth || *scalarWidth > 64)) {
-      emitError(location)
-          << "dynamic cycle delay count currently requires at most 64 bits";
-      return failure();
-    }
     FailureOr<Value> normalized =
         succeeded(scalar)
             ? convert(*scalar, countType, isSignedNode(children.front()),
@@ -660,7 +652,8 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
       return failure();
     count = *normalized;
     Value zero = arith::ConstantOp::create(builder, location, countType,
-                                           builder.getI64IntegerAttr(0));
+                                           builder.getIntegerAttr(
+                                               countType, APInt(*countWidth, 0)));
     positive = arith::CmpIOp::create(
         builder, location,
         isSignedNode(children.front()) ? arith::CmpIPredicate::sgt
@@ -704,10 +697,12 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
   OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
   emitClockWait(waitBuilder, resume, wait->getArguments());
   OpBuilder resumeBuilder = OpBuilder::atBlockEnd(resume);
-  Value one = arith::ConstantOp::create(resumeBuilder, location, countType,
-                                        resumeBuilder.getI64IntegerAttr(1));
-  Value zero = arith::ConstantOp::create(resumeBuilder, location, countType,
-                                         resumeBuilder.getI64IntegerAttr(0));
+  Value one = arith::ConstantOp::create(
+      resumeBuilder, location, countType,
+      resumeBuilder.getIntegerAttr(countType, APInt(*countWidth, 1)));
+  Value zero = arith::ConstantOp::create(
+      resumeBuilder, location, countType,
+      resumeBuilder.getIntegerAttr(countType, APInt(*countWidth, 0)));
   Value remaining = arith::SubIOp::create(
       resumeBuilder, location, resume->getArgument(0), one);
   Value more = arith::CmpIOp::create(resumeBuilder, location,
