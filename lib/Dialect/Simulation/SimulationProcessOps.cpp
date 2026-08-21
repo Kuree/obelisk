@@ -1533,6 +1533,15 @@ LogicalResult SimOverrideOp::verify() {
 }
 
 LogicalResult SimNBAEnqueueOp::verify() {
+  Type elementType;
+  if (auto reference = dyn_cast<RefType>(getDestination().getType()))
+    elementType = reference.getElementType();
+  else if (auto driver = dyn_cast<DriverType>(getDestination().getType()))
+    elementType = driver.getElementType();
+  else
+    return emitOpError("destination must be a reference or net driver");
+  if (elementType != getValue().getType())
+    return emitOpError("destination element type must match the value");
   SmallVector<ManagedHandleSlot> slots;
   if (!getManagedHandleSlots(getValue().getType(), slots))
     return emitOpError("value has no supported canonical managed-root layout");

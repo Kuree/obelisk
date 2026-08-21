@@ -1,5 +1,6 @@
 //===- Process.cpp - Shared native/bytecode process instances ------------===//
 
+#include "DesignBytecodeNets.h"
 #include "ProcessAllocation.h"
 #include "ProcessContext.h"
 #include "ProcessObservers.h"
@@ -2601,6 +2602,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           bool canonical =
               !automatic && context->execution &&
               context->execution->state_bit_count == update.planeBitCount;
+          if (update.driver &&
+              (automatic || !staticState || update.managedValue ||
+               update.stringValue || !canonical)) {
+            context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+            return;
+          }
           if (canonical &&
               (context->stateValue.size() != (update.planeBitCount + 63) / 64 ||
                context->stateUnknown.size() != context->stateValue.size())) {
@@ -2849,7 +2856,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               return;
             }
             publicationChanged = changedBits != 0;
-            changed |= publicationChanged;
+            if (!update.driver)
+              changed |= publicationChanged;
           } else
             for (uint64_t bit = 0; bit < update.bitWidth; ++bit) {
               uint64_t sourceByte = bit / 8;
@@ -2951,12 +2959,13 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               uint32_t edges =
                   transitionEdges(oldValue, oldUnknown, newValue, newUnknown);
               if (edges != 0 && !equalStringContents) {
-                changed = true;
+                if (!update.driver)
+                  changed = true;
                 publicationChanged = true;
                 transitions.record(bit, edges);
               }
             }
-          if (publicationChanged) {
+          if (publicationChanged && !update.driver) {
             uint64_t sequence = 0;
             if (!obelisk_rt_publish_signal_transition_batch_unlocked(
                     context, update.bitOffset, update.bitWidth,
@@ -3007,6 +3016,27 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             if (!obelisk_rt_notify_observer_signal_unlocked(
                     context, update.bitOffset, update.bitWidth))
               return;
+          }
+          if (publicationChanged && update.driver) {
+            __int128 first = std::max<__int128>(baseOffset, 0);
+            __int128 last = std::min<__int128>(
+                static_cast<__int128>(baseOffset) + update.bitWidth,
+                staticState->bitWidth);
+            if (first < last) {
+              uint64_t begin = staticState->bitOffset +
+                               static_cast<uint64_t>(first);
+              uint64_t end = staticState->bitOffset +
+                             static_cast<uint64_t>(last);
+              bool resolvedChanged = false;
+              if (!obelisk::designbytecode::resolveDrivenNets(
+                      context->designBytecodeImage, context,
+                      static_cast<int64_t>(begin), static_cast<int64_t>(end),
+                      resolvedChanged)) {
+                context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+                return;
+              }
+              changed |= resolvedChanged;
+            }
           }
         };
         auto planeBit = [](const std::vector<uint64_t> &plane, uint64_t bit) {

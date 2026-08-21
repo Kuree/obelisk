@@ -524,6 +524,65 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
           builder.getI64IntegerAttr(sink.width));
     }
   }
+
+  // A clocking output that names a net contributes one procedural driver per
+  // syntactic lvalue. Attach that driver to the enclosing executable unit and
+  // retain the lvalue node ID, leaving ordinary reads bound to the net itself.
+  llvm::DenseSet<Operation *> sourceUnitSet(sourceUnits.begin(),
+                                            sourceUnits.end());
+  for (Operation *unit : sourceUnits) {
+    unit->walk<WalkOrder::PreOrder>([&](Operation *nested) -> WalkResult {
+      if (nested != unit && sourceUnitSet.contains(nested))
+        return WalkResult::skip();
+      auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(nested);
+      if (!assignment)
+        return WalkResult::advance();
+      SmallVector<Operation *> children = getChildren(assignment);
+      size_t destinationIndex = assignment.getHasTimingControl() ? 1 : 0;
+      if (children.size() <= destinationIndex)
+        return WalkResult::advance();
+      Operation *destination = children[destinationIndex];
+      auto direction =
+          destination->getAttrOfType<semantic::SVArgumentDirectionAttr>(
+              clockingAccessDirectionAttrName);
+      if (!destination->hasAttr(clockingVariableAttrName) || !direction ||
+          direction.getValue() == semantic::SVArgumentDirection::In)
+        return WalkResult::advance();
+      auto path = destination->getAttrOfType<StringAttr>(
+          clockingSourcePathAttrName);
+      auto node = destination->getAttrOfType<IntegerAttr>("node_id");
+      if (!path || !node)
+        return WalkResult::advance();
+      auto sink = descriptors.find(path.getValue());
+      if (sink == descriptors.end() ||
+          sink->second.kind != DescriptorInfo::Kind::Net)
+        return WalkResult::advance();
+      std::optional<unsigned> width =
+          analysis::getSimulationStorageBitWidth(sink->second.type);
+      if (!width) {
+        emitError(getSemanticLocation(destination))
+            << "clocking output net has no fixed storage width";
+        invalid = true;
+        return WalkResult::interrupt();
+      }
+      uint64_t id = nextDriverId++;
+      uint64_t scopeId = scopes.lookup(unit);
+      DescriptorInfo info{DescriptorInfo::Kind::Driver, id, scopeId,
+                          sink->second.type, sink->second.netKind};
+      info.rootType = sink->second.type;
+      continuousDrivers[unit].push_back(
+          {path.getValue().str(), info, node.getValue().getZExtValue(), 0,
+           *width});
+      sim::SimDriverDeclOp::create(
+          builder, getSemanticLocation(destination), id, scopeId,
+          sink->second.id, sink->second.type, sim::Lifetime::Design, path,
+          builder.getStringAttr("clocking output"),
+          builder.getI64IntegerAttr(0), builder.getI64IntegerAttr(*width));
+      return WalkResult::advance();
+    });
+    if (invalid)
+      break;
+  }
   if (invalid)
     return failure();
   return continuousDrivers;

@@ -2720,10 +2720,9 @@ def SimDriverArrayElementOp : SimOp<"driver.array_element", [Pure, ViewLikeOpInt
 }
 
 def SimNBAEnqueueOp : SimOp<"nba.enqueue", [
-    MemoryEffects<[MemWrite<SimSchedulerResource>]>,
-    SimRefElementMatches<"destination", "value">
+    MemoryEffects<[MemWrite<SimSchedulerResource>]>
   ]> {
-  let arguments = (ins AnyType:$value, SimRefType:$destination,
+  let arguments = (ins AnyType:$value, AnyType:$destination,
                        Optional<SimTimeType>:$delay,
                        OptionalAttr<SimNBASiteAttr>:$site);
   let assemblyFormat = [{$value `to` $destination (`after` $delay^)? attr-dict

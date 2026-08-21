@@ -45,6 +45,8 @@ public:
     Type i32 = rewriter.getI32Type();
     Type i64 = rewriter.getI64Type();
     sim::SimFuncOp function = op->getParentOfType<sim::SimFuncOp>();
+    bool driverDestination =
+        isa<sim::DriverType>(op.getDestination().getType());
     bool inductiveTwoStateAccess =
         op->hasAttr("obelisk.eval.inductive_two_state_access");
     // Selected eval bodies execute only after their complete closure crosses
@@ -66,7 +68,8 @@ public:
         resolveCFGConstantInteger(adaptor.getDestination().front());
     obelisk_rt_stable_handle_v1 decoded{};
     bool packedStaticStage =
-        site && staticPlan && staticRoot != staticPlan->siteRoots.end() &&
+        !driverDestination && site && staticPlan &&
+        staticRoot != staticPlan->siteRoots.end() &&
         staticRoot->second < staticPlan->roots.size() &&
         adaptor.getDelay().empty() && !site.getTiming() &&
         site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier &&
@@ -417,7 +420,7 @@ public:
                            ValueRange{runtimeContext, status});
     } else {
       bool staticallyStaged =
-          staticSitesEnabled && staticPlan && site &&
+          !driverDestination && staticSitesEnabled && staticPlan && site &&
           staticPlan->siteRoots.contains(site.getId()) &&
           adaptor.getDelay().empty() && !site.getTiming() &&
           site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier;
@@ -439,7 +442,9 @@ public:
           LLVM::CallOp::create(
               rewriter, location, TypeRange{i32},
               SymbolRefAttr::get(rewriter.getContext(),
-                                 staticallyStaged
+                                 driverDestination
+                                     ? "obelisk_rt_v1_scheduler_driver_nba"
+                                 : staticallyStaged
                                      ? "obelisk_rt_v1_scheduler_static_nba"
                                      : "obelisk_rt_v1_scheduler_nba"),
               arguments)

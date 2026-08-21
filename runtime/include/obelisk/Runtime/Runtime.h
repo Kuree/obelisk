@@ -2760,6 +2760,12 @@ obelisk_rt_status obelisk_rt_v1_scheduler_nba(
     obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
     uint64_t plane_bit_count, uint64_t bit_offset, uint64_t bit_width,
     uint64_t delay, const uint8_t *value, const uint8_t *unknown);
+// Queue an update to a net driver's contribution. The scheduler commits it in
+// the same NBA/Re-NBA region as a variable NBA and then resolves affected nets.
+obelisk_rt_status obelisk_rt_v1_scheduler_driver_nba(
+    obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
+    uint64_t plane_bit_count, uint64_t bit_offset, uint64_t bit_width,
+    uint64_t delay, const uint8_t *value, const uint8_t *unknown);
 // Site-aware form shared by native and design-bytecode fragments. The site
 // identity is validated against an installed static schedule when one is
 // present; otherwise this has exactly the generic scheduler semantics.

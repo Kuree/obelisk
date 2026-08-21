@@ -1966,7 +1966,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     } else if (!boundedStatic) {
       begin = static_cast<int64_t>(objectBase);
     }
-    if (descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE || begin > end)
+    bool driver = descriptorKind == OBELISK_RT_DESCRIPTOR_DRIVER;
+    if ((descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE && !driver) ||
+        begin > end)
       return OBELISK_RT_INVALID_HANDLE;
     // An invalid dynamic selection is an ignored assignment, matching direct
     // state stores and the native scheduler ABI.
@@ -1998,6 +2000,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       staticSiteID = *encodedSite;
     }
     if (managedValue || automatic || boundedStatic) {
+      if (driver && (managedValue || automatic || !boundedStatic))
+        return OBELISK_RT_INVALID_HANDLE;
       int64_t first = start < begin ? begin - start : 0;
       int64_t last = static_cast<int64_t>(value.width);
       if (start > end || end - start < last)
@@ -2014,7 +2018,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       if (stable == UINT64_MAX)
         return OBELISK_RT_INVALID_HANDLE;
       uint64_t selectedWidth = static_cast<uint64_t>(last - first);
-      if (staticSiteID != UINT64_MAX && !stringValue && !managedValue &&
+      if (!driver && staticSiteID != UINT64_MAX && !stringValue &&
+          !managedValue &&
           boundedStatic && selectedWidth <= 64 && context->nativeSchedulePlan &&
           !context->nativeScheduleDeoptimized) {
         uint64_t packedValue = extractScalarBits(
@@ -2046,6 +2051,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       update.bitWidth = selectedWidth;
       update.stringValue = stringValue;
       update.managedValue = managedValue;
+      update.driver = driver;
       update.rootedString = rootedString;
       update.rootedManaged = rootedManaged;
       uint64_t bytes = (update.bitWidth + 7) / 8;
@@ -2060,7 +2066,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         if (value.fourState && bit(value.unknown, source))
           update.unknown[bitIndex / 8] |= mask;
       }
-      if (staticSiteID != UINT64_MAX && !stringValue && !managedValue &&
+      if (!driver && staticSiteID != UINT64_MAX && !stringValue &&
+          !managedValue &&
           boundedStatic && context->nativeSchedulePlan &&
           !context->nativeScheduleDeoptimized) {
         uint8_t *valuePlane =

@@ -1252,11 +1252,16 @@ LogicalResult UnitLowering::lowerStaticClockingOutputAssignment(
            << "clocking output has no directly addressable target and clock";
   FailureOr<Value> target = lowerReferencedValue(
       destination, sourcePath.getValue(), /*lvalue=*/true);
-  FailureOr<Value> clock = lowerReferencedValue(
-      destination, clockPath.getValue(), /*lvalue=*/true);
-  if (failed(target) || failed(clock))
+  // A net output has a node-specific driver binding. Resolve the separate
+  // event clock by path so that binding cannot substitute for the clock.
+  Value clock = lvalues.lookup(clockPath.getValue());
+  if (failed(target) || !clock) {
+    if (!clock)
+      emitError(location) << "clocking output has no frozen clock binding: "
+                          << clockPath.getValue();
     return failure();
-  return emitClockingOutputDrive(destination, *target, *clock, value,
+  }
+  return emitClockingOutputDrive(destination, *target, clock, value,
                                  /*virtualInterface=*/false, location);
 }
 
@@ -1264,11 +1269,10 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
     Operation *destination, Value target, Value clock, Value value,
     bool virtualInterface, Location location) {
   auto targetRef = dyn_cast<sim::RefType>(target.getType());
-  if (!targetRef) {
-    emitError(location)
-        << "clocking output to a resolved net is not yet supported";
-    return failure();
-  }
+  auto targetDriver = dyn_cast<sim::DriverType>(target.getType());
+  if (!targetRef && !targetDriver)
+    return emitError(location)
+           << "clocking output target is not variable storage or a net driver";
 
   StringRef eventEdgeName =
       virtualInterface ? "virtual_interface_clock_event_edge"

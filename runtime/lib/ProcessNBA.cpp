@@ -93,7 +93,7 @@ schedulerNBA(obelisk_rt_context *context, uint8_t *valuePlane,
              uint8_t *unknownPlane, uint64_t planeBitCount, uint64_t bitOffset,
              uint64_t bitWidth, uint64_t delay, const uint8_t *value,
              const uint8_t *unknown, bool stringValue,
-             uint64_t staticSite = UINT64_MAX) {
+             uint64_t staticSite = UINT64_MAX, bool driver = false) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
   auto fail = [&](obelisk_rt_status status) {
@@ -138,6 +138,7 @@ schedulerNBA(obelisk_rt_context *context, uint8_t *valuePlane,
     update.bitOffset = bitOffset;
     update.bitWidth = bitWidth;
     update.stringValue = stringValue;
+    update.driver = driver;
     update.rootedString = queuedString;
     ContextMutexLock lock(context);
     const NativeStaticState *staticState = nullptr;
@@ -176,7 +177,7 @@ schedulerNBA(obelisk_rt_context *context, uint8_t *valuePlane,
       context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
       return OBELISK_RT_OUT_OF_RESOURCES;
     }
-    if (staticSite != UINT64_MAX && boundedStatic && !stringValue &&
+    if (!driver && staticSite != UINT64_MAX && boundedStatic && !stringValue &&
         delay == 0 && context->nativeSchedulePlan &&
         !context->nativeScheduleDeoptimized &&
         context->nativeScheduleNBASiteCount != 0) {
@@ -366,6 +367,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_nba(
     uint64_t delay, const uint8_t *value, const uint8_t *unknown) {
   return schedulerNBA(context, valuePlane, unknownPlane, planeBitCount,
                       bitOffset, bitWidth, delay, value, unknown, false);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_driver_nba(
+    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+    uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
+    uint64_t delay, const uint8_t *value, const uint8_t *unknown) {
+  return schedulerNBA(context, valuePlane, unknownPlane, planeBitCount,
+                      bitOffset, bitWidth, delay, value, unknown, false,
+                      UINT64_MAX, true);
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_static_nba(
@@ -1465,7 +1475,8 @@ bool canCommitInlineNativeNBABarrierUnlocked(obelisk_rt_context *context,
       continue;
     uint32_t staticID = 0;
     int64_t offset = 0;
-    if (!update.inlinePacked || update.stringValue || update.managedValue ||
+    if (update.driver || !update.inlinePacked || update.stringValue ||
+        update.managedValue ||
         update.retainedAutomaticID != 0 || update.bitWidth == 0 ||
         update.bitWidth > 64 ||
         update.planeBitCount != context->execution->state_bit_count ||
@@ -1598,4 +1609,3 @@ commitInlineNativeNBABarrierUnlocked(obelisk_rt_context *context,
   context->scheduledNBAs.resize(retained);
   return OBELISK_RT_OK;
 }
-

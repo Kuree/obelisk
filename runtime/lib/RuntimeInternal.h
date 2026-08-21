@@ -455,6 +455,7 @@ struct ScheduledNBA {
   uint64_t bitOffset = 0;
   uint64_t bitWidth = 0;
   bool stringValue = false;
+  bool driver = false;
   bool managedValue = false;
   bool inlinePacked = false;
   obelisk_rt_string_v1 rootedString = 0;
