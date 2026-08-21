@@ -452,11 +452,30 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
             type && isa<semantic::SequenceType>(type.getValue()))
           return;
       // A clocking-block event is lowered directly to its selected clock
-      // descriptor. Outlining its void-typed surface expression as a value
-      // observer would lose the frozen event identity (and, for a virtual
-      // interface, its receiver handle).
+      // descriptor. Its void-typed surface expression is therefore never a
+      // value observer. A monitored event with an additional iff only needs
+      // an observer for that additional condition; lowering supplies the
+      // event-primary evaluator over the selected descriptor.
       if (children.front()->hasAttr("virtual_interface_clocking_block_event") ||
           children.front()->hasAttr(clockingBlockEventAttrName)) {
+        bool monitoredClockingEvent =
+            children.front()->hasAttr(clockingEventMonitorRequiredAttrName) ||
+            children.front()->hasAttr(clockingEventListAttrName) ||
+            children.front()->hasAttr(
+                "virtual_interface_clock_event_monitor") ||
+            children.front()->hasAttr("virtual_interface_clock_event_list");
+        if (monitoredClockingEvent && event.getHasIff()) {
+          if (children.size() != 2) {
+            emitError(getSemanticLocation(event))
+                << "monitored clocking-block event with iff has no condition";
+            invalid = true;
+            return;
+          }
+          observerCandidates.push_back({children[1], ObserverResult::Truth,
+                                        "clocking_event_iff", unit.id,
+                                        unit.hierarchy});
+          return;
+        }
         bool virtualClockingIff =
             children.front()->hasAttr("virtual_interface_clock_event_has_iff");
         bool staticClockingIff =

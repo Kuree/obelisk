@@ -59,6 +59,17 @@ module {
                 }
                 obelisk.sv.statement.empty attributes {node_id = 38 : i64} {}
               }
+              obelisk.sv.statement.timed attributes {node_id = 51 : i64} {
+                obelisk.sv.timing.signal_event attributes {edge_kind = 0 : i32, has_iff = true, node_id = 52 : i64} {
+                  obelisk.sv.expression.member_access attributes {is_signed = false, member_name = "cb", node_id = 53 : i64, referenced_path = "top.bus.cb", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s18.bus::@s21.cb, semantic_type = !obelisk.void, virtual_interface_clock_event_edge = 0 : i32, virtual_interface_clock_event_list, virtual_interface_clock_member = "cb", virtual_interface_clocking_block_event} {
+                    obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 54 : i64, referenced_path = "top.vif", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s16.vif, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.b, "">} {}
+                  }
+                  obelisk.sv.expression.member_access attributes {is_signed = false, member_name = "reset_n", node_id = 55 : i64, referenced_path = "top.bus.reset_n", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s18.bus::@s20.reset_n, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                    obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 56 : i64, referenced_path = "top.vif", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s16.vif, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.b, "">} {}
+                  }
+                }
+                obelisk.sv.statement.empty attributes {node_id = 57 : i64} {}
+              }
             }
           }
         }
@@ -94,6 +105,9 @@ module {
 
 // Virtual selection multiplexes the two event handles by interface scope and
 // waits for the selected occurrence in Reactive.
+// The use-site iff gets a compact primary evaluator for the selected event.
+// CHECK: observer hierarchy "unit_2.$clocking_event_primary.52"
+// CHECK: obelisk_sim.event.triggered
 // CHECK-LABEL: obelisk_sim.func private @unit_2(
 // CHECK-DAG: %[[EVENT1:.*]] = obelisk_sim.context.event %{{.*}}[1]
 // CHECK-DAG: %[[EVENT0:.*]] = obelisk_sim.context.event %{{.*}}[0]
@@ -101,4 +115,9 @@ module {
 // CHECK: cf.cond_br %{{.*}}, ^{{.*}}(%[[EVENT0]] : !obelisk_sim.event), ^{{.*}}
 // CHECK: obelisk_sim.suspend.event %{{[^ ]+}} {{.*}}resume_region = 10 : i32
 // CHECK: cf.cond_br %{{.*}}, ^{{.*}}(%[[EVENT1]] : !obelisk_sim.event), ^{{.*}}
+// The additional iff remains a separate observer over the selected virtual
+// interface and gates the published clocking event.
+// CHECK: obelisk_sim.observer.bind {{.*}}obelisk_sim.event_primary
+// CHECK: obelisk_sim.suspend.observe %{{.*}} conditions 1 edges [0] indices [0]
+// CHECK-SAME: resume_region = 10 : i32
 // CHECK-NOT: obelisk.sv.

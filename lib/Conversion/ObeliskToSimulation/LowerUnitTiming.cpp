@@ -301,6 +301,90 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
     return success();
   };
 
+  auto bindEventPrimary = [&](Value event,
+                              Operation *source) -> FailureOr<Value> {
+    if (!isa<sim::EventType>(event.getType()))
+      return emitError(location)
+                 << "clocking event monitor did not select a named event",
+             failure();
+    auto nodeAttr = source->getAttrOfType<IntegerAttr>("node_id");
+    if (!nodeAttr)
+      return emitError(location)
+                 << "clocking event control is missing its node identity",
+             failure();
+    uint64_t node = nodeAttr.getValue().getZExtValue();
+    std::string identity =
+        (function.getSymName() + ".$clocking_event_primary." + Twine(node))
+            .str();
+    uint64_t codeUnitID = stableCodeUnitID(identity);
+    uint64_t scopeID = 0;
+    if (auto parentID = function.getCodeUnitId())
+      for (sim::SimCodeUnitDeclOp declaration :
+           function->getParentOfType<sim::SimDesignOp>()
+               .getBody()
+               .front()
+               .getOps<sim::SimCodeUnitDeclOp>())
+        if (declaration.getId() == *parentID) {
+          scopeID = declaration.getScopeId();
+          break;
+        }
+
+    OpBuilder outlineBuilder(function);
+    outlineBuilder.setInsertionPoint(function);
+    sim::SimCodeUnitDeclOp::create(
+        outlineBuilder, location, codeUnitID, scopeID, sim::EntryKind::Observer,
+        outlineBuilder.getStringAttr(identity),
+        outlineBuilder.getStringAttr("clocking event primary"),
+        outlineBuilder.getUnitAttr());
+    MLIRContext *context = function.getContext();
+    SmallVector<DictionaryAttr> argumentAttrs{
+        captureMetadata(outlineBuilder, sim::CaptureKind::Context),
+        captureMetadata(outlineBuilder, sim::CaptureKind::Formal)};
+    SmallVector<NamedAttribute> attributes{
+        outlineBuilder.getNamedAttr(
+            "code_unit_id", outlineBuilder.getI64IntegerAttr(codeUnitID)),
+        outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
+        outlineBuilder.getNamedAttr("home_region", function.getHomeRegionAttr()),
+        outlineBuilder.getNamedAttr("domain", function.getDomainAttr()),
+        outlineBuilder.getNamedAttr(
+            sim::metadata::hierarchicalName,
+            outlineBuilder.getStringAttr(identity)),
+        outlineBuilder.getNamedAttr(
+            observerResultAttrName,
+            outlineBuilder.getI32IntegerAttr(
+                static_cast<uint32_t>(ObserverResult::Event))),
+        outlineBuilder.getNamedAttr("obelisk_sim.observer_width",
+                                    outlineBuilder.getI32IntegerAttr(1)),
+        outlineBuilder.getNamedAttr("obelisk_sim.observer_four_state",
+                                    outlineBuilder.getBoolAttr(false))};
+    sim::SimFuncOp evaluator = sim::SimFuncOp::create(
+        outlineBuilder, location, identity,
+        FunctionType::get(
+            context,
+            TypeRange{sim::ContextType::get(context),
+                      sim::EventType::get(context)},
+            TypeRange{outlineBuilder.getI1Type()}),
+        sim::EntryKind::Observer, attributes, argumentAttrs);
+    SymbolTable::setSymbolVisibility(evaluator,
+                                     SymbolTable::Visibility::Private);
+    OpBuilder evaluatorBuilder =
+        OpBuilder::atBlockEnd(&evaluator.getBody().front());
+    Value triggered = sim::SimEventTriggeredOp::create(
+        evaluatorBuilder, location, evaluatorBuilder.getI1Type(),
+        evaluator.getBody().front().getArgument(1));
+    sim::SimReturnOp::create(evaluatorBuilder, location,
+                             ValueRange{triggered});
+    evaluator->setAttr(sim::metadata::lowered,
+                       outlineBuilder.getUnitAttr());
+
+    auto binding = sim::SimObserverBindOp::create(
+        builder, location,
+        sim::ObserverType::get(context, builder.getI1Type()),
+        evaluator.getSymName(), ValueRange{event, event}, uint32_t{1});
+    binding->setAttr(observerEventPrimaryAttrName, builder.getUnitAttr());
+    return binding.getResult();
+  };
+
   if (auto event = dyn_cast<semantic::SVSignalEventControlOp>(control)) {
     SmallVector<Operation *> children = getChildren(event);
     size_t expected = event.getHasIff() ? 2 : 1;
@@ -341,11 +425,66 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
         children.front()->hasAttr("virtual_interface_clock_event_has_iff");
     bool staticClockingIff =
         children.front()->hasAttr(clockingEventHasIffAttrName);
+    bool monitoredClockingEvent =
+        children.front()->hasAttr(clockingEventMonitorRequiredAttrName) ||
+        children.front()->hasAttr(clockingEventListAttrName) ||
+        children.front()->hasAttr("virtual_interface_clock_event_monitor") ||
+        children.front()->hasAttr("virtual_interface_clock_event_list");
+    if (clockingBlockEvent && monitoredClockingEvent && event.getHasIff()) {
+      FailureOr<Value> handle = failure();
+      Value virtualInterface;
+      auto virtualAccess =
+          dyn_cast<semantic::SVMemberAccessExpressionOp>(children.front());
+      if (virtualClockingBlockEvent) {
+        SmallVector<Operation *> clockingChildren =
+            virtualAccess ? getChildren(virtualAccess)
+                          : SmallVector<Operation *>{};
+        if (!virtualAccess || clockingChildren.size() != 1) {
+          emitError(location)
+              << "monitored virtual clocking event has no receiver";
+          return failure();
+        }
+        FailureOr<Value> receiver = lowerExpression(clockingChildren.front());
+        if (failed(receiver))
+          return failure();
+        virtualInterface = *receiver;
+        handle = lowerVirtualInterfaceClock(virtualAccess, virtualInterface);
+      } else {
+        handle = lowerExpression(children.front());
+      }
+      if (failed(handle) || !isa<sim::EventType>((*handle).getType())) {
+        if (succeeded(handle))
+          emitError(location)
+              << "monitored clocking event did not resolve to an event";
+        return failure();
+      }
+      FailureOr<Value> primary = bindEventPrimary(*handle, event);
+      FailureOr<Value> condition =
+          virtualClockingBlockEvent
+              ? bindVirtualClockingObserver(children[1], virtualAccess,
+                                            virtualInterface, *handle)
+              : bindObserver(children[1]);
+      if (failed(primary) || failed(condition))
+        return failure();
+      Value initial = arith::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+      SmallVector<Value> observerValues{*primary, initial, *condition};
+      llvm::append_range(observerValues, continuationOperands);
+      sim::SimSuspendObserveOp::create(
+          builder, location, observerValues, 1,
+          ArrayRef<int32_t>{static_cast<int32_t>(sim::EdgeKind::Change)},
+          ArrayRef<int32_t>{0}, sim::ContinuationSiteAttr{},
+          sim::EventRegionAttr::get(function.getContext(),
+                                    sim::EventRegion::Reactive),
+          continuation);
+      clockingEventContinuations[continuation] = {*handle, {}};
+      return success();
+    }
     if (clockingBlockEvent && (virtualClockingIff || staticClockingIff) &&
         event.getHasIff()) {
       emitError(location)
-          << "a clocking block with a declared iff cannot yet be combined "
-             "with an additional event-control iff";
+          << "legacy clocking-block events with a declared iff cannot be "
+             "combined with an additional event-control iff";
       return failure();
     }
     FailureOr<Type> watchedType =

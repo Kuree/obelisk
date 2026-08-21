@@ -479,11 +479,11 @@ LogicalResult SimObserverBindOp::verify() {
     // so a capture may name the whole aggregate the evaluator indexes into.
     // Only the observer's result has to be singular, and its type carries that.
     if (!isManagedHandleType(element) &&
-        !isa<FloatType, ProcessType>(element) && !getPackedWidth(element) &&
-        !isAggregateType(element))
+        !isa<FloatType, ProcessType, VirtualInterfaceType>(element) &&
+        !getPackedWidth(element) && !isAggregateType(element))
       return emitOpError(
           "captured handles must refer to packed, floating, process, "
-          "aggregate, or managed values");
+          "aggregate, virtual-interface, or managed values");
   }
   for (Value dependency : getDependencies())
     if (!isa<RefType, NetType, EventType, ManagedWatchType>(

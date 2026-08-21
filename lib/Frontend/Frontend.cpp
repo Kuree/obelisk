@@ -1264,7 +1264,7 @@ private:
     bool direct = event->expr.as_if<slang::ast::NamedValueExpression>() ||
                   event->expr
                       .as_if<slang::ast::HierarchicalValueExpression>();
-    return !direct || (event->iffCondition && event->expr.type->isEvent());
+    return !direct || event->iffCondition;
   }
 
   void addStaticClockingEventDescriptor(
@@ -1311,6 +1311,8 @@ private:
       if (clocking.getEvent().as_if<slang::ast::EventListControl>())
         attrs.set("virtual_interface_clock_event_list",
                   builder.getUnitAttr());
+      attrs.set("virtual_interface_clock_event_monitor",
+                builder.getUnitAttr());
       attrs.set("virtual_interface_clock_event_edge",
                 slangir::EdgeKindAttr::get(
                     builder.getContext(), slangir::EdgeKind::None));
