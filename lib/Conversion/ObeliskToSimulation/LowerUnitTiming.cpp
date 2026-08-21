@@ -894,9 +894,12 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
     }
   }
 
-  if (constantCount && constantCount->isZero()) {
-    // ##0 does not cross an event boundary. Preserve any clocking occurrence
-    // inherited from an immediately preceding @(clocking_block).
+  bool zeroCount = constantCount && constantCount->isZero();
+  if (zeroCount && incomingOccurrence && !*incomingOccurrence) {
+    // IEEE 1800-2017 14.11: a ##0 whose clocking event has already occurred in
+    // this time step continues without suspension. Reaching here from that
+    // event unconditionally is what makes it already occurred, so preserve the
+    // occurrence rather than crossing a boundary.
     timingBoundaryContinuations.erase(continuation);
     cf::BranchOp::create(builder, location, continuation,
                          continuationOperands);
@@ -909,6 +912,24 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
       return failure();
     primaryObserver = *primary;
     conditionObserver = *condition;
+  }
+  if (zeroCount) {
+    // IEEE 1800-2017 14.11: otherwise the ##0 suspends until the clocking
+    // event occurs. A conditional occurrence takes the fall-through only on
+    // the paths that arrived through the event; either way the continuation
+    // then runs inside it.
+    Block *wait = current;
+    if (incomingOccurrence && *incomingOccurrence) {
+      wait = addBlock();
+      cf::CondBranchOp::create(builder, location, *incomingOccurrence,
+                               continuation, continuationOperands, wait,
+                               ValueRange{});
+    }
+    OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
+    if (failed(emitClockWait(waitBuilder, continuation, continuationOperands)))
+      return failure();
+    clockingEventContinuations[continuation] = {*clock, {}};
+    return success();
   }
   if (constantCount && constantCount->isOne()) {
     if (failed(emitClockWait(builder, continuation, continuationOperands)))
