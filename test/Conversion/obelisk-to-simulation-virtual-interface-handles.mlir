@@ -82,8 +82,13 @@ module {
                   obelisk.sv.expression.member_access attributes {is_signed = false, member_name = "signal", node_id = 36 : i64, referenced_path = "top.bus_if.signal", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.bus::@s7.bus_if::@s12.signal, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, virtual_interface_access_direction = 1 : i32, virtual_interface_clock_event_edge = 1 : i32, virtual_interface_clock_member = "clk", virtual_interface_clock_output_skew_delay = "0", virtual_interface_clock_output_skew_edge = 0 : i32, virtual_interface_clock_time_precision_fs = 1000000 : i64, virtual_interface_clock_time_unit_fs = 1000000 : i64, virtual_interface_clocking, virtual_interface_clocking_block = "cb"} {
                     obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 37 : i64, referenced_path = "top.vif", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s8.vif, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s9.bus_if, "">} {}
                   }
-                  obelisk.sv.expression.member_access attributes {is_signed = false, member_name = "ready", node_id = 38 : i64, referenced_path = "top.bus_if.ready", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.bus::@s7.bus_if::@s13.ready, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, virtual_interface_access_direction = 0 : i32, virtual_interface_clock_event_edge = 1 : i32, virtual_interface_clock_input_skew_edge = 0 : i32, virtual_interface_clock_input_skew_one_step, virtual_interface_clock_member = "clk", virtual_interface_clock_time_precision_fs = 1000000 : i64, virtual_interface_clock_time_unit_fs = 1000000 : i64, virtual_interface_clocking, virtual_interface_clocking_block = "cb"} {
+                  obelisk.sv.expression.member_access attributes {is_signed = false, member_name = "ready", node_id = 38 : i64, referenced_path = "top.bus_if.ready", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.bus::@s7.bus_if::@s13.ready, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, virtual_interface_access_direction = 0 : i32, virtual_interface_clock_event_edge = 1 : i32, virtual_interface_clock_event_has_iff, virtual_interface_clock_input_skew_edge = 0 : i32, virtual_interface_clock_input_skew_one_step, virtual_interface_clock_member = "clk", virtual_interface_clock_time_precision_fs = 1000000 : i64, virtual_interface_clock_time_unit_fs = 1000000 : i64, virtual_interface_clocking, virtual_interface_clocking_block = "cb"} {
                     obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 39 : i64, referenced_path = "top.vif", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s8.vif, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s9.bus_if, "">} {}
+                    obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 98 : i64, referenced_path = "top.bus_if.clk", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.bus::@s7.bus_if::@s19.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
+                    obelisk.sv.expression.binary_op attributes {is_signed = false, node_id = 99 : i64, operator_kind = 19 : i32, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 100 : i64, referenced_path = "top.bus_if.ready", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.bus::@s7.bus_if::@s13.ready, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
+                      obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 101 : i64, referenced_path = "top.bus_if.clk", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.bus::@s7.bus_if::@s19.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
+                    }
                   }
                 }
               }
@@ -101,7 +106,7 @@ module {
                     obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 76 : i64, referenced_path = "top.vif", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s8.vif, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s9.bus_if, "">} {}
                     obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 94 : i64, referenced_path = "top.bus_if.clk", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.bus::@s7.bus_if::@s19.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
                     obelisk.sv.expression.binary_op attributes {is_signed = false, node_id = 95 : i64, operator_kind = 19 : i32, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
-                      obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 96 : i64, referenced_path = "top.bus_if.signal", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.bus::@s7.bus_if::@s12.signal, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
+                      obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 96 : i64, referenced_path = "top.bus_if.ready", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.bus::@s7.bus_if::@s13.ready, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
                       obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 97 : i64, referenced_path = "top.bus_if.clk", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.bus::@s7.bus_if::@s19.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
                     }
                   }
@@ -176,7 +181,15 @@ module {
 // The value-returning observer exercises the typed fatal-path return while
 // per-pass verification is active; it is inlined into the timed process later.
 // CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in 1 observer hierarchy "top.$code_unit_9.$observer.91.primary"
-// Each elaborated input has an Observed-region sampler.
+// Each elaborated input has an Observed-region sampler gated by the declared
+// clocking-event iff from the same selected interface instance.
+// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_input.{{[0-9]+}}
+// CHECK: obelisk_sim.observer.bind
+// CHECK: obelisk_sim.observer.bind
+// CHECK-SAME: !obelisk_sim.net
+// CHECK: obelisk_sim.suspend.observe
+// CHECK-SAME: conditions 1 edges [1] indices [0]
+// CHECK-SAME: resume_region = 8 : i32
 // CHECK: obelisk_sim.assert.sampled_read
 // CHECK: obelisk_sim.assert.clocked_sample_update
 // A clocking output drive is outlined so evaluating the assignment does not
@@ -220,7 +233,8 @@ module {
 // INPUT-SKEW: clocking input skew currently requires #1step, #0, or an edge
 // INPUT-ZERO: obelisk_sim.assert.clocked_sample_update
 // INPUT-ZERO: obelisk_sim.net.read
-// INPUT-EDGE: obelisk_sim.suspend.edge negedge
+// INPUT-EDGE: obelisk_sim.suspend.observe
+// INPUT-EDGE-SAME: conditions 1 edges [2] indices [0]
 // INPUT-EDGE: obelisk_sim.assert.clocked_sample_update
 // An output edge distinct from @(vif.cb)'s event cannot reuse that occurrence.
 // OUTPUT-EDGE-LABEL: obelisk_sim.func private @unit_0.$clocking_output.79

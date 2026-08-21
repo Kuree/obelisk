@@ -18,6 +18,7 @@ struct PreparedLocal {
   mlir::Type type;
   bool automatic = false;
   bool patternVariable = false;
+  bool net = false;
 };
 
 struct PreparedConstant {

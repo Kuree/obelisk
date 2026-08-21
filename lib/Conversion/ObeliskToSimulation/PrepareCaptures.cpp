@@ -387,8 +387,11 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
         result.constants[unit.source].push_back({path.str(), *value});
         return;
       }
+      bool observerNet = unit.entryKind == sim::EntryKind::Observer &&
+                         isa<semantic::SVNetSymbolOp>(referencedSymbol);
       if (!isa<semantic::SVVariableSymbolOp, semantic::SVPatternVarSymbolOp>(
               referencedSymbol) &&
+          !observerNet &&
           !isRandSequenceFormal(referencedSymbol) &&
           !(unit.entryKind == sim::EntryKind::Observer &&
             isa<semantic::SVFormalArgumentSymbolOp>(referencedSymbol)))
@@ -404,7 +407,8 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
                                 : result.locals[unit.source];
         destination.push_back(
             {path.str(), *type, isAutomaticLocalSymbol(referencedSymbol),
-             isa<semantic::SVPatternVarSymbolOp>(referencedSymbol)});
+             isa<semantic::SVPatternVarSymbolOp>(referencedSymbol),
+             observerNet});
         referencedSymbol->walk<WalkOrder::PreOrder>(
             [&](Operation *initializerNode) {
               collectBinding(initializerNode);

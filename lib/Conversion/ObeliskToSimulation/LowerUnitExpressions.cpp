@@ -1887,9 +1887,17 @@ FailureOr<Value> UnitLowering::bindVirtualClockingObserver(
            failure();
   std::string marker = (Twine(".") + clockingBlock.getValue()).str();
   size_t markerOffset = accessPath.rfind(marker);
+  if (markerOffset == StringRef::npos &&
+      access->hasAttr("virtual_interface_clocking")) {
+    auto member = access->getAttrOfType<StringAttr>("member_name");
+    std::string memberMarker =
+        member ? (Twine(".") + member.getValue()).str() : std::string{};
+    if (!memberMarker.empty() && accessPath.ends_with(memberMarker))
+      markerOffset = accessPath.size() - memberMarker.size();
+  }
   if (markerOffset == StringRef::npos)
     return emitError(location)
-               << "virtual clocking observer path does not contain its block",
+               << "virtual clocking observer path has no interface prefix",
            failure();
   StringRef interfacePath = accessPath.take_front(markerOffset);
   auto captures =
@@ -1970,6 +1978,13 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
       return sourceAttrs;
     if (value == clock)
       return clockAttrs;
+    if (auto storage = value.getDefiningOp<sim::SimContextStorageOp>())
+      return captureMetadata(
+          builder, sim::CaptureKind::Storage,
+          storage.getIdAttr().getValue().getZExtValue());
+    if (auto net = value.getDefiningOp<sim::SimContextNetOp>())
+      return captureMetadata(builder, sim::CaptureKind::Net,
+                             net.getIdAttr().getValue().getZExtValue());
     auto argument = dyn_cast<BlockArgument>(value);
     if (!argument || argument.getOwner() != &function.getBody().front())
       return failure();
@@ -2285,12 +2300,23 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
   llvm::sort(*targets);
 
   bool clockedRead = !lvalue && op->hasAttr("virtual_interface_clocking");
+  bool clockedReadIff =
+      clockedRead && op->hasAttr("virtual_interface_clock_event_has_iff");
+  SmallVector<Operation *> clockingChildren;
   if (clockedRead) {
     auto eventEdge = op->getAttrOfType<semantic::EdgeKindAttr>(
         "virtual_interface_clock_event_edge");
-    if (!eventEdge || op->hasAttr("virtual_interface_clock_event_has_iff")) {
+    if (!eventEdge) {
       emitError(location)
           << "clocking variable has no supported static clock event";
+      return failure();
+    }
+    clockingChildren = getChildren(op);
+    size_t expectedChildren = clockedReadIff ? 3 : 1;
+    if (clockingChildren.size() != expectedChildren) {
+      emitError(location)
+          << "virtual clocking input has no frozen receiver, clock, and iff "
+             "expressions";
       return failure();
     }
     bool oneStep =
@@ -2406,9 +2432,22 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
                              entryBuilder.getI64IntegerAttr(clockDescriptor)));
         clockCache[clockDescriptor] = clockHandle;
       }
+      Value primaryObserver;
+      Value conditionObserver;
+      if (clockedReadIff) {
+        FailureOr<Value> primary = bindVirtualClockingObserver(
+            clockingChildren[1], op, interface, clockHandle, target.first);
+        FailureOr<Value> condition = bindVirtualClockingObserver(
+            clockingChildren[2], op, interface, clockHandle, target.first);
+        if (failed(primary) || failed(condition))
+          return failure();
+        primaryObserver = *primary;
+        conditionObserver = *condition;
+      }
       FailureOr<Value> sample = lowerClockingInputSample(
           staticTargets[index], target.second, clockHandle, clockDescriptor,
-          static_cast<sim::EdgeKind>(selectedEdge), oneStep, location);
+          static_cast<sim::EdgeKind>(selectedEdge), oneStep, location,
+          primaryObserver, conditionObserver);
       if (failed(sample))
         return failure();
       clockedSamples.push_back(*sample);

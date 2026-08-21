@@ -5644,7 +5644,8 @@ void ObeliskSimPreparePass::runOnOperation() {
 
     for (const PreparedLocal &local : observerLocals) {
       unsigned argument = inputs.size();
-      inputs.push_back(sim::RefType::get(context, local.type));
+      inputs.push_back(local.net ? Type(sim::NetType::get(context, local.type))
+                                 : Type(sim::RefType::get(context, local.type)));
       argAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Value));
       bindings.push_back(sim::ArgumentBindingAttr::get(
           context, builder.getStringAttr(local.path), argument,
