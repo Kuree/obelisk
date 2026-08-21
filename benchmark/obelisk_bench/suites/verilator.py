@@ -6,7 +6,8 @@ generate the same clock-driving top shell `driver.py` would (a `module top` that
 instantiates the design's `module t` and toggles its clock), compile the shell
 plus the test with Obelisk, run the result, and judge it:
 
-  * `_bad` / `_unsup` tests expect a compile error;
+  * `_bad` / `_unsup` tests expect a failure, and their descriptor says
+    whether it belongs to the compile or to the run;
   * a test in `EXCLUDED` is skipped, because what it asserts is Verilator's
     behavior rather than the language's;
   * everything else self-checks and must print `*-* All Finished *-*`.
@@ -58,6 +59,14 @@ TIMING_LOOP = re.compile(r"^\s*test\.compile\(.*\btiming_loop\s*=\s*True",
 TRACE_DUMPFILE = "simx.vcd"
 
 EXPECTED_ERROR = re.compile(r"_(bad|unsup|fail\d*)$")
+# A descriptor spells out where upstream expects the failure: `fails=True` on
+# `test.compile`/`test.lint` means the code never builds, while `fails=True` on
+# `test.execute` means it builds and the *run* is what has to fail. The name
+# alone cannot tell those apart, and `_bad` covers both. Reading the descriptor
+# is only ever used to take an expectation away, never to add one: a descriptor
+# that expects a compile error for a Verilator limitation the name does not
+# advertise would otherwise hand Obelisk credit for sharing that limitation.
+DESCRIPTOR_FAILS = re.compile(r"\bfails\s*=\s*True\b")
 MODULE_T = re.compile(r"^\s*module\s+t\b", re.MULTILINE)
 # `clocking` joins driver.py's list because a clocking block's `input` lines sit
 # at the start of a line just as a non-ANSI port declaration does.
@@ -346,6 +355,55 @@ def detect_sim_time(descriptor: Path) -> int:
     return SIM_TIME
 
 
+class Expectation(NamedTuple):
+    """Where a test's descriptor says the failure it wants belongs."""
+    compile_error: bool
+    run_error: bool
+
+
+def descriptor_calls(text: str, method: str) -> list[str]:
+    """Return the argument text of every `test.<method>(...)` call.
+
+    The calls span lines and nest brackets, so the opening parenthesis is
+    matched by scanning rather than by a regex.
+    """
+    arguments = []
+    for call in re.finditer(r"\btest\." + method + r"\s*\(", text):
+        index = call.end()
+        depth = 1
+        while index < len(text) and depth:
+            if text[index] == "(":
+                depth += 1
+            elif text[index] == ")":
+                depth -= 1
+            index += 1
+        arguments.append(text[call.end():index - 1])
+    return arguments
+
+
+def detect_expectation(name: str, descriptor: Path) -> Expectation:
+    """Return whether the test expects a compile error, a run error, or neither.
+
+    The name is what nominates a test as an expected failure; the descriptor
+    then says which stage that failure belongs to. A `_bad` test whose
+    descriptor builds cleanly and asks for `test.execute(fails=True)` is a
+    runtime check, and judging it as a compile error would mark a correct
+    diagnosis as a failure. An unreadable descriptor leaves the name's reading
+    in place.
+    """
+    nominated = bool(EXPECTED_ERROR.search(name))
+    if not nominated or not descriptor.exists():
+        return Expectation(nominated, False)
+    text = descriptor.read_text(encoding="utf-8", errors="replace")
+    compile_error = any(
+        DESCRIPTOR_FAILS.search(arguments)
+        for method in ("compile", "lint")
+        for arguments in descriptor_calls(text, method))
+    run_error = any(DESCRIPTOR_FAILS.search(arguments)
+                    for arguments in descriptor_calls(text, "execute"))
+    return Expectation(compile_error, run_error and not compile_error)
+
+
 def detect_timing_loop(descriptor: Path) -> bool:
     """Return whether the test's descriptor asks for driver.py's timing loop."""
     if not descriptor.exists():
@@ -430,7 +488,7 @@ def judge_one(obelisk: str, top: Path, timeout: float,
         return model.Outcome(model.SKIP,
                              f"{excluded.clause}: {excluded.reason}")
     top_text = top.read_text(encoding="utf-8", errors="replace")
-    expects_error = bool(EXPECTED_ERROR.search(name))
+    expectation = detect_expectation(name, top.with_suffix(".py"))
 
     with tempfile.TemporaryDirectory(prefix="obelisk-vlt-") as tmp:
         native = runner.build_vpi_inputs(
@@ -465,7 +523,7 @@ def judge_one(obelisk: str, top: Path, timeout: float,
             vpi=vpi_mode or ("full" if native.inputs else "off"),
         )
 
-        if expects_error:
+        if expectation.compile_error:
             # driver.py reports these "passed" whenever the compiler rejects them;
             # their diagnostics are intended, so keep them out of the blocker table.
             if compiled.failure_kind == "compile":
@@ -482,6 +540,12 @@ def judge_one(obelisk: str, top: Path, timeout: float,
         # reads without letting a test that writes a file touch the checkout.
         (Path(tmp) / "t").symlink_to(top.parent, target_is_directory=True)
         result = runner.execute(str(binary), timeout, cwd=tmp)
+        if expectation.run_error:
+            # The design builds and the run is what has to fail. A timeout is
+            # not that failure: it means the run never reached a verdict.
+            if not result.ok and not result.timed_out:
+                return model.Outcome(model.XFAIL_PASS)
+            return model.Outcome(model.RUN_FAIL, result.stdout)
         if result.ok and FINISHED_MARKER in result.stdout:
             return model.Outcome(model.PASS)
         if FINISHED_MARKER in top_text:

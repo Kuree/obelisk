@@ -15,8 +15,11 @@ The harness owns its run loop — it does **not** invoke the upstream test drive
 design with Obelisk directly, runs the resulting native executable, and judges it
 three ways:
 
-- a test that expects a **compile error** (`_bad`/`_unsup`, or ivtest type `CE`)
-  passes iff Obelisk fails to compile it;
+- a test that expects a **failure** (`_bad`/`_unsup`, or ivtest type `CE`) passes
+  iff Obelisk fails on it. For Verilator the test's own descriptor says which
+  stage that is: `fails=True` on `test.compile`/`test.lint` wants a rejected
+  compile, while `fails=True` on `test.execute` wants a design that builds and
+  then fails at run time;
 - a test with a **gold file** passes iff its stdout matches the gold;
 - otherwise the test **self-checks** and must print its success marker
   (`*-* All Finished *-*` for Verilator, `PASSED` for ivtest).

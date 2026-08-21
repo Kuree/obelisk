@@ -129,6 +129,58 @@ class TimingLoopDescriptorTest(unittest.TestCase):
                 verilator.detect_timing_loop(Path(tmp) / "absent.py"))
 
 
+class ExpectationDescriptorTest(unittest.TestCase):
+    """Where the descriptor says a nominated failure belongs."""
+
+    def expectation(self, name: str, text: str | None):
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            path = Path(tmp) / (name + ".py")
+            if text is not None:
+                path.write_text(text, encoding="utf-8")
+            return verilator.detect_expectation(name, path)
+
+    def test_an_unnominated_name_expects_nothing(self):
+        self.assertEqual(
+            self.expectation("t_ordinary", "test.compile(fails=True)\n"),
+            verilator.Expectation(False, False))
+
+    def test_a_lint_failure_is_a_compile_error(self):
+        self.assertEqual(
+            self.expectation("t_x_unsup", "test.lint(fails=True)\n"),
+            verilator.Expectation(True, False))
+
+    def test_an_execute_failure_is_a_run_error(self):
+        self.assertEqual(
+            self.expectation(
+                "t_x_bad",
+                "test.compile()\ntest.execute(fails=True)\ntest.passes()\n"),
+            verilator.Expectation(False, True))
+
+    def test_a_multiline_compile_call_is_read_whole(self):
+        self.assertEqual(
+            self.expectation(
+                "t_x_bad",
+                "test.compile(\n    verilator_flags2=['--exe', f(1)],\n"
+                "    fails=True)\n"),
+            verilator.Expectation(True, False))
+
+    def test_a_verilator_only_failure_is_not_ours_to_expect(self):
+        self.assertEqual(
+            self.expectation(
+                "t_x_bad",
+                "test.compile(fails=test.vlt_all)\ntest.execute()\n"),
+            verilator.Expectation(False, False))
+
+    def test_a_descriptor_that_only_runs_expects_nothing(self):
+        self.assertEqual(
+            self.expectation("t_x_bad", "test.compile()\ntest.execute()\n"),
+            verilator.Expectation(False, False))
+
+    def test_a_missing_descriptor_keeps_the_name_reading(self):
+        self.assertEqual(self.expectation("t_x_bad", None),
+                         verilator.Expectation(True, False))
+
+
 class TraceDumpfileTest(unittest.TestCase):
     def test_trace_macro_points_to_temporary_vcd(self):
         with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
