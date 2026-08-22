@@ -1214,9 +1214,13 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return convertResult(result);
   }
 
+  // The whole of IEEE 1800-2017 Table 20-4.
   bool realMath = llvm::StringSwitch<bool>(name)
                       .Cases({"$ceil", "$floor", "$sqrt", "$exp", "$ln",
-                              "$log10", "$pow", "$atan2", "$hypot"},
+                              "$log10", "$pow", "$atan2", "$hypot", "$sin",
+                              "$cos", "$tan", "$asin", "$acos", "$atan",
+                              "$sinh", "$cosh", "$tanh", "$asinh", "$acosh",
+                              "$atanh"},
                              true)
                       .Default(false);
   if (realMath)

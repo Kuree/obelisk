@@ -35,6 +35,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/Math/Transforms/Passes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
@@ -4545,6 +4546,11 @@ static void populateSimulationCoroutineBodyToLLVMPatterns(
   arith::populateArithToLLVMConversionPatterns(converter, patterns);
   cf::populateControlFlowToLLVMConversionPatterns(converter, patterns);
   populateMathToLLVMConversionPatterns(converter, patterns);
+  // Every IEEE 1800-2017 Table 20-4 real math function reaches an LLVM
+  // intrinsic through the patterns above except the inverse hyperbolics, which
+  // have none. Name those three so the math dialect's own expansions supply
+  // them, and so the expansions that would displace an intrinsic stay out.
+  math::populateExpansionPatterns(patterns, {"asinh", "acosh", "atanh"});
   populateFuncToLLVMConversionPatterns(converter, patterns);
 }
 
