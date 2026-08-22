@@ -321,6 +321,14 @@ NON_STANDARD_REWIND_SPELLING = Exclusion(
     "the standard spells the seek-to-start file function $rewind, which "
     "Obelisk provides; the test calls it $frewind, a tool-specific name 5.6.3 "
     "puts outside the standard")
+USE_BEFORE_DECLARATION = Exclusion(
+    "IEEE 1800-2017 6.5",
+    "\"Data shall be declared before they are used, apart from implicit nets\" "
+    "and 6.20 makes a parameter constant a named data object too, so a net, a "
+    "class property, or a localparam named above its own declaration has no "
+    "meaning; the test needs Verilator's tolerance of the forward reference "
+    "(compiling the same sources with --allow-use-before-declare runs them to "
+    "their marker)")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dynarray": PATTERN_RADIX,
     "t_dynarray_method": PATTERN_RADIX,
@@ -362,6 +370,10 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_iface_chained_consumer_struct": HIERARCHICAL_TYPEDEF,
     "t_iface_nested_width2": HIERARCHICAL_TYPEDEF,
     "t_iface_nested_width3": HIERARCHICAL_TYPEDEF,
+    "t_class_static_member": USE_BEFORE_DECLARATION,
+    "t_func_const": USE_BEFORE_DECLARATION,
+    "t_var_overcmp": USE_BEFORE_DECLARATION,
+    "t_var_overzero": USE_BEFORE_DECLARATION,
     "t_iface_param_type_derived_range": HIERARCHICAL_TYPEDEF,
     "t_interface_nested_struct_param": HIERARCHICAL_TYPEDEF,
     "t_lparam_dep_iface2": HIERARCHICAL_TYPEDEF,
