@@ -32,6 +32,31 @@ std::optional<uint64_t> unionPayloadSpan(Type type) {
   return std::nullopt;
 }
 
+// A real is a legal element of every unpacked aggregate: IEEE 1800-2017 7.2
+// says "unpacked structures can contain any data type", 7.4.2 says the same of
+// unpacked arrays, and 7.3 spells its union example `union { int i; shortreal
+// f; }`. Their native representation here is a single integer storage plane,
+// so a floating-point element crosses that boundary as its bit pattern. 7.3
+// calls a union "a single piece of storage that can be accessed using one of
+// the named member data types", which is exactly a reinterpretation of the
+// bits -- a numeric conversion would change what the other members read back.
+Value toStoragePlane(ConversionPatternRewriter &rewriter, Location location,
+                     Value value) {
+  auto floatType = dyn_cast<FloatType>(value.getType());
+  if (!floatType)
+    return value;
+  return arith::BitcastOp::create(
+      rewriter, location, rewriter.getIntegerType(floatType.getWidth()), value);
+}
+
+Value fromStoragePlane(ConversionPatternRewriter &rewriter, Location location,
+                       Type elementType, Value plane) {
+  auto floatType = dyn_cast<FloatType>(elementType);
+  if (!floatType || plane.getType() == elementType)
+    return plane;
+  return arith::BitcastOp::create(rewriter, location, floatType, plane);
+}
+
 class PackedAggregateExtractConversion final
     : public OpConversionPattern<sim::SimAggregateExtractOp> {
 public:
@@ -59,11 +84,10 @@ public:
         selected = arith::ShRUIOp::create(rewriter, op.getLoc(), plane, amount);
       }
       IntegerType outputType = rewriter.getIntegerType(*resultWidth);
-      results.push_back(inputType == outputType
-                            ? selected
-                            : arith::TruncIOp::create(rewriter, op.getLoc(),
-                                                      outputType, selected)
-                                  .getResult());
+      if (inputType != outputType)
+        selected = arith::TruncIOp::create(rewriter, op.getLoc(), outputType,
+                                           selected);
+      results.push_back(selected);
     }
     if (containsLogic(op.getResult().getType())) {
       if (results.size() != 2)
@@ -71,6 +95,10 @@ public:
     } else if (results.size() > 1) {
       results.resize(1);
     }
+    // A real has no unknown plane, so the reinterpretation happens once the
+    // surplus planes are gone.
+    results.front() = fromStoragePlane(
+        rewriter, op.getLoc(), op.getResult().getType(), results.front());
     SmallVector<ValueRange> replacements{ValueRange(results)};
     rewriter.replaceOpWithMultiple(op, replacements);
     return success();
@@ -112,7 +140,8 @@ public:
         return failure();
       Value replacement = zero;
       if (index < adaptor.getReplacement().size()) {
-        Value source = adaptor.getReplacement()[index];
+        Value source = toStoragePlane(rewriter, op.getLoc(),
+                                      adaptor.getReplacement()[index]);
         auto sourceType = dyn_cast<IntegerType>(source.getType());
         if (!sourceType || sourceType.getWidth() > *resultWidth)
           return failure();
@@ -155,6 +184,7 @@ public:
     };
     auto place = [&](Value destination, Value source,
                      uint64_t offset) -> FailureOr<Value> {
+      source = toStoragePlane(rewriter, op.getLoc(), source);
       auto sourceType = dyn_cast<IntegerType>(source.getType());
       if (!sourceType || sourceType.getWidth() > outputType.getWidth())
         return failure();
@@ -315,6 +345,8 @@ public:
     } else if (results.size() > 1) {
       results.resize(1);
     }
+    results.front() =
+        fromStoragePlane(rewriter, location, element, results.front());
     SmallVector<ValueRange> replacements{ValueRange(results)};
     rewriter.replaceOpWithMultiple(op, replacements);
     return success();
@@ -366,6 +398,7 @@ public:
       return failure();
     IntegerType plane = rewriter.getIntegerType(*width);
     auto extend = [&](Value value) -> FailureOr<Value> {
+      value = toStoragePlane(rewriter, op.getLoc(), value);
       auto type = dyn_cast<IntegerType>(value.getType());
       if (!type || type.getWidth() > plane.getWidth())
         return failure();
@@ -453,12 +486,10 @@ public:
         selectedPlane =
             arith::ShRUIOp::create(rewriter, op.getLoc(), plane, amount);
       }
-      results.push_back(inputType == resultType
-                            ? selectedPlane
-                            : arith::TruncIOp::create(rewriter, op.getLoc(),
-                                                      resultType,
-                                                      selectedPlane)
-                                  .getResult());
+      if (inputType != resultType)
+        selectedPlane = arith::TruncIOp::create(rewriter, op.getLoc(),
+                                                resultType, selectedPlane);
+      results.push_back(selectedPlane);
     }
     if (containsLogic(op.getResult().getType())) {
       if (results.size() != 2)
@@ -466,6 +497,8 @@ public:
     } else if (results.size() > 1) {
       results.resize(1);
     }
+    results.front() = fromStoragePlane(
+        rewriter, op.getLoc(), op.getResult().getType(), results.front());
     SmallVector<ValueRange> replacements{ValueRange(results)};
     rewriter.replaceOpWithMultiple(op, replacements);
     return success();
