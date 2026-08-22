@@ -552,12 +552,44 @@ FailureOr<Value> lowerStringLiteralValue(OpBuilder &builder, Operation *op,
   return value;
 }
 
+/// Whether `op` is a replication whose count folded to zero. IEEE 1800-2017
+/// 11.4.12.1 gives such a replication a size of zero, which the frontend
+/// spells as a void-typed item of the enclosing concatenation.
+static bool isZeroSizeReplication(Operation *op) {
+  if (!isa<semantic::SVReplicationExpressionOp>(op))
+    return false;
+  auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
+  return semanticType && isa<semantic::VoidType>(semanticType.getValue());
+}
+
 FailureOr<Value> UnitLowering::lowerConcatenation(Operation *op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
   FailureOr<Type> resultType = getNormalizedSemanticType(op);
   if (failed(resultType))
     return failure();
+  // IEEE 1800-2017 11.4.12.1: a replication with a zero replication constant
+  // has a size of zero and is ignored, and such a replication may appear only
+  // inside a concatenation. Its operand is still evaluated exactly once, so
+  // the item is lowered for its effects -- ahead of the items that do
+  // contribute, an order the clause leaves open -- and then dropped.
+  if (llvm::any_of(children, isZeroSizeReplication)) {
+    SmallVector<Operation *> contributing;
+    for (Operation *child : children) {
+      if (!isZeroSizeReplication(child)) {
+        contributing.push_back(child);
+        continue;
+      }
+      SmallVector<Operation *> replication = getChildren(child);
+      if (replication.size() != 2) {
+        unsupported(child) << " (replication arity)";
+        return failure();
+      }
+      if (failed(lowerExpression(replication[1])))
+        return failure();
+    }
+    children = std::move(contributing);
+  }
   if (children.empty() &&
       !isa<sim::DynamicArrayType, sim::QueueType>(*resultType)) {
     unsupported(op) << " (empty concatenation)";
