@@ -585,6 +585,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
         DescriptorInfo info{DescriptorInfo::Kind::Driver, id, scopeId,
                             sink.descriptor.type, sink.descriptor.netKind};
         info.rootType = sink.descriptor.type;
+        info.delayedNet = sink.descriptor.delayedNet;
         continuousDrivers[unit].push_back(
             {sink.path, info, sink.nodeId, sink.offset, sink.width,
              conditionalGate ? std::optional<unsigned>(bank) : std::nullopt});
@@ -705,6 +706,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
                               sink->second.scopeId, sink->second.type,
                               sink->second.netKind};
           info.rootType = sink->second.type;
+          info.delayedNet = sink->second.delayedNet;
           shared = staticClockingDrivers.try_emplace(driverKey, info).first;
           sim::SimDriverDeclOp::create(
               builder, getSemanticLocation(destination), id,
@@ -826,6 +828,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
                               net.getScopeId(), net.getType(),
                               net.getResolutionKind()};
           info.rootType = net.getType();
+          info.delayedNet = static_cast<bool>(net.getPropagationDelays());
           shared = virtualClockingDrivers
                        .try_emplace(driverKey,
                                     VirtualClockingDriver{info, net.getId()})

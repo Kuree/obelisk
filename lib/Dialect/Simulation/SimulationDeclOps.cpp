@@ -130,6 +130,14 @@ LogicalResult SimNetDeclOp::verify() {
     return failure();
   if (getType().isF64())
     return emitOpError("real-valued nets are not supported");
+  if (auto delays = getPropagationDelays()) {
+    if (delays->size() != 3)
+      return emitOpError("propagation delays must contain rise, fall, and "
+                         "turn-off values");
+    if (llvm::any_of(*delays,
+                     [](int64_t delay) { return delay < 0; }))
+      return emitOpError("propagation delays must be nonnegative");
+  }
   return verifyElementType([&] { return emitOpError(); }, getType());
 }
 

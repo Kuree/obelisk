@@ -29,6 +29,36 @@ Operation *getSingleRegionRoot(Region &region) {
   return &region.front().front();
 }
 
+bool drivesDelayedNet(sim::SimFuncOp function, Value driver) {
+  while (driver) {
+    Operation *definition = driver.getDefiningOp();
+    if (auto extract = dyn_cast_or_null<sim::SimDriverExtractOp>(definition)) {
+      driver = extract.getInput();
+      continue;
+    }
+    if (auto extract =
+            dyn_cast_or_null<sim::SimDriverDynExtractOp>(definition)) {
+      driver = extract.getInput();
+      continue;
+    }
+    if (auto subelement =
+            dyn_cast_or_null<sim::SimDriverSubelementOp>(definition)) {
+      driver = subelement.getInput();
+      continue;
+    }
+    if (auto element =
+            dyn_cast_or_null<sim::SimDriverArrayElementOp>(definition)) {
+      driver = element.getInput();
+      continue;
+    }
+    auto argument = dyn_cast<BlockArgument>(driver);
+    return argument &&
+           static_cast<bool>(function.getArgAttrOfType<UnitAttr>(
+               argument.getArgNumber(), "obelisk_sim.delayed_net"));
+  }
+  return false;
+}
+
 /// Whether a dynamic container's element sits under this designator. IEEE
 /// 1800-2017 7.5, 7.8, and 7.10 give queues, associative arrays, and dynamic
 /// arrays storage the container itself owns, which it hands out only by value,
@@ -798,11 +828,17 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
             builder.getBoolAttr(deferDriverResolution));
         return success();
       }
-      auto drive = sim::SimDriverDriveOp::create(
-          builder, location, destination.reference, published);
-      if (deferDriverResolution)
-        drive->setAttr("obelisk_sim.defer_net_resolution",
-                       builder.getUnitAttr());
+      if (drivesDelayedNet(function, destination.reference)) {
+        sim::SimDriverDriveDelayedNetOp::create(
+            builder, location, destination.reference, published,
+            builder.getBoolAttr(deferDriverResolution));
+      } else {
+        auto drive = sim::SimDriverDriveOp::create(
+            builder, location, destination.reference, published);
+        if (deferDriverResolution)
+          drive->setAttr("obelisk_sim.defer_net_resolution",
+                         builder.getUnitAttr());
+      }
     } else {
       return failure();
     }
@@ -2981,8 +3017,13 @@ UnitLowering::lowerPortConnection(semantic::SVPortConnectionOp op) {
                                               destination);
       if (continuousStore)
         store->setAttr(continuousStoreAttrName, builder.getUnitAttr());
-    } else
+    } else if (drivesDelayedNet(function, destination)) {
+      sim::SimDriverDriveDelayedNetOp::create(
+          builder, location, destination, *converted,
+          builder.getBoolAttr(false));
+    } else {
       sim::SimDriverDriveOp::create(builder, location, destination, *converted);
+    }
     return success();
   };
 

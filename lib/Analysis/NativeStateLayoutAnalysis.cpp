@@ -87,11 +87,19 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
       }
       layout.nets[declaration.getId()] = handle;
       layout.netOffsets[declaration.getId()] = offset;
+      std::optional<std::array<uint64_t, 3>> propagationDelays;
+      if (auto delays = declaration.getPropagationDelays()) {
+        ArrayRef<int64_t> values = *delays;
+        propagationDelays = std::array<uint64_t, 3>{
+            static_cast<uint64_t>(values[0]),
+            static_cast<uint64_t>(values[1]),
+            static_cast<uint64_t>(values[2])};
+      }
       layout.netLayouts.push_back(
           {declaration.getId(), nextHandleID - 1, offset,
            *getSimulationStorageBitWidth(declaration.getType()),
            containsFourStateLogic(declaration.getType()),
-           declaration.getResolutionKind()});
+           declaration.getResolutionKind(), propagationDelays});
     } else if (auto declaration = dyn_cast<sim::SimDriverDeclOp>(operation)) {
       auto found = layout.nets.find(declaration.getNetId());
       if (found == layout.nets.end()) {
@@ -223,6 +231,27 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
         std::pair<uint64_t, uint64_t> key{net.id, bit};
         std::pair<uint64_t, uint64_t> canonical{component.front().net,
                                                 component.front().offset};
+        // Port collapsing selects the dominating net's delay (IEEE
+        // 1800-2017 23.3.3.7), but the canonical connectivity representation
+        // deliberately discards internal/external dominance. Reject this
+        // combination until that direction is represented rather than
+        // silently publishing members of one simulated net at different
+        // times.
+        if (key == canonical) {
+          bool componentHasDelay = llvm::any_of(component, [&](NetBit member) {
+            auto declaration = llvm::find_if(
+                layout.netLayouts,
+                [&](const Net &candidate) { return candidate.id == member.net; });
+            return declaration != layout.netLayouts.end() &&
+                   declaration->propagationDelays.has_value();
+          });
+          if (componentHasDelay) {
+            module.emitError()
+                << "net declaration delays on collapsed port nets require "
+                   "dominating-net delay selection";
+            return failure();
+          }
+        }
         layout.connectivityCanonical[key] = canonical;
         if (key == canonical)
           llvm::append_range(layout.connectivityComponents[canonical],

@@ -32,6 +32,8 @@ module {
 
 // A declaration with an initializer is a continuous assignment, so its delay
 // belongs to that assignment rather than to the net (IEEE 1800-2017 10.3.3).
+// CHECK: obelisk_sim.net.decl
+// CHECK-NOT: propagation_delays
 // CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in 1 continuous hierarchy "initializer_delay.value.$net_initializer"
 // CHECK-LABEL: obelisk_sim.func private @unit_0
 // CHECK-SAME: obelisk_sim.propagation_delays = array<i64: 2, 5>

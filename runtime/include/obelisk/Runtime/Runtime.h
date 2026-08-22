@@ -2790,6 +2790,11 @@ obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
     uint64_t code_unit, uint32_t component, uint32_t flags,
     uint64_t rise_delay, uint64_t fall_delay, uint64_t turnoff_delay,
     const uint8_t *value, const uint8_t *unknown);
+// Resolve a canonical driver-state range after an immediate native store.
+// Net declarations with propagation delays schedule their post-resolution
+// visible transitions; other nets publish immediately.
+obelisk_rt_status obelisk_rt_v1_scheduler_resolve_drivers(
+    obelisk_rt_context *context, uint64_t begin, uint64_t end);
 // Clocking-output forms retain the clock-variable identity so coincident
 // synchronous drives can be checked and resolved bitwise at the NBA barrier.
 obelisk_rt_status obelisk_rt_v1_scheduler_clocking_nba(

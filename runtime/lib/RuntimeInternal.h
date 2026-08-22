@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -458,6 +459,11 @@ struct InertialDriverPending {
   uint64_t remaining = 0;
 };
 
+struct InertialNetPending {
+  bool value = false;
+  bool unknown = false;
+};
+
 struct NativeStaticState {
   uint64_t bitOffset = 0;
   uint64_t bitWidth = 0;
@@ -493,6 +499,8 @@ struct ScheduledNBA {
   std::vector<uint8_t> value;
   std::vector<uint8_t> unknown;
   InertialDriverSite inertialSite{UINT64_MAX, 0};
+  uint64_t inertialNetBit = UINT64_MAX;
+  bool cancelled = false;
 };
 
 struct StaticNBAAccumulator {
@@ -728,6 +736,7 @@ struct NetAliasRange {
   uint64_t targetOffset = 0;
   uint64_t width = 0;
   bool fourState = false;
+  std::optional<std::array<uint64_t, 3>> propagationDelays;
 };
 
 struct NetDriverBit {
@@ -911,6 +920,8 @@ struct obelisk_rt_context {
   std::unordered_map<InertialDriverSite, InertialDriverPending,
                      InertialDriverSiteHash>
       inertialDriverPending;
+  std::unordered_map<uint64_t, InertialNetPending> inertialNetPending;
+  bool schedulerApplyingNativeUpdate = false;
   std::vector<StaticNBAAccumulator> staticNBAAccumulators;
   bool staticNBAAccumulatorsPending = false;
   std::vector<uint8_t> staticNBASlowRoots;

@@ -11,6 +11,8 @@
 #include "obelisk/Conversion/SimulationRuntime.h"
 #include "obelisk/Runtime/Runtime.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 #include <algorithm>
 #include <cstddef>
 
@@ -25,6 +27,16 @@ SmallVector<uint8_t> serializeBytecodeImage(
     ArrayRef<IntrinsicSite> intrinsicSites,
     ArrayRef<CaptureRecord> captureRecords, const StateLayout &state) {
   using Header = obelisk_rt_design_bytecode_header_v1;
+  SmallVector<uint8_t> serializedConstants(constants.begin(), constants.end());
+  SmallVector<uint64_t> netDelayOffsets(state.netLayouts.size(), UINT64_MAX);
+  for (auto [index, net] : llvm::enumerate(state.netLayouts)) {
+    if (!net.propagationDelays)
+      continue;
+    alignTo(serializedConstants, 8);
+    netDelayOffsets[index] = serializedConstants.size();
+    for (uint64_t delay : *net.propagationDelays)
+      append64(serializedConstants, delay);
+  }
   SmallVector<uint8_t> output(OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE, 0);
   static constexpr char magic[] = OBELISK_RT_DESIGN_BYTECODE_MAGIC;
   static_assert(sizeof(magic) == sizeof(Header::magic));
@@ -106,7 +118,7 @@ SmallVector<uint8_t> serializeBytecodeImage(
   }
   alignTo(output, 8);
   uint64_t constantOffset = output.size();
-  llvm::append_range(output, constants);
+  llvm::append_range(output, serializedConstants);
   alignTo(output, 8);
   uint64_t continuationOffset = output.size();
   for (const FunctionPlan &plan : plans)
@@ -144,12 +156,13 @@ SmallVector<uint8_t> serializeBytecodeImage(
   }
   // Static net descriptors precede drivers. They let a design-bound context
   // reproduce the native initial Z state even when a net has no drivers.
-  for (const StateLayout::Net &net : state.netLayouts) {
+  for (auto [index, net] : llvm::enumerate(state.netLayouts)) {
     append32(output, UINT32_MAX - 1);
     append32(output, (net.fourState ? 1u : 0u) |
-                         (static_cast<uint32_t>(net.resolution) << 1));
+                         (static_cast<uint32_t>(net.resolution) << 1) |
+                         (net.propagationDelays ? uint32_t{1} << 3 : 0));
     append64(output, net.offset);
-    append64(output, UINT64_MAX);
+    append64(output, netDelayOffsets[index]);
     append64(output, net.width);
   }
   for (const StateLayout::Driver &driver : state.driverLayouts) {
@@ -191,7 +204,8 @@ SmallVector<uint8_t> serializeBytecodeImage(
   write64(output, offsetof(Header, operand_offset), operandOffset);
   write64(output, offsetof(Header, operand_count), operandMaps.size());
   write64(output, offsetof(Header, constant_offset), constantOffset);
-  write64(output, offsetof(Header, constant_size), constants.size());
+  write64(output, offsetof(Header, constant_size),
+          serializedConstants.size());
   write64(output, offsetof(Header, continuation_offset), continuationOffset);
   write64(output, offsetof(Header, continuation_count), continuationCursor);
   write64(output, offsetof(Header, intrinsic_offset), intrinsicOffset);

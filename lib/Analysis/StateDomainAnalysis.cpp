@@ -1207,6 +1207,10 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
           destination = drive.getDriver();
           value = drive.getValue();
         } else if (auto drive =
+                       dyn_cast<sim::SimDriverDriveDelayedNetOp>(operation)) {
+          destination = drive.getDriver();
+          value = drive.getValue();
+        } else if (auto drive =
                        dyn_cast<sim::SimDriverDriveChangedOp>(operation)) {
           destination = drive.getDriver();
           value = drive.getValue();

@@ -13,6 +13,7 @@ module attributes {
     obelisk_sim.code_unit.decl 4 in 0 initial hierarchy "driver_lowering.drive_nba"
     obelisk_sim.code_unit.decl 5 in 0 function hierarchy "driver_lowering.drive_strength"
     obelisk_sim.code_unit.decl 6 in 0 function hierarchy "driver_lowering.drive_inertial"
+    obelisk_sim.code_unit.decl 7 in 0 function hierarchy "driver_lowering.drive_delayed_net"
     obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<2> design
     obelisk_sim.driver.decl 0 in 0 drives 0 :
         !obelisk_sim.logic<2> design
@@ -32,6 +33,11 @@ module attributes {
       obelisk_sim.strength_group = 1 : i64,
       obelisk_sim.strength_bank = 1 : i32
     }
+    obelisk_sim.net.decl 3 in 0 : !obelisk_sim.logic<1> design {
+      propagation_delays = array<i64: 7, 11, 13>
+    }
+    obelisk_sim.driver.decl 4 in 0 drives 3 :
+        !obelisk_sim.logic<1> design
 
     obelisk_sim.func @drive(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
@@ -129,6 +135,19 @@ module attributes {
           !obelisk_sim.logic<2>
       obelisk_sim.return
     }
+
+    obelisk_sim.func @drive_delayed_net(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 7 : i64} {
+      %driver = obelisk_sim.context.driver %ctx[4] :
+          !obelisk_sim.driver<!obelisk_sim.logic<1>>
+      %one = obelisk_sim.logic.constant 1 : i1, 0 : i1 :
+          !obelisk_sim.logic<1>
+      obelisk_sim.driver.drive_delayed_net %driver = %one :
+          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
+          !obelisk_sim.logic<1>
+      obelisk_sim.return
+    }
   }
 }
 
@@ -175,6 +194,14 @@ module attributes {
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_inertial_driver
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
 // CHECK-NOT: obelisk_sim.driver.drive_inertial
+
+// The driver contribution is stored immediately, then resolution schedules
+// the delayed visible-net update through the runtime.
+// CHECK-LABEL: llvm.func @drive_delayed_net
+// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_store_plane
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_resolve_drivers
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
+// CHECK-NOT: obelisk_sim.driver.drive_delayed_net
 
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x00010236 inputs=8 outputs=0 flags=0
 // BYTECODE: site {{[0-9]+}}: signature={{[0-9]+}} id=0x00010236 inputs={{\[[0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+\]}} outputs=[]

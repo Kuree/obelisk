@@ -2009,7 +2009,7 @@ obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context,
         inspectNBARoot(root);
   }
   for (const ScheduledNBA &update : context->scheduledNBAs)
-    if (update.dueTime <= context->schedulerTime)
+    if (!update.cancelled && update.dueTime <= context->schedulerTime)
       barrierRegion = std::min(barrierRegion, update.execRegion);
   if (barrierRegion != UINT32_MAX) {
     if (!canCommitInlineNativeNBABarrierUnlocked(context, barrierRegion))
@@ -2084,7 +2084,9 @@ uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
       if (entry.dueTime <= context->schedulerTime)
         barrierRegion = std::min(barrierRegion, entry.execRegion);
   };
-  considerBarrier(context->scheduledNBAs);
+  for (const ScheduledNBA &entry : context->scheduledNBAs)
+    if (!entry.cancelled && entry.dueTime <= context->schedulerTime)
+      barrierRegion = std::min(barrierRegion, entry.execRegion);
   considerBarrier(context->scheduledManagedNBAs);
   considerBarrier(context->scheduledDesignNBAs);
   considerBarrier(context->scheduledDesignEvents);
@@ -3045,6 +3047,14 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           }
         };
         auto completeInertial = [&](const ScheduledNBA &update) {
+          if (update.inertialNetBit != UINT64_MAX) {
+            auto pending =
+                context->inertialNetPending.find(update.inertialNetBit);
+            if (pending != context->inertialNetPending.end() &&
+                pending->second.value == (update.inlineValue != 0) &&
+                pending->second.unknown == (update.inlineUnknown != 0))
+              context->inertialNetPending.erase(pending);
+          }
           if (update.inertialSite.codeUnit == UINT64_MAX)
             return;
           auto pending =
@@ -3192,8 +3202,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           for (size_t index = 0; index != context->scheduledNBAs.size();
                ++index) {
             ScheduledNBA &update = context->scheduledNBAs[index];
-            bool due = update.dueTime <= context->schedulerTime &&
-                       update.execRegion == barrierRegion;
+            bool due = update.cancelled ||
+                       (update.dueTime <= context->schedulerTime &&
+                        update.execRegion == barrierRegion);
             if (!due) {
               if (retained != index)
                 context->scheduledNBAs[retained] = std::move(update);
@@ -3201,10 +3212,14 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               continue;
             }
             uint32_t retainedAutomaticID = update.retainedAutomaticID;
-            applyNative(update);
-            if (context->schedulerStatus != OBELISK_RT_OK)
-              return context->schedulerStatus;
-            completeInertial(update);
+            if (!update.cancelled) {
+              completeInertial(update);
+              context->schedulerApplyingNativeUpdate = true;
+              applyNative(update);
+              context->schedulerApplyingNativeUpdate = false;
+              if (context->schedulerStatus != OBELISK_RT_OK)
+                return context->schedulerStatus;
+            }
             if (retainedAutomaticID != 0) {
               auto found =
                   context->nativeAutomaticStates.find(retainedAutomaticID);
@@ -3226,7 +3241,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             for (size_t index = 0; index != context->scheduledNBAs.size();
                  ++index) {
               const ScheduledNBA &update = context->scheduledNBAs[index];
-              if (update.dueTime <= context->schedulerTime &&
+              if (!update.cancelled &&
+                  update.dueTime <= context->schedulerTime &&
                   update.execRegion == barrierRegion &&
                   update.sequence < nativeSequence) {
                 nativeSequence = update.sequence;
@@ -3280,10 +3296,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             if (sequence == nativeSequence) {
               uint32_t retainedAutomaticID =
                   context->scheduledNBAs[nativeIndex].retainedAutomaticID;
+              completeInertial(context->scheduledNBAs[nativeIndex]);
+              context->schedulerApplyingNativeUpdate = true;
               applyNative(context->scheduledNBAs[nativeIndex]);
+              context->schedulerApplyingNativeUpdate = false;
               if (context->schedulerStatus != OBELISK_RT_OK)
                 return context->schedulerStatus;
-              completeInertial(context->scheduledNBAs[nativeIndex]);
               if (retainedAutomaticID != 0) {
                 auto found =
                     context->nativeAutomaticStates.find(retainedAutomaticID);
@@ -3412,7 +3430,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           if (update.dueTime > context->schedulerTime)
             considerTime(update.dueTime);
         for (const ScheduledNBA &update : context->scheduledNBAs)
-          if (update.dueTime > context->schedulerTime)
+          if (!update.cancelled && update.dueTime > context->schedulerTime)
             considerTime(update.dueTime);
         for (const ScheduledManagedNBA &update : context->scheduledManagedNBAs)
           if (update.dueTime > context->schedulerTime)

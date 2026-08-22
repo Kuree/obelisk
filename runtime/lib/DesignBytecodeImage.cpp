@@ -1629,9 +1629,14 @@ bool validateImage(const Image &image) {
     CaptureRecord net = captureAt(image, captureIndex);
     if (net.function != kNetStateDescriptor)
       break;
-    if ((net.argument & ~uint32_t{7}) != 0 || (net.argument >> 1) > 2 ||
+    bool delayed = (net.argument & (uint32_t{1} << 3)) != 0;
+    if ((net.argument & ~uint32_t{15}) != 0 ||
+        ((net.argument >> 1) & 3) > 2 ||
         net.planeSize == 0 || net.valueOffset < previousNetEnd ||
-        net.unknownOffset != UINT64_MAX ||
+        delayed != (net.unknownOffset != UINT64_MAX) ||
+        (delayed && ((net.unknownOffset & 7) != 0 ||
+                     net.unknownOffset > image.constantSize ||
+                     24 > image.constantSize - net.unknownOffset)) ||
         net.valueOffset > image.stateBitCount ||
         net.planeSize > image.stateBitCount - net.valueOffset)
       return reject(__LINE__, "invalid or misordered net state record");
@@ -1671,7 +1676,8 @@ bool validateImage(const Image &image) {
         driver.planeSize > image.stateBitCount - driver.valueOffset ||
         driver.unknownOffset > image.stateBitCount ||
         driver.planeSize > image.stateBitCount - driver.unknownOffset ||
-        !target || ((driver.argument >> 1) & 3) != (target->argument >> 1))
+        !target || ((driver.argument >> 1) & 3) !=
+                       ((target->argument >> 1) & 3))
       return reject(__LINE__, "invalid or misordered driver state record");
     if (highStrengthBank) {
       if (driverRecords.empty())
@@ -1730,8 +1736,8 @@ bool validateImage(const Image &image) {
     if (connection.width == 0 || connection.flags > 1 ||
         connection.reserved != 0 || connection.tailReserved != 0 ||
         connection.lhsResolution > 2 || connection.rhsResolution > 2 || !lhs ||
-        !rhs || connection.lhsResolution != (lhs->argument >> 1) ||
-        connection.rhsResolution != (rhs->argument >> 1) ||
+        !rhs || connection.lhsResolution != ((lhs->argument >> 1) & 3) ||
+        connection.rhsResolution != ((rhs->argument >> 1) & 3) ||
         ((lhs->argument ^ rhs->argument) & 1) != 0 ||
         ((connection.lhsResolution == 2) != (connection.rhsResolution == 2)) ||
         (!firstConnection && key <= previousConnection) ||

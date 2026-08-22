@@ -30,6 +30,7 @@ struct DescriptorInfo {
   uint64_t packedViewOffset = 0;
   mlir::SmallVector<int64_t> viewIndices;
   mlir::Type aggregateViewType;
+  bool delayedNet = false;
 };
 
 struct StaticStorageView {
@@ -72,7 +73,8 @@ bool isNestedInCodeUnit(mlir::Operation *operation);
 mlir::FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     mlir::ModuleOp module, ir::SVRootSymbolOp semanticRoot,
     const PreparedPortAliases &portAliases,
-    const PreparedScopeDeclarations &scopes, mlir::OpBuilder &builder);
+    const PreparedScopeDeclarations &scopes, uint64_t designPrecisionFs,
+    mlir::OpBuilder &builder);
 
 } // namespace obelisk::simlowering
 

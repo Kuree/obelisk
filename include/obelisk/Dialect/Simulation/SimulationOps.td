@@ -128,6 +128,7 @@ def SimNetDeclOp : SimOp<"net.decl", [MemoryEffects<[MemWrite<SimInventoryResour
                        OptionalAttr<SimComputeObservabilityKind>:$observability,
                        DefaultValuedAttr<SimNetResolutionKind,
                          "::obelisk::sim::NetResolutionKind::Wire">:$resolution_kind,
+                       OptionalAttr<DenseI64ArrayAttr>:$propagation_delays,
                        OptionalAttr<UnitAttr>:$internal);
   let assemblyFormat = [{$id `in` $scope_id `:` $type $lifetime
     (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)? attr-dict}];
@@ -2686,6 +2687,22 @@ def SimDriverDriveInertialOp : SimOp<"driver.drive_inertial", [
     `vector` `=` $vector_delay attr-dict `:` qualified(type($driver)) `,`
     type($value)
   }];
+}
+
+def SimDriverDriveDelayedNetOp : SimOp<"driver.drive_delayed_net", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimNetResource>]>,
+    SimDriverElementMatches<"driver", "value">
+  ]> {
+  let summary = "drive a net whose resolved value has an inertial net delay";
+  let description = [{
+    Stores the driver contribution immediately, then resolves the target net
+    and schedules any resulting visible transition using the delay metadata on
+    the net declaration. The optional deferred-resolution flag pairs the two
+    strength banks of a conditional primitive into one logical update.
+  }];
+  let arguments = (ins SimDriverType:$driver, AnyType:$value,
+                       DefaultValuedAttr<BoolAttr, "false">:$defer_resolution);
+  let assemblyFormat = "$driver `=` $value attr-dict `:` qualified(type($driver)) `,` type($value)";
 }
 
 def SimDriverDriveChangedOp : SimOp<"driver.drive_changed", [

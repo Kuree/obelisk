@@ -86,8 +86,16 @@ NetAliasCache *getNetAliasCache(const Image &image,
     CaptureRecord record = captureAt(image, index);
     if (record.function == kNetStateDescriptor) {
       nets.push_back(record);
+      std::optional<std::array<uint64_t, 3>> propagationDelays;
+      if ((record.argument & (uint32_t{1} << 3)) != 0) {
+        const uint8_t *encoded =
+            image.data + image.constants + record.unknownOffset;
+        propagationDelays = std::array<uint64_t, 3>{
+            read64(encoded), read64(encoded + 8), read64(encoded + 16)};
+      }
       cache.nets.push_back({record.valueOffset, record.valueOffset,
-                            record.planeSize, (record.argument & 1) != 0});
+                            record.planeSize, (record.argument & 1) != 0,
+                            propagationDelays});
     } else if (record.function == kDriverStateDescriptor) {
       drivers.push_back(record);
       cache.drivers.push_back(
@@ -240,6 +248,85 @@ bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,
   return true;
 }
 
+bool scheduleNetBit(obelisk_rt_context *context, uint64_t destination,
+                    bool value, bool unknown,
+                    const std::array<uint64_t, 3> &delays) {
+  auto cancel = [&] {
+    // Resolution can run while the scheduler is applying a propagation-
+    // delayed driver from this same vector. Marking the superseded net event
+    // avoids invalidating the scheduler's current reference; barrier scans
+    // ignore the tombstone and a later compaction removes it.
+    if (context->schedulerApplyingNativeUpdate) {
+      for (ScheduledNBA &update : context->scheduledNBAs)
+        if (update.inertialNetBit == destination)
+          update.cancelled = true;
+    } else {
+      context->scheduledNBAs.erase(
+          std::remove_if(context->scheduledNBAs.begin(),
+                         context->scheduledNBAs.end(),
+                         [&](const ScheduledNBA &update) {
+                           return update.inertialNetBit == destination;
+                         }),
+          context->scheduledNBAs.end());
+    }
+    context->inertialNetPending.erase(destination);
+  };
+  if (auto pending = context->inertialNetPending.find(destination);
+      pending != context->inertialNetPending.end() &&
+      pending->second.value == value && pending->second.unknown == unknown)
+    return true;
+
+  cancel();
+  bool currentValue = bit(context->stateValue, destination);
+  bool currentUnknown = bit(context->stateUnknown, destination);
+  if (currentValue == value && currentUnknown == unknown)
+    return true;
+  if (context->nextSchedulerSequence == 0 ||
+      context->nextSchedulerSequence == UINT64_MAX) {
+    context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+    return false;
+  }
+  uint64_t handle = obelisk_rt_canonical_state_handle_unlocked(
+      context, destination, 1);
+  if (handle == UINT64_MAX) {
+    context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+    return false;
+  }
+  uint64_t delay = !unknown ? delays[value ? 0 : 1]
+                             : value ? delays[2]
+                                     : std::min({delays[0], delays[1],
+                                                 delays[2]});
+  ScheduledNBA update;
+  update.sequence = context->nextSchedulerSequence++;
+  update.dueTime = delay > UINT64_MAX - context->schedulerTime
+                       ? UINT64_MAX
+                       : context->schedulerTime + delay;
+  update.execRegion = OBELISK_RT_REGION_ACTIVE;
+  // Native/generic execution binds compiler-emitted planes during startup.
+  // Write those planes as the scheduled destination while applyNative also
+  // maintains the canonical context image. Pure bytecode contexts have no
+  // binding and use the canonical planes directly.
+  update.valuePlane = context->nativeStateValue
+                          ? context->nativeStateValue
+                          : reinterpret_cast<uint8_t *>(
+                                context->stateValue.data());
+  update.unknownPlane = context->nativeStateUnknown
+                            ? context->nativeStateUnknown
+                            : reinterpret_cast<uint8_t *>(
+                                  context->stateUnknown.data());
+  update.planeBitCount = context->execution->state_bit_count;
+  update.bitOffset = handle;
+  update.bitWidth = 1;
+  update.inlinePacked = true;
+  update.inlineValue = value;
+  update.inlineUnknown = unknown;
+  update.inertialNetBit = destination;
+  context->scheduledNBAs.push_back(std::move(update));
+  context->inertialNetPending.emplace(destination,
+                                      InertialNetPending{value, unknown});
+  return true;
+}
+
 bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
                      std::vector<uint64_t> affectedRoots, bool &changed) {
   if (affectedRoots.empty())
@@ -314,12 +401,21 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
         publishValue = bit(context->stateValue, destination);
         publishUnknown = bit(context->stateUnknown, destination);
       }
-      publications.push_back({destination,
-                              bit(context->stateValue, destination),
-                              bit(context->stateUnknown, destination),
-                              publishValue, publishUnknown});
+      NetPublication publication{destination,
+                                 bit(context->stateValue, destination),
+                                 bit(context->stateUnknown, destination),
+                                 publishValue, publishUnknown};
+      if (net->propagationDelays) {
+        if (!scheduleNetBit(context, destination, publishValue, publishUnknown,
+                            *net->propagationDelays))
+          return false;
+      } else {
+        publications.push_back(publication);
+      }
     }
   }
+  if (publications.empty())
+    return true;
   return publishNetBits(context, cache, publications, changed);
 }
 
@@ -438,6 +534,11 @@ obelisk_rt_status obelisk_rt_resolve_design_drivers(obelisk_rt_context *context,
   } catch (...) {
     return OBELISK_RT_INVALID_BYTECODE;
   }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_resolve_drivers(
+    obelisk_rt_context *context, uint64_t begin, uint64_t end) {
+  return obelisk_rt_resolve_design_drivers(context, begin, end);
 }
 
 obelisk_rt_status

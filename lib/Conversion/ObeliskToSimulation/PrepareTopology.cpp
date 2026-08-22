@@ -13,6 +13,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSet.h"
 
+#include <algorithm>
 #include <functional>
 #include <limits>
 
@@ -295,7 +296,8 @@ bool isNestedInCodeUnit(Operation *op) {
 FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     ModuleOp module, semantic::SVRootSymbolOp semanticRoot,
     const PreparedPortAliases &portAliases,
-    const PreparedScopeDeclarations &scopes, OpBuilder &builder) {
+    const PreparedScopeDeclarations &scopes, uint64_t designPrecisionFs,
+    OpBuilder &builder) {
   llvm::StringMap<DescriptorInfo> descriptors;
   uint64_t nextStorageId = 0;
   uint64_t nextNetId = 0;
@@ -463,19 +465,46 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       invalid = true;
       return;
     }
-    if (net.getDelayFs() && getNetInitializerExpressions(op).empty()) {
-      emitError(getSemanticLocation(op)) << "net delays are not supported";
-      invalid = true;
-      return;
+    DenseI64ArrayAttr propagationDelays;
+    if (auto delays = net.getDelayFs();
+        delays && getNetInitializerExpressions(op).empty()) {
+      if (delays->empty() || delays->size() > 3) {
+        emitError(getSemanticLocation(op))
+            << "net delay must contain one to three values";
+        invalid = true;
+        return;
+      }
+      SmallVector<int64_t, 3> ticks;
+      for (int64_t femtoseconds : *delays) {
+        if (femtoseconds < 0 ||
+            static_cast<uint64_t>(femtoseconds) % designPrecisionFs != 0) {
+          emitError(getSemanticLocation(op))
+              << "net delay is incompatible with design precision";
+          invalid = true;
+          return;
+        }
+        ticks.push_back(static_cast<int64_t>(
+            static_cast<uint64_t>(femtoseconds) / designPrecisionFs));
+      }
+      int64_t rise = ticks[0];
+      int64_t fall = ticks.size() == 1 ? rise : ticks[1];
+      int64_t turnoff = ticks.size() == 1
+                            ? rise
+                            : ticks.size() == 2 ? std::min(rise, fall)
+                                                : ticks[2];
+      propagationDelays =
+          builder.getDenseI64ArrayAttr({rise, fall, turnoff});
     }
     uint64_t id = nextNetId++;
     descriptors[path] = {DescriptorInfo::Kind::Net, id, scopeId, *type,
                          resolution};
     descriptors[path].rootType = *type;
+    descriptors[path].delayedNet = static_cast<bool>(propagationDelays);
     auto declaration = sim::SimNetDeclOp::create(
         builder, getSemanticLocation(op), id, scopeId, *type,
         sim::Lifetime::Design, hierarchy, debug,
-        sim::ComputeObservabilityKindAttr{}, resolution, UnitAttr{});
+        sim::ComputeObservabilityKindAttr{}, resolution, propagationDelays,
+        UnitAttr{});
     if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(op->getParentOp());
         body && body->hasAttr("virtual_interface_identity") &&
         !isCompileTimeOnlyInstanceMember(body))

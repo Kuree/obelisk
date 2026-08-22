@@ -1067,7 +1067,7 @@ void ObeliskSimPreparePass::runOnOperation() {
 
   FailureOr<llvm::StringMap<DescriptorInfo>> preparedDescriptors =
       materializeDesignDescriptors(module, semanticRoot, *portAliases, *scopes,
-                                   builder);
+                                   designPrecisionFs, builder);
   if (failed(preparedDescriptors))
     return abort();
   llvm::StringMap<DescriptorInfo> &descriptors = *preparedDescriptors;
@@ -5602,6 +5602,10 @@ void ObeliskSimPreparePass::runOnOperation() {
         metadataAttrs.push_back(builder.getNamedAttr(
             "obelisk_sim.strength_driver_bank",
             builder.getI32IntegerAttr(*plannedDriver->strengthBank)));
+      if (capture.second.kind == DescriptorInfo::Kind::Driver &&
+          capture.second.delayedNet)
+        metadataAttrs.push_back(builder.getNamedAttr(
+            "obelisk_sim.delayed_net", builder.getUnitAttr()));
       if (capture.second.rootType &&
           (capture.second.viewOffset != 0 ||
            capture.second.rootType != capture.second.type)) {
@@ -7022,6 +7026,10 @@ void ObeliskSimPreparePass::runOnOperation() {
           captureMetadata(builder, captureKind, capture.second.id);
       SmallVector<NamedAttribute> metadataAttrs(metadata.begin(),
                                                 metadata.end());
+      if (capture.second.kind == DescriptorInfo::Kind::Driver &&
+          capture.second.delayedNet)
+        metadataAttrs.push_back(builder.getNamedAttr(
+            "obelisk_sim.delayed_net", builder.getUnitAttr()));
       if (capture.second.rootType &&
           (capture.second.viewOffset != 0 ||
            capture.second.rootType != capture.second.type)) {

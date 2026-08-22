@@ -4,6 +4,7 @@
 #include "obelisk/Runtime/StableHandle.h"
 
 #include "../lib/DesignBytecodeExecution.h"
+#include "../lib/DesignBytecodeNets.h"
 #include "../lib/RuntimeInternal.h"
 
 #include "gtest/gtest.h"
@@ -4323,6 +4324,128 @@ TEST(Scheduler, InertialGateDriversUsePerBitTransitionDelays) {
   EXPECT_EQ(context->stateValue[0] & 0xf, value);
   EXPECT_EQ(context->stateUnknown[0] & 0xf, unknown);
   EXPECT_TRUE(context->inertialDriverPending.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, NetDeclarationDelaysApplyAfterDriverResolution) {
+  // A net descriptor carries its expanded rise/fall/turn-off delays in the
+  // constant table. Its driver points back to the net's canonical bit range.
+  constexpr uint64_t constantsOffset = 0;
+  constexpr uint64_t descriptorsOffset = 24;
+  std::vector<uint8_t> bytes(descriptorsOffset + 2 * 32, 0);
+  auto write32 = [&](uint64_t offset, uint32_t value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  };
+  auto write64 = [&](uint64_t offset, uint64_t value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  };
+  write64(constantsOffset, 7);
+  write64(constantsOffset + 8, 11);
+  write64(constantsOffset + 16, 13);
+  auto writeDescriptor = [&](uint64_t index, uint32_t function,
+                             uint32_t argument, uint64_t valueOffset,
+                             uint64_t unknownOffset, uint64_t width) {
+    uint64_t record = descriptorsOffset + index * 32;
+    write32(record, function);
+    write32(record + 4, argument);
+    write64(record + 8, valueOffset);
+    write64(record + 16, unknownOffset);
+    write64(record + 24, width);
+  };
+  writeDescriptor(0, obelisk::designbytecode::kNetStateDescriptor,
+                  /*four-state | delayed=*/9, /*net=*/0,
+                  /*delay constant offset=*/0, /*width=*/4);
+  writeDescriptor(1, obelisk::designbytecode::kDriverStateDescriptor,
+                  /*four-state, default strong strengths=*/1, /*driver=*/8,
+                  /*target net=*/0, /*width=*/4);
+
+  obelisk::designbytecode::Image image{};
+  image.data = bytes.data();
+  image.size = bytes.size();
+  image.constants = constantsOffset;
+  image.constantSize = 24;
+  image.stateDescriptors = descriptorsOffset;
+  image.stateDescriptorCount = 2;
+  image.stateBitCount = 12;
+
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 12;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 4),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 2, 8, 4),
+            OBELISK_RT_OK);
+
+  // Begin at Z and resolve one driver to 1, 0, X, Z. Table 28-9 selects
+  // rise, fall, the least delay, and no event for the unchanged Z bit.
+  context->stateValue[0] = 0b1001'0000'1111;
+  context->stateUnknown[0] = 0b1100'0000'1111;
+  bool changed = false;
+  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(
+      image, context, 8, 12, changed));
+  EXPECT_FALSE(changed);
+  EXPECT_EQ(context->stateValue[0] & 0xf, 0xfu);
+  ASSERT_EQ(context->scheduledNBAs.size(), 3u);
+  EXPECT_EQ(context->scheduledNBAs[0].dueTime, 7u);
+  EXPECT_EQ(context->scheduledNBAs[1].dueTime, 11u);
+  EXPECT_EQ(context->scheduledNBAs[2].dueTime, 7u);
+
+  context->designBytecodeImage = image;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->schedulerTime, 11u);
+  EXPECT_EQ(context->stateValue[0] & 0xf, 0x9u);
+  EXPECT_EQ(context->stateUnknown[0] & 0xf, 0xcu);
+  EXPECT_TRUE(context->inertialNetPending.empty());
+
+  // Re-resolving the same target retains its original deadline. Returning to
+  // the visible value before that deadline rejects the pulse completely.
+  context->stateValue[0] &= ~uint64_t{1};
+  context->stateUnknown[0] &= ~uint64_t{1};
+  context->stateValue[0] |= uint64_t{1} << 8;
+  changed = false;
+  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(
+      image, context, 8, 9, changed));
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 18u);
+  context->schedulerTime = 14;
+  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(
+      image, context, 8, 9, changed));
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 18u);
+  context->schedulerTime = 15;
+  context->stateValue[0] &= ~(uint64_t{1} << 8);
+  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(
+      image, context, 8, 9, changed));
+  EXPECT_TRUE(context->scheduledNBAs.empty());
+  EXPECT_TRUE(context->inertialNetPending.empty());
+  EXPECT_EQ(context->stateValue[0] & 1, 0u);
+
+  // A propagation-delayed driver can mature while the scheduler is draining
+  // this same queue. Its resolved net transition must be safely appended as a
+  // second inertial stage rather than invalidating the active driver event.
+  uint8_t one = 1;
+  uint8_t known = 0;
+  uint64_t driverHandle = obelisk_rt_v1_native_state_static_handle(2);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_inertial_driver(
+                context,
+                reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                reinterpret_cast<uint8_t *>(context->stateUnknown.data()), 12,
+                driverHandle, 1, 99, 0,
+                OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY, 3, 3, 3, &one,
+                &known),
+            OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 18u);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->schedulerTime, 25u);
+  EXPECT_EQ(context->stateValue[0] & 1, 1u);
+  EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
+  EXPECT_TRUE(context->scheduledNBAs.empty());
+  EXPECT_TRUE(context->inertialDriverPending.empty());
+  EXPECT_TRUE(context->inertialNetPending.empty());
   obelisk_rt_v1_context_destroy(context);
 }
 
