@@ -3,6 +3,7 @@
 #include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Runtime/StableHandle.h"
 
+#include "../lib/DesignBytecodeExecution.h"
 #include "../lib/RuntimeInternal.h"
 
 #include "gtest/gtest.h"
@@ -4282,6 +4283,342 @@ TEST(Scheduler, DelayedNBAsAdvanceTimeAndPreserveQueueOrder) {
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
   EXPECT_EQ(plane, second);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, InertialGateDriversUsePerBitTransitionDelays) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 4;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 4),
+            OBELISK_RT_OK);
+
+  // Exercise 0->1, 1->0, 0->z, and 0->x in bit order. IEEE 1800-2017
+  // Table 28-9 selects rise, fall, turn-off, and the least delay.
+  context->stateValue[0] = 0b0010;
+  context->stateUnknown[0] = 0;
+  uint8_t value = 0b0101;
+  uint8_t unknown = 0b1100;
+  uint64_t handle = obelisk_rt_v1_native_state_static_handle(1);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_inertial_driver(
+                context,
+                reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                reinterpret_cast<uint8_t *>(context->stateUnknown.data()), 4,
+                handle, 4, 17, 3, OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION,
+                7, 11, 13, &value, &unknown),
+            OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 4u);
+  EXPECT_EQ(context->scheduledNBAs[0].dueTime, 7u);
+  EXPECT_EQ(context->scheduledNBAs[1].dueTime, 11u);
+  EXPECT_EQ(context->scheduledNBAs[2].dueTime, 13u);
+  EXPECT_EQ(context->scheduledNBAs[3].dueTime, 7u);
+  ASSERT_EQ(context->inertialDriverPending.size(), 1u);
+  EXPECT_EQ(context->inertialDriverPending.begin()->second.remaining, 4u);
+
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->schedulerTime, 13u);
+  EXPECT_EQ(context->stateValue[0] & 0xf, value);
+  EXPECT_EQ(context->stateUnknown[0] & 0xf, unknown);
+  EXPECT_TRUE(context->inertialDriverPending.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, InertialVectorDriversRejectPulsesAndKeepStableDeadlines) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 4;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 4),
+            OBELISK_RT_OK);
+  context->stateValue[0] = 0;
+  context->stateUnknown[0] = 0;
+  uint64_t handle = obelisk_rt_v1_native_state_static_handle(1);
+  uint32_t flags = OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY |
+                   OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION;
+  uint8_t one = 1;
+  uint8_t zero = 0;
+
+  ASSERT_EQ(obelisk_rt_v1_scheduler_inertial_driver(
+                context,
+                reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                reinterpret_cast<uint8_t *>(context->stateUnknown.data()), 4,
+                handle, 4, 23, 9, flags, 10, 20, 30, &one, &zero),
+            OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 10u);
+
+  // Re-evaluating to the same target does not restart the propagation delay.
+  context->schedulerTime = 3;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_inertial_driver(
+                context,
+                reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                reinterpret_cast<uint8_t *>(context->stateUnknown.data()), 4,
+                handle, 4, 23, 9, flags, 10, 20, 30, &one, &zero),
+            OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 10u);
+
+  // Returning to the current driver value before the deadline suppresses the
+  // pulse and leaves no replacement event (10.3.3 b-d).
+  context->schedulerTime = 4;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_inertial_driver(
+                context,
+                reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                reinterpret_cast<uint8_t *>(context->stateUnknown.data()), 4,
+                handle, 4, 23, 9, flags, 10, 20, 30, &zero, &zero),
+            OBELISK_RT_OK);
+  EXPECT_TRUE(context->scheduledNBAs.empty());
+  EXPECT_TRUE(context->inertialDriverPending.empty());
+  EXPECT_EQ(context->stateValue[0] & 0xf, 0u);
+
+  // A known nonzero-to-zero vector transition uses the falling delay.
+  context->stateValue[0] = 0b0100;
+  context->schedulerTime = 8;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_inertial_driver(
+                context,
+                reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                reinterpret_cast<uint8_t *>(context->stateUnknown.data()), 4,
+                handle, 4, 23, 9, flags, 10, 20, 30, &zero, &zero),
+            OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 28u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, InertialPendingTargetsIncludeTheirDestination) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 8;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 8),
+            OBELISK_RT_OK);
+  uint64_t handle = obelisk_rt_v1_native_state_static_handle(1);
+  uint8_t value = 1;
+  uint8_t unknown = 0;
+  uint32_t flags = OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY |
+                   OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_inertial_driver(
+                context,
+                reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                reinterpret_cast<uint8_t *>(context->stateUnknown.data()), 8,
+                handle, 4, 29, 2, flags, 10, 20, 30, &value, &unknown),
+            OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 10u);
+
+  // A dynamic lvalue selection can move while retaining the same value. The
+  // destination is therefore part of the pending propagation target.
+  context->schedulerTime = 3;
+  uint64_t upper = obelisk_rt_v1_native_handle_offset(handle, 4);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_inertial_driver(
+                context,
+                reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                reinterpret_cast<uint8_t *>(context->stateUnknown.data()), 8,
+                upper, 4, 29, 2, flags, 10, 20, 30, &value, &unknown),
+            OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().bitOffset, upper);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 13u);
+
+  // Unknown dynamic selections suppress the drive and still reject the old
+  // pending propagation event from this statement.
+  context->schedulerTime = 4;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_inertial_driver(
+                context,
+                reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                reinterpret_cast<uint8_t *>(context->stateUnknown.data()), 8,
+                UINT64_MAX, 4, 29, 2, flags, 10, 20, 30, nullptr, nullptr),
+            OBELISK_RT_OK);
+  EXPECT_TRUE(context->scheduledNBAs.empty());
+  EXPECT_TRUE(context->inertialDriverPending.empty());
+
+  // A partial overlap clips both the destination and the corresponding low
+  // source bits, matching ordinary driver-store view semantics.
+  context->schedulerTime = 5;
+  value = 0b1101;
+  uint64_t partial = obelisk_rt_v1_native_handle_offset(handle, -2);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_inertial_driver(
+                context,
+                reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                reinterpret_cast<uint8_t *>(context->stateUnknown.data()), 8,
+                partial, 4, 29, 2, flags, 10, 20, 30, &value, &unknown),
+            OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().bitOffset, handle);
+  EXPECT_EQ(context->scheduledNBAs.front().bitWidth, 2u);
+  ASSERT_EQ(context->scheduledNBAs.front().value.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().value.front() & 3, 3);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 15u);
+
+  // A fully out-of-range selection likewise suppresses the drive and cancels
+  // the partially overlapping event.
+  context->schedulerTime = 6;
+  uint64_t outside = obelisk_rt_v1_native_handle_offset(handle, 8);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_inertial_driver(
+                context,
+                reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                reinterpret_cast<uint8_t *>(context->stateUnknown.data()), 8,
+                outside, 4, 29, 2, flags, 10, 20, 30, &value, &unknown),
+            OBELISK_RT_OK);
+  EXPECT_TRUE(context->scheduledNBAs.empty());
+  EXPECT_TRUE(context->inertialDriverPending.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, InertialKnownTargetsArePlaneRepresentationIndependent) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 4;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 4),
+            OBELISK_RT_OK);
+  uint64_t handle = obelisk_rt_v1_native_state_static_handle(1);
+  uint8_t value = 1;
+  uint8_t unknown = 0;
+  uint32_t flags = OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY |
+                   OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION;
+
+  // Native two-state lowering omits the unknown plane.
+  ASSERT_EQ(obelisk_rt_v1_scheduler_inertial_driver(
+                context,
+                reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                nullptr, 4, handle, 4, 31, 7, flags, 10, 20, 30, &value,
+                nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 10u);
+
+  // Bytecode and four-state lowering provide an explicit all-zero unknown
+  // plane. The known target is identical and must retain its first deadline.
+  context->schedulerTime = 3;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_inertial_driver(
+                context,
+                reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                reinterpret_cast<uint8_t *>(context->stateUnknown.data()), 4,
+                handle, 4, 31, 7, flags, 10, 20, 30, &value, &unknown),
+            OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 10u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, BytecodeInertialDriversClipAndSuppressDynamicViews) {
+  // Build the small validated-image fragment needed to invoke the bytecode
+  // intrinsic directly. This executes descriptor decoding rather than merely
+  // checking the compiler's bytecode encoding.
+  constexpr uint64_t layoutOffset = 0;
+  constexpr uint64_t intrinsicOffset = 8 * 40;
+  constexpr uint64_t siteOffset = intrinsicOffset + 16;
+  constexpr uint64_t operandOffset = siteOffset + 16;
+  std::vector<uint8_t> bytes(operandOffset + 8 * 8, 0);
+  auto write32 = [&](uint64_t offset, uint32_t value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  };
+  auto write64 = [&](uint64_t offset, uint64_t value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  };
+  auto writeLayout = [&](uint32_t index, uint8_t kind, uint32_t width,
+                         uint64_t offset, uint64_t size) {
+    uint64_t record = layoutOffset + uint64_t{index} * 40;
+    bytes[record] = kind;
+    write32(record + 4, width);
+    write64(record + 8, offset);
+    write64(record + 16, size);
+  };
+  writeLayout(0, OBELISK_RT_DBREG_LOGIC, 4, 0, 16);
+  writeLayout(1, OBELISK_RT_DBREG_HANDLE, 0, 16, 32);
+  for (uint32_t index = 2; index != 8; ++index)
+    writeLayout(index, OBELISK_RT_DBREG_BITS, 64,
+                48 + uint64_t{index - 2} * 8, 8);
+  write32(intrinsicOffset, OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER);
+  write32(intrinsicOffset + 4, 8);
+  write32(siteOffset + 8, 8);
+  for (uint32_t index = 0; index != 8; ++index)
+    write32(operandOffset + uint64_t{index} * 8 + 4, index);
+
+  obelisk::designbytecode::Image image{};
+  image.data = bytes.data();
+  image.size = bytes.size();
+  image.layouts = layoutOffset;
+  image.layoutCount = 8;
+  image.intrinsics = intrinsicOffset;
+  image.intrinsicCount = 1;
+  image.sites = siteOffset;
+  image.siteCount = 1;
+  image.operands = operandOffset;
+  image.operandCount = 8;
+
+  std::array<uint8_t, 96> frameData{};
+  obelisk::designbytecode::Frame frame{};
+  frame.function.layoutCount = 8;
+  frame.function.scratchSize = frameData.size();
+  frame.data = frameData.data();
+  ASSERT_TRUE(obelisk::designbytecode::validIntrinsic(image, frame.function,
+                                                      0));
+  uint64_t value = 0b1101;
+  std::memcpy(frameData.data(), &value, sizeof(value));
+  uint32_t kind = OBELISK_RT_DESCRIPTOR_DRIVER;
+  std::memcpy(frameData.data() + 16, &kind, sizeof(kind));
+  uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
+  std::memcpy(frameData.data() + 24, &root, sizeof(root));
+  auto setView = [&](int64_t start, int64_t end) {
+    std::memcpy(frameData.data() + 32, &start, sizeof(start));
+    std::memcpy(frameData.data() + 40, &end, sizeof(end));
+  };
+  const std::array<uint64_t, 6> arguments{{10, 20, 30, 37, 5,
+      OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY |
+          OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION}};
+  for (size_t index = 0; index != arguments.size(); ++index)
+    std::memcpy(frameData.data() + 48 + index * 8, &arguments[index], 8);
+
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 8;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 8),
+            OBELISK_RT_OK);
+
+  setView(0, 8);
+  ASSERT_EQ(obelisk::designbytecode::invokeIntrinsic(image, frame, context, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().bitOffset, root);
+  EXPECT_EQ(context->scheduledNBAs.front().bitWidth, 4u);
+
+  // An unknown selection cancels the pending event at this bytecode site.
+  setView(obelisk::designbytecode::kInvalidHandleStart, 8);
+  ASSERT_EQ(obelisk::designbytecode::invokeIntrinsic(image, frame, context, 0),
+            OBELISK_RT_OK);
+  EXPECT_TRUE(context->scheduledNBAs.empty());
+
+  // A low-side overlap drops the two out-of-range source bits and schedules
+  // only source bits 2..3 into destination bits 0..1.
+  setView(-2, 8);
+  ASSERT_EQ(obelisk::designbytecode::invokeIntrinsic(image, frame, context, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().bitOffset, root);
+  EXPECT_EQ(context->scheduledNBAs.front().bitWidth, 2u);
+  ASSERT_EQ(context->scheduledNBAs.front().value.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().value.front() & 3, 3);
+
+  // A fully out-of-range selection is suppressed and cancels that event.
+  setView(8, 8);
+  ASSERT_EQ(obelisk::designbytecode::invokeIntrinsic(image, frame, context, 0),
+            OBELISK_RT_OK);
+  EXPECT_TRUE(context->scheduledNBAs.empty());
+  EXPECT_TRUE(context->inertialDriverPending.empty());
   obelisk_rt_v1_context_destroy(context);
 }
 

@@ -1076,6 +1076,12 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_driver_nba,
              obelisk_rt_status (*)(obelisk_rt_context *, uint8_t *, uint8_t *,
                                    uint64_t, uint64_t, uint64_t, uint64_t,
                                    const uint8_t *, const uint8_t *));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_inertial_driver,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint8_t *, uint8_t *,
+                                   uint64_t, uint64_t, uint64_t, uint64_t,
+                                   uint32_t, uint32_t, uint64_t, uint64_t,
+                                   uint64_t, const uint8_t *,
+                                   const uint8_t *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_clocking_nba,
              obelisk_rt_status (*)(obelisk_rt_context *, uint8_t *, uint8_t *,
                                    uint64_t, uint64_t, uint64_t, uint64_t,

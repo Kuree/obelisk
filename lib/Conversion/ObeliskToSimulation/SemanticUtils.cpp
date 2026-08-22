@@ -88,6 +88,14 @@ SmallVector<Operation *> getChildren(Operation *op) {
   return children;
 }
 
+SmallVector<Operation *> getNetInitializerExpressions(Operation *op) {
+  SmallVector<Operation *> expressions;
+  for (Operation *child : getChildren(op))
+    if (!isa<semantic::SVDelayControlOp, semantic::SVDelay3ControlOp>(child))
+      expressions.push_back(child);
+  return expressions;
+}
+
 bool storageDecidesTruth(Operation *expression) {
   // IEEE 1800-2017 12.4 reads a condition as a comparison against zero, and
   // only a packed integral value answers that from its stored bits. A handle

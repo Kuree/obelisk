@@ -2670,6 +2670,24 @@ def SimDriverDriveOp : SimOp<"driver.drive", [
   let assemblyFormat = "$driver `=` $value attr-dict `:` qualified(type($driver)) `,` type($value)";
 }
 
+def SimDriverDriveInertialOp : SimOp<"driver.drive_inertial", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimNetResource>]>,
+    SimDriverElementMatches<"driver", "value">
+  ]> {
+  let summary = "schedule an inertial gate or continuous-assignment drive";
+  let arguments = (ins SimDriverType:$driver, AnyType:$value,
+                       SimTimeType:$rise_delay, SimTimeType:$fall_delay,
+                       SimTimeType:$turnoff_delay, I64Attr:$code_unit_id,
+                       I32Attr:$component, BoolAttr:$vector_delay,
+                       DefaultValuedAttr<BoolAttr, "false">:$defer_resolution);
+  let assemblyFormat = [{
+    $driver `=` $value `after` `[` $rise_delay `,` $fall_delay `,`
+    $turnoff_delay `]` `site` $code_unit_id `:` $component
+    `vector` `=` $vector_delay attr-dict `:` qualified(type($driver)) `,`
+    type($value)
+  }];
+}
+
 def SimDriverDriveChangedOp : SimOp<"driver.drive_changed", [
     MemoryEffects<[MemWrite<SimNetResource>]>,
     SimDriverElementMatches<"driver", "value">

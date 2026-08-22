@@ -429,6 +429,12 @@ bool isCompileTimeOnlyInstanceMember(::mlir::Operation *op);
 /// Operations in the first block of an AST node's inventory region.
 ::mlir::SmallVector<::mlir::Operation *> getChildren(::mlir::Operation *op);
 
+/// The value expression, if any, in a net declaration. Delay-control children
+/// describe either the declaration assignment or the net itself and are not
+/// initializer expressions.
+::mlir::SmallVector<::mlir::Operation *>
+getNetInitializerExpressions(::mlir::Operation *op);
+
 /// Literal spelling of an integer node, including constants frozen by the
 /// prepare pass after their defining symbol is no longer in scope.
 std::optional<::mlir::StringRef>

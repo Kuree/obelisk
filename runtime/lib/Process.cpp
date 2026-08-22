@@ -3021,7 +3021,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                     context, update.bitOffset, update.bitWidth))
               return;
           }
-          if (publicationChanged && update.driver) {
+          if (publicationChanged && update.driver &&
+              !update.deferDriverResolution) {
             __int128 first = std::max<__int128>(baseOffset, 0);
             __int128 last = std::min<__int128>(
                 static_cast<__int128>(baseOffset) + update.bitWidth,
@@ -3042,6 +3043,18 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               changed |= resolvedChanged;
             }
           }
+        };
+        auto completeInertial = [&](const ScheduledNBA &update) {
+          if (update.inertialSite.codeUnit == UINT64_MAX)
+            return;
+          auto pending =
+              context->inertialDriverPending.find(update.inertialSite);
+          if (pending == context->inertialDriverPending.end())
+            return;
+          if (pending->second.remaining <= 1)
+            context->inertialDriverPending.erase(pending);
+          else
+            --pending->second.remaining;
         };
         auto planeBit = [](const std::vector<uint64_t> &plane, uint64_t bit) {
           return bit / 64 < plane.size() &&
@@ -3191,6 +3204,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             applyNative(update);
             if (context->schedulerStatus != OBELISK_RT_OK)
               return context->schedulerStatus;
+            completeInertial(update);
             if (retainedAutomaticID != 0) {
               auto found =
                   context->nativeAutomaticStates.find(retainedAutomaticID);
@@ -3267,6 +3281,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               uint32_t retainedAutomaticID =
                   context->scheduledNBAs[nativeIndex].retainedAutomaticID;
               applyNative(context->scheduledNBAs[nativeIndex]);
+              if (context->schedulerStatus != OBELISK_RT_OK)
+                return context->schedulerStatus;
+              completeInertial(context->scheduledNBAs[nativeIndex]);
               if (retainedAutomaticID != 0) {
                 auto found =
                     context->nativeAutomaticStates.find(retainedAutomaticID);

@@ -29,7 +29,10 @@ module {
     // CHECK: %[[A:.*]] = obelisk_sim.ref.load %arg2
     // CHECK: %[[B:.*]] = obelisk_sim.ref.load %arg3
     // CHECK: %[[RESULT:.*]] = obelisk_sim.logic.binary and %[[A]], %[[B]]
-    // CHECK: obelisk_sim.driver.drive %arg1 = %[[RESULT]]
+    // CHECK-DAG: %[[AND_RISE:.*]] = obelisk_sim.time.constant 7
+    // CHECK-DAG: %[[AND_FALL:.*]] = obelisk_sim.time.constant 11
+    // CHECK-DAG: %[[AND_OFF:.*]] = obelisk_sim.time.constant 7
+    // CHECK: obelisk_sim.driver.drive_inertial %arg1 = %[[RESULT]] after[%[[AND_RISE]], %[[AND_FALL]], %[[AND_OFF]]] site 9100001 : 0 vector = false
     // CHECK: obelisk_sim.suspend.any %arg2, %arg3
     obelisk_sim.func @primitive_and(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
@@ -38,6 +41,7 @@ module {
         %b: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 9100001 : i64,
                     obelisk_sim.primitive_name = "and",
+                    obelisk_sim.propagation_delays = array<i64: 7, 11>,
                     obelisk_sim.bindings = [
                       #obelisk_sim.argument_binding<path = "top.and_out", argument = 1, kind = lvalue_only, copyOut = false>,
                       #obelisk_sim.argument_binding<path = "top.a", argument = 2, kind = direct, copyOut = false>,

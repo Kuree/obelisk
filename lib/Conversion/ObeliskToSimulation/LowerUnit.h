@@ -555,6 +555,7 @@ private:
   ::llvm::StringMap<uint64_t> descriptorIDs;
   ::llvm::DenseMap<uint64_t, ::mlir::Value> nodeLvalues;
   bool deferDriverResolution = false;
+  uint64_t nextInertialDriveComponent = 0;
   ::llvm::StringMap<std::array<::mlir::Value, 2>> strengthDriverLvalues;
   ::llvm::DenseMap<uint64_t, std::array<::mlir::Value, 2>> strengthNodeLvalues;
   ::llvm::StringMap<::mlir::Value> localDefaults;

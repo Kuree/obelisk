@@ -33,6 +33,7 @@
 #include <array>
 #include <cctype>
 #include <charconv>
+#include <cmath>
 #include <concepts>
 #include <functional>
 #include <limits>
@@ -1580,6 +1581,74 @@ private:
                 builder.getI64IntegerAttr(*repetition->range.max));
   }
 
+  bool addStaticPropagationDelay(
+      NamedAttrList &attrs, const slang::ast::TimingControl *control,
+      const slang::ast::Symbol &contextSymbol) {
+    if (!control)
+      return true;
+    SmallVector<const slang::ast::Expression *, 3> expressions;
+    if (const auto *delay = control->as_if<slang::ast::DelayControl>()) {
+      expressions.push_back(&delay->expr);
+    } else if (const auto *delay =
+                   control->as_if<slang::ast::Delay3Control>()) {
+      expressions.push_back(&delay->expr1);
+      if (delay->expr2)
+        expressions.push_back(delay->expr2);
+      if (delay->expr3)
+        expressions.push_back(delay->expr3);
+    } else {
+      return false;
+    }
+
+    slang::TimeScale scale;
+    if (const slang::ast::Scope *scope = contextSymbol.getParentScope())
+      scale = scope->getTimeScale().value_or(slang::TimeScale{});
+    uint64_t unitFs = getFemtoseconds(scale.base);
+    uint64_t precisionFs = getFemtoseconds(scale.precision);
+    if (unitFs == 0 || precisionFs == 0 || unitFs < precisionFs ||
+        unitFs % precisionFs != 0)
+      return false;
+
+    slang::ast::EvalContext evalContext(contextSymbol);
+    SmallVector<int64_t, 3> delays;
+    for (const slang::ast::Expression *expression : expressions) {
+      slang::ConstantValue value = expression->eval(evalContext);
+      if (!value)
+        return false;
+      long double amount = 0;
+      if (value.isInteger()) {
+        const slang::SVInt &integer = value.integer();
+        if (!integer.hasUnknown() &&
+            !(integer.isSigned() && integer.isNegative())) {
+          std::optional<uint64_t> converted = integer.as<uint64_t>();
+          if (!converted)
+            return false;
+          amount = static_cast<long double>(*converted);
+        }
+      } else if (value.isReal()) {
+        amount = static_cast<long double>(value.real());
+      } else if (value.isShortReal()) {
+        amount = static_cast<long double>(value.shortReal());
+      } else {
+        return false;
+      }
+      if (!std::isfinite(amount))
+        return false;
+      if (amount < 0)
+        amount = 0;
+      long double steps =
+          amount * static_cast<long double>(unitFs / precisionFs);
+      long double femtoseconds = std::round(steps) * precisionFs;
+      if (!std::isfinite(femtoseconds) || femtoseconds < 0 ||
+          femtoseconds >
+              static_cast<long double>(std::numeric_limits<int64_t>::max()))
+        return false;
+      delays.push_back(static_cast<int64_t>(femtoseconds));
+    }
+    attrs.set("delay_fs", builder.getDenseI64ArrayAttr(delays));
+    return true;
+  }
+
   template <typename Op, typename Node>
   void addSpecificAttributes(const Node &node, NamedAttrList &attrs) {
     using T = std::remove_cvref_t<Node>;
@@ -1634,7 +1703,8 @@ private:
         SET_OP_ATTR(DriveStrength1,
                     slangir::DriveStrengthAttr::get(builder.getContext(),
                                                     convertEnum(*strength1)));
-      if (const slang::ast::TimingControl *delay = node.getDelay()) {
+      if (const slang::ast::TimingControl *delay = node.getDelay();
+          delay && !addStaticPropagationDelay(attrs, delay, node)) {
         slang::SourceRange range = getSourceRange(*delay);
         if (range.start().valid() && range.end().valid() &&
             range.start().buffer() == range.end().buffer()) {
@@ -2192,7 +2262,8 @@ private:
         SET_OP_ATTR(DriveStrength1,
                     slangir::DriveStrengthAttr::get(builder.getContext(),
                                                     convertEnum(*strength1)));
-      if (const slang::ast::TimingControl *delay = node.getDelay()) {
+      if (const slang::ast::TimingControl *delay = node.getDelay();
+          delay && !addStaticPropagationDelay(attrs, delay, node)) {
         slang::SourceRange range = getSourceRange(*delay);
         if (range.start().valid() && range.end().valid() &&
             range.start().buffer() == range.end().buffer()) {
@@ -2226,7 +2297,8 @@ private:
                       slangir::DriveStrengthAttr::get(builder.getContext(),
                                                       convertEnum(*strength1)));
       }
-      if (const slang::ast::TimingControl *delay = node.getDelay()) {
+      if (const slang::ast::TimingControl *delay = node.getDelay();
+          delay && !addStaticPropagationDelay(attrs, delay, node)) {
         slang::SourceRange range = getSourceRange(*delay);
         if (range.start().valid() && range.end().valid() &&
             range.start().buffer() == range.end().buffer()) {

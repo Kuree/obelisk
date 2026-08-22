@@ -2216,6 +2216,10 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
   }
 
   if (strengthResults) {
+    if (function->hasAttr("obelisk_sim.propagation_delays"))
+      return emitError(location)
+             << "conditional primitive propagation delays are not yet "
+                "supported";
     if (strengthDriverLvalues.empty())
       return emitError(location)
              << "conditional primitive has no polarity-specific drivers";
@@ -2351,12 +2355,12 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     FailureOr<Value> value = lowerExpression(op);
     if (failed(value))
       return failure();
-    FailureOr<Value> converted = convert(*value, driverType.getElementType(),
-                                         isSignedNode(op), location);
-    if (failed(converted))
-      return failure();
-    sim::SimDriverDriveOp::create(builder, location, destination, *converted);
-    return success();
+    CapturedLValue captured;
+    captured.semanticNode = op;
+    captured.type = driverType.getElementType();
+    captured.reference = destination;
+    return writeCapturedLValue(captured, *value, isSignedNode(op), false,
+                               location);
   }
   if (auto field = op->getAttrOfType<FlatSymbolRefAttr>(
           "obelisk_sim.initialize_field")) {

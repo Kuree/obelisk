@@ -432,6 +432,32 @@ struct EventState {
   uint64_t lastTriggeredTime = 0;
 };
 
+struct InertialDriverSite {
+  uint64_t codeUnit = 0;
+  uint32_t component = 0;
+
+  bool operator==(const InertialDriverSite &other) const {
+    return codeUnit == other.codeUnit && component == other.component;
+  }
+};
+
+struct InertialDriverSiteHash {
+  size_t operator()(const InertialDriverSite &site) const {
+    uint64_t mixed = site.codeUnit ^
+                     (uint64_t{site.component} + UINT64_C(0x9e3779b97f4a7c15) +
+                      (site.codeUnit << 6) + (site.codeUnit >> 2));
+    return static_cast<size_t>(mixed);
+  }
+};
+
+struct InertialDriverPending {
+  uint64_t destination = UINT64_MAX;
+  uint64_t width = 0;
+  std::vector<uint8_t> value;
+  std::vector<uint8_t> unknown;
+  uint64_t remaining = 0;
+};
+
 struct NativeStaticState {
   uint64_t bitOffset = 0;
   uint64_t bitWidth = 0;
@@ -457,6 +483,7 @@ struct ScheduledNBA {
   uint64_t bitWidth = 0;
   bool stringValue = false;
   bool driver = false;
+  bool deferDriverResolution = false;
   bool managedValue = false;
   bool inlinePacked = false;
   obelisk_rt_string_v1 rootedString = 0;
@@ -465,6 +492,7 @@ struct ScheduledNBA {
   uint64_t inlineUnknown = 0;
   std::vector<uint8_t> value;
   std::vector<uint8_t> unknown;
+  InertialDriverSite inertialSite{UINT64_MAX, 0};
 };
 
 struct StaticNBAAccumulator {
@@ -880,6 +908,9 @@ struct obelisk_rt_context {
   bool signalDiagnosticsReport = false;
   SignalSubscriptionDiagnostics signalDiagnostics;
   std::vector<ScheduledNBA> scheduledNBAs;
+  std::unordered_map<InertialDriverSite, InertialDriverPending,
+                     InertialDriverSiteHash>
+      inertialDriverPending;
   std::vector<StaticNBAAccumulator> staticNBAAccumulators;
   bool staticNBAAccumulatorsPending = false;
   std::vector<uint8_t> staticNBASlowRoots;

@@ -265,6 +265,25 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return emitIntrinsicRegisters(plan, kIntrinsicStaticNBA, inputRegisters,
                                   {});
   }
+  if (auto op = dyn_cast<sim::SimDriverDriveInertialOp>(operation)) {
+    uint32_t codeUnit = emitU64Constant(plan, op.getCodeUnitId());
+    uint32_t component = emitU64Constant(plan, op.getComponent());
+    uint32_t flags = emitU64Constant(
+        plan,
+        (op.getVectorDelay() ? OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY : 0) |
+            (op.getDeferResolution()
+                 ? OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION
+                 : 0));
+    if (codeUnit == kInvalidRegister || component == kInvalidRegister ||
+        flags == kInvalidRegister)
+      return op.emitOpError("cannot encode inertial driver identity");
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicInertialDriver,
+        {reg(plan, op.getValue()), reg(plan, op.getDriver()),
+         reg(plan, op.getRiseDelay()), reg(plan, op.getFallDelay()),
+         reg(plan, op.getTurnoffDelay()), codeUnit, component, flags},
+        {});
+  }
   if (auto op = dyn_cast<sim::SimEventTriggerOp>(operation)) {
     SmallVector<Value> inputs{op.getEvent()};
     if (op.getDelay())

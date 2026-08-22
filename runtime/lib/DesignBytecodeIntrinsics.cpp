@@ -1942,6 +1942,73 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     std::memcpy(address + 24, &end, 8);
     return OBELISK_RT_OK;
   }
+  case OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER: {
+    if (!context || !context->execution)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    auto rise = scalar(2);
+    auto fall = scalar(3);
+    auto turnoff = scalar(4);
+    auto codeUnit = scalar(5);
+    auto component = scalar(6);
+    auto flags = scalar(7);
+    if (!rise || !fall || !turnoff || !codeUnit || !component || !flags ||
+        *component > UINT32_MAX || *flags > UINT32_MAX)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Layout valueLayout = layoutAt(image, frame.function, inputRegister(0));
+    Logic value = readLogic(frame.data, valueLayout);
+    auto suppress = [&] {
+      return obelisk_rt_v1_scheduler_inertial_driver(
+          context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
+          reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
+          context->execution->state_bit_count, UINT64_MAX, value.width,
+          *codeUnit, static_cast<uint32_t>(*component),
+          static_cast<uint32_t>(*flags), *rise, *fall, *turnoff, nullptr,
+          nullptr);
+    };
+    Layout destination = layoutAt(image, frame.function, inputRegister(1));
+    uint32_t kind = 0;
+    uint64_t objectBase = 0;
+    int64_t begin = 0, start = kInvalidHandleStart, end = 0;
+    const uint8_t *address = frame.data + destination.offset;
+    std::memcpy(&kind, address, 4);
+    std::memcpy(&objectBase, address + 8, 8);
+    std::memcpy(&start, address + 16, 8);
+    std::memcpy(&end, address + 24, 8);
+    uint32_t staticID = 0;
+    if (kind != OBELISK_RT_DESCRIPTOR_DRIVER ||
+        !decodeStaticHandle(objectBase, staticID, begin) || begin > end)
+      return OBELISK_RT_INVALID_HANDLE;
+    if (start == kInvalidHandleStart)
+      return suppress();
+    int64_t first = start < begin ? begin - start : 0;
+    int64_t last = static_cast<int64_t>(value.width);
+    if (start > end || end - start < last)
+      last = end - start;
+    if (first >= last)
+      return suppress();
+    int64_t selectedStart = start + first;
+    uint64_t stable = encodeStaticHandle(staticID, selectedStart);
+    if (stable == UINT64_MAX)
+      return OBELISK_RT_INVALID_HANDLE;
+    uint64_t width = static_cast<uint64_t>(last - first);
+    uint64_t bytes = (width + 7) / 8;
+    std::vector<uint8_t> selectedValue(static_cast<size_t>(bytes), 0);
+    std::vector<uint8_t> selectedUnknown(static_cast<size_t>(bytes), 0);
+    for (uint64_t bitIndex = 0; bitIndex != width; ++bitIndex) {
+      uint64_t source = static_cast<uint64_t>(first) + bitIndex;
+      uint8_t mask = static_cast<uint8_t>(1u << (bitIndex % 8));
+      if (bit(value.value, source))
+        selectedValue[bitIndex / 8] |= mask;
+      if (value.fourState && bit(value.unknown, source))
+        selectedUnknown[bitIndex / 8] |= mask;
+    }
+    return obelisk_rt_v1_scheduler_inertial_driver(
+        context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
+        reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
+        context->execution->state_bit_count, stable, width, *codeUnit,
+        static_cast<uint32_t>(*component), static_cast<uint32_t>(*flags), *rise,
+        *fall, *turnoff, selectedValue.data(), selectedUnknown.data());
+  }
   case OBELISK_RT_INTRINSIC_V1_NBA:
   case OBELISK_RT_INTRINSIC_V1_STATIC_NBA:
   case OBELISK_RT_INTRINSIC_V1_CLOCKING_NBA: {

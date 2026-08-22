@@ -380,6 +380,217 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_driver_nba(
                       UINT64_MAX, true);
 }
 
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
+    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+    uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
+    uint64_t codeUnit, uint32_t component, uint32_t flags, uint64_t riseDelay,
+    uint64_t fallDelay, uint64_t turnoffDelay, const uint8_t *value,
+    const uint8_t *unknown) {
+  if (!context || !context->execution || !valuePlane || bitWidth == 0 ||
+      codeUnit == UINT64_MAX ||
+      (flags & ~(OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY |
+                 OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION)) != 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  try {
+    ContextTransaction transaction(context);
+    ContextMutexLock lock(context);
+    if (planeBitCount != context->execution->state_bit_count ||
+        valuePlane != reinterpret_cast<uint8_t *>(context->stateValue.data()) ||
+        (unknownPlane &&
+         unknownPlane !=
+             reinterpret_cast<uint8_t *>(context->stateUnknown.data())))
+      return OBELISK_RT_INVALID_HANDLE;
+    InertialDriverSite site{codeUnit, component};
+    auto cancelPending = [&] {
+      context->scheduledNBAs.erase(
+          std::remove_if(context->scheduledNBAs.begin(),
+                         context->scheduledNBAs.end(),
+                         [&](const ScheduledNBA &update) {
+                           return update.inertialSite == site;
+                         }),
+          context->scheduledNBAs.end());
+      context->inertialDriverPending.erase(site);
+    };
+    // Dynamic driver selections use the invalid handle as a no-drive value.
+    // Re-evaluation still rejects an older pulse from this assignment site.
+    if (bitOffset == UINT64_MAX) {
+      cancelPending();
+      return OBELISK_RT_OK;
+    }
+
+    uint32_t staticID = 0;
+    int64_t offset = 0;
+    if (!decodeNativeStatic(bitOffset, staticID, offset))
+      return OBELISK_RT_INVALID_HANDLE;
+    const NativeStaticState *state = findNativeStaticState(context, staticID);
+    if (!state)
+      return OBELISK_RT_INVALID_HANDLE;
+    __int128 firstWide =
+        std::max<__int128>(0, -static_cast<__int128>(offset));
+    __int128 lastWide = std::min<__int128>(
+        bitWidth, static_cast<__int128>(state->bitWidth) - offset);
+    if (firstWide >= lastWide) {
+      cancelPending();
+      return OBELISK_RT_OK;
+    }
+    uint64_t sourceFirst = static_cast<uint64_t>(firstWide);
+    uint64_t selectedWidth = static_cast<uint64_t>(lastWide - firstWide);
+    __int128 selectedOffsetWide =
+        static_cast<__int128>(offset) + firstWide;
+    if (selectedOffsetWide < 0 || selectedOffsetWide > INT64_MAX)
+      return OBELISK_RT_INVALID_HANDLE;
+    int64_t selectedOffset = static_cast<int64_t>(selectedOffsetWide);
+    uint64_t selectedHandle = obelisk::designbytecode::encodeStaticHandle(
+        staticID, selectedOffset);
+    if (selectedHandle == UINT64_MAX)
+      return OBELISK_RT_INVALID_HANDLE;
+    uint64_t byteCount = (bitWidth - 1) / 8 + 1;
+    if (!value || (unknownPlane && !unknown) ||
+        byteCount > std::numeric_limits<size_t>::max())
+      return OBELISK_RT_INVALID_ARGUMENT;
+
+    uint64_t selectedBytes = (selectedWidth - 1) / 8 + 1;
+    std::vector<uint8_t> targetValue(static_cast<size_t>(selectedBytes), 0);
+    // Keep pending-target identity independent of whether a two-state caller
+    // omitted its physically all-zero unknown plane.
+    std::vector<uint8_t> targetUnknown(static_cast<size_t>(selectedBytes), 0);
+    for (uint64_t bit = 0; bit != selectedWidth; ++bit) {
+      if (byteBit(value, sourceFirst + bit))
+        setByteBit(targetValue.data(), bit, true);
+      if (unknownPlane && byteBit(unknown, sourceFirst + bit))
+        setByteBit(targetUnknown.data(), bit, true);
+    }
+    bitOffset = selectedHandle;
+    bitWidth = selectedWidth;
+    offset = selectedOffset;
+    if (auto pending = context->inertialDriverPending.find(site);
+        pending != context->inertialDriverPending.end() &&
+        pending->second.destination == bitOffset &&
+        pending->second.width == bitWidth &&
+        pending->second.value == targetValue &&
+        pending->second.unknown == targetUnknown)
+      return OBELISK_RT_OK;
+
+    cancelPending();
+
+    auto sourceBit = [](const std::vector<uint8_t> &plane, uint64_t bit) {
+      return bit / 8 < plane.size() && byteBit(plane.data(), bit);
+    };
+    auto currentBit = [&](bool unknownBit, uint64_t bit) {
+      uint64_t absolute =
+          state->bitOffset + static_cast<uint64_t>(offset) + bit;
+      const std::vector<uint64_t> &plane =
+          unknownBit ? context->stateUnknown : context->stateValue;
+      if (absolute / 64 >= plane.size())
+        return false;
+      return ((plane[absolute / 64] >> (absolute % 64)) & 1) != 0;
+    };
+    auto delayFor = [&](bool newValue, bool newUnknown) {
+      if (!newUnknown)
+        return newValue ? riseDelay : fallDelay;
+      return newValue ? turnoffDelay
+                      : std::min({riseDelay, fallDelay, turnoffDelay});
+    };
+    auto enqueue = [&](uint64_t first, uint64_t width, uint64_t delay) {
+      if (context->nextSchedulerSequence == 0 ||
+          context->nextSchedulerSequence == UINT64_MAX)
+        return false;
+      ScheduledNBA update;
+      update.valuePlane = valuePlane;
+      update.unknownPlane = unknownPlane;
+      update.planeBitCount = planeBitCount;
+      update.bitOffset = obelisk::designbytecode::encodeStaticHandle(
+          staticID,
+          static_cast<int64_t>(static_cast<uint64_t>(offset) + first));
+      update.bitWidth = width;
+      update.driver = true;
+      update.deferDriverResolution =
+          (flags & OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION) != 0;
+      update.execRegion = OBELISK_RT_REGION_ACTIVE;
+      update.sequence = context->nextSchedulerSequence++;
+      update.dueTime = delay > UINT64_MAX - context->schedulerTime
+                           ? UINT64_MAX
+                           : context->schedulerTime + delay;
+      update.inertialSite = site;
+      uint64_t bytes = (width - 1) / 8 + 1;
+      update.value.assign(static_cast<size_t>(bytes), 0);
+      if (unknownPlane)
+        update.unknown.assign(static_cast<size_t>(bytes), 0);
+      for (uint64_t bit = 0; bit != width; ++bit) {
+        if (sourceBit(targetValue, first + bit))
+          setByteBit(update.value.data(), bit, true);
+        if (unknownPlane && sourceBit(targetUnknown, first + bit))
+          setByteBit(update.unknown.data(), bit, true);
+      }
+      context->scheduledNBAs.push_back(std::move(update));
+      return true;
+    };
+
+    uint64_t scheduled = 0;
+    if ((flags & OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY) != 0) {
+      bool changed = false;
+      bool oldNonzero = false;
+      bool newZero = true;
+      bool newHighZ = true;
+      for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+        bool oldValue = currentBit(false, bit);
+        bool oldUnknown = currentBit(true, bit);
+        bool newValue = sourceBit(targetValue, bit);
+        bool newUnknown = sourceBit(targetUnknown, bit);
+        changed |= oldValue != newValue || oldUnknown != newUnknown;
+        oldNonzero |= !oldUnknown && oldValue;
+        newZero &= !newUnknown && !newValue;
+        newHighZ &= newUnknown && newValue;
+      }
+      if (changed) {
+        if (context->nextSchedulerSequence == 0 ||
+            context->nextSchedulerSequence == UINT64_MAX)
+          return OBELISK_RT_OUT_OF_RESOURCES;
+        uint64_t delay = newHighZ ? turnoffDelay
+                         : oldNonzero && newZero ? fallDelay
+                                                 : riseDelay;
+        if (!enqueue(0, bitWidth, delay))
+          return OBELISK_RT_OUT_OF_RESOURCES;
+        scheduled = 1;
+      }
+    } else {
+      for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+        bool newValue = sourceBit(targetValue, bit);
+        bool newUnknown = sourceBit(targetUnknown, bit);
+        scheduled += currentBit(false, bit) != newValue ||
+                     currentBit(true, bit) != newUnknown;
+      }
+      if (scheduled != 0 &&
+          (context->nextSchedulerSequence == 0 ||
+           static_cast<__uint128_t>(scheduled) >
+               static_cast<__uint128_t>(UINT64_MAX) -
+                   context->nextSchedulerSequence))
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+        bool newValue = sourceBit(targetValue, bit);
+        bool newUnknown = sourceBit(targetUnknown, bit);
+        if (currentBit(false, bit) == newValue &&
+            currentBit(true, bit) == newUnknown)
+          continue;
+        if (!enqueue(bit, 1, delayFor(newValue, newUnknown)))
+          return OBELISK_RT_OUT_OF_RESOURCES;
+      }
+    }
+    if (scheduled != 0)
+      context->inertialDriverPending.emplace(
+          site, InertialDriverPending{bitOffset, bitWidth,
+                                      std::move(targetValue),
+                                      std::move(targetUnknown), scheduled});
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
+
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_clocking_nba(
     obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,

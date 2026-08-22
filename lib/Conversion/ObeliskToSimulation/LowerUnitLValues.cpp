@@ -9,6 +9,7 @@
 
 #include "llvm/ADT/STLExtras.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <optional>
@@ -752,6 +753,50 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
       if (nonblocking) {
         emitError(location) << "nonblocking assignment cannot target a driver";
         return failure();
+      }
+      if (auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
+              "obelisk_sim.propagation_delays")) {
+        if (delays.empty() || delays.size() > 3)
+          return function.emitError("invalid frozen propagation delays");
+        ArrayRef<int64_t> values = delays.asArrayRef();
+        int64_t rise = values[0];
+        int64_t fall = values.size() == 1 ? rise : values[1];
+        int64_t turnoff = values.size() == 1
+                              ? rise
+                              : values.size() == 2
+                                    ? std::min(rise, fall)
+                                    : values[2];
+        auto timeConstant = [&](int64_t ticks) {
+          return sim::SimTimeConstantOp::create(
+              builder, location, sim::TimeType::get(function.getContext()),
+              builder.getI64IntegerAttr(ticks));
+        };
+        auto codeUnitID =
+            function->getAttrOfType<IntegerAttr>("code_unit_id");
+        if (!codeUnitID)
+          return function.emitError(
+              "delayed drive has no stable code unit identity");
+        std::optional<unsigned> drivenWidth =
+            sim::getPackedWidth(published.getType());
+        if (!drivenWidth)
+          return function.emitError(
+              "delayed drive value has no fixed packed width");
+        bool vectorDelay =
+            !function->hasAttr("obelisk_sim.primitive_name") &&
+            *drivenWidth != 1;
+        if (nextInertialDriveComponent > UINT32_MAX)
+          return function.emitError("too many delayed drive sites");
+        Value riseDelay = timeConstant(rise);
+        Value fallDelay = timeConstant(fall);
+        Value turnoffDelay = timeConstant(turnoff);
+        sim::SimDriverDriveInertialOp::create(
+            builder, location, destination.reference, published, riseDelay,
+            fallDelay, turnoffDelay, codeUnitID,
+            builder.getI32IntegerAttr(
+                static_cast<uint32_t>(nextInertialDriveComponent++)),
+            builder.getBoolAttr(vectorDelay),
+            builder.getBoolAttr(deferDriverResolution));
+        return success();
       }
       auto drive = sim::SimDriverDriveOp::create(
           builder, location, destination.reference, published);

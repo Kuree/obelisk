@@ -375,7 +375,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                              !isAutomaticLocalSymbol(variable) &&
                              !getChildren(variable).empty();
     auto net = dyn_cast<semantic::SVNetSymbolOp>(op);
-    bool netInitializer = net && !getChildren(net).empty();
+    bool netInitializer = net && !getNetInitializerExpressions(net).empty();
     if (isCodeUnit(op) || staticInitializer || initializedStaticLocal ||
         designInitializer || netInitializer ||
         op->hasAttr(sequenceEndpointEventAttrName) ||
@@ -1163,9 +1163,11 @@ void ObeliskSimPreparePass::runOnOperation() {
   llvm::DenseMap<Operation *, StringAttr> staticLiteralNets;
   for (Operation *source : sourceUnits) {
     auto net = dyn_cast<semantic::SVNetSymbolOp>(source);
-    if (!net)
+    // A delayed declaration assignment has not driven the net when static
+    // variable initialization runs, so its literal cannot seed that fold.
+    if (!net || net->hasAttr("delay_fs"))
       continue;
-    SmallVector<Operation *> initializer = getChildren(net);
+    SmallVector<Operation *> initializer = getNetInitializerExpressions(net);
     std::optional<StringRef> spelling =
         initializer.size() == 1 ? getConstantSpelling(initializer.front())
                                 : std::nullopt;
@@ -5946,6 +5948,34 @@ void ObeliskSimPreparePass::runOnOperation() {
         bindingAttr, delayScaleAttr, delayQuantumAttr,
         builder.getNamedAttr("code_unit_id",
                              builder.getI64IntegerAttr(unit.id))};
+    if (auto delays =
+            unit.source->getAttrOfType<DenseI64ArrayAttr>("delay_fs")) {
+      if (delays.empty() || delays.size() > 3) {
+        emitError(getSemanticLocation(unit.source))
+            << "propagation delay must contain one to three values";
+        invalid = true;
+        continue;
+      }
+      SmallVector<int64_t, 3> ticks;
+      bool delayInvalid = false;
+      for (int64_t femtoseconds : delays.asArrayRef()) {
+        if (femtoseconds < 0 ||
+            static_cast<uint64_t>(femtoseconds) % designPrecisionFs != 0) {
+          emitError(getSemanticLocation(unit.source))
+              << "propagation delay is incompatible with design precision";
+          invalid = true;
+          delayInvalid = true;
+          break;
+        }
+        ticks.push_back(static_cast<int64_t>(
+            static_cast<uint64_t>(femtoseconds) / designPrecisionFs));
+      }
+      if (delayInvalid)
+        continue;
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.propagation_delays",
+          builder.getDenseI64ArrayAttr(ticks)));
+    }
     if (instanceClassMethod)
       functionAttrs.push_back(builder.getNamedAttr(
           sim::metadata::thisArgument, builder.getI32IntegerAttr(1)));
@@ -6217,7 +6247,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                         builder.getStringAttr(getHierarchyName(unit.source)));
       }
     } else if (isa<semantic::SVNetSymbolOp>(unit.source)) {
-      SmallVector<Operation *> initializer = getChildren(unit.source);
+      SmallVector<Operation *> initializer =
+          getNetInitializerExpressions(unit.source);
       if (initializer.size() != 1) {
         emitError(getSemanticLocation(unit.source))
             << "net initializer must have one expression";
@@ -6429,6 +6460,9 @@ void ObeliskSimPreparePass::runOnOperation() {
         // Cloning any Symbol into the isolated simulation function would put
         // it below an operation without the SymbolTable trait.
         if (isa<SymbolOpInterface>(child))
+          continue;
+        if (unit.function->hasAttr("obelisk_sim.propagation_delays") &&
+            isa<semantic::SVDelayControlOp, semantic::SVDelay3ControlOp>(child))
           continue;
         Operation *clonedChild = child;
         if (moveBody)

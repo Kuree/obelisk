@@ -348,6 +348,7 @@ class SlangContinuousAssignASTNodeOp<string mnemonic>
     : SlangSymbolASTNodeOp<mnemonic, [], (ins
         OptionalAttr<SlangDriveStrength>:$drive_strength0,
         OptionalAttr<SlangDriveStrength>:$drive_strength1,
+        OptionalAttr<DenseI64ArrayAttr>:$delay_fs,
         OptionalAttr<StrAttr>:$unsupported_delay
       )>;
 
@@ -355,6 +356,7 @@ class SlangPrimitiveInstanceASTNodeOp<string mnemonic>
     : SlangSymbolASTNodeOp<mnemonic, [], (ins
         OptionalAttr<SlangDriveStrength>:$drive_strength0,
         OptionalAttr<SlangDriveStrength>:$drive_strength1,
+        OptionalAttr<DenseI64ArrayAttr>:$delay_fs,
         OptionalAttr<StrAttr>:$unsupported_delay
       )>;
 
@@ -365,6 +367,7 @@ class SlangNetSymbolASTNodeOp<string mnemonic>
         OptionalAttr<SlangDriveStrength>:$drive_strength0,
         OptionalAttr<SlangDriveStrength>:$drive_strength1,
         OptionalAttr<SlangChargeStrength>:$charge_strength,
+        OptionalAttr<DenseI64ArrayAttr>:$delay_fs,
         OptionalAttr<StrAttr>:$unsupported_delay
       )>;
 

@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode -o /dev/null
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode | %python %S/Inputs/dump-bytecode-instructions.py | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -12,6 +12,7 @@ module attributes {
     obelisk_sim.code_unit.decl 3 in 0 function hierarchy "driver_lowering.drive_wide"
     obelisk_sim.code_unit.decl 4 in 0 initial hierarchy "driver_lowering.drive_nba"
     obelisk_sim.code_unit.decl 5 in 0 function hierarchy "driver_lowering.drive_strength"
+    obelisk_sim.code_unit.decl 6 in 0 function hierarchy "driver_lowering.drive_inertial"
     obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<2> design
     obelisk_sim.driver.decl 0 in 0 drives 0 :
         !obelisk_sim.logic<2> design
@@ -105,6 +106,29 @@ module attributes {
           !obelisk_sim.logic<1>
       obelisk_sim.return
     }
+
+    obelisk_sim.func @drive_inertial(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %index: !obelisk_sim.logic<3> {obelisk_sim.capture_kind = 2 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 6 : i64} {
+      %driver = obelisk_sim.context.driver %ctx[0] :
+          !obelisk_sim.driver<!obelisk_sim.logic<2>>
+      %selected = obelisk_sim.driver.dyn_extract %driver from %index :
+          (!obelisk_sim.driver<!obelisk_sim.logic<2>>,
+           !obelisk_sim.logic<3>) ->
+          !obelisk_sim.driver<!obelisk_sim.logic<2>>
+      %value = obelisk_sim.logic.constant 1 : i2, 0 : i2 :
+          !obelisk_sim.logic<2>
+      %rise = obelisk_sim.time.constant 7
+      %fall = obelisk_sim.time.constant 11
+      %turnoff = obelisk_sim.time.constant 13
+      obelisk_sim.driver.drive_inertial %selected = %value
+          after[%rise, %fall, %turnoff] site 6 : 4 vector = true
+          {defer_resolution = true} :
+          !obelisk_sim.driver<!obelisk_sim.logic<2>>,
+          !obelisk_sim.logic<2>
+      obelisk_sim.return
+    }
   }
 }
 
@@ -144,3 +168,13 @@ module attributes {
 // CHECK-LABEL: llvm.func @drive_strength
 // CHECK-COUNT-1: llvm.call @obelisk_rt_v1_strength_resolve
 // CHECK-NOT: obelisk_sim.driver.drive
+
+// CHECK-LABEL: llvm.func @drive_inertial
+// CHECK: llvm.icmp
+// CHECK: llvm.select
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_inertial_driver
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
+// CHECK-NOT: obelisk_sim.driver.drive_inertial
+
+// BYTECODE: intrinsic {{[0-9]+}}: id=0x00010236 inputs=8 outputs=0 flags=0
+// BYTECODE: site {{[0-9]+}}: signature={{[0-9]+}} id=0x00010236 inputs={{\[[0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+\]}} outputs=[]

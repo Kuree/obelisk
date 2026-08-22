@@ -463,6 +463,11 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       invalid = true;
       return;
     }
+    if (net.getDelayFs() && getNetInitializerExpressions(op).empty()) {
+      emitError(getSemanticLocation(op)) << "net delays are not supported";
+      invalid = true;
+      return;
+    }
     uint64_t id = nextNetId++;
     descriptors[path] = {DescriptorInfo::Kind::Net, id, scopeId, *type,
                          resolution};
