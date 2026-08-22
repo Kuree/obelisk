@@ -1480,23 +1480,6 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_edge_iff_primary {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_edge_iff_primary.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i8 design
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %ref = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i8>
-      // expected-error @+1 {{primary event must request an edge}}
-      obelisk_sim.suspend.edge_iff change %ref iff %ref to ^next : !obelisk_sim.ref<i8>, !obelisk_sim.ref<i8>
-    ^next:
-      obelisk_sim.return
-    }
-  }
-}
-
-// -----
-
-module {
   obelisk_sim.design @bad_level_handle {
     obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_level_handle.bad.9000001"
     obelisk_sim.scope.decl 0

@@ -3226,12 +3226,15 @@ def SimSuspendEdgeOp : SimSuspendOp<"suspend.edge", (ins
 
 def SimSuspendEdgeIffOp : SimSuspendOp<"suspend.edge_iff", (ins
     SimEdgeKind:$edge, AnyType:$watched, AnyType:$condition)> {
-  let summary = "suspend until an edge whose level condition is true";
+  let summary = "suspend until a watched event whose level condition is true";
   let description = [{
     The condition is a directly addressable packed object. The scheduler
-    samples its complete four-state value when the primary edge occurs and
+    samples its complete four-state value when the primary event occurs and
     latches a successful occurrence for the waiting process. Changes to the
-    condition alone never resume the process.
+    condition alone never resume the process. IEEE 1800-2017 9.4.2.3 writes
+    the primary event with an optional edge identifier -- its `always @(a iff
+    enable == 1)` example qualifies a plain value change -- so a `change` edge
+    is as ordinary here as a directed one.
   }];
   let assemblyFormat = [{$edge $watched `iff` $condition `to` $continuation
     (`(` $continuation_operands^ `:` type($continuation_operands) `)`)?

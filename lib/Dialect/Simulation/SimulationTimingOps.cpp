@@ -212,8 +212,6 @@ LogicalResult SimSuspendEdgeIffOp::verify() {
     return emitOpError("watched value must be a ref or net handle");
   if (!isa<RefType, NetType>(getCondition().getType()))
     return emitOpError("condition must be a ref or net handle");
-  if (getEdge() == EdgeKind::Change)
-    return emitOpError("primary event must request an edge");
   return verifyContinuation(*this, getContinuationOperands(),
                             getContinuation());
 }
