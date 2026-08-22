@@ -1174,23 +1174,23 @@ FailureOr<sim::FrozenConstantAttr> freezeSemanticConstant(Operation *symbol) {
   std::function<FailureOr<sim::FrozenConstantAttr>(Type, Type, StringRef)>
       freeze = [&](Type normalizedType, Type sourceType,
                    StringRef text) -> FailureOr<sim::FrozenConstantAttr> {
-    text = text.trim();
     Attribute payload;
     if (isa<sim::StringType>(normalizedType)) {
+      // IEEE 1800-2017 5.9 makes a string literal's value exactly the
+      // characters it encloses, so its spelling is taken as written -- padding
+      // is part of the value, not layout around it.
       payload = builder.getStringAttr(text);
     } else if (isa<FloatType>(normalizedType)) {
       double value = 0.0;
-      if (text.getAsDouble(value) || !std::isfinite(value)) {
-        emitError(location) << "real constant '" << text << "' is not finite";
+      StringRef spelling = text.trim();
+      if (spelling.getAsDouble(value) || !std::isfinite(value)) {
+        emitError(location)
+            << "real constant '" << spelling << "' is not finite";
         return failure();
       }
       payload = builder.getFloatAttr(normalizedType, value);
     } else if (auto array = dyn_cast<sim::UnpackedArrayType>(normalizedType)) {
-      if (isa<sim::StringType>(array.getElementType())) {
-        emitError(location)
-            << "string-valued unpacked-array constants are not executable yet";
-        return failure();
-      }
+      text = text.trim();
       Type sourceElementType;
       if (auto source = dyn_cast<semantic::RangedUnpackedArrayType>(sourceType))
         sourceElementType = source.getElementType();
@@ -1202,31 +1202,69 @@ FailureOr<sim::FrozenConstantAttr> freezeSemanticConstant(Operation *symbol) {
             << "malformed unpacked-array constant '" << text << "'";
         return failure();
       }
-      SmallVector<StringRef> elementSpellings;
-      unsigned depth = 0;
-      size_t begin = 0;
-      for (size_t index = 0; index != text.size(); ++index) {
-        if (text[index] == '[')
-          ++depth;
-        else if (text[index] == ']') {
-          if (depth == 0) {
-            emitError(location)
-                << "malformed unpacked-array constant '" << text << "'";
-            return failure();
-          }
-          --depth;
-        } else if (text[index] == ',' && depth == 0) {
-          elementSpellings.push_back(text.slice(begin, index));
-          begin = index + 1;
-        }
-      }
-      if (depth != 0) {
-        emitError(location)
-            << "malformed unpacked-array constant '" << text << "'";
-        return failure();
-      }
-      elementSpellings.push_back(text.drop_front(begin));
       unsigned count = sim::getAggregateNumElements(array);
+      SmallVector<StringRef> elementSpellings;
+      if (isa<sim::StringType>(array.getElementType())) {
+        // The elaborated spelling wraps each string element in quotes, so a
+        // comma inside a string is not a separator: `["a,b", "c"]` has two
+        // elements, not three. Walk the quotes instead -- an element opens at
+        // its `"` and closes at the `"` that a separator, or the end of the
+        // array, follows.
+        StringRef remaining = text;
+        for (unsigned element = 0; element != count; ++element) {
+          bool last = element + 1 == count;
+          size_t end = StringRef::npos;
+          if (remaining.consume_front("\"")) {
+            if (last) {
+              end = remaining.rfind('"');
+              if (end != StringRef::npos && end + 1 != remaining.size())
+                end = StringRef::npos;
+            } else {
+              for (size_t quote = remaining.find('"');
+                   quote != StringRef::npos;
+                   quote = remaining.find('"', quote + 1))
+                if (remaining.drop_front(quote + 1).ltrim().starts_with(",")) {
+                  end = quote;
+                  break;
+                }
+            }
+          }
+          if (end == StringRef::npos) {
+            elementSpellings.clear();
+            break;
+          }
+          elementSpellings.push_back(remaining.take_front(end));
+          remaining = remaining.drop_front(end + 1);
+          if (!last)
+            remaining = remaining.ltrim().drop_front(1).ltrim();
+        }
+        if (!remaining.empty())
+          elementSpellings.clear();
+      } else {
+        unsigned depth = 0;
+        size_t begin = 0;
+        for (size_t index = 0; index != text.size(); ++index) {
+          if (text[index] == '[')
+            ++depth;
+          else if (text[index] == ']') {
+            if (depth == 0) {
+              emitError(location)
+                  << "malformed unpacked-array constant '" << text << "'";
+              return failure();
+            }
+            --depth;
+          } else if (text[index] == ',' && depth == 0) {
+            elementSpellings.push_back(text.slice(begin, index));
+            begin = index + 1;
+          }
+        }
+        if (depth != 0) {
+          emitError(location)
+              << "malformed unpacked-array constant '" << text << "'";
+          return failure();
+        }
+        elementSpellings.push_back(text.drop_front(begin));
+      }
       if (elementSpellings.size() != count) {
         emitError(location)
             << "unpacked-array constant has " << elementSpellings.size()
@@ -1253,7 +1291,8 @@ FailureOr<sim::FrozenConstantAttr> freezeSemanticConstant(Operation *symbol) {
             << normalizedType;
         return failure();
       }
-      FailureOr<ParsedConstant> parsed = parseSVInteger(text, *width, location);
+      FailureOr<ParsedConstant> parsed =
+          parseSVInteger(text.trim(), *width, location);
       if (failed(parsed))
         return failure();
       auto planeType = builder.getIntegerType(*width);
