@@ -1213,6 +1213,55 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
     return convert(wide, targetType, sourceSigned, location, targetSigned);
   }
   if (auto sourceArray = dyn_cast<sim::UnpackedArrayType>(value.getType())) {
+    // IEEE 1800-2017 7.6: a fixed-size unpacked array is assignment compatible
+    // with a dynamic array or queue of an equivalent element type, and 7.5.1
+    // takes the same array as the initializer of a `new[]`. The elements move
+    // in order, so the container is built at the source's own size.
+    Type containerElement;
+    if (auto dynamicTarget = dyn_cast<sim::DynamicArrayType>(targetType))
+      containerElement = dynamicTarget.getElementType();
+    else if (auto queueTarget = dyn_cast<sim::QueueType>(targetType))
+      containerElement = queueTarget.getElementType();
+    if (containerElement) {
+      unsigned sourceCount = sim::getAggregateNumElements(sourceArray);
+      FailureOr<ContainerElementDescriptor> descriptor =
+          describeContainerElement(containerElement, location);
+      if (failed(descriptor))
+        return failure();
+      auto queue = dyn_cast<sim::QueueType>(targetType);
+      uint64_t bound = 0;
+      if (queue)
+        bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
+      Value size = arith::ConstantOp::create(
+          builder, location, builder.getI64Type(),
+          builder.getI64IntegerAttr(queue ? 0 : sourceCount));
+      Value container = sim::SimContainerCreateOp::create(
+          builder, location, targetType, size, descriptor->typeID,
+          descriptor->kind, descriptor->flags, descriptor->valueSize,
+          descriptor->alignment, descriptor->bitWidth,
+          builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
+          builder.getDenseI32ArrayAttr(descriptor->traceKinds),
+          queue ? OBELISK_RT_CONTAINER_QUEUE
+                : OBELISK_RT_CONTAINER_DYNAMIC_ARRAY,
+          bound);
+      for (unsigned ordinal = 0; ordinal < sourceCount; ++ordinal) {
+        Type elementType =
+            sim::getAggregateElementType(sourceArray, ordinal);
+        Value element = sim::SimAggregateExtractOp::create(
+            builder, location, elementType, value, ordinal);
+        FailureOr<Value> converted = convert(element, containerElement,
+                                             sourceSigned, location,
+                                             targetSigned);
+        if (failed(converted))
+          return failure();
+        Value index = arith::ConstantOp::create(
+            builder, location, builder.getI64Type(),
+            builder.getI64IntegerAttr(ordinal));
+        sim::SimContainerWriteOp::create(builder, location, container, index,
+                                         *converted);
+      }
+      return container;
+    }
     if (auto targetArray = dyn_cast<sim::UnpackedArrayType>(targetType)) {
       unsigned sourceCount = sim::getAggregateNumElements(sourceArray);
       unsigned targetCount = sim::getAggregateNumElements(targetArray);
