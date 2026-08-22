@@ -298,11 +298,52 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
   if (failed(resultType))
     return failure();
 
-  // Logical conjunction and disjunction only evaluate their right operand
-  // when the left operand does not determine the result.  Keep the
-  // four-state predicate for the eventual logical operation, but branch on an
-  // ordinary i1 that recognizes only the controlling known value.
-  if (kind == Binary::LogicalAnd || kind == Binary::LogicalOr) {
+  // IEEE 1800-2017 11.4.7: `a <-> b` is `(a -> b) && (b -> a)`, and each of
+  // its two operands is evaluated exactly once, so neither side is skipped.
+  if (kind == Binary::LogicalEquivalence) {
+    Type predicateType = sim::LogicType::get(function.getContext(), 1);
+    FailureOr<Value> lhs = lowerExpression(children[0]);
+    if (failed(lhs))
+      return failure();
+    FailureOr<Value> lhsPredicate =
+        conditionalPredicate(*lhs, getSemanticLocation(children[0]));
+    if (failed(lhsPredicate))
+      return failure();
+    FailureOr<Value> rhs = lowerExpression(children[1]);
+    if (failed(rhs))
+      return failure();
+    FailureOr<Value> rhsPredicate =
+        conditionalPredicate(*rhs, getSemanticLocation(children[1]));
+    if (failed(rhsPredicate))
+      return failure();
+    auto negate = [&](Value predicate) {
+      return sim::SimLogicUnaryOp::create(builder, location, predicateType,
+                                          sim::UnaryKind::LogicalNot, predicate)
+          .getResult();
+    };
+    auto implies = [&](Value antecedent, Value consequent) {
+      return sim::SimLogicLogicalOp::create(builder, location, predicateType,
+                                            sim::LogicalKind::Or,
+                                            negate(antecedent), consequent)
+          .getResult();
+    };
+    Value logical = sim::SimLogicLogicalOp::create(
+        builder, location, predicateType, sim::LogicalKind::And,
+        implies(*lhsPredicate, *rhsPredicate),
+        implies(*rhsPredicate, *lhsPredicate));
+    return convert(logical, *resultType, false, location);
+  }
+
+  // Logical conjunction, disjunction, and implication only evaluate their
+  // right operand when the left operand does not determine the result.  Keep
+  // the four-state predicate for the eventual logical operation, but branch on
+  // an ordinary i1 that recognizes only the controlling known value.
+  // IEEE 1800-2017 11.4.7: `a -> b` is logically equivalent to `!a || b`, so
+  // it is the disjunction of a negated left operand, short-circuited by 11.3.5
+  // exactly as `||` is.
+  if (kind == Binary::LogicalAnd || kind == Binary::LogicalOr ||
+      kind == Binary::LogicalImplication) {
+    bool disjunction = kind != Binary::LogicalAnd;
     FailureOr<Value> lhs = lowerExpression(children[0]);
     if (failed(lhs))
       return failure();
@@ -312,8 +353,13 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       return failure();
 
     Type predicateType = sim::LogicType::get(function.getContext(), 1);
+    if (kind == Binary::LogicalImplication)
+      lhsPredicate = sim::SimLogicUnaryOp::create(
+                         builder, location, predicateType,
+                         sim::UnaryKind::LogicalNot, *lhsPredicate)
+                         .getResult();
     Value controlling;
-    if (kind == Binary::LogicalAnd) {
+    if (!disjunction) {
       Value falsePredicate = sim::SimLogicConstantOp::create(
           builder, location, predicateType,
           builder.getIntegerAttr(builder.getI1Type(), 0),
@@ -328,7 +374,7 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
 
     Value controllingPredicate = sim::SimLogicConstantOp::create(
         builder, location, predicateType,
-        builder.getIntegerAttr(builder.getI1Type(), kind == Binary::LogicalOr),
+        builder.getIntegerAttr(builder.getI1Type(), disjunction),
         builder.getIntegerAttr(builder.getI1Type(), 0));
     FailureOr<Value> controllingResult =
         convert(controllingPredicate, *resultType, false, location);
@@ -352,8 +398,7 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       return failure();
     Value logical = sim::SimLogicLogicalOp::create(
         builder, location, predicateType,
-        kind == Binary::LogicalAnd ? sim::LogicalKind::And
-                                   : sim::LogicalKind::Or,
+        disjunction ? sim::LogicalKind::Or : sim::LogicalKind::And,
         *lhsPredicate, *rhsPredicate);
     FailureOr<Value> rhsResult = convert(logical, *resultType, false, location);
     if (failed(rhsResult))
