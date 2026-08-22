@@ -274,6 +274,41 @@ EVENT_TRIGGER_IS_A_ONE_SHOT = Exclusion(
     "reaches `@(e_all_xfers_completed[0])` at time 40, twenty time units after "
     "that event was triggered, and needs Verilator's persistent trigger state "
     "to come back from the wait")
+PROCEDURAL_NET_ASSIGNMENT = Exclusion(
+    "IEEE 1800-2017 6.5",
+    "\"a net can be written by one or more continuous assignments, by "
+    "primitive outputs, or through module ports\" and \"a net cannot be "
+    "procedurally assigned\"; the test drives a net from an always block")
+PORT_INITIALIZER = Exclusion(
+    "IEEE 1800-2017 A.2.1.2",
+    "only `output variable_port_type list_of_variable_port_identifiers` "
+    "carries the `= constant_expression` an initializer needs -- an input, an "
+    "inout, and a net port all take the plain identifier list; the test "
+    "initializes one of those in its declaration")
+VARIABLE_ON_BIDIRECTIONAL_PORT = Exclusion(
+    "IEEE 1800-2017 23.3.3.3",
+    "\"an inout can be connected to a net (or a concatenation of nets) of a "
+    "compatible data type or left unconnected, but cannot be connected to a "
+    "variable\", and the test names a variable on one")
+NULL_STATEMENT_BODY = Exclusion(
+    "IEEE 1800-2017 A.6.4",
+    "a bare `;` is a statement_or_null, and neither `final function_statement` "
+    "nor a foreach loop_statement admits one -- both take a statement, which "
+    "A.6.4 gives no empty production; the test writes `final ;` or a foreach "
+    "with a null body")
+EMPTY_ASSIGNMENT_PATTERN = Exclusion(
+    "IEEE 1800-2017 A.6.7.1",
+    "every assignment_pattern production carries at least one element or "
+    "key:value pair, so `'{}` has no spelling; the test clears an associative "
+    "array with one where 7.9.4's delete() is the language's way")
+UNRECOGNIZED_KEYWORD_VERSION = Exclusion(
+    "IEEE 1800-2017 22.14",
+    "the clause's version_specifier list ends at 1800-2017, and while "
+    "\"implementations and other standards are permitted to extend the "
+    "`begin_keywords directive with custom version specifiers\", \"it shall "
+    "be an error if an implementation does not recognize the "
+    "version_specifier used\"; the test opens with Verilog-AMS's "
+    "\"1800+VAMS\"")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dynarray": PATTERN_RADIX,
     "t_dynarray_method": PATTERN_RADIX,
@@ -346,6 +381,20 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_enum_const_methods": IMPLICIT_ENUM_BASE_TYPE,
     "t_enum_type_methods": IMPLICIT_ENUM_BASE_TYPE,
     "t_event_array_fire": EVENT_TRIGGER_IS_A_ONE_SHOT,
+    "t_langext_2": PROCEDURAL_NET_ASSIGNMENT,
+    "t_split_var_0": PROCEDURAL_NET_ASSIGNMENT,
+    "t_math_pow6": PORT_INITIALIZER,
+    "t_var_tieout": PORT_INITIALIZER,
+    "t_mod_interface_clocking": VARIABLE_ON_BIDIRECTIONAL_PORT,
+    "t_opt_const": VARIABLE_ON_BIDIRECTIONAL_PORT,
+    "t_final": NULL_STATEMENT_BODY,
+    "t_foreach": NULL_STATEMENT_BODY,
+    "t_assoc": EMPTY_ASSIGNMENT_PATTERN,
+    "t_cover_expr_associative_array_class": EMPTY_ASSIGNMENT_PATTERN,
+    "t_dpi_vams": UNRECOGNIZED_KEYWORD_VERSION,
+    "t_split_var_3_wreal": UNRECOGNIZED_KEYWORD_VERSION,
+    "t_vams_basic": UNRECOGNIZED_KEYWORD_VERSION,
+    "t_vams_wreal": UNRECOGNIZED_KEYWORD_VERSION,
 }
 
 
