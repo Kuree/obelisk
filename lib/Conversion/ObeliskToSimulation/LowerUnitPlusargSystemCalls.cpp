@@ -112,16 +112,22 @@ UnitLowering::lowerPlusargSystemCall(semantic::SVCallExpressionOp op) {
   }
   StringRef format = literal.getConstantValue();
   size_t percent = format.rfind('%');
-  if (percent == StringRef::npos || percent + 1 >= format.size()) {
+  // IEEE 1800-2017 21.6: uppercase, lowercase, and leading `0` forms of a
+  // conversion are all valid, so `%0d` asks for the same conversion `%d` does.
+  size_t specifier = percent == StringRef::npos ? percent : percent + 1;
+  while (specifier != StringRef::npos && specifier < format.size() &&
+         format[specifier] == '0')
+    ++specifier;
+  if (percent == StringRef::npos || specifier >= format.size()) {
     emitError(getSemanticLocation(children[0]))
         << "$value$plusargs format must end with a conversion specifier";
     return failure();
   }
-  std::optional<unsigned> radix = conversionRadix(format[percent + 1]);
+  std::optional<unsigned> radix = conversionRadix(format[specifier]);
   if (!radix) {
     emitError(getSemanticLocation(children[0]))
         << "unsupported $value$plusargs conversion specifier '"
-        << format.substr(percent, 2) << "'";
+        << format.substr(percent, specifier + 1 - percent) << "'";
     return failure();
   }
 
