@@ -532,6 +532,19 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
     }
     if (failed(handle))
       return failure();
+    // IEEE 1800-2017 9.4.2 detects an edge on the value of the expression the
+    // event control names, and 6.6 makes a net's value the resolution of every
+    // driver on it. A process that also drives this net -- through a clocking
+    // block output, a continuous assignment, or a force -- resolves the name to
+    // the driver handle it writes, which carries only its own contribution and
+    // no resolved value to compare. Take the net view of the same signal for
+    // the wait; the driver stays what the writes go through.
+    if (isa<sim::DriverType>((*handle).getType()))
+      if (auto path =
+              children.front()->getAttrOfType<StringAttr>("referenced_path"))
+        if (Value net = values.lookup(path.getValue());
+            net && isa<sim::NetType>(net.getType()))
+          handle = net;
     auto edge = static_cast<sim::EdgeKind>(event.getEdgeKind());
     if (auto clockingEdge =
             children.front()->getAttrOfType<semantic::EdgeKindAttr>(
