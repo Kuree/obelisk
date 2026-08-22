@@ -132,6 +132,25 @@ std::optional<unsigned> getArrayElementOrdinal(Type type, int64_t sourceIndex) {
   return static_cast<unsigned>(ordinal);
 }
 
+// The bits one element occupies inside the aggregate that holds it. IEEE
+// 1800-2017 7.3.2 gives a tagged union a tag alongside its member value, and
+// the native layout stores that tag above the member payload, so a nested
+// tagged union brings both into its parent. getProvenanceSpan reports only the
+// payload -- that is what locates the tag within the union itself -- so laying
+// a member out by it alone would let the parent place its next member, or its
+// own tag, over the nested tag.
+static std::optional<uint64_t> getElementStorageSpan(Type type) {
+  std::optional<uint64_t> span = getProvenanceSpan(type);
+  auto unionType = dyn_cast<UnpackedUnionType>(type);
+  if (!span || !unionType || !unionType.getIsTagged())
+    return span;
+  uint64_t tagBits = llvm::Log2_64_Ceil(
+      static_cast<uint64_t>(getAggregateNumElements(type)) + 1);
+  if (tagBits > std::numeric_limits<uint64_t>::max() - *span)
+    return std::nullopt;
+  return *span + tagBits;
+}
+
 std::optional<uint64_t> getProvenanceSpan(Type type) {
   if (auto reference = dyn_cast<RefType>(type))
     return getProvenanceSpan(reference.getElementType());
@@ -176,7 +195,7 @@ std::optional<uint64_t> getProvenanceSpan(Type type) {
   if (isa<UnpackedArrayType>(type)) {
     uint64_t count = getAggregateNumElements(type);
     Type elementType = getAggregateElementType(type, 0);
-    std::optional<uint64_t> element = getProvenanceSpan(elementType);
+    std::optional<uint64_t> element = getElementStorageSpan(elementType);
     std::optional<uint64_t> alignment = getProvenanceAlignment(elementType);
     std::optional<uint64_t> stride = element && alignment
                                          ? checkedAlign(*element, *alignment)
@@ -198,7 +217,7 @@ std::optional<uint64_t> getProvenanceSpan(Type type) {
     uint64_t alignment = 1;
     for (unsigned index = 0; index < getAggregateNumElements(type); ++index) {
       Type childType = getAggregateElementType(type, index);
-      std::optional<uint64_t> child = getProvenanceSpan(childType);
+      std::optional<uint64_t> child = getElementStorageSpan(childType);
       std::optional<uint64_t> childAlignment =
           getProvenanceAlignment(childType);
       std::optional<uint64_t> offset =
@@ -215,7 +234,7 @@ std::optional<uint64_t> getProvenanceSpan(Type type) {
     uint64_t alignment = 1;
     for (unsigned index = 0; index < getAggregateNumElements(type); ++index) {
       Type childType = getAggregateElementType(type, index);
-      std::optional<uint64_t> child = getProvenanceSpan(childType);
+      std::optional<uint64_t> child = getElementStorageSpan(childType);
       std::optional<uint64_t> childAlignment =
           getProvenanceAlignment(childType);
       if (!child || !childAlignment)
@@ -260,7 +279,7 @@ std::optional<uint64_t> getProvenanceAlignment(Type type) {
 std::optional<std::pair<uint64_t, uint64_t>>
 getAggregateProvenanceSubelement(Type type, unsigned index) {
   Type element = getAggregateElementType(type, index);
-  std::optional<uint64_t> span = getProvenanceSpan(element);
+  std::optional<uint64_t> span = getElementStorageSpan(element);
   if (!element || !span)
     return std::nullopt;
   uint64_t offset = 0;
@@ -287,7 +306,8 @@ getAggregateProvenanceSubelement(Type type, unsigned index) {
               cast<UnpackedUnionType>(type).getIsTagged())) {
     for (unsigned previous = 0; previous < index; ++previous) {
       Type previousType = getAggregateElementType(type, previous);
-      std::optional<uint64_t> previousSpan = getProvenanceSpan(previousType);
+      std::optional<uint64_t> previousSpan =
+          getElementStorageSpan(previousType);
       std::optional<uint64_t> previousAlignment =
           getProvenanceAlignment(previousType);
       if (!previousSpan || !previousAlignment ||
