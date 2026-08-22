@@ -24,6 +24,8 @@ struct DriverInfo {
   std::optional<uint64_t> nodeId;
   uint64_t drivenLow;
   uint64_t drivenWidth;
+  /// For conditional gates, identifies the polarity-specific low/high driver.
+  std::optional<unsigned> strengthBank;
 };
 
 using ContinuousDriverMap =

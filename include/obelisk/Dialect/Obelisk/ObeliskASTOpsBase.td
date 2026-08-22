@@ -330,7 +330,8 @@ def SVPortConnectionOp : Op<ObeliskDialect, "sv.port.connection", [
     OptionalAttr<StrAttr>:$interface_instance_path,
     OptionalAttr<DenseI64ArrayAttr>:$interface_shape,
     OptionalAttr<StrAttr>:$selected_modport,
-    OptionalAttr<StrAttr>:$unsupported_strength,
+    OptionalAttr<ObeliskSVDriveStrength>:$drive_strength0,
+    OptionalAttr<ObeliskSVDriveStrength>:$drive_strength1,
     OptionalAttr<StrAttr>:$unsupported_delay
   );
   let regions = (region AnyRegion:$internal, AnyRegion:$actual);
@@ -339,13 +340,15 @@ def SVPortConnectionOp : Op<ObeliskDialect, "sv.port.connection", [
 
 class ObeliskContinuousAssignASTNodeOp<string mnemonic>
     : ObeliskSymbolASTNodeOp<mnemonic, [], (ins
-        OptionalAttr<StrAttr>:$unsupported_strength,
+        OptionalAttr<ObeliskSVDriveStrength>:$drive_strength0,
+        OptionalAttr<ObeliskSVDriveStrength>:$drive_strength1,
         OptionalAttr<StrAttr>:$unsupported_delay
       )>;
 
 class ObeliskPrimitiveInstanceASTNodeOp<string mnemonic>
     : ObeliskSymbolASTNodeOp<mnemonic, [], (ins
-        OptionalAttr<StrAttr>:$unsupported_strength,
+        OptionalAttr<ObeliskSVDriveStrength>:$drive_strength0,
+        OptionalAttr<ObeliskSVDriveStrength>:$drive_strength1,
         OptionalAttr<StrAttr>:$unsupported_delay
       )>;
 
@@ -353,7 +356,9 @@ class ObeliskNetSymbolASTNodeOp<string mnemonic>
     : ObeliskSymbolASTNodeOp<mnemonic, [], (ins
         ObeliskSVNetKind:$net_kind,
         BoolAttr:$is_implicit,
-        OptionalAttr<StrAttr>:$unsupported_strength,
+        OptionalAttr<ObeliskSVDriveStrength>:$drive_strength0,
+        OptionalAttr<ObeliskSVDriveStrength>:$drive_strength1,
+        OptionalAttr<ObeliskSVChargeStrength>:$charge_strength,
         OptionalAttr<StrAttr>:$unsupported_delay
       )>;
 

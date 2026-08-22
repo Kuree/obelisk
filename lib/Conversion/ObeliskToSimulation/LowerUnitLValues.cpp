@@ -753,8 +753,11 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         emitError(location) << "nonblocking assignment cannot target a driver";
         return failure();
       }
-      sim::SimDriverDriveOp::create(builder, location, destination.reference,
-                                    published);
+      auto drive = sim::SimDriverDriveOp::create(
+          builder, location, destination.reference, published);
+      if (deferDriverResolution)
+        drive->setAttr("obelisk_sim.defer_net_resolution",
+                       builder.getUnitAttr());
     } else {
       return failure();
     }

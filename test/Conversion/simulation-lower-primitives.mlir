@@ -22,6 +22,8 @@ module {
     obelisk_sim.driver.decl 1 in 0 drives 1 : !obelisk_sim.logic<1> design
     obelisk_sim.driver.decl 2 in 0 drives 2 : !obelisk_sim.logic<1> design
     obelisk_sim.driver.decl 3 in 0 drives 3 : !obelisk_sim.logic<1> design
+    obelisk_sim.driver.decl 4 in 0 drives 2 : !obelisk_sim.logic<1> design
+    obelisk_sim.driver.decl 5 in 0 drives 3 : !obelisk_sim.logic<1> design
 
     // CHECK-LABEL: obelisk_sim.func @primitive_and
     // CHECK: %[[A:.*]] = obelisk_sim.ref.load %arg2
@@ -79,7 +81,7 @@ module {
       obelisk_sim.return
     }
 
-    // IEEE 1800-2017 Table 28-6: a buf input of z drives x, so the pass-through
+    // IEEE 1800-2017 Table 28-4: a buf input of z drives x, so the pass-through
     // gate cannot forward its input unchanged.
     // CHECK-LABEL: obelisk_sim.func @primitive_buf
     // CHECK: %[[IN:.*]] = obelisk_sim.ref.load %arg2
@@ -105,19 +107,26 @@ module {
 
     // CHECK-LABEL: obelisk_sim.func @primitive_bufif0
     // CHECK: %[[Z:.*]] = obelisk_sim.logic.constant true, true
-    // CHECK: %[[MUX:.*]] = obelisk_sim.logic.mux %{{.*}} ? %[[Z]] : %{{.*}}
-    // CHECK: obelisk_sim.driver.drive %arg1 = %[[MUX]]
+    // CHECK: %[[LOW_CANDIDATE:.*]] = obelisk_sim.logic.mux
+    // CHECK: %[[HIGH_CANDIDATE:.*]] = obelisk_sim.logic.mux
+    // CHECK: %[[LOW:.*]] = obelisk_sim.logic.mux %{{.*}} ? %[[Z]] : %[[LOW_CANDIDATE]]
+    // CHECK: %[[HIGH:.*]] = obelisk_sim.logic.mux %{{.*}} ? %[[Z]] : %[[HIGH_CANDIDATE]]
+    // CHECK: obelisk_sim.driver.drive %arg1 = %[[LOW]]
+    // CHECK-SAME: obelisk_sim.defer_net_resolution
+    // CHECK: obelisk_sim.driver.drive %arg2 = %[[HIGH]]
     obelisk_sim.func @primitive_bufif0(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %out: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 2 : i64},
+        %out_low: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 2 : i64, obelisk_sim.strength_driver_bank = 0 : i32},
+        %out_high: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 4 : i64, obelisk_sim.strength_driver_bank = 1 : i32},
         %a: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64},
         %control: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 9100003 : i64,
                     obelisk_sim.primitive_name = "bufif0",
                     obelisk_sim.bindings = [
                       #obelisk_sim.argument_binding<path = "top.bufif0_out", argument = 1, kind = lvalue_only, copyOut = false>,
-                      #obelisk_sim.argument_binding<path = "top.a", argument = 2, kind = direct, copyOut = false>,
-                      #obelisk_sim.argument_binding<path = "top.control", argument = 3, kind = direct, copyOut = false>]} {
+                      #obelisk_sim.argument_binding<path = "top.bufif0_out", argument = 2, kind = lvalue_only, copyOut = false>,
+                      #obelisk_sim.argument_binding<path = "top.a", argument = 3, kind = direct, copyOut = false>,
+                      #obelisk_sim.argument_binding<path = "top.control", argument = 4, kind = direct, copyOut = false>]} {
       obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 30 : i64, semantic_type = !logic1} {
         obelisk.sv.expression.named_value attributes {node_id = 31 : i64, referenced_path = "top.bufif0_out", referenced_symbol = @bufif0_out, semantic_type = !logic1} {}
         obelisk.sv.expression.empty_argument attributes {node_id = 32 : i64, semantic_type = !logic1} {}
@@ -130,19 +139,26 @@ module {
     // CHECK-LABEL: obelisk_sim.func @primitive_notif1
     // CHECK: %[[INVERTED:.*]] = obelisk_sim.logic.unary bit_not
     // CHECK: %[[Z:.*]] = obelisk_sim.logic.constant true, true
-    // CHECK: %[[MUX:.*]] = obelisk_sim.logic.mux %{{.*}} ? %[[INVERTED]] : %[[Z]]
-    // CHECK: obelisk_sim.driver.drive %arg1 = %[[MUX]]
+    // CHECK: %[[LOW_CANDIDATE:.*]] = obelisk_sim.logic.mux
+    // CHECK: %[[HIGH_CANDIDATE:.*]] = obelisk_sim.logic.mux
+    // CHECK: %[[LOW:.*]] = obelisk_sim.logic.mux %{{.*}} ? %[[LOW_CANDIDATE]] : %[[Z]]
+    // CHECK: %[[HIGH:.*]] = obelisk_sim.logic.mux %{{.*}} ? %[[HIGH_CANDIDATE]] : %[[Z]]
+    // CHECK: obelisk_sim.driver.drive %arg1 = %[[LOW]]
+    // CHECK-SAME: obelisk_sim.defer_net_resolution
+    // CHECK: obelisk_sim.driver.drive %arg2 = %[[HIGH]]
     obelisk_sim.func @primitive_notif1(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %out: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 3 : i64},
+        %out_low: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 3 : i64, obelisk_sim.strength_driver_bank = 0 : i32},
+        %out_high: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 5 : i64, obelisk_sim.strength_driver_bank = 1 : i32},
         %a: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64},
         %control: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 9100004 : i64,
                     obelisk_sim.primitive_name = "notif1",
                     obelisk_sim.bindings = [
                       #obelisk_sim.argument_binding<path = "top.notif1_out", argument = 1, kind = lvalue_only, copyOut = false>,
-                      #obelisk_sim.argument_binding<path = "top.a", argument = 2, kind = direct, copyOut = false>,
-                      #obelisk_sim.argument_binding<path = "top.control", argument = 3, kind = direct, copyOut = false>]} {
+                      #obelisk_sim.argument_binding<path = "top.notif1_out", argument = 2, kind = lvalue_only, copyOut = false>,
+                      #obelisk_sim.argument_binding<path = "top.a", argument = 3, kind = direct, copyOut = false>,
+                      #obelisk_sim.argument_binding<path = "top.control", argument = 4, kind = direct, copyOut = false>]} {
       obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 40 : i64, semantic_type = !logic1} {
         obelisk.sv.expression.named_value attributes {node_id = 41 : i64, referenced_path = "top.notif1_out", referenced_symbol = @notif1_out, semantic_type = !logic1} {}
         obelisk.sv.expression.empty_argument attributes {node_id = 42 : i64, semantic_type = !logic1} {}

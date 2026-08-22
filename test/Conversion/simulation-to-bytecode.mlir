@@ -6,6 +6,9 @@
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
 // RUN:   | %python %S/Inputs/dump-bytecode-instructions.py \
 // RUN:   | FileCheck %s --check-prefix=INSTRUCTIONS
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
+// RUN:   | %python %S/Inputs/dump-bytecode-instructions.py --state \
+// RUN:   | FileCheck %s --check-prefix=STATE
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -40,7 +43,8 @@ module attributes {
     obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<2> design
         {resolution_kind = 2 : i32}
     obelisk_sim.driver.decl 0 in 0 drives 0 : !obelisk_sim.logic<2> design
-        {driven_low = 0 : i64, driven_width = 1 : i64}
+        {driven_low = 0 : i64, driven_width = 1 : i64,
+         strength0 = 5 : i32, strength1 = 0 : i32}
     obelisk_sim.driver.decl 1 in 0 drives 0 : !obelisk_sim.logic<2> design
         {driven_low = 1 : i64, driven_width = 1 : i64}
     obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 2 reversed = false
@@ -107,6 +111,10 @@ module attributes {
 // Dynamic INSERT carries its low-bit register in source2; static INSERT leaves
 // source2 zero and uses only the immediate field.
 // INSTRUCTIONS: opcode=22 flags=1 {{.*}}src2={{[0-9]+}} {{.*}}imm=0
+
+// Strength codes are serialized one greater than the Figure 28-2 position;
+// zero remains the legacy/default-strong encoding.
+// STATE: state {{[0-9]+}}: kind=driver flags=181 {{.*}}strength0=5 strength1=0
 
 // Unified runtime artifact version 1 follows the database magic; the next word
 // is reserved.

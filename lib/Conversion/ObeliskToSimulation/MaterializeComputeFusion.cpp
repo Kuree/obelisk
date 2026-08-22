@@ -1322,9 +1322,13 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
                                   builder.getBoolAttr(false));
     for (Operation &operation : candidate.body->without_terminator()) {
       if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation)) {
-        Value transition = sim::SimDriverDriveChangedOp::create(
+        auto replacement = sim::SimDriverDriveChangedOp::create(
             builder, drive.getLoc(), mapping->lookup(drive.getDriver()),
             mapping->lookup(drive.getValue()));
+        if (Attribute defer =
+                drive->getAttr("obelisk_sim.defer_net_resolution"))
+          replacement->setAttr("obelisk_sim.defer_net_resolution", defer);
+        Value transition = replacement.getChanged();
         changed =
             arith::OrIOp::create(builder, drive.getLoc(), changed, transition);
       } else {

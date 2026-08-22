@@ -19,6 +19,65 @@ using namespace mlir;
 
 namespace obelisk::simlowering {
 
+static sim::Strength lowerDriveStrength(semantic::SVDriveStrength strength) {
+  switch (strength) {
+  case semantic::SVDriveStrength::Supply:
+    return sim::Strength::Supply;
+  case semantic::SVDriveStrength::Strong:
+    return sim::Strength::Strong;
+  case semantic::SVDriveStrength::Pull:
+    return sim::Strength::Pull;
+  case semantic::SVDriveStrength::Weak:
+    return sim::Strength::Weak;
+  case semantic::SVDriveStrength::HighZ:
+    return sim::Strength::HighZ;
+  }
+  llvm_unreachable("unknown SystemVerilog drive strength");
+}
+
+static std::pair<sim::Strength, sim::Strength>
+getDriverStrengths(Operation *unit) {
+  // IEEE 1800-2017 10.3.4 and 28.3.2 specify strong as the default for
+  // continuous assignments and ordinary gates. Pull sources instead default
+  // to pull strength (28.10).
+  sim::Strength defaultStrength = sim::Strength::Strong;
+  if (auto primitive = dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(unit)) {
+    auto name = primitive->getAttrOfType<StringAttr>("primitive_name");
+    if (name && (name.getValue() == "pullup" || name.getValue() == "pulldown"))
+      defaultStrength = sim::Strength::Pull;
+  }
+  sim::Strength strength0 = defaultStrength;
+  sim::Strength strength1 = defaultStrength;
+  std::optional<semantic::SVDriveStrength> semanticStrength0;
+  std::optional<semantic::SVDriveStrength> semanticStrength1;
+  auto readStrengths = [&]<typename OpTy>(OpTy op) {
+    semanticStrength0 = op.getDriveStrength0();
+    semanticStrength1 = op.getDriveStrength1();
+  };
+  if (auto assignment = dyn_cast<semantic::SVContinuousAssignSymbolOp>(unit))
+    readStrengths(assignment);
+  else if (auto primitive =
+               dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(unit))
+    readStrengths(primitive);
+  else if (auto net = dyn_cast<semantic::SVNetSymbolOp>(unit))
+    readStrengths(net);
+  else if (auto connection = dyn_cast<semantic::SVPortConnectionOp>(unit))
+    readStrengths(connection);
+  if (semanticStrength0)
+    strength0 = lowerDriveStrength(*semanticStrength0);
+  if (semanticStrength1)
+    strength1 = lowerDriveStrength(*semanticStrength1);
+  return {strength0, strength1};
+}
+
+static bool isConditionalGate(Operation *unit) {
+  auto primitive = dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(unit);
+  auto name = primitive ? primitive->getAttrOfType<StringAttr>("primitive_name")
+                        : StringAttr{};
+  return name && (name.getValue() == "bufif0" || name.getValue() == "bufif1" ||
+                  name.getValue() == "notif0" || name.getValue() == "notif1");
+}
+
 static Operation *peelClockingOutputSelects(Operation *destination) {
   while (isa<semantic::SVElementSelectExpressionOp,
              semantic::SVRangeSelectExpressionOp>(destination)) {
@@ -430,6 +489,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     auto connection = dyn_cast<semantic::SVPortConnectionOp>(unit);
     if (!continuous && !connection)
       continue;
+    auto [strength0, strength1] = getDriverStrengths(unit);
     SmallVector<NetRun> sinks;
     if (connection &&
         connection.getDirection() == semantic::SVArgumentDirection::In) {
@@ -515,24 +575,46 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       collectDriverRuns(children.front(), sinks);
     }
 
+    bool conditionalGate = isConditionalGate(unit);
     for (const NetRun &sink : sinks) {
-      uint64_t id = nextDriverId++;
-      uint64_t scopeId = scopes.lookup(unit);
-      DescriptorInfo info{DescriptorInfo::Kind::Driver, id, scopeId,
-                          sink.descriptor.type, sink.descriptor.netKind};
-      info.rootType = sink.descriptor.type;
-      continuousDrivers[unit].push_back(
-          {sink.path, info, sink.nodeId, sink.offset, sink.width});
-      sim::SimDriverDeclOp::create(
-          builder, getSemanticLocation(unit), id, scopeId, sink.descriptor.id,
-          sink.descriptor.type, sim::Lifetime::Design,
-          builder.getStringAttr(sink.path),
-          builder.getStringAttr(connection ? "port connection"
-                                : isa<semantic::SVNetSymbolOp>(unit)
-                                    ? "net initializer"
-                                    : "continuous"),
-          builder.getI64IntegerAttr(sink.offset),
-          builder.getI64IntegerAttr(sink.width));
+      unsigned bankCount = conditionalGate ? 2 : 1;
+      uint64_t strengthGroup = nextDriverId;
+      for (unsigned bank = 0; bank != bankCount; ++bank) {
+        uint64_t id = nextDriverId++;
+        uint64_t scopeId = scopes.lookup(unit);
+        DescriptorInfo info{DescriptorInfo::Kind::Driver, id, scopeId,
+                            sink.descriptor.type, sink.descriptor.netKind};
+        info.rootType = sink.descriptor.type;
+        continuousDrivers[unit].push_back(
+            {sink.path, info, sink.nodeId, sink.offset, sink.width,
+             conditionalGate ? std::optional<unsigned>(bank) : std::nullopt});
+        auto driver = sim::SimDriverDeclOp::create(
+            builder, getSemanticLocation(unit), id, scopeId, sink.descriptor.id,
+            sink.descriptor.type, sim::Lifetime::Design,
+            builder.getStringAttr(sink.path),
+            builder.getStringAttr(connection ? "port connection"
+                                  : isa<semantic::SVNetSymbolOp>(unit)
+                                      ? "net initializer"
+                                      : "continuous"),
+            builder.getI64IntegerAttr(sink.offset),
+            builder.getI64IntegerAttr(sink.width));
+        sim::Strength driverStrength0 =
+            conditionalGate && bank == 1 ? sim::Strength::HighZ : strength0;
+        sim::Strength driverStrength1 =
+            conditionalGate && bank == 0 ? sim::Strength::HighZ : strength1;
+        driver->setAttr(
+            "strength0",
+            sim::StrengthAttr::get(builder.getContext(), driverStrength0));
+        driver->setAttr(
+            "strength1",
+            sim::StrengthAttr::get(builder.getContext(), driverStrength1));
+        if (conditionalGate) {
+          driver->setAttr("obelisk_sim.strength_group",
+                          builder.getI64IntegerAttr(strengthGroup));
+          driver->setAttr("obelisk_sim.strength_bank",
+                          builder.getI32IntegerAttr(bank));
+        }
+      }
     }
   }
 

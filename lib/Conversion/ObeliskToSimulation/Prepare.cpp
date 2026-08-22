@@ -942,12 +942,6 @@ void ObeliskSimPreparePass::runOnOperation() {
   for (Operation *unit : sourceUnits) {
     if (auto assignment =
             dyn_cast<semantic::SVContinuousAssignSymbolOp>(unit)) {
-      if (assignment.getUnsupportedStrength()) {
-        emitError(getSemanticLocation(unit))
-            << "continuous-assignment strengths are not supported: "
-            << *assignment.getUnsupportedStrength();
-        invalid = true;
-      }
       if (assignment.getUnsupportedDelay()) {
         emitError(getSemanticLocation(unit))
             << "continuous-assignment delays are not supported: "
@@ -957,12 +951,6 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     if (auto primitive =
             dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(unit)) {
-      if (primitive.getUnsupportedStrength()) {
-        emitError(getSemanticLocation(unit))
-            << "primitive strengths are not supported: "
-            << *primitive.getUnsupportedStrength();
-        invalid = true;
-      }
       if (primitive.getUnsupportedDelay()) {
         emitError(getSemanticLocation(unit))
             << "primitive delays are not supported: "
@@ -5597,6 +5585,21 @@ void ObeliskSimPreparePass::runOnOperation() {
           captureMetadata(builder, captureKind, capture.second.id);
       SmallVector<NamedAttribute> metadataAttrs(metadata.begin(),
                                                 metadata.end());
+      const DriverInfo *plannedDriver = nullptr;
+      if (capture.second.kind == DescriptorInfo::Kind::Driver)
+        if (auto found = continuousDrivers.find(unit.source);
+            found != continuousDrivers.end())
+          if (auto planned = llvm::find_if(found->second,
+                                           [&](const DriverInfo &driver) {
+                                             return driver.descriptor.id ==
+                                                    capture.second.id;
+                                           });
+              planned != found->second.end())
+            plannedDriver = &*planned;
+      if (plannedDriver && plannedDriver->strengthBank)
+        metadataAttrs.push_back(builder.getNamedAttr(
+            "obelisk_sim.strength_driver_bank",
+            builder.getI32IntegerAttr(*plannedDriver->strengthBank)));
       if (capture.second.rootType &&
           (capture.second.viewOffset != 0 ||
            capture.second.rootType != capture.second.type)) {
@@ -5621,17 +5624,6 @@ void ObeliskSimPreparePass::runOnOperation() {
               builder.getI64IntegerAttr(capture.second.packedViewOffset)));
       }
       argAttrs.push_back(builder.getDictionaryAttr(metadataAttrs));
-      const DriverInfo *plannedDriver = nullptr;
-      if (capture.second.kind == DescriptorInfo::Kind::Driver)
-        if (auto found = continuousDrivers.find(unit.source);
-            found != continuousDrivers.end())
-          if (auto planned = llvm::find_if(found->second,
-                                           [&](const DriverInfo &driver) {
-                                             return driver.descriptor.id ==
-                                                    capture.second.id;
-                                           });
-              planned != found->second.end())
-            plannedDriver = &*planned;
       IntegerAttr lvalueNode =
           plannedDriver && plannedDriver->nodeId
               ? builder.getI64IntegerAttr(*plannedDriver->nodeId)

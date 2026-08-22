@@ -345,6 +345,32 @@ def SlangNetKind : I32EnumAttr<"NetKind", "SystemVerilog net resolution kind", [
   let cppNamespace = "::obelisk::slangir";
 }
 
+// Keep these values aligned with slang::ast::DriveStrength and
+// slang::ast::ChargeStrength. The Slang-to-Obelisk conversion intentionally
+// copies semantic enum attributes without rebuilding them.
+def SlangDrive_Supply : I32EnumAttrCase<"Supply", 0, "supply">;
+def SlangDrive_Strong : I32EnumAttrCase<"Strong", 1, "strong">;
+def SlangDrive_Pull : I32EnumAttrCase<"Pull", 2, "pull">;
+def SlangDrive_Weak : I32EnumAttrCase<"Weak", 3, "weak">;
+def SlangDrive_HighZ : I32EnumAttrCase<"HighZ", 4, "highz">;
+def SlangDriveStrength : I32EnumAttr<"DriveStrength",
+    "SystemVerilog drive strength for one logic polarity", [
+  SlangDrive_Supply, SlangDrive_Strong, SlangDrive_Pull, SlangDrive_Weak,
+  SlangDrive_HighZ
+]> {
+  let cppNamespace = "::obelisk::slangir";
+}
+
+def SlangCharge_Small : I32EnumAttrCase<"Small", 0, "small">;
+def SlangCharge_Medium : I32EnumAttrCase<"Medium", 1, "medium">;
+def SlangCharge_Large : I32EnumAttrCase<"Large", 2, "large">;
+def SlangChargeStrength : I32EnumAttr<"ChargeStrength",
+    "SystemVerilog trireg charge strength", [
+  SlangCharge_Small, SlangCharge_Medium, SlangCharge_Large
+]> {
+  let cppNamespace = "::obelisk::slangir";
+}
+
 def SlangPortConnOrdered : I32EnumAttrCase<"Ordered", 0, "ordered">;
 def SlangPortConnNamed : I32EnumAttrCase<"Named", 1, "named">;
 def SlangPortConnImplicit : I32EnumAttrCase<"Implicit", 2, "implicit">;

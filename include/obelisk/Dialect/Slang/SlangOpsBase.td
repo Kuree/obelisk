@@ -336,7 +336,8 @@ def PortConnectionOp : Op<SlangDialect, "port.connection", [
     OptionalAttr<StrAttr>:$interface_instance_path,
     OptionalAttr<DenseI64ArrayAttr>:$interface_shape,
     OptionalAttr<StrAttr>:$selected_modport,
-    OptionalAttr<StrAttr>:$unsupported_strength,
+    OptionalAttr<SlangDriveStrength>:$drive_strength0,
+    OptionalAttr<SlangDriveStrength>:$drive_strength1,
     OptionalAttr<StrAttr>:$unsupported_delay
   );
   let regions = (region AnyRegion:$internal, AnyRegion:$actual);
@@ -345,13 +346,15 @@ def PortConnectionOp : Op<SlangDialect, "port.connection", [
 
 class SlangContinuousAssignASTNodeOp<string mnemonic>
     : SlangSymbolASTNodeOp<mnemonic, [], (ins
-        OptionalAttr<StrAttr>:$unsupported_strength,
+        OptionalAttr<SlangDriveStrength>:$drive_strength0,
+        OptionalAttr<SlangDriveStrength>:$drive_strength1,
         OptionalAttr<StrAttr>:$unsupported_delay
       )>;
 
 class SlangPrimitiveInstanceASTNodeOp<string mnemonic>
     : SlangSymbolASTNodeOp<mnemonic, [], (ins
-        OptionalAttr<StrAttr>:$unsupported_strength,
+        OptionalAttr<SlangDriveStrength>:$drive_strength0,
+        OptionalAttr<SlangDriveStrength>:$drive_strength1,
         OptionalAttr<StrAttr>:$unsupported_delay
       )>;
 
@@ -359,7 +362,9 @@ class SlangNetSymbolASTNodeOp<string mnemonic>
     : SlangSymbolASTNodeOp<mnemonic, [], (ins
         SlangNetKind:$net_kind,
         BoolAttr:$is_implicit,
-        OptionalAttr<StrAttr>:$unsupported_strength,
+        OptionalAttr<SlangDriveStrength>:$drive_strength0,
+        OptionalAttr<SlangDriveStrength>:$drive_strength1,
+        OptionalAttr<SlangChargeStrength>:$charge_strength,
         OptionalAttr<StrAttr>:$unsupported_delay
       )>;
 

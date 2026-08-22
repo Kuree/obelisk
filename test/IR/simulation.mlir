@@ -12,6 +12,7 @@ module {
     obelisk_sim.storage.decl 0 in 1 : !obelisk_sim.logic<8> design hierarchy "top.child.state"
     obelisk_sim.net.decl 0 in 1 : !obelisk_sim.logic<8> design hierarchy "top.child.wire"
     obelisk_sim.driver.decl 0 in 1 drives 0 : !obelisk_sim.logic<8> design
+        {strength0 = 5 : i32, strength1 = 3 : i32}
 
     obelisk_sim.func @root(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {code_unit_id = 10 : i64, entry_kind = 0 : i32} {
       %ref = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<!obelisk_sim.logic<8>>
@@ -118,6 +119,8 @@ module {
 // CHECK: obelisk_sim.storage.decl 0 in 1 : !obelisk_sim.logic<8>
 // CHECK: obelisk_sim.net.decl 0 in 1 : !obelisk_sim.logic<8>
 // CHECK: obelisk_sim.driver.decl 0 in 1 drives 0
+// CHECK-SAME: strength0 = 5 : i32
+// CHECK-SAME: strength1 = 3 : i32
 // CHECK: obelisk_sim.func @callee
 // CHECK-SAME: obelisk_sim.bindings = [#obelisk_sim.argument_binding<path = "value", argument = 1, kind = direct, copyOut = false>, #obelisk_sim.constant_binding<path = "P", value = #obelisk_sim.frozen_constant<value = [-3 : i8, 0 : i8], isSigned = true> : !obelisk_sim.logic<8>>]
 // CHECK: obelisk_sim.logic.is_true

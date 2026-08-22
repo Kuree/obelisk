@@ -100,6 +100,16 @@ public:
                                        rewriter.getBoolAttr(value));
     };
     Value changed = boolean(false);
+    // A conditional gate stores its complementary low-polarity bank before
+    // its high-polarity bank. The first store deliberately stops here so the
+    // second drive resolves and publishes one atomic logical transition.
+    if (op->hasAttr("obelisk_sim.defer_net_resolution")) {
+      if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveChangedOp>)
+        rewriter.replaceOp(op, changed);
+      else
+        rewriter.eraseOp(op);
+      return success();
+    }
     std::optional<uint64_t> affectedNet;
     if (auto netID =
             op->template getAttrOfType<IntegerAttr>("obelisk.native.net_id"))
@@ -133,8 +143,9 @@ public:
             });
         if (net != layout.netLayouts.end() && onlyDriver && !connected &&
             driver->drivenLow == 0 && driver->drivenWidth == driver->width &&
-            driver->width == net->width &&
-            driveType.getWidth() == net->width)
+            driver->width == net->width && driveType.getWidth() == net->width &&
+            driver->strength0 != sim::Strength::HighZ &&
+            driver->strength1 != sim::Strength::HighZ)
           bulkNet = &*net;
       }
     }
@@ -215,8 +226,16 @@ public:
           continue;
         resolvedComponents.push_back(canonical);
 
-        Value resolvedValue = boolean(true);
-        Value resolvedUnknown = boolean(true);
+        IntegerType strengthType = rewriter.getIntegerType(16);
+        auto strengthConstant = [&](uint16_t value) {
+          return arith::ConstantOp::create(
+              rewriter, op.getLoc(), strengthType,
+              rewriter.getIntegerAttr(strengthType, value));
+        };
+        auto strengthBit = [](unsigned index) -> uint16_t {
+          return static_cast<uint16_t>(uint16_t{1} << index);
+        };
+        Value resolvedStrengths = strengthConstant(strengthBit(7));
         for (const NativeStateLayout::Driver &driver : layout.driverLayouts) {
           for (const analysis::NetBit &member : component) {
             if (member.net != driver.netId ||
@@ -230,48 +249,73 @@ public:
                 rewriter, op.getLoc(), rewriter.getI64Type(),
                 rewriter.getI64IntegerAttr(encodeNativeStaticHandle(
                     driver.handleID, static_cast<int32_t>(member.offset))));
-            Value driverValue =
-                loadStatePlane(rewriter, op.getLoc(), handle, i1,
-                               "__obelisk_state_value", false, layout.bitCount,
-                               &layout);
-            Value driverUnknown = loadStatePlane(rewriter, op.getLoc(), handle,
-                                                 i1, "__obelisk_state_unknown",
-                                                 true, layout.bitCount,
-                                                 &layout);
-            Value currentZ = arith::AndIOp::create(
-                rewriter, op.getLoc(), resolvedUnknown, resolvedValue);
-            Value driverZ = arith::AndIOp::create(rewriter, op.getLoc(),
-                                                  driverUnknown, driverValue);
-            Value currentX = arith::AndIOp::create(
-                rewriter, op.getLoc(), resolvedUnknown,
-                arith::XOrIOp::create(rewriter, op.getLoc(), resolvedValue,
-                                      boolean(true)));
-            Value driverX = arith::AndIOp::create(
-                rewriter, op.getLoc(), driverUnknown,
-                arith::XOrIOp::create(rewriter, op.getLoc(), driverValue,
-                                      boolean(true)));
-            Value conflict = arith::OrIOp::create(
-                rewriter, op.getLoc(), currentX,
-                arith::OrIOp::create(
-                    rewriter, op.getLoc(), driverX,
-                    arith::CmpIOp::create(rewriter, op.getLoc(),
-                                          arith::CmpIPredicate::ne,
-                                          resolvedValue, driverValue)));
-            Value mergedValue = arith::SelectOp::create(
-                rewriter, op.getLoc(), conflict, boolean(false), resolvedValue);
-            Value mergedUnknown = arith::SelectOp::create(
-                rewriter, op.getLoc(), conflict, boolean(true), boolean(false));
-            Value withoutCurrentZ = arith::SelectOp::create(
-                rewriter, op.getLoc(), driverZ, resolvedValue, mergedValue);
-            Value withoutCurrentZUnknown = arith::SelectOp::create(
-                rewriter, op.getLoc(), driverZ, resolvedUnknown, mergedUnknown);
-            resolvedValue = arith::SelectOp::create(
-                rewriter, op.getLoc(), currentZ, driverValue, withoutCurrentZ);
-            resolvedUnknown =
-                arith::SelectOp::create(rewriter, op.getLoc(), currentZ,
-                                        driverUnknown, withoutCurrentZUnknown);
+            Value driverValue = loadStatePlane(rewriter, op.getLoc(), handle,
+                                               i1, "__obelisk_state_value",
+                                               false, layout.bitCount, &layout);
+            Value driverUnknown = loadStatePlane(
+                rewriter, op.getLoc(), handle, i1, "__obelisk_state_unknown",
+                true, layout.bitCount, &layout);
+            unsigned strength0 = static_cast<unsigned>(driver.strength0);
+            unsigned strength1 = static_cast<unsigned>(driver.strength1);
+            uint16_t zeroMask = strengthBit(7 - strength0);
+            uint16_t oneMask = strengthBit(7 + strength1);
+            uint16_t xMask = 0;
+            for (unsigned index = 7 - strength0; index <= 7 + strength1;
+                 ++index)
+              xMask |= strengthBit(index);
+            Value knownStrengths = arith::SelectOp::create(
+                rewriter, op.getLoc(), driverValue, strengthConstant(oneMask),
+                strengthConstant(zeroMask));
+            Value unknownStrengths = arith::SelectOp::create(
+                rewriter, op.getLoc(), driverValue,
+                strengthConstant(strengthBit(7)), strengthConstant(xMask));
+            Value driverStrengths =
+                arith::SelectOp::create(rewriter, op.getLoc(), driverUnknown,
+                                        unknownStrengths, knownStrengths);
+            resolvedStrengths =
+                LLVM::CallOp::create(
+                    rewriter, op.getLoc(), TypeRange{strengthType},
+                    SymbolRefAttr::get(rewriter.getContext(),
+                                       "obelisk_rt_v1_strength_resolve"),
+                    ValueRange{resolvedStrengths, driverStrengths})
+                    .getResult();
           }
         }
+        auto hasStrength = [&](uint16_t mask) {
+          Value masked = arith::AndIOp::create(
+              rewriter, op.getLoc(), resolvedStrengths, strengthConstant(mask));
+          return arith::CmpIOp::create(rewriter, op.getLoc(),
+                                       arith::CmpIPredicate::ne, masked,
+                                       strengthConstant(0));
+        };
+        Value hasNegative = hasStrength((uint16_t{1} << 7) - 1);
+        Value hasZero = hasStrength(strengthBit(7));
+        Value hasPositive = hasStrength(static_cast<uint16_t>(
+            ((uint16_t{1} << 15) - 1) & ~((uint16_t{1} << 8) - 1)));
+        auto logicalNot = [&](Value value) {
+          return arith::XOrIOp::create(rewriter, op.getLoc(), value,
+                                       boolean(true));
+        };
+        Value resolvedZ = arith::AndIOp::create(
+            rewriter, op.getLoc(), hasZero,
+            arith::AndIOp::create(rewriter, op.getLoc(),
+                                  logicalNot(hasNegative),
+                                  logicalNot(hasPositive)));
+        Value knownZero = arith::AndIOp::create(
+            rewriter, op.getLoc(), hasNegative,
+            arith::AndIOp::create(rewriter, op.getLoc(), logicalNot(hasZero),
+                                  logicalNot(hasPositive)));
+        Value knownOne =
+            arith::AndIOp::create(rewriter, op.getLoc(), hasPositive,
+                                  arith::AndIOp::create(rewriter, op.getLoc(),
+                                                        logicalNot(hasNegative),
+                                                        logicalNot(hasZero)));
+        Value resolvedUnknown = arith::OrIOp::create(
+            rewriter, op.getLoc(), resolvedZ,
+            logicalNot(arith::OrIOp::create(rewriter, op.getLoc(), knownZero,
+                                            knownOne)));
+        Value resolvedValue =
+            arith::OrIOp::create(rewriter, op.getLoc(), resolvedZ, knownOne);
         for (const analysis::NetBit &member : component) {
           auto memberNet =
               llvm::find_if(layout.netLayouts, [&](const auto &candidate) {

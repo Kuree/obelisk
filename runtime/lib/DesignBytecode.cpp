@@ -2045,6 +2045,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             instruction.opcode == OBELISK_RT_DB_STORE_STATE &&
             descriptorKind == OBELISK_RT_DESCRIPTOR_DRIVER && start >= 0 &&
             begin < end &&
+            (instruction.flags &
+             OBELISK_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION) == 0 &&
             !resolveDrivenNets(
                 image, context,
                 boundedStatic
@@ -2061,6 +2063,9 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       }
       if (instruction.opcode == OBELISK_RT_DB_STORE_STATE &&
           (instruction.flags & OBELISK_RT_DB_STORE_STATE_CHANGED) != 0) {
+        if ((instruction.flags &
+             OBELISK_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION) != 0)
+          changed = false;
         Logic changedValue{1, false, LimbVector(1), LimbVector(1)};
         setBit(changedValue.value, 0, changed);
         write(instruction.destination, changedValue);

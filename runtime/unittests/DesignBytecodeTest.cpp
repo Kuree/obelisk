@@ -989,6 +989,63 @@ std::vector<uint8_t> makeDriverBytecode() {
   return bytes;
 }
 
+uint32_t driverFlags(uint8_t strength0, uint8_t strength1) {
+  return 1u | ((static_cast<uint32_t>(strength0) + 1) << 3) |
+         ((static_cast<uint32_t>(strength1) + 1) << 7);
+}
+
+std::vector<uint8_t> makeStrengthDriverBytecode() {
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t layoutOffset = functionOffset + 96;
+  constexpr size_t codeOffset = layoutOffset + 4 * 40;
+  std::vector<uint8_t> bytes = makeDriverBytecode();
+  size_t stateOffset = get64(bytes, 168);
+  size_t constantOffset = get64(bytes, 104);
+  size_t secondDriver = bytes.size();
+  size_t thirdDriver = secondDriver + 32;
+  bytes.resize(thirdDriver + 32, 0);
+
+  // Drivers zero and one are the polarity banks of a conditional gate. Their
+  // x values encode strong L and strong H respectively. Driver two is an
+  // ordinary strong driver used to test how those ranges combine.
+  put32(bytes, stateOffset + 32 + 4, driverFlags(6, 0));
+  put32(bytes, secondDriver, UINT32_MAX);
+  put32(bytes, secondDriver + 4, driverFlags(0, 6) | (uint32_t{1} << 11));
+  put64(bytes, secondDriver + 8, 130);
+  put64(bytes, secondDriver + 16, 0);
+  put64(bytes, secondDriver + 24, 65);
+  put32(bytes, thirdDriver, UINT32_MAX);
+  put32(bytes, thirdDriver + 4, driverFlags(6, 6));
+  put64(bytes, thirdDriver + 8, 195);
+  put64(bytes, thirdDriver + 16, 0);
+  put64(bytes, thirdDriver + 24, 65);
+
+  // Exercise an atomic transition from a preloaded 0 to 1: release the low
+  // bank without resolving, then drive the high bank and resolve once. The
+  // branch also proves that a deferred changed-store reports no logical net
+  // transition. Both handles are scalar views even though the descriptors are
+  // wide.
+  put32(bytes, layoutOffset + 2 * 40 + 4, 1);
+  put32(bytes, codeOffset + 1 * 32 + 12, 1);
+  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_STORE_STATE,
+              OBELISK_RT_DB_STORE_STATE_CHANGED |
+                  OBELISK_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION,
+              2, 1, 0);
+  instruction(bytes, codeOffset, 2, OBELISK_RT_DB_MAKE_HANDLE, 0, 3,
+              OBELISK_RT_DESCRIPTOR_DRIVER, 1, 0, 0, 130);
+  instruction(bytes, codeOffset, 4, OBELISK_RT_DB_BRANCH, 0, 2, 0, 0, 0, 0,
+              6);
+  instruction(bytes, codeOffset, 5, OBELISK_RT_DB_STORE_STATE, 0, 0, 3, 0);
+  instruction(bytes, codeOffset, 6, OBELISK_RT_DB_TERMINATE);
+  put64(bytes, constantOffset, 1);
+  put64(bytes, constantOffset + 8, 0);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, 176, 4);
+  put64(bytes, 184, bytes.size());
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeConnectedDriverBytecode() {
   constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
@@ -2801,6 +2858,135 @@ TEST(DesignBytecode, ResolvesFourStateDriversFromInitialHighImpedance) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(DesignBytecode, ResolvesIEEEAmbiguousStrengthRangesBeforeFourState) {
+  Fixture fixture;
+  fixture.bytecode = makeStrengthDriverBytecode();
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.state_bit_count = 260;
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  auto setState = [&](uint64_t offset, bool value, bool unknown) {
+    uint64_t mask = UINT64_C(1) << (offset % 64);
+    if (value)
+      context->stateValue[offset / 64] |= mask;
+    else
+      context->stateValue[offset / 64] &= ~mask;
+    if (unknown)
+      context->stateUnknown[offset / 64] |= mask;
+    else
+      context->stateUnknown[offset / 64] &= ~mask;
+  };
+  auto resolve = [&] {
+    ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196),
+              OBELISK_RT_OK);
+  };
+
+  // IEEE 1800-2017 28.12.3: strong L plus strong 0 becomes known 0. An
+  // implementation that prematurely collapses L to x produces the wrong x.
+  setState(65, false, true);
+  setState(130, true, true);
+  setState(195, false, false);
+  resolve();
+  EXPECT_EQ(context->stateValue[0] & 1, 0u);
+  EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
+
+  // The symmetric H case is the output of bufif1(1, x). A separate strong1
+  // driver eliminates the weaker-or-equal ambiguous levels and yields 1.
+  setState(65, true, true);
+  setState(130, false, true);
+  setState(195, true, false);
+  resolve();
+  EXPECT_EQ(context->stateValue[0] & 1, 1u);
+  EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
+
+  // Equal-strength opposite values span both polarities and resolve to x.
+  setState(65, false, false);
+  setState(130, true, true);
+  setState(195, true, false);
+  resolve();
+  EXPECT_EQ(context->stateValue[0] & 1, 0u);
+  EXPECT_EQ(context->stateUnknown[0] & 1, 1u);
+
+  // highz1 replaces a driven 1 with z and therefore contributes no drive.
+  setState(65, true, false);
+  setState(130, true, true);
+  setState(195, true, true);
+  resolve();
+  EXPECT_EQ(context->stateValue[0] & 1, 1u);
+  EXPECT_EQ(context->stateUnknown[0] & 1, 1u);
+
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, PublishesSplitStrengthBanksAtomically) {
+  Fixture fixture;
+  fixture.bytecode = makeStrengthDriverBytecode();
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.state_bit_count = 260;
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+  fixture.entry = {&fixture.execution, 0, 0};
+  fixture.layout.frame_size = 0;
+  fixture.layout.checksum = frameChecksum(fixture.layout);
+  fixture.descriptor.frame_layout = &fixture.layout;
+  fixture.descriptor.execution = &fixture.execution;
+  fixture.descriptor.design_bytecode = &fixture.entry;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  auto setState = [&](uint64_t offset, bool value, bool unknown) {
+    uint64_t mask = UINT64_C(1) << (offset % 64);
+    if (value)
+      context->stateValue[offset / 64] |= mask;
+    else
+      context->stateValue[offset / 64] &= ~mask;
+    if (unknown)
+      context->stateUnknown[offset / 64] |= mask;
+    else
+      context->stateUnknown[offset / 64] &= ~mask;
+  };
+  setState(0, false, false);
+  setState(65, false, false);
+  context->signalDiagnosticsEnabled = true;
+  struct {
+    obelisk_rt_wait_record_v1 wait;
+    obelisk_rt_wait_entry_v1 entry;
+  } waitRecord{{OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE, 0, 1, 0, 0},
+               {0, OBELISK_RT_WAIT_EDGE_CHANGE, 1}};
+  std::vector<std::unique_ptr<SignalSubscription>> subscriptions;
+  std::unique_ptr<SignalWaitLatch> latch;
+  ASSERT_TRUE(obelisk_rt_register_signal_wait_unlocked(
+      context, &waitRecord.wait, subscriptions, latch));
+
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      OBELISK_RT_OK);
+  obelisk_rt_fragment_action_v1 action{};
+  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
+            OBELISK_RT_OK);
+  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+  EXPECT_EQ(context->stateValue[0] & 1, 1u);
+  EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
+  ASSERT_TRUE(latch);
+  EXPECT_TRUE(latch->triggered);
+  // Two physical driver-state publications and one resolved-net transition.
+  // Resolving after the low bank as well would add a spurious fourth one.
+  EXPECT_EQ(context->signalDiagnostics.publications, 3u);
+
+  obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions);
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(DesignBytecode, ResolvesDriversAcrossLogicalNetAliases) {
   Fixture fixture;
   fixture.bytecode = makeConnectedDriverBytecode();
@@ -3793,6 +3979,12 @@ TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
     fixture.execution.checksum = imageChecksum(fixture.bytecode);
     fixture.entry = {&fixture.execution, 0, 0};
   };
+  Fixture invalidDriverStrength;
+  connected(invalidDriverStrength);
+  size_t strengthState = get64(invalidDriverStrength.bytecode, 168);
+  put32(invalidDriverStrength.bytecode, strengthState + 64 + 4, 1u | (9u << 3));
+  rejected(invalidDriverStrength);
+
   Fixture misalignedConnectivity;
   connected(misalignedConnectivity);
   put64(misalignedConnectivity.bytecode, 184,

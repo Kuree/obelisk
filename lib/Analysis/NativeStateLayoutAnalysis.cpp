@@ -121,17 +121,91 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
         declaration.emitError("native driver has an invalid driven range");
         return WalkResult::interrupt();
       }
+      std::optional<uint64_t> strengthGroup;
+      std::optional<unsigned> strengthBank;
+      if (auto group = declaration->getAttrOfType<IntegerAttr>(
+              "obelisk_sim.strength_group")) {
+        if (group.getValue().isNegative() ||
+            group.getValue().getActiveBits() > 64) {
+          declaration.emitError("driver strength group is not unsigned");
+          return WalkResult::interrupt();
+        }
+        strengthGroup = group.getValue().getZExtValue();
+      }
+      if (auto bank = declaration->getAttrOfType<IntegerAttr>(
+              "obelisk_sim.strength_bank")) {
+        if (bank.getValue().isNegative() ||
+            bank.getValue().getActiveBits() > 1) {
+          declaration.emitError("driver strength bank must be zero or one");
+          return WalkResult::interrupt();
+        }
+        strengthBank = bank.getValue().getZExtValue();
+      }
+      if (strengthGroup.has_value() != strengthBank.has_value()) {
+        declaration.emitError(
+            "driver strength group and bank must appear together");
+        return WalkResult::interrupt();
+      }
       layout.drivers[declaration.getId()] = handle;
       layout.driverOffsets[declaration.getId()] = offset;
       layout.driverLayouts.push_back(
           {declaration.getId(), declaration.getNetId(), nextHandleID - 1,
            offset, *width, static_cast<unsigned>(drivenLow),
-           static_cast<unsigned>(drivenWidth)});
+           static_cast<unsigned>(drivenWidth), declaration.getStrength0(),
+           declaration.getStrength1(), strengthGroup, strengthBank});
     }
     return WalkResult::advance();
   });
   if (walked.wasInterrupted())
     return failure();
+
+  DenseMap<uint64_t, std::array<const Driver *, 2>> strengthGroups;
+  for (const Driver &driver : layout.driverLayouts) {
+    if (!driver.strengthGroup)
+      continue;
+    auto &banks = strengthGroups[*driver.strengthGroup];
+    unsigned bank = *driver.strengthBank;
+    if (banks[bank]) {
+      module.emitError("driver strength group contains a duplicate bank");
+      return failure();
+    }
+    banks[bank] = &driver;
+  }
+  for (const auto &entry : strengthGroups) {
+    const Driver *low = entry.second[0];
+    const Driver *high = entry.second[1];
+    if (!low || !high || low->netId != high->netId ||
+        low->width != high->width || low->drivenLow != high->drivenLow ||
+        low->drivenWidth != high->drivenWidth ||
+        low->strength1 != sim::Strength::HighZ ||
+        high->strength0 != sim::Strength::HighZ) {
+      module.emitError("driver strength group is not a complementary L/H pair");
+      return failure();
+    }
+  }
+  // The bytecode ABI marks only the high bank and identifies its low bank by
+  // the immediately preceding record. Keep that compact representation
+  // unambiguous for every layout accepted by this shared analysis.
+  for (size_t index = 0; index != layout.driverLayouts.size(); ++index) {
+    const Driver &driver = layout.driverLayouts[index];
+    if (!driver.strengthBank)
+      continue;
+    bool adjacent = false;
+    if (*driver.strengthBank == 0 && index + 1 < layout.driverLayouts.size()) {
+      const Driver &next = layout.driverLayouts[index + 1];
+      adjacent =
+          next.strengthBank == 1 && next.strengthGroup == driver.strengthGroup;
+    } else if (*driver.strengthBank == 1 && index != 0) {
+      const Driver &previous = layout.driverLayouts[index - 1];
+      adjacent = previous.strengthBank == 0 &&
+                 previous.strengthGroup == driver.strengthGroup;
+    }
+    if (!adjacent) {
+      module.emitError(
+          "complementary driver strength banks must be adjacent low/high");
+      return failure();
+    }
+  }
 
   SmallVector<sim::SimDesignOp> designs;
   module.walk([&](sim::SimDesignOp design) { designs.push_back(design); });
@@ -158,6 +232,8 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
 
     DenseMap<std::pair<uint64_t, uint64_t>, uint64_t> uwireDrivers;
     for (const Driver &driver : layout.driverLayouts) {
+      if (driver.strengthBank == 1)
+        continue;
       auto target = llvm::find_if(layout.netLayouts, [&](const auto &net) {
         return net.id == driver.netId;
       });

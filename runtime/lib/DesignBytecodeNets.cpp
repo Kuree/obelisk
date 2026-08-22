@@ -5,11 +5,66 @@
 #include "RuntimeInternal.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <map>
 #include <new>
 #include <unordered_map>
 
 namespace obelisk::designbytecode {
+
+static constexpr unsigned strengthCount = 15;
+
+static uint16_t strengthBit(int strength) {
+  return static_cast<uint16_t>(uint16_t{1} << (strength + 7));
+}
+
+static uint16_t combineStrengthRanges(uint16_t lhs, uint16_t rhs) {
+  uint16_t result = 0;
+  for (unsigned lhsIndex = 0; lhsIndex != strengthCount; ++lhsIndex) {
+    if ((lhs & (uint16_t{1} << lhsIndex)) == 0)
+      continue;
+    int left = static_cast<int>(lhsIndex) - 7;
+    for (unsigned rhsIndex = 0; rhsIndex != strengthCount; ++rhsIndex) {
+      if ((rhs & (uint16_t{1} << rhsIndex)) == 0)
+        continue;
+      int right = static_cast<int>(rhsIndex) - 7;
+      if (left == 0 || right == 0) {
+        result |= strengthBit(left == 0 ? right : left);
+        continue;
+      }
+      if ((left < 0) == (right < 0)) {
+        result |= strengthBit(std::abs(left) >= std::abs(right) ? left : right);
+        continue;
+      }
+      if (std::abs(left) != std::abs(right)) {
+        result |= strengthBit(std::abs(left) > std::abs(right) ? left : right);
+        continue;
+      }
+      for (int strength = -std::abs(left); strength <= std::abs(left);
+           ++strength)
+        result |= strengthBit(strength);
+    }
+  }
+  // Ambiguous strengths are ranges, not sparse sets (28.12.2). Preserve that
+  // invariant so a later driver observes every intermediate strength level.
+  unsigned first = 0;
+  while (first != strengthCount && (result & (uint16_t{1} << first)) == 0)
+    ++first;
+  unsigned last = strengthCount;
+  while (last != first && (result & (uint16_t{1} << (last - 1))) == 0)
+    --last;
+  uint16_t range = 0;
+  for (unsigned index = first; index != last; ++index)
+    range |= uint16_t{1} << index;
+  return range;
+}
+
+static uint8_t decodeDriverStrength(uint32_t flags, unsigned shift) {
+  uint32_t encoded = (flags >> shift) & 0xf;
+  // Strength metadata predates executable strength resolution. Preserve the
+  // old encoding as the LRM default strong drive.
+  return encoded == 0 ? 6 : static_cast<uint8_t>(encoded - 1);
+}
 
 bool appendSignalEvent(obelisk_rt_context *context, uint64_t bitOffset,
                        bool oldValue, bool oldUnknown, bool newValue,
@@ -76,10 +131,13 @@ NetAliasCache *getNetAliasCache(const Image &image,
       cache.rootByBit.emplace(logicalBit, root);
       cache.members[root].push_back(logicalBit);
     }
-  for (const CaptureRecord &driver : drivers)
+  for (const CaptureRecord &driver : drivers) {
+    uint8_t strength0 = decodeDriverStrength(driver.argument, 3);
+    uint8_t strength1 = decodeDriverStrength(driver.argument, 7);
     for (uint64_t bit = 0; bit != driver.planeSize; ++bit)
       cache.driverBits[findRoot(driver.unknownOffset + bit)].push_back(
-          driver.valueOffset + bit);
+          {driver.valueOffset + bit, strength0, strength1});
+  }
   for (auto &[root, component] : cache.members) {
     std::sort(component.begin(), component.end());
     component.erase(std::unique(component.begin(), component.end()),
@@ -194,26 +252,45 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
     auto members = cache.members.find(root);
     if (members == cache.members.end())
       return false;
-    bool resolvedValue = true;
-    bool resolvedUnknown = true;
+    // IEEE 1800-2017 28.12 defines an ambiguous signal as a range on the
+    // signed Figure 28-2 strength scale. Resolve the small, fixed 15-point
+    // domain exactly, then collapse the final range to a four-state value.
+    // Keeping L/H ranges until every driver participates is essential: a
+    // strong L combined with a strong 0 resolves to 0, not x.
+    auto driverStrengths = [&](bool value, bool unknown, uint8_t strength0,
+                               uint8_t strength1) {
+      if (!unknown)
+        return strengthBit(value ? strength1 : -static_cast<int>(strength0));
+      if (value)
+        return strengthBit(0); // z
+      uint16_t result = 0;
+      for (int strength = -static_cast<int>(strength0);
+           strength <= static_cast<int>(strength1); ++strength)
+        result |= strengthBit(strength);
+      return result;
+    };
+    uint16_t resolvedStrengths = strengthBit(0);
     auto componentDrivers = cache.driverBits.find(root);
     if (componentDrivers != cache.driverBits.end()) {
-      for (uint64_t driverBit : componentDrivers->second) {
-        bool driverValue = bit(context->stateValue, driverBit);
-        bool driverUnknown = bit(context->stateUnknown, driverBit);
-        bool currentZ = resolvedUnknown && resolvedValue;
-        bool driverZ = driverUnknown && driverValue;
-        bool currentX = resolvedUnknown && !resolvedValue;
-        bool driverX = driverUnknown && !driverValue;
-        bool conflict = currentX || driverX || resolvedValue != driverValue;
-        bool mergedValue = conflict ? false : resolvedValue;
-        bool mergedUnknown = conflict;
-        bool withoutCurrentZ = driverZ ? resolvedValue : mergedValue;
-        bool withoutCurrentZUnknown = driverZ ? resolvedUnknown : mergedUnknown;
-        resolvedValue = currentZ ? driverValue : withoutCurrentZ;
-        resolvedUnknown = currentZ ? driverUnknown : withoutCurrentZUnknown;
+      for (const NetDriverBit &driver : componentDrivers->second) {
+        bool driverValue = bit(context->stateValue, driver.valueOffset);
+        bool driverUnknown = bit(context->stateUnknown, driver.valueOffset);
+        resolvedStrengths = combineStrengthRanges(
+            resolvedStrengths,
+            driverStrengths(driverValue, driverUnknown, driver.strength0,
+                            driver.strength1));
       }
     }
+    bool hasZero = (resolvedStrengths & strengthBit(0)) != 0;
+    constexpr uint16_t negativeMask = (uint16_t{1} << 7) - 1;
+    constexpr uint16_t positiveMask = static_cast<uint16_t>(
+        ((uint16_t{1} << strengthCount) - 1) & ~((uint16_t{1} << 8) - 1));
+    bool hasNegative = (resolvedStrengths & negativeMask) != 0;
+    bool hasPositive = (resolvedStrengths & positiveMask) != 0;
+    bool resolvedZ = hasZero && !hasNegative && !hasPositive;
+    bool resolvedUnknown =
+        resolvedZ || (hasNegative + hasZero + hasPositive) != 1;
+    bool resolvedValue = resolvedZ || (!resolvedUnknown && hasPositive);
     for (uint64_t destination : members->second) {
       const NetAliasRange *net = nullptr;
       for (const NetAliasRange &candidate : cache.nets)
@@ -290,6 +367,10 @@ bool resolveDrivenNets(const Image &image, obelisk_rt_context *context,
 } // namespace obelisk::designbytecode
 
 using namespace obelisk::designbytecode;
+
+extern "C" uint16_t obelisk_rt_v1_strength_resolve(uint16_t lhs, uint16_t rhs) {
+  return combineStrengthRanges(lhs, rhs);
+}
 
 obelisk_rt_status
 obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept {

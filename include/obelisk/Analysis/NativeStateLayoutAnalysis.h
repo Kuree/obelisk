@@ -11,7 +11,9 @@
 
 #include "llvm/ADT/DenseMap.h"
 
+#include <array>
 #include <cstdint>
+#include <optional>
 #include <utility>
 
 namespace obelisk::analysis {
@@ -42,6 +44,10 @@ struct NativeStateLayoutAnalysis {
     unsigned width;
     unsigned drivenLow;
     unsigned drivenWidth;
+    sim::Strength strength0;
+    sim::Strength strength1;
+    std::optional<uint64_t> strengthGroup;
+    std::optional<unsigned> strengthBank;
   };
 
   static mlir::FailureOr<NativeStateLayoutAnalysis>

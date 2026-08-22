@@ -14,6 +14,11 @@ parser.add_argument(
     action="store_true",
     help="print function, register-layout, and operand-map metadata",
 )
+parser.add_argument(
+    "--state",
+    action="store_true",
+    help="print static net and driver state descriptors",
+)
 args = parser.parse_args()
 
 
@@ -26,6 +31,37 @@ values = [int(value) & 0xFF for value in re.findall(r"-?\d+", match.group(1))]
 image = bytes(values)
 if len(image) < 208 or image[:8] != b"OBBCDS1\0":
     raise SystemExit("invalid Obelisk design-bytecode header")
+
+if args.state:
+    state_offset = struct.unpack_from("<Q", image, 168)[0]
+    state_count = struct.unpack_from("<Q", image, 176)[0]
+    state_size = 32
+    if state_offset > len(image) or state_count > (
+        len(image) - state_offset
+    ) // state_size:
+        raise SystemExit("invalid Obelisk design-bytecode state range")
+    for index in range(state_count):
+        offset = state_offset + index * state_size
+        kind, flags, value_offset, target_offset, width = struct.unpack_from(
+            "<IIQQQ", image, offset
+        )
+        if kind == 0xFFFFFFFE:
+            name = "net"
+            suffix = ""
+        elif kind == 0xFFFFFFFF:
+            name = "driver"
+            strength0_code = (flags >> 3) & 0xF
+            strength1_code = (flags >> 7) & 0xF
+            strength0 = 6 if strength0_code == 0 else strength0_code - 1
+            strength1 = 6 if strength1_code == 0 else strength1_code - 1
+            suffix = f" strength0={strength0} strength1={strength1}"
+        else:
+            name = "capture"
+            suffix = ""
+        print(
+            f"state {index}: kind={name} flags={flags} value={value_offset} "
+            f"target={target_offset} width={width}{suffix}"
+        )
 
 code_offset = struct.unpack_from("<Q", image, 72)[0]
 instruction_count = struct.unpack_from("<Q", image, 80)[0]

@@ -160,9 +160,10 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
     if (net == analyzed->netLayouts.end())
       return module.emitError("analyzed driver references an unknown net"),
              failure();
-    result.driverLayouts.push_back({driver.id, driver.offset, net->offset,
-                                    driver.width, driver.drivenLow,
-                                    driver.drivenWidth, net->resolution});
+    result.driverLayouts.push_back(
+        {driver.id, driver.offset, net->offset, driver.width, driver.drivenLow,
+         driver.drivenWidth, net->resolution, driver.strength0,
+         driver.strength1, driver.strengthBank});
   }
 
   // The net each endpoint belongs to travels with the resolutions: a run may

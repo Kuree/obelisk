@@ -215,6 +215,24 @@ def SimNetResolutionKind
   let cppNamespace = "::obelisk::sim";
 }
 
+// Numeric values are the positions on the IEEE 1800-2017 Figure 28-2
+// strength scale. Charge-only positions are retained so runtime resolution
+// can use one representation for all strength ranges.
+def SimStrengthHighZ : I32EnumAttrCase<"HighZ", 0, "highz">;
+def SimStrengthSmall : I32EnumAttrCase<"Small", 1, "small">;
+def SimStrengthMedium : I32EnumAttrCase<"Medium", 2, "medium">;
+def SimStrengthWeak : I32EnumAttrCase<"Weak", 3, "weak">;
+def SimStrengthLarge : I32EnumAttrCase<"Large", 4, "large">;
+def SimStrengthPull : I32EnumAttrCase<"Pull", 5, "pull">;
+def SimStrengthStrong : I32EnumAttrCase<"Strong", 6, "strong">;
+def SimStrengthSupply : I32EnumAttrCase<"Supply", 7, "supply">;
+def SimStrength : I32EnumAttr<"Strength", "signal strength scale position", [
+  SimStrengthHighZ, SimStrengthSmall, SimStrengthMedium, SimStrengthWeak,
+  SimStrengthLarge, SimStrengthPull, SimStrengthStrong, SimStrengthSupply
+]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 def SimCaptureContext : I32EnumAttrCase<"Context", 0, "context">;
 def SimCaptureFormal : I32EnumAttrCase<"Formal", 1, "formal">;
 def SimCaptureValue : I32EnumAttrCase<"Value", 2, "value">;

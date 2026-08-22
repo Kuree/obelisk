@@ -157,7 +157,13 @@ SmallVector<uint8_t> serializeBytecodeImage(
     // Driver planes remain four-state even when the logical destination is
     // two-state, so Z release and contention are never inferred from a
     // previously published net value.
-    append32(output, 1u | (static_cast<uint32_t>(driver.resolution) << 1));
+    // Zero strength codes remain reserved for legacy/default-strong records;
+    // explicit codes are one greater than the Figure 28-2 scale position.
+    uint32_t strength0 = static_cast<uint32_t>(driver.strength0) + 1;
+    uint32_t strength1 = static_cast<uint32_t>(driver.strength1) + 1;
+    append32(output, 1u | (static_cast<uint32_t>(driver.resolution) << 1) |
+                         (strength0 << 3) | (strength1 << 7) |
+                         (driver.strengthBank == 1 ? uint32_t{1} << 11 : 0));
     append64(output, driver.offset + driver.drivenLow);
     append64(output, driver.netOffset + driver.drivenLow);
     append64(output, driver.drivenWidth);

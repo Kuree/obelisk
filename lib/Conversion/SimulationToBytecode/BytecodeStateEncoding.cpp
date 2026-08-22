@@ -108,12 +108,18 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
     return success();
   }
   if (auto op = dyn_cast<sim::SimDriverDriveOp>(operation)) {
-    emit({StoreState, 0, 0, reg(plan, op.getDriver()),
+    uint16_t flags = op->hasAttr("obelisk_sim.defer_net_resolution")
+                         ? OBELISK_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION
+                         : 0;
+    emit({StoreState, flags, 0, reg(plan, op.getDriver()),
           reg(plan, op.getValue())});
     return success();
   }
   if (auto op = dyn_cast<sim::SimDriverDriveChangedOp>(operation)) {
-    emit({StoreState, OBELISK_RT_DB_STORE_STATE_CHANGED,
+    uint16_t flags = OBELISK_RT_DB_STORE_STATE_CHANGED;
+    if (op->hasAttr("obelisk_sim.defer_net_resolution"))
+      flags |= OBELISK_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION;
+    emit({StoreState, flags,
           reg(plan, op.getChanged()), reg(plan, op.getDriver()),
           reg(plan, op.getValue())});
     return success();

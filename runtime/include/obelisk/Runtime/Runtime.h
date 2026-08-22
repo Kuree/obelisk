@@ -73,6 +73,11 @@ typedef int32_t obelisk_rt_status;
 // 20 to the runtime scheduler.
 #define OBELISK_RT_AOT_GENERATED_CHECKPOINT INT32_C(22)
 
+// Combine two IEEE 1800-2017 Figure 28-2 strength ranges. Bit positions 0..14
+// represent supply0..highz..supply1. Generated native code and bytecode use
+// this shared primitive so their ambiguous-strength resolution is identical.
+uint16_t obelisk_rt_v1_strength_resolve(uint16_t lhs, uint16_t rhs);
+
 // Tokens in an IEEE 1800 $readmemb/$readmemh input stream. Address tokens are
 // always hexadecimal; data tokens use the radix selected by the system task.
 typedef uint32_t obelisk_rt_readmem_token_kind_v1;
@@ -729,6 +734,11 @@ enum {
 // Preserve the latest continuous publication beneath force / procedural
 // assign so releasing the override can immediately reveal its driver.
 #define OBELISK_RT_DB_STORE_STATE_CONTINUOUS UINT16_C(2)
+// Store a physical driver bank without resolving its destination net. A
+// following driver store completes the logical update and publishes once. If
+// CHANGED is also set, the result is false because no logical net transition
+// has been published yet.
+#define OBELISK_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION UINT16_C(4)
 
 typedef uint16_t obelisk_rt_design_extract_kind;
 enum {

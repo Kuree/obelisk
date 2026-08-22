@@ -157,7 +157,11 @@ def SimDriverDeclOp : SimOp<"driver.decl", [MemoryEffects<[MemWrite<SimInventory
                        OptionalAttr<StrAttr>:$hierarchical_name,
                        OptionalAttr<StrAttr>:$debug_name,
                        OptionalAttr<I64Attr>:$driven_low,
-                       OptionalAttr<I64Attr>:$driven_width);
+                       OptionalAttr<I64Attr>:$driven_width,
+                       DefaultValuedAttr<SimStrength,
+                         "::obelisk::sim::Strength::Strong">:$strength0,
+                       DefaultValuedAttr<SimStrength,
+                         "::obelisk::sim::Strength::Strong">:$strength1);
   let assemblyFormat = [{$id `in` $scope_id `drives` $net_id `:` $type
     $lifetime (`hierarchy` $hierarchical_name^)?
     (`debug` $debug_name^)? attr-dict}];

@@ -1141,6 +1141,7 @@ ABI_FUNCTION(obelisk_rt_v1_native_state_register_static,
 ABI_FUNCTION(obelisk_rt_v1_native_state_static_handle, uint64_t (*)(uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_native_handle_offset,
              uint64_t (*)(uint64_t, int64_t));
+ABI_FUNCTION(obelisk_rt_v1_strength_resolve, uint16_t (*)(uint16_t, uint16_t));
 ABI_FUNCTION(obelisk_rt_v1_native_state_alloc,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t,
                                    const uint8_t *, const uint8_t *,

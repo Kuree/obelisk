@@ -432,6 +432,13 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       return;
     }
     auto net = cast<semantic::SVNetSymbolOp>(op);
+    if (net.getChargeStrength()) {
+      emitError(getSemanticLocation(op))
+          << "trireg charge strengths are not supported: "
+          << semantic::stringifySVChargeStrength(*net.getChargeStrength());
+      invalid = true;
+      return;
+    }
     sim::NetResolutionKind resolution;
     switch (net.getNetKind()) {
     case semantic::SVNetKind::Wire:
@@ -447,12 +454,6 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       emitError(getSemanticLocation(op))
           << "unsupported net resolution kind "
           << semantic::stringifySVNetKind(net.getNetKind());
-      invalid = true;
-      return;
-    }
-    if (net.getUnsupportedStrength()) {
-      emitError(getSemanticLocation(op)) << "net strengths are not supported: "
-                                         << *net.getUnsupportedStrength();
       invalid = true;
       return;
     }

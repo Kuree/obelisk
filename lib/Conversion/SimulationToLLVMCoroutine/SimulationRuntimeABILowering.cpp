@@ -12,6 +12,9 @@ namespace obelisk::detail {
 void declareNativeRuntimeABI(ModuleOp module) {
   MLIRContext *context = module.getContext();
   getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_strength_resolve", IntegerType::get(context, 16),
+      {IntegerType::get(context, 16), IntegerType::get(context, 16)});
+  getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_scheduler_signal",
       LLVM::LLVMVoidType::get(context),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),

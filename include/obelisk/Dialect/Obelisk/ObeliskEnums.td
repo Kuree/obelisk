@@ -672,6 +672,29 @@ def ObeliskSVNetKind : I32EnumAttr<"SVNetKind",
   let cppNamespace = "::obelisk::ir";
 }
 
+def ObeliskSVDrive_Supply : I32EnumAttrCase<"Supply", 0, "supply">;
+def ObeliskSVDrive_Strong : I32EnumAttrCase<"Strong", 1, "strong">;
+def ObeliskSVDrive_Pull : I32EnumAttrCase<"Pull", 2, "pull">;
+def ObeliskSVDrive_Weak : I32EnumAttrCase<"Weak", 3, "weak">;
+def ObeliskSVDrive_HighZ : I32EnumAttrCase<"HighZ", 4, "highz">;
+def ObeliskSVDriveStrength : I32EnumAttr<"SVDriveStrength",
+    "SystemVerilog drive strength for one logic polarity", [
+  ObeliskSVDrive_Supply, ObeliskSVDrive_Strong, ObeliskSVDrive_Pull,
+  ObeliskSVDrive_Weak, ObeliskSVDrive_HighZ
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVCharge_Small : I32EnumAttrCase<"Small", 0, "small">;
+def ObeliskSVCharge_Medium : I32EnumAttrCase<"Medium", 1, "medium">;
+def ObeliskSVCharge_Large : I32EnumAttrCase<"Large", 2, "large">;
+def ObeliskSVChargeStrength : I32EnumAttr<"SVChargeStrength",
+    "SystemVerilog trireg charge strength", [
+  ObeliskSVCharge_Small, ObeliskSVCharge_Medium, ObeliskSVCharge_Large
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
 def ObeliskSVPortConnOrdered : I32EnumAttrCase<"Ordered", 0, "ordered">;
 def ObeliskSVPortConnNamed : I32EnumAttrCase<"Named", 1, "named">;
 def ObeliskSVPortConnImplicit : I32EnumAttrCase<"Implicit", 2, "implicit">;

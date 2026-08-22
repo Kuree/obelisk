@@ -17,6 +17,7 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -553,6 +554,9 @@ private:
   ::llvm::StringMap<::mlir::Value> lvalues;
   ::llvm::StringMap<uint64_t> descriptorIDs;
   ::llvm::DenseMap<uint64_t, ::mlir::Value> nodeLvalues;
+  bool deferDriverResolution = false;
+  ::llvm::StringMap<std::array<::mlir::Value, 2>> strengthDriverLvalues;
+  ::llvm::DenseMap<uint64_t, std::array<::mlir::Value, 2>> strengthNodeLvalues;
   ::llvm::StringMap<::mlir::Value> localDefaults;
   ::llvm::StringSet<> automaticLocals;
   ::llvm::StringMap<::mlir::Value> copyOutDestinations;

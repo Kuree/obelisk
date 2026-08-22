@@ -313,6 +313,22 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
         continue;
       }
       if (argument.getKind() == sim::UnitArgumentKind::LValueOnly) {
+        if (auto bank = function.getArgAttrOfType<IntegerAttr>(
+                argument.getArgument(), "obelisk_sim.strength_driver_bank")) {
+          if (bank.getValue().isNegative() ||
+              bank.getValue().getActiveBits() > 1 ||
+              !isa<sim::DriverType>(value.getType())) {
+            function.emitError()
+                << "conditional-gate driver has an invalid strength bank";
+            invalidBindings = true;
+          } else {
+            unsigned index = bank.getValue().getZExtValue();
+            strengthDriverLvalues[path][index] = value;
+            if (IntegerAttr node = argument.getLvalueNode())
+              strengthNodeLvalues[node.getValue().getZExtValue()][index] =
+                  value;
+          }
+        }
         lvalues[path] = value;
         if (IntegerAttr node = argument.getLvalueNode())
           nodeLvalues[node.getValue().getZExtValue()] = value;
@@ -2089,9 +2105,9 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
     return toLogic(*scalar, getSemanticLocation(input));
   };
 
-  // The truth tables of IEEE 1800-2017 28.4 give a gate the same output for a
-  // z input as for an x one. Gates that compute a result observe that through
-  // their own tables, but a gate that passes its data input through has to
+  // The truth tables of IEEE 1800-2017 28.4 and 28.5 give a gate the same
+  // output for a z input as for an x one. Gates that compute a result observe
+  // that through their own tables, but a gate that passes its data input has to
   // normalize it, and conjunction with all ones is exactly that table.
   auto normalizeGateInput = [&](Value input) -> Value {
     auto type = cast<sim::LogicType>(input.getType());
@@ -2105,6 +2121,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
   };
 
   Value result;
+  std::optional<std::array<Value, 2>> strengthResults;
   if (name == "and" || name == "nand" || name == "or" || name == "nor" ||
       name == "xor" || name == "xnor") {
     if (inputs.empty())
@@ -2160,16 +2177,78 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
     Value disabled = sim::SimLogicConstantOp::create(
         builder, location, logicType, builder.getIntegerAttr(planeType, highZ),
         builder.getIntegerAttr(planeType, highZ));
+    Value zero = sim::SimLogicConstantOp::create(
+        builder, location, logicType, builder.getIntegerAttr(planeType, 0),
+        builder.getIntegerAttr(planeType, 0));
+    Value one = sim::SimLogicConstantOp::create(
+        builder, location, logicType,
+        builder.getIntegerAttr(planeType,
+                               APInt::getAllOnes(logicType.getWidth())),
+        builder.getIntegerAttr(planeType, 0));
+    // IEEE 1800-2017 28.12.2 represents an uncertain conditional-gate output
+    // as L or H, not ordinary x. Split the output into polarity-specific
+    // drivers: the low bank has (strength0, highz1), and the high bank has
+    // (highz0, strength1). Their ordinary four-state values therefore encode
+    // L, H, and full x as exact strength ranges without extending logic<N>.
+    Value lowCandidate = sim::SimLogicMuxOp::create(
+        builder, location, logicType, driven, disabled, zero);
+    Value highCandidate = sim::SimLogicMuxOp::create(
+        builder, location, logicType, driven, one, disabled);
     bool activeHigh = name.ends_with("1");
-    result =
-        activeHigh
-            ? Value(sim::SimLogicMuxOp::create(builder, location, logicType,
-                                               *control, driven, disabled))
-            : Value(sim::SimLogicMuxOp::create(builder, location, logicType,
-                                               *control, disabled, driven));
+    Value lowResult =
+        activeHigh ? Value(sim::SimLogicMuxOp::create(builder, location,
+                                                      logicType, *control,
+                                                      lowCandidate, disabled))
+                   : Value(sim::SimLogicMuxOp::create(builder, location,
+                                                      logicType, *control,
+                                                      disabled, lowCandidate));
+    Value highResult =
+        activeHigh ? Value(sim::SimLogicMuxOp::create(builder, location,
+                                                      logicType, *control,
+                                                      highCandidate, disabled))
+                   : Value(sim::SimLogicMuxOp::create(builder, location,
+                                                      logicType, *control,
+                                                      disabled, highCandidate));
+    strengthResults = std::array<Value, 2>{lowResult, highResult};
   } else {
     return emitError(location)
            << "unsupported built-in primitive '" << name << "'";
+  }
+
+  if (strengthResults) {
+    if (strengthDriverLvalues.empty())
+      return emitError(location)
+             << "conditional primitive has no polarity-specific drivers";
+    for (unsigned bank = 0; bank != 2; ++bank) {
+      // Both polarity banks are one logical primitive driver. Store every low
+      // bank first without publishing its transient result; the corresponding
+      // high-bank stores then resolve each affected net from the completed
+      // L/H representation.
+      deferDriverResolution = bank == 0;
+      for (auto &entry : strengthDriverLvalues) {
+        if (!entry.second[bank])
+          return emitError(location)
+                 << "conditional primitive has an incomplete driver bank";
+        lvalues[entry.first()] = entry.second[bank];
+      }
+      for (auto &entry : strengthNodeLvalues) {
+        if (!entry.second[bank])
+          return emitError(location)
+                 << "conditional primitive has an incomplete node driver "
+                    "bank";
+        nodeLvalues[entry.first] = entry.second[bank];
+      }
+      FailureOr<Value> converted =
+          convert((*strengthResults)[bank], *outputType, false, location);
+      if (failed(converted))
+        return failure();
+      for (Operation *output : outputs)
+        if (failed(writeLValue(output, *converted, false, false,
+                               getSemanticLocation(output))))
+          return failure();
+    }
+    deferDriverResolution = false;
+    return success();
   }
 
   FailureOr<Value> converted = convert(result, *outputType, false, location);

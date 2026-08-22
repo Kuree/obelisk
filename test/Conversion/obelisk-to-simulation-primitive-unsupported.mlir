@@ -20,13 +20,13 @@ module {
         sym_name = "s3",
         time_precision_fs = 1000 : i64,
         time_unit_fs = 1000000 : i64,
-        unsupported_delay = "5",
-        unsupported_strength = "strong,pull"
+        drive_strength0 = 1 : i32,
+        drive_strength1 = 2 : i32,
+        unsupported_delay = "5"
       } {
       }
     }
   }
 }
 
-// CHECK: error: primitive strengths are not supported: strong,pull
 // CHECK: error: primitive delays are not supported: 5

@@ -50,6 +50,22 @@ static_assert(haveSameEncoding(slangir::ArgumentDirection::In,
                                ir::SVArgumentDirection::InOut) &&
               haveSameEncoding(slangir::ArgumentDirection::Ref,
                                ir::SVArgumentDirection::Ref));
+static_assert(haveSameEncoding(slangir::DriveStrength::Supply,
+                               ir::SVDriveStrength::Supply) &&
+              haveSameEncoding(slangir::DriveStrength::Strong,
+                               ir::SVDriveStrength::Strong) &&
+              haveSameEncoding(slangir::DriveStrength::Pull,
+                               ir::SVDriveStrength::Pull) &&
+              haveSameEncoding(slangir::DriveStrength::Weak,
+                               ir::SVDriveStrength::Weak) &&
+              haveSameEncoding(slangir::DriveStrength::HighZ,
+                               ir::SVDriveStrength::HighZ));
+static_assert(haveSameEncoding(slangir::ChargeStrength::Small,
+                               ir::SVChargeStrength::Small) &&
+              haveSameEncoding(slangir::ChargeStrength::Medium,
+                               ir::SVChargeStrength::Medium) &&
+              haveSameEncoding(slangir::ChargeStrength::Large,
+                               ir::SVChargeStrength::Large));
 static_assert(haveSameEncoding(slangir::DefinitionKind::Module,
                                ir::SVDefinitionKind::Module) &&
               haveSameEncoding(slangir::DefinitionKind::Interface,

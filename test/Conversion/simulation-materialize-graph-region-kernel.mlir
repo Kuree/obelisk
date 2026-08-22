@@ -1,6 +1,12 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion),encode-obelisk-sim-to-bytecode{vpi=off})' \
+// RUN:   | %python %S/Inputs/dump-bytecode-instructions.py \
+// RUN:   | FileCheck %s --check-prefix=BYTECODE
 
-module {
+module attributes {
+  llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
+  llvm.target_triple = "x86_64-unknown-linux-gnu"
+} {
   obelisk_sim.design @region_kernel {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 continuous hierarchy "region_kernel.first"
@@ -44,7 +50,9 @@ module {
     ^body:
       %value = obelisk_sim.ref.load %input :
           !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      obelisk_sim.driver.drive %driver = %value :
+      obelisk_sim.driver.drive %driver = %value {
+        obelisk_sim.defer_net_resolution
+      } :
           !obelisk_sim.driver<!obelisk_sim.logic<1>>,
           !obelisk_sim.logic<1>
       obelisk_sim.suspend.change %input to ^body :
@@ -83,6 +91,12 @@ module {
 // CHECK: cf.cond_br
 // CHECK: obelisk_sim.suspend.any
 // CHECK-SAME: edges [0, 0]
-// CHECK-COUNT-2: obelisk_sim.driver.drive_changed
+// CHECK: obelisk_sim.driver.drive_changed
+// CHECK-SAME: obelisk_sim.defer_net_resolution
+// CHECK: obelisk_sim.driver.drive_changed
+// CHECK-NOT: obelisk_sim.defer_net_resolution
 // CHECK-NOT: obelisk_sim.func private @first
 // CHECK-NOT: obelisk_sim.func private @second
+
+// A fused deferred drive writes the changed result and carries both flags.
+// BYTECODE: opcode=28 flags=5

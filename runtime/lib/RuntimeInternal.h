@@ -702,11 +702,17 @@ struct NetAliasRange {
   bool fourState = false;
 };
 
+struct NetDriverBit {
+  uint64_t valueOffset = 0;
+  uint8_t strength0 = 6;
+  uint8_t strength1 = 6;
+};
+
 struct NetAliasCache {
   const obelisk_rt_execution_descriptor_v1 *execution = nullptr;
   std::unordered_map<uint64_t, uint64_t> rootByBit;
   std::unordered_map<uint64_t, std::vector<uint64_t>> members;
-  std::unordered_map<uint64_t, std::vector<uint64_t>> driverBits;
+  std::unordered_map<uint64_t, std::vector<NetDriverBit>> driverBits;
   std::vector<NetAliasRange> nets;
   std::vector<NetAliasRange> drivers;
 };

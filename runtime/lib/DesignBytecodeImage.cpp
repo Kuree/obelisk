@@ -1654,16 +1654,31 @@ bool validateImage(const Image &image) {
     CaptureRecord driver = captureAt(image, captureIndex);
     const CaptureRecord *target =
         containingNet(driver.unknownOffset, driver.planeSize, false);
+    uint32_t strength0 = (driver.argument >> 3) & 0xf;
+    uint32_t strength1 = (driver.argument >> 7) & 0xf;
+    bool highStrengthBank = (driver.argument & (uint32_t{1} << 11)) != 0;
     if (driver.function != kDriverStateDescriptor ||
-        (driver.argument & ~uint32_t{7}) != 0 || (driver.argument & 1) == 0 ||
-        (driver.argument >> 1) > 2 || driver.planeSize == 0 ||
+        (driver.argument & ~uint32_t{0xfff}) != 0 ||
+        (driver.argument & 1) == 0 || ((driver.argument >> 1) & 3) > 2 ||
+        strength0 > 8 || strength1 > 8 || driver.planeSize == 0 ||
         driver.valueOffset < previousDriverEnd ||
         driver.valueOffset > image.stateBitCount ||
         driver.planeSize > image.stateBitCount - driver.valueOffset ||
         driver.unknownOffset > image.stateBitCount ||
         driver.planeSize > image.stateBitCount - driver.unknownOffset ||
-        !target || (driver.argument >> 1) != (target->argument >> 1))
+        !target || ((driver.argument >> 1) & 3) != (target->argument >> 1))
       return reject(__LINE__, "invalid or misordered driver state record");
+    if (highStrengthBank) {
+      if (driverRecords.empty())
+        return reject(__LINE__, "orphaned high-polarity driver bank");
+      const CaptureRecord &low = driverRecords.back();
+      uint32_t lowStrength1 = (low.argument >> 7) & 0xf;
+      if ((low.argument & (uint32_t{1} << 11)) != 0 || lowStrength1 != 1 ||
+          strength0 != 1 || low.unknownOffset != driver.unknownOffset ||
+          low.planeSize != driver.planeSize ||
+          ((low.argument >> 1) & 3) != ((driver.argument >> 1) & 3))
+        return reject(__LINE__, "invalid complementary driver strength banks");
+    }
     // Driver ranges are resolved bitwise and may legally overlap. In
     // particular, a driver for a packed aggregate and a driver for its
     // low-order member have the same target start but different widths. The
@@ -1814,7 +1829,9 @@ bool validateImage(const Image &image) {
   // connected scalar equivalence class, including aliases of its target.
   std::unordered_map<uint64_t, uint32_t> uwireDrivers;
   for (const CaptureRecord &driver : driverRecords) {
-    if ((driver.argument >> 1) != 2)
+    if (((driver.argument >> 1) & 3) != 2)
+      continue;
+    if ((driver.argument & (uint32_t{1} << 11)) != 0)
       continue;
     for (uint64_t bit = 0; bit != driver.planeSize; ++bit) {
       uint64_t root = findConnectivity(driver.unknownOffset + bit);
@@ -2320,9 +2337,10 @@ bool validateImage(const Image &image) {
                         functionIndex, pc, instruction.opcode);
         break;
       case OBELISK_RT_DB_STORE_STATE:
-        if ((instruction.flags & ~(OBELISK_RT_DB_STORE_STATE_CHANGED |
-                                   OBELISK_RT_DB_STORE_STATE_CONTINUOUS)) !=
-                0 ||
+        if ((instruction.flags &
+             ~(OBELISK_RT_DB_STORE_STATE_CHANGED |
+               OBELISK_RT_DB_STORE_STATE_CONTINUOUS |
+               OBELISK_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION)) != 0 ||
             ((instruction.flags & OBELISK_RT_DB_STORE_STATE_CHANGED) != 0
                  ? (!reg(instruction.destination) ||
                     layoutAt(image, function, instruction.destination).width !=

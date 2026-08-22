@@ -340,6 +340,11 @@ buildNativePeriodicAliasPlan(ModuleOp module,
         driver == stateLayout.driverLayouts.end() || driver->width != 1 ||
         driver->drivenLow != 0 || driver->drivenWidth != 1)
       return WalkResult::advance();
+    // The alias copies four-state planes without resolution. That is only an
+    // identity when neither known polarity is replaced by high impedance.
+    if (driver->strength0 == sim::Strength::HighZ ||
+        driver->strength1 == sim::Strength::HighZ)
+      return WalkResult::advance();
     std::optional<uint32_t> sourceStatic =
         decodeStaticRoot(sourceHandle->second);
     if (!sourceStatic)

@@ -203,6 +203,34 @@ convertEnum(slang::ast::ArgumentDirection direction) {
   llvm_unreachable("unknown slang argument direction");
 }
 
+slangir::DriveStrength convertEnum(slang::ast::DriveStrength strength) {
+  switch (strength) {
+  case slang::ast::DriveStrength::Supply:
+    return slangir::DriveStrength::Supply;
+  case slang::ast::DriveStrength::Strong:
+    return slangir::DriveStrength::Strong;
+  case slang::ast::DriveStrength::Pull:
+    return slangir::DriveStrength::Pull;
+  case slang::ast::DriveStrength::Weak:
+    return slangir::DriveStrength::Weak;
+  case slang::ast::DriveStrength::HighZ:
+    return slangir::DriveStrength::HighZ;
+  }
+  llvm_unreachable("unknown slang drive strength");
+}
+
+slangir::ChargeStrength convertEnum(slang::ast::ChargeStrength strength) {
+  switch (strength) {
+  case slang::ast::ChargeStrength::Small:
+    return slangir::ChargeStrength::Small;
+  case slang::ast::ChargeStrength::Medium:
+    return slangir::ChargeStrength::Medium;
+  case slang::ast::ChargeStrength::Large:
+    return slangir::ChargeStrength::Large;
+  }
+  llvm_unreachable("unknown slang charge strength");
+}
+
 slangir::DefinitionKind convertEnum(slang::ast::DefinitionKind kind) {
   switch (kind) {
   case slang::ast::DefinitionKind::Module:
@@ -1598,15 +1626,14 @@ private:
       attrs.set("primitive_name",
                 builder.getStringAttr(node.primitiveType.name));
       auto [strength0, strength1] = node.getDriveStrength();
-      if (strength0 || strength1) {
-        std::string spelling;
-        if (strength0)
-          spelling += slang::ast::toString(*strength0);
-        spelling += ',';
-        if (strength1)
-          spelling += slang::ast::toString(*strength1);
-        SET_OP_ATTR(UnsupportedStrength, builder.getStringAttr(spelling));
-      }
+      if (strength0)
+        SET_OP_ATTR(DriveStrength0,
+                    slangir::DriveStrengthAttr::get(builder.getContext(),
+                                                    convertEnum(*strength0)));
+      if (strength1)
+        SET_OP_ATTR(DriveStrength1,
+                    slangir::DriveStrengthAttr::get(builder.getContext(),
+                                                    convertEnum(*strength1)));
       if (const slang::ast::TimingControl *delay = node.getDelay()) {
         slang::SourceRange range = getSourceRange(*delay);
         if (range.start().valid() && range.end().valid() &&
@@ -2157,15 +2184,14 @@ private:
         SET_OP_ATTR(IsVirtualInterfaceTypeInstance, builder.getBoolAttr(true));
     } else if constexpr (std::same_as<T, slang::ast::ContinuousAssignSymbol>) {
       auto [strength0, strength1] = node.getDriveStrength();
-      if (strength0 || strength1) {
-        std::string spelling;
-        if (strength0)
-          spelling += slang::ast::toString(*strength0);
-        spelling += ',';
-        if (strength1)
-          spelling += slang::ast::toString(*strength1);
-        SET_OP_ATTR(UnsupportedStrength, builder.getStringAttr(spelling));
-      }
+      if (strength0)
+        SET_OP_ATTR(DriveStrength0,
+                    slangir::DriveStrengthAttr::get(builder.getContext(),
+                                                    convertEnum(*strength0)));
+      if (strength1)
+        SET_OP_ATTR(DriveStrength1,
+                    slangir::DriveStrengthAttr::get(builder.getContext(),
+                                                    convertEnum(*strength1)));
       if (const slang::ast::TimingControl *delay = node.getDelay()) {
         slang::SourceRange range = getSourceRange(*delay);
         if (range.start().valid() && range.end().valid() &&
@@ -2187,16 +2213,18 @@ private:
       auto [strength0, strength1] = node.getDriveStrength();
       if (std::optional<slang::ast::ChargeStrength> charge =
               node.getChargeStrength()) {
-        SET_OP_ATTR(UnsupportedStrength,
-                    builder.getStringAttr(slang::ast::toString(*charge)));
-      } else if (strength0 || strength1) {
-        std::string spelling;
+        SET_OP_ATTR(ChargeStrength,
+                    slangir::ChargeStrengthAttr::get(builder.getContext(),
+                                                     convertEnum(*charge)));
+      } else {
         if (strength0)
-          spelling += slang::ast::toString(*strength0);
-        spelling += ',';
+          SET_OP_ATTR(DriveStrength0,
+                      slangir::DriveStrengthAttr::get(builder.getContext(),
+                                                      convertEnum(*strength0)));
         if (strength1)
-          spelling += slang::ast::toString(*strength1);
-        SET_OP_ATTR(UnsupportedStrength, builder.getStringAttr(spelling));
+          SET_OP_ATTR(DriveStrength1,
+                      slangir::DriveStrengthAttr::get(builder.getContext(),
+                                                      convertEnum(*strength1)));
       }
       if (const slang::ast::TimingControl *delay = node.getDelay()) {
         slang::SourceRange range = getSourceRange(*delay);

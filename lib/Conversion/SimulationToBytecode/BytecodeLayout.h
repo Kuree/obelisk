@@ -17,6 +17,7 @@
 #include "llvm/IR/DataLayout.h"
 
 #include <cstdint>
+#include <optional>
 
 namespace obelisk::bytecode {
 
@@ -71,6 +72,9 @@ struct StateLayout {
     uint32_t drivenLow;
     uint32_t drivenWidth;
     sim::NetResolutionKind resolution;
+    sim::Strength strength0;
+    sim::Strength strength1;
+    std::optional<unsigned> strengthBank;
   };
   struct Connection {
     uint64_t lhsOffset;
