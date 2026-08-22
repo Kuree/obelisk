@@ -2101,6 +2101,58 @@ FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
       }
       return success();
     }
+    // IEEE 1800-2017 11.4.13: an array operand of an inside set contributes
+    // every one of its elements. A dynamic array or queue only knows how many
+    // that is at run time, so the disjunction is accumulated by a loop over
+    // the container instead of by unrolling.
+    if (isa<sim::DynamicArrayType, sim::QueueType>(candidate.getType())) {
+      Type elementType =
+          isa<sim::DynamicArrayType>(candidate.getType())
+              ? cast<sim::DynamicArrayType>(candidate.getType())
+                    .getElementType()
+              : cast<sim::QueueType>(candidate.getType()).getElementType();
+      Type indexType = builder.getI64Type();
+      auto indexConstant = [&](int64_t value) {
+        return arith::ConstantOp::create(builder, itemLocation, indexType,
+                                         builder.getI64IntegerAttr(value))
+            .getResult();
+      };
+      Value size = sim::SimContainerSizeOp::create(builder, itemLocation,
+                                                   indexType, candidate);
+      Block *header = addBlock();
+      header->addArgument(indexType, itemLocation);
+      header->addArgument(matched.getType(), itemLocation);
+      Block *body = addBlock();
+      Block *exit = addBlock();
+      exit->addArgument(matched.getType(), itemLocation);
+      cf::BranchOp::create(builder, itemLocation, header,
+                           ValueRange{indexConstant(0), matched});
+      setCurrent(header);
+      Value index = header->getArgument(0);
+      Value accumulator = header->getArgument(1);
+      Value more = arith::CmpIOp::create(builder, itemLocation,
+                                         arith::CmpIPredicate::ult, index,
+                                         size);
+      cf::CondBranchOp::create(builder, itemLocation, more, body, ValueRange{},
+                               exit, ValueRange{accumulator});
+      setCurrent(body);
+      Value element = sim::SimContainerReadOp::create(
+          builder, itemLocation, elementType, candidate, index);
+      FailureOr<Value> elementEqual =
+          compare(element, sim::CompareKind::WildEq, arith::CmpIPredicate::eq,
+                  itemLocation);
+      if (failed(elementEqual))
+        return failure();
+      Value next = combine(accumulator, *elementEqual, false, itemLocation);
+      cf::BranchOp::create(
+          builder, itemLocation, header,
+          ValueRange{arith::AddIOp::create(builder, itemLocation, index,
+                                           indexConstant(1)),
+                     next});
+      setCurrent(exit);
+      matched = exit->getArgument(0);
+      return success();
+    }
     FailureOr<Value> equal = compare(candidate, sim::CompareKind::WildEq,
                                      arith::CmpIPredicate::eq, itemLocation);
     if (failed(equal))
