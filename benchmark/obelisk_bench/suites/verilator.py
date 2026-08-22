@@ -279,6 +279,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_dynarray_method": PATTERN_RADIX,
     "t_stream_crc_example": PATTERN_RADIX,
     "t_stream_dynamic": PATTERN_RADIX,
+    "t_stream_unpack": PATTERN_RADIX,
     "t_struct_nest_uarray": PATTERN_RADIX,
     "t_class_enum": CLASS_PATTERN,
     "t_class_param_extends": CLASS_PATTERN,
