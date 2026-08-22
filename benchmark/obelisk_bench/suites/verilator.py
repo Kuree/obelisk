@@ -161,6 +161,12 @@ LOCATOR_RETURN_ELEMENT_TYPE = Exclusion(
     "`int unsigned array[3]` gives min() the type `int unsigned$[$]`; the test "
     "expects Verilator's spelling with the element's unsigned dropped, and its "
     "%p expectations are the hexadecimal ones 21.2.1.7 already rules out")
+STRING_LITERAL_BYTE_ARRAY_JUSTIFICATION = Exclusion(
+    "IEEE 1800-2017 5.9",
+    "a string literal assigned to an unpacked array of bytes is left "
+    "justified, so `byte bh[3:0] = \"hi2\"` fills the array from its leftmost "
+    "element and leaves bh[0] zero; the test expects Verilator's "
+    "right-justified fill, which the same clause reserves for a packed target")
 UNSIGNED_SELECT_INDEX = Exclusion(
     "IEEE 1800-2017 11.8.1",
     "a concatenation is unsigned and 11.6.1 carries that through the "
@@ -263,6 +269,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_split_var_4": TWO_STATE_INITIALIZATION,
     "t_param_type5": UNNAMED_TYPE_SPELLING,
     "t_emit_constw": OUT_OF_RANGE_PART_SELECT_READ,
+    "t_string_byte": STRING_LITERAL_BYTE_ARRAY_JUSTIFICATION,
     "t_mem_multi_io": TWO_STATE_INITIALIZATION,
     "t_math_pow3": CONTEXT_DETERMINED_POWER_BASE,
     "t_typename_min": LOCATOR_RETURN_ELEMENT_TYPE,

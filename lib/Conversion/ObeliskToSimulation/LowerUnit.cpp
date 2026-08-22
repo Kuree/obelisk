@@ -1899,7 +1899,17 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
     // represents the empty literal as an 8-bit zero value; converting that
     // packed value would create a one-byte NUL string instead of an empty
     // string.
-    if (isa<sim::StringType>(*target) &&
+    // IEEE 1800-2017 5.9 gives the same literal a left-justified byte layout
+    // when its target is an unpacked array of bytes, which its packed
+    // representation cannot express either.
+    bool unpackedByteArray = false;
+    if (auto array = dyn_cast<sim::UnpackedArrayType>(*target)) {
+      Type elementScalar = sim::getPackedScalarType(array.getElementType());
+      std::optional<unsigned> elementWidth =
+          elementScalar ? sim::getPackedWidth(elementScalar) : std::nullopt;
+      unpackedByteArray = elementWidth && *elementWidth == 8;
+    }
+    if ((isa<sim::StringType>(*target) || unpackedByteArray) &&
         isa<semantic::SVStringLiteralOp>(children.front()))
       return lowerStringLiteralValue(builder, children.front(), *target,
                                      getSemanticLocation(op));

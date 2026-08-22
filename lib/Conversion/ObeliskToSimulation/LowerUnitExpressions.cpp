@@ -526,6 +526,46 @@ FailureOr<Value> lowerStringLiteralValue(OpBuilder &builder, Operation *op,
         .getResult();
   }
 
+  // IEEE 1800-2017 5.9: a string literal can be assigned to an unpacked array
+  // of bytes, and if the size differs it is left justified. The array's first
+  // element in left-to-right order therefore takes the literal's first
+  // character, and any elements the literal does not reach stay zero.
+  if (auto array = dyn_cast<sim::UnpackedArrayType>(type)) {
+    Type elementType = array.getElementType();
+    Type elementScalar = sim::getPackedScalarType(elementType);
+    std::optional<unsigned> elementWidth =
+        elementScalar ? sim::getPackedWidth(elementScalar) : std::nullopt;
+    if (elementWidth && *elementWidth == 8) {
+      StringRef text = spelling.getValue();
+      auto planeType = IntegerType::get(type.getContext(), 8);
+      SmallVector<Value> elements;
+      for (unsigned ordinal = 0,
+                    count = sim::getAggregateNumElements(array);
+           ordinal != count; ++ordinal) {
+        APInt bits(8, ordinal < text.size()
+                          ? static_cast<uint8_t>(text[ordinal])
+                          : 0);
+        Value element;
+        if (isa<IntegerType>(elementScalar))
+          element = arith::ConstantOp::create(
+              builder, location, elementScalar,
+              builder.getIntegerAttr(elementScalar, bits));
+        else
+          element = sim::SimLogicConstantOp::create(
+              builder, location, elementScalar,
+              builder.getIntegerAttr(planeType, bits),
+              builder.getIntegerAttr(planeType, APInt(8, 0)));
+        if (elementScalar != elementType)
+          element = sim::SimPackedUnflattenOp::create(builder, location,
+                                                      elementType, element);
+        elements.push_back(element);
+      }
+      return sim::SimAggregateConstructOp::create(builder, location, type,
+                                                  elements)
+          .getResult();
+    }
+  }
+
   Type scalar = sim::getPackedScalarType(type);
   std::optional<unsigned> width =
       scalar ? sim::getPackedWidth(scalar) : std::nullopt;
