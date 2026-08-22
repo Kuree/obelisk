@@ -4789,11 +4789,20 @@ void ObeliskSimPreparePass::runOnOperation() {
       return true;
     }
 
+    // IEEE 1800-2017 18.9: the receiver names a constraint block, which a
+    // method of the owning class may name on its own. The frontend spells the
+    // qualified form as a member access and the implicit-`this` form as a
+    // direct reference to the block symbol; both identify the same block.
     auto member =
         dyn_cast<semantic::SVMemberAccessExpressionOp>(callChildren.front());
+    auto implicitReceiver =
+        dyn_cast<semantic::SVArbitrarySymbolExpressionOp>(callChildren.front());
     auto reference =
         member ? member->getAttrOfType<SymbolRefAttr>("referenced_symbol")
-               : SymbolRefAttr{};
+        : implicitReceiver
+            ? implicitReceiver->getAttrOfType<SymbolRefAttr>(
+                  "referenced_symbol")
+            : SymbolRefAttr{};
     auto symbol = reference ? semanticSymbols.find(reference.getLeafReference())
                             : semanticSymbols.end();
     auto constraint =

@@ -756,19 +756,31 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       return failure();
     }
     Operation *receiverNode = children.front();
+    // IEEE 1800-2017 18.9: a method of the owning class may name a constraint
+    // block on its own, which the frontend spells as a direct reference to the
+    // block symbol rather than as a member access. That form's object is the
+    // enclosing method's `this`.
+    bool implicitThisBlock = false;
     if (blockIndexAttr) {
       auto member =
           dyn_cast<semantic::SVMemberAccessExpressionOp>(children.front());
       SmallVector<Operation *> memberChildren =
           member ? getChildren(member) : SmallVector<Operation *>{};
-      if (!member || memberChildren.size() != 1) {
+      implicitThisBlock =
+          !member &&
+          isa<semantic::SVArbitrarySymbolExpressionOp>(children.front()) &&
+          thisObject;
+      if (!implicitThisBlock && (!member || memberChildren.size() != 1)) {
         emitError(location)
             << "constraint-block constraint_mode has no object receiver";
         return failure();
       }
-      receiverNode = memberChildren.front();
+      if (!implicitThisBlock)
+        receiverNode = memberChildren.front();
     }
-    FailureOr<Value> loweredReceiver = lowerExpression(receiverNode);
+    FailureOr<Value> loweredReceiver =
+        implicitThisBlock ? FailureOr<Value>(thisObject)
+                          : lowerExpression(receiverNode);
     auto objectType =
         succeeded(loweredReceiver)
             ? dyn_cast<sim::ClassHandleType>((*loweredReceiver).getType())
