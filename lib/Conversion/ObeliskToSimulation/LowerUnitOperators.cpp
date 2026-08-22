@@ -285,6 +285,16 @@ FailureOr<Value> UnitLowering::lowerUnary(semantic::SVUnaryExpressionOp op) {
   return convert(value, *resultType, false, location);
 }
 
+/// The element type of a dynamic-array or queue type, or a null type for any
+/// other type.
+static Type sequentialElementType(Type type) {
+  if (auto dynamicArray = dyn_cast<sim::DynamicArrayType>(type))
+    return dynamicArray.getElementType();
+  if (auto queue = dyn_cast<sim::QueueType>(type))
+    return queue.getElementType();
+  return {};
+}
+
 FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
   using Binary = semantic::SVBinaryOperator;
   Location location = getSemanticLocation(op);
@@ -506,7 +516,18 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
           (*lhs).getType()) ||
       isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
           (*rhs).getType())) {
-    if ((*lhs).getType() != (*rhs).getType() ||
+    // IEEE 1800-2017 11.4.5 compares operands bit for bit, and 6.22.2(c) makes
+    // packed arrays and built-in integral types equivalent when they hold the
+    // same number of bits in the same domain with the same signedness. `int`
+    // and `bit signed [31:0]` are equivalent by that rule, so two queues over
+    // them compare even though the normalized element types are spelled
+    // differently.
+    bool sameContainerKind =
+        (isa<sim::QueueType>((*lhs).getType()) &&
+         isa<sim::QueueType>((*rhs).getType())) ||
+        (isa<sim::DynamicArrayType>((*lhs).getType()) &&
+         isa<sim::DynamicArrayType>((*rhs).getType()));
+    if (((*lhs).getType() != (*rhs).getType() && !sameContainerKind) ||
         (kind != Binary::Equality && kind != Binary::Inequality &&
          kind != Binary::CaseEquality && kind != Binary::CaseInequality)) {
       unsupported(op) << " (sequential-container operator)";
@@ -1362,13 +1383,23 @@ FailureOr<Value> UnitLowering::conditionalEqual(Value lhs, Value rhs, Type type,
                              ValueRange{}, resultBlock, ValueRange{trueValue});
 
     setCurrent(bodyBlock);
-    Type elementType = isa<sim::DynamicArrayType>(type)
-                           ? cast<sim::DynamicArrayType>(type).getElementType()
-                           : cast<sim::QueueType>(type).getElementType();
+    Type elementType = sequentialElementType(type);
+    // Each side is read in its own element spelling; an equivalent element
+    // type spelled differently is normalized to the left one before the
+    // comparison.
+    Type rightElementType = sequentialElementType(rhs.getType());
     Value left = sim::SimContainerReadOp::create(builder, location, elementType,
                                                  lhs, index);
-    Value right = sim::SimContainerReadOp::create(builder, location,
-                                                  elementType, rhs, index);
+    Value right = sim::SimContainerReadOp::create(
+        builder, location, rightElementType ? rightElementType : elementType,
+        rhs, index);
+    if (right.getType() != elementType) {
+      FailureOr<Value> normalized =
+          convert(right, elementType, false, location);
+      if (failed(normalized))
+        return failure();
+      right = *normalized;
+    }
     FailureOr<Value> equal =
         conditionalEqual(left, right, elementType, location, caseEquality);
     if (failed(equal))
@@ -1618,13 +1649,23 @@ FailureOr<Value> UnitLowering::logicalEqual(Value lhs, Value rhs, Type type,
                              ValueRange{accumulated});
 
     setCurrent(bodyBlock);
-    Type elementType = isa<sim::DynamicArrayType>(type)
-                           ? cast<sim::DynamicArrayType>(type).getElementType()
-                           : cast<sim::QueueType>(type).getElementType();
+    Type elementType = sequentialElementType(type);
+    // Each side is read in its own element spelling; an equivalent element
+    // type spelled differently is normalized to the left one before the
+    // comparison.
+    Type rightElementType = sequentialElementType(rhs.getType());
     Value left = sim::SimContainerReadOp::create(builder, location, elementType,
                                                  lhs, index);
-    Value right = sim::SimContainerReadOp::create(builder, location,
-                                                  elementType, rhs, index);
+    Value right = sim::SimContainerReadOp::create(
+        builder, location, rightElementType ? rightElementType : elementType,
+        rhs, index);
+    if (right.getType() != elementType) {
+      FailureOr<Value> normalized =
+          convert(right, elementType, false, location);
+      if (failed(normalized))
+        return failure();
+      right = *normalized;
+    }
     FailureOr<Value> elementEqual =
         logicalEqual(left, right, elementType, location);
     if (failed(elementEqual))
