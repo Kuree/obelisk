@@ -308,6 +308,29 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
   if (failed(resultType))
     return failure();
 
+  // IEEE 1800-2017 6.23: a type reference shall only be compared with another
+  // type reference, and two of them are equal exactly when the types they
+  // refer to match (6.22.1). The reference carries no run-time value, so the
+  // comparison of the identities the importer assigned is the whole result.
+  if (llvm::any_of(children, [](Operation *child) {
+        return isa<semantic::SVTypeReferenceExpressionOp>(child);
+      })) {
+    bool equality = kind == Binary::Equality || kind == Binary::CaseEquality;
+    bool inequality =
+        kind == Binary::Inequality || kind == Binary::CaseInequality;
+    std::optional<int64_t> left = getTypeReferenceIdentity(children[0]);
+    std::optional<int64_t> right = getTypeReferenceIdentity(children[1]);
+    if ((!equality && !inequality) || !left || !right) {
+      unsupported(op) << " (type reference comparison)";
+      return failure();
+    }
+    bool matching = *left == *right;
+    Value result = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(),
+        builder.getBoolAttr(equality ? matching : !matching));
+    return convert(result, *resultType, false, location);
+  }
+
   // IEEE 1800-2017 11.4.7: `a <-> b` is `(a -> b) && (b -> a)`, and each of
   // its two operands is evaluated exactly once, so neither side is skipped.
   if (kind == Binary::LogicalEquivalence) {

@@ -151,6 +151,11 @@ inline constexpr ::mlir::StringLiteral staticNetConstantAttrName =
 /// Written by the Slang importer, so the spelling is fixed there as well.
 inline constexpr ::mlir::StringLiteral foldedConstantAttrName =
     "folded_constant";
+/// Identity a type reference shares with every reference to a matching type
+/// (IEEE 1800-2017 6.22.1). Written by the Slang importer, so the spelling is
+/// fixed there as well.
+inline constexpr ::mlir::StringLiteral typeReferenceIdentityAttrName =
+    "type_reference_identity";
 inline constexpr ::llvm::StringLiteral captureKindAttrName =
     sim::metadata::captureKind;
 inline constexpr ::llvm::StringLiteral descriptorIdAttrName =
@@ -428,6 +433,10 @@ bool isCompileTimeOnlyInstanceMember(::mlir::Operation *op);
 /// prepare pass after their defining symbol is no longer in scope.
 std::optional<::mlir::StringRef>
 getConstantSpelling(::mlir::Operation *operation);
+
+/// Matching-type identity of a type-reference node, or nothing when the node
+/// is not a type reference the importer numbered.
+std::optional<int64_t> getTypeReferenceIdentity(::mlir::Operation *operation);
 
 /// Fold a pure, already-lowered SSA chain without rewriting its surrounding
 /// CFG. This also follows constants frozen from elaborated parameters.

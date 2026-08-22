@@ -81,6 +81,11 @@ template <typename Value> std::string formatConstant(const Value &value) {
 /// it; what it buys is not having to fold that tree a second time. Read back
 /// under the same name by the simulation lowering.
 constexpr llvm::StringLiteral foldedConstantAttrName = "folded_constant";
+// Identity a type reference shares with every other reference to a matching
+// type (IEEE 1800-2017 6.22.1), so that the comparisons 6.23 allows can be
+// settled without re-implementing the matching rules downstream.
+constexpr llvm::StringLiteral typeReferenceIdentityAttrName =
+    "type_reference_identity";
 
 std::string formatConstant(const slang::ConstantValue &value) {
   if (value.isString())
@@ -896,6 +901,20 @@ public:
   }
 
 private:
+  /// The number this type shares with every type it matches under IEEE
+  /// 1800-2017 6.22.1. Matching is not an equivalence Slang exposes as a key,
+  /// so representatives are collected and each new type is matched against
+  /// them; a compilation names few distinct types this way.
+  int64_t matchingTypeIdentity(const slang::ast::Type &type) {
+    for (auto [index, representative] :
+         llvm::enumerate(matchingTypeRepresentatives))
+      if (type.isMatching(*representative))
+        return static_cast<int64_t>(index);
+    matchingTypeRepresentatives.push_back(&type);
+    return static_cast<int64_t>(matchingTypeRepresentatives.size()) - 1;
+  }
+
+
   /// slang represents code it deliberately never elaborates - the unselected
   /// arm of a generate condition, the body of an uninstantiated module, an
   /// unspecialized generic class - with Invalid* placeholders, and suppresses
@@ -1662,6 +1681,19 @@ private:
     // as the constants they are, instead of re-implementing constant evaluation
     // against the imported tree. Nodes that carry their own literal value are
     // left alone; the folded attribute is only for what is computed.
+    // IEEE 1800-2017 6.23: a type reference may be compared with another type
+    // reference, and 6.22.1 settles that comparison by whether the referenced
+    // types match. Number each distinct matching type so those comparisons can
+    // be resolved later by comparing numbers.
+    // A `type(type(...))` reference targets the type-reference type itself,
+    // which names no data type to match against, so it stays unnumbered and
+    // its comparisons are refused rather than silently resolved.
+    if constexpr (std::same_as<T, slang::ast::TypeReferenceExpression>)
+      if (node.targetType.kind != slang::ast::SymbolKind::TypeRefType)
+        attrs.set(
+            typeReferenceIdentityAttrName,
+            builder.getI64IntegerAttr(matchingTypeIdentity(node.targetType)));
+
     constexpr bool carriesOwnLiteralValue =
         std::same_as<T, slang::ast::IntegerLiteral> ||
         std::same_as<T, slang::ast::UnbasedUnsizedIntegerLiteral>;
@@ -3711,6 +3743,7 @@ private:
   SmallVector<const slang::ast::Symbol *, 0> semanticDependencies;
   SmallVector<PendingReferenceSeed, 2> currentPendingReferences;
   SmallVector<PendingReferenceArraySeed, 2> currentPendingReferenceArrays;
+  SmallVector<const slang::ast::Type *, 4> matchingTypeRepresentatives;
   int64_t nextNodeId = 0;
   uint64_t nextAnonymousSymbolId = 0;
   uint64_t nextShadowedSymbolId = 0;

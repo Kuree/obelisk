@@ -1123,6 +1123,34 @@ LogicalResult UnitLowering::lowerCase(semantic::SVCaseStatementOp op) {
       ArrayRef<Operation *>(children).slice(1, totalLabels);
   ArrayRef<Operation *> statements =
       ArrayRef<Operation *>(children).take_back(statementCount);
+  // IEEE 1800-2017 6.23: a type reference shall only be compared with another
+  // type reference, and such comparisons are constant expressions. A case over
+  // one is therefore settled here: 12.5 runs the first item a label of which
+  // names a matching type (6.22.1), and the default otherwise.
+  if (std::optional<int64_t> selectorIdentity =
+          getTypeReferenceIdentity(children.front())) {
+    Operation *chosen = hasDefault ? statements.back() : nullptr;
+    size_t nextLabel = 0;
+    bool matched = false;
+    for (size_t item = 0; item < itemCount; ++item) {
+      ArrayRef<Operation *> itemLabels =
+          labels.slice(nextLabel, static_cast<size_t>(labelCounts[item]));
+      nextLabel += static_cast<size_t>(labelCounts[item]);
+      for (Operation *label : itemLabels) {
+        std::optional<int64_t> labelIdentity = getTypeReferenceIdentity(label);
+        if (!labelIdentity) {
+          unsupported(op) << " (type reference case label)";
+          return failure();
+        }
+        if (matched || *labelIdentity != *selectorIdentity)
+          continue;
+        chosen = statements[item];
+        matched = true;
+      }
+    }
+    return chosen ? lowerStatement(chosen) : success();
+  }
+
   FailureOr<Value> selector =
       lowerContextDeterminedExpression(children.front());
   if (failed(selector))

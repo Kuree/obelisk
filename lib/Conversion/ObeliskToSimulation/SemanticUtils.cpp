@@ -119,6 +119,16 @@ std::optional<StringRef> getConstantSpelling(Operation *operation) {
   return std::nullopt;
 }
 
+std::optional<int64_t> getTypeReferenceIdentity(Operation *operation) {
+  if (!isa<semantic::SVTypeReferenceExpressionOp>(operation))
+    return std::nullopt;
+  auto identity =
+      operation->getAttrOfType<IntegerAttr>(typeReferenceIdentityAttrName);
+  if (!identity)
+    return std::nullopt;
+  return identity.getInt();
+}
+
 Attribute foldConstantValue(Value value) {
   llvm::DenseMap<Value, Attribute> constants;
   llvm::DenseSet<Value> active;
