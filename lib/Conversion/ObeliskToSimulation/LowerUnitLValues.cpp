@@ -57,6 +57,11 @@ bool isContainerElementSubvalue(Operation *expression) {
 /// way a container element's does.
 bool isClassPropertySubvalue(Operation *expression) {
   SmallVector<Operation *> children = getChildren(expression);
+  // 8.11 lets a method of the owning class name a property without `this`,
+  // which the frontend spells as a plain reference to the property rather
+  // than as a member access. The storage it names is the same.
+  if (isa<semantic::SVNamedValueExpressionOp>(expression))
+    return expression->hasAttr("obelisk_sim.class_field");
   if (isa<semantic::SVMemberAccessExpressionOp>(expression) &&
       children.size() == 1) {
     if (expression->hasAttr("obelisk_sim.class_field"))
