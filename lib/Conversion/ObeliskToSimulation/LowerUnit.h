@@ -138,9 +138,9 @@ private:
                                                      ::mlir::Value outputIndex,
                                                      bool fourState,
                                                      ::mlir::Location location);
-  ::mlir::FailureOr<::mlir::Value> reorderBitStream(::mlir::Value stream,
-                                                    uint64_t slice,
-                                                    ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value>
+  reorderBitStream(::mlir::Value stream, uint64_t slice,
+                   ::mlir::Location location, ::mlir::Value limit = {});
   ::mlir::FailureOr<::mlir::Value>
   sliceStreamingContainer(::mlir::Value container, ::mlir::Operation *withRange,
                           ::mlir::Location location);
@@ -171,6 +171,15 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   readBitStreamValue(::mlir::Value stream, ::mlir::Value start,
                      ::mlir::Type type, ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value>
+  readBitStreamTarget(::mlir::Value stream, ::mlir::Value &cursor,
+                      ::mlir::Type type, ::mlir::Location location);
+  /// Lay the left-justified bit stream `packed` into a value of `type`, which
+  /// may be a fixed unpacked aggregate. `highBit` is the position just above
+  /// the next leaf's bits and drops as the stream is consumed.
+  ::mlir::FailureOr<::mlir::Value>
+  unflattenBitStreamValue(::mlir::Value packed, uint64_t &highBit,
+                          ::mlir::Type type, ::mlir::Location location);
   ::mlir::LogicalResult lowerClockingOutputAssignment(
       semantic::SVMemberAccessExpressionOp clockingVariable,
       ::mlir::Operation *destination, ::mlir::Value value,

@@ -1099,7 +1099,8 @@ FailureOr<Value> UnitLowering::appendToBitStream(Value value, Value stream,
 }
 
 FailureOr<Value> UnitLowering::reorderBitStream(Value stream, uint64_t slice,
-                                                Location location) {
+                                                Location location,
+                                                Value limit) {
   if (slice == 0)
     return stream;
   auto streamType = dyn_cast<sim::QueueType>(stream.getType());
@@ -1116,8 +1117,12 @@ FailureOr<Value> UnitLowering::reorderBitStream(Value stream, uint64_t slice,
   };
   Value zero = i64Constant(0);
   Value one = i64Constant(1);
-  Value totalWidth = sim::SimContainerSizeOp::create(
-      builder, location, builder.getI64Type(), stream);
+  // `limit` names how many of the stream's leading bits the reordering covers;
+  // without one it covers the whole stream.
+  Value totalWidth = limit ? limit
+                           : Value(sim::SimContainerSizeOp::create(
+                                 builder, location, builder.getI64Type(),
+                                 stream));
   Value sliceValue = i64Constant(slice);
   Value fullBlocks =
       arith::DivUIOp::create(builder, location, totalWidth, sliceValue);
@@ -1783,11 +1788,25 @@ UnitLowering::lowerStreaming(semantic::SVStreamingConcatenationExpressionOp op,
     return reordered;
   Type targetScalar = sim::getPackedScalarType(assignmentType);
   std::optional<unsigned> targetWidth = sim::getPackedWidth(assignmentType);
-  if (!targetScalar || !targetWidth)
-    return emitError(location)
-               << "a fixed streaming source requires a fixed bit-stream "
-                  "assignment target",
-           failure();
+  // IEEE 1800-2017 11.4.14 counts a fixed unpacked array or structure of
+  // bit-stream types as a bit-stream type itself, so one may receive a stream.
+  // It has no packed scalar of its own, so the stream is widened against its
+  // bit-stream width and then laid into its leaves.
+  std::optional<uint64_t> aggregateWidth;
+  if (!targetScalar || !targetWidth) {
+    aggregateWidth = fixedBitStreamWidth(assignmentType);
+    if (!aggregateWidth ||
+        *aggregateWidth > std::numeric_limits<unsigned>::max())
+      return emitError(location)
+                 << "a fixed streaming source requires a fixed bit-stream "
+                    "assignment target",
+             failure();
+    targetWidth = static_cast<unsigned>(*aggregateWidth);
+    targetScalar =
+        isa<sim::LogicType>(reordered.getType())
+            ? Type(sim::LogicType::get(function.getContext(), *targetWidth))
+            : Type(IntegerType::get(function.getContext(), *targetWidth));
+  }
   if (*targetWidth < totalWidth)
     return emitError(location)
                << "streaming assignment target is narrower than its source",
@@ -1827,6 +1846,11 @@ UnitLowering::lowerStreaming(semantic::SVStreamingConcatenationExpressionOp op,
     if (failed(converted))
       return failure();
     reordered = *converted;
+  }
+  if (aggregateWidth) {
+    uint64_t highBit = *aggregateWidth;
+    return unflattenBitStreamValue(reordered, highBit, assignmentType,
+                                   location);
   }
   return convert(reordered, assignmentType, false, location);
 }

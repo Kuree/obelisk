@@ -586,6 +586,12 @@ bool isConstantTimeValue(::mlir::Value value);
 using DescriptorProvenance = ::obelisk::analysis::DescriptorProvenance;
 using DescriptorProvenanceMap = ::obelisk::analysis::DescriptorProvenanceMap;
 
+/// The bit-stream width of a fixed bit-stream type: a packed value's own
+/// width, or, for a fixed unpacked array or structure, the sum of its
+/// elements' widths as IEEE 1800-2017 11.4.14 concatenates them. Empty for
+/// anything whose width the compiler cannot know.
+::std::optional<uint64_t> fixedBitStreamWidth(::mlir::Type type);
+
 } // namespace obelisk::simlowering
 
 #endif // OBELISK_LIB_CONVERSION_OBELISKTOSIMULATION_DETAIL_H

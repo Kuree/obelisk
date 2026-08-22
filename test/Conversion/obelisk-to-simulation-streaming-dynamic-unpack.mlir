@@ -5,17 +5,20 @@
 // CHECK: %[[GENERIC:.*]] = obelisk_sim.container.create
 // CHECK: obelisk_sim.container.size %[[SOURCE]]
 // CHECK: obelisk_sim.container.read %[[SOURCE]]
-// CHECK: %[[REORDERED:.*]] = obelisk_sim.container.create
+// The source has to hold every fixed target's bits before the reordering runs,
+// because that is what the reordering spans (IEEE 1800-2017 11.4.14.3).
+// CHECK: obelisk_sim.container.size %[[GENERIC]]
+// CHECK: arith.cmpi uge
 // CHECK: obelisk_sim.bits.dyn_extract
 // CHECK: obelisk_sim.container.write %[[GENERIC]],
+// CHECK: %[[REORDERED:.*]] = obelisk_sim.container.create
+// CHECK: arith.divui
+// CHECK: arith.remui
 // CHECK: obelisk_sim.container.read %[[GENERIC]]
 // CHECK: obelisk_sim.container.write %[[REORDERED]],
-// CHECK: arith.cmpi uge
-// CHECK: arith.remui
-// CHECK: arith.cmpi eq
-// CHECK: arith.divui
-// CHECK: %[[DYNAMIC:.*]] = obelisk_sim.container.create
 // CHECK: obelisk_sim.container.read %[[REORDERED]]
+// CHECK: arith.cmpi eq
+// CHECK: %[[DYNAMIC:.*]] = obelisk_sim.container.create
 // CHECK: obelisk_sim.container.write %[[DYNAMIC]],
 // CHECK: obelisk_sim.ref.store
 // A one-bit dynamic destination stores the converted i1 directly. Equal-width

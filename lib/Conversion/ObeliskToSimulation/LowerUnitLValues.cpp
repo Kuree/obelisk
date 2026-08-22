@@ -2078,6 +2078,136 @@ FailureOr<Value> UnitLowering::readBitStreamValue(Value stream, Value start,
       .getResult();
 }
 
+// IEEE 1800-2017 11.4.14 makes the bit-stream of an unpacked array or
+// structure the concatenation of its elements' bit-streams in left-to-right
+// order, so a fixed aggregate of packed leaves has a width the compiler knows
+// and a target position for every leaf.
+std::optional<uint64_t> fixedBitStreamWidth(Type type) {
+  if (sim::getPackedScalarType(type))
+    if (std::optional<unsigned> packed = sim::getPackedWidth(type))
+      return *packed ? std::optional<uint64_t>{*packed} : std::nullopt;
+  if (!isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type))
+    return std::nullopt;
+  unsigned count = sim::getAggregateNumElements(type);
+  if (count == 0)
+    return std::nullopt;
+  uint64_t total = 0;
+  for (unsigned ordinal = 0; ordinal < count; ++ordinal) {
+    std::optional<uint64_t> element =
+        fixedBitStreamWidth(sim::getAggregateElementType(type, ordinal));
+    if (!element || *element > std::numeric_limits<uint64_t>::max() - total)
+      return std::nullopt;
+    total += *element;
+  }
+  return total;
+}
+
+// Take one fixed-size target's worth of bits off the stream, advancing the
+// cursor past what it consumed. An unpacked aggregate is filled element by
+// element in the same left-to-right order appendToBitStream flattens it,
+// which is what makes `{>>{a}} = {>>{a}}` the identity 11.4.14 describes.
+FailureOr<Value> UnitLowering::readBitStreamTarget(Value stream, Value &cursor,
+                                                   Type type,
+                                                   Location location) {
+  auto advance = [&](uint64_t width) {
+    Value amount =
+        arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                  builder.getI64IntegerAttr(width));
+    cursor = arith::AddIOp::create(builder, location, cursor, amount);
+  };
+  if (sim::getPackedScalarType(type)) {
+    std::optional<unsigned> width = sim::getPackedWidth(type);
+    if (!width || *width == 0)
+      return emitError(location)
+                 << "streaming assignment target is not a nonempty packed "
+                    "value",
+             failure();
+    FailureOr<Value> value = readBitStreamValue(stream, cursor, type, location);
+    if (failed(value))
+      return failure();
+    advance(*width);
+    return value;
+  }
+  if (!isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type))
+    return emitError(location)
+               << "streaming assignment targets must be packed values, fixed "
+                  "unpacked aggregates of them, or sequential containers of "
+                  "packed values",
+           failure();
+  SmallVector<Value> elements;
+  unsigned count = sim::getAggregateNumElements(type);
+  elements.reserve(count);
+  for (unsigned ordinal = 0; ordinal < count; ++ordinal) {
+    FailureOr<Value> element = readBitStreamTarget(
+        stream, cursor, sim::getAggregateElementType(type, ordinal), location);
+    if (failed(element))
+      return failure();
+    elements.push_back(*element);
+  }
+  return sim::SimAggregateConstructOp::create(builder, location, type, elements)
+      .getResult();
+}
+
+FailureOr<Value> UnitLowering::unflattenBitStreamValue(Value packed,
+                                                       uint64_t &highBit,
+                                                       Type type,
+                                                       Location location) {
+  if (Type scalarType = sim::getPackedScalarType(type)) {
+    std::optional<unsigned> width = sim::getPackedWidth(type);
+    if (!width || *width == 0 || *width > highBit)
+      return emitError(location)
+                 << "streaming assignment target has no bit-stream window",
+             failure();
+    highBit -= *width;
+    Value window;
+    if (isa<sim::LogicType>(packed.getType())) {
+      window = sim::SimLogicExtractOp::create(
+          builder, location, sim::LogicType::get(function.getContext(), *width),
+          packed, highBit);
+    } else {
+      auto full = cast<IntegerType>(packed.getType());
+      Value shifted = packed;
+      if (highBit) {
+        Value amount =
+            arith::ConstantOp::create(builder, location, full,
+                                      builder.getIntegerAttr(full, highBit));
+        shifted = arith::ShRUIOp::create(builder, location, packed, amount);
+      }
+      window = *width == full.getWidth()
+                   ? shifted
+                   : arith::TruncIOp::create(
+                         builder, location,
+                         IntegerType::get(function.getContext(), *width),
+                         shifted)
+                         .getResult();
+    }
+    FailureOr<Value> converted = convert(window, scalarType, false, location);
+    if (failed(converted))
+      return failure();
+    if (scalarType == type)
+      return *converted;
+    return sim::SimPackedUnflattenOp::create(builder, location, type,
+                                             *converted)
+        .getResult();
+  }
+  if (!isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type))
+    return emitError(location)
+               << "streaming assignment target is not a bit-stream type",
+           failure();
+  SmallVector<Value> elements;
+  unsigned count = sim::getAggregateNumElements(type);
+  elements.reserve(count);
+  for (unsigned ordinal = 0; ordinal < count; ++ordinal) {
+    FailureOr<Value> element = unflattenBitStreamValue(
+        packed, highBit, sim::getAggregateElementType(type, ordinal), location);
+    if (failed(element))
+      return failure();
+    elements.push_back(*element);
+  }
+  return sim::SimAggregateConstructOp::create(builder, location, type, elements)
+      .getResult();
+}
+
 FailureOr<Value> UnitLowering::lowerStreamingAssignment(
     semantic::SVStreamingConcatenationExpressionOp destination, Value source) {
   Location location = getSemanticLocation(destination);
@@ -2109,12 +2239,8 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
                                         builder.getI64IntegerAttr(1));
   if (failed(appendToBitStream(source, *generic, zero, fourState, location)))
     return failure();
-  FailureOr<Value> reordered =
-      reorderBitStream(*generic, destination.getSliceSize(), location);
-  if (failed(reordered))
-    return failure();
   Value sourceSize = sim::SimContainerSizeOp::create(
-      builder, location, builder.getI64Type(), *reordered);
+      builder, location, builder.getI64Type(), *generic);
 
   struct TargetInfo {
     Operation *node;
@@ -2136,13 +2262,19 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
     else if (auto queue = dyn_cast<sim::QueueType>(*type))
       elementType = queue.getElementType();
     bool dynamic = static_cast<bool>(elementType);
-    std::optional<unsigned> width =
-        sim::getPackedWidth(dynamic ? elementType : *type);
-    Type scalar = sim::getPackedScalarType(dynamic ? elementType : *type);
-    if (!width || *width == 0 || !scalar)
+    std::optional<uint64_t> width;
+    if (dynamic) {
+      std::optional<unsigned> packed = sim::getPackedWidth(elementType);
+      if (packed && *packed && sim::getPackedScalarType(elementType))
+        width = *packed;
+    } else {
+      width = fixedBitStreamWidth(*type);
+    }
+    if (!width)
       return emitError(getSemanticLocation(target))
-                 << "streaming assignment targets must be packed values or "
-                    "sequential containers of packed values",
+                 << "streaming assignment targets must be packed values, "
+                    "fixed unpacked aggregates of them, or sequential "
+                    "containers of packed values",
              failure();
     if (!dynamic) {
       if (fixedWidth > std::numeric_limits<uint64_t>::max() - *width)
@@ -2174,11 +2306,29 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
     setCurrent(accepted);
     return success();
   };
+  // 11.4.14.3 makes a source with fewer bits than the targets need an error,
+  // and this has to settle before the stream is reordered: the reordering
+  // below covers the bits the targets consume, which is only a position in the
+  // stream once there are that many.
   Value enough =
       arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
                             sourceSize, i64Constant(fixedWidth));
   if (failed(requireRuntime(enough,
                             "streaming assignment source has too few bits")))
+    return failure();
+  // IEEE 1800-2017 11.4.14.3: "If the source expression contains more bits
+  // than are needed, the appropriate number of bits shall be consumed from its
+  // left (most significant) end." The reordering then applies to those bits
+  // alone -- reordering the whole source first and taking its front instead
+  // would hand a left-to-right stream the source's rightmost bits. Targets
+  // that include a dynamic container consume the whole source (11.4.14.4's
+  // greedy resize), so there is nothing to leave behind there.
+  bool everyTargetFixed = llvm::none_of(
+      infos, [](const TargetInfo &info) { return info.dynamic; });
+  FailureOr<Value> reordered = reorderBitStream(
+      *generic, destination.getSliceSize(), location,
+      everyTargetFixed ? i64Constant(fixedWidth) : Value{});
+  if (failed(reordered))
     return failure();
 
   bool usedGreedy = false;
@@ -2186,13 +2336,11 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
   for (size_t targetIndex = 0; targetIndex < infos.size(); ++targetIndex) {
     TargetInfo &info = infos[targetIndex];
     if (!info.dynamic) {
-      FailureOr<Value> value = readBitStreamValue(
+      FailureOr<Value> value = readBitStreamTarget(
           *reordered, cursor, info.type, getSemanticLocation(info.node));
       if (failed(value) || failed(writeLValue(info.node, *value, false, false,
                                               getSemanticLocation(info.node))))
         return failure();
-      cursor = arith::AddIOp::create(builder, location, cursor,
-                                     i64Constant(info.width));
       continue;
     }
 
