@@ -5141,8 +5141,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                                  constantLike(current, bit));
               current = arith::AndIOp::create(builder, location, current,
                                               constantLike(current, 1));
-              bits = arith::XOrIOp::create(builder, location, bits,
-                                           definitionTruth(current));
+              // IEEE 1800-2017 11.4.9: each step applies the operator between
+              // the one-bit result of the prior step and the next bit of the
+              // operand. The accumulator is a value of this program, which
+              // holds every value in an i64 below 65 bits, so the folded bit
+              // joins it in that representation rather than as a bare i1.
+              bits = arith::XOrIOp::create(
+                  builder, location, bits,
+                  definitionBooleanBits(definitionTruth(current)));
             }
             if (encoded.opcode == OBELISK_RT_RANDOM_REDUCE_XNOR_V1)
               bits = arith::XOrIOp::create(
