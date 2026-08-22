@@ -236,6 +236,44 @@ UNTIMED_ALWAYS = Exclusion(
     "it will create a simulation deadlock condition\", and the test's design "
     "spells its combinational logic as exactly that; the test needs "
     "Verilator's inference of a sensitivity list for an untimed always")
+HIERARCHICAL_TYPEDEF = Exclusion(
+    "IEEE 1800-2017 6.18",
+    "\"hierarchical references to type_identifier shall not be allowed\", and "
+    "the clause's one exception -- an interface based typedef -- covers only a "
+    "type defined in the interface a *port* denotes; the test names a locally "
+    "instantiated interface, or descends past the port into one nested inside "
+    "it, both of which are the hierarchical reference the clause forbids")
+HIERARCHICAL_CONSTANT_OPERAND = Exclusion(
+    "IEEE 1800-2017 11.2.1",
+    "a constant expression's operands are \"constant numbers, strings, "
+    "parameters, constant bit-selects and part-selects of parameters, constant "
+    "function calls, and constant system function calls only\", and the test "
+    "sizes a declaration with $bits of a hierarchical reference to a variable, "
+    "which is none of those")
+AUTOMATIC_HIERARCHICAL_NAME = Exclusion(
+    "IEEE 1800-2017 23.6",
+    "\"objects declared in automatic tasks and functions are exceptions and "
+    "cannot be accessed by hierarchical name references\", and the test reads "
+    "an automatic variable of a named block through one")
+TYPE_REFERENCE_HIERARCHICAL_OPERAND = Exclusion(
+    "IEEE 1800-2017 A.2.2.1",
+    "footnote 17 says \"an expression that is used as the argument in a "
+    "type_reference shall not contain any hierarchical references\", and the "
+    "test writes `type (intf_pin.foo)`")
+IMPLICIT_ENUM_BASE_TYPE = Exclusion(
+    "IEEE 1800-2017 A.2.2.1",
+    "enum_base_type is an integer_atom_type, an integer_vector_type with an "
+    "optional packed dimension, or a type_identifier -- a dimension alone is "
+    "none of them, so `enum [2:0] {...}` has no base type to read; the test "
+    "needs Verilator's implicit logic before the dimension")
+EVENT_TRIGGER_IS_A_ONE_SHOT = Exclusion(
+    "IEEE 1800-2017 15.5.1",
+    "\"named events triggered via the -> operator unblock all processes "
+    "currently waiting on that event\" and \"behave like a one shot, i.e., "
+    "the trigger state itself is not observable\"; the test's initial block "
+    "reaches `@(e_all_xfers_completed[0])` at time 40, twenty time units after "
+    "that event was triggered, and needs Verilator's persistent trigger state "
+    "to come back from the wait")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dynarray": PATTERN_RADIX,
     "t_dynarray_method": PATTERN_RADIX,
@@ -273,6 +311,40 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_mem_multi_io": TWO_STATE_INITIALIZATION,
     "t_math_pow3": CONTEXT_DETERMINED_POWER_BASE,
     "t_typename_min": LOCATOR_RETURN_ELEMENT_TYPE,
+    "t_iface_chained_consumer_struct": HIERARCHICAL_TYPEDEF,
+    "t_iface_nested_width2": HIERARCHICAL_TYPEDEF,
+    "t_iface_nested_width3": HIERARCHICAL_TYPEDEF,
+    "t_iface_param_type_derived_range": HIERARCHICAL_TYPEDEF,
+    "t_interface_nested_struct_param": HIERARCHICAL_TYPEDEF,
+    "t_lparam_dep_iface2": HIERARCHICAL_TYPEDEF,
+    "t_lparam_dep_iface3": HIERARCHICAL_TYPEDEF,
+    "t_lparam_dep_iface4": HIERARCHICAL_TYPEDEF,
+    "t_lparam_dep_iface5": HIERARCHICAL_TYPEDEF,
+    "t_lparam_dep_iface6": HIERARCHICAL_TYPEDEF,
+    "t_lparam_dep_iface7": HIERARCHICAL_TYPEDEF,
+    "t_lparam_dep_iface8": HIERARCHICAL_TYPEDEF,
+    "t_lparam_dep_iface9": HIERARCHICAL_TYPEDEF,
+    "t_lparam_dep_iface10": HIERARCHICAL_TYPEDEF,
+    "t_lparam_dep_iface11": HIERARCHICAL_TYPEDEF,
+    "t_lparam_dep_iface12": HIERARCHICAL_TYPEDEF,
+    "t_lparam_dep_iface14": HIERARCHICAL_TYPEDEF,
+    "t_lparam_dep_iface15": HIERARCHICAL_TYPEDEF,
+    "t_lparam_dep_iface16": HIERARCHICAL_TYPEDEF,
+    "t_paramgraph_ascrange_prelim_cfg": HIERARCHICAL_TYPEDEF,
+    "t_paramgraph_comined_iface": HIERARCHICAL_TYPEDEF,
+    "t_paramgraph_iface_dependency2": HIERARCHICAL_TYPEDEF,
+    "t_paramgraph_iface_dependency3": HIERARCHICAL_TYPEDEF,
+    "t_paramgraph_minimal_sibling": HIERARCHICAL_TYPEDEF,
+    "t_paramgraph_nested_iface_typedef": HIERARCHICAL_TYPEDEF,
+    "t_event_control_prev_name_collision": HIERARCHICAL_CONSTANT_OPERAND,
+    "t_interface_hierparam_bits": HIERARCHICAL_CONSTANT_OPERAND,
+    "t_var_init_static_automatic": AUTOMATIC_HIERARCHICAL_NAME,
+    "t_param_type6": TYPE_REFERENCE_HIERARCHICAL_OPERAND,
+    "t_cast": IMPLICIT_ENUM_BASE_TYPE,
+    "t_enum": IMPLICIT_ENUM_BASE_TYPE,
+    "t_enum_const_methods": IMPLICIT_ENUM_BASE_TYPE,
+    "t_enum_type_methods": IMPLICIT_ENUM_BASE_TYPE,
+    "t_event_array_fire": EVENT_TRIGGER_IS_A_ONE_SHOT,
 }
 
 
