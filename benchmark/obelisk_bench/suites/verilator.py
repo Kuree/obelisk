@@ -309,6 +309,18 @@ UNRECOGNIZED_KEYWORD_VERSION = Exclusion(
     "be an error if an implementation does not recognize the "
     "version_specifier used\"; the test opens with Verilog-AMS's "
     "\"1800+VAMS\"")
+TOOL_SPECIFIC_SYSTEM_TASK = Exclusion(
+    "IEEE 1800-2017 5.6.3",
+    "\"software implementations can also specify additional system tasks and "
+    "system functions, which may be tool-specific\" and \"additional system "
+    "tasks and system functions are not part of this standard\"; the test is "
+    "written around Verilator's inline-C escape ($c, $c1, $c32, $cpure), which "
+    "it uses to hide a value from constant folding")
+NON_STANDARD_REWIND_SPELLING = Exclusion(
+    "IEEE 1800-2017 21.3.4.4",
+    "the standard spells the seek-to-start file function $rewind, which "
+    "Obelisk provides; the test calls it $frewind, a tool-specific name 5.6.3 "
+    "puts outside the standard")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dynarray": PATTERN_RADIX,
     "t_dynarray_method": PATTERN_RADIX,
@@ -395,6 +407,22 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_split_var_3_wreal": UNRECOGNIZED_KEYWORD_VERSION,
     "t_vams_basic": UNRECOGNIZED_KEYWORD_VERSION,
     "t_vams_wreal": UNRECOGNIZED_KEYWORD_VERSION,
+    "t_c_this": TOOL_SPECIFIC_SYSTEM_TASK,
+    "t_cpure": TOOL_SPECIFIC_SYSTEM_TASK,
+    "t_disable_inside": TOOL_SPECIFIC_SYSTEM_TASK,
+    "t_event_control_expr": TOOL_SPECIFIC_SYSTEM_TASK,
+    "t_fork_finish": TOOL_SPECIFIC_SYSTEM_TASK,
+    "t_func_call_super_arg": TOOL_SPECIFIC_SYSTEM_TASK,
+    "t_func_purification": TOOL_SPECIFIC_SYSTEM_TASK,
+    "t_interface_virtual_timing": TOOL_SPECIFIC_SYSTEM_TASK,
+    "t_param_array7": TOOL_SPECIFIC_SYSTEM_TASK,
+    "t_param_in_func": TOOL_SPECIFIC_SYSTEM_TASK,
+    "t_sc_vl_assign_sbw": TOOL_SPECIFIC_SYSTEM_TASK,
+    "t_struct_cons_cast": TOOL_SPECIFIC_SYSTEM_TASK,
+    "t_struct_unpacked_clean": TOOL_SPECIFIC_SYSTEM_TASK,
+    "t_timing_initial_always": TOOL_SPECIFIC_SYSTEM_TASK,
+    "t_unroll_complexcond": TOOL_SPECIFIC_SYSTEM_TASK,
+    "t_sys_file_basic": NON_STANDARD_REWIND_SPELLING,
 }
 
 
