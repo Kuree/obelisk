@@ -878,18 +878,34 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     FailureOr<Value> destination = lowerExpression(actual, true);
     if (failed(destination))
       return failure();
+    // IEEE 1800-2017 21.3.7: the description is written into `str`, which
+    // should be a packed array of at least 640 bits or a string type. A packed
+    // destination takes the same bytes the string type would, through the
+    // string-to-packed conversion of 5.9.
     auto reference = dyn_cast<sim::RefType>((*destination).getType());
-    if (!reference || !isa<sim::StringType>(reference.getElementType())) {
+    Type destinationType = reference ? reference.getElementType() : Type{};
+    bool stringDestination =
+        destinationType && isa<sim::StringType>(destinationType);
+    bool packedDestination = destinationType && !stringDestination &&
+                             sim::getPackedScalarType(destinationType);
+    if (!stringDestination && !packedDestination) {
       emitError(getSemanticLocation(actual))
-          << "$ferror destination must be a string variable";
+          << "$ferror destination must be a string or packed variable";
       return failure();
     }
     auto query = sim::SimFileErrorStringOp::create(
         builder, location,
         TypeRange{sim::StringType::get(function.getContext()), i32}, context,
         *descriptor);
-    sim::SimRefStoreOp::create(builder, location, query.getMessage(),
-                               *destination);
+    Value message = query.getMessage();
+    if (packedDestination) {
+      FailureOr<Value> converted =
+          convert(message, destinationType, false, location);
+      if (failed(converted))
+        return failure();
+      message = *converted;
+    }
+    sim::SimRefStoreOp::create(builder, location, message, *destination);
     return convertResult(query.getCode());
   }
 
