@@ -507,8 +507,15 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     if (failed(resultType) || failed(path))
       return failure();
     SavedIterator saved = saveIterator(*path);
+    // IEEE 1800-2017 7.12.3: the result has the array's element type, or the
+    // type of the with expression when one is given. Either can be a packed
+    // array rather than a scalar, so the reduction runs in that type's scalar
+    // spelling and hands the caller back a value of the declared type.
+    Type reduceType = *resultType;
+    if (Type scalar = sim::getPackedScalarType(*resultType))
+      reduceType = scalar;
     Value initial;
-    if (auto integer = dyn_cast<IntegerType>(*resultType)) {
+    if (auto integer = dyn_cast<IntegerType>(reduceType)) {
       APInt identity(integer.getWidth(),
                      method == ArrayMethod::Product ? 1 : 0);
       if (method == ArrayMethod::And)
@@ -516,7 +523,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
       initial =
           arith::ConstantOp::create(builder, location, integer,
                                     builder.getIntegerAttr(integer, identity));
-    } else if (auto logic = dyn_cast<sim::LogicType>(*resultType)) {
+    } else if (auto logic = dyn_cast<sim::LogicType>(reduceType)) {
       APInt identity(logic.getWidth(), method == ArrayMethod::Product ? 1 : 0);
       if (method == ArrayMethod::And)
         identity.setAllBits();
@@ -524,11 +531,11 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
       initial = sim::SimLogicConstantOp::create(
           builder, location, logic, builder.getIntegerAttr(plane, identity),
           builder.getIntegerAttr(plane, 0));
-    } else if (isa<FloatType>(*resultType) &&
+    } else if (isa<FloatType>(reduceType) &&
                (method == ArrayMethod::Sum || method == ArrayMethod::Product)) {
       initial = arith::ConstantOp::create(
-          builder, location, *resultType,
-          builder.getFloatAttr(*resultType,
+          builder, location, reduceType,
+          builder.getFloatAttr(reduceType,
                                method == ArrayMethod::Product ? 1.0 : 0.0));
     } else {
       emitError(location) << "array reduction " << methodName
@@ -536,7 +543,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
       return failure();
     }
     auto combine = [&](Value accumulator, Value term) -> Value {
-      if (isa<IntegerType>(*resultType)) {
+      if (isa<IntegerType>(reduceType)) {
         if (method == ArrayMethod::Sum)
           return arith::AddIOp::create(builder, location, accumulator, term);
         if (method == ArrayMethod::Product)
@@ -547,7 +554,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
           return arith::OrIOp::create(builder, location, accumulator, term);
         return arith::XOrIOp::create(builder, location, accumulator, term);
       }
-      if (isa<FloatType>(*resultType))
+      if (isa<FloatType>(reduceType))
         return method == ArrayMethod::Sum
                    ? Value(arith::AddFOp::create(builder, location, accumulator,
                                                  term))
@@ -559,7 +566,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
                              : method == ArrayMethod::And ? sim::BinaryKind::And
                              : method == ArrayMethod::Or  ? sim::BinaryKind::Or
                                                          : sim::BinaryKind::Xor;
-      return sim::SimLogicBinaryOp::create(builder, location, *resultType, kind,
+      return sim::SimLogicBinaryOp::create(builder, location, reduceType, kind,
                                            accumulator, term);
     };
 
@@ -577,22 +584,22 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         FailureOr<Value> term = evaluateClause(*path, element, index);
         FailureOr<Value> converted =
             succeeded(term)
-                ? convert(*term, *resultType, keyIsSigned(), location)
+                ? convert(*term, reduceType, keyIsSigned(), location)
                 : FailureOr<Value>(failure());
         if (failed(converted))
           return failure();
         accumulator = combine(accumulator, *converted);
       }
       restoreIterator(saved);
-      return accumulator;
+      return convert(accumulator, *resultType, false, location);
     }
     Value size = inputSize();
     Block *header = addBlock();
     header->addArgument(builder.getI64Type(), location);
-    header->addArgument(*resultType, location);
+    header->addArgument(reduceType, location);
     Block *body = addBlock();
     Block *exit = addBlock();
-    exit->addArgument(*resultType, location);
+    exit->addArgument(reduceType, location);
     cf::BranchOp::create(builder, location, header,
                          ValueRange{indexConstant(0), initial});
     setCurrent(header);
@@ -608,7 +615,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     if (failed(term))
       return failure();
     FailureOr<Value> converted =
-        convert(*term, *resultType, keyIsSigned(), location);
+        convert(*term, reduceType, keyIsSigned(), location);
     if (failed(converted))
       return failure();
     Value nextAccumulator = combine(accumulator, *converted);
@@ -618,7 +625,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
                          ValueRange{next, nextAccumulator});
     restoreIterator(saved);
     setCurrent(exit);
-    return exit->getArgument(0);
+    return convert(exit->getArgument(0), *resultType, false, location);
   }
 
   if (method == ArrayMethod::Reverse) {
