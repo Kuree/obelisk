@@ -4,6 +4,7 @@
 #include "obelisk/Runtime/StableHandle.h"
 
 #include "../lib/DesignBytecodeExecution.h"
+#include "../lib/DesignBytecodeImage.h"
 #include "../lib/DesignBytecodeNets.h"
 #include "../lib/RuntimeInternal.h"
 
@@ -78,6 +79,21 @@ bool emitInvalidNativeWait;
 bool emitInvalidNativeTerminate;
 bool emitExistingNativeWait;
 bool emitInvalidResumeRegion;
+
+std::vector<uint32_t> collapsedAliasObserverSamples;
+
+obelisk_rt_status collapsedAliasObserverEvaluator(
+    obelisk_rt_context *context, const uint64_t *, uint32_t captureCount,
+    uint64_t *value, uint64_t *unknown, uint32_t limbCount) {
+  if (!context || captureCount != 0 || !value || !unknown || limbCount != 1)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  collapsedAliasObserverSamples.push_back(
+      static_cast<uint32_t>(context->stateValue[0] & 3) |
+      (static_cast<uint32_t>(context->stateUnknown[0] & 3) << 2));
+  value[0] = context->stateValue[0] & 1;
+  unknown[0] = context->stateUnknown[0] & 1;
+  return OBELISK_RT_OK;
+}
 obelisk_rt_status frameDuringExecute;
 obelisk_rt_status destroyDuringExecute;
 obelisk_rt_context *observedContext;
@@ -4446,6 +4462,241 @@ TEST(Scheduler, NetDeclarationDelaysApplyAfterDriverResolution) {
   EXPECT_TRUE(context->scheduledNBAs.empty());
   EXPECT_TRUE(context->inertialDriverPending.empty());
   EXPECT_TRUE(context->inertialNetPending.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, DominatingNetDelayPublishesEveryCollapsedAlias) {
+  constexpr uint64_t constantsOffset = 0;
+  constexpr uint64_t descriptorsOffset = 48;
+  constexpr uint64_t connectivityOffset = descriptorsOffset + 3 * 32;
+  std::vector<uint8_t> bytes(connectivityOffset + 32, 0);
+  auto write32 = [&](uint64_t offset, uint32_t value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  };
+  auto write64 = [&](uint64_t offset, uint64_t value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  };
+  write64(constantsOffset, 7);
+  write64(constantsOffset + 8, 11);
+  write64(constantsOffset + 16, 13);
+  write64(constantsOffset + 24, 7);
+  write64(constantsOffset + 32, 11);
+  write64(constantsOffset + 40, 13);
+  auto writeDescriptor = [&](uint64_t index, uint32_t function,
+                             uint32_t argument, uint64_t valueOffset,
+                             uint64_t unknownOffset) {
+    uint64_t record = descriptorsOffset + index * 32;
+    write32(record, function);
+    write32(record + 4, argument);
+    write64(record + 8, valueOffset);
+    write64(record + 16, unknownOffset);
+    write64(record + 24, 1);
+  };
+  writeDescriptor(0, obelisk::designbytecode::kNetStateDescriptor, 9, 0, 0);
+  writeDescriptor(1, obelisk::designbytecode::kNetStateDescriptor, 9, 1, 24);
+  writeDescriptor(2, obelisk::designbytecode::kDriverStateDescriptor, 1, 8,
+                  0);
+  write64(connectivityOffset, 0);
+  write64(connectivityOffset + 8, 1);
+  write64(connectivityOffset + 16, 1);
+
+  obelisk::designbytecode::Image image{};
+  image.data = bytes.data();
+  image.size = bytes.size();
+  image.constants = constantsOffset;
+  image.constantSize = 48;
+  image.stateDescriptors = descriptorsOffset;
+  image.stateDescriptorCount = 3;
+  image.connectivity = connectivityOffset;
+  image.connectivityCount = 1;
+  image.stateBitCount = 9;
+  ASSERT_TRUE(obelisk::designbytecode::validateImage(image));
+
+  // The bytecode trust boundary rejects aliases that do not carry one
+  // normalized dominating delay.
+  write64(constantsOffset + 24, 17);
+  EXPECT_FALSE(obelisk::designbytecode::validateImage(image));
+  write64(constantsOffset + 24, 7);
+
+  // Bitwise delay metadata requires the delayed flag and uses only complete
+  // all-UINT64_MAX triples as the absent-bit sentinel.
+  write32(descriptorsOffset + 4, 17);
+  write64(descriptorsOffset + 16, UINT64_MAX);
+  EXPECT_FALSE(obelisk::designbytecode::validateImage(image));
+  write32(descriptorsOffset + 4, 25);
+  write64(descriptorsOffset + 16, 0);
+  write64(constantsOffset, UINT64_MAX);
+  EXPECT_FALSE(obelisk::designbytecode::validateImage(image));
+  write32(descriptorsOffset + 4, 9);
+  write64(constantsOffset, 7);
+
+  constexpr uint64_t observerID = 77;
+  obelisk_rt_observer_descriptor_v1 observer{
+      observerID, nullptr, 0, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
+      collapsedAliasObserverEvaluator, 0};
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 9;
+  execution.observers = &observer;
+  execution.observer_count = 1;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 2, 1, 1),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 3, 8, 1),
+            OBELISK_RT_OK);
+
+  struct AliasObserverWait {
+    obelisk_rt_computed_wait_record_v1 wait{};
+    obelisk_rt_computed_observer_v1 observer{};
+    obelisk_rt_computed_dependency_v1 dependency{};
+    obelisk_rt_computed_clause_v1 clause{};
+    uint64_t previousValue = 0;
+    uint64_t previousUnknown = 0;
+  } record;
+  record.wait = {OBELISK_RT_VERSION,
+                 OBELISK_RT_SUSPEND_OBSERVER,
+                 OBELISK_RT_COMPUTED_WAIT_INTERLEAVED,
+                 1,
+                 1,
+                 0,
+                 1,
+                 1,
+                 offsetof(AliasObserverWait, observer),
+                 offsetof(AliasObserverWait, dependency),
+                 offsetof(AliasObserverWait, dependency),
+                 offsetof(AliasObserverWait, clause),
+                 offsetof(AliasObserverWait, previousValue),
+                 0,
+                 sizeof(AliasObserverWait),
+                 0};
+  record.observer = {observerID,
+                     0,
+                     0,
+                     0,
+                     1,
+                     static_cast<uint32_t>(
+                         offsetof(AliasObserverWait, previousValue)),
+                     0};
+  uint64_t aliasHandle =
+      obelisk_rt_canonical_state_handle_unlocked(context, 0, 1);
+  ASSERT_NE(aliasHandle, UINT64_MAX);
+  record.dependency = {aliasHandle, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, 1};
+  record.clause = {0, OBELISK_RT_OBSERVER_CONDITION_NONE,
+                   OBELISK_RT_WAIT_EDGE_NEGEDGE, 0};
+  ASSERT_TRUE(obelisk_rt_validate_computed_wait_record(
+      &execution, &record.wait, sizeof(record)));
+  obelisk_rt_process_descriptor_v1 descriptor{};
+  descriptor.execution = &execution;
+  obelisk_rt_process_instance_v1 instance{};
+  instance.descriptor = &descriptor;
+  instance.frame = &record;
+  instance.frame_size = sizeof(record);
+  instance.context = context;
+  context->scheduledProcesses.emplace_back();
+  ScheduledProcess &scheduled = context->scheduledProcesses.back();
+  scheduled.instance = &instance;
+  scheduled.token = 1;
+  scheduled.waitSize = sizeof(record);
+  scheduled.suspendKind = OBELISK_RT_SUSPEND_OBSERVER;
+  scheduled.started = true;
+  context->scheduledProcessIndices.emplace(1, 0);
+  ASSERT_TRUE(obelisk_rt_register_computed_signal_wait_unlocked(
+      context, &record.wait, scheduled.token, false,
+      scheduled.signalSubscriptions, scheduled.signalLatch));
+
+  collapsedAliasObserverSamples.clear();
+  context->stateValue[0] = (uint64_t{1} << 8) | 3;
+  context->stateUnknown[0] = 3;
+  bool changed = false;
+  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(
+      image, context, 8, 9, changed));
+  EXPECT_FALSE(changed);
+  ASSERT_EQ(context->scheduledNBAs.size(), 2u);
+  EXPECT_EQ(context->scheduledNBAs[0].dueTime, 7u);
+  EXPECT_EQ(context->scheduledNBAs[1].dueTime, 7u);
+  context->designBytecodeImage = image;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->stateValue[0] & 3, 3u);
+  EXPECT_EQ(context->stateUnknown[0] & 3, 0u);
+  EXPECT_EQ(collapsedAliasObserverSamples, std::vector<uint32_t>({3}));
+  EXPECT_TRUE(context->inertialNetPending.empty());
+  obelisk_rt_unregister_signal_wait_unlocked(
+      context, scheduled.signalSubscriptions, scheduled.token, false);
+  scheduled.instance = nullptr;
+  context->scheduledProcessIndices.clear();
+  context->scheduledProcesses.clear();
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, BitwiseDominatingNetDelaysPreserveImmediateVectorBits) {
+  constexpr uint64_t descriptorsOffset = 48;
+  std::vector<uint8_t> bytes(descriptorsOffset + 2 * 32, 0);
+  auto write32 = [&](uint64_t offset, uint32_t value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  };
+  auto write64 = [&](uint64_t offset, uint64_t value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  };
+  write64(0, 7);
+  write64(8, 11);
+  write64(16, 13);
+  write64(24, UINT64_MAX);
+  write64(32, UINT64_MAX);
+  write64(40, UINT64_MAX);
+  auto writeDescriptor = [&](uint64_t index, uint32_t function,
+                             uint32_t argument, uint64_t valueOffset,
+                             uint64_t unknownOffset) {
+    uint64_t record = descriptorsOffset + index * 32;
+    write32(record, function);
+    write32(record + 4, argument);
+    write64(record + 8, valueOffset);
+    write64(record + 16, unknownOffset);
+    write64(record + 24, 2);
+  };
+  writeDescriptor(0, obelisk::designbytecode::kNetStateDescriptor,
+                  /*four-state | delayed | bitwise=*/25, 0, 0);
+  writeDescriptor(1, obelisk::designbytecode::kDriverStateDescriptor, 1, 8,
+                  0);
+
+  obelisk::designbytecode::Image image{};
+  image.data = bytes.data();
+  image.size = bytes.size();
+  image.constants = 0;
+  image.constantSize = 48;
+  image.stateDescriptors = descriptorsOffset;
+  image.stateDescriptorCount = 2;
+  image.stateBitCount = 10;
+  ASSERT_TRUE(obelisk::designbytecode::validateImage(image));
+  image.constantSize = 47;
+  EXPECT_FALSE(obelisk::designbytecode::validateImage(image));
+  image.constantSize = 48;
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 10;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 2),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 2, 8, 2),
+            OBELISK_RT_OK);
+  context->stateValue[0] = (uint64_t{3} << 8) | 3;
+  context->stateUnknown[0] = 3;
+  bool changed = false;
+  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(
+      image, context, 8, 10, changed));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(context->stateValue[0] & 3, 3u);
+  EXPECT_EQ(context->stateUnknown[0] & 3, 1u);
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 7u);
+  context->designBytecodeImage = image;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->stateUnknown[0] & 3, 0u);
   obelisk_rt_v1_context_destroy(context);
 }
 

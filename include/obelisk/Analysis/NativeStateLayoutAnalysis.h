@@ -35,7 +35,7 @@ struct NativeStateLayoutAnalysis {
     unsigned width;
     bool fourState;
     sim::NetResolutionKind resolution;
-    std::optional<std::array<uint64_t, 3>> propagationDelays;
+    mlir::SmallVector<std::optional<std::array<uint64_t, 3>>> propagationDelays;
   };
   struct Driver {
     uint64_t id;

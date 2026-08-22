@@ -38,10 +38,9 @@ public:
 
     llvm::errs() << "native-state bits=" << layout->bitCount << "\n";
     for (const auto &bound : layout->bounds) {
-      llvm::errs() << "  bound " << bound.handleID << " offset="
-                   << bound.offset << " width=" << bound.width
-                   << " four-state="
-                   << (bound.fourState ? "true" : "false");
+      llvm::errs() << "  bound " << bound.handleID << " offset=" << bound.offset
+                   << " width=" << bound.width
+                   << " four-state=" << (bound.fourState ? "true" : "false");
       if (!bound.managedRootOffsets.empty()) {
         llvm::errs() << " roots=";
         llvm::interleaveComma(bound.managedRootOffsets, llvm::errs());
@@ -57,11 +56,27 @@ public:
       }
       llvm::errs() << "\n";
     }
-    for (const auto &net : layout->netLayouts)
+    for (const auto &net : layout->netLayouts) {
       llvm::errs() << "  net " << net.id << " handle=" << net.handleID
                    << " offset=" << net.offset << " width=" << net.width
-                   << " four-state=" << (net.fourState ? "true" : "false")
-                   << "\n";
+                   << " four-state=" << (net.fourState ? "true" : "false");
+      if (llvm::any_of(net.propagationDelays,
+                       [](const auto &delay) { return delay.has_value(); })) {
+        llvm::errs() << " delays=";
+        llvm::interleave(
+            net.propagationDelays, llvm::errs(),
+            [&](const auto &delay) {
+              if (!delay) {
+                llvm::errs() << "-";
+                return;
+              }
+              llvm::errs() << (*delay)[0] << "," << (*delay)[1] << ","
+                           << (*delay)[2];
+            },
+            ";");
+      }
+      llvm::errs() << "\n";
+    }
     for (const auto &driver : layout->driverLayouts)
       llvm::errs() << "  driver " << driver.id << " net=" << driver.netId
                    << " handle=" << driver.handleID

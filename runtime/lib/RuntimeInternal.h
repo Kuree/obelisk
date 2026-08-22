@@ -500,6 +500,7 @@ struct ScheduledNBA {
   std::vector<uint8_t> unknown;
   InertialDriverSite inertialSite{UINT64_MAX, 0};
   uint64_t inertialNetBit = UINT64_MAX;
+  uint64_t inertialNetGroup = UINT64_MAX;
   bool cancelled = false;
 };
 
@@ -736,7 +737,7 @@ struct NetAliasRange {
   uint64_t targetOffset = 0;
   uint64_t width = 0;
   bool fourState = false;
-  std::optional<std::array<uint64_t, 3>> propagationDelays;
+  std::vector<std::optional<std::array<uint64_t, 3>>> propagationDelays;
 };
 
 struct NetDriverBit {

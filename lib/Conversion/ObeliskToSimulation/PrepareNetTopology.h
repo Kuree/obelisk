@@ -36,7 +36,7 @@ mlir::FailureOr<ContinuousDriverMap> materializeNetTopology(
     mlir::SmallVectorImpl<mlir::Operation *> &sourceUnits,
     mlir::ArrayRef<ir::SVPortConnectionOp> portConnections,
     const llvm::StringMap<mlir::Operation *> &semanticSymbols,
-    const llvm::StringMap<DescriptorInfo> &descriptors,
+    llvm::StringMap<DescriptorInfo> &descriptors,
     const PreparedScopeDeclarations &scopes, mlir::OpBuilder &builder);
 
 } // namespace obelisk::simlowering

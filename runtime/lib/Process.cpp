@@ -2575,6 +2575,41 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             resolveClockingDriveConflictsUnlocked(context, barrierRegion);
         if (clockingStatus != OBELISK_RT_OK)
           return clockingStatus;
+        std::vector<obelisk::designbytecode::NetPublication>
+            delayedNetPublications;
+        uint64_t delayedNetGroup = UINT64_MAX;
+        uint64_t delayedNetDueTime = UINT64_MAX;
+        auto flushDelayedNetPublications = [&] {
+          if (delayedNetPublications.empty()) {
+            delayedNetGroup = UINT64_MAX;
+            delayedNetDueTime = UINT64_MAX;
+            return true;
+          }
+          auto *cache = obelisk::designbytecode::getNetAliasCache(
+              context->designBytecodeImage, context);
+          if (!cache || !obelisk::designbytecode::publishNetBits(
+                            context, *cache, delayedNetPublications, changed)) {
+            if (context->schedulerStatus == OBELISK_RT_OK)
+              context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+            return false;
+          }
+          delayedNetPublications.clear();
+          delayedNetGroup = UINT64_MAX;
+          delayedNetDueTime = UINT64_MAX;
+          return true;
+        };
+        auto prepareDelayedNetBatch = [&](const ScheduledNBA &update) {
+          if (update.inertialNetBit == UINT64_MAX)
+            return flushDelayedNetPublications();
+          if (delayedNetGroup != UINT64_MAX &&
+              (delayedNetGroup != update.inertialNetGroup ||
+               delayedNetDueTime != update.dueTime) &&
+              !flushDelayedNetPublications())
+            return false;
+          delayedNetGroup = update.inertialNetGroup;
+          delayedNetDueTime = update.dueTime;
+          return true;
+        };
         auto applyNative = [&](const ScheduledNBA &update) {
           bool publicationChanged = false;
           uint32_t automaticID = 0;
@@ -2864,6 +2899,16 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             publicationChanged = changedBits != 0;
             if (!update.driver)
               changed |= publicationChanged;
+            if (update.inertialNetBit != UINT64_MAX)
+              for (uint64_t bit = 0; bit != update.bitWidth; ++bit) {
+                uint64_t mask = uint64_t{1} << bit;
+                if ((changedBits & mask) == 0)
+                  continue;
+                delayedNetPublications.push_back(
+                    {packedPlaneBit + bit, (oldValue & mask) != 0,
+                     (oldUnknown & mask) != 0, (newValue & mask) != 0,
+                     (newUnknown & mask) != 0});
+              }
           } else
             for (uint64_t bit = 0; bit < update.bitWidth; ++bit) {
               uint64_t sourceByte = bit / 8;
@@ -2969,9 +3014,18 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                   changed = true;
                 publicationChanged = true;
                 transitions.record(bit, edges);
+                if (update.inertialNetBit != UINT64_MAX)
+                  delayedNetPublications.push_back(
+                      {planeBit, oldValue, oldUnknown, newValue, newUnknown});
               }
             }
           if (publicationChanged && !update.driver) {
+            // One collapsed simulated net can occupy several logical state
+            // ranges. Commit all of its same-time inertial publications before
+            // evaluating any observer so no callback can see a half-updated
+            // alias set.
+            if (update.inertialNetBit != UINT64_MAX)
+              return;
             uint64_t sequence = 0;
             if (!obelisk_rt_publish_signal_transition_batch_unlocked(
                     context, update.bitOffset, update.bitWidth,
@@ -3199,8 +3253,13 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             context->scheduledDesignNBAs.empty() &&
             context->scheduledDesignEvents.empty()) {
           size_t retained = 0;
-          for (size_t index = 0; index != context->scheduledNBAs.size();
-               ++index) {
+          for (size_t index = 0;; ++index) {
+            if (index == context->scheduledNBAs.size()) {
+              if (!flushDelayedNetPublications())
+                return context->schedulerStatus;
+              if (index == context->scheduledNBAs.size())
+                break;
+            }
             ScheduledNBA &update = context->scheduledNBAs[index];
             bool due = update.cancelled ||
                        (update.dueTime <= context->schedulerTime &&
@@ -3213,9 +3272,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             }
             uint32_t retainedAutomaticID = update.retainedAutomaticID;
             if (!update.cancelled) {
-              completeInertial(update);
+              if (!prepareDelayedNetBatch(update))
+                return context->schedulerStatus;
+              ScheduledNBA &current = context->scheduledNBAs[index];
+              completeInertial(current);
               context->schedulerApplyingNativeUpdate = true;
-              applyNative(update);
+              applyNative(current);
               context->schedulerApplyingNativeUpdate = false;
               if (context->schedulerStatus != OBELISK_RT_OK)
                 return context->schedulerStatus;
@@ -3291,8 +3353,21 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             uint64_t sequence =
                 std::min(std::min(nativeSequence, managedSequence),
                          std::min(eventSequence, designSequence));
-            if (sequence == UINT64_MAX)
+            if (sequence == UINT64_MAX) {
+              bool hadDelayedPublications = !delayedNetPublications.empty();
+              if (!flushDelayedNetPublications())
+                return context->schedulerStatus;
+              if (hadDelayedPublications)
+                continue;
               break;
+            }
+            if (sequence == nativeSequence) {
+              if (!prepareDelayedNetBatch(
+                      context->scheduledNBAs[nativeIndex]))
+                return context->schedulerStatus;
+            } else if (!flushDelayedNetPublications()) {
+              return context->schedulerStatus;
+            }
             if (sequence == nativeSequence) {
               uint32_t retainedAutomaticID =
                   context->scheduledNBAs[nativeIndex].retainedAutomaticID;

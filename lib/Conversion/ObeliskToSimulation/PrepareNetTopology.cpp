@@ -8,6 +8,7 @@
 #include "PrepareNetTopology.h"
 
 #include "Detail.h"
+#include "obelisk/Analysis/NetConnectivityAnalysis.h"
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/STLExtras.h"
@@ -93,7 +94,7 @@ FailureOr<ContinuousDriverMap>
 materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
                        ArrayRef<semantic::SVPortConnectionOp> portConnections,
                        const llvm::StringMap<Operation *> &semanticSymbols,
-                       const llvm::StringMap<DescriptorInfo> &descriptors,
+                       llvm::StringMap<DescriptorInfo> &descriptors,
                        const PreparedScopeDeclarations &scopes,
                        OpBuilder &builder) {
   struct NetRun {
@@ -310,6 +311,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     uint64_t scopeId;
     std::string provenance;
     Location location;
+    bool rhsDominates;
   };
   std::map<StaticEdgeKey, StaticEdgeMetadata> staticEdges;
   auto appendStaticConnections = [&](semantic::SVPortConnectionOp connection,
@@ -336,8 +338,11 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
                            right.descriptor.id, rightOffset + bit};
         StaticEdgeKey reverse{right.descriptor.id, rightOffset + bit,
                               left.descriptor.id, leftOffset + bit};
-        if (reverse < edge)
+        bool rhsDominates = true;
+        if (reverse < edge) {
           edge = reverse;
+          rhsDominates = false;
+        }
         if (std::get<0>(edge) == std::get<2>(edge) &&
             std::get<1>(edge) == std::get<3>(edge))
           continue;
@@ -345,8 +350,14 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
             scopes.lookup(connection),
             semantic::stringifySVPortConnectionKind(connection.getProvenance())
                 .str(),
-            getSemanticLocation(connection)};
+            getSemanticLocation(connection), rhsDominates};
         auto [found, inserted] = staticEdges.try_emplace(edge, metadata);
+        if (!inserted && found->second.rhsDominates != metadata.rhsDominates) {
+          emitError(getSemanticLocation(connection))
+              << "static net connection has conflicting dominating sides";
+          invalid = true;
+          return;
+        }
         if (!inserted &&
             std::tie(metadata.scopeId, metadata.provenance) <
                 std::tie(found->second.scopeId, found->second.provenance))
@@ -435,6 +446,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       auto [nextLhsNet, nextLhsOffset, nextRhsNet, nextRhsOffset] = next->first;
       if (next->second.scopeId != metadata.scopeId ||
           next->second.provenance != metadata.provenance ||
+          next->second.rhsDominates != metadata.rhsDominates ||
           nextLhsNet != lhsNet || nextRhsNet != rhsNet ||
           nextLhsOffset != lhsOffset + width)
         break;
@@ -453,9 +465,103 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     sim::SimNetConnectDeclOp::create(
         builder, metadata.location, nextConnectionId++, metadata.scopeId,
         lhsNet, lhsOffset, rhsNet, rhsOffset, width, direction < 0,
-        builder.getStringAttr(metadata.provenance));
+        builder.getStringAttr(metadata.provenance),
+        builder.getBoolAttr(metadata.rhsDominates));
     edge = next;
   }
+
+  // Preserve the external/internal direction long enough to apply the LRM
+  // 23.3.3.7 dominating net's delay to every declaration participating in
+  // the collapsed simulated net. Mixed vector components use one encoded
+  // triple per bit; an all--1 triple denotes a bit with no net delay.
+  auto design =
+      dyn_cast<sim::SimDesignOp>(builder.getInsertionBlock()->getParentOp());
+  if (!design)
+    return failure();
+  analysis::NetConnectivityAnalysis connectivity(design);
+  DenseMap<uint64_t, sim::SimNetDeclOp> netDeclarations;
+  for (sim::SimNetDeclOp net : design.getBody().getOps<sim::SimNetDeclOp>())
+    netDeclarations[net.getId()] = net;
+  using DelayTriple = std::array<int64_t, 3>;
+  auto declaredDelay = [&](analysis::NetBit bit) -> std::optional<DelayTriple> {
+    auto found = netDeclarations.find(bit.net);
+    if (found == netDeclarations.end())
+      return std::nullopt;
+    auto delays =
+        found->second->getAttrOfType<DenseI64ArrayAttr>("propagation_delays");
+    if (!delays)
+      return std::nullopt;
+    ArrayRef<int64_t> values = delays.asArrayRef();
+    size_t index = values.size() == 3 ? 0 : size_t{bit.offset} * 3;
+    if (index + 3 > values.size() || values[index] == -1)
+      return std::nullopt;
+    return DelayTriple{values[index], values[index + 1], values[index + 2]};
+  };
+  DenseMap<uint64_t, SmallVector<std::optional<DelayTriple>>> effectiveDelays;
+  for (auto entry : netDeclarations) {
+    uint64_t netId = entry.first;
+    sim::SimNetDeclOp declaration = entry.second;
+    std::optional<unsigned> width = sim::getPackedWidth(declaration.getType());
+    if (!width)
+      continue;
+    effectiveDelays[netId].resize(*width);
+    for (uint64_t bit = 0; bit != *width; ++bit) {
+      ArrayRef<analysis::NetBit> component =
+          connectivity.getComponent({netId, bit});
+      bool componentHasDelay =
+          llvm::any_of(component, [&](analysis::NetBit member) {
+            return declaredDelay(member).has_value();
+          });
+      analysis::NetDominance dominance =
+          connectivity.getDominance({netId, bit});
+      if (componentHasDelay &&
+          (dominance.kind == analysis::NetDominanceKind::Incomplete ||
+           dominance.kind == analysis::NetDominanceKind::Ambiguous)) {
+        declaration.emitError(
+            dominance.kind == analysis::NetDominanceKind::Incomplete
+                ? "delayed collapsed net is missing port-dominance direction"
+                : "delayed collapsed net has ambiguous port dominance");
+        return failure();
+      }
+      effectiveDelays[netId][bit] = declaredDelay(dominance.bit);
+    }
+  }
+  for (auto entry : netDeclarations) {
+    uint64_t netId = entry.first;
+    sim::SimNetDeclOp declaration = entry.second;
+    auto foundDelays = effectiveDelays.find(netId);
+    if (foundDelays == effectiveDelays.end())
+      continue;
+    ArrayRef<std::optional<DelayTriple>> delays = foundDelays->second;
+    bool anyDelay = llvm::any_of(
+        delays, [](const auto &delay) { return delay.has_value(); });
+    if (!anyDelay) {
+      declaration->removeAttr("propagation_delays");
+      continue;
+    }
+    bool uniform = llvm::all_of(
+        delays, [&](const auto &delay) { return delay == delays.front(); });
+    SmallVector<int64_t> encoded;
+    if (uniform) {
+      llvm::append_range(encoded, *delays.front());
+    } else {
+      for (const auto &delay : delays) {
+        if (delay)
+          llvm::append_range(encoded, *delay);
+        else
+          encoded.append(3, -1);
+      }
+    }
+    declaration->setAttr("propagation_delays",
+                         builder.getDenseI64ArrayAttr(encoded));
+  }
+  for (auto &[path, descriptor] : descriptors)
+    if (descriptor.kind == DescriptorInfo::Kind::Net) {
+      auto found = effectiveDelays.find(descriptor.id);
+      if (found != effectiveDelays.end())
+        descriptor.delayedNet = llvm::any_of(
+            found->second, [](const auto &delay) { return delay.has_value(); });
+    }
 
   ContinuousDriverMap continuousDrivers;
   uint64_t nextDriverId = 0;
@@ -647,8 +753,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       if (!destination->hasAttr(clockingVariableAttrName) || !direction ||
           direction.getValue() == semantic::SVArgumentDirection::In)
         return WalkResult::advance();
-      auto path = destination->getAttrOfType<StringAttr>(
-          clockingSourcePathAttrName);
+      auto path =
+          destination->getAttrOfType<StringAttr>(clockingSourcePathAttrName);
       auto clockingPath =
           destination->getAttrOfType<StringAttr>("referenced_path");
       auto node = destination->getAttrOfType<IntegerAttr>("node_id");
@@ -788,8 +894,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
           destination->getAttrOfType<StringAttr>("referenced_path");
       SmallVector<Operation *> receiver = getChildren(destination);
       size_t expectedReceiverChildren =
-          destination->hasAttr("virtual_interface_clock_event_has_iff") ? 3
-                                                                         : 1;
+          destination->hasAttr("virtual_interface_clock_event_has_iff") ? 3 : 1;
       FailureOr<Type> receiverType =
           receiver.size() == expectedReceiverChildren
               ? getNormalizedSemanticType(receiver.front())

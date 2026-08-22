@@ -86,12 +86,20 @@ NetAliasCache *getNetAliasCache(const Image &image,
     CaptureRecord record = captureAt(image, index);
     if (record.function == kNetStateDescriptor) {
       nets.push_back(record);
-      std::optional<std::array<uint64_t, 3>> propagationDelays;
+      std::vector<std::optional<std::array<uint64_t, 3>>> propagationDelays(
+          record.planeSize);
       if ((record.argument & (uint32_t{1} << 3)) != 0) {
         const uint8_t *encoded =
             image.data + image.constants + record.unknownOffset;
-        propagationDelays = std::array<uint64_t, 3>{
-            read64(encoded), read64(encoded + 8), read64(encoded + 16)};
+        bool bitwise = (record.argument & (uint32_t{1} << 4)) != 0;
+        for (uint64_t bit = 0; bit != record.planeSize; ++bit) {
+          const uint8_t *triple = encoded + (bitwise ? bit * 24 : 0);
+          uint64_t rise = read64(triple);
+          if (rise == UINT64_MAX)
+            continue;
+          propagationDelays[bit] = std::array<uint64_t, 3>{
+              rise, read64(triple + 8), read64(triple + 16)};
+        }
       }
       cache.nets.push_back({record.valueOffset, record.valueOffset,
                             record.planeSize, (record.argument & 1) != 0,
@@ -248,8 +256,8 @@ bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,
   return true;
 }
 
-bool scheduleNetBit(obelisk_rt_context *context, uint64_t destination,
-                    bool value, bool unknown,
+bool scheduleNetBit(obelisk_rt_context *context, uint64_t root,
+                    uint64_t destination, bool value, bool unknown,
                     const std::array<uint64_t, 3> &delays) {
   auto cancel = [&] {
     // Resolution can run while the scheduler is applying a propagation-
@@ -321,6 +329,7 @@ bool scheduleNetBit(obelisk_rt_context *context, uint64_t destination,
   update.inlineValue = value;
   update.inlineUnknown = unknown;
   update.inertialNetBit = destination;
+  update.inertialNetGroup = root;
   context->scheduledNBAs.push_back(std::move(update));
   context->inertialNetPending.emplace(destination,
                                       InertialNetPending{value, unknown});
@@ -405,9 +414,11 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
                                  bit(context->stateValue, destination),
                                  bit(context->stateUnknown, destination),
                                  publishValue, publishUnknown};
-      if (net->propagationDelays) {
-        if (!scheduleNetBit(context, destination, publishValue, publishUnknown,
-                            *net->propagationDelays))
+      const auto &delays =
+          net->propagationDelays[destination - net->valueOffset];
+      if (delays) {
+        if (!scheduleNetBit(context, root, destination, publishValue,
+                            publishUnknown, *delays))
           return false;
       } else {
         publications.push_back(publication);

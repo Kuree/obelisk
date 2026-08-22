@@ -27,6 +27,22 @@ struct NetBit {
   }
 };
 
+enum class NetDominanceKind {
+  /// The bit is not connected through a port and therefore dominates itself.
+  Isolated,
+  /// Every directed collapse edge leads to one dominating component member.
+  Unique,
+  /// At least one collapse edge predates or omits dominance direction.
+  Incomplete,
+  /// Directed edges have multiple sinks or contain a dominance cycle.
+  Ambiguous,
+};
+
+struct NetDominance {
+  NetDominanceKind kind = NetDominanceKind::Isolated;
+  NetBit bit;
+};
+
 /// Immutable topology derived only from `obelisk_sim.net.connect.decl`.
 /// Keeping this separate from SimulationAnalysis lets concurrent IPO retain
 /// its existing cache and invalidation contract.
@@ -41,6 +57,9 @@ public:
   /// themselves.
   NetBit getCanonical(NetBit bit) const;
 
+  /// LRM 23.3.3.7 dominating member for the simulated-net component.
+  NetDominance getDominance(NetBit bit) const;
+
   /// Fixed packed width of a logical net descriptor, when known.
   std::optional<uint64_t> getNetWidth(uint64_t net) const;
 
@@ -49,6 +68,7 @@ private:
   llvm::DenseMap<uint64_t, uint64_t> netWidths;
   mlir::SmallVector<uint64_t> parents;
   llvm::DenseMap<uint64_t, mlir::SmallVector<NetBit>> components;
+  llvm::DenseMap<uint64_t, NetDominance> dominance;
 };
 
 } // namespace obelisk::analysis

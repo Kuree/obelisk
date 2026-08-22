@@ -14,7 +14,7 @@ module attributes {
   }
 }
 
-// IEEE 1800-2017 23.3.3.7 selects the dominating port net's delay. The
-// canonical connection currently has no internal/external direction, so this
-// combination must not compile with per-declaration timing by accident.
-// CHECK: error: net declaration delays on collapsed port nets require dominating-net delay selection
+// IEEE 1800-2017 23.3.3.7 selects the dominating port net's delay. This
+// hand-written connection omits its internal/external direction, so it must
+// not compile with per-declaration timing by accident.
+// CHECK: error: delayed collapsed net is missing port-dominance direction

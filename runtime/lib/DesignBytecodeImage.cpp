@@ -1630,16 +1630,33 @@ bool validateImage(const Image &image) {
     if (net.function != kNetStateDescriptor)
       break;
     bool delayed = (net.argument & (uint32_t{1} << 3)) != 0;
-    if ((net.argument & ~uint32_t{15}) != 0 ||
+    bool bitwiseDelay = (net.argument & (uint32_t{1} << 4)) != 0;
+    uint64_t delayBytes = 24;
+    if (bitwiseDelay &&
+        (net.planeSize > UINT64_MAX / 24 ||
+         (delayBytes = net.planeSize * 24) == 0))
+      return reject(__LINE__, "invalid bitwise net-delay size");
+    if ((net.argument & ~uint32_t{31}) != 0 ||
         ((net.argument >> 1) & 3) > 2 ||
         net.planeSize == 0 || net.valueOffset < previousNetEnd ||
+        (bitwiseDelay && !delayed) ||
         delayed != (net.unknownOffset != UINT64_MAX) ||
         (delayed && ((net.unknownOffset & 7) != 0 ||
                      net.unknownOffset > image.constantSize ||
-                     24 > image.constantSize - net.unknownOffset)) ||
+                     delayBytes > image.constantSize - net.unknownOffset)) ||
         net.valueOffset > image.stateBitCount ||
         net.planeSize > image.stateBitCount - net.valueOffset)
       return reject(__LINE__, "invalid or misordered net state record");
+    if (delayed && bitwiseDelay)
+      for (uint64_t bit = 0; bit != net.planeSize; ++bit) {
+        const uint8_t *triple = image.data + image.constants +
+                                net.unknownOffset + bit * 24;
+        unsigned sentinels = (read64(triple) == UINT64_MAX) +
+                             (read64(triple + 8) == UINT64_MAX) +
+                             (read64(triple + 16) == UINT64_MAX);
+        if (sentinels != 0 && sentinels != 3)
+          return reject(__LINE__, "invalid absent bitwise net delay");
+      }
     netRecords.push_back(net);
     previousNetEnd = net.valueOffset + net.planeSize;
   }
@@ -1835,6 +1852,33 @@ bool validateImage(const Image &image) {
         actual.flags != expected.flags)
       return reject(__LINE__,
                     "connectivity table differs from its canonical encoding");
+  }
+  // Every logical alias of one simulated-net bit must mature together. The
+  // compiler normalizes each member to the dominating net's delay; enforce
+  // the same invariant at the bytecode trust boundary.
+  std::unordered_map<uint64_t,
+                     std::optional<std::array<uint64_t, 3>>>
+      componentDelays;
+  for (const CaptureRecord &net : netRecords) {
+    bool delayed = (net.argument & (uint32_t{1} << 3)) != 0;
+    bool bitwise = (net.argument & (uint32_t{1} << 4)) != 0;
+    for (uint64_t bit = 0; bit != net.planeSize; ++bit) {
+      std::optional<std::array<uint64_t, 3>> delay;
+      if (delayed) {
+        const uint8_t *triple =
+            image.data + image.constants + net.unknownOffset +
+            (bitwise ? bit * 24 : 0);
+        uint64_t rise = read64(triple);
+        if (!bitwise || rise != UINT64_MAX)
+          delay = std::array<uint64_t, 3>{rise, read64(triple + 8),
+                                          read64(triple + 16)};
+      }
+      uint64_t root = findConnectivity(net.valueOffset + bit);
+      auto [found, inserted] = componentDelays.try_emplace(root, delay);
+      if (!inserted && found->second != delay)
+        return reject(__LINE__,
+                      "collapsed net members have unequal propagation delays");
+    }
   }
   // A uwire component has at most one design-lifetime driver for every
   // connected scalar equivalence class, including aliases of its target.

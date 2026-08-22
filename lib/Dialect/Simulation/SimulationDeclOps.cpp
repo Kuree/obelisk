@@ -131,12 +131,20 @@ LogicalResult SimNetDeclOp::verify() {
   if (getType().isF64())
     return emitOpError("real-valued nets are not supported");
   if (auto delays = getPropagationDelays()) {
-    if (delays->size() != 3)
-      return emitOpError("propagation delays must contain rise, fall, and "
-                         "turn-off values");
-    if (llvm::any_of(*delays,
-                     [](int64_t delay) { return delay < 0; }))
-      return emitOpError("propagation delays must be nonnegative");
+    std::optional<unsigned> width = getPackedWidth(getType());
+    if (!width ||
+        (delays->size() != 3 && delays->size() != uint64_t{*width} * 3))
+      return emitOpError(
+          "propagation delays must contain one uniform triple or one triple "
+          "per net bit");
+    for (size_t index = 0; index != delays->size(); index += 3) {
+      bool absent = (*delays)[index] == -1 && (*delays)[index + 1] == -1 &&
+                    (*delays)[index + 2] == -1;
+      if (!absent && ((*delays)[index] < 0 || (*delays)[index + 1] < 0 ||
+                      (*delays)[index + 2] < 0))
+        return emitOpError(
+            "each propagation-delay triple must be nonnegative or all -1");
+    }
   }
   return verifyElementType([&] { return emitOpError(); }, getType());
 }
@@ -999,8 +1007,7 @@ LogicalResult SimManagedStoreOp::verify() {
 LogicalResult SimManagedBitsDynStoreOp::verify() {
   Type element = getReference().getType().getElementType();
   std::optional<unsigned> fieldWidth = getPackedWidth(element);
-  if (!fieldWidth ||
-      !isa<IntegerType>(getPackedScalarType(element)))
+  if (!fieldWidth || !isa<IntegerType>(getPackedScalarType(element)))
     return emitOpError("reference must select a two-state packed field");
   if (!getReplacement().getType().isSignless() ||
       getReplacement().getType().getWidth() > 64)

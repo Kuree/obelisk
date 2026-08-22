@@ -87,17 +87,23 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
       }
       layout.nets[declaration.getId()] = handle;
       layout.netOffsets[declaration.getId()] = offset;
-      std::optional<std::array<uint64_t, 3>> propagationDelays;
+      unsigned netWidth = *getSimulationStorageBitWidth(declaration.getType());
+      SmallVector<std::optional<std::array<uint64_t, 3>>> propagationDelays(
+          netWidth);
       if (auto delays = declaration.getPropagationDelays()) {
         ArrayRef<int64_t> values = *delays;
-        propagationDelays = std::array<uint64_t, 3>{
-            static_cast<uint64_t>(values[0]),
-            static_cast<uint64_t>(values[1]),
-            static_cast<uint64_t>(values[2])};
+        for (unsigned bit = 0; bit != netWidth; ++bit) {
+          size_t index = values.size() == 3 ? 0 : size_t{bit} * 3;
+          if (values[index] == -1)
+            continue;
+          propagationDelays[bit] =
+              std::array<uint64_t, 3>{static_cast<uint64_t>(values[index]),
+                                      static_cast<uint64_t>(values[index + 1]),
+                                      static_cast<uint64_t>(values[index + 2])};
+        }
       }
       layout.netLayouts.push_back(
-          {declaration.getId(), nextHandleID - 1, offset,
-           *getSimulationStorageBitWidth(declaration.getType()),
+          {declaration.getId(), nextHandleID - 1, offset, netWidth,
            containsFourStateLogic(declaration.getType()),
            declaration.getResolutionKind(), propagationDelays});
     } else if (auto declaration = dyn_cast<sim::SimDriverDeclOp>(operation)) {
@@ -223,6 +229,39 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
   }
   if (!designs.empty()) {
     NetConnectivityAnalysis connectivity(designs.front());
+    DenseMap<uint64_t, SmallVector<std::optional<std::array<uint64_t, 3>>>>
+        declaredDelays;
+    for (const Net &net : layout.netLayouts)
+      declaredDelays[net.id] = net.propagationDelays;
+    for (Net &net : layout.netLayouts) {
+      for (uint64_t bit = 0; bit != net.width; ++bit) {
+        ArrayRef<NetBit> component = connectivity.getComponent({net.id, bit});
+        bool componentHasDelay = llvm::any_of(component, [&](NetBit member) {
+          auto declaration = declaredDelays.find(member.net);
+          return declaration != declaredDelays.end() &&
+                 member.offset < declaration->second.size() &&
+                 declaration->second[member.offset].has_value();
+        });
+        NetDominance dominance = connectivity.getDominance({net.id, bit});
+        if (componentHasDelay &&
+            (dominance.kind == NetDominanceKind::Incomplete ||
+             dominance.kind == NetDominanceKind::Ambiguous)) {
+          module.emitError()
+              << (dominance.kind == NetDominanceKind::Incomplete
+                      ? "delayed collapsed net is missing port-dominance "
+                        "direction"
+                      : "delayed collapsed net has ambiguous port dominance");
+          return failure();
+        }
+        auto dominating = declaredDelays.find(dominance.bit.net);
+        net.propagationDelays[bit] =
+            dominating != declaredDelays.end() &&
+                    dominance.bit.offset < dominating->second.size()
+                ? dominating->second[dominance.bit.offset]
+                : std::nullopt;
+      }
+    }
+
     for (const Net &net : layout.netLayouts) {
       for (uint64_t bit = 0; bit != net.width; ++bit) {
         ArrayRef<NetBit> component = connectivity.getComponent({net.id, bit});
@@ -231,27 +270,6 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
         std::pair<uint64_t, uint64_t> key{net.id, bit};
         std::pair<uint64_t, uint64_t> canonical{component.front().net,
                                                 component.front().offset};
-        // Port collapsing selects the dominating net's delay (IEEE
-        // 1800-2017 23.3.3.7), but the canonical connectivity representation
-        // deliberately discards internal/external dominance. Reject this
-        // combination until that direction is represented rather than
-        // silently publishing members of one simulated net at different
-        // times.
-        if (key == canonical) {
-          bool componentHasDelay = llvm::any_of(component, [&](NetBit member) {
-            auto declaration = llvm::find_if(
-                layout.netLayouts,
-                [&](const Net &candidate) { return candidate.id == member.net; });
-            return declaration != layout.netLayouts.end() &&
-                   declaration->propagationDelays.has_value();
-          });
-          if (componentHasDelay) {
-            module.emitError()
-                << "net declaration delays on collapsed port nets require "
-                   "dominating-net delay selection";
-            return failure();
-          }
-        }
         layout.connectivityCanonical[key] = canonical;
         if (key == canonical)
           llvm::append_range(layout.connectivityComponents[canonical],

@@ -143,11 +143,13 @@ def SimNetConnectDeclOp : SimOp<"net.connect.decl", [
                        I64Attr:$lhs_net_id, I64Attr:$lhs_offset,
                        I64Attr:$rhs_net_id, I64Attr:$rhs_offset,
                        I64Attr:$width, BoolAttr:$rhs_reversed,
-                       OptionalAttr<StrAttr>:$provenance);
+                       OptionalAttr<StrAttr>:$provenance,
+                       OptionalAttr<BoolAttr>:$rhs_dominates);
   let assemblyFormat = [{$id `in` $scope_id $lhs_net_id `[` $lhs_offset `]`
     `to` $rhs_net_id `[` $rhs_offset `]` `width` $width
     `reversed` `=` $rhs_reversed
-    (`provenance` $provenance^)? attr-dict}];
+    (`provenance` $provenance^)?
+    (`rhs_dominates` `=` $rhs_dominates^)? attr-dict}];
   let hasVerifier = 1;
 }
 
