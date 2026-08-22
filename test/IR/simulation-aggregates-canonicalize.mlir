@@ -107,6 +107,36 @@ func.func @unknown_dynamic(%array: !array) -> i8 {
   return %value : i8
 }
 
+// IEEE 1800-2017 7.4.6 gives a constant index the same element a static ordinal
+// names, so a dynamic write through one folds to the static insertion.
+// CHECK-LABEL: func.func @constant_dynamic_insert
+// CHECK: %[[UPDATED:.*]] = obelisk_sim.aggregate.insert %arg1 into %arg0[1]
+// CHECK-NEXT: return %[[UPDATED]] : !obelisk_sim.unpacked_array<3 : 1 x i8>
+func.func @constant_dynamic_insert(%array: !array, %value: i8) -> !array {
+  %index = arith.constant 2 : i32
+  %updated = obelisk_sim.array.insert_dynamic %value into %array[%index] : (!array, i8, i32) -> !array
+  return %updated : !array
+}
+
+// IEEE 1800-2017 7.4.6: "Writing to an array with an invalid index shall
+// perform no operation", so an out-of-range index leaves the array as it was.
+// CHECK-LABEL: func.func @invalid_dynamic_insert
+// CHECK-NEXT: return %arg0 : !obelisk_sim.unpacked_array<3 : 1 x i8>
+func.func @invalid_dynamic_insert(%array: !array, %value: i8) -> !array {
+  %index = arith.constant 0 : i32
+  %updated = obelisk_sim.array.insert_dynamic %value into %array[%index] : (!array, i8, i32) -> !array
+  return %updated : !array
+}
+
+// The same clause makes an index with an unknown bit invalid.
+// CHECK-LABEL: func.func @unknown_dynamic_insert
+// CHECK-NEXT: return %arg0 : !obelisk_sim.unpacked_array<3 : 1 x i8>
+func.func @unknown_dynamic_insert(%array: !array, %value: i8) -> !array {
+  %index = obelisk_sim.logic.constant 0 : i32, -1 : i32 : !obelisk_sim.logic<32>
+  %updated = obelisk_sim.array.insert_dynamic %value into %array[%index] : (!array, i8, !obelisk_sim.logic<32>) -> !array
+  return %updated : !array
+}
+
 // Out-of-range reads of aggregate elements recursively materialize defaults.
 // CHECK-LABEL: func.func @aggregate_element_oob
 // CHECK: %[[ZERO:.*]] = arith.constant 0 : i8

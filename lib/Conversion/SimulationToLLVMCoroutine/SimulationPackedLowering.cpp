@@ -704,7 +704,8 @@ LogicalResult lowerPackedSimulationOperations(
     target
         .addIllegalOp<sim::SimAggregateDefaultOp, sim::SimAggregateConstructOp,
                       sim::SimAggregateExtractOp, sim::SimAggregateInsertOp,
-                      sim::SimArrayDynExtractOp, sim::SimUnionConstructOp,
+                      sim::SimArrayDynExtractOp, sim::SimArrayDynInsertOp,
+                      sim::SimUnionConstructOp,
                       sim::SimUnionExtractOp, sim::SimUnionIsActiveOp>();
     target.addLegalDialect<runtime::ObeliskRuntimeDialect>();
     target.addLegalOp<sim::SimContextRuntimeOp, sim::SimStatusCheckOp>();

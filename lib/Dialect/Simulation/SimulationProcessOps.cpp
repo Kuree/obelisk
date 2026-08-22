@@ -1024,6 +1024,19 @@ LogicalResult SimArrayDynExtractOp::verify() {
   return success();
 }
 
+LogicalResult SimArrayDynInsertOp::verify() {
+  Type type = getInput().getType();
+  if (!isa<PackedArrayType, UnpackedArrayType>(type))
+    return emitOpError("input must be a fixed array");
+  if (getResult().getType() != type)
+    return emitOpError("input and result array types must match");
+  if (failed(verifyNormalizedIndex(*this, getIndex().getType())))
+    return failure();
+  if (getReplacement().getType() != getAggregateElementType(type, 0))
+    return emitOpError("replacement must match the array element type");
+  return success();
+}
+
 LogicalResult SimUnionConstructOp::verify() {
   return verifyAggregateIndex(*this, getResult().getType(), getIndexAttr(),
                               getValue().getType(), true);
@@ -1350,7 +1363,7 @@ bool SimRefLoadOp::canRewire(const DestructurableMemorySlot &slot,
     return false;
   if (isa<PackedArrayType, UnpackedArrayType>(slot.elemType) &&
       llvm::any_of(getResult().getUsers(), [](Operation *user) {
-        return isa<SimArrayDynExtractOp>(user);
+        return isa<SimArrayDynExtractOp, SimArrayDynInsertOp>(user);
       }))
     return false;
   for (Attribute index : getSortedSubslotIndices(slot))

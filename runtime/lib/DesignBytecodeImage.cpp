@@ -1458,7 +1458,7 @@ bool validateInitialization(const Image &image, const Function &function,
       break;
     case OBELISK_RT_DB_INSERT:
       valid = sources({instruction.source0, instruction.source1}) &&
-              (instruction.flags != OBELISK_RT_DB_INSERT_DYNAMIC ||
+              ((instruction.flags & OBELISK_RT_DB_INSERT_DYNAMIC) == 0 ||
                sources({instruction.source2}));
       break;
     case OBELISK_RT_DB_SELECT:
@@ -2167,24 +2167,35 @@ bool validateImage(const Image &image) {
                         functionIndex, pc, instruction.opcode);
         Layout destination = layoutAt(image, function, instruction.destination);
         Layout inserted = layoutAt(image, function, instruction.source1);
-        if (instruction.flags == OBELISK_RT_DB_INSERT_DYNAMIC) {
-          if (instruction.immediate != 0 || !numeric(instruction.source1) ||
-              !numeric(instruction.source2))
-            return reject(__LINE__, "invalid instruction encoding or operands",
-                          functionIndex, pc, instruction.opcode);
-        } else if (instruction.flags == OBELISK_RT_DB_AGGREGATE_MANAGED) {
+        bool dynamic = (instruction.flags & OBELISK_RT_DB_INSERT_DYNAMIC) != 0;
+        bool managedWord =
+            (instruction.flags & OBELISK_RT_DB_AGGREGATE_MANAGED) != 0;
+        if (instruction.flags & ~uint16_t(OBELISK_RT_DB_INSERT_DYNAMIC |
+                                          OBELISK_RT_DB_AGGREGATE_MANAGED))
+          return reject(__LINE__, "invalid instruction encoding or operands",
+                        functionIndex, pc, instruction.opcode);
+        if (dynamic &&
+            (instruction.immediate != 0 || !numeric(instruction.source2)))
+          return reject(__LINE__, "invalid instruction encoding or operands",
+                        functionIndex, pc, instruction.opcode);
+        if (managedWord) {
+          // A managed word carries a handle, not a numeric value. Its lane is
+          // 64 bits wide and 64-bit aligned; a dynamic offset is a multiple of
+          // the element span, which the compiler keeps aligned, so only the
+          // static form can check the position here.
           if ((inserted.kind != OBELISK_RT_DBREG_MANAGED &&
                inserted.kind != OBELISK_RT_DBREG_STRING) ||
-              inserted.width != 64 || (instruction.immediate & 63) != 0)
+              inserted.width != 64 ||
+              (!dynamic && (instruction.immediate & 63) != 0))
             return reject(__LINE__, "invalid instruction encoding or operands",
                           functionIndex, pc, instruction.opcode);
-        } else if (instruction.flags != 0 || !numeric(instruction.source1)) {
+        } else if (!numeric(instruction.source1)) {
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         }
-        if (instruction.flags != OBELISK_RT_DB_INSERT_DYNAMIC &&
-            (instruction.immediate > destination.width ||
-             inserted.width > destination.width - instruction.immediate))
+        if (!dynamic && (instruction.immediate > destination.width ||
+                         inserted.width >
+                             destination.width - instruction.immediate))
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;

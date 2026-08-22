@@ -61,6 +61,7 @@ private:
       ContainerElement,
       AssociativeElement,
       AggregateElement,
+      AggregateDynamicElement,
       AggregateSlice,
       StringCharacter,
       Concatenation,
@@ -428,6 +429,14 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   toContainerIndex(::mlir::Value value, bool sourceSigned,
                    ::mlir::Location location);
+  /// Widen a fixed-array index to the form the dynamic array operations take:
+  /// one bit wider than both the source index and the i64 the declared bounds
+  /// are compared in, so a source-range index can neither wrap nor lose its
+  /// sign. Four-state indices keep their unknown plane, which IEEE 1800-2017
+  /// 7.4.6 makes an invalid index.
+  ::mlir::FailureOr<::mlir::Value>
+  toArrayIndex(::mlir::Value value, bool sourceSigned,
+               ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   formatTaggedUnionPattern(::mlir::Value value, ::mlir::Type semanticType,
                            ::mlir::Location location);

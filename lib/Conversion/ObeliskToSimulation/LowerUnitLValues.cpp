@@ -262,6 +262,32 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
         captured.children.push_back(std::move(*base));
         return captured;
       }
+
+      // IEEE 1800-2017 7.4.6 makes one element of an unpacked array an
+      // assignment target whether or not the index is constant, and 8.3 makes
+      // a class property a variable of the object. Managed storage exposes no
+      // stable interior reference, so a variable index reads the whole array,
+      // replaces the addressed element, and stores the array back -- the same
+      // treatment the constant index above gets.
+      if (isa<sim::UnpackedArrayType>(*baseType) &&
+          !getConstantSpelling(selection[1]).has_value() &&
+          sim::getAggregateElementType(*baseType, 0) == *destinationType &&
+          (isContainerElementSubvalue(selection.front()) ||
+           isClassPropertySubvalue(selection.front()))) {
+        FailureOr<CapturedLValue> base =
+            captureLValue(selection.front(), location);
+        FailureOr<Value> index = lowerExpression(selection[1]);
+        if (failed(base) || failed(index))
+          return failure();
+        FailureOr<Value> normalized =
+            toArrayIndex(*index, isSignedNode(selection[1]), location);
+        if (failed(normalized))
+          return failure();
+        captured.kind = CapturedLValue::Kind::AggregateDynamicElement;
+        captured.index = *normalized;
+        captured.children.push_back(std::move(*base));
+        return captured;
+      }
     }
   }
 
@@ -509,6 +535,20 @@ UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
                                               destination.ordinal)
         .getResult();
   }
+  case CapturedLValue::Kind::AggregateDynamicElement: {
+    if (destination.children.size() != 1)
+      return failure();
+    FailureOr<Value> aggregate =
+        loadCapturedLValue(destination.children.front(), location);
+    if (failed(aggregate) ||
+        sim::getAggregateElementType((*aggregate).getType(), 0) !=
+            destination.type)
+      return failure();
+    return sim::SimArrayDynExtractOp::create(builder, location,
+                                             destination.type, *aggregate,
+                                             destination.index)
+        .getResult();
+  }
   case CapturedLValue::Kind::AggregateSlice: {
     SmallVector<Value> elements;
     elements.reserve(destination.children.size());
@@ -614,6 +654,7 @@ bool UnitLowering::haveSameCapturedStorage(const CapturedLValue &lhs,
     return lhs.ordinal == rhs.ordinal && lhs.children.size() == 1 &&
            rhs.children.size() == 1 &&
            haveSameCapturedStorage(lhs.children.front(), rhs.children.front());
+  case CapturedLValue::Kind::AggregateDynamicElement:
   case CapturedLValue::Kind::ContainerElement:
   case CapturedLValue::Kind::AssociativeElement: {
     if (lhs.children.size() != 1 || rhs.children.size() != 1 ||
@@ -1081,6 +1122,24 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     return writeCapturedLValue(base, updated, false, nonblocking, location,
                                delay);
   }
+  case CapturedLValue::Kind::AggregateDynamicElement: {
+    if (destination.children.size() != 1)
+      return failure();
+    CapturedLValue &base = destination.children.front();
+    FailureOr<Value> aggregate = loadCapturedLValue(base, location);
+    FailureOr<Value> replacement =
+        convert(value, destination.type, sourceSigned, location,
+                isSignedNode(destination.semanticNode));
+    if (failed(aggregate) || failed(replacement) ||
+        sim::getAggregateElementType((*aggregate).getType(), 0) !=
+            destination.type)
+      return failure();
+    Value updated = sim::SimArrayDynInsertOp::create(
+        builder, location, (*aggregate).getType(), *aggregate, *replacement,
+        destination.index);
+    return writeCapturedLValue(base, updated, false, nonblocking, location,
+                               delay);
+  }
   case CapturedLValue::Kind::AggregateSlice: {
     FailureOr<Value> converted =
         convert(value, destination.type, sourceSigned, location,
@@ -1190,7 +1249,8 @@ void UnitLowering::appendCapturedValues(const CapturedLValue &destination,
     values.push_back(destination.container);
     values.push_back(destination.index);
   } else if (destination.kind == CapturedLValue::Kind::StringCharacter ||
-             destination.kind == CapturedLValue::Kind::PackedDynamicSlice) {
+             destination.kind == CapturedLValue::Kind::PackedDynamicSlice ||
+             destination.kind == CapturedLValue::Kind::AggregateDynamicElement) {
     values.push_back(destination.index);
   } else if (destination.kind == CapturedLValue::Kind::PackedValueSlice &&
              destination.index) {
@@ -1218,7 +1278,8 @@ LogicalResult UnitLowering::replaceCapturedValues(CapturedLValue &destination,
     destination.container = values[next++];
     destination.index = values[next++];
   } else if (destination.kind == CapturedLValue::Kind::StringCharacter ||
-             destination.kind == CapturedLValue::Kind::PackedDynamicSlice) {
+             destination.kind == CapturedLValue::Kind::PackedDynamicSlice ||
+             destination.kind == CapturedLValue::Kind::AggregateDynamicElement) {
     if (next >= values.size())
       return failure();
     destination.index = values[next++];

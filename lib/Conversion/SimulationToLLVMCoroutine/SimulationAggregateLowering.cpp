@@ -232,6 +232,103 @@ public:
   }
 };
 
+// The bit position one element of a fixed array occupies in its flat storage
+// planes, together with whether the index named an element at all. IEEE
+// 1800-2017 7.4.6 makes an out-of-range or unknown index invalid: a read of one
+// yields the element default and a write through one does nothing, which both
+// dynamic patterns below spell as a select on `valid`.
+struct DynamicArrayAddress {
+  Value valid;
+  Value offset;
+  unsigned elementWidth;
+  uint64_t elementSpan;
+  Type elementType;
+};
+
+std::optional<DynamicArrayAddress>
+lowerDynamicArrayAddress(ConversionPatternRewriter &rewriter, Location location,
+                         Type array, ValueRange indexPlanes) {
+  if (indexPlanes.empty())
+    return std::nullopt;
+  int64_t left;
+  int64_t right;
+  bool packed;
+  Type element;
+  if (auto type = dyn_cast<sim::PackedArrayType>(array)) {
+    left = type.getLeft();
+    right = type.getRight();
+    packed = true;
+    element = type.getElementType();
+  } else if (auto type = dyn_cast<sim::UnpackedArrayType>(array)) {
+    left = type.getLeft();
+    right = type.getRight();
+    packed = false;
+    element = type.getElementType();
+  } else {
+    return std::nullopt;
+  }
+  std::optional<unsigned> resultWidth = nativeStateWidth(element);
+  std::optional<uint64_t> span = sim::getProvenanceSpan(element);
+  uint64_t count = sim::getAggregateNumElements(array);
+  if (!resultWidth || !span || count == 0)
+    return std::nullopt;
+
+  IntegerType i64 = rewriter.getI64Type();
+  SignedI64Index convertedIndex =
+      resizeSignedIndexToI64(rewriter, location, indexPlanes.front());
+  Value index = convertedIndex.value;
+  Value leftValue = arith::ConstantOp::create(rewriter, location, i64,
+                                              rewriter.getI64IntegerAttr(left));
+  Value rightValue = arith::ConstantOp::create(
+      rewriter, location, i64, rewriter.getI64IntegerAttr(right));
+  Value valid;
+  Value ordinal;
+  if (left >= right) {
+    valid = arith::AndIOp::create(
+        rewriter, location,
+        arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::sle,
+                              index, leftValue),
+        arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::sge,
+                              index, rightValue));
+    ordinal = arith::SubIOp::create(rewriter, location, leftValue, index);
+  } else {
+    valid = arith::AndIOp::create(
+        rewriter, location,
+        arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::sge,
+                              index, leftValue),
+        arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::sle,
+                              index, rightValue));
+    ordinal = arith::SubIOp::create(rewriter, location, index, leftValue);
+  }
+  // The declared bounds fit in i64, but truncating a wider source index can
+  // wrap an out-of-range value into that range.
+  valid = arith::AndIOp::create(rewriter, location, valid,
+                                convertedIndex.representable);
+  if (indexPlanes.size() == 2) {
+    Value known = arith::CmpIOp::create(
+        rewriter, location, arith::CmpIPredicate::eq, indexPlanes[1],
+        arith::ConstantOp::create(
+            rewriter, location, indexPlanes[1].getType(),
+            rewriter.getZeroAttr(indexPlanes[1].getType())));
+    valid = arith::AndIOp::create(rewriter, location, valid, known);
+  }
+  if (packed) {
+    Value last = arith::ConstantOp::create(
+        rewriter, location, i64,
+        rewriter.getI64IntegerAttr(static_cast<int64_t>(count - 1)));
+    ordinal = arith::SubIOp::create(rewriter, location, last, ordinal);
+  }
+  Value safeOrdinal = arith::SelectOp::create(
+      rewriter, location, valid, ordinal,
+      arith::ConstantOp::create(rewriter, location, i64,
+                                rewriter.getI64IntegerAttr(0)));
+  Value offset = arith::MulIOp::create(
+      rewriter, location, safeOrdinal,
+      arith::ConstantOp::create(rewriter, location, i64,
+                                rewriter.getI64IntegerAttr(*span)));
+  return DynamicArrayAddress{valid, offset, *resultWidth, *span, element};
+}
+
 class AggregateDynamicExtractConversion final
     : public OpConversionPattern<sim::SimArrayDynExtractOp> {
 public:
@@ -239,91 +336,21 @@ public:
   LogicalResult
   matchAndRewrite(sim::SimArrayDynExtractOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    if (adaptor.getInput().empty() || adaptor.getIndex().empty())
+    if (adaptor.getInput().empty())
       return failure();
-    Type array = op.getInput().getType();
-    int64_t left;
-    int64_t right;
-    bool packed;
-    Type element;
-    if (auto type = dyn_cast<sim::PackedArrayType>(array)) {
-      left = type.getLeft();
-      right = type.getRight();
-      packed = true;
-      element = type.getElementType();
-    } else if (auto type = dyn_cast<sim::UnpackedArrayType>(array)) {
-      left = type.getLeft();
-      right = type.getRight();
-      packed = false;
-      element = type.getElementType();
-    } else {
-      return failure();
-    }
-    std::optional<unsigned> resultWidth = nativeStateWidth(element);
-    std::optional<uint64_t> span = sim::getProvenanceSpan(element);
-    uint64_t count = sim::getAggregateNumElements(array);
-    if (!resultWidth || !span || count == 0)
-      return failure();
-
     Location location = op.getLoc();
-    IntegerType i64 = rewriter.getI64Type();
-    SignedI64Index convertedIndex =
-        resizeSignedIndexToI64(rewriter, location, adaptor.getIndex().front());
-    Value index = convertedIndex.value;
-    Value leftValue = arith::ConstantOp::create(
-        rewriter, location, i64, rewriter.getI64IntegerAttr(left));
-    Value rightValue = arith::ConstantOp::create(
-        rewriter, location, i64, rewriter.getI64IntegerAttr(right));
-    Value valid;
-    Value ordinal;
-    if (left >= right) {
-      valid = arith::AndIOp::create(
-          rewriter, location,
-          arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::sle,
-                                index, leftValue),
-          arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::sge,
-                                index, rightValue));
-      ordinal = arith::SubIOp::create(rewriter, location, leftValue, index);
-    } else {
-      valid = arith::AndIOp::create(
-          rewriter, location,
-          arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::sge,
-                                index, leftValue),
-          arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::sle,
-                                index, rightValue));
-      ordinal = arith::SubIOp::create(rewriter, location, index, leftValue);
-    }
-    // The declared bounds fit in i64, but truncating a wider source index can
-    // wrap an out-of-range value into that range.
-    valid = arith::AndIOp::create(rewriter, location, valid,
-                                  convertedIndex.representable);
-    if (adaptor.getIndex().size() == 2) {
-      Value known = arith::CmpIOp::create(
-          rewriter, location, arith::CmpIPredicate::eq, adaptor.getIndex()[1],
-          arith::ConstantOp::create(
-              rewriter, location, adaptor.getIndex()[1].getType(),
-              rewriter.getZeroAttr(adaptor.getIndex()[1].getType())));
-      valid = arith::AndIOp::create(rewriter, location, valid, known);
-    }
-    if (packed) {
-      Value last = arith::ConstantOp::create(
-          rewriter, location, i64,
-          rewriter.getI64IntegerAttr(static_cast<int64_t>(count - 1)));
-      ordinal = arith::SubIOp::create(rewriter, location, last, ordinal);
-    }
-    Value safeOrdinal = arith::SelectOp::create(
-        rewriter, location, valid, ordinal,
-        arith::ConstantOp::create(rewriter, location, i64,
-                                  rewriter.getI64IntegerAttr(0)));
-    Value offset = arith::MulIOp::create(
-        rewriter, location, safeOrdinal,
-        arith::ConstantOp::create(rewriter, location, i64,
-                                  rewriter.getI64IntegerAttr(*span)));
-    IntegerType outputType = rewriter.getIntegerType(*resultWidth);
+    std::optional<DynamicArrayAddress> address = lowerDynamicArrayAddress(
+        rewriter, location, op.getInput().getType(), adaptor.getIndex());
+    if (!address)
+      return failure();
+    Type element = address->elementType;
+    unsigned resultWidth = address->elementWidth;
+    IntegerType outputType = rewriter.getIntegerType(resultWidth);
     SmallVector<Value> results;
     for (auto [planeIndex, plane] : llvm::enumerate(adaptor.getInput())) {
       auto planeType = cast<IntegerType>(plane.getType());
-      Value amount = resizeNativeInteger(rewriter, location, offset, planeType);
+      Value amount =
+          resizeNativeInteger(rewriter, location, address->offset, planeType);
       Value shifted = arith::ShRUIOp::create(rewriter, location, plane, amount);
       Value extracted =
           planeType == outputType
@@ -331,13 +358,13 @@ public:
               : arith::TruncIOp::create(rewriter, location, outputType, shifted)
                     .getResult();
       APInt fallback = planeIndex == 1 && containsLogic(element)
-                           ? APInt::getAllOnes(*resultWidth)
-                           : APInt::getZero(*resultWidth);
+                           ? APInt::getAllOnes(resultWidth)
+                           : APInt::getZero(resultWidth);
       Value defaultValue = arith::ConstantOp::create(
           rewriter, location, outputType,
           rewriter.getIntegerAttr(outputType, fallback));
-      results.push_back(arith::SelectOp::create(rewriter, location, valid,
-                                                extracted, defaultValue));
+      results.push_back(arith::SelectOp::create(
+          rewriter, location, address->valid, extracted, defaultValue));
     }
     if (containsLogic(element)) {
       if (results.size() != 2)
@@ -347,6 +374,75 @@ public:
     }
     results.front() =
         fromStoragePlane(rewriter, location, element, results.front());
+    SmallVector<ValueRange> replacements{ValueRange(results)};
+    rewriter.replaceOpWithMultiple(op, replacements);
+    return success();
+  }
+};
+
+class AggregateDynamicInsertConversion final
+    : public OpConversionPattern<sim::SimArrayDynInsertOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimArrayDynInsertOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getInput().empty() ||
+        adaptor.getReplacement().size() != adaptor.getInput().size())
+      return failure();
+    Location location = op.getLoc();
+    std::optional<DynamicArrayAddress> address = lowerDynamicArrayAddress(
+        rewriter, location, op.getInput().getType(), adaptor.getIndex());
+    if (!address)
+      return failure();
+    std::optional<unsigned> arrayWidth =
+        nativeStateWidth(op.getResult().getType());
+    // The replacement occupies the low bits of the element's slot; writing more
+    // than the slot spans would reach into the neighboring element.
+    if (!arrayWidth || address->elementWidth > address->elementSpan ||
+        address->elementWidth > *arrayWidth)
+      return failure();
+    IntegerType planeType = rewriter.getIntegerType(*arrayWidth);
+    Value amount =
+        resizeNativeInteger(rewriter, location, address->offset, planeType);
+    Value elementMask = arith::ConstantOp::create(
+        rewriter, location, planeType,
+        rewriter.getIntegerAttr(
+            planeType,
+            APInt::getLowBitsSet(*arrayWidth, address->elementWidth)));
+    Value keepMask = arith::XOrIOp::create(
+        rewriter, location,
+        arith::ConstantOp::create(
+            rewriter, location, planeType,
+            rewriter.getIntegerAttr(planeType, APInt::getAllOnes(*arrayWidth))),
+        arith::ShLIOp::create(rewriter, location, elementMask, amount));
+    SmallVector<Value> results;
+    for (auto [plane, replacement] :
+         llvm::zip(adaptor.getInput(), adaptor.getReplacement())) {
+      if (cast<IntegerType>(plane.getType()) != planeType)
+        return failure();
+      Value source = toStoragePlane(rewriter, location, replacement);
+      auto sourceType = dyn_cast<IntegerType>(source.getType());
+      if (!sourceType || sourceType.getWidth() > *arrayWidth)
+        return failure();
+      Value extended =
+          sourceType == planeType
+              ? source
+              : arith::ExtUIOp::create(rewriter, location, planeType, source)
+                    .getResult();
+      Value placed = arith::ShLIOp::create(
+          rewriter, location,
+          arith::AndIOp::create(rewriter, location, extended, elementMask),
+          amount);
+      Value preserved =
+          arith::AndIOp::create(rewriter, location, plane, keepMask);
+      Value written =
+          arith::OrIOp::create(rewriter, location, preserved, placed);
+      // IEEE 1800-2017 7.4.6: a write through an invalid index performs no
+      // operation, so the plane keeps the value it already held.
+      results.push_back(arith::SelectOp::create(
+          rewriter, location, address->valid, written, plane));
+    }
     SmallVector<ValueRange> replacements{ValueRange(results)};
     rewriter.replaceOpWithMultiple(op, replacements);
     return success();
@@ -582,8 +678,9 @@ void populateAggregateToLLVMConversionPatterns(RewritePatternSet &patterns,
   patterns.add<
       PackedAggregateExtractConversion, PackedAggregateInsertConversion,
       PackedAggregateConstructConversion, AggregateDynamicExtractConversion,
-      AggregateDefaultConversion, UnionConstructConversion,
-      UnionExtractConversion, UnionIsActiveConversion>(converter, context);
+      AggregateDynamicInsertConversion, AggregateDefaultConversion,
+      UnionConstructConversion, UnionExtractConversion, UnionIsActiveConversion>(
+      converter, context);
 }
 
 } // namespace obelisk::detail

@@ -274,6 +274,28 @@ LogicalResult Encoder::encodeArrayExtract(FunctionPlan &plan,
   return success();
 }
 
+LogicalResult Encoder::encodeArrayInsert(FunctionPlan &plan,
+                                         sim::SimArrayDynInsertOp op) {
+  FailureOr<uint32_t> offset = encodeArrayOffset(
+      plan, op.getInput().getType(), op.getIndex(), op.getOperation());
+  if (failed(offset))
+    return failure();
+  uint32_t replacement = reg(plan, op.getReplacement());
+  uint8_t kind = plan.layouts[replacement].kind;
+  uint16_t flags = OBELISK_RT_DB_INSERT_DYNAMIC;
+  if (isManagedAggregateWord(kind))
+    flags |= OBELISK_RT_DB_AGGREGATE_MANAGED;
+  else if (kind != Bits && kind != Logic)
+    return op.emitOpError("array element has no bytecode word representation");
+  // encodeArrayOffset resolves an invalid index to the array's own width, and
+  // INSERT drops every bit that falls at or past that width. That is exactly
+  // what IEEE 1800-2017 7.4.6 asks of a write through an invalid index: no
+  // operation.
+  emit({Insert, flags, reg(plan, op.getResult()), reg(plan, op.getInput()),
+        replacement, *offset});
+  return success();
+}
+
 LogicalResult Encoder::encodeUnionConstruct(FunctionPlan &plan,
                                             sim::SimUnionConstructOp op) {
   Type unionType = op.getResult().getType();

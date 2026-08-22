@@ -121,6 +121,9 @@ planTwoStateRegisters(sim::SimDesignOp design) {
           constrain(op.getResult(), op.getFalseValue());
         } else if (auto op = dyn_cast<sim::SimAggregateInsertOp>(operation)) {
           constrain(op.getResult(), op.getInput());
+        } else if (auto op = dyn_cast<sim::SimArrayDynInsertOp>(operation)) {
+          constrain(op.getResult(), op.getInput());
+          force(op.getIndex());
         }
       }
     }

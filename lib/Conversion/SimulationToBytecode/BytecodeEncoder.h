@@ -147,6 +147,8 @@ private:
                                               mlir::Operation *anchor);
   mlir::LogicalResult encodeArrayExtract(FunctionPlan &plan,
                                          sim::SimArrayDynExtractOp op);
+  mlir::LogicalResult encodeArrayInsert(FunctionPlan &plan,
+                                        sim::SimArrayDynInsertOp op);
   mlir::LogicalResult encodeUnionConstruct(FunctionPlan &plan,
                                            sim::SimUnionConstructOp op);
   mlir::LogicalResult encodeUnionIsActive(FunctionPlan &plan,

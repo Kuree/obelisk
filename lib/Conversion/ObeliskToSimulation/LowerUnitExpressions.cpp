@@ -4523,23 +4523,8 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
     FailureOr<Value> index = lowerExpression(children[1]);
     if (failed(index))
       return failure();
-    FailureOr<Value> scalarIndex = toPackedScalar(*index, location);
-    if (failed(scalarIndex))
-      return failure();
-    index = *scalarIndex;
-    std::optional<unsigned> indexWidth =
-        sim::getPackedWidth((*index).getType());
-    if (!indexWidth || *indexWidth > std::numeric_limits<unsigned>::max() - 1) {
-      emitError(location) << "array index is too wide to normalize";
-      return failure();
-    }
-    unsigned widenedWidth = std::max(*indexWidth, 64u) + 1;
-    Type widenedType =
-        isa<sim::LogicType>((*index).getType())
-            ? Type(sim::LogicType::get(function.getContext(), widenedWidth))
-            : Type(IntegerType::get(function.getContext(), widenedWidth));
     FailureOr<Value> widened =
-        convert(*index, widenedType, isSignedNode(children[1]), location);
+        toArrayIndex(*index, isSignedNode(children[1]), location);
     if (failed(widened))
       return failure();
     if (isa<sim::RefType>((*input).getType())) {

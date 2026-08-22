@@ -2448,6 +2448,21 @@ def SimArrayDynExtractOp : SimOp<"array.extract_dynamic", [Pure]> {
   let hasCanonicalizer = 1;
 }
 
+def SimArrayDynInsertOp : SimOp<"array.insert_dynamic", [Pure]> {
+  let summary = "replace an element of a fixed array using a declared-range index";
+  let description = [{
+    The index is interpreted in the array's preserved source range. IEEE
+    1800-2017 7.4.6 makes an unknown or out-of-range index invalid, and
+    "writing to an array with an invalid index shall perform no operation", so
+    such an index yields the input array unchanged.
+  }];
+  let arguments = (ins AnyType:$input, AnyType:$replacement, AnyType:$index);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$replacement `into` $input `[` $index `]` attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
 def SimUnionConstructOp : SimOp<"union.construct", [Pure]> {
   let summary = "construct a union with one selected field";
   let arguments = (ins AnyType:$value, I64Attr:$index);

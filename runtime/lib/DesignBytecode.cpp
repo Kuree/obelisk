@@ -1302,7 +1302,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       bool negative = false;
       uint64_t low = instruction.immediate;
       uint64_t negativeMagnitude = 0;
-      if (instruction.flags == OBELISK_RT_DB_INSERT_DYNAMIC) {
+      if ((instruction.flags & OBELISK_RT_DB_INSERT_DYNAMIC) != 0) {
         Logic dynamic = read(instruction.source2);
         if (anyUnknown(dynamic)) {
           write(instruction.destination, base);

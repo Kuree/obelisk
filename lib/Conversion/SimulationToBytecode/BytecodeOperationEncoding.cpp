@@ -587,6 +587,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   }
   if (auto op = dyn_cast<sim::SimArrayDynExtractOp>(operation))
     return encodeArrayExtract(plan, op);
+  if (auto op = dyn_cast<sim::SimArrayDynInsertOp>(operation))
+    return encodeArrayInsert(plan, op);
   if (auto op = dyn_cast<sim::SimUnionConstructOp>(operation))
     return encodeUnionConstruct(plan, op);
   if (auto op = dyn_cast<sim::SimUnionExtractOp>(operation)) {

@@ -1414,6 +1414,24 @@ FailureOr<Value> UnitLowering::toContainerIndex(Value value, bool sourceSigned,
       .getResult();
 }
 
+FailureOr<Value> UnitLowering::toArrayIndex(Value value, bool sourceSigned,
+                                            Location location) {
+  FailureOr<Value> scalar = toPackedScalar(value, location);
+  if (failed(scalar))
+    return failure();
+  std::optional<unsigned> width = sim::getPackedWidth((*scalar).getType());
+  if (!width || *width > std::numeric_limits<unsigned>::max() - 1) {
+    emitError(location) << "array index is too wide to normalize";
+    return failure();
+  }
+  unsigned widenedWidth = std::max(*width, 64u) + 1;
+  Type widenedType =
+      isa<sim::LogicType>((*scalar).getType())
+          ? Type(sim::LogicType::get(function.getContext(), widenedWidth))
+          : Type(IntegerType::get(function.getContext(), widenedWidth));
+  return convert(*scalar, widenedType, sourceSigned, location);
+}
+
 FailureOr<Value> UnitLowering::formatTaggedUnionPattern(Value value,
                                                         Type semanticType,
                                                         Location location) {

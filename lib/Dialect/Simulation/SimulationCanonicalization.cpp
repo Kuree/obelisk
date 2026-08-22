@@ -1578,6 +1578,34 @@ struct ConstantArrayExtract final : OpRewritePattern<SimArrayDynExtractOp> {
   }
 };
 
+struct ConstantArrayInsert final : OpRewritePattern<SimArrayDynInsertOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimArrayDynInsertOp op,
+                                PatternRewriter &rewriter) const override {
+    bool unknown;
+    std::optional<int64_t> sourceIndex =
+        getConstantSourceIndex(op.getIndex(), unknown);
+    if (!sourceIndex && !unknown)
+      return failure();
+    std::optional<unsigned> ordinal =
+        sourceIndex
+            ? getArrayElementOrdinal(op.getInput().getType(), *sourceIndex)
+            : std::nullopt;
+    // IEEE 1800-2017 7.4.6: a write through an invalid index performs no
+    // operation, so the array passes through unchanged.
+    if (!ordinal) {
+      rewriter.replaceOp(op, op.getInput());
+      return success();
+    }
+    auto replacement = SimAggregateInsertOp::create(
+        rewriter, op.getLoc(), op.getResult().getType(), op.getInput(),
+        op.getReplacement(), rewriter.getI64IntegerAttr(*ordinal));
+    rewriter.replaceOp(op, replacement.getResult());
+    return success();
+  }
+};
+
 // Conservatively true unless the operation is known not to write memory. An
 // operation with regions or without the effect interface is assumed to write.
 static bool mayWriteMemory(Operation *op) {
@@ -1751,6 +1779,11 @@ void SimArrayDynExtractOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
   results.add<ConstantArrayExtract, DynamicArrayExtractThroughReference>(
       context);
+}
+
+void SimArrayDynInsertOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                     MLIRContext *context) {
+  results.add<ConstantArrayInsert>(context);
 }
 
 void SimUnionConstructOp::getCanonicalizationPatterns(RewritePatternSet &,
