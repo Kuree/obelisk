@@ -1114,8 +1114,120 @@ FailureOr<ParsedConstant> parseSVInteger(StringRef spelling, unsigned width,
   }
 
   bool signedLiteral = quote == StringRef::npos || basedSigned;
+  bool hasUnknown =
+      digits.contains('x') || digits.contains('z') || digits.contains('?');
+
+  // Validate the digit string before using it to derive an unsized literal's
+  // width. IEEE 1800-2017 5.7.1 permits exactly one x, z, or ? digit in a
+  // decimal based literal; nondecimal based literals admit those digits in
+  // any position.
+  if (radix == 10 && hasUnknown) {
+    if (quote == StringRef::npos || digits.size() != 1 ||
+        (digits.front() != 'x' && digits.front() != 'z' &&
+         digits.front() != '?')) {
+      emitError(location) << "invalid decimal X/Z integer literal '" << spelling
+                          << "'";
+      return failure();
+    }
+  } else {
+    for (char c : digits) {
+      if (c == 'x' || c == 'z' || c == '?')
+        continue;
+      unsigned digit = llvm::hexDigitValue(c);
+      if (digit == static_cast<unsigned>(-1) || digit >= radix) {
+        emitError(location)
+            << "invalid digit in integer literal '" << spelling << "'";
+        return failure();
+      }
+    }
+  }
+
+  // A based number without a size is self-determined and at least 32 bits
+  // wide. For binary/octal/hexadecimal spellings, every nonleading digit
+  // contributes a complete digit group while the leading known digit
+  // contributes only its significant bits. A leading X/Z contributes no
+  // significant bits but retains every following group. This is the rule
+  // used by the source frontend and follows 5.7.1's minimum-width and
+  // leading-padding requirements.
+  bool unsizedBased = quote == 0;
+  if (unsizedBased) {
+    uint64_t requiredWidth = 0;
+    if (radix == 10) {
+      if (!hasUnknown) {
+        requiredWidth = APInt::getSufficientBitsNeeded(digits, radix);
+        // An unsized signed decimal based literal needs a separate sign bit;
+        // unlike a nondecimal digit string, its token denotes a magnitude.
+        if (basedSigned)
+          ++requiredWidth;
+        requiredWidth = std::min<uint64_t>(
+            requiredWidth, std::numeric_limits<unsigned>::max());
+      }
+    } else {
+      unsigned group = radix == 2 ? 1 : radix == 8 ? 3 : 4;
+      SmallVector<char> normalizedDigits;
+      normalizedDigits.reserve(digits.size());
+      for (char c : digits) {
+        bool unknown = c == 'x' || c == 'z' || c == '?';
+        unsigned digit = unknown ? 0 : llvm::hexDigitValue(c);
+        if (!unknown && digit == 0 && normalizedDigits.size() == 1 &&
+            normalizedDigits.front() == '0')
+          continue;
+        if (!unknown && digit != 0 && normalizedDigits.size() == 1 &&
+            normalizedDigits.front() == '0')
+          normalizedDigits.clear();
+        normalizedDigits.push_back(c);
+      }
+      if (normalizedDigits.empty())
+        normalizedDigits.push_back('0');
+
+      uint64_t trailingDigits = normalizedDigits.size() - 1;
+      uint64_t maximum = std::numeric_limits<unsigned>::max();
+      requiredWidth =
+          trailingDigits > maximum / group ? maximum : trailingDigits * group;
+      char leading = normalizedDigits.front();
+      if (leading != 'x' && leading != 'z' && leading != '?') {
+        unsigned digit = llvm::hexDigitValue(leading);
+        unsigned leadingWidth = APInt(4, digit).getActiveBits();
+        requiredWidth =
+            std::min<uint64_t>(maximum, requiredWidth + leadingWidth);
+      }
+    }
+    literalWidth = static_cast<unsigned>(std::max<uint64_t>(32, requiredWidth));
+  }
+
+  // Unary minus is applied to the declared or self-determined literal before
+  // its result is resized for the caller. Therefore an X/Z bit that survives
+  // literal-width truncation poisons the entire arithmetic result even when
+  // that bit would sit above the requested result width. Determine this from
+  // digit positions rather than allocating a potentially enormous declared
+  // width. Conversely, an unknown group wholly above the literal width is
+  // discarded before the operator and cannot affect the result.
+  if (negative && hasUnknown) {
+    bool operandHasUnknown = radix == 10;
+    if (radix != 10) {
+      unsigned group = radix == 2 ? 1 : radix == 8 ? 3 : 4;
+      uint64_t bit = 0;
+      for (char c : llvm::reverse(digits)) {
+        if (bit >= literalWidth)
+          break;
+        if (c == 'x' || c == 'z' || c == '?') {
+          operandHasUnknown = true;
+          break;
+        }
+        bit += group;
+      }
+    }
+    if (operandHasUnknown)
+      return ParsedConstant{APInt(width, 0), APInt::getAllOnes(width)};
+  }
+
   auto resize = [&](APInt value, APInt unknown) -> ParsedConstant {
-    if (signedLiteral)
+    // 5.7.1 gives an unsized unsigned literal whose high bit is X/Z the same
+    // X/Z fill through its wider expression context. Extending both planes
+    // from that bit preserves X versus Z.
+    bool fillUnsizedUnknown =
+        unsizedBased && unknown.isSignBitSet() && width > unknown.getBitWidth();
+    if (signedLiteral || fillUnsizedUnknown)
       return {value.sextOrTrunc(width), unknown.sextOrTrunc(width)};
     return {value.zextOrTrunc(width), unknown.zextOrTrunc(width)};
   };
@@ -1125,26 +1237,18 @@ FailureOr<ParsedConstant> parseSVInteger(StringRef spelling, unsigned width,
   // allocation proportional to an otherwise valid but enormous size token.
   unsigned materializedWidth = std::min(literalWidth, width);
   APInt value(materializedWidth, 0), unknown(materializedWidth, 0);
-  if (!digits.contains('x') && !digits.contains('z') && !digits.contains('?')) {
+  if (!hasUnknown) {
     // APInt's string constructor requires a width that can hold the literal,
     // and wraps silently in a no-assert build otherwise. Parse at the width
     // the digits need, then apply the explicitly declared size. IEEE
     // 1800-2017 5.7.1 requires excess high bits of a sized literal to be
     // discarded; only an unsized spelling that contradicts its semantic width
     // remains malformed IR.
-    for (char c : digits) {
-      unsigned digit = llvm::hexDigitValue(c);
-      if (digit == static_cast<unsigned>(-1) || digit >= radix) {
-        emitError(location)
-            << "invalid digit in integer literal '" << spelling << "'";
-        return failure();
-      }
-    }
     unsigned needed = APInt::getSufficientBitsNeeded(digits, radix);
     unsigned parseWidth = std::max(needed, materializedWidth);
     APInt parsed(parseWidth, digits, radix);
     bool fits = explicitlySized || parsed.getActiveBits() <= literalWidth;
-    if (negative && !explicitlySized) {
+    if (negative && quote == StringRef::npos) {
       APInt signedLimit(parseWidth, 1);
       signedLimit <<= literalWidth - 1;
       fits = parsed.ule(signedLimit);
@@ -1160,39 +1264,13 @@ FailureOr<ParsedConstant> parseSVInteger(StringRef spelling, unsigned width,
       parsed.negate();
     return resize(parsed, unknown);
   }
-  if (negative) {
-    emitError(location) << "negative X/Z integer literal '" << spelling
-                        << "' is not supported";
-    return failure();
-  }
   if (radix == 10) {
-    // IEEE 1800-2017 5.7.1 permits exactly one x, z, or ? digit in a
-    // decimal based literal. That digit denotes the value of every bit; ? is
-    // the spelling alternative for z. Reject mixed decimal digit strings here
-    // as well, even though the source parser normally diagnoses them first.
-    if (quote == StringRef::npos || digits.size() != 1 ||
-        (digits.front() != 'x' && digits.front() != 'z' &&
-         digits.front() != '?')) {
-      emitError(location) << "invalid decimal X/Z integer literal '" << spelling
-                          << "'";
-      return failure();
-    }
     unknown.setAllBits();
     if (digits.front() == 'z' || digits.front() == '?')
       value.setAllBits();
     return resize(value, unknown);
   }
   unsigned group = radix == 2 ? 1 : radix == 8 ? 3 : 4;
-  for (char c : digits) {
-    if (c == 'x' || c == 'z' || c == '?')
-      continue;
-    unsigned digit = llvm::hexDigitValue(c);
-    if (digit == static_cast<unsigned>(-1) || digit >= radix) {
-      emitError(location) << "invalid digit in integer literal '" << spelling
-                          << "'";
-      return failure();
-    }
-  }
   unsigned bit = 0;
   for (char c : llvm::reverse(digits)) {
     if (bit >= materializedWidth)
@@ -1224,6 +1302,8 @@ FailureOr<ParsedConstant> parseSVInteger(StringRef spelling, unsigned width,
         value.setBit(i);
     }
   }
+  if (negative)
+    value.negate();
   return resize(value, unknown);
 }
 

@@ -550,8 +550,10 @@ struct ParsedConstant {
 };
 
 /// Parse a SystemVerilog integer literal into `width` bits. Explicitly sized
-/// literals are first truncated or padded to their declared size, then resized
-/// to `width` according to their signedness. Unsized values must fit `width`.
+/// literals are first truncated or padded to their declared size. Unsized
+/// based literals first acquire their self-determined width (at least 32 bits).
+/// The resulting literal is then resized to `width` according to its
+/// signedness and the unsized-X/Z extension rule.
 ::mlir::FailureOr<ParsedConstant> parseSVInteger(::mlir::StringRef spelling,
                                                  unsigned width,
                                                  ::mlir::Location location);
