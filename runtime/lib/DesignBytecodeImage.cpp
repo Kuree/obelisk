@@ -1637,7 +1637,9 @@ bool validateImage(const Image &image) {
                          (delayBytes = net.planeSize * 24) == 0))
       return reject(__LINE__, "invalid bitwise net-delay size");
     if ((net.argument & ~uint32_t{127}) != 0 ||
-        decodeNetResolution(net.argument) > 8 || net.planeSize == 0 ||
+        decodeNetResolution(net.argument) > 9 || net.planeSize == 0 ||
+        (decodeNetResolution(net.argument) == 9 && (net.argument & 1) == 0) ||
+        (decodeNetResolution(net.argument) == 9 && delayed) ||
         net.valueOffset < previousNetEnd || (bitwiseDelay && !delayed) ||
         delayed != (net.unknownOffset != UINT64_MAX) ||
         (delayed && ((net.unknownOffset & 7) != 0 ||
@@ -1686,7 +1688,7 @@ bool validateImage(const Image &image) {
     if (driver.function != kDriverStateDescriptor ||
         (driver.argument & ~uint32_t{0x3fff}) != 0 ||
         (driver.argument & 1) == 0 ||
-        decodeDriverResolution(driver.argument) > 8 || strength0 > 8 ||
+        decodeDriverResolution(driver.argument) > 9 || strength0 > 8 ||
         strength1 > 8 || driver.planeSize == 0 ||
         driver.valueOffset < previousDriverEnd ||
         driver.valueOffset > image.stateBitCount ||
@@ -1756,7 +1758,7 @@ bool validateImage(const Image &image) {
     if (connection.width == 0 || (connection.flags & ~uint8_t{7}) != 0 ||
         ((connection.flags & 2) == 0 && (connection.flags & 4) != 0) ||
         connection.reserved != 0 || connection.tailReserved != 0 ||
-        connection.lhsResolution > 8 || connection.rhsResolution > 8 || !lhs ||
+        connection.lhsResolution > 9 || connection.rhsResolution > 9 || !lhs ||
         !rhs ||
         connection.lhsResolution != decodeNetResolution(lhs->argument) ||
         connection.rhsResolution != decodeNetResolution(rhs->argument) ||
@@ -1912,6 +1914,9 @@ bool validateImage(const Image &image) {
       invalidWinner = !isSupply(winner);
     else if (!isSupply(winner) && ((winner == 2) != (loser == 2)))
       invalidWinner = winner != 2;
+    else if (((winner == 9) && (loser == 5 || loser == 6)) ||
+             ((loser == 9) && (winner == 5 || winner == 6)))
+      invalidWinner = winner == 9;
     else if (!isSupply(winner) && winner != 2 && loser != 2 &&
              ((winner == 0) != (loser == 0)))
       invalidWinner = winner == 0;

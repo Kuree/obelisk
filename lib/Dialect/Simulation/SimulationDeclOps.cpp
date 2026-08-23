@@ -41,6 +41,18 @@ namespace obelisk::sim {
 static constexpr uint64_t interfaceDispatchSlot =
     std::numeric_limits<uint32_t>::max();
 
+static bool isEntirelyFourState(Type type) {
+  if (isa<LogicType>(type))
+    return true;
+  if (!isAggregateType(type))
+    return false;
+  for (unsigned index = 0, end = getAggregateNumElements(type); index != end;
+       ++index)
+    if (!isEntirelyFourState(getAggregateElementType(type, index)))
+      return false;
+  return true;
+}
+
 // Classify the physical representation of one fixed packed subrange. A port
 // view may select a two-state member from a mixed aggregate, so comparing the
 // port against the whole source type is both too strict and too imprecise.
@@ -130,7 +142,13 @@ LogicalResult SimNetDeclOp::verify() {
     return failure();
   if (getType().isF64())
     return emitOpError("real-valued nets are not supported");
+  if (getResolutionKind() == NetResolutionKind::TriReg &&
+      !isEntirelyFourState(getType()))
+    return emitOpError("trireg nets require an entirely four-state type");
   if (auto delays = getPropagationDelays()) {
+    if (getResolutionKind() == NetResolutionKind::TriReg)
+      return emitOpError(
+          "trireg charge decay cannot use ordinary propagation delays");
     std::optional<unsigned> width = getPackedWidth(getType());
     if (!width ||
         (delays->size() != 3 && delays->size() != uint64_t{*width} * 3))
@@ -1490,6 +1508,10 @@ LogicalResult SimDesignOp::verifyRegions() {
       auto isWire = [](NetResolutionKind kind) {
         return kind == NetResolutionKind::Wire;
       };
+      auto isPull = [](NetResolutionKind kind) {
+        return kind == NetResolutionKind::Tri0 ||
+               kind == NetResolutionKind::Tri1;
+      };
       std::optional<bool> requiredDominance;
       if (isSupply(lhsResolution) != isSupply(rhsResolution))
         requiredDominance = isSupply(rhsResolution);
@@ -1497,6 +1519,11 @@ LogicalResult SimDesignOp::verifyRegions() {
                ((lhsResolution == NetResolutionKind::UWire) !=
                 (rhsResolution == NetResolutionKind::UWire)))
         requiredDominance = rhsResolution == NetResolutionKind::UWire;
+      else if ((lhsResolution == NetResolutionKind::TriReg &&
+                isPull(rhsResolution)) ||
+               (rhsResolution == NetResolutionKind::TriReg &&
+                isPull(lhsResolution)))
+        requiredDominance = isPull(rhsResolution);
       else if (isWire(lhsResolution) != isWire(rhsResolution))
         requiredDominance = isWire(lhsResolution);
       if (requiredDominance &&

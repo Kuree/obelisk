@@ -474,10 +474,20 @@ materializeDesignDescriptors(ModuleOp module,
     case semantic::SVNetKind::Supply1:
       resolution = sim::NetResolutionKind::Supply1;
       break;
+    case semantic::SVNetKind::TriReg:
+      resolution = sim::NetResolutionKind::TriReg;
+      break;
     default:
       emitError(getSemanticLocation(op))
           << "unsupported net resolution kind "
           << semantic::stringifySVNetKind(net.getNetKind());
+      invalid = true;
+      return;
+    }
+    if (resolution == sim::NetResolutionKind::TriReg &&
+        (net.getDelayFs() || net.getUnsupportedDelay())) {
+      emitError(getSemanticLocation(op))
+          << "trireg net delays and charge decay are not supported";
       invalid = true;
       return;
     }

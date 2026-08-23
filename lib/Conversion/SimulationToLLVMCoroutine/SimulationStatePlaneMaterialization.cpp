@@ -70,10 +70,16 @@ makeStatePlane(ModuleOp module, StringRef name, uint64_t bytes, bool unknown,
       if (resolution != sim::NetResolutionKind::Tri0 &&
           resolution != sim::NetResolutionKind::Tri1 &&
           resolution != sim::NetResolutionKind::Supply0 &&
-          resolution != sim::NetResolutionKind::Supply1)
+          resolution != sim::NetResolutionKind::Supply1 &&
+          resolution != sim::NetResolutionKind::TriReg)
         continue;
       uint64_t absolute = net.offset + bit;
       uint8_t mask = static_cast<uint8_t>(1u << (absolute % 8));
+      if (resolution == sim::NetResolutionKind::TriReg) {
+        if (!unknown)
+          initial[absolute / 8] &= static_cast<uint8_t>(~mask);
+        continue;
+      }
       if (unknown || resolution == sim::NetResolutionKind::Tri0 ||
           resolution == sim::NetResolutionKind::Supply0)
         initial[absolute / 8] &= static_cast<uint8_t>(~mask);

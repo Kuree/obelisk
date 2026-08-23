@@ -352,6 +352,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       internalDominates = external == sim::NetResolutionKind::Wire ||
                           external == sim::NetResolutionKind::Tri;
       warn = external == sim::NetResolutionKind::WOr ||
+             external == sim::NetResolutionKind::TriReg ||
              external == sim::NetResolutionKind::Tri0 ||
              external == sim::NetResolutionKind::Tri1 ||
              external == sim::NetResolutionKind::UWire;
@@ -360,13 +361,15 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       internalDominates = external == sim::NetResolutionKind::Wire ||
                           external == sim::NetResolutionKind::Tri;
       warn = external == sim::NetResolutionKind::WAnd ||
+             external == sim::NetResolutionKind::TriReg ||
              external == sim::NetResolutionKind::Tri0 ||
              external == sim::NetResolutionKind::Tri1 ||
              external == sim::NetResolutionKind::UWire;
       break;
     case sim::NetResolutionKind::Tri0:
       internalDominates = external == sim::NetResolutionKind::Wire ||
-                          external == sim::NetResolutionKind::Tri;
+                          external == sim::NetResolutionKind::Tri ||
+                          external == sim::NetResolutionKind::TriReg;
       warn = external == sim::NetResolutionKind::WAnd ||
              external == sim::NetResolutionKind::WOr ||
              external == sim::NetResolutionKind::Tri1 ||
@@ -374,7 +377,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       break;
     case sim::NetResolutionKind::Tri1:
       internalDominates = external == sim::NetResolutionKind::Wire ||
-                          external == sim::NetResolutionKind::Tri;
+                          external == sim::NetResolutionKind::Tri ||
+                          external == sim::NetResolutionKind::TriReg;
       warn = external == sim::NetResolutionKind::WAnd ||
              external == sim::NetResolutionKind::WOr ||
              external == sim::NetResolutionKind::Tri0 ||
@@ -386,6 +390,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
                           external != sim::NetResolutionKind::Supply1;
       warn = external == sim::NetResolutionKind::WAnd ||
              external == sim::NetResolutionKind::WOr ||
+             external == sim::NetResolutionKind::TriReg ||
              external == sim::NetResolutionKind::Tri0 ||
              external == sim::NetResolutionKind::Tri1;
       break;
@@ -398,6 +403,13 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       internalDominates = external != sim::NetResolutionKind::Supply0 &&
                           external != sim::NetResolutionKind::Supply1;
       warn = external == sim::NetResolutionKind::Supply0;
+      break;
+    case sim::NetResolutionKind::TriReg:
+      internalDominates = external == sim::NetResolutionKind::Wire ||
+                          external == sim::NetResolutionKind::Tri;
+      warn = external == sim::NetResolutionKind::WAnd ||
+             external == sim::NetResolutionKind::WOr ||
+             external == sim::NetResolutionKind::UWire;
       break;
     }
     return std::pair(!internalDominates, warn);

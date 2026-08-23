@@ -3158,6 +3158,120 @@ TEST(DesignBytecode, PullNetConflictsWithEqualPullStrength) {
   }
 }
 
+TEST(DesignBytecode, RetainsDefaultTriregChargeIndefinitely) {
+  Fixture fixture;
+  fixture.bytecode = makeStrengthDriverBytecode(9);
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.state_bit_count = 260;
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  auto state = [&](uint64_t offset) {
+    return std::pair((context->stateValue[offset / 64] &
+                      (UINT64_C(1) << (offset % 64))) != 0,
+                     (context->stateUnknown[offset / 64] &
+                      (UINT64_C(1) << (offset % 64))) != 0);
+  };
+  auto setState = [&](uint64_t offset, bool value, bool unknown) {
+    uint64_t mask = UINT64_C(1) << (offset % 64);
+    if (value)
+      context->stateValue[offset / 64] |= mask;
+    else
+      context->stateValue[offset / 64] &= ~mask;
+    if (unknown)
+      context->stateUnknown[offset / 64] |= mask;
+    else
+      context->stateUnknown[offset / 64] &= ~mask;
+  };
+  auto resolve = [&] {
+    ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196),
+              OBELISK_RT_OK);
+  };
+
+  // IEEE 1800-2017 6.7.1: trireg starts at x, not z.
+  EXPECT_EQ(state(0), std::pair(false, true));
+  setState(65, true, true);
+  setState(130, true, true);
+
+  // IEEE 1800-2017 6.6.4: a non-z driver enters the driven state, and all-z
+  // drivers enter the capacitive state without propagating z.
+  setState(195, true, false);
+  resolve();
+  EXPECT_EQ(state(0), std::pair(true, false));
+  setState(195, true, true);
+  resolve();
+  EXPECT_EQ(state(0), std::pair(true, false));
+
+  setState(195, false, false);
+  resolve();
+  EXPECT_EQ(state(0), std::pair(false, false));
+  setState(195, true, true);
+  resolve();
+  EXPECT_EQ(state(0), std::pair(false, false));
+
+  setState(195, false, true);
+  resolve();
+  EXPECT_EQ(state(0), std::pair(false, true));
+  setState(195, true, true);
+  resolve();
+  EXPECT_EQ(state(0), std::pair(false, true));
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, RetainsEffectiveCollapsedTriregChargeAcrossAliases) {
+  Fixture fixture;
+  fixture.bytecode = makeConnectedDriverBytecode();
+  size_t stateOffset = get64(fixture.bytecode, 168);
+  size_t connectivity = get64(fixture.bytecode, 184);
+  put32(fixture.bytecode, stateOffset + 4, 1);
+  put32(fixture.bytecode, stateOffset + 32 + 4,
+        1u | resolutionFlags(9, false));
+  put32(fixture.bytecode, stateOffset + 64 + 4,
+        driverFlags(6, 6) | resolutionFlags(9, true));
+  fixture.bytecode[connectivity + 24] = 0;
+  fixture.bytecode[connectivity + 25] = 9;
+  fixture.bytecode[connectivity + 26] = 6;
+  put64(fixture.bytecode, 32, imageChecksum(fixture.bytecode));
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.state_bit_count = 195;
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  auto setDriver = [&](bool value, bool unknown) {
+    uint64_t mask = UINT64_C(1) << (130 % 64);
+    if (value)
+      context->stateValue[130 / 64] |= mask;
+    else
+      context->stateValue[130 / 64] &= ~mask;
+    if (unknown)
+      context->stateUnknown[130 / 64] |= mask;
+    else
+      context->stateUnknown[130 / 64] &= ~mask;
+    ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 130, 131),
+              OBELISK_RT_OK);
+  };
+  auto expectAliases = [&](bool value, bool unknown) {
+    EXPECT_EQ((context->stateValue[0] & 1) != 0, value);
+    EXPECT_EQ((context->stateUnknown[0] & 1) != 0, unknown);
+    EXPECT_EQ((context->stateValue[1] & 2) != 0, value);
+    EXPECT_EQ((context->stateUnknown[1] & 2) != 0, unknown);
+  };
+  expectAliases(false, true);
+  setDriver(true, false);
+  expectAliases(true, false);
+  setDriver(true, true);
+  expectAliases(true, false);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(DesignBytecode, PublishesSplitStrengthBanksAtomically) {
   Fixture fixture;
   fixture.bytecode = makeStrengthDriverBytecode();
@@ -4348,8 +4462,16 @@ TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
   connected(invalidNetResolution);
   size_t invalidNetState = get64(invalidNetResolution.bytecode, 168);
   put32(invalidNetResolution.bytecode, invalidNetState + 4,
-        1u | resolutionFlags(9, false));
+        1u | resolutionFlags(10, false));
   rejected(invalidNetResolution);
+
+  Fixture twoStateTrireg;
+  twoStateTrireg.bytecode = makeStrengthDriverBytecode(9);
+  size_t twoStateTriregState = get64(twoStateTrireg.bytecode, 168);
+  put32(twoStateTrireg.bytecode, twoStateTriregState + 4,
+        resolutionFlags(9, false));
+  twoStateTrireg.execution.state_bit_count = 260;
+  rejected(twoStateTrireg);
 
   Fixture misalignedConnectivity;
   connected(misalignedConnectivity);

@@ -407,6 +407,14 @@ public:
               true, layout.bitCount, &layout);
           Value publishValue = resolvedValue;
           Value publishUnknown = resolvedUnknown;
+          if (resolution == sim::NetResolutionKind::TriReg) {
+            publishValue = arith::SelectOp::create(
+                rewriter, op.getLoc(), resolvedZ, oldResolvedValue,
+                resolvedValue);
+            publishUnknown = arith::SelectOp::create(
+                rewriter, op.getLoc(), resolvedZ, oldResolvedUnknown,
+                resolvedUnknown);
+          }
           if (!memberNet->fourState) {
             publishValue =
                 arith::SelectOp::create(rewriter, op.getLoc(), resolvedUnknown,

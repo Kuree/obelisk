@@ -13,8 +13,11 @@ module attributes {
     obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 6 : i32}
     obelisk_sim.net.decl 2 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 7 : i32}
     obelisk_sim.net.decl 3 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 8 : i32}
+    obelisk_sim.net.decl 4 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 9 : i32}
   }
 }
 
-// CHECK: llvm.mlir.global internal @__obelisk_state_unknown()
+// IEEE 1800-2017 6.7.1 initializes trireg to x, represented by value bit 0
+// and unknown bit 1 in the fifth declaration position.
+// CHECK: llvm.mlir.global internal @__obelisk_state_unknown("\10\00\00\00\00\00\00\00\00")
 // CHECK: llvm.mlir.global internal @__obelisk_state_value("\0A\00\00\00\00\00\00\00\00")

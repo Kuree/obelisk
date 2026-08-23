@@ -461,6 +461,10 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
       bool publishValue = net->fourState
                               ? resolvedValue
                               : (resolvedUnknown ? false : resolvedValue);
+      if (cache.resolutionByRoot.at(root) == 9 && resolvedZ) {
+        publishValue = bit(context->stateValue, destination);
+        publishUnknown = bit(context->stateUnknown, destination);
+      }
       uint64_t mask = uint64_t{1} << (destination % 64);
       bool forced = destination / 64 < context->forceMask.size() &&
                     (context->forceMask[destination / 64] & mask) != 0;
@@ -582,9 +586,13 @@ obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept {
     for (const auto &[root, resolution] : cache->resolutionByRoot) {
       if (resolution < 5)
         continue;
-      bool value = resolution == 6 || resolution == 8;
       for (uint64_t destination : cache->members.at(root)) {
-        setBit(context->stateValue, destination, value);
+        if (resolution == 9) {
+          setBit(context->stateValue, destination, false);
+          continue;
+        }
+        setBit(context->stateValue, destination,
+               resolution == 6 || resolution == 8);
         setBit(context->stateUnknown, destination, false);
       }
     }

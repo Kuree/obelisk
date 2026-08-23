@@ -27,6 +27,8 @@ module attributes {
         }
         obelisk.sv.symbol.net attributes {hierarchical_name = "unsupported_wired_resolution.supply1_value", is_implicit = false, name = "supply1_value", net_kind = 11 : i32, node_id = 12 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s12.supply1_value"} {
         }
+        obelisk.sv.symbol.net attributes {hierarchical_name = "unsupported_wired_resolution.trireg_value", is_implicit = false, name = "trireg_value", net_kind = 9 : i32, node_id = 13 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s13.trireg_value"} {
+        }
       }
     }
   }
@@ -43,3 +45,6 @@ module attributes {
 // CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.tri1_value" {{.*}}resolution_kind = 6 : i32
 // CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.supply0_value" {{.*}}resolution_kind = 7 : i32
 // CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.supply1_value" {{.*}}resolution_kind = 8 : i32
+// IEEE 1800-2017 6.6.4: an unqualified trireg stores charge indefinitely
+// with the default medium charge strength.
+// CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.trireg_value" {{.*}}resolution_kind = 9 : i32
