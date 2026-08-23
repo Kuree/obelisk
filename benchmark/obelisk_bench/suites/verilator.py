@@ -10,6 +10,8 @@ plus the test with Obelisk, run the result, and judge it:
     whether it belongs to the compile or to the run;
   * a test in `EXCLUDED` is skipped, because what it asserts is Verilator's
     behavior rather than the language's;
+  * a test whose descriptor never calls `test.execute()` is judged on its
+    compile, exactly as upstream judges it;
   * everything else self-checks and must print `*-* All Finished *-*`.
 
 Real Verilator is never invoked. The clock-shell generation mirrors driver.py's
@@ -56,6 +58,11 @@ CYCLES_DEFAULT = re.compile(
 # a design counting to a late cycle only reaches it under this spelling.
 TIMING_LOOP = re.compile(r"^\s*test\.compile\(.*\btiming_loop\s*=\s*True",
                          re.MULTILINE)
+# A descriptor that never calls test.execute() is a compile-only or lint-only
+# test: upstream judges it on the build and never simulates the design. Its
+# body is therefore free to assert what no simulation makes true, so running it
+# here manufactures a failure that says nothing about Obelisk.
+EXECUTES = re.compile(r"\btest\.execute\s*\(")
 TRACE_DUMPFILE = "simx.vcd"
 
 EXPECTED_ERROR = re.compile(r"_(bad|unsup|fail\d*)$")
@@ -650,6 +657,18 @@ def shell_module_name(top_text: str) -> str:
     return SHELL_ALTERNATE_NAME if MODULE_TOP.search(top_text) else "top"
 
 
+def detect_executes(descriptor: Path) -> bool:
+    """Return whether the test's descriptor simulates the design.
+
+    An unreadable descriptor keeps the run: a test is only taken off the
+    simulation path when its descriptor is there to say so.
+    """
+    if not descriptor.exists():
+        return True
+    return bool(EXECUTES.search(
+        descriptor.read_text(encoding="utf-8", errors="replace")))
+
+
 def make_top_shell(inputs: list[str], sim_time: int = SIM_TIME,
                    timing_loop: bool = False,
                    module_name: str = "top") -> str:
@@ -773,6 +792,9 @@ def judge_one(obelisk: str, top: Path, timeout: float,
             return model.Outcome(model.COMPILE_FAIL, compiled.stderr)
         if not compiled.ok:
             return model.Outcome(model.COMPILE_FAIL, compiled.stderr)
+        if not detect_executes(top.with_suffix(".py")):
+            # Upstream stops here for this test, so this is its whole verdict.
+            return model.Outcome(model.PASS)
 
         # A test that reads a data file names it the way driver.py's working
         # directory sees it -- `t/<name>.dat`, relative to test_regress. Linking

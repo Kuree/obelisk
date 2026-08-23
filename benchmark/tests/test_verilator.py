@@ -134,6 +134,29 @@ class ShellModuleNameTest(unittest.TestCase):
             verilator.shell_module_name("// module top;\nmodule t;"), "top")
 
 
+class ExecutesDescriptorTest(unittest.TestCase):
+    def descriptor(self, text: str) -> bool:
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            path = Path(tmp) / "t_x.py"
+            path.write_text(text, encoding="utf-8")
+            return verilator.detect_executes(path)
+
+    def test_a_descriptor_that_executes_is_a_simulation_test(self):
+        self.assertTrue(self.descriptor("test.compile()\ntest.execute()\n"))
+
+    def test_a_lint_only_descriptor_never_runs_the_design(self):
+        # A test upstream only lints is judged on its compile there, so its
+        # body is never simulated and may assert things no simulation makes
+        # true. t_notiming reads $time as 0 after `x = #1 8`, which IEEE
+        # 1800-2017 9.4.5 makes 1 in any simulator that honors the delay.
+        self.assertFalse(self.descriptor(
+            "test.lint(verilator_flags2=['--no-timing'], fails=True)\n"))
+
+    def test_an_unreadable_descriptor_keeps_running_the_design(self):
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            self.assertTrue(verilator.detect_executes(Path(tmp) / "absent.py"))
+
+
 class TimingLoopDescriptorTest(unittest.TestCase):
     def descriptor(self, text: str) -> bool:
         with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:

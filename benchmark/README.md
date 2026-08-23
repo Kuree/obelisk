@@ -21,6 +21,8 @@ three ways:
   compile, while `fails=True` on `test.execute` wants a design that builds and
   then fails at run time;
 - a test with a **gold file** passes iff its stdout matches the gold;
+- a Verilator test whose descriptor never calls `test.execute()` is compile-only
+  upstream, so it passes iff it builds and is never simulated here either;
 - otherwise the test **self-checks** and must print its success marker
   (`*-* All Finished *-*` for Verilator, `PASSED` for ivtest).
 
