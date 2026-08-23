@@ -108,6 +108,31 @@ class TopShellTest(unittest.TestCase):
         self.assertIn("reg clk;", shell)
         self.assertIn(".clk (clk)", shell)
 
+    def test_the_shell_module_can_be_renamed(self):
+        shell = verilator.make_top_shell(["clk"], module_name="obelisk_top")
+        self.assertIn("module obelisk_top;", shell)
+        self.assertNotIn("module top;", shell)
+
+
+class ShellModuleNameTest(unittest.TestCase):
+    def test_a_design_without_its_own_top_keeps_driver_pys_name(self):
+        self.assertEqual(verilator.shell_module_name("module t (input clk);"),
+                         "top")
+
+    def test_a_design_declaring_module_top_gets_another_name(self):
+        # driver.py names its shell `top`, but the Verilator scenario never
+        # generates one: the clock comes from a generated C++ main instead. A
+        # test is therefore free to declare its own `module top`, and reusing
+        # the name here would fail the compile on a duplicate definition that
+        # says nothing about Obelisk.
+        name = verilator.shell_module_name(
+            "module top (input a);\nendmodule\nmodule t;\nendmodule\n")
+        self.assertNotEqual(name, "top")
+
+    def test_a_commented_out_module_top_is_not_a_declaration(self):
+        self.assertEqual(
+            verilator.shell_module_name("// module top;\nmodule t;"), "top")
+
 
 class TimingLoopDescriptorTest(unittest.TestCase):
     def descriptor(self, text: str) -> bool:

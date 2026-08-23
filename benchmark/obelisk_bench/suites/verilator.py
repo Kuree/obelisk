@@ -68,6 +68,10 @@ EXPECTED_ERROR = re.compile(r"_(bad|unsup|fail\d*)$")
 # advertise would otherwise hand Obelisk credit for sharing that limitation.
 DESCRIPTOR_FAILS = re.compile(r"\bfails\s*=\s*True\b")
 MODULE_T = re.compile(r"^\s*module\s+t\b", re.MULTILINE)
+MODULE_TOP = re.compile(r"^\s*module\s+top\b", re.MULTILINE)
+# Any name the corpus cannot also declare. Nothing in test_regress spells one
+# with this prefix, and the shell is the only file the harness itself writes.
+SHELL_ALTERNATE_NAME = "obelisk_bench_top"
 # `clocking` joins driver.py's list because a clocking block's `input` lines sit
 # at the start of a line just as a non-ANSI port declaration does.
 STOP_SCANNING = re.compile(r"^\s*(function|task|clocking|endmodule)")
@@ -617,10 +621,22 @@ def detect_timing_loop(descriptor: Path) -> bool:
         descriptor.read_text(encoding="utf-8", errors="replace")))
 
 
+def shell_module_name(top_text: str) -> str:
+    """Return the module name the generated clock shell may safely take.
+
+    driver.py calls its shell `top`, but the Verilator scenario never builds
+    one: there the clock comes from a generated C++ main. A test is therefore
+    free to declare its own `module top`, and reusing the name here would fail
+    the compile on a duplicate definition that says nothing about Obelisk.
+    """
+    return SHELL_ALTERNATE_NAME if MODULE_TOP.search(top_text) else "top"
+
+
 def make_top_shell(inputs: list[str], sim_time: int = SIM_TIME,
-                   timing_loop: bool = False) -> str:
+                   timing_loop: bool = False,
+                   module_name: str = "top") -> str:
     """Generate the clock-driving top module, matching driver.py's _make_top_v."""
-    lines = ["module top;"]
+    lines = [f"module {module_name};"]
     for name in sorted(inputs):
         lines.append(f"    reg {name};")
     lines.append("    t t (")
@@ -708,7 +724,8 @@ def judge_one(obelisk: str, top: Path, timeout: float,
         shell.write_text(
             make_top_shell(detect_inputs(top_text),
                            detect_sim_time(top.with_suffix(".py")),
-                           detect_timing_loop(top.with_suffix(".py"))),
+                           detect_timing_loop(top.with_suffix(".py")),
+                           shell_module_name(top_text)),
             encoding="utf-8")
         binary = Path(tmp) / "sim"
         # -y/+libext lets separate submodule files resolve; +incdir for includes.
