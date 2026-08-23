@@ -1922,6 +1922,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         throw;
       }
     }
+    if ((signature.flags & OBELISK_RT_INTRINSIC_SPAWN_PRIME) != 0) {
+      obelisk_rt_status status = obelisk_rt_prime_design_task(context, id);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
     uint32_t destinationRegister = outputRegister(0);
     Layout destination = layoutAt(image, frame.function, destinationRegister);
     uint8_t *address = frame.data + destination.offset;

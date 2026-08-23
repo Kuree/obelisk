@@ -1544,6 +1544,8 @@ obelisk_rt_design_net_is_connected(obelisk_rt_context *context, uint64_t begin,
 obelisk_rt_status obelisk_rt_run_one_design_task(
     obelisk_rt_context *context, uint32_t maximumRegion, uint32_t maximumRank,
     uint64_t maximumInsertionSequence, bool *outProgress) noexcept;
+obelisk_rt_status obelisk_rt_prime_design_task(obelisk_rt_context *context,
+                                               uint64_t taskID) noexcept;
 obelisk_rt_status
 obelisk_rt_apply_managed_nba(obelisk_rt_context *context,
                              const ScheduledManagedNBA &update);

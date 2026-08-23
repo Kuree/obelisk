@@ -435,12 +435,13 @@ enum {
 // process's event region or make its initial activation urgent.
 #define OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL (UINT32_C(1) << 7)
 
-// The bytecode SPAWN intrinsic uses its three high flag bits for scheduler
+// The bytecode SPAWN intrinsic uses its four high flag bits for scheduler
 // classifications and the remaining bits for the callee function index.
 #define OBELISK_RT_INTRINSIC_SPAWN_STARTUP (UINT32_C(1) << 31)
 #define OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS (UINT32_C(1) << 30)
 #define OBELISK_RT_INTRINSIC_SPAWN_PRIORITY_SIGNAL (UINT32_C(1) << 29)
-#define OBELISK_RT_INTRINSIC_SPAWN_FUNCTION_MASK UINT32_C(0x1fffffff)
+#define OBELISK_RT_INTRINSIC_SPAWN_PRIME (UINT32_C(1) << 28)
+#define OBELISK_RT_INTRINSIC_SPAWN_FUNCTION_MASK UINT32_C(0x0fffffff)
 
 // Serialized design-bytecode function flags. Process functions encode their
 // canonical frame size shifted left by one. Bits 60-62 encode the executable
@@ -2595,6 +2596,12 @@ obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
     obelisk_rt_context *context, obelisk_rt_process_instance_v1 *instance,
     uint32_t flags, uint32_t initial_rank, const uint32_t *continuations,
     const uint32_t *ranks, uint32_t continuation_count);
+// Execute one newly added process synchronously until its first suspension.
+// This atomically establishes a scheduler-owned wait before its spawning
+// process continues, without making the parent wait for the occurrence.
+obelisk_rt_status
+obelisk_rt_v1_scheduler_prime(obelisk_rt_context *context,
+                              obelisk_rt_process_instance_v1 *instance);
 obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
     obelisk_rt_context *context, const obelisk_rt_native_schedule_plan *plan);
 // OR one stable merged-fragment bit into a generated kernel's ingress.  The

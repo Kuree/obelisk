@@ -14,6 +14,8 @@ module {
         }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_intra_assignment_event.rhs", lifetime = 1 : i32, name = "rhs", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s7.rhs"} {
         }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_intra_assignment_event.count", lifetime = 1 : i32, name = "count", node_id = 25 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s25.count"} {
+        }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "simulation_intra_assignment_event", node_id = 8 : i64, procedure_kind = 0 : i32, sym_name = "s8", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 9 : i64} {
             obelisk.sv.statement.list attributes {node_id = 10 : i64} {
@@ -30,9 +32,9 @@ module {
                 }
               }
               obelisk.sv.statement.expression_statement attributes {node_id = 17 : i64} {
-                obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, has_timing_control = true, node_id = 18 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                obelisk.sv.expression.assignment attributes {assignment_kind = 1 : i32, has_timing_control = true, node_id = 18 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                   obelisk.sv.timing.repeated_event attributes {node_id = 19 : i64} {
-                    obelisk.sv.expression.integer_literal attributes {constant_value = "2", node_id = 20 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    obelisk.sv.expression.named_value attributes {node_id = 20 : i64, referenced_path = "simulation_intra_assignment_event.count", referenced_symbol = @s1.$root::@s3.simulation_intra_assignment_event::@s4.simulation_intra_assignment_event::@s25.count, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                     }
                     obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 21 : i64} {
                       obelisk.sv.expression.named_value attributes {node_id = 22 : i64, referenced_path = "simulation_intra_assignment_event.clk", referenced_symbol = @s1.$root::@s3.simulation_intra_assignment_event::@s4.simulation_intra_assignment_event::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -53,20 +55,34 @@ module {
   }
 }
 
-// The RHS is loaded before each wait, while the blocking destination store is
-// emitted only in its continuation.
-// CHECK: %[[EVENT_RHS:.*]] = obelisk_sim.ref.load
-// CHECK: obelisk_sim.suspend.edge posedge {{.*}} to ^[[EVENT_COMMIT:.*]](%[[EVENT_RHS]]
-// CHECK: ^[[EVENT_COMMIT]](%[[EVENT_COMMIT_RHS:.*]]: !obelisk_sim.logic<1>):
-// CHECK: obelisk_sim.ref.store %[[EVENT_COMMIT_RHS]]
-// CHECK: %[[REPEAT_RHS:.*]] = obelisk_sim.ref.load
-// CHECK: cf.br ^[[REPEAT_HEADER:.*]](%{{.*}}, %[[REPEAT_RHS]]
-// CHECK: ^[[REPEAT_COMMIT:.*]](%[[REPEAT_COMMIT_RHS:.*]]: !obelisk_sim.logic<1>):
-// CHECK: obelisk_sim.ref.store %[[REPEAT_COMMIT_RHS]]
-// CHECK: ^[[REPEAT_HEADER]](%[[REPEAT_COUNT:.*]]: i64, %[[REPEAT_VALUE:.*]]: !obelisk_sim.logic<1>):
-// CHECK: obelisk_sim.suspend.edge posedge {{.*}} to ^[[REPEAT_STEP:.*]](%[[REPEAT_COUNT]], %[[REPEAT_VALUE]]
-// CHECK: ^[[REPEAT_STEP]](%[[STEP_COUNT:.*]]: i64, %[[STEP_VALUE:.*]]: !obelisk_sim.logic<1>):
+// The repeated NBA has a detached child whose count is a value capture. The
+// child loops over the event, then stages the already captured RHS.
+// CHECK-LABEL: obelisk_sim.func private @{{.*nba_event.*}}(
+// CHECK-SAME: %[[CHILD_COUNT:[a-zA-Z0-9_]+]]: i64
+// CHECK-SAME: obelisk_sim.detached_controls
+// CHECK: cf.cond_br %{{.*}}, ^[[REPEAT_HEADER:[a-zA-Z0-9_]+]](%[[CHILD_COUNT]] {{.*}}), ^[[REPEAT_COMMIT:[a-zA-Z0-9_]+]]
+// CHECK: ^[[REPEAT_COMMIT]]:
+// CHECK: obelisk_sim.nba.enqueue
+// CHECK: ^[[REPEAT_HEADER]](%[[REPEAT_COUNT:.*]]: i64):
+// CHECK: obelisk_sim.suspend.edge posedge {{.*}} to ^[[REPEAT_STEP:[a-zA-Z0-9_]+]](%[[REPEAT_COUNT]]
+// CHECK: ^[[REPEAT_STEP]](%[[STEP_COUNT:.*]]: i64):
 // CHECK: %[[NEXT_COUNT:.*]] = arith.subi %[[STEP_COUNT]]
 // CHECK: %[[CONTINUE:.*]] = arith.cmpi sgt, %[[NEXT_COUNT]]
-// CHECK: cf.cond_br %[[CONTINUE]], ^[[REPEAT_HEADER]](%[[NEXT_COUNT]], %[[STEP_VALUE]] {{.*}}), ^[[REPEAT_COMMIT]](%[[STEP_VALUE]]
+// CHECK: cf.cond_br %[[CONTINUE]], ^[[REPEAT_HEADER]](%[[NEXT_COUNT]] {{.*}}), ^[[REPEAT_COMMIT]]
+// The first assignment is blocking: its caller carries the RHS through the
+// wait and stores it in the continuation. It then evaluates the repeated
+// NBA's count, RHS, and LHS before dispatching.
+// CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK: %[[EVENT_RHS:.*]] = obelisk_sim.ref.load
+// CHECK: obelisk_sim.suspend.edge posedge {{.*}} to ^[[EVENT_COMMIT:[a-zA-Z0-9_]+]](%[[EVENT_RHS]]
+// CHECK: ^[[EVENT_COMMIT]](%[[EVENT_COMMIT_RHS:.*]]: !obelisk_sim.logic<1>):
+// CHECK: obelisk_sim.ref.store %[[EVENT_COMMIT_RHS]]
+// CHECK: %[[REPEAT_RHS:.*]] = obelisk_sim.ref.load %{{.*}} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+// CHECK: %[[COUNT:.*]] = obelisk_sim.ref.load %{{.*}} : !obelisk_sim.ref<i32>
+// CHECK: %[[POSITIVE:.*]] = arith.cmpi sgt, %{{.*}}, %{{.*}} : i64
+// CHECK: cf.cond_br %[[POSITIVE]], ^[[SPAWN:.*]], ^[[IMMEDIATE:.*]]
+// CHECK: ^[[SPAWN]]:
+// CHECK: obelisk_sim.spawn @{{.*nba_event.*}}
+// CHECK: ^[[IMMEDIATE]]:
+// CHECK: obelisk_sim.nba.enqueue %[[REPEAT_RHS]]
 // CHECK-NOT: obelisk.sv.

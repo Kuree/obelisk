@@ -2765,6 +2765,310 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
   return source;
 }
 
+LogicalResult UnitLowering::emitDeferredNBAEvent(
+    semantic::SVAssignmentExpressionOp assignment, Operation *control,
+    CapturedLValue target, Value value, Location location) {
+  auto design = function->getParentOfType<sim::SimDesignOp>();
+  if (!design)
+    return function.emitError(
+        "deferred nonblocking assignment requires a simulation design");
+
+  SmallVector<Operation *> controlChildren = getChildren(control);
+  bool repeated = isa<semantic::SVRepeatedEventControlOp>(control);
+  if (repeated && controlChildren.size() != 2) {
+    unsupported(control) << " (repeated-event inventory)";
+    return failure();
+  }
+
+  // IEEE 1800-2017 10.4.2 evaluates the assignment operands when the
+  // statement is encountered. In particular, the repeat count must not be
+  // reread by the later scheduler-owned action.
+  Value repeatCount;
+  if (repeated) {
+    FailureOr<Value> lowered = lowerRepeatedEventCount(control);
+    if (failed(lowered))
+      return failure();
+    repeatCount = *lowered;
+  }
+
+  SmallVector<Value> targetValues;
+  appendCapturedValues(target, targetValues);
+  MLIRContext *context = function.getContext();
+  SmallVector<Type> inputs;
+  SmallVector<Value> captures;
+  SmallVector<DictionaryAttr> argumentAttrs;
+  SmallVector<Attribute> bindings;
+
+  auto appendCapture = [&](Value capture, sim::CaptureKind kind,
+                           bool retainReference) -> unsigned {
+    unsigned argument = inputs.size();
+    inputs.push_back(capture.getType());
+    captures.push_back(capture);
+    DictionaryAttr metadata;
+    if (auto blockArgument = dyn_cast<BlockArgument>(capture);
+        blockArgument &&
+        blockArgument.getOwner() == &function.getBody().front())
+      metadata = function.getArgAttrDict(blockArgument.getArgNumber());
+    if (!metadata)
+      metadata = captureMetadata(builder, kind);
+    if (retainReference && !isStaticallyAllocatedOverrideTarget(capture)) {
+      SmallVector<NamedAttribute> entries(metadata.begin(), metadata.end());
+      if (!metadata.contains("obelisk_sim.automatic_reference_capture"))
+        entries.push_back(builder.getNamedAttr(
+            "obelisk_sim.automatic_reference_capture", builder.getUnitAttr()));
+      metadata = builder.getDictionaryAttr(entries);
+    }
+    argumentAttrs.push_back(metadata);
+    return argument;
+  };
+
+  Value processContext = function.getBody().front().getArgument(0);
+  appendCapture(processContext, sim::CaptureKind::Context,
+                /*retainReference=*/false);
+  unsigned targetStart = inputs.size();
+  for (Value captured : targetValues)
+    appendCapture(captured, sim::CaptureKind::Formal,
+                  /*retainReference=*/true);
+  unsigned valueArgument = appendCapture(value, sim::CaptureKind::Value,
+                                         /*retainReference=*/false);
+  std::optional<unsigned> repeatArgument;
+  if (repeatCount)
+    repeatArgument = appendCapture(repeatCount, sim::CaptureKind::Value,
+                                   /*retainReference=*/false);
+
+  // Preserve only the frozen bindings used by the event expression. Design
+  // descriptors and constants need no spawn ABI slot; lexical values and
+  // automatic references do.
+  Operation *eventTree = repeated ? controlChildren[1] : control;
+  llvm::StringSet<> referencedPaths;
+  bool eventUsesThis = false;
+  ArrayAttr parentBindings =
+      function->getAttrOfType<ArrayAttr>(bindingsAttrName);
+  llvm::StringSet<> thisBindingPaths;
+  if (parentBindings && thisObject)
+    for (Attribute attribute : parentBindings) {
+      auto argument = dyn_cast<sim::ArgumentBindingAttr>(attribute);
+      if (argument && argument.getArgument() < function.getNumArguments() &&
+          function.getArgument(argument.getArgument()) == thisObject)
+        thisBindingPaths.insert(argument.getPath().getValue());
+    }
+  eventTree->walk([&](Operation *nested) {
+    StringRef path;
+    if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(nested)) {
+      path = named.getReferencedPath();
+      eventUsesThis |= named->hasAttr("obelisk_sim.class_field");
+    } else if (auto hierarchical =
+                   dyn_cast<semantic::SVHierarchicalValueExpressionOp>(nested))
+      path = hierarchical.getReferencedPath();
+    else if (auto member =
+                 dyn_cast<semantic::SVMemberAccessExpressionOp>(nested)) {
+      if (member->hasAttr(staticClassPropertyAttrName))
+        path = member.getReferencedPath();
+      eventUsesThis |= member->hasAttr("obelisk_sim.class_field");
+    }
+    if (!path.empty())
+      referencedPaths.insert(path);
+    if (auto call = dyn_cast<semantic::SVCallExpressionOp>(nested);
+        call && call->hasAttr("obelisk_sim.class_instance")) {
+      auto formals = call->getAttrOfType<ArrayAttr>(calleeFormalsAttrName);
+      bool superCall = call->hasAttr("obelisk_sim.class_super");
+      eventUsesThis |=
+          superCall || (formals && getChildren(call).size() == formals.size());
+    }
+    if (auto callCaptures =
+            nested->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
+      for (Attribute capture : callCaptures)
+        referencedPaths.insert(cast<StringAttr>(capture).getValue());
+    if (auto observerCaptures =
+            nested->getAttrOfType<ArrayAttr>(observerCapturesAttrName))
+      for (Attribute capture : observerCaptures) {
+        StringRef path = cast<StringAttr>(capture).getValue();
+        referencedPaths.insert(path);
+        eventUsesThis |= thisBindingPaths.contains(path);
+      }
+  });
+
+  llvm::StringSet<> capturedPaths;
+  std::optional<unsigned> outlinedThisArgument;
+  if (eventUsesThis && thisObject) {
+    outlinedThisArgument = appendCapture(thisObject, sim::CaptureKind::Formal,
+                                         /*retainReference=*/false);
+    for (const auto &entry : thisBindingPaths)
+      if (capturedPaths.insert(entry.getKey()).second)
+        bindings.push_back(sim::ArgumentBindingAttr::get(
+            context, builder.getStringAttr(entry.getKey()),
+            *outlinedThisArgument, sim::UnitArgumentKind::Direct,
+            /*copyOut=*/false, IntegerAttr{}, /*copyIn=*/true));
+  }
+  auto addPathCapture = [&](StringRef path) {
+    if (!capturedPaths.insert(path).second)
+      return;
+    Value capture = values.lookup(path);
+    if (!capture)
+      capture = lvalues.lookup(path);
+    if (!capture)
+      return;
+    unsigned argument = appendCapture(capture, sim::CaptureKind::Formal,
+                                      /*retainReference=*/true);
+    bindings.push_back(sim::ArgumentBindingAttr::get(
+        context, builder.getStringAttr(path), argument,
+        sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{},
+        /*copyIn=*/true));
+  };
+  if (parentBindings)
+    for (Attribute attribute : parentBindings) {
+      StringRef path = sim::getUnitBindingPath(attribute);
+      if (path.empty() || !referencedPaths.contains(path))
+        continue;
+      if (isa<sim::ConstantBindingAttr, sim::DescriptorBindingAttr>(
+              attribute)) {
+        if (capturedPaths.insert(path).second)
+          bindings.push_back(attribute);
+        continue;
+      }
+      addPathCapture(path);
+    }
+  SmallVector<StringRef> lexicalPaths;
+  for (const auto &entry : referencedPaths)
+    if (!capturedPaths.contains(entry.getKey()))
+      lexicalPaths.push_back(entry.getKey());
+  llvm::sort(lexicalPaths);
+  for (StringRef path : lexicalPaths)
+    addPathCapture(path);
+
+  auto codeUnitIDAttr = assignment->getAttrOfType<IntegerAttr>(
+      "obelisk_sim.nba_event_code_unit_id");
+  auto hierarchyAttr =
+      assignment->getAttrOfType<StringAttr>("obelisk_sim.nba_event_hierarchy");
+  if (!codeUnitIDAttr || !codeUnitIDAttr.getValue().isStrictlyPositive() ||
+      !hierarchyAttr)
+    return emitError(location)
+           << "deferred nonblocking assignment has no prepared code-unit "
+              "identity";
+  uint64_t codeUnitID = codeUnitIDAttr.getValue().getZExtValue();
+  uint64_t parentID = function.getCodeUnitId().value_or(0);
+  uint64_t scopeID = 0;
+  for (sim::SimCodeUnitDeclOp declaration :
+       design.getBody().front().getOps<sim::SimCodeUnitDeclOp>())
+    if (declaration.getId() == parentID) {
+      scopeID = declaration.getScopeId();
+      break;
+    }
+
+  std::string symbol =
+      (function.getSymName() + ".$nba_event." + Twine(codeUnitID)).str();
+  OpBuilder outlineBuilder(function);
+  outlineBuilder.setInsertionPoint(function);
+  auto declaration = sim::SimCodeUnitDeclOp::create(
+      outlineBuilder, location, codeUnitID, scopeID, sim::EntryKind::Fork,
+      hierarchyAttr, outlineBuilder.getStringAttr("deferred NBA event"),
+      outlineBuilder.getUnitAttr());
+  SmallVector<NamedAttribute> attributes{
+      outlineBuilder.getNamedAttr(bindingsAttrName,
+                                  outlineBuilder.getArrayAttr(bindings)),
+      outlineBuilder.getNamedAttr("code_unit_id",
+                                  outlineBuilder.getI64IntegerAttr(codeUnitID)),
+      outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
+      outlineBuilder.getNamedAttr("obelisk_sim.detached_controls",
+                                  outlineBuilder.getUnitAttr()),
+      outlineBuilder.getNamedAttr("obelisk_sim.prime_on_spawn",
+                                  outlineBuilder.getUnitAttr()),
+      outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
+                                  hierarchyAttr),
+  };
+  if (outlinedThisArgument)
+    attributes.push_back(outlineBuilder.getNamedAttr(
+        sim::metadata::thisArgument,
+        outlineBuilder.getI32IntegerAttr(*outlinedThisArgument)));
+  const StringRef inheritedAttributes[] = {
+      delayScaleAttrName, delayQuantumAttrName, "home_region", "domain"};
+  for (StringRef name : inheritedAttributes)
+    if (Attribute attribute = function->getAttr(name))
+      attributes.push_back(outlineBuilder.getNamedAttr(name, attribute));
+  auto deferred =
+      sim::SimFuncOp::create(outlineBuilder, location, symbol,
+                             FunctionType::get(context, inputs, TypeRange{}),
+                             sim::EntryKind::Fork, attributes, argumentAttrs);
+  SymbolTable::setSymbolVisibility(deferred, SymbolTable::Visibility::Private);
+
+  Block &entry = deferred.getBody().front();
+  OpBuilder bodyBuilder = OpBuilder::atBlockEnd(&entry);
+  IRMapping mapping;
+  Operation *clonedControl = bodyBuilder.clone(*control, mapping);
+  UnitLowering nested(deferred);
+  if (repeatArgument) {
+    Operation *clonedCount = mapping.lookupOrNull(controlChildren[0]);
+    if (!clonedCount) {
+      deferred.erase();
+      declaration.erase();
+      return emitError(location)
+             << "deferred repeat count is outside its timing control";
+    }
+    nested.expressionCaptures[clonedCount] = entry.getArgument(*repeatArgument);
+  }
+  Block *continuation = nested.addBlock();
+  LogicalResult suspended =
+      repeated ? nested.emitRepeatedEventSuspend(clonedControl, continuation)
+               : nested.emitEventSuspend(clonedControl, continuation);
+  if (failed(suspended)) {
+    deferred.erase();
+    declaration.erase();
+    return failure();
+  }
+  nested.setCurrent(continuation);
+  CapturedLValue childTarget = target;
+  unsigned next = 0;
+  if (failed(nested.replaceCapturedValues(
+          childTarget,
+          entry.getArguments().slice(targetStart, targetValues.size()),
+          next)) ||
+      next != targetValues.size() ||
+      failed(nested.writeCapturedLValue(childTarget,
+                                        entry.getArgument(valueArgument), false,
+                                        true, location))) {
+    deferred.erase();
+    declaration.erase();
+    return failure();
+  }
+  if (nested.current->empty() ||
+      !nested.current->back().hasTrait<OpTrait::IsTerminator>())
+    sim::SimReturnOp::create(nested.builder, location, ValueRange{});
+  clonedControl->erase();
+  deferred->setAttr(sim::metadata::lowered, outlineBuilder.getUnitAttr());
+
+  auto spawn = [&]() {
+    sim::SimSpawnOp::create(builder, location, deferred.getSymNameAttr(),
+                            captures, ArrayAttr{}, ArrayAttr{});
+  };
+  if (!repeatCount) {
+    spawn();
+    return success();
+  }
+
+  // A nonpositive repeat count completes immediately. Enqueue it here, in
+  // source order, instead of launching a child that could run after a later
+  // nonblocking assignment from the same process.
+  Value zero = arith::ConstantOp::create(
+      builder, location, builder.getI64Type(), builder.getI64IntegerAttr(0));
+  Value positive = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::sgt, repeatCount, zero);
+  Block *positiveBlock = addBlock();
+  Block *immediateBlock = addBlock();
+  Block *resume = addBlock();
+  cf::CondBranchOp::create(builder, location, positive, positiveBlock,
+                           ValueRange{}, immediateBlock, ValueRange{});
+  setCurrent(positiveBlock);
+  spawn();
+  cf::BranchOp::create(builder, location, resume);
+  setCurrent(immediateBlock);
+  if (failed(writeCapturedLValue(target, value, false, true, location)))
+    return failure();
+  if (current->empty() || !current->back().hasTrait<OpTrait::IsTerminator>())
+    cf::BranchOp::create(builder, location, resume);
+  setCurrent(resume);
+  return success();
+}
+
 FailureOr<Value>
 UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
   Location location = getSemanticLocation(op);
@@ -2934,10 +3238,13 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
   }
 
   if (nonblocking) {
-    unsupported(control)
-        << " (nonblocking intra-assignment event/repeat control requires a "
-           "scheduler-owned deferred action)";
-    return failure();
+    FailureOr<CapturedLValue> destinationCapture =
+        captureLValue(destination, location);
+    if (failed(destinationCapture) ||
+        failed(emitDeferredNBAEvent(op, control, std::move(*destinationCapture),
+                                    *value, location)))
+      return failure();
+    return *value;
   }
 
   // Event-controlled blocking assignments capture the RHS at encounter time,

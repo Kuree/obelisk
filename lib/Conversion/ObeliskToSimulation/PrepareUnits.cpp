@@ -598,6 +598,35 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
 
   std::function<void(Operation *, StringRef)> assignForkCodeUnits;
   assignForkCodeUnits = [&](Operation *operation, StringRef parentHierarchy) {
+    if (auto assignment =
+            dyn_cast<semantic::SVAssignmentExpressionOp>(operation);
+        assignment && assignment.getHasTimingControl() &&
+        assignment.getAssignmentKind() ==
+            semantic::SVAssignmentKind::Nonblocking) {
+      SmallVector<Operation *> children = getChildren(assignment);
+      if (children.size() == 3 &&
+          !isa<semantic::SVDelayControlOp>(children.front())) {
+        uint64_t nodeID = assignment.getNodeId();
+        std::string hierarchy =
+            (Twine(parentHierarchy) + ".$nba_event." + Twine(nodeID)).str();
+        uint64_t id = stableCodeUnitID(hierarchy);
+        auto [collision, inserted] = codeUnitIDs.try_emplace(id, assignment);
+        if (!inserted) {
+          emitError(getSemanticLocation(assignment))
+              << "stable deferred-NBA code-unit ID collision for '" << hierarchy
+              << "'";
+          emitRemark(getSemanticLocation(collision->second))
+              << "colliding code unit is here";
+          invalid = true;
+        } else {
+          assignment->setAttr(
+              "obelisk_sim.nba_event_code_unit_id",
+              IntegerAttr::get(IntegerType::get(context, 64), id));
+          assignment->setAttr("obelisk_sim.nba_event_hierarchy",
+                              builder.getStringAttr(hierarchy));
+        }
+      }
+    }
     if (auto fork = dyn_cast<semantic::SVBlockStatementOp>(operation);
         fork &&
         fork.getBlockKind() != semantic::SVStatementBlockKind::Sequential) {

@@ -204,6 +204,13 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     if (found->second > OBELISK_RT_INTRINSIC_SPAWN_FUNCTION_MASK)
       return op.emitOpError("spawn target index exceeds bytecode encoding");
     sim::EntryKind entryKind = callee.function.getEntryKind();
+    bool primeOnSpawn = callee.function->hasAttr("obelisk_sim.prime_on_spawn");
+    if (primeOnSpawn &&
+        (!callee.function->hasAttr("internal") ||
+         !callee.function->hasAttr("obelisk_sim.detached_controls") ||
+         entryKind != sim::EntryKind::Fork))
+      return op.emitOpError(
+          "prime-on-spawn is reserved for internal detached waiters");
     bool startup =
         sim::isStartupEntryKind(entryKind) ||
         (entryKind == sim::EntryKind::Initial &&
@@ -226,6 +233,7 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         (callee.function->hasAttr("obelisk_sim.detached_controls")
              ? OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS
              : 0) |
+        (primeOnSpawn ? OBELISK_RT_INTRINSIC_SPAWN_PRIME : 0) |
         (prioritySignalResume ? OBELISK_RT_INTRINSIC_SPAWN_PRIORITY_SIGNAL : 0);
     return emitIntrinsic(plan, kIntrinsicSpawn, captures, {op.getProcess()},
                          flags);

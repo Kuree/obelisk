@@ -384,6 +384,12 @@ private:
   emitRepeatedEventSuspend(::mlir::Operation *control,
                            ::mlir::Block *continuation,
                            ::mlir::ValueRange continuationOperands = {});
+  ::mlir::FailureOr<::mlir::Value>
+  lowerRepeatedEventCount(::mlir::Operation *control);
+  ::mlir::LogicalResult
+  emitDeferredNBAEvent(semantic::SVAssignmentExpressionOp assignment,
+                       ::mlir::Operation *control, CapturedLValue target,
+                       ::mlir::Value value, ::mlir::Location location);
   ::mlir::LogicalResult
   emitCycleDelaySuspend(semantic::SVCycleDelayControlOp control,
                         ::mlir::Block *continuation,

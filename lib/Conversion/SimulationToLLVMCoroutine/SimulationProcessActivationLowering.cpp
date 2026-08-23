@@ -251,10 +251,17 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
   Block *createFailed = new Block;
   Block *added = new Block;
   Block *addFailed = new Block;
+  bool primeOnSpawn = function->hasAttr("obelisk_sim.prime_on_spawn");
+  Block *primed = primeOnSpawn ? new Block : nullptr;
+  Block *primeFailed = primeOnSpawn ? new Block : nullptr;
   helper.getBody().push_back(created);
   helper.getBody().push_back(createFailed);
   helper.getBody().push_back(added);
   helper.getBody().push_back(addFailed);
+  if (primed) {
+    helper.getBody().push_back(primed);
+    helper.getBody().push_back(primeFailed);
+  }
   builder.setInsertionPointToStart(entry);
   Value one = llvmConstant(builder, location, i64, 1);
   Value outInstance =
@@ -312,6 +319,11 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
   if (homeRegion == UINT32_MAX)
     return function.emitOpError("has no executable runtime home region");
   sim::EntryKind entryKind = function.getEntryKind();
+  if (primeOnSpawn && (!function->hasAttr("internal") ||
+                       !function->hasAttr("obelisk_sim.detached_controls") ||
+                       entryKind != sim::EntryKind::Fork))
+    return helper.emitError(
+        "prime-on-spawn is reserved for internal detached waiters");
   bool startup = sim::isStartupEntryKind(entryKind) ||
                  (entryKind == sim::EntryKind::Initial &&
                   function.getHomeRegion() == sim::EventRegion::Active);
@@ -398,6 +410,26 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
                          llvmConstant(builder, location, i64, 0));
 
   builder.setInsertionPointToStart(added);
+  if (primeOnSpawn) {
+    auto prime = LLVM::CallOp::create(
+        builder, location, TypeRange{i32},
+        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_prime"),
+        ValueRange{entry->getArgument(0), instance});
+    Value primeSucceeded = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, prime.getResult(),
+        llvmConstant(builder, location, i32, 0));
+    LLVM::CondBrOp::create(builder, location, primeSucceeded, primed,
+                           primeFailed);
+
+    builder.setInsertionPointToStart(primeFailed);
+    LLVM::CallOp::create(
+        builder, location, TypeRange{},
+        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+        ValueRange{entry->getArgument(0), prime.getResult()});
+    LLVM::ReturnOp::create(builder, location,
+                           llvmConstant(builder, location, i64, 0));
+    builder.setInsertionPointToStart(primed);
+  }
   Value token =
       LLVM::CallOp::create(
           builder, location, TypeRange{i64},
@@ -415,6 +447,8 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
       {pointer, pointer, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_add_planned", i32,
                            {pointer, pointer, i32, i32, pointer, pointer, i32});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_prime", i32,
+                           {pointer, pointer});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_scheduler_add_aot", i32,
       {pointer, pointer, i32, i32, i32, pointer, pointer, i32, pointer, i32});

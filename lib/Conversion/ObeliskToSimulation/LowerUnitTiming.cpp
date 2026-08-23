@@ -768,17 +768,10 @@ UnitLowering::emitRepeatedEventSuspend(Operation *control, Block *continuation,
     unsupported(control) << " (repeated-event inventory)";
     return failure();
   }
-  FailureOr<Value> count = lowerExpression(children[0]);
-  if (failed(count))
-    return failure();
-  FailureOr<Value> scalar = toPackedScalar(*count, location);
-  if (failed(scalar))
-    return failure();
-  Type countType = builder.getI64Type();
-  FailureOr<Value> normalized =
-      convert(*scalar, countType, isSignedNode(children[0]), location);
+  FailureOr<Value> normalized = lowerRepeatedEventCount(control);
   if (failed(normalized))
     return failure();
+  Type countType = builder.getI64Type();
   Value zero = arith::ConstantOp::create(builder, location, countType,
                                          builder.getI64IntegerAttr(0));
   Value positive = arith::CmpIOp::create(
@@ -814,6 +807,24 @@ UnitLowering::emitRepeatedEventSuspend(Operation *control, Block *continuation,
                            continuation, resume->getArguments().drop_front());
   setCurrent(continuation);
   return success();
+}
+
+FailureOr<Value> UnitLowering::lowerRepeatedEventCount(Operation *control) {
+  Location location = getSemanticLocation(control);
+  SmallVector<Operation *> children = getChildren(control);
+  if (!isa<semantic::SVRepeatedEventControlOp>(control) ||
+      children.size() != 2) {
+    unsupported(control) << " (repeated-event inventory)";
+    return failure();
+  }
+  FailureOr<Value> count = lowerExpression(children[0]);
+  if (failed(count))
+    return failure();
+  FailureOr<Value> scalar = toPackedScalar(*count, location);
+  if (failed(scalar))
+    return failure();
+  return convert(*scalar, builder.getI64Type(), isSignedNode(children[0]),
+                 location);
 }
 
 LogicalResult UnitLowering::emitCycleDelaySuspend(

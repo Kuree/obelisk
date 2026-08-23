@@ -4348,3 +4348,80 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
     return abandonTask(OBELISK_RT_INVALID_BYTECODE);
   }
 }
+
+obelisk_rt_status obelisk_rt_prime_design_task(obelisk_rt_context *context,
+                                               uint64_t taskID) noexcept {
+  if (!context || taskID == 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  struct ActiveStateGuard {
+    obelisk_rt_context *context;
+    obelisk_rt_process_instance_v1 *native = context->activeNativeProcess;
+    uint64_t logical = context->activeLogicalProcessToken;
+    uint64_t logicalParent = context->activeLogicalProcessParent;
+    uint64_t design = context->activeDesignTaskID;
+    uint32_t phase = context->activeDesignTaskPhase;
+    uint32_t home = context->activeHomeRegion;
+    uint32_t region = context->activeExecRegion;
+    bool designExecuting = context->designTaskExecuting;
+    obelisk_rt_random_state_v1 *random = context->activeRandom;
+    bool designFilter = context->nativeScheduleDesignTaskFilterActive;
+    uint64_t forcedDesignTask = context->nativeScheduleForcedDesignTask;
+    std::vector<uint64_t> controls = std::move(context->activeControls);
+
+    ~ActiveStateGuard() noexcept {
+      context->activeControls = std::move(controls);
+      context->activeNativeProcess = native;
+      context->activeLogicalProcessToken = logical;
+      context->activeLogicalProcessParent = logicalParent;
+      context->activeDesignTaskID = design;
+      context->activeDesignTaskPhase = phase;
+      context->activeHomeRegion = home;
+      context->activeExecRegion = region;
+      context->designTaskExecuting = designExecuting;
+      context->activeRandom = random;
+      context->nativeScheduleDesignTaskFilterActive = designFilter;
+      context->nativeScheduleForcedDesignTask = forcedDesignTask;
+    }
+  } activeState{context};
+  try {
+    // A primed child executes inside its parent's SPAWN intrinsic. Temporarily
+    // lend the active-context fields to the child, force scheduler selection
+    // to that one task, and restore the parent before returning from the
+    // intrinsic. This establishes the wait atomically with the source
+    // statement without yielding to unrelated work.
+    context->activeNativeProcess = nullptr;
+    context->activeLogicalProcessToken = 0;
+    context->activeLogicalProcessParent = 0;
+    context->activeDesignTaskID = 0;
+    context->activeDesignTaskPhase = 0;
+    context->activeHomeRegion = UINT32_MAX;
+    context->activeExecRegion = UINT32_MAX;
+    context->designTaskExecuting = false;
+    context->activeRandom = nullptr;
+    context->nativeScheduleDesignTaskFilterActive = true;
+    context->nativeScheduleForcedDesignTask = taskID;
+
+    for (uint32_t step = 0; step != 1024; ++step) {
+      bool progress = false;
+      obelisk_rt_status status = obelisk_rt_run_one_design_task(
+          context, UINT32_MAX, UINT32_MAX, UINT64_MAX, &progress);
+      if (status != OBELISK_RT_OK || !progress)
+        return status != OBELISK_RT_OK ? status : OBELISK_RT_INVALID_LIFECYCLE;
+      auto indexed = context->scheduledDesignTaskIndices.find(taskID);
+      if (indexed == context->scheduledDesignTaskIndices.end() ||
+          indexed->second >= context->scheduledDesignTasks.size())
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      const ScheduledDesignTask &task =
+          context->scheduledDesignTasks[indexed->second];
+      if (task.id != taskID || task.terminated || task.explicitlySuspended)
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      if (task.started && task.suspendKind != OBELISK_RT_SUSPEND_NONE)
+        return OBELISK_RT_OK;
+    }
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
