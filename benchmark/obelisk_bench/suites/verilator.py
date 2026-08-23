@@ -360,6 +360,12 @@ KILLED_PROCESS_SUBTREE = Exclusion(
     "and the test kills the always procedure that spawned both halves of a "
     "join_none, so the half holding its $finish goes with it and the design "
     "never ends; the test needs Verilator's survival of the sibling")
+NARROW_STREAM_TARGET = Exclusion(
+    "IEEE 1800-2017 11.4.14",
+    "\"if the target represents a fixed-size variable that is narrower (has "
+    "fewer bits) than the stream, an error shall be generated\", and the test "
+    "unpacks a four-byte queue into one byte; 11.4.14.3's own example spells "
+    "the same rule `int j = {>>{a, b, c}}; // error: j is 32 bits < 96 bits`")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dynarray": PATTERN_RADIX,
     "t_dynarray_method": PATTERN_RADIX,
@@ -472,6 +478,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_clk_concat6": MIXED_PORT_HEADER_STYLES,
     "t_langext_order": NON_STANDARD_KEYWORD_LEVEL,
     "t_process_task": KILLED_PROCESS_SUBTREE,
+    "t_stream_queue_interface": NARROW_STREAM_TARGET,
 }
 
 
