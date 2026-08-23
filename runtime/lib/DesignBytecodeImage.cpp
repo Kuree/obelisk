@@ -2540,7 +2540,9 @@ bool validateImage(const Image &image) {
               (layoutAt(image, function, instruction.destination).kind !=
                    OBELISK_RT_DBREG_MANAGED &&
                layoutAt(image, function, instruction.destination).kind !=
-                   OBELISK_RT_DBREG_STRING))) ||
+                   OBELISK_RT_DBREG_STRING &&
+               layoutAt(image, function, instruction.destination).kind !=
+                   OBELISK_RT_DBREG_HANDLE))) ||
             !reg(instruction.source0) ||
             layoutAt(image, function, instruction.source0).kind !=
                 OBELISK_RT_DBREG_HANDLE)
@@ -2566,7 +2568,13 @@ bool validateImage(const Image &image) {
               (layoutAt(image, function, instruction.source1).kind !=
                    OBELISK_RT_DBREG_MANAGED &&
                layoutAt(image, function, instruction.source1).kind !=
-                   OBELISK_RT_DBREG_STRING))) ||
+                   OBELISK_RT_DBREG_STRING &&
+               layoutAt(image, function, instruction.source1).kind !=
+                   OBELISK_RT_DBREG_HANDLE))) ||
+            (reg(instruction.source1) &&
+             layoutAt(image, function, instruction.source1).kind ==
+                 OBELISK_RT_DBREG_HANDLE &&
+             instruction.flags != 0) ||
             layoutAt(image, function, instruction.source0).kind !=
                 OBELISK_RT_DBREG_HANDLE)
           return reject(__LINE__, "invalid instruction encoding or operands",

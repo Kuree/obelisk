@@ -264,6 +264,11 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
     }
   if (!bindings)
     return;
+  llvm::StringSet<> explicitlyInitializedLocals;
+  function.walk([&](semantic::SVVariableDeclStatementOp declaration) {
+    if (!getChildren(declaration).empty())
+      explicitlyInitializedLocals.insert(declaration.getReferencedPath());
+  });
   // A formal whose binding declines copy-in keeps whatever its shared location
   // already holds. The formal-local binding is seen before the descriptor
   // binding that names that location, so record the decision on the way past.
@@ -383,7 +388,16 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
     }
     StringRef path = localBinding.getPath().getValue();
     Type type = localBinding.getType();
-    Value initial = createDefaultValue(builder, function.getLoc(), type);
+    // The declaration expression replaces the default value before an
+    // explicitly initialized local becomes visible. In particular, 6.17
+    // says `event alias = source` aliases `source`; creating another event as
+    // an unused placeholder would consume a synchronization object that the
+    // declaration never denotes.
+    Value initial =
+        isa<sim::EventType>(type) && explicitlyInitializedLocals.contains(path)
+            ? sim::SimEventNullOp::create(builder, function.getLoc(), type)
+                  .getResult()
+            : createDefaultValue(builder, function.getLoc(), type);
     if (!initial) {
       function.emitError() << "cannot initialize local binding '" << path
                            << "' of type " << type;
@@ -1953,6 +1967,10 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
       if (isa<sim::CovergroupHandleType>(*target))
         return sim::SimCovergroupNullOp::create(
                    builder, getSemanticLocation(op), *target)
+            .getResult();
+      if (isa<sim::EventType>(*target))
+        return sim::SimEventNullOp::create(builder, getSemanticLocation(op),
+                                           *target)
             .getResult();
       if (isa<sim::VirtualInterfaceType>(*target))
         return sim::SimVirtualInterfaceNullOp::create(

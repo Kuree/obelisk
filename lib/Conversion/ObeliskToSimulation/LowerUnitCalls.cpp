@@ -1504,7 +1504,13 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
 
       Value initial;
       if (direction == semantic::SVArgumentDirection::Out) {
-        initial = createDefaultValue(builder, location, formalType);
+        auto staticAttr = formal.getAs<BoolAttr>("static");
+        bool staticFormal = staticAttr && staticAttr.getValue();
+        initial =
+            staticFormal && isa<sim::EventType>(formalType)
+                ? sim::SimEventNullOp::create(builder, location, formalType)
+                      .getResult()
+                : createDefaultValue(builder, location, formalType);
         if (!initial) {
           emitError(location)
               << "cannot materialize a class output-formal default for type "
@@ -1805,7 +1811,12 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
 
     Value initial;
     if (direction == semantic::SVArgumentDirection::Out) {
-      initial = createDefaultValue(builder, location, formalType);
+      auto staticAttr = formal.getAs<BoolAttr>("static");
+      bool staticFormal = staticAttr && staticAttr.getValue();
+      initial = staticFormal && isa<sim::EventType>(formalType)
+                    ? sim::SimEventNullOp::create(builder, location, formalType)
+                          .getResult()
+                    : createDefaultValue(builder, location, formalType);
       if (!initial) {
         emitError(location)
             << "cannot materialize an output-formal default for type "
@@ -2417,7 +2428,12 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
 
     Value initial;
     if (direction == semantic::SVArgumentDirection::Out) {
-      initial = createDefaultValue(builder, location, formalType);
+      auto staticAttr = formal.getAs<BoolAttr>("static");
+      bool staticFormal = staticAttr && staticAttr.getValue();
+      initial = staticFormal && isa<sim::EventType>(formalType)
+                    ? sim::SimEventNullOp::create(builder, location, formalType)
+                          .getResult()
+                    : createDefaultValue(builder, location, formalType);
       if (!initial)
         return emitError(location)
                    << "cannot materialize a constructor output-formal "

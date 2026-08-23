@@ -305,6 +305,65 @@ materializeDesignDescriptors(ModuleOp module,
   uint64_t nextEventId = 0;
   bool invalid = false;
   SmallVector<Operation *> designObjects;
+
+  // IEEE 1800-2017 6.17 and 15.5.5 make event variables assignable handles.
+  // Keep never-written, uninitialized scalar events as direct scheduler
+  // descriptors, but give every initialized or written design event a storage
+  // cell. Copying that cell aliases the synchronization object without moving
+  // waiters that already captured the previous handle.
+  llvm::StringSet<> eventCellPaths;
+  auto collectEventCellReferences = [&](Operation *root) {
+    root->walk<WalkOrder::PreOrder>([&](Operation *nested) {
+      auto type = nested->getAttrOfType<TypeAttr>("semantic_type");
+      if (!type || !isa<semantic::EventType>(type.getValue()))
+        return;
+      StringRef path;
+      if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(nested))
+        path = named.getReferencedPath();
+      else if (auto hierarchical =
+                   dyn_cast<semantic::SVHierarchicalValueExpressionOp>(nested))
+        path = hierarchical.getReferencedPath();
+      else if (auto member =
+                   dyn_cast<semantic::SVMemberAccessExpressionOp>(nested))
+        path = member.getReferencedPath();
+      if (!path.empty())
+        eventCellPaths.insert(path);
+    });
+  };
+  semanticRoot->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (isStaticFormal(op)) {
+      auto type = op->getAttrOfType<TypeAttr>("semantic_type");
+      if (type && isa<semantic::EventType>(type.getValue()))
+        eventCellPaths.insert(getHierarchyName(op));
+      return;
+    }
+    if (auto variable = dyn_cast<semantic::SVVariableSymbolOp>(op)) {
+      auto type = variable->getAttrOfType<TypeAttr>("semantic_type");
+      if (type && isa<semantic::EventType>(type.getValue()) &&
+          (!getChildren(op).empty() || isStaticReturnVariable(op)))
+        eventCellPaths.insert(getHierarchyName(op));
+      return;
+    }
+    if (auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(op)) {
+      auto type = property->getAttrOfType<TypeAttr>("semantic_type");
+      if (type && isa<semantic::EventType>(type.getValue()) &&
+          !getChildren(op).empty())
+        eventCellPaths.insert(getHierarchyName(op));
+      return;
+    }
+    if (auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(op)) {
+      SmallVector<Operation *> children = getChildren(assignment);
+      size_t destination = assignment.getHasTimingControl() ? 1 : 0;
+      if (destination < children.size())
+        collectEventCellReferences(children[destination]);
+      return;
+    }
+    if (auto call = dyn_cast<semantic::SVCallExpressionOp>(op);
+        call && call.getHasOutputArguments())
+      for (Operation *child : getChildren(call))
+        collectEventCellReferences(child);
+  });
+
   semanticRoot->walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isCompileTimeOnlyInstanceMember(op))
       return;
@@ -390,13 +449,8 @@ materializeDesignDescriptors(ModuleOp module,
     uint64_t scopeId = scopes.lookup(op);
     StringAttr hierarchy = builder.getStringAttr(path);
     StringAttr debug = builder.getStringAttr(getDebugName(op));
-    if (storage && isa<sim::EventType>(*type)) {
-      if (!getChildren(op).empty()) {
-        emitError(getSemanticLocation(op))
-            << "initialized event variables require event-cell lowering";
-        invalid = true;
-        return;
-      }
+    if (storage && isa<sim::EventType>(*type) &&
+        !eventCellPaths.contains(path)) {
       uint64_t id = nextEventId++;
       descriptors[path] = {DescriptorInfo::Kind::Event, id, scopeId, *type,
                            sim::NetResolutionKind::Wire};
@@ -416,6 +470,12 @@ materializeDesignDescriptors(ModuleOp module,
       auto declaration = sim::SimStorageDeclOp::create(
           builder, getSemanticLocation(op), id, scopeId, *type, lifetime,
           hierarchy, debug, sim::ComputeObservabilityKindAttr{});
+      if (isa<sim::EventType>(*type) &&
+          isa<semantic::SVVariableSymbolOp,
+              semantic::SVClassPropertySymbolOp>(op) &&
+          !getChildren(op).empty())
+        declaration->setAttr(eventExplicitInitializerAttrName,
+                             builder.getUnitAttr());
       // Storage a subroutine owns is written by its callers, which the driver
       // rules of IEEE 1800-2017 6.5 do not count as competing drivers.
       if (op->getParentOfType<semantic::SVSubroutineSymbolOp>())

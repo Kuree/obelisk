@@ -858,7 +858,7 @@ std::vector<uint8_t> makeSchedulerBytecode(uint64_t stateHandle = 0,
   constexpr size_t codeOffset = layoutOffset + 4 * 40;
   constexpr size_t operandOffset = codeOffset + 7 * 32;
   constexpr size_t constantOffset = operandOffset + 4 * 8;
-  constexpr size_t continuationOffset = constantOffset + 24;
+  constexpr size_t continuationOffset = constantOffset + 56;
   constexpr size_t intrinsicOffset = continuationOffset + 24;
   constexpr size_t siteOffset = intrinsicOffset + 2 * 16;
   constexpr size_t stateOffset = siteOffset + 2 * 16;
@@ -877,7 +877,7 @@ std::vector<uint8_t> makeSchedulerBytecode(uint64_t stateHandle = 0,
   put64(bytes, 88, operandOffset);
   put64(bytes, 96, 4);
   put64(bytes, 104, constantOffset);
-  put64(bytes, 112, 24);
+  put64(bytes, 112, 56);
   put64(bytes, 120, continuationOffset);
   put64(bytes, 128, 1);
   put64(bytes, 136, intrinsicOffset);
@@ -922,8 +922,12 @@ std::vector<uint8_t> makeSchedulerBytecode(uint64_t stateHandle = 0,
               16);
   instruction(bytes, codeOffset, 3, OBELISK_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
               0);
-  instruction(bytes, codeOffset, 4, OBELISK_RT_DB_MAKE_HANDLE, 0, 3,
-              OBELISK_RT_DESCRIPTOR_EVENT, 0, 0, 0, eventHandle);
+  if (eventHandle == UINT64_MAX)
+    instruction(bytes, codeOffset, 4, OBELISK_RT_DB_CONSTANT, 0, 3, 0, 0, 0, 0,
+                24);
+  else
+    instruction(bytes, codeOffset, 4, OBELISK_RT_DB_MAKE_HANDLE, 0, 3,
+                OBELISK_RT_DESCRIPTOR_EVENT, 0, 0, 0, eventHandle);
   instruction(bytes, codeOffset, 5, OBELISK_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
               1);
   instruction(bytes, codeOffset, 6, OBELISK_RT_DB_TERMINATE);
@@ -935,6 +939,9 @@ std::vector<uint8_t> makeSchedulerBytecode(uint64_t stateHandle = 0,
   put64(bytes, constantOffset, UINT64_C(0xa5));
   put64(bytes, constantOffset + 8, UINT64_C(0x04));
   put64(bytes, constantOffset + 16, 5);
+  put32(bytes, constantOffset + 24, OBELISK_RT_DESCRIPTOR_EVENT);
+  put64(bytes, constantOffset + 32, UINT64_MAX);
+  put64(bytes, constantOffset + 40, UINT64_MAX);
   put32(bytes, continuationOffset, 0);
   put32(bytes, continuationOffset + 4, 0);
   put64(bytes, continuationOffset + 8, 0);
@@ -2799,6 +2806,39 @@ TEST(DesignBytecode, ConstructsReservedPreponedEventHandle) {
                 instance, context, OBELISK_RT_TIER_BYTECODE, &action),
             OBELISK_RT_OK);
   EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, TriggeringCanonicalNullEventHasNoEffect) {
+  Fixture fixture;
+  fixture.bytecode =
+      makeSchedulerBytecode(/*stateHandle=*/0, /*eventHandle=*/UINT64_MAX);
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+  fixture.entry = {&fixture.execution, 0, 0};
+  fixture.layout.frame_size = 0;
+  fixture.layout.checksum = frameChecksum(fixture.layout);
+  fixture.descriptor.frame_layout = &fixture.layout;
+  fixture.descriptor.execution = &fixture.execution;
+  fixture.descriptor.design_bytecode = &fixture.entry;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      OBELISK_RT_OK);
+  obelisk_rt_fragment_action_v1 action{};
+  EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
+                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
+            OBELISK_RT_OK);
+  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+  EXPECT_TRUE(context->events.empty());
+  EXPECT_TRUE(context->scheduledDesignEvents.empty());
   EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
   obelisk_rt_v1_context_destroy(context);
 }

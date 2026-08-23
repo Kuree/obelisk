@@ -5393,6 +5393,8 @@ void ObeliskSimPreparePass::runOnOperation() {
               builder.getBoolAttr(formal.getDirection() ==
                                       semantic::SVArgumentDirection::Ref &&
                                   indirectRefTasks.contains(targetSource))),
+          builder.getNamedAttr("static",
+                               builder.getBoolAttr(isStaticFormal(formal))),
       };
       if (dpiTarget && semanticType) {
         FailureOr<DPIABIKind> category =
@@ -7339,9 +7341,11 @@ void ObeliskSimPreparePass::runOnOperation() {
                                SmallVectorImpl<int64_t> &indices) {
           Location loc = rootInitializer.getLoc();
           if (isa<sim::EventType>(type)) {
-            Value slot = sim::SimRefSubelementOp::create(
-                rootBuilder, loc, sim::RefType::get(context, type), storage,
-                rootBuilder.getDenseI64ArrayAttr(indices));
+            Value slot = storage;
+            if (!indices.empty())
+              slot = sim::SimRefSubelementOp::create(
+                  rootBuilder, loc, sim::RefType::get(context, type), storage,
+                  rootBuilder.getDenseI64ArrayAttr(indices));
             Value event = sim::SimEventCreateOp::create(
                 rootBuilder, loc, sim::EventType::get(context));
             sim::SimRefStoreOp::create(rootBuilder, loc, event, slot);
@@ -7362,8 +7366,15 @@ void ObeliskSimPreparePass::runOnOperation() {
     for (sim::SimStorageDeclOp declaration :
          design.getBody().front().getOps<sim::SimStorageDeclOp>()) {
       Type type = declaration.getType();
-      if (declaration.getLifetime() != sim::Lifetime::Design ||
-          isa<sim::EventType>(type) || !typeContainsEvent(type))
+      if ((declaration.getLifetime() != sim::Lifetime::Design &&
+           declaration.getLifetime() != sim::Lifetime::Static) ||
+          !typeContainsEvent(type))
+        continue;
+      // An explicit scalar initializer supplies either an alias or null. It
+      // does not create a fresh synchronization object first (6.17), and the
+      // marked initializer function runs below before any process is spawned.
+      if (isa<sim::EventType>(type) &&
+          declaration->hasAttr(eventExplicitInitializerAttrName))
         continue;
       Value storage = sim::SimContextStorageOp::create(
           rootBuilder, rootInitializer.getLoc(),

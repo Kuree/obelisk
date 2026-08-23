@@ -1609,6 +1609,24 @@ TEST(Scheduler, EventTriggeredSpansExactlyOneTimeSlot) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, TriggeringNullEventHasNoEffect) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+
+  EXPECT_TRUE(context->events.empty());
+  obelisk_rt_v1_scheduler_event(context, UINT64_MAX, 0);
+  EXPECT_TRUE(context->events.empty());
+  EXPECT_EQ(obelisk_rt_v1_scheduler_event_triggered(context, UINT64_MAX), 0u);
+
+  obelisk_rt_v1_scheduler_event_after(context, UINT64_MAX, 1, 7);
+  EXPECT_TRUE(context->scheduledDesignEvents.empty());
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_TRUE(context->events.empty());
+  EXPECT_EQ(obelisk_rt_v1_scheduler_event_triggered(context, UINT64_MAX), 0u);
+
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, WaitActionPayloadSelectsTheExactFrameField) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);

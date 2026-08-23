@@ -1203,6 +1203,11 @@ extern "C" void obelisk_rt_v1_scheduler_event_after(obelisk_rt_context *context,
       obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
     return;
   }
+  // IEEE 1800-2017 15.5.5.2: triggering a null event has no effect. The
+  // all-ones stable ID is the canonical null event in native execution; do
+  // not create its queue or enqueue a delayed/nonblocking occurrence.
+  if (stableID == UINT64_MAX)
+    return;
   ContextTransaction transaction(context);
   try {
     ContextMutexLock lock(context);

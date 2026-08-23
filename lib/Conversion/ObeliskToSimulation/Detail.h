@@ -145,6 +145,11 @@ inline constexpr ::mlir::StringLiteral placeholderAttrName =
 /// position immediately after an explicit super.new call.
 inline constexpr ::mlir::StringLiteral preparedInitializerAttrName =
     "obelisk_sim.prepared_initializer";
+/// Marks an event storage cell whose declaration initializer supplies the
+/// initial handle. The root initializer must not first create an unused
+/// synchronization object for such a cell (IEEE 1800-2017 6.17).
+inline constexpr ::mlir::StringLiteral eventExplicitInitializerAttrName =
+    "obelisk_sim.event_explicit_initializer";
 inline constexpr ::mlir::StringLiteral staticNetConstantAttrName =
     "obelisk_sim.static_net_constant";
 /// Value elaboration folded an expression to, carried over by the frontend.

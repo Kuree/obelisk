@@ -1404,8 +1404,12 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         uint32_t automaticID = 0;
         int64_t automaticOffset = 0;
         bool boundedStatic = false;
+        bool nullEvent =
+            kind == OBELISK_RT_DESCRIPTOR_EVENT && stable == UINT64_MAX;
         bool dynamicEvent = isDynamicEventHandle(kind, stable);
-        if (dynamicEvent) {
+        if (nullEvent) {
+          start = end = -1;
+        } else if (dynamicEvent) {
           start = static_cast<int64_t>(stable);
           begin = start;
           end = start == INT64_MAX ? start : start + 1;
@@ -1521,11 +1525,31 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       uint32_t valueRegister =
           isLoad ? instruction.destination : instruction.source1;
       Layout valueLayout = layout(valueRegister);
-      Logic value = !isLoad ? read(valueRegister)
-                            : Logic{valueLayout.width,
-                                    valueLayout.kind == OBELISK_RT_DBREG_LOGIC,
-                                    LimbVector(limbCount(valueLayout.width)),
-                                    LimbVector(limbCount(valueLayout.width))};
+      bool eventValue = valueLayout.kind == OBELISK_RT_DBREG_HANDLE;
+      Logic value;
+      if (eventValue) {
+        if (valueLayout.size != 32 || isOverride)
+          return OBELISK_RT_INVALID_HANDLE;
+        value = Logic{64, false, LimbVector(1), LimbVector(1)};
+        if (!isLoad) {
+          uint32_t valueKind = 0;
+          std::memcpy(&valueKind, frame.data + valueLayout.offset,
+                      sizeof(valueKind));
+          valueKind &= ~(kLocalHandleKind | kAutomaticHandleKind);
+          uint64_t stable = UINT64_MAX;
+          if (valueKind != OBELISK_RT_DESCRIPTOR_EVENT ||
+              !encodeCanonicalHandle(frame.data + valueLayout.offset, stable))
+            return OBELISK_RT_INVALID_HANDLE;
+          value.value[0] = stable;
+        }
+      } else {
+        value = !isLoad
+                    ? read(valueRegister)
+                    : Logic{valueLayout.width,
+                            valueLayout.kind == OBELISK_RT_DBREG_LOGIC,
+                            LimbVector(limbCount(valueLayout.width)),
+                            LimbVector(limbCount(valueLayout.width))};
+      }
       Layout handleLayout = layout(instruction.source0);
       if (handleLayout.kind != OBELISK_RT_DBREG_HANDLE)
         return OBELISK_RT_INVALID_HANDLE;
@@ -1559,6 +1583,10 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                       descriptorKind > OBELISK_RT_DESCRIPTOR_DRIVER)) ||
           (automatic && descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE) ||
           begin > end)
+        return OBELISK_RT_INVALID_HANDLE;
+      if (eventValue &&
+          (descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE || isContinuous ||
+           instruction.flags != 0))
         return OBELISK_RT_INVALID_HANDLE;
       if (isOverride && (local || automatic ||
                          (descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE &&
@@ -2070,8 +2098,35 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       }
       if (local && instruction.opcode == OBELISK_RT_DB_STORE_STATE)
         writeLogic(localFrame->data, localLayout, localValue);
-      if (isLoad)
-        write(valueRegister, value);
+      if (isLoad) {
+        if (!eventValue) {
+          write(valueRegister, value);
+          break;
+        }
+        uint64_t stable = value.value[0];
+        uint8_t *address = frame.data + valueLayout.offset;
+        std::memset(address, 0, valueLayout.size);
+        uint32_t kind = OBELISK_RT_DESCRIPTOR_EVENT;
+        int64_t start = -1;
+        int64_t end = -1;
+        uint64_t base = 0;
+        if (stable != UINT64_MAX) {
+          if (isDynamicEventStableHandle(stable)) {
+            start = static_cast<int64_t>(stable);
+            end = start == INT64_MAX ? start : start + 1;
+            base = stable;
+          } else if (decodeGlobalHandle(stable, start)) {
+            end = start == INT64_MAX ? start : start + 1;
+            base = static_cast<uint64_t>(start);
+          } else {
+            return OBELISK_RT_INVALID_HANDLE;
+          }
+        }
+        std::memcpy(address, &kind, sizeof(kind));
+        std::memcpy(address + 8, &base, sizeof(base));
+        std::memcpy(address + 16, &start, sizeof(start));
+        std::memcpy(address + 24, &end, sizeof(end));
+      }
       break;
     }
     case OBELISK_RT_DB_RELEASE_STATE: {

@@ -2338,7 +2338,14 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     const uint8_t *address = frame.data + event.offset;
     std::memcpy(&kind, address, 4);
     std::memcpy(&start, address + 16, 8);
-    if (kind != OBELISK_RT_DESCRIPTOR_EVENT || start < 0)
+    if (kind != OBELISK_RT_DESCRIPTOR_EVENT)
+      return OBELISK_RT_INVALID_HANDLE;
+    // The canonical event-null bytecode handle carries an all-ones start.
+    // IEEE 1800-2017 15.5.5.2 makes every trigger of it a no-op, including
+    // delayed and nonblocking triggers.
+    if (start == -1)
+      return OBELISK_RT_OK;
+    if (start < 0)
       return OBELISK_RT_INVALID_HANDLE;
     uint64_t stableID = static_cast<uint64_t>(start);
     uint64_t delay = 0;
