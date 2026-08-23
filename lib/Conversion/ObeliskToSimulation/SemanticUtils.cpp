@@ -1135,10 +1135,33 @@ FailureOr<ParsedConstant> parseSVInteger(StringRef spelling, unsigned width,
     return failure();
   }
   if (radix == 10) {
-    emitError(location) << "decimal X/Z integer literals are not yet supported";
-    return failure();
+    // IEEE 1800-2017 5.7.1 permits exactly one x, z, or ? digit in a
+    // decimal based literal. That digit denotes the value of every bit; ? is
+    // the spelling alternative for z. Reject mixed decimal digit strings here
+    // as well, even though the source parser normally diagnoses them first.
+    if (quote == StringRef::npos || digits.size() != 1 ||
+        (digits.front() != 'x' && digits.front() != 'z' &&
+         digits.front() != '?')) {
+      emitError(location) << "invalid decimal X/Z integer literal '" << spelling
+                          << "'";
+      return failure();
+    }
+    unknown.setAllBits();
+    if (digits.front() == 'z' || digits.front() == '?')
+      value.setAllBits();
+    return ParsedConstant{value, unknown};
   }
   unsigned group = radix == 2 ? 1 : radix == 8 ? 3 : 4;
+  for (char c : digits) {
+    if (c == 'x' || c == 'z' || c == '?')
+      continue;
+    unsigned digit = llvm::hexDigitValue(c);
+    if (digit == static_cast<unsigned>(-1) || digit >= radix) {
+      emitError(location) << "invalid digit in integer literal '" << spelling
+                          << "'";
+      return failure();
+    }
+  }
   unsigned bit = 0;
   for (char c : llvm::reverse(digits)) {
     if (bit >= width)
@@ -1151,16 +1174,23 @@ FailureOr<ParsedConstant> parseSVInteger(StringRef spelling, unsigned width,
       }
     } else {
       unsigned digit = llvm::hexDigitValue(c);
-      if (digit == static_cast<unsigned>(-1) || digit >= radix) {
-        emitError(location)
-            << "invalid digit in integer literal '" << spelling << "'";
-        return failure();
-      }
       for (unsigned i = 0; i < group && bit + i < width; ++i)
         if (digit & (1u << i))
           value.setBit(bit + i);
     }
     bit += group;
+  }
+
+  // When the written digits do not fill the declared size, 5.7.1 requires
+  // the leftmost x or z digit to fill all remaining high bits. Known leading
+  // digits retain the ordinary zero extension.
+  char leading = digits.front();
+  if (bit < width && (leading == 'x' || leading == 'z' || leading == '?')) {
+    for (unsigned i = bit; i < width; ++i) {
+      unknown.setBit(i);
+      if (leading == 'z' || leading == '?')
+        value.setBit(i);
+    }
   }
   return ParsedConstant{value, unknown};
 }
