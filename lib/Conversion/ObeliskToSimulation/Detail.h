@@ -549,8 +549,9 @@ struct ParsedConstant {
   ::llvm::APInt unknown;
 };
 
-/// Parse a SystemVerilog integer literal into `width` bits. Fails when the
-/// literal is malformed or does not fit, rather than silently truncating.
+/// Parse a SystemVerilog integer literal into `width` bits. Explicitly sized
+/// literals are first truncated or padded to their declared size, then resized
+/// to `width` according to their signedness. Unsized values must fit `width`.
 ::mlir::FailureOr<ParsedConstant> parseSVInteger(::mlir::StringRef spelling,
                                                  unsigned width,
                                                  ::mlir::Location location);

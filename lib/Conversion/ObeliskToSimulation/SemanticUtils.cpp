@@ -1064,10 +1064,25 @@ FailureOr<ParsedConstant> parseSVInteger(StringRef spelling, unsigned width,
     text.consume_front("+");
   size_t quote = text.find('\'');
   unsigned radix = 10;
+  unsigned literalWidth = width;
+  bool explicitlySized = false;
+  bool basedSigned = false;
   StringRef digits = text;
   if (quote != StringRef::npos) {
+    StringRef size = text.take_front(quote);
+    if (!size.empty()) {
+      uint64_t parsedSize = 0;
+      if (size.getAsInteger(10, parsedSize) || parsedSize == 0 ||
+          parsedSize > std::numeric_limits<unsigned>::max()) {
+        emitError(location) << "invalid size in SystemVerilog integer literal '"
+                            << spelling << "'";
+        return failure();
+      }
+      literalWidth = static_cast<unsigned>(parsedSize);
+      explicitlySized = true;
+    }
     StringRef suffix = text.drop_front(quote + 1);
-    suffix.consume_front("s");
+    basedSigned = suffix.consume_front("s");
     if (suffix.empty()) {
       emitError(location) << "invalid SystemVerilog integer literal '"
                           << spelling << "'";
@@ -1098,11 +1113,25 @@ FailureOr<ParsedConstant> parseSVInteger(StringRef spelling, unsigned width,
     return failure();
   }
 
-  APInt value(width, 0), unknown(width, 0);
+  bool signedLiteral = quote == StringRef::npos || basedSigned;
+  auto resize = [&](APInt value, APInt unknown) -> ParsedConstant {
+    if (signedLiteral)
+      return {value.sextOrTrunc(width), unknown.sextOrTrunc(width)};
+    return {value.zextOrTrunc(width), unknown.zextOrTrunc(width)};
+  };
+
+  // If a declared size is wider than the requested result, only its low
+  // `width` bits can survive. Materializing no more than those bits avoids an
+  // allocation proportional to an otherwise valid but enormous size token.
+  unsigned materializedWidth = std::min(literalWidth, width);
+  APInt value(materializedWidth, 0), unknown(materializedWidth, 0);
   if (!digits.contains('x') && !digits.contains('z') && !digits.contains('?')) {
     // APInt's string constructor requires a width that can hold the literal,
     // and wraps silently in a no-assert build otherwise. Parse at the width
-    // the digits need, then reject anything that does not fit the target.
+    // the digits need, then apply the explicitly declared size. IEEE
+    // 1800-2017 5.7.1 requires excess high bits of a sized literal to be
+    // discarded; only an unsized spelling that contradicts its semantic width
+    // remains malformed IR.
     for (char c : digits) {
       unsigned digit = llvm::hexDigitValue(c);
       if (digit == static_cast<unsigned>(-1) || digit >= radix) {
@@ -1112,22 +1141,24 @@ FailureOr<ParsedConstant> parseSVInteger(StringRef spelling, unsigned width,
       }
     }
     unsigned needed = APInt::getSufficientBitsNeeded(digits, radix);
-    unsigned parseWidth = std::max(needed, width);
+    unsigned parseWidth = std::max(needed, materializedWidth);
     APInt parsed(parseWidth, digits, radix);
-    bool fits = parsed.getActiveBits() <= width;
-    if (negative) {
+    bool fits = explicitlySized || parsed.getActiveBits() <= literalWidth;
+    if (negative && !explicitlySized) {
       APInt signedLimit(parseWidth, 1);
-      signedLimit <<= width - 1;
+      signedLimit <<= literalWidth - 1;
       fits = parsed.ule(signedLimit);
     }
     if (!fits) {
       emitError(location) << "integer literal '" << spelling
-                          << "' does not fit " << "in " << width << " bits";
+                          << "' does not fit " << "in " << literalWidth
+                          << " bits";
       return failure();
     }
+    parsed = parsed.trunc(materializedWidth);
     if (negative)
       parsed.negate();
-    return ParsedConstant{parsed.trunc(width), unknown};
+    return resize(parsed, unknown);
   }
   if (negative) {
     emitError(location) << "negative X/Z integer literal '" << spelling
@@ -1149,7 +1180,7 @@ FailureOr<ParsedConstant> parseSVInteger(StringRef spelling, unsigned width,
     unknown.setAllBits();
     if (digits.front() == 'z' || digits.front() == '?')
       value.setAllBits();
-    return ParsedConstant{value, unknown};
+    return resize(value, unknown);
   }
   unsigned group = radix == 2 ? 1 : radix == 8 ? 3 : 4;
   for (char c : digits) {
@@ -1164,17 +1195,17 @@ FailureOr<ParsedConstant> parseSVInteger(StringRef spelling, unsigned width,
   }
   unsigned bit = 0;
   for (char c : llvm::reverse(digits)) {
-    if (bit >= width)
+    if (bit >= materializedWidth)
       break;
     if (c == 'x' || c == 'z' || c == '?') {
-      for (unsigned i = 0; i < group && bit + i < width; ++i) {
+      for (unsigned i = 0; i < group && bit + i < materializedWidth; ++i) {
         unknown.setBit(bit + i);
         if (c == 'z' || c == '?')
           value.setBit(bit + i);
       }
     } else {
       unsigned digit = llvm::hexDigitValue(c);
-      for (unsigned i = 0; i < group && bit + i < width; ++i)
+      for (unsigned i = 0; i < group && bit + i < materializedWidth; ++i)
         if (digit & (1u << i))
           value.setBit(bit + i);
     }
@@ -1185,14 +1216,15 @@ FailureOr<ParsedConstant> parseSVInteger(StringRef spelling, unsigned width,
   // the leftmost x or z digit to fill all remaining high bits. Known leading
   // digits retain the ordinary zero extension.
   char leading = digits.front();
-  if (bit < width && (leading == 'x' || leading == 'z' || leading == '?')) {
-    for (unsigned i = bit; i < width; ++i) {
+  if (bit < materializedWidth &&
+      (leading == 'x' || leading == 'z' || leading == '?')) {
+    for (unsigned i = bit; i < materializedWidth; ++i) {
       unknown.setBit(i);
       if (leading == 'z' || leading == '?')
         value.setBit(i);
     }
   }
-  return ParsedConstant{value, unknown};
+  return resize(value, unknown);
 }
 
 FailureOr<sim::FrozenConstantAttr> freezeSemanticConstant(Operation *symbol) {
