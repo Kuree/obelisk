@@ -897,6 +897,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_ASSERTION_KILL_EPOCH = UINT32_C(0x00010234),
   OBELISK_RT_INTRINSIC_V1_CLOCKING_NBA = UINT32_C(0x00010235),
   OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER = UINT32_C(0x00010236),
+  OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER_STRENGTH_PAIR = UINT32_C(0x00010237),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -2793,6 +2794,17 @@ obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
     uint64_t code_unit, uint32_t component, uint32_t flags, uint64_t rise_delay,
     uint64_t fall_delay, uint64_t turnoff_delay, const uint8_t *value,
     const uint8_t *unknown);
+// Schedule the polarity-specific driver banks of one three-state primitive as
+// one inertial update. The transition planes carry the logical gate result
+// used for delay selection; both banks mature before the net is resolved.
+obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
+    obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
+    uint64_t plane_bit_count, uint64_t low_bit_offset, uint64_t high_bit_offset,
+    uint64_t bit_width, uint64_t code_unit, uint32_t component,
+    uint64_t rise_delay, uint64_t fall_delay, uint64_t turnoff_delay,
+    const uint8_t *low_value, const uint8_t *low_unknown,
+    const uint8_t *high_value, const uint8_t *high_unknown,
+    const uint8_t *transition_value, const uint8_t *transition_unknown);
 // Resolve a canonical driver-state range after an immediate native store.
 // Net declarations with propagation delays schedule their post-resolution
 // visible transitions; other nets publish immediately.

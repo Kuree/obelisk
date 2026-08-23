@@ -2009,6 +2009,113 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         static_cast<uint32_t>(*component), static_cast<uint32_t>(*flags), *rise,
         *fall, *turnoff, selectedValue.data(), selectedUnknown.data());
   }
+  case OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER_STRENGTH_PAIR: {
+    if (!context || !context->execution)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    auto rise = scalar(5);
+    auto fall = scalar(6);
+    auto turnoff = scalar(7);
+    auto codeUnit = scalar(8);
+    auto component = scalar(9);
+    if (!rise || !fall || !turnoff || !codeUnit || !component ||
+        *component > UINT32_MAX)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Logic low = readLogic(frame.data,
+                          layoutAt(image, frame.function, inputRegister(0)));
+    Logic high = readLogic(frame.data,
+                           layoutAt(image, frame.function, inputRegister(2)));
+    Logic transition = readLogic(
+        frame.data, layoutAt(image, frame.function, inputRegister(4)));
+    struct Selection {
+      uint64_t stable = UINT64_MAX;
+      int64_t first = 0;
+      int64_t last = 0;
+      bool suppressed = false;
+    };
+    auto select = [&](unsigned inputIndex) -> std::optional<Selection> {
+      Layout destination =
+          layoutAt(image, frame.function, inputRegister(inputIndex));
+      uint32_t kind = 0;
+      uint64_t objectBase = 0;
+      int64_t begin = 0, start = kInvalidHandleStart, end = 0;
+      const uint8_t *address = frame.data + destination.offset;
+      std::memcpy(&kind, address, 4);
+      std::memcpy(&objectBase, address + 8, 8);
+      std::memcpy(&start, address + 16, 8);
+      std::memcpy(&end, address + 24, 8);
+      uint32_t staticID = 0;
+      if (kind != OBELISK_RT_DESCRIPTOR_DRIVER ||
+          !decodeStaticHandle(objectBase, staticID, begin) || begin > end)
+        return std::nullopt;
+      if (start == kInvalidHandleStart)
+        return Selection{UINT64_MAX, 0, 0, true};
+      int64_t first = start < begin ? begin - start : 0;
+      int64_t last = static_cast<int64_t>(low.width);
+      if (start > end || end - start < last)
+        last = end - start;
+      if (first >= last)
+        return Selection{UINT64_MAX, first, last, true};
+      uint64_t stable = encodeStaticHandle(staticID, start + first);
+      if (stable == UINT64_MAX)
+        return std::nullopt;
+      return Selection{stable, first, last, false};
+    };
+    std::optional<Selection> lowSelection = select(1);
+    std::optional<Selection> highSelection = select(3);
+    if (!lowSelection || !highSelection)
+      return OBELISK_RT_INVALID_HANDLE;
+    auto suppress = [&] {
+      return obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
+          context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
+          reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
+          context->execution->state_bit_count, UINT64_MAX, UINT64_MAX,
+          low.width, *codeUnit, static_cast<uint32_t>(*component), *rise, *fall,
+          *turnoff, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+    };
+    if (lowSelection->suppressed || highSelection->suppressed) {
+      if (lowSelection->suppressed != highSelection->suppressed ||
+          lowSelection->first != highSelection->first ||
+          lowSelection->last != highSelection->last)
+        return OBELISK_RT_INVALID_HANDLE;
+      return suppress();
+    }
+    if (lowSelection->first != highSelection->first ||
+        lowSelection->last != highSelection->last)
+      return OBELISK_RT_INVALID_HANDLE;
+    uint64_t width =
+        static_cast<uint64_t>(lowSelection->last - lowSelection->first);
+    uint64_t bytes = (width + 7) / 8;
+    struct Planes {
+      std::vector<uint8_t> value;
+      std::vector<uint8_t> unknown;
+    };
+    auto extract = [&](const Logic &source) {
+      Planes planes{std::vector<uint8_t>(static_cast<size_t>(bytes), 0),
+                    std::vector<uint8_t>(static_cast<size_t>(bytes), 0)};
+      for (uint64_t bitIndex = 0; bitIndex != width; ++bitIndex) {
+        uint64_t sourceBit =
+            static_cast<uint64_t>(lowSelection->first) + bitIndex;
+        uint8_t mask = static_cast<uint8_t>(1u << (bitIndex % 8));
+        if (bit(source.value, sourceBit))
+          planes.value[bitIndex / 8] |= mask;
+        if (source.fourState && bit(source.unknown, sourceBit))
+          planes.unknown[bitIndex / 8] |= mask;
+      }
+      return planes;
+    };
+    Planes lowPlanes = extract(low);
+    Planes highPlanes = extract(high);
+    Planes transitionPlanes = extract(transition);
+    return obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
+        context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
+        reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
+        context->execution->state_bit_count, lowSelection->stable,
+        highSelection->stable, width, *codeUnit,
+        static_cast<uint32_t>(*component), *rise, *fall, *turnoff,
+        lowPlanes.value.data(), lowPlanes.unknown.data(),
+        highPlanes.value.data(), highPlanes.unknown.data(),
+        transitionPlanes.value.data(), transitionPlanes.unknown.data());
+  }
   case OBELISK_RT_INTRINSIC_V1_NBA:
   case OBELISK_RT_INTRINSIC_V1_STATIC_NBA:
   case OBELISK_RT_INTRINSIC_V1_CLOCKING_NBA: {

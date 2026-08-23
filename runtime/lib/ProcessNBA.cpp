@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "DesignBytecodeNets.h"
 #include "ProcessAllocation.h"
 #include "ProcessContext.h"
 #include "ProcessObservers.h"
@@ -59,6 +60,40 @@ std::optional<uint64_t> countGeneratedNBAStages(
 bool hasGeneratedNBAStages(
     const obelisk_rt_generated_nba_accumulator_256 &generated) {
   return generated.valid != 0;
+}
+
+static bool validInertialStatePlanesUnlocked(const obelisk_rt_context *context,
+                                             const uint8_t *valuePlane,
+                                             const uint8_t *unknownPlane,
+                                             uint64_t planeBitCount) {
+  if (!context || !context->execution ||
+      planeBitCount != context->execution->state_bit_count)
+    return false;
+  const auto *canonicalValue =
+      reinterpret_cast<const uint8_t *>(context->stateValue.data());
+  const auto *canonicalUnknown =
+      reinterpret_cast<const uint8_t *>(context->stateUnknown.data());
+  bool canonical = valuePlane == canonicalValue &&
+                   (!unknownPlane || unknownPlane == canonicalUnknown);
+  bool native = context->nativeStateBitCount == planeBitCount &&
+                valuePlane == context->nativeStateValue &&
+                (!unknownPlane || unknownPlane == context->nativeStateUnknown);
+  return canonical || native;
+}
+
+static bool validInertialStrengthPairUnlocked(
+    obelisk_rt_context *context, const NativeStaticState &lowState,
+    int64_t lowOffset, const NativeStaticState &highState, int64_t highOffset,
+    uint64_t width) {
+  if (!context || !context->designBytecodeImage.data || lowOffset < 0 ||
+      highOffset < 0)
+    return false;
+  const auto &image = context->designBytecodeImage;
+  uint64_t lowAbsolute = lowState.bitOffset + static_cast<uint64_t>(lowOffset);
+  uint64_t highAbsolute =
+      highState.bitOffset + static_cast<uint64_t>(highOffset);
+  return obelisk::designbytecode::isComplementaryDriverPair(
+      image, context, lowAbsolute, highAbsolute, width);
 }
 
 void markStaticNBAAccumulatorPending(obelisk_rt_context *context,
@@ -394,11 +429,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
   try {
     ContextTransaction transaction(context);
     ContextMutexLock lock(context);
-    if (planeBitCount != context->execution->state_bit_count ||
-        valuePlane != reinterpret_cast<uint8_t *>(context->stateValue.data()) ||
-        (unknownPlane &&
-         unknownPlane !=
-             reinterpret_cast<uint8_t *>(context->stateUnknown.data())))
+    if (!validInertialStatePlanesUnlocked(context, valuePlane, unknownPlane,
+                                          planeBitCount))
       return OBELISK_RT_INVALID_HANDLE;
     InertialDriverSite site{codeUnit, component};
     auto cancelPending = [&] {
@@ -578,9 +610,229 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
     }
     if (scheduled != 0)
       context->inertialDriverPending.emplace(
-          site, InertialDriverPending{bitOffset, bitWidth,
-                                      std::move(targetValue),
-                                      std::move(targetUnknown), scheduled});
+          site,
+          InertialDriverPending{bitOffset, bitWidth, std::move(targetValue),
+                                std::move(targetUnknown), scheduled});
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
+    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+    uint64_t planeBitCount, uint64_t lowBitOffset, uint64_t highBitOffset,
+    uint64_t bitWidth, uint64_t codeUnit, uint32_t component,
+    uint64_t riseDelay, uint64_t fallDelay, uint64_t turnoffDelay,
+    const uint8_t *lowValue, const uint8_t *lowUnknown,
+    const uint8_t *highValue, const uint8_t *highUnknown,
+    const uint8_t *transitionValue, const uint8_t *transitionUnknown) {
+  if (!context || !context->execution || !valuePlane || !unknownPlane ||
+      bitWidth == 0 || codeUnit == UINT64_MAX)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  try {
+    ContextTransaction transaction(context);
+    ContextMutexLock lock(context);
+    if (!validInertialStatePlanesUnlocked(context, valuePlane, unknownPlane,
+                                          planeBitCount))
+      return OBELISK_RT_INVALID_HANDLE;
+    InertialDriverSite site{codeUnit, component};
+    auto cancelPending = [&] {
+      context->scheduledNBAs.erase(
+          std::remove_if(context->scheduledNBAs.begin(),
+                         context->scheduledNBAs.end(),
+                         [&](const ScheduledNBA &update) {
+                           return update.inertialSite == site;
+                         }),
+          context->scheduledNBAs.end());
+      context->inertialDriverPending.erase(site);
+    };
+    if (lowBitOffset == UINT64_MAX || highBitOffset == UINT64_MAX) {
+      cancelPending();
+      return lowBitOffset == highBitOffset ? OBELISK_RT_OK
+                                           : OBELISK_RT_INVALID_HANDLE;
+    }
+    uint64_t byteCount = (bitWidth - 1) / 8 + 1;
+    if (!lowValue || !lowUnknown || !highValue || !highUnknown ||
+        !transitionValue || !transitionUnknown ||
+        byteCount > std::numeric_limits<size_t>::max())
+      return OBELISK_RT_INVALID_ARGUMENT;
+
+    struct Selection {
+      uint32_t staticID = 0;
+      int64_t offset = 0;
+      uint64_t first = 0;
+      uint64_t width = 0;
+      uint64_t handle = UINT64_MAX;
+      const NativeStaticState *state = nullptr;
+    };
+    auto select = [&](uint64_t handle) -> std::optional<Selection> {
+      Selection selected;
+      if (!decodeNativeStatic(handle, selected.staticID, selected.offset))
+        return std::nullopt;
+      selected.state = findNativeStaticState(context, selected.staticID);
+      if (!selected.state)
+        return std::nullopt;
+      __int128 firstWide =
+          std::max<__int128>(0, -static_cast<__int128>(selected.offset));
+      __int128 lastWide = std::min<__int128>(
+          bitWidth,
+          static_cast<__int128>(selected.state->bitWidth) - selected.offset);
+      if (firstWide >= lastWide) {
+        selected.first = bitWidth;
+        return selected;
+      }
+      selected.first = static_cast<uint64_t>(firstWide);
+      selected.width = static_cast<uint64_t>(lastWide - firstWide);
+      __int128 offsetWide = static_cast<__int128>(selected.offset) + firstWide;
+      if (offsetWide < 0 || offsetWide > INT64_MAX)
+        return std::nullopt;
+      selected.offset = static_cast<int64_t>(offsetWide);
+      selected.handle = obelisk::designbytecode::encodeStaticHandle(
+          selected.staticID, selected.offset);
+      if (selected.handle == UINT64_MAX)
+        return std::nullopt;
+      return selected;
+    };
+    std::optional<Selection> low = select(lowBitOffset);
+    std::optional<Selection> high = select(highBitOffset);
+    if (!low || !high)
+      return OBELISK_RT_INVALID_HANDLE;
+    if (low->width == 0 || high->width == 0) {
+      cancelPending();
+      return low->width == high->width && low->first == high->first
+                 ? OBELISK_RT_OK
+                 : OBELISK_RT_INVALID_HANDLE;
+    }
+    if (low->first != high->first || low->width != high->width)
+      return OBELISK_RT_INVALID_HANDLE;
+    if (static_cast<__int128>(low->offset) + low->width - 1 > INT64_MAX ||
+        static_cast<__int128>(high->offset) + high->width - 1 > INT64_MAX)
+      return OBELISK_RT_INVALID_HANDLE;
+    if (!validInertialStrengthPairUnlocked(context, *low->state, low->offset,
+                                           *high->state, high->offset,
+                                           low->width))
+      return OBELISK_RT_INVALID_HANDLE;
+
+    uint64_t selectedBytes = (low->width - 1) / 8 + 1;
+    auto copySelected = [&](const uint8_t *source) {
+      std::vector<uint8_t> result(static_cast<size_t>(selectedBytes), 0);
+      for (uint64_t bit = 0; bit != low->width; ++bit)
+        if (byteBit(source, low->first + bit))
+          setByteBit(result.data(), bit, true);
+      return result;
+    };
+    std::vector<uint8_t> targetLowValue = copySelected(lowValue);
+    std::vector<uint8_t> targetLowUnknown = copySelected(lowUnknown);
+    std::vector<uint8_t> targetHighValue = copySelected(highValue);
+    std::vector<uint8_t> targetHighUnknown = copySelected(highUnknown);
+    std::vector<uint8_t> targetTransitionValue = copySelected(transitionValue);
+    std::vector<uint8_t> targetTransitionUnknown =
+        copySelected(transitionUnknown);
+    if (auto pending = context->inertialDriverPending.find(site);
+        pending != context->inertialDriverPending.end() &&
+        pending->second.destination == low->handle &&
+        pending->second.secondDestination == high->handle &&
+        pending->second.width == low->width &&
+        pending->second.value == targetLowValue &&
+        pending->second.unknown == targetLowUnknown &&
+        pending->second.secondValue == targetHighValue &&
+        pending->second.secondUnknown == targetHighUnknown)
+      return OBELISK_RT_OK;
+
+    cancelPending();
+    auto currentBit = [&](const Selection &selection, bool unknown,
+                          uint64_t bit) {
+      uint64_t absolute = selection.state->bitOffset +
+                          static_cast<uint64_t>(selection.offset) + bit;
+      const std::vector<uint64_t> &plane =
+          unknown ? context->stateUnknown : context->stateValue;
+      return absolute / 64 < plane.size() &&
+             ((plane[absolute / 64] >> (absolute % 64)) & 1) != 0;
+    };
+    auto targetBit = [](const std::vector<uint8_t> &plane, uint64_t bit) {
+      return byteBit(plane.data(), bit);
+    };
+    uint64_t changedBits = 0;
+    for (uint64_t bit = 0; bit != low->width; ++bit) {
+      bool lowChanged =
+          currentBit(*low, false, bit) != targetBit(targetLowValue, bit) ||
+          currentBit(*low, true, bit) != targetBit(targetLowUnknown, bit);
+      bool highChanged =
+          currentBit(*high, false, bit) != targetBit(targetHighValue, bit) ||
+          currentBit(*high, true, bit) != targetBit(targetHighUnknown, bit);
+      changedBits += lowChanged || highChanged;
+    }
+    if (changedBits == 0)
+      return OBELISK_RT_OK;
+    __uint128_t updateCount = static_cast<__uint128_t>(changedBits) * 2;
+    if (context->nextSchedulerSequence == 0 ||
+        updateCount > static_cast<__uint128_t>(UINT64_MAX) -
+                          context->nextSchedulerSequence)
+      return OBELISK_RT_OUT_OF_RESOURCES;
+
+    auto delayFor = [&](uint64_t bit) {
+      bool value = targetBit(targetTransitionValue, bit);
+      bool unknown = targetBit(targetTransitionUnknown, bit);
+      if (!unknown)
+        return value ? riseDelay : fallDelay;
+      return value ? turnoffDelay
+                   : std::min({riseDelay, fallDelay, turnoffDelay});
+    };
+    auto enqueue = [&](const Selection &selection, uint64_t bit, bool value,
+                       bool unknown, uint64_t delay, bool final) {
+      ScheduledNBA update;
+      update.valuePlane = valuePlane;
+      update.unknownPlane = unknownPlane;
+      update.planeBitCount = planeBitCount;
+      update.bitOffset = obelisk::designbytecode::encodeStaticHandle(
+          selection.staticID,
+          selection.offset + static_cast<int64_t>(bit));
+      update.bitWidth = 1;
+      update.driver = true;
+      update.deferDriverResolution = !final;
+      update.forceDriverResolution = final;
+      update.execRegion = OBELISK_RT_REGION_ACTIVE;
+      update.sequence = context->nextSchedulerSequence++;
+      update.dueTime = delay > UINT64_MAX - context->schedulerTime
+                           ? UINT64_MAX
+                           : context->schedulerTime + delay;
+      update.inertialSite = site;
+      update.inlinePacked = true;
+      update.inlineValue = value;
+      update.inlineUnknown = unknown;
+      context->scheduledNBAs.push_back(std::move(update));
+    };
+    for (uint64_t bit = 0; bit != low->width; ++bit) {
+      bool lowChanged =
+          currentBit(*low, false, bit) != targetBit(targetLowValue, bit) ||
+          currentBit(*low, true, bit) != targetBit(targetLowUnknown, bit);
+      bool highChanged =
+          currentBit(*high, false, bit) != targetBit(targetHighValue, bit) ||
+          currentBit(*high, true, bit) != targetBit(targetHighUnknown, bit);
+      if (!lowChanged && !highChanged)
+        continue;
+      uint64_t delay = delayFor(bit);
+      enqueue(*low, bit, targetBit(targetLowValue, bit),
+              targetBit(targetLowUnknown, bit), delay, false);
+      enqueue(*high, bit, targetBit(targetHighValue, bit),
+              targetBit(targetHighUnknown, bit), delay, true);
+    }
+    InertialDriverPending pending;
+    pending.destination = low->handle;
+    pending.width = low->width;
+    pending.value = std::move(targetLowValue);
+    pending.unknown = std::move(targetLowUnknown);
+    pending.remaining = static_cast<uint64_t>(updateCount);
+    pending.secondDestination = high->handle;
+    pending.secondValue = std::move(targetHighValue);
+    pending.secondUnknown = std::move(targetHighUnknown);
+    context->inertialDriverPending.emplace(site, std::move(pending));
     return OBELISK_RT_OK;
   } catch (const std::bad_alloc &) {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);

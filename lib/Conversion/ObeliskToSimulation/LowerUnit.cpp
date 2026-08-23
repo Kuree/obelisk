@@ -2185,6 +2185,10 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
         builder.getIntegerAttr(planeType,
                                APInt::getAllOnes(logicType.getWidth())),
         builder.getIntegerAttr(planeType, 0));
+    Value x = sim::SimLogicConstantOp::create(
+        builder, location, logicType, builder.getIntegerAttr(planeType, 0),
+        builder.getIntegerAttr(planeType,
+                               APInt::getAllOnes(logicType.getWidth())));
     // IEEE 1800-2017 28.12.2 represents an uncertain conditional-gate output
     // as L or H, not ordinary x. Split the output into polarity-specific
     // drivers: the low bank has (strength0, highz1), and the high bank has
@@ -2209,6 +2213,34 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
                    : Value(sim::SimLogicMuxOp::create(builder, location,
                                                       logicType, *control,
                                                       disabled, highCandidate));
+    // Keep the ordinary four-state gate result alongside its two exact
+    // strength ranges. IEEE 1800-2017 28.6 and 28.16 select propagation delay
+    // from this logical transition: L and H use the x delay, not the delay of
+    // either implementation bank.
+    auto controlPlaneType = IntegerType::get(function.getContext(), 1);
+    Value controlZero = sim::SimLogicConstantOp::create(
+        builder, location, control->getType(),
+        builder.getIntegerAttr(controlPlaneType, 0),
+        builder.getIntegerAttr(controlPlaneType, 0));
+    Value controlOne = sim::SimLogicConstantOp::create(
+        builder, location, control->getType(),
+        builder.getIntegerAttr(controlPlaneType, 1),
+        builder.getIntegerAttr(controlPlaneType, 0));
+    Value activeControl = activeHigh ? controlOne : controlZero;
+    Value inactiveControl = activeHigh ? controlZero : controlOne;
+    Value active = sim::SimLogicCompareOp::create(
+        builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
+        *control, activeControl);
+    Value inactive = sim::SimLogicCompareOp::create(
+        builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
+        *control, inactiveControl);
+    // A four-state mux would preserve Z when merging a driven 1 with Z,
+    // encoding the H strength range as ordinary Z. Select with deterministic
+    // case-equality predicates instead so every uncertain control becomes
+    // canonical X for propagation-delay selection.
+    result = arith::SelectOp::create(builder, location, active, driven, x);
+    result =
+        arith::SelectOp::create(builder, location, inactive, disabled, result);
     strengthResults = std::array<Value, 2>{lowResult, highResult};
   } else {
     return emitError(location)
@@ -2216,32 +2248,95 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
   }
 
   if (strengthResults) {
-    if (function->hasAttr("obelisk_sim.propagation_delays"))
-      return emitError(location)
-             << "conditional primitive propagation delays are not yet "
-                "supported";
     if (strengthDriverLvalues.empty())
       return emitError(location)
              << "conditional primitive has no polarity-specific drivers";
+    auto selectStrengthBank = [&](unsigned bank) {
+      for (auto &entry : strengthDriverLvalues) {
+        if (!entry.second[bank])
+          return false;
+        lvalues[entry.first()] = entry.second[bank];
+      }
+      for (auto &entry : strengthNodeLvalues) {
+        if (!entry.second[bank])
+          return false;
+        nodeLvalues[entry.first] = entry.second[bank];
+      }
+      return true;
+    };
+    if (auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
+            "obelisk_sim.propagation_delays")) {
+      if (delays.empty() || delays.size() > 3)
+        return function.emitError("invalid frozen propagation delays");
+      ArrayRef<int64_t> values = delays.asArrayRef();
+      int64_t rise = values[0];
+      int64_t fall = values.size() == 1 ? rise : values[1];
+      int64_t turnoff = values.size() == 1   ? rise
+                        : values.size() == 2 ? std::min(rise, fall)
+                                             : values[2];
+      auto timeConstant = [&](int64_t ticks) {
+        return sim::SimTimeConstantOp::create(
+            builder, location, sim::TimeType::get(function.getContext()),
+            builder.getI64IntegerAttr(ticks));
+      };
+      auto codeUnitID = function->getAttrOfType<IntegerAttr>("code_unit_id");
+      if (!codeUnitID)
+        return function.emitError(
+            "delayed drive has no stable code unit identity");
+      Value riseDelay = timeConstant(rise);
+      Value fallDelay = timeConstant(fall);
+      Value turnoffDelay = timeConstant(turnoff);
+      for (Operation *output : outputs) {
+        if (!selectStrengthBank(0))
+          return emitError(location)
+                 << "conditional primitive has an incomplete driver bank";
+        FailureOr<CapturedLValue> low = captureLValue(output, location);
+        if (!selectStrengthBank(1))
+          return emitError(location)
+                 << "conditional primitive has an incomplete driver bank";
+        FailureOr<CapturedLValue> high = captureLValue(output, location);
+        if (failed(low) || failed(high))
+          return failure();
+        if (low->kind != CapturedLValue::Kind::Reference ||
+            high->kind != CapturedLValue::Kind::Reference ||
+            !isa<sim::DriverType>(low->reference.getType()) ||
+            !isa<sim::DriverType>(high->reference.getType()))
+          return emitError(getSemanticLocation(output))
+                 << "delayed conditional primitive output is not a "
+                    "first-class net driver";
+        FailureOr<Value> lowValue =
+            convert((*strengthResults)[0], low->type, false, location,
+                    isSignedNode(low->semanticNode));
+        FailureOr<Value> highValue =
+            convert((*strengthResults)[1], high->type, false, location,
+                    isSignedNode(high->semanticNode));
+        FailureOr<Value> transitionValue =
+            convert(result, low->type, false, location,
+                    isSignedNode(low->semanticNode));
+        if (failed(lowValue) || failed(highValue) || failed(transitionValue))
+          return failure();
+        if (nextInertialDriveComponent > UINT32_MAX)
+          return function.emitError("too many delayed drive sites");
+        recordImplicitWrite(low->reference);
+        recordImplicitWrite(high->reference);
+        sim::SimDriverDriveInertialStrengthPairOp::create(
+            builder, location, low->reference, *lowValue, high->reference,
+            *highValue, *transitionValue, riseDelay, fallDelay, turnoffDelay,
+            codeUnitID,
+            builder.getI32IntegerAttr(
+                static_cast<uint32_t>(nextInertialDriveComponent++)));
+      }
+      return success();
+    }
     for (unsigned bank = 0; bank != 2; ++bank) {
       // Both polarity banks are one logical primitive driver. Store every low
       // bank first without publishing its transient result; the corresponding
       // high-bank stores then resolve each affected net from the completed
       // L/H representation.
       deferDriverResolution = bank == 0;
-      for (auto &entry : strengthDriverLvalues) {
-        if (!entry.second[bank])
-          return emitError(location)
-                 << "conditional primitive has an incomplete driver bank";
-        lvalues[entry.first()] = entry.second[bank];
-      }
-      for (auto &entry : strengthNodeLvalues) {
-        if (!entry.second[bank])
-          return emitError(location)
-                 << "conditional primitive has an incomplete node driver "
-                    "bank";
-        nodeLvalues[entry.first] = entry.second[bank];
-      }
+      if (!selectStrengthBank(bank))
+        return emitError(location)
+               << "conditional primitive has an incomplete driver bank";
       FailureOr<Value> converted =
           convert((*strengthResults)[bank], *outputType, false, location);
       if (failed(converted))

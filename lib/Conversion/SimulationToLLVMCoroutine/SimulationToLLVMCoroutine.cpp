@@ -404,8 +404,25 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
                         selectRange(drive.getDriver(), provenance, localRanges);
           return;
         }
-        if (auto drive =
-                dyn_cast<sim::SimDriverDriveDelayedNetOp>(operation)) {
+        if (auto pair = dyn_cast<sim::SimDriverDriveInertialStrengthPairOp>(
+                operation)) {
+          auto inspect = [&](Value driver, Value value) {
+            auto found = provenance.find(driver);
+            if (found != provenance.end() && found->second.descriptor &&
+                domains->isInductivelyTwoState(found->second.resource,
+                                               *found->second.descriptor))
+              (void)selectRange(driver, provenance, inductiveRanges);
+            preserving &=
+                knownStateDomains->isTwoStateWithInductiveRoots(value) &&
+                selectRange(driver, provenance, localRanges);
+          };
+          inspect(pair.getLowDriver(), pair.getLowValue());
+          inspect(pair.getHighDriver(), pair.getHighValue());
+          preserving &= knownStateDomains->isTwoStateWithInductiveRoots(
+              pair.getTransitionValue());
+          return;
+        }
+        if (auto drive = dyn_cast<sim::SimDriverDriveDelayedNetOp>(operation)) {
           auto found = provenance.find(drive.getDriver());
           if (found != provenance.end() && found->second.descriptor &&
               domains->isInductivelyTwoState(found->second.resource,

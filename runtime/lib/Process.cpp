@@ -3077,8 +3077,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                     context, update.bitOffset, update.bitWidth))
               return;
           }
-          if (publicationChanged && update.driver &&
-              !update.deferDriverResolution) {
+          if ((publicationChanged || update.forceDriverResolution) &&
+              update.driver && !update.deferDriverResolution) {
             __int128 first = std::max<__int128>(baseOffset, 0);
             __int128 last = std::min<__int128>(
                 static_cast<__int128>(baseOffset) + update.bitWidth,

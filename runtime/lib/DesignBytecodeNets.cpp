@@ -135,6 +135,11 @@ NetAliasCache *getNetAliasCache(const Image &image,
       for (uint64_t bit = 0; bit != record.planeSize; ++bit)
         resolutionByBit.emplace(record.valueOffset + bit, resolution);
     } else if (record.function == kDriverStateDescriptor) {
+      if ((record.argument & (uint32_t{1} << 11)) != 0 && !drivers.empty()) {
+        const CaptureRecord &low = drivers.back();
+        cache.strengthDriverPairs.push_back(
+            {low.valueOffset, record.valueOffset, record.planeSize});
+      }
       drivers.push_back(record);
       cache.drivers.push_back(
           {record.valueOffset, record.unknownOffset, record.planeSize, true});
@@ -220,6 +225,28 @@ NetAliasCache *getNetAliasCache(const Image &image,
   }
   context->netAliases = std::move(cache);
   return &context->netAliases;
+}
+
+bool isComplementaryDriverPair(const Image &image, obelisk_rt_context *context,
+                               uint64_t lowOffset, uint64_t highOffset,
+                               uint64_t width) {
+  if (width == 0)
+    return false;
+  NetAliasCache *cache = getNetAliasCache(image, context);
+  if (!cache)
+    return false;
+  auto pair = std::upper_bound(
+      cache->strengthDriverPairs.begin(), cache->strengthDriverPairs.end(),
+      lowOffset, [](uint64_t offset, const NetStrengthDriverPairRange &range) {
+        return offset < range.lowOffset;
+      });
+  if (pair == cache->strengthDriverPairs.begin())
+    return false;
+  --pair;
+  if (lowOffset < pair->lowOffset || lowOffset - pair->lowOffset >= pair->width)
+    return false;
+  uint64_t local = lowOffset - pair->lowOffset;
+  return width <= pair->width - local && highOffset == pair->highOffset + local;
 }
 
 bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,

@@ -284,6 +284,21 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
          reg(plan, op.getTurnoffDelay()), codeUnit, component, flags},
         {});
   }
+  if (auto op =
+          dyn_cast<sim::SimDriverDriveInertialStrengthPairOp>(operation)) {
+    uint32_t codeUnit = emitU64Constant(plan, op.getCodeUnitId());
+    uint32_t component = emitU64Constant(plan, op.getComponent());
+    if (codeUnit == kInvalidRegister || component == kInvalidRegister)
+      return op.emitOpError("cannot encode inertial strength-pair identity");
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicInertialDriverStrengthPair,
+        {reg(plan, op.getLowValue()), reg(plan, op.getLowDriver()),
+         reg(plan, op.getHighValue()), reg(plan, op.getHighDriver()),
+         reg(plan, op.getTransitionValue()), reg(plan, op.getRiseDelay()),
+         reg(plan, op.getFallDelay()), reg(plan, op.getTurnoffDelay()),
+         codeUnit, component},
+        {});
+  }
   if (auto op = dyn_cast<sim::SimEventTriggerOp>(operation)) {
     SmallVector<Value> inputs{op.getEvent()};
     if (op.getDelay())

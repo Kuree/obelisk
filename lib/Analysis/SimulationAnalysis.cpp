@@ -386,11 +386,10 @@ uint64_t getSimulationOperationCost(Operation &operation) {
     return 0;
   if (isa<sim::SimRefLoadOp, sim::SimRefStoreOp, sim::SimNetReadOp,
           sim::SimDriverDriveOp, sim::SimDriverDriveInertialOp,
-          sim::SimDriverDriveDelayedNetOp,
-          sim::SimDriverDriveChangedOp,
-          sim::SimNBAEnqueueOp,
-          sim::SimManagedNBAEnqueueOp, sim::SimReferencePathNBAEnqueueOp>(
-          operation))
+          sim::SimDriverDriveInertialStrengthPairOp,
+          sim::SimDriverDriveDelayedNetOp, sim::SimDriverDriveChangedOp,
+          sim::SimNBAEnqueueOp, sim::SimManagedNBAEnqueueOp,
+          sim::SimReferencePathNBAEnqueueOp>(operation))
     return 3;
   if (isa<sim::SimCallOp>(operation))
     return 5;

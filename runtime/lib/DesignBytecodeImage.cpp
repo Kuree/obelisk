@@ -489,6 +489,17 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 0 && numeric(input(0)) && handle(input(1)) &&
            bits(input(2), 64) && bits(input(3), 64) && bits(input(4), 64) &&
            bits(input(5), 64) && bits(input(6), 64) && bits(input(7), 64);
+  case OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER_STRENGTH_PAIR: {
+    auto low = input(0);
+    auto high = input(2);
+    auto transition = input(4);
+    return signature.flags == 0 && site.inputCount == 10 &&
+           site.outputCount == 0 && numeric(low) && handle(input(1)) &&
+           numeric(high) && handle(input(3)) && numeric(transition) &&
+           compatible(*low, *high) && compatible(*low, *transition) &&
+           bits(input(5), 64) && bits(input(6), 64) && bits(input(7), 64) &&
+           bits(input(8), 64) && bits(input(9), 64);
+  }
   case OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER:
     return signature.flags <= 1 &&
            (site.inputCount == 1 || site.inputCount == 2) &&

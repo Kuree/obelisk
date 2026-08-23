@@ -100,6 +100,19 @@ void declareNativeRuntimeABI(ModuleOp module) {
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_scheduler_inertial_driver_strength_pair",
+      IntegerType::get(context, 32),
+      {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
+       LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
+       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       IntegerType::get(context, 32), IntegerType::get(context, 64),
+       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
+       LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
+       LLVM::LLVMPointerType::get(context),
+       LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_resolve_drivers",
                            IntegerType::get(context, 32),
                            {LLVM::LLVMPointerType::get(context),

@@ -458,6 +458,9 @@ struct InertialDriverPending {
   std::vector<uint8_t> value;
   std::vector<uint8_t> unknown;
   uint64_t remaining = 0;
+  uint64_t secondDestination = UINT64_MAX;
+  std::vector<uint8_t> secondValue;
+  std::vector<uint8_t> secondUnknown;
 };
 
 struct InertialNetPending {
@@ -492,6 +495,7 @@ struct ScheduledNBA {
   bool stringValue = false;
   bool driver = false;
   bool deferDriverResolution = false;
+  bool forceDriverResolution = false;
   bool managedValue = false;
   bool inlinePacked = false;
   obelisk_rt_string_v1 rootedString = 0;
@@ -749,6 +753,12 @@ struct NetDriverBit {
   uint8_t strength1 = 6;
 };
 
+struct NetStrengthDriverPairRange {
+  uint64_t lowOffset = 0;
+  uint64_t highOffset = 0;
+  uint64_t width = 0;
+};
+
 struct NetAliasCache {
   const obelisk_rt_execution_descriptor_v1 *execution = nullptr;
   std::unordered_map<uint64_t, uint64_t> rootByBit;
@@ -757,6 +767,7 @@ struct NetAliasCache {
   std::unordered_map<uint64_t, uint8_t> resolutionByRoot;
   std::vector<NetAliasRange> nets;
   std::vector<NetAliasRange> drivers;
+  std::vector<NetStrengthDriverPairRange> strengthDriverPairs;
 };
 
 // Decoded view of the immutable reflection image. Context creation validates

@@ -85,6 +85,8 @@ constexpr uint32_t kIntrinsicStaticNBA = OBELISK_RT_INTRINSIC_V1_STATIC_NBA;
 constexpr uint32_t kIntrinsicClockingNBA = OBELISK_RT_INTRINSIC_V1_CLOCKING_NBA;
 constexpr uint32_t kIntrinsicInertialDriver =
     OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER;
+constexpr uint32_t kIntrinsicInertialDriverStrengthPair =
+    OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER_STRENGTH_PAIR;
 constexpr uint32_t kIntrinsicEventTrigger =
     OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER;
 constexpr uint32_t kIntrinsicEventTriggered =

@@ -28,6 +28,9 @@ struct NetPublication {
 
 NetAliasCache *getNetAliasCache(const Image &image,
                                 obelisk_rt_context *context);
+bool isComplementaryDriverPair(const Image &image, obelisk_rt_context *context,
+                               uint64_t lowOffset, uint64_t highOffset,
+                               uint64_t width);
 bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,
                     std::vector<NetPublication> &publications, bool &changed);
 bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,

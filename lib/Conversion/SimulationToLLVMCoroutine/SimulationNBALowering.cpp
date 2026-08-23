@@ -101,6 +101,83 @@ private:
   uint64_t stateBitCount = 0;
 };
 
+class InertialStrengthPairConversion final
+    : public OpConversionPattern<sim::SimDriverDriveInertialStrengthPairOp> {
+public:
+  InertialStrengthPairConversion(const TypeConverter &converter,
+                                 MLIRContext *context, uint64_t stateBitCount)
+      : OpConversionPattern(converter, context), stateBitCount(stateBitCount) {}
+
+  LogicalResult
+  matchAndRewrite(sim::SimDriverDriveInertialStrengthPairOp op,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getLowDriver().size() != 1 ||
+        adaptor.getHighDriver().size() != 1 ||
+        adaptor.getLowValue().size() != 2 ||
+        adaptor.getHighValue().size() != 2 ||
+        adaptor.getTransitionValue().size() != 2 ||
+        adaptor.getRiseDelay().size() != 1 ||
+        adaptor.getFallDelay().size() != 1 ||
+        adaptor.getTurnoffDelay().size() != 1)
+      return failure();
+    std::optional<unsigned> width =
+        nativeStateWidth(op.getLowValue().getType());
+    if (!width)
+      return failure();
+
+    Location location = op.getLoc();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i32 = rewriter.getI32Type();
+    Type i64 = rewriter.getI64Type();
+    Value contextAddress = LLVM::AddressOfOp::create(
+        rewriter, location, pointer, "__obelisk_current_context");
+    Value runtimeContext =
+        LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
+    auto savePlane = [&](Value value) {
+      Value address = entryAlloca(rewriter, location, value.getType(), 1, 1);
+      LLVM::StoreOp::create(rewriter, location, value, address, 1);
+      return address;
+    };
+    Value lowValue = savePlane(adaptor.getLowValue()[0]);
+    Value lowUnknown = savePlane(adaptor.getLowValue()[1]);
+    Value highValue = savePlane(adaptor.getHighValue()[0]);
+    Value highUnknown = savePlane(adaptor.getHighValue()[1]);
+    Value transitionValue = savePlane(adaptor.getTransitionValue()[0]);
+    Value transitionUnknown = savePlane(adaptor.getTransitionValue()[1]);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(
+                rewriter.getContext(),
+                "obelisk_rt_v1_scheduler_inertial_driver_strength_pair"),
+            ValueRange{
+                runtimeContext,
+                LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                          "__obelisk_state_value"),
+                LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                          "__obelisk_state_unknown"),
+                llvmConstant(rewriter, location, i64, stateBitCount),
+                adaptor.getLowDriver().front(), adaptor.getHighDriver().front(),
+                llvmConstant(rewriter, location, i64, *width),
+                llvmConstant(rewriter, location, i64, op.getCodeUnitId()),
+                llvmConstant(rewriter, location, i32, op.getComponent()),
+                adaptor.getRiseDelay().front(), adaptor.getFallDelay().front(),
+                adaptor.getTurnoffDelay().front(), lowValue, lowUnknown,
+                highValue, highUnknown, transitionValue, transitionUnknown})
+            .getResult();
+    LLVM::CallOp::create(rewriter, location, TypeRange{},
+                         SymbolRefAttr::get(rewriter.getContext(),
+                                            "obelisk_rt_v1_scheduler_fail"),
+                         ValueRange{runtimeContext, status});
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  uint64_t stateBitCount = 0;
+};
+
 class ImmediateNBAConversion final
     : public OpConversionPattern<sim::SimNBAEnqueueOp> {
 public:
@@ -561,14 +638,14 @@ void populateNBAToLLVMConversionPatterns(RewritePatternSet &patterns,
                                          uint64_t stateBitCount,
                                          const NativeStaticNBAPlan *staticPlan,
                                          bool staticSitesEnabled,
-                                         bool guardedClaims,
-                                         bool evalCeiling) {
+                                         bool guardedClaims, bool evalCeiling) {
   patterns.add<InertialDriverConversion>(converter, patterns.getContext(),
                                          stateBitCount);
-  patterns.add<ImmediateNBAConversion>(converter, patterns.getContext(),
-                                       stateBitCount, staticPlan,
-                                       staticSitesEnabled, guardedClaims,
-                                       evalCeiling);
+  patterns.add<InertialStrengthPairConversion>(converter, patterns.getContext(),
+                                               stateBitCount);
+  patterns.add<ImmediateNBAConversion>(
+      converter, patterns.getContext(), stateBitCount, staticPlan,
+      staticSitesEnabled, guardedClaims, evalCeiling);
 }
 
 } // namespace obelisk::detail

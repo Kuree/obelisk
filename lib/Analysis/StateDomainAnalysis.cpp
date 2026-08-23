@@ -1191,6 +1191,30 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
       analysis::DescriptorProvenanceMap provenance =
           analysis::deriveDescriptorProvenance(function);
       function.walk([&](Operation *operation) {
+        auto rejectWrite = [&](Value destination, Value value) {
+          if (getValueFact(facts, value).domain == StateDomain::TwoState)
+            return;
+          if (std::optional<RootKey> root =
+                  getConcreteRoot(destination, provenance)) {
+            if (candidates.contains(*root))
+              rejected.insert(*root);
+            return;
+          }
+          auto found = provenance.find(destination);
+          sim::ComputeResourceKind resource =
+              found == provenance.end() ? sim::ComputeResourceKind::Unknown
+                                        : found->second.resource;
+          for (RootKey root : candidates)
+            if (resource == sim::ComputeResourceKind::Unknown ||
+                root.first == static_cast<unsigned>(resource))
+              rejected.insert(root);
+        };
+        if (auto pair = dyn_cast<sim::SimDriverDriveInertialStrengthPairOp>(
+                operation)) {
+          rejectWrite(pair.getLowDriver(), pair.getLowValue());
+          rejectWrite(pair.getHighDriver(), pair.getHighValue());
+          return;
+        }
         Value destination;
         Value value;
         if (auto store = dyn_cast<sim::SimRefStoreOp>(operation)) {
@@ -1217,22 +1241,7 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
         } else {
           return;
         }
-        if (getValueFact(facts, value).domain == StateDomain::TwoState)
-          return;
-        if (std::optional<RootKey> root =
-                getConcreteRoot(destination, provenance)) {
-          if (candidates.contains(*root))
-            rejected.insert(*root);
-          return;
-        }
-        auto found = provenance.find(destination);
-        sim::ComputeResourceKind resource =
-            found == provenance.end() ? sim::ComputeResourceKind::Unknown
-                                      : found->second.resource;
-        for (RootKey root : candidates)
-          if (resource == sim::ComputeResourceKind::Unknown ||
-              root.first == static_cast<unsigned>(resource))
-            rejected.insert(root);
+        rejectWrite(destination, value);
       });
     }
     if (rejected.empty())

@@ -4343,6 +4343,207 @@ TEST(Scheduler, InertialGateDriversUsePerBitTransitionDelays) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, InertialStrengthPairsMatureAtomicallyAndRejectPulses) {
+  // One wire plus the complementary (strong0, highz1) and
+  // (highz0, strong1) driver banks used for a conditional primitive.
+  constexpr uint64_t descriptorsOffset = 0;
+  std::vector<uint8_t> bytes(3 * 32, 0);
+  auto write32 = [&](uint64_t offset, uint32_t value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  };
+  auto write64 = [&](uint64_t offset, uint64_t value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  };
+  auto writeDescriptor = [&](uint64_t index, uint32_t function,
+                             uint32_t argument, uint64_t valueOffset,
+                             uint64_t unknownOffset) {
+    uint64_t record = descriptorsOffset + index * 32;
+    write32(record, function);
+    write32(record + 4, argument);
+    write64(record + 8, valueOffset);
+    write64(record + 16, unknownOffset);
+    write64(record + 24, 1);
+  };
+  writeDescriptor(0, obelisk::designbytecode::kNetStateDescriptor,
+                  /*four-state wire=*/1, /*net=*/0, UINT64_MAX);
+  writeDescriptor(1, obelisk::designbytecode::kDriverStateDescriptor,
+                  /*strong0, highz1=*/185, /*driver=*/8, /*net=*/0);
+  writeDescriptor(2, obelisk::designbytecode::kDriverStateDescriptor,
+                  /*highz0, strong1, high bank=*/2953, /*driver=*/16,
+                  /*net=*/0);
+  obelisk::designbytecode::Image image{};
+  image.data = bytes.data();
+  image.size = bytes.size();
+  image.stateDescriptors = descriptorsOffset;
+  image.stateDescriptorCount = 3;
+  image.stateBitCount = 17;
+  ASSERT_TRUE(obelisk::designbytecode::validateImage(image));
+
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 17;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 8, 1),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 2, 16, 1),
+            OBELISK_RT_OK);
+  context->designBytecodeImage = image;
+  // Net and both driver banks start at z.
+  context->stateValue[0] =
+      (uint64_t{1} << 0) | (uint64_t{1} << 8) | (uint64_t{1} << 16);
+  context->stateUnknown[0] = context->stateValue[0];
+  std::array<uint8_t, 3> nativeValue{1, 1, 1};
+  std::array<uint8_t, 3> nativeUnknown{1, 1, 1};
+  ASSERT_EQ(obelisk_rt_v1_native_state_sync(context, nativeValue.data(),
+                                            nativeUnknown.data(), 17),
+            OBELISK_RT_OK);
+  uint64_t low = obelisk_rt_v1_native_state_static_handle(1);
+  uint64_t high = obelisk_rt_v1_native_state_static_handle(2);
+  uint8_t zero = 0;
+  uint8_t one = 1;
+  auto schedule = [&](uint8_t lowValue, uint8_t lowUnknown, uint8_t highValue,
+                      uint8_t highUnknown, uint8_t transitionValue,
+                      uint8_t transitionUnknown) {
+    return obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
+        context, nativeValue.data(), nativeUnknown.data(), 17, low, high, 1, 41,
+        3, /*rise=*/7, /*fall=*/11, /*turnoff=*/13, &lowValue, &lowUnknown,
+        &highValue, &highUnknown, &transitionValue, &transitionUnknown);
+  };
+
+  // The runtime trust boundary rejects handles that do not identify the
+  // adjacent complementary banks of one logical driver range.
+  ASSERT_EQ(obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
+                context, nativeValue.data(), nativeUnknown.data(), 17, low, low,
+                1, 42, 3, 7, 11, 13, &zero, &zero, &one, &one, &zero, &zero),
+            OBELISK_RT_INVALID_HANDLE);
+  EXPECT_TRUE(context->scheduledNBAs.empty());
+
+  // A logical 0 changes only the low bank, but the unchanged high-bank marker
+  // still resolves the completed pair at the falling deadline.
+  ASSERT_EQ(schedule(zero, zero, one, one, zero, zero), OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 2u);
+  EXPECT_EQ(context->scheduledNBAs[0].dueTime, 11u);
+  EXPECT_TRUE(context->scheduledNBAs[0].deferDriverResolution);
+  EXPECT_EQ(context->scheduledNBAs[1].dueTime, 11u);
+  EXPECT_TRUE(context->scheduledNBAs[1].forceDriverResolution);
+  context->schedulerTime = 3;
+  ASSERT_EQ(schedule(zero, zero, one, one, zero, zero), OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 2u);
+  EXPECT_EQ(context->scheduledNBAs[0].dueTime, 11u);
+
+  // Returning to z before maturity rejects both halves of the pulse.
+  context->schedulerTime = 4;
+  ASSERT_EQ(schedule(one, one, one, one, one, one), OBELISK_RT_OK);
+  EXPECT_TRUE(context->scheduledNBAs.empty());
+  EXPECT_TRUE(context->inertialDriverPending.empty());
+
+  // A known 1 uses the rise delay and publishes only after both strength
+  // banks have matured.
+  ASSERT_EQ(schedule(one, one, one, zero, one, zero), OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 2u);
+  EXPECT_EQ(context->scheduledNBAs[0].dueTime, 11u);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->schedulerTime, 11u);
+  EXPECT_EQ(context->stateValue[0] & 1, 1u);
+  EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
+  EXPECT_TRUE(context->inertialDriverPending.empty());
+
+  // L/H ranges use the x delay, the minimum of all three values (§28.6),
+  // rather than the z-looking representation of either strength bank.
+  ASSERT_EQ(schedule(one, one, zero, one, zero, one), OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 2u);
+  EXPECT_EQ(context->scheduledNBAs[0].dueTime, 18u);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->stateUnknown[0] & 1, 1u);
+
+  // A real high-impedance output uses the third (turn-off) delay.
+  ASSERT_EQ(schedule(one, one, one, one, one, one), OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 2u);
+  EXPECT_EQ(context->scheduledNBAs[0].dueTime, 31u);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->stateValue[0] & 1, 1u);
+  EXPECT_EQ(context->stateUnknown[0] & 1, 1u);
+  EXPECT_EQ(nativeValue[0] & 1, 1u);
+  EXPECT_EQ(nativeUnknown[0] & 1, 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, InertialStrengthPairsClipOnlyMatchingDynamicViews) {
+  std::vector<uint8_t> bytes(3 * 32, 0);
+  auto write32 = [&](uint64_t offset, uint32_t value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  };
+  auto write64 = [&](uint64_t offset, uint64_t value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  };
+  auto writeDescriptor = [&](uint64_t index, uint32_t function,
+                             uint32_t argument, uint64_t valueOffset,
+                             uint64_t unknownOffset) {
+    uint64_t record = index * 32;
+    write32(record, function);
+    write32(record + 4, argument);
+    write64(record + 8, valueOffset);
+    write64(record + 16, unknownOffset);
+    write64(record + 24, 4);
+  };
+  writeDescriptor(0, obelisk::designbytecode::kNetStateDescriptor, 1, 0,
+                  UINT64_MAX);
+  writeDescriptor(1, obelisk::designbytecode::kDriverStateDescriptor, 185, 4,
+                  0);
+  writeDescriptor(2, obelisk::designbytecode::kDriverStateDescriptor, 2953, 8,
+                  0);
+  obelisk::designbytecode::Image image{};
+  image.data = bytes.data();
+  image.size = bytes.size();
+  image.stateDescriptorCount = 3;
+  image.stateBitCount = 12;
+  ASSERT_TRUE(obelisk::designbytecode::validateImage(image));
+
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 12;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 4, 4),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 2, 8, 4),
+            OBELISK_RT_OK);
+  context->designBytecodeImage = image;
+  context->stateValue[0] = 0xfff;
+  context->stateUnknown[0] = 0xfff;
+
+  uint64_t low = obelisk::designbytecode::encodeStaticHandle(1, -2);
+  uint64_t matchingHigh = obelisk::designbytecode::encodeStaticHandle(2, -2);
+  uint64_t mismatchedHigh = obelisk::designbytecode::encodeStaticHandle(2, -1);
+  uint8_t zero = 0;
+  uint8_t z = 0xf;
+  auto schedule = [&](uint64_t high) {
+    return obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
+        context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
+        reinterpret_cast<uint8_t *>(context->stateUnknown.data()), 12, low,
+        high, 4, 71, 4, 7, 11, 13, &zero, &zero, &z, &z, &zero, &zero);
+  };
+  EXPECT_EQ(schedule(mismatchedHigh), OBELISK_RT_INVALID_HANDLE);
+  EXPECT_TRUE(context->scheduledNBAs.empty());
+
+  ASSERT_EQ(schedule(matchingHigh), OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 4u);
+  EXPECT_EQ(context->scheduledNBAs[0].bitOffset,
+            obelisk_rt_v1_native_state_static_handle(1));
+  EXPECT_EQ(context->scheduledNBAs[1].bitOffset,
+            obelisk_rt_v1_native_state_static_handle(2));
+  EXPECT_EQ(context->scheduledNBAs[2].bitOffset,
+            obelisk::designbytecode::encodeStaticHandle(1, 1));
+  EXPECT_EQ(context->scheduledNBAs[3].bitOffset,
+            obelisk::designbytecode::encodeStaticHandle(2, 1));
+  for (const auto &update : context->scheduledNBAs)
+    EXPECT_EQ(update.dueTime, 11u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, NetDeclarationDelaysApplyAfterDriverResolution) {
   // A net descriptor carries its expanded rise/fall/turn-off delays in the
   // constant table. Its driver points back to the net's canonical bit range.
@@ -5209,6 +5410,136 @@ TEST(Scheduler, BytecodeInertialDriversClipAndSuppressDynamicViews) {
 
   // A fully out-of-range selection is suppressed and cancels that event.
   setView(8, 8);
+  ASSERT_EQ(obelisk::designbytecode::invokeIntrinsic(image, frame, context, 0),
+            OBELISK_RT_OK);
+  EXPECT_TRUE(context->scheduledNBAs.empty());
+  EXPECT_TRUE(context->inertialDriverPending.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, BytecodeInertialStrengthPairsUseLogicalTransitionDelay) {
+  constexpr uint64_t layoutOffset = 0;
+  constexpr uint64_t intrinsicOffset = 10 * 40;
+  constexpr uint64_t siteOffset = intrinsicOffset + 16;
+  constexpr uint64_t operandOffset = siteOffset + 16;
+  constexpr uint64_t descriptorOffset = operandOffset + 10 * 8;
+  std::vector<uint8_t> bytes(descriptorOffset + 3 * 32, 0);
+  auto write32 = [&](uint64_t offset, uint32_t value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  };
+  auto write64 = [&](uint64_t offset, uint64_t value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  };
+  auto writeLayout = [&](uint32_t index, uint8_t kind, uint32_t width,
+                         uint64_t offset, uint64_t size) {
+    uint64_t record = layoutOffset + uint64_t{index} * 40;
+    bytes[record] = kind;
+    write32(record + 4, width);
+    write64(record + 8, offset);
+    write64(record + 16, size);
+  };
+  writeLayout(0, OBELISK_RT_DBREG_LOGIC, 1, 0, 16);
+  writeLayout(1, OBELISK_RT_DBREG_HANDLE, 0, 16, 32);
+  writeLayout(2, OBELISK_RT_DBREG_LOGIC, 1, 48, 16);
+  writeLayout(3, OBELISK_RT_DBREG_HANDLE, 0, 64, 32);
+  writeLayout(4, OBELISK_RT_DBREG_LOGIC, 1, 96, 16);
+  for (uint32_t index = 5; index != 10; ++index)
+    writeLayout(index, OBELISK_RT_DBREG_BITS, 64, 112 + uint64_t{index - 5} * 8,
+                8);
+  write32(intrinsicOffset,
+          OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER_STRENGTH_PAIR);
+  write32(intrinsicOffset + 4, 10);
+  write32(siteOffset + 8, 10);
+  for (uint32_t index = 0; index != 10; ++index)
+    write32(operandOffset + uint64_t{index} * 8 + 4, index);
+  auto writeDescriptor = [&](uint64_t index, uint32_t function,
+                             uint32_t argument, uint64_t valueOffset,
+                             uint64_t unknownOffset) {
+    uint64_t record = descriptorOffset + index * 32;
+    write32(record, function);
+    write32(record + 4, argument);
+    write64(record + 8, valueOffset);
+    write64(record + 16, unknownOffset);
+    write64(record + 24, 1);
+  };
+  writeDescriptor(0, obelisk::designbytecode::kNetStateDescriptor, 1, 0,
+                  UINT64_MAX);
+  writeDescriptor(1, obelisk::designbytecode::kDriverStateDescriptor, 185, 1,
+                  0);
+  writeDescriptor(2, obelisk::designbytecode::kDriverStateDescriptor, 2953, 2,
+                  0);
+
+  obelisk::designbytecode::Image image{};
+  image.data = bytes.data();
+  image.size = bytes.size();
+  image.layouts = layoutOffset;
+  image.layoutCount = 10;
+  image.intrinsics = intrinsicOffset;
+  image.intrinsicCount = 1;
+  image.sites = siteOffset;
+  image.siteCount = 1;
+  image.operands = operandOffset;
+  image.operandCount = 10;
+  image.stateDescriptors = descriptorOffset;
+  image.stateDescriptorCount = 3;
+  image.stateBitCount = 3;
+  ASSERT_TRUE(obelisk::designbytecode::validateImage(image));
+  std::array<uint8_t, 160> frameData{};
+  obelisk::designbytecode::Frame frame{};
+  frame.function.layoutCount = 10;
+  frame.function.scratchSize = frameData.size();
+  frame.data = frameData.data();
+  ASSERT_TRUE(
+      obelisk::designbytecode::validIntrinsic(image, frame.function, 0));
+  // Low=z, high=x is an H strength range. Its logical transition is x, so
+  // §28.6 requires min(rise, fall, turn-off), despite the z-looking low bank.
+  uint64_t one = 1;
+  uint64_t zero = 0;
+  std::memcpy(frameData.data(), &one, 8);
+  std::memcpy(frameData.data() + 8, &one, 8);
+  std::memcpy(frameData.data() + 48, &zero, 8);
+  std::memcpy(frameData.data() + 56, &one, 8);
+  std::memcpy(frameData.data() + 96, &zero, 8);
+  std::memcpy(frameData.data() + 104, &one, 8);
+  uint32_t kind = OBELISK_RT_DESCRIPTOR_DRIVER;
+  auto writeHandle = [&](uint64_t offset, uint64_t root) {
+    std::memcpy(frameData.data() + offset, &kind, 4);
+    std::memcpy(frameData.data() + offset + 8, &root, 8);
+    int64_t start = 0;
+    int64_t end = 1;
+    std::memcpy(frameData.data() + offset + 16, &start, 8);
+    std::memcpy(frameData.data() + offset + 24, &end, 8);
+  };
+  uint64_t lowRoot = obelisk_rt_v1_native_state_static_handle(1);
+  uint64_t highRoot = obelisk_rt_v1_native_state_static_handle(2);
+  writeHandle(16, lowRoot);
+  writeHandle(64, highRoot);
+  const std::array<uint64_t, 5> arguments{{7, 11, 13, 43, 2}};
+  for (size_t index = 0; index != arguments.size(); ++index)
+    std::memcpy(frameData.data() + 112 + index * 8, &arguments[index], 8);
+
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 3;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 1, 1),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 2, 2, 1),
+            OBELISK_RT_OK);
+  context->designBytecodeImage = image;
+  context->stateValue[0] = 0b110;
+  context->stateUnknown[0] = 0b110;
+  ASSERT_EQ(obelisk::designbytecode::invokeIntrinsic(image, frame, context, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 2u);
+  EXPECT_EQ(context->scheduledNBAs[0].dueTime, 7u);
+  EXPECT_EQ(context->scheduledNBAs[1].dueTime, 7u);
+
+  int64_t invalid = obelisk::designbytecode::kInvalidHandleStart;
+  std::memcpy(frameData.data() + 32, &invalid, 8);
+  std::memcpy(frameData.data() + 80, &invalid, 8);
   ASSERT_EQ(obelisk::designbytecode::invokeIntrinsic(image, frame, context, 0),
             OBELISK_RT_OK);
   EXPECT_TRUE(context->scheduledNBAs.empty());

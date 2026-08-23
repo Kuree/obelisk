@@ -1600,6 +1600,19 @@ LogicalResult SimNetExtractOp::verify() {
   return success();
 }
 
+LogicalResult SimDriverDriveInertialStrengthPairOp::verify() {
+  Type lowType = getLowDriver().getType().getElementType();
+  Type highType = getHighDriver().getType().getElementType();
+  if (lowType != highType || lowType != getLowValue().getType() ||
+      lowType != getHighValue().getType() ||
+      lowType != getTransitionValue().getType())
+    return emitOpError(
+        "requires matching low-bank, high-bank, and transition types");
+  if (!isa<LogicType>(lowType) || !getPackedWidth(lowType))
+    return emitOpError("requires a fixed-width four-state logic element");
+  return success();
+}
+
 LogicalResult SimRefDynExtractOp::verify() {
   Type inputType = getInput().getType().getElementType();
   Type resultType = getResult().getType().getElementType();

@@ -2698,6 +2698,36 @@ def SimDriverDriveInertialOp : SimOp<"driver.drive_inertial", [
   }];
 }
 
+def SimDriverDriveInertialStrengthPairOp : SimOp<
+    "driver.drive_inertial_strength_pair", [
+      MemoryEffects<[MemWrite<SimSchedulerResource>,
+                     MemWrite<SimNetResource>]>
+    ]> {
+  let summary = "schedule one inertial three-state strength-pair drive";
+  let description = [{
+    Schedules the two polarity banks used to represent one `bufif` or `notif`
+    output as a single inertial update. `transition_value` is the logical
+    four-state gate output used to select the rise, fall, turn-off, or unknown
+    delay. The low and high bank contributions mature atomically before net
+    resolution, including when only one bank changes.
+  }];
+  let arguments = (ins SimDriverType:$low_driver, AnyType:$low_value,
+                       SimDriverType:$high_driver, AnyType:$high_value,
+                       AnyType:$transition_value,
+                       SimTimeType:$rise_delay, SimTimeType:$fall_delay,
+                       SimTimeType:$turnoff_delay, I64Attr:$code_unit_id,
+                       I32Attr:$component);
+  let assemblyFormat = [{
+    $low_driver `=` $low_value `,` $high_driver `=` $high_value
+    `transition` $transition_value `after` `[` $rise_delay `,` $fall_delay `,`
+    $turnoff_delay `]` `site` $code_unit_id `:` $component attr-dict `:`
+    qualified(type($low_driver)) `,` type($low_value) `,`
+    qualified(type($high_driver)) `,` type($high_value) `,`
+    type($transition_value)
+  }];
+  let hasVerifier = 1;
+}
+
 def SimDriverDriveDelayedNetOp : SimOp<"driver.drive_delayed_net", [
     MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimNetResource>]>,
     SimDriverElementMatches<"driver", "value">
