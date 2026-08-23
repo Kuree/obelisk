@@ -21,10 +21,10 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @zero_bins {
+  obelisk_sim.design @negative_bins {
     obelisk_sim.scope.decl 0
-    // expected-error @+1 {{every coverpoint requires a positive 32-bit named-bin count}}
-    obelisk_sim.covergroup.decl @cg id 1 bins [2, 0]
+    // expected-error @+1 {{every coverpoint requires a nonnegative 32-bit contributing-bin count}}
+    obelisk_sim.covergroup.decl @cg id 1 bins [2, -1]
   }
 }
 

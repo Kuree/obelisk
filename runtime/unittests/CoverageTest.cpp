@@ -176,4 +176,40 @@ TEST_F(CoverageRuntimeTest, CompleteSamplesCommitAtomically) {
   EXPECT_EQ(covered, 4);
 }
 
+TEST_F(CoverageRuntimeTest, EmptyCoverpointsDoNotDiluteCoverage) {
+  constexpr std::array<uint64_t, 2> bins{0, 1};
+  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 31, bins.data(),
+                                            bins.size(), &handle),
+            OBELISK_RT_OK);
+
+  constexpr std::array<uint8_t, 1> hit{1};
+  ASSERT_EQ(
+      obelisk_rt_v1_covergroup_sample(context, handle, hit.data(), hit.size()),
+      OBELISK_RT_OK);
+  double percentage = -1.0;
+  int32_t covered = -1;
+  int32_t total = -1;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                context, handle, &percentage, &covered, &total),
+            OBELISK_RT_OK);
+  EXPECT_DOUBLE_EQ(percentage, 100.0);
+  EXPECT_EQ(covered, 1);
+  EXPECT_EQ(total, 1);
+
+  constexpr std::array<uint64_t, 1> noBins{0};
+  obelisk_rt_covergroup_v1 empty = 0;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 32, noBins.data(),
+                                            noBins.size(), &empty),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_covergroup_sample(context, empty, nullptr, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(context, empty, &percentage,
+                                                    &covered, &total),
+            OBELISK_RT_OK);
+  EXPECT_DOUBLE_EQ(percentage, 0.0);
+  EXPECT_EQ(covered, 0);
+  EXPECT_EQ(total, 0);
+}
+
 } // namespace

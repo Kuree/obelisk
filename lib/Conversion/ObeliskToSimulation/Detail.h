@@ -150,6 +150,16 @@ inline constexpr ::mlir::StringLiteral preparedInitializerAttrName =
 /// synchronization object for such a cell (IEEE 1800-2017 6.17).
 inline constexpr ::mlir::StringLiteral eventExplicitInitializerAttrName =
     "obelisk_sim.event_explicit_initializer";
+/// Marks an ordinary state bin that retains at least one value after the
+/// coverpoint's ignore_bins and illegal_bins sets are removed.  Declaration
+/// planning computes this once so the schema and every sample site flatten
+/// exactly the same bin inventory.
+inline constexpr ::mlir::StringLiteral coverageContributingAttrName =
+    "obelisk_sim.coverage_contributing";
+/// Alternating inclusive lower/upper endpoints after applying the
+/// coverpoint-type value-resolution rules of IEEE 1800-2017 19.5.7.
+inline constexpr ::mlir::StringLiteral coverageResolvedIntervalsAttrName =
+    "obelisk_sim.coverage_resolved_intervals";
 inline constexpr ::mlir::StringLiteral staticNetConstantAttrName =
     "obelisk_sim.static_net_constant";
 /// Value elaboration folded an expression to, carried over by the frontend.

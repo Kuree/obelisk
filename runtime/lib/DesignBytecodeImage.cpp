@@ -885,7 +885,7 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 0 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) && twoStateBits(input(2), 64);
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE:
-    if (signature.flags != 0 || site.inputCount < 2 || site.outputCount != 0 ||
+    if (signature.flags != 0 || site.inputCount < 1 || site.outputCount != 0 ||
         !twoStateBits(input(0), 64))
       return false;
     for (uint32_t index = 1; index != site.inputCount; ++index)

@@ -230,10 +230,13 @@ FailureOr<ValidatedSemanticDesign> validateSemanticDesign(ModuleOp module) {
             << "coverpoint coverage options are not supported";
         invalid = true;
       }
-      size_t namedBins = llvm::count_if(getChildren(op), [](Operation *child) {
-        return isa<semantic::SVCoverageBinSymbolOp>(child);
-      });
-      if (namedBins == 0) {
+      size_t namedCoverageBins =
+          llvm::count_if(getChildren(op), [](Operation *child) {
+            auto bin = dyn_cast<semantic::SVCoverageBinSymbolOp>(child);
+            return bin &&
+                   bin.getBinsKind() == semantic::SVCoverageBinKind::Bins;
+          });
+      if (namedCoverageBins == 0) {
         emitError(getSemanticLocation(op))
             << "coverpoints require explicit named bins; automatic bins are "
                "not supported";
@@ -248,12 +251,10 @@ FailureOr<ValidatedSemanticDesign> validateSemanticDesign(ModuleOp module) {
         invalid = true;
       }
     } else if (auto bin = dyn_cast<semantic::SVCoverageBinSymbolOp>(op)) {
-      if (bin.getBinsKind() != semantic::SVCoverageBinKind::Bins) {
+      if (bin.getBinsKind() == semantic::SVCoverageBinKind::IgnoreBins &&
+          bin.getIsDefault()) {
         emitError(getSemanticLocation(op))
-            << (bin.getBinsKind() ==
-                        semantic::SVCoverageBinKind::IgnoreBins
-                    ? "ignore_bins are not supported"
-                    : "illegal_bins are not supported");
+            << "ignore_bins cannot specify default";
         invalid = true;
       }
       if (bin.getIsArray() || bin.getHasNumberOfBins()) {

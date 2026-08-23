@@ -76,12 +76,12 @@ module native_covergroups;
 endmodule
 
 // CHECK: type_empty 0.000000 0 0
-// CHECK-NEXT: initial 0.000000 0 5
-// CHECK-NEXT: overlap 58.333333 3 5
-// CHECK-NEXT: default 100.000000 5 5
-// CHECK-NEXT: controlled 100.000000 5 5
-// CHECK-NEXT: suppressed 0.000000 0 5
+// CHECK-NEXT: initial 0.000000 0 4
+// CHECK-NEXT: overlap 75.000000 3 4
+// CHECK-NEXT: default 100.000000 4 4
+// CHECK-NEXT: controlled 100.000000 4 4
+// CHECK-NEXT: suppressed 0.000000 0 4
 // CHECK-NEXT: zero_outputs 0.000000 50.000000
-// CHECK-NEXT: repeated 41.666667 2 5
-// CHECK-NEXT: two_instances 70.833333 7 10
-// CHECK-NEXT: retained 47.222222 7 15
+// CHECK-NEXT: repeated 50.000000 2 4
+// CHECK-NEXT: two_instances 75.000000 6 8
+// CHECK-NEXT: retained 50.000000 6 12

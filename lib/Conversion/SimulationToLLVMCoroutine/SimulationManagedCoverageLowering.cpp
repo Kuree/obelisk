@@ -168,7 +168,11 @@ public:
       return failure();
     SmallVector<Value> hitValues = flatten(adaptor.getHits());
     Type i8 = rewriter.getI8Type();
-    Value hits = entryAlloca(rewriter, op.getLoc(), i8, hitValues.size(), 1);
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Value hits =
+        hitValues.empty()
+            ? LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer)
+            : entryAlloca(rewriter, op.getLoc(), i8, hitValues.size(), 1);
     for (auto [index, hit] : llvm::enumerate(hitValues))
       LLVM::StoreOp::create(
           rewriter, op.getLoc(),
@@ -272,4 +276,3 @@ void populateManagedCoverageToLLVMConversionPatterns(
 }
 
 } // namespace obelisk::detail
-

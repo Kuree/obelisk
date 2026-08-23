@@ -117,4 +117,6 @@ module {
   }
 }
 
-// CHECK: illegal_bins are not supported
+// As with ignore_bins-only coverpoints, an illegal-only inventory requires
+// automatic normal-bin distribution, which remains a separate feature.
+// CHECK: coverpoints require explicit named bins; automatic bins are not supported

@@ -117,4 +117,6 @@ module {
   }
 }
 
-// CHECK: ignore_bins are not supported
+// IEEE 1800-2017 19.11.1 creates automatic bins when ignore_bins is the only
+// bin declaration. Automatic-bin distribution remains a separate feature.
+// CHECK: coverpoints require explicit named bins; automatic bins are not supported

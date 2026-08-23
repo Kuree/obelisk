@@ -143,6 +143,32 @@ module {
               }
               obelisk.sv.symbol.coverage_bin attributes {bins_kind = 0 : i32, has_iff = false, has_number_of_bins = false, has_set_coverage = false, has_with = false, hierarchical_name = "covergroup_lowering.cg.cp.fallback", is_array = false, is_default = true, is_default_sequence = false, is_wildcard = false, name = "fallback", node_id = 73 : i64, sym_name = "s36.fallback", transition_set_count = 0 : i64, value_count = 0 : i64} {
               }
+              obelisk.sv.symbol.coverage_bin attributes {bins_kind = 0 : i32, has_iff = false, has_number_of_bins = false, has_set_coverage = false, has_with = false, hierarchical_name = "covergroup_lowering.cg.cp.removed", is_array = false, is_default = false, is_default_sequence = false, is_wildcard = false, name = "removed", node_id = 107 : i64, sym_name = "s41.removed", transition_set_count = 0 : i64, value_count = 1 : i64} {
+                obelisk.sv.expression.integer_literal attributes {constant_value = "4", node_id = 108 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                }
+              }
+              obelisk.sv.symbol.coverage_bin attributes {bins_kind = 2 : i32, has_iff = false, has_number_of_bins = false, has_set_coverage = false, has_with = false, hierarchical_name = "covergroup_lowering.cg.cp.ignored", is_array = false, is_default = false, is_default_sequence = false, is_wildcard = false, name = "ignored", node_id = 109 : i64, sym_name = "s42.ignored", transition_set_count = 0 : i64, value_count = 2 : i64} {
+                obelisk.sv.expression.integer_literal attributes {constant_value = "1", node_id = 110 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                }
+                obelisk.sv.expression.integer_literal attributes {constant_value = "4", node_id = 111 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                }
+              }
+              obelisk.sv.symbol.coverage_bin attributes {bins_kind = 1 : i32, has_iff = false, has_number_of_bins = false, has_set_coverage = false, has_with = false, hierarchical_name = "covergroup_lowering.cg.cp.illegal", is_array = false, is_default = false, is_default_sequence = false, is_wildcard = false, name = "illegal", node_id = 112 : i64, sym_name = "s43.illegal", transition_set_count = 0 : i64, value_count = 1 : i64} {
+                obelisk.sv.expression.integer_literal attributes {constant_value = "2", node_id = 113 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                }
+              }
+            }
+            obelisk.sv.symbol.coverpoint attributes {has_iff = false, hierarchical_name = "covergroup_lowering.cg.empty", name = "empty", node_id = 114 : i64, option_count = 0 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s44.empty"} {
+              obelisk.sv.expression.named_value attributes {node_id = 115 : i64, referenced_path = "covergroup_lowering.cg::sampled", referenced_symbol = @s1.$root::@s3.covergroup_lowering::@s4.covergroup_lowering::@s6.cg::@s7.sampled, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
+              }
+              obelisk.sv.symbol.coverage_bin attributes {bins_kind = 0 : i32, has_iff = false, has_number_of_bins = false, has_set_coverage = false, has_with = false, hierarchical_name = "covergroup_lowering.cg.empty.removed", is_array = false, is_default = false, is_default_sequence = false, is_wildcard = false, name = "removed", node_id = 116 : i64, sym_name = "s45.removed", transition_set_count = 0 : i64, value_count = 1 : i64} {
+                obelisk.sv.expression.integer_literal attributes {constant_value = "5", node_id = 117 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                }
+              }
+              obelisk.sv.symbol.coverage_bin attributes {bins_kind = 2 : i32, has_iff = false, has_number_of_bins = false, has_set_coverage = false, has_with = false, hierarchical_name = "covergroup_lowering.cg.empty.ignored", is_array = false, is_default = false, is_default_sequence = false, is_wildcard = false, name = "ignored", node_id = 118 : i64, sym_name = "s46.ignored", transition_set_count = 0 : i64, value_count = 1 : i64} {
+                obelisk.sv.expression.integer_literal attributes {constant_value = "5", node_id = 119 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                }
+              }
             }
           }
         }
@@ -217,7 +243,10 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.covergroup.decl @[[DECL:__obelisk_covergroup_.*]] id 1 bins [3]
+// IEEE 1800-2017 19.5, 19.5.5, 19.5.6, and 19.11.1: default bins do
+// not contribute, ignored/illegal values are removed from ordinary bins, and
+// an ordinary bin emptied by that removal is omitted from the denominator.
+// CHECK: obelisk_sim.covergroup.decl @[[DECL:__obelisk_covergroup_.*]] id 1 bins [2, 0]
 // CHECK: obelisk_sim.storage.decl {{[0-9]+}} in {{[0-9]+}} : !obelisk_sim.covergroup_handle<@[[DECL]]>
 // CHECK: %[[HANDLE:.*]] = obelisk_sim.covergroup.create {{.*}} from @[[DECL]]
 // CHECK: obelisk_sim.covergroup.sample_enabled {{.*}}, %{{.*}}
@@ -228,8 +257,21 @@ module {
 // CHECK: obelisk_sim.covergroup.type_query {{.*}} from @[[DECL]]
 // CHECK: obelisk_sim.ref.store %covered
 // CHECK: obelisk_sim.ref.store %total
-// CHECK: obelisk_sim.logic.compare eq
 // CHECK: obelisk_sim.logic.compare uge
 // CHECK: obelisk_sim.logic.compare ule
-// CHECK: obelisk_sim.covergroup.sample
+// CHECK: obelisk_sim.logic.compare uge
+// CHECK: obelisk_sim.logic.compare ule
+// CHECK: obelisk_sim.logic.compare eq
+// CHECK: obelisk_sim.logic.compare eq
+// CHECK: %[[IGNORED:.*]] = arith.ori %{{.*}}, %{{.*}} : i1
+// CHECK: obelisk_sim.logic.compare eq
+// CHECK: %[[ILLEGAL:.*]] = obelisk_sim.logic.is_true
+// CHECK: %[[EXCLUDED:.*]] = arith.ori %[[IGNORED]], %[[ILLEGAL]] : i1
+// CHECK: %[[ALLOWED:.*]] = arith.xori %[[EXCLUDED]], %{{.*}} : i1
+// CHECK: %[[FIRST_HIT:.*]] = arith.andi %{{.*}}, %[[ALLOWED]] : i1
+// CHECK: %[[SECOND_HIT:.*]] = arith.andi %{{.*}}, %[[ALLOWED]] : i1
+// CHECK: cf.cond_br %[[ILLEGAL]],
+// CHECK: ^{{.*}}(%[[FIRST_ARG:.*]]: i1, %[[SECOND_ARG:.*]]: i1):
+// CHECK: obelisk_sim.covergroup.sample {{.*}}[%[[FIRST_ARG]], %[[SECOND_ARG]]]
+// CHECK: obelisk_sim.error
 // CHECK-NOT: obelisk.sv.

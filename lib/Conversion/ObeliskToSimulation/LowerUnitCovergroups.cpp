@@ -163,6 +163,10 @@ UnitLowering::lowerCovergroupSample(semantic::SVCallExpressionOp op,
          ArrayRef<Operation *>(members).drop_front(expressionCount))
       if (auto bin = dyn_cast<semantic::SVCoverageBinSymbolOp>(member))
         bins.push_back(bin);
+    SmallVector<semantic::SVCoverageBinSymbolOp> contributingBins;
+    for (semantic::SVCoverageBinSymbolOp bin : bins)
+      if (bin->hasAttr(coverageContributingAttrName))
+        contributingBins.push_back(bin);
     if (coverpoint.getHasIff()) {
       FailureOr<Value> iff = lowerExpression(members[1]);
       FailureOr<Value> condition =
@@ -173,8 +177,8 @@ UnitLowering::lowerCovergroupSample(semantic::SVCallExpressionOp op,
       Block *pointBody = addBlock();
       pointDone = addBlock();
       SmallVector<Value> skipped;
-      skipped.reserve(bins.size());
-      for (size_t index = 0; index < bins.size(); ++index) {
+      skipped.reserve(contributingBins.size());
+      for (size_t index = 0; index < contributingBins.size(); ++index) {
         pointDone->addArgument(builder.getI1Type(), pointLocation);
         skipped.push_back(falseValue(pointLocation));
       }
@@ -201,103 +205,171 @@ UnitLowering::lowerCovergroupSample(semantic::SVCallExpressionOp op,
       return failure();
     }
 
-    Value known = trueValue(pointLocation);
-    if (logic) {
-      auto logicType = cast<sim::LogicType>(selector.getType());
-      Type bitsType = builder.getIntegerType(logicType.getWidth());
-      Value bits = sim::SimLogicToBitsOp::create(builder, pointLocation,
-                                                 bitsType, selector);
-      Value roundTrip = sim::SimLogicFromBitsOp::create(builder, pointLocation,
-                                                        logicType, bits);
-      known = sim::SimLogicCompareOp::create(
-          builder, pointLocation, builder.getI1Type(), sim::CompareKind::CaseEq,
-          selector, roundTrip);
-    }
-
-    auto compare = [&](Operation *candidateNode, sim::CompareKind logicKind,
-                       arith::CmpIPredicate integerKind) -> FailureOr<Value> {
-      Location candidateLocation = getSemanticLocation(candidateNode);
-      FailureOr<Value> candidate = lowerExpression(candidateNode);
-      if (failed(candidate))
-        return failure();
-      FailureOr<Value> converted = convert(
-          *candidate, (*sampledValue).getType(), isSignedNode(candidateNode),
-          candidateLocation, isSignedNode(members.front()));
-      FailureOr<Value> scalar =
-          succeeded(converted) ? toPackedScalar(*converted, candidateLocation)
-                               : FailureOr<Value>(failure());
-      if (failed(scalar) || (*scalar).getType() != selector.getType()) {
-        emitError(candidateLocation)
-            << "coverage bin value does not normalize to its coverpoint type";
-        return failure();
-      }
+    unsigned selectorWidth = logic ? cast<sim::LogicType>(selector.getType())
+                                         .getWidth()
+                                   : integerType.getWidth();
+    Type planeType = builder.getIntegerType(selectorWidth);
+    auto constant = [&](Location candidateLocation,
+                        const APInt &bits) -> Value {
+      if (!logic)
+        return arith::ConstantOp::create(
+                   builder, candidateLocation, integerType,
+                   builder.getIntegerAttr(integerType, bits))
+            .getResult();
+      return sim::SimLogicConstantOp::create(
+                 builder, candidateLocation, selector.getType(),
+                 builder.getIntegerAttr(planeType, bits),
+                 builder.getIntegerAttr(planeType, 0))
+          .getResult();
+    };
+    auto compare = [&](Location candidateLocation, const APInt &bits,
+                       sim::CompareKind logicKind,
+                       arith::CmpIPredicate integerKind) -> Value {
+      Value candidate = constant(candidateLocation, bits);
       if (logic) {
         Value result = sim::SimLogicCompareOp::create(
             builder, candidateLocation,
             sim::LogicType::get(function.getContext(), 1), logicKind, selector,
-            *scalar);
+            candidate);
         return sim::SimLogicIsTrueOp::create(builder, candidateLocation,
                                              builder.getI1Type(), result)
             .getResult();
       }
       return arith::CmpIOp::create(builder, candidateLocation, integerKind,
-                                   selector, *scalar)
+                                   selector, candidate)
           .getResult();
     };
 
-    auto matchItem = [&](Operation *item) -> FailureOr<Value> {
-      Location itemLocation = getSemanticLocation(item);
-      if (auto range = dyn_cast<semantic::SVValueRangeExpressionOp>(item)) {
-        SmallVector<Operation *> endpoints = getChildren(range);
-        if (range.getRangeKind() != semantic::SVValueRangeKind::Simple ||
-            endpoints.size() != 2) {
-          emitError(itemLocation)
-              << "coverage bins require a simple inclusive range";
+    auto matchBin = [&](semantic::SVCoverageBinSymbolOp bin)
+        -> FailureOr<Value> {
+      Location binLocation = getSemanticLocation(bin);
+      auto encoded = bin->getAttrOfType<ArrayAttr>(
+          coverageResolvedIntervalsAttrName);
+      if (!encoded || encoded.size() % 2 != 0) {
+        emitError(binLocation)
+            << "coverage bin has no resolved state-value inventory";
+        return failure();
+      }
+      bool isSigned = isSignedNode(members.front());
+      Value binMatched = falseValue(binLocation);
+      for (size_t index = 0; index < encoded.size(); index += 2) {
+        auto lower = dyn_cast<IntegerAttr>(encoded[index]);
+        auto upper = dyn_cast<IntegerAttr>(encoded[index + 1]);
+        if (!lower || !upper || lower.getType() != planeType ||
+            upper.getType() != planeType) {
+          emitError(binLocation)
+              << "coverage bin has malformed resolved state-value endpoints";
           return failure();
         }
-        bool isSigned = isSignedNode(members.front());
-        FailureOr<Value> lower = compare(
-            endpoints[0],
-            isSigned ? sim::CompareKind::SGE : sim::CompareKind::UGE,
-            isSigned ? arith::CmpIPredicate::sge : arith::CmpIPredicate::uge);
-        FailureOr<Value> upper = compare(
-            endpoints[1],
-            isSigned ? sim::CompareKind::SLE : sim::CompareKind::ULE,
-            isSigned ? arith::CmpIPredicate::sle : arith::CmpIPredicate::ule);
-        if (failed(lower) || failed(upper))
-          return failure();
-        return arith::AndIOp::create(builder, itemLocation, *lower, *upper)
-            .getResult();
+        Value matched;
+        if (lower.getValue() == upper.getValue()) {
+          matched = compare(binLocation, lower.getValue(),
+                            sim::CompareKind::Eq,
+                            arith::CmpIPredicate::eq);
+        } else {
+          Value lowerMatched = compare(
+              binLocation, lower.getValue(),
+              isSigned ? sim::CompareKind::SGE : sim::CompareKind::UGE,
+              isSigned ? arith::CmpIPredicate::sge
+                       : arith::CmpIPredicate::uge);
+          Value upperMatched = compare(
+              binLocation, upper.getValue(),
+              isSigned ? sim::CompareKind::SLE : sim::CompareKind::ULE,
+              isSigned ? arith::CmpIPredicate::sle
+                       : arith::CmpIPredicate::ule);
+          matched = arith::AndIOp::create(builder, binLocation, lowerMatched,
+                                          upperMatched);
+        }
+        binMatched = arith::OrIOp::create(builder, binLocation, binMatched,
+                                          matched);
       }
-      return compare(item, sim::CompareKind::Eq, arith::CmpIPredicate::eq);
+      return binMatched;
     };
 
-    SmallVector<Value> pointDecisions(bins.size());
-    Value explicitMatched = falseValue(pointLocation);
-    SmallVector<unsigned> defaultBins;
-    for (auto [binIndex, bin] : llvm::enumerate(bins)) {
+    SmallVector<Value> ordinaryMatches;
+    Value explicitlyDefinedMatched = falseValue(pointLocation);
+    Value ignoredMatched = falseValue(pointLocation);
+    Value illegalMatched = falseValue(pointLocation);
+    bool hasIllegalBins = false;
+    bool hasIllegalDefault = false;
+    for (semantic::SVCoverageBinSymbolOp bin : bins) {
+      // Ordinary default bins collect data but IEEE 1800-2017 19.5 excludes
+      // them from coverage. Coverpoint-bin introspection is not in this
+      // executable slice, so no runtime state is needed for that count.
       if (bin.getIsDefault()) {
-        defaultBins.push_back(binIndex);
+        if (bin.getBinsKind() == semantic::SVCoverageBinKind::IllegalBins) {
+          hasIllegalBins = true;
+          hasIllegalDefault = true;
+        }
         continue;
       }
-      Value binMatched = falseValue(getSemanticLocation(bin));
-      for (Operation *item : getChildren(bin)) {
-        FailureOr<Value> matched = matchItem(item);
-        if (failed(matched))
-          return failure();
-        binMatched = arith::OrIOp::create(builder, getSemanticLocation(item),
-                                          binMatched, *matched);
+      FailureOr<Value> binMatched = matchBin(bin);
+      if (failed(binMatched))
+        return failure();
+      explicitlyDefinedMatched = arith::OrIOp::create(
+          builder, getSemanticLocation(bin), explicitlyDefinedMatched,
+          *binMatched);
+      switch (bin.getBinsKind()) {
+      case semantic::SVCoverageBinKind::Bins:
+        if (bin->hasAttr(coverageContributingAttrName))
+          ordinaryMatches.push_back(*binMatched);
+        break;
+      case semantic::SVCoverageBinKind::IgnoreBins:
+        ignoredMatched = arith::OrIOp::create(builder, getSemanticLocation(bin),
+                                              ignoredMatched, *binMatched);
+        break;
+      case semantic::SVCoverageBinKind::IllegalBins:
+        hasIllegalBins = true;
+        illegalMatched = arith::OrIOp::create(builder, getSemanticLocation(bin),
+                                              illegalMatched, *binMatched);
+        break;
       }
-      explicitMatched = arith::OrIOp::create(builder, getSemanticLocation(bin),
-                                             explicitMatched, binMatched);
-      pointDecisions[binIndex] = binMatched;
     }
-    Value noExplicitMatch = arith::XOrIOp::create(
-        builder, pointLocation, explicitMatched, trueValue(pointLocation));
-    Value defaultMatched =
-        arith::AndIOp::create(builder, pointLocation, known, noExplicitMatch);
-    for (unsigned binIndex : defaultBins)
-      pointDecisions[binIndex] = defaultMatched;
+    if (hasIllegalDefault) {
+      Value known = trueValue(pointLocation);
+      if (logic) {
+        Type bitsType = builder.getIntegerType(selectorWidth);
+        Value bits = sim::SimLogicToBitsOp::create(builder, pointLocation,
+                                                   bitsType, selector);
+        Value roundTrip = sim::SimLogicFromBitsOp::create(
+            builder, pointLocation, selector.getType(), bits);
+        known = sim::SimLogicCompareOp::create(
+            builder, pointLocation, builder.getI1Type(),
+            sim::CompareKind::CaseEq, selector, roundTrip);
+      }
+      Value noExplicitMatch = arith::XOrIOp::create(
+          builder, pointLocation, explicitlyDefinedMatched,
+          trueValue(pointLocation));
+      Value defaultMatched = arith::AndIOp::create(
+          builder, pointLocation, known, noExplicitMatch);
+      illegalMatched = arith::OrIOp::create(
+          builder, pointLocation, illegalMatched, defaultMatched);
+    }
+
+    // Sections 19.5.5 and 19.5.6 remove ignored and illegal values from every
+    // ordinary bin after distribution. Illegal bins take precedence and also
+    // issue a nonterminating runtime error when sampled.
+    Value excludedMatched = arith::OrIOp::create(
+        builder, pointLocation, ignoredMatched, illegalMatched);
+    Value allowed = arith::XOrIOp::create(
+        builder, pointLocation, excludedMatched, trueValue(pointLocation));
+    SmallVector<Value> pointDecisions;
+    pointDecisions.reserve(ordinaryMatches.size());
+    for (Value matched : ordinaryMatches)
+      pointDecisions.push_back(
+          arith::AndIOp::create(builder, pointLocation, matched, allowed));
+
+    if (hasIllegalBins) {
+      Block *illegalBlock = addBlock();
+      Block *afterIllegal = addBlock();
+      cf::CondBranchOp::create(builder, pointLocation, illegalMatched,
+                               illegalBlock, ValueRange{}, afterIllegal,
+                               ValueRange{});
+      setCurrent(illegalBlock);
+      sim::SimErrorOp::create(builder, pointLocation, context);
+      emitBranch(afterIllegal);
+      setCurrent(afterIllegal);
+    }
 
     if (pointDone) {
       cf::BranchOp::create(builder, pointLocation, pointDone, pointDecisions);

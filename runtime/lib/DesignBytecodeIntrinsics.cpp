@@ -1031,7 +1031,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
   }
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE: {
     auto handle = scalar(0);
-    if (!handle || site.inputCount < 2)
+    if (!handle || site.inputCount < 1)
       return OBELISK_RT_INVALID_BYTECODE;
     std::vector<uint8_t> hits;
     try {

@@ -33,7 +33,7 @@ obelisk_rt_status collectCoverpointBins(const uint64_t *coverpointBins,
   bins.reserve(static_cast<size_t>(coverpointCount));
   for (uint64_t index = 0; index < coverpointCount; ++index) {
     uint64_t count = coverpointBins[index];
-    if (!count || count > UINT32_MAX)
+    if (count > UINT32_MAX)
       return OBELISK_RT_INVALID_ARGUMENT;
     bins.push_back(static_cast<uint32_t>(count));
   }
@@ -65,6 +65,7 @@ CoverageResult queryInstance(const CoverageInstanceState &instance) {
   if (instance.hits.empty())
     return result;
   double sum = 0.0;
+  uint64_t contributingCoverpoints = 0;
   for (const std::vector<uint64_t> &coverpoint : instance.hits) {
     uint64_t covered = 0;
     for (uint64_t hits : coverpoint)
@@ -72,12 +73,16 @@ CoverageResult queryInstance(const CoverageInstanceState &instance) {
     result.covered = saturatingAdd(result.covered, covered);
     result.total =
         saturatingAdd(result.total, static_cast<uint64_t>(coverpoint.size()));
-    sum += coverpoint.empty()
-               ? 0.0
-               : 100.0 * static_cast<double>(covered) /
-                     static_cast<double>(coverpoint.size());
+    if (!coverpoint.empty()) {
+      sum += 100.0 * static_cast<double>(covered) /
+             static_cast<double>(coverpoint.size());
+      ++contributingCoverpoints;
+    }
   }
-  result.percentage = sum / static_cast<double>(instance.hits.size());
+  // IEEE 1800-2017 19.11.1 excludes a coverpoint whose bins are all empty
+  // from its parent covergroup's numerator and denominator.
+  if (contributingCoverpoints)
+    result.percentage = sum / static_cast<double>(contributingCoverpoints);
   return result;
 }
 
@@ -190,7 +195,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_bin_hit(
 extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
     obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
     const uint8_t *hits, uint64_t hitCount) {
-  if (!context || !hits || !hitCount)
+  if (!context || (hitCount != 0 && !hits))
     return OBELISK_RT_INVALID_ARGUMENT;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
   auto found = context->coverageInstances.find(handle);

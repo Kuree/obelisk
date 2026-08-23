@@ -2321,6 +2321,9 @@ private:
       SET_OP_ATTR(OperatorKind,
                   slangir::BinaryOperatorAttr::get(builder.getContext(),
                                                    convertEnum(node.op)));
+    } else if constexpr (std::same_as<T,
+                                     slang::ast::ConversionExpression>) {
+      attrs.set("is_implicit", builder.getBoolAttr(node.isImplicit()));
     } else if constexpr (std::same_as<T, slang::ast::AssignmentExpression>) {
       if (node.op)
         SET_OP_ATTR(OperatorKind,

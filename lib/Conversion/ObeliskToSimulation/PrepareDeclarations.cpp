@@ -12,11 +12,13 @@
 
 #include "mlir/IR/SymbolTable.h"
 
+#include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/Twine.h"
 
 #include <functional>
+#include <iterator>
 
 using namespace mlir;
 
@@ -36,6 +38,274 @@ uint64_t getVirtualMethodSignatureID(semantic::SVSubroutineSymbolOp method) {
   if (auto type = method->getAttrOfType<TypeAttr>("semantic_type"))
     type.getValue().print(stream);
   return stableCodeUnitID(key);
+}
+
+struct CoverageInterval {
+  APInt lower;
+  APInt upper;
+};
+
+/// Strip the contextual casts the frontend places around a bins expression.
+/// Section 19.5.7 tests the original value for representability before the
+/// static cast to the coverpoint type, so using the outer folded value would
+/// incorrectly turn an out-of-domain value such as 15 into 3'b111.
+Operation *getCoverageSourceExpression(Operation *expression) {
+  while (auto conversion =
+             dyn_cast<semantic::SVConversionExpressionOp>(expression)) {
+    // Older hand-authored semantic IR lacks this attribute and only used
+    // conversion nodes for contextual casts. Frontend-imported IR records the
+    // distinction so an explicit cast remains part of the bins expression.
+    BoolAttr isImplicit =
+        conversion->getAttrOfType<BoolAttr>("is_implicit");
+    if (isImplicit && !isImplicit.getValue())
+      break;
+    SmallVector<Operation *> children = getChildren(expression);
+    if (children.size() != 1)
+      break;
+    expression = children.front();
+  }
+  return expression;
+}
+
+FailureOr<std::optional<APSInt>>
+getCoverageConstant(Operation *expression, unsigned effectiveWidth,
+                    bool effectiveSigned) {
+  Operation *source = getCoverageSourceExpression(expression);
+  std::optional<StringRef> spelling = getConstantSpelling(source);
+  if (!spelling) {
+    emitError(getSemanticLocation(source))
+        << "coverage bin constant has no elaborated value";
+    return failure();
+  }
+
+  // The unbased unsized values are context-filling tokens rather than
+  // mathematical singleton integers. Parse them directly in the effective
+  // type; X/Z is still excluded below by 19.5.7(b)(3).
+  if (isa<semantic::SVUnbasedUnsizedIntegerLiteralOp>(source)) {
+    FailureOr<ParsedConstant> parsed = parseSVInteger(
+        *spelling, effectiveWidth, getSemanticLocation(source));
+    if (failed(parsed))
+      return failure();
+    if (!parsed->unknown.isZero())
+      return std::optional<APSInt>{};
+    return std::optional<APSInt>{
+        APSInt(std::move(parsed->value), !effectiveSigned)};
+  }
+
+  FailureOr<Type> normalized = getNormalizedSemanticType(source);
+  Type scalar =
+      succeeded(normalized) ? sim::getPackedScalarType(*normalized) : Type{};
+  unsigned width = 0;
+  if (auto integer = dyn_cast<IntegerType>(scalar))
+    width = integer.getWidth();
+  else if (auto logic = dyn_cast<sim::LogicType>(scalar))
+    width = logic.getWidth();
+  if (!width) {
+    emitError(getSemanticLocation(source))
+        << "coverage bin constant has no packed integral type";
+    return failure();
+  }
+  auto sourceType = source->getAttrOfType<TypeAttr>("semantic_type");
+  bool isSigned = sourceType && isSignedSemanticType(sourceType.getValue());
+  FailureOr<ParsedConstant> parsed =
+      parseSVInteger(*spelling, width, getSemanticLocation(source));
+  if (failed(parsed))
+    return failure();
+  if (!parsed->unknown.isZero())
+    return std::optional<APSInt>{};
+  return std::optional<APSInt>{APSInt(std::move(parsed->value), !isSigned)};
+}
+
+/// Resolve a state-bin inventory according to IEEE 1800-2017 19.5.7. Values
+/// outside the effective coverpoint domain do not participate. Ranges are
+/// intersected with that domain rather than wrapping their endpoints.
+FailureOr<SmallVector<CoverageInterval>>
+getCoverageIntervals(semantic::SVCoverageBinSymbolOp bin, unsigned width,
+                     bool isSigned) {
+  APSInt domainLower(isSigned ? APInt::getSignedMinValue(width)
+                              : APInt::getZero(width),
+                     /*isUnsigned=*/!isSigned);
+  APSInt domainUpper(isSigned ? APInt::getSignedMaxValue(width)
+                              : APInt::getAllOnes(width),
+                     /*isUnsigned=*/!isSigned);
+  auto orderKey = [&](const APSInt &value) {
+    APInt bits = value.extOrTrunc(width);
+    if (isSigned)
+      bits.flipBit(width - 1);
+    return bits;
+  };
+  auto outsideDomain = [&](const APSInt &value) {
+    return APSInt::compareValues(value, domainLower) < 0 ||
+           APSInt::compareValues(value, domainUpper) > 0;
+  };
+
+  SmallVector<CoverageInterval> intervals;
+  for (Operation *item : getChildren(bin)) {
+    if (auto range = dyn_cast<semantic::SVValueRangeExpressionOp>(item)) {
+      SmallVector<Operation *> endpoints = getChildren(range);
+      if (endpoints.size() != 2)
+        return failure();
+      FailureOr<std::optional<APSInt>> lower =
+          getCoverageConstant(endpoints[0], width, isSigned);
+      FailureOr<std::optional<APSInt>> upper =
+          getCoverageConstant(endpoints[1], width, isSigned);
+      if (failed(lower) || failed(upper))
+        return failure();
+      bool lowerWarns = !*lower || outsideDomain(**lower);
+      bool upperWarns = !*upper || outsideDomain(**upper);
+      if (lowerWarns || upperWarns)
+        emitWarning(getSemanticLocation(item))
+            << "coverage bin range is not fully representable in the "
+               "effective coverpoint type";
+      // An X/Z endpoint makes the entire range nonparticipating.
+      if (!*lower || !*upper || APSInt::compareValues(**lower, **upper) > 0)
+        continue;
+      APSInt clippedLower = outsideDomain(**lower) &&
+                                    APSInt::compareValues(**lower,
+                                                         domainLower) < 0
+                                ? domainLower
+                                : **lower;
+      APSInt clippedUpper = outsideDomain(**upper) &&
+                                    APSInt::compareValues(**upper,
+                                                         domainUpper) > 0
+                                ? domainUpper
+                                : **upper;
+      if (APSInt::compareValues(clippedLower, clippedUpper) <= 0)
+        intervals.push_back(
+            {orderKey(clippedLower), orderKey(clippedUpper)});
+      continue;
+    }
+    FailureOr<std::optional<APSInt>> value =
+        getCoverageConstant(item, width, isSigned);
+    if (failed(value))
+      return failure();
+    if (!*value || outsideDomain(**value)) {
+      emitWarning(getSemanticLocation(item))
+          << "coverage bin value is not representable in the effective "
+             "coverpoint type and does not participate";
+      continue;
+    }
+    APInt key = orderKey(**value);
+    intervals.push_back({key, std::move(key)});
+  }
+  return intervals;
+}
+
+void mergeCoverageIntervals(SmallVectorImpl<CoverageInterval> &intervals) {
+  llvm::sort(intervals,
+             [](const CoverageInterval &lhs, const CoverageInterval &rhs) {
+               return lhs.lower.ult(rhs.lower) ||
+                      (lhs.lower == rhs.lower && lhs.upper.ult(rhs.upper));
+             });
+  SmallVector<CoverageInterval> merged;
+  for (CoverageInterval &interval : intervals) {
+    if (merged.empty()) {
+      merged.push_back(std::move(interval));
+      continue;
+    }
+    CoverageInterval &last = merged.back();
+    bool adjacent = !last.upper.isAllOnes() && interval.lower == last.upper + 1;
+    if (interval.lower.ule(last.upper) || adjacent) {
+      if (last.upper.ult(interval.upper))
+        last.upper = std::move(interval.upper);
+      continue;
+    }
+    merged.push_back(std::move(interval));
+  }
+  intervals.assign(std::make_move_iterator(merged.begin()),
+                   std::make_move_iterator(merged.end()));
+}
+
+bool hasValueOutside(ArrayRef<CoverageInterval> values,
+                     ArrayRef<CoverageInterval> excluded) {
+  for (const CoverageInterval &value : values) {
+    APInt cursor = value.lower;
+    bool consumed = false;
+    for (const CoverageInterval &removal : excluded) {
+      if (removal.upper.ult(cursor))
+        continue;
+      if (value.upper.ult(removal.lower))
+        break;
+      if (cursor.ult(removal.lower))
+        return true;
+      if (removal.upper.uge(value.upper)) {
+        consumed = true;
+        break;
+      }
+      cursor = removal.upper + 1;
+    }
+    if (!consumed && cursor.ule(value.upper))
+      return true;
+  }
+  return false;
+}
+
+FailureOr<int64_t>
+markContributingCoverageBins(semantic::SVCoverpointSymbolOp coverpoint) {
+  FailureOr<Type> normalized = getNormalizedSemanticType(coverpoint);
+  Type scalar =
+      succeeded(normalized) ? sim::getPackedScalarType(*normalized) : Type{};
+  unsigned width = 0;
+  if (auto integer = dyn_cast<IntegerType>(scalar))
+    width = integer.getWidth();
+  else if (auto logic = dyn_cast<sim::LogicType>(scalar))
+    width = logic.getWidth();
+  if (!width)
+    return failure();
+  SmallVector<Operation *> pointChildren = getChildren(coverpoint);
+  if (pointChildren.empty())
+    return failure();
+  auto sourceType =
+      pointChildren.front()->getAttrOfType<TypeAttr>("semantic_type");
+  bool isSigned = sourceType && isSignedSemanticType(sourceType.getValue());
+
+  struct ResolvedBin {
+    semantic::SVCoverageBinSymbolOp bin;
+    SmallVector<CoverageInterval> intervals;
+  };
+  SmallVector<ResolvedBin> resolvedBins;
+  SmallVector<CoverageInterval> excluded;
+  for (Operation *candidate : pointChildren) {
+    auto bin = dyn_cast<semantic::SVCoverageBinSymbolOp>(candidate);
+    if (!bin || bin.getIsDefault())
+      continue;
+    FailureOr<SmallVector<CoverageInterval>> intervals =
+        getCoverageIntervals(bin, width, isSigned);
+    if (failed(intervals))
+      return failure();
+    mergeCoverageIntervals(*intervals);
+    SmallVector<Attribute> encoded;
+    encoded.reserve(intervals->size() * 2);
+    Type endpointType = IntegerType::get(coverpoint.getContext(), width);
+    for (const CoverageInterval &interval : *intervals) {
+      APInt lower = interval.lower;
+      APInt upper = interval.upper;
+      if (isSigned) {
+        lower.flipBit(width - 1);
+        upper.flipBit(width - 1);
+      }
+      encoded.push_back(IntegerAttr::get(endpointType, lower));
+      encoded.push_back(IntegerAttr::get(endpointType, upper));
+    }
+    bin->setAttr(coverageResolvedIntervalsAttrName,
+                 ArrayAttr::get(coverpoint.getContext(), encoded));
+    if (bin.getBinsKind() != semantic::SVCoverageBinKind::Bins)
+      llvm::append_range(excluded, *intervals);
+    resolvedBins.push_back({bin, std::move(*intervals)});
+  }
+  mergeCoverageIntervals(excluded);
+
+  int64_t count = 0;
+  for (ResolvedBin &resolved : resolvedBins) {
+    if (resolved.bin.getBinsKind() != semantic::SVCoverageBinKind::Bins)
+      continue;
+    if (!hasValueOutside(resolved.intervals, excluded))
+      continue;
+    resolved.bin->setAttr(coverageContributingAttrName,
+                          UnitAttr::get(coverpoint.getContext()));
+    ++count;
+  }
+  return count;
 }
 
 } // namespace
@@ -81,11 +351,15 @@ materializeCovergroupDeclarations(semantic::SVRootSymbolOp semanticRoot,
       for (Operation *member : getChildren(body)) {
         if (auto coverpoint =
                 dyn_cast<semantic::SVCoverpointSymbolOp>(member)) {
-          int64_t bins =
-              llvm::count_if(getChildren(coverpoint), [](Operation *candidate) {
-                return isa<semantic::SVCoverageBinSymbolOp>(candidate);
-              });
-          coverpointBins.push_back(bins);
+          FailureOr<int64_t> bins = markContributingCoverageBins(coverpoint);
+          if (failed(bins)) {
+            emitError(getSemanticLocation(coverpoint))
+                << "cannot determine the coverpoint's contributing state "
+                   "bins";
+            invalid = true;
+            continue;
+          }
+          coverpointBins.push_back(*bins);
         }
       }
     }

@@ -249,9 +249,10 @@ LogicalResult SimCovergroupDeclOp::verify() {
   if (getCoverpointBins().empty())
     return emitOpError("requires at least one coverpoint");
   for (int64_t bins : getCoverpointBins())
-    if (bins <= 0 || static_cast<uint64_t>(bins) > UINT32_MAX)
+    if (bins < 0 || static_cast<uint64_t>(bins) > UINT32_MAX)
       return emitOpError(
-          "every coverpoint requires a positive 32-bit named-bin count");
+          "every coverpoint requires a nonnegative 32-bit contributing-bin "
+          "count");
   return success();
 }
 
