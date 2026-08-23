@@ -992,7 +992,7 @@ uint32_t driverFlags(uint8_t strength0, uint8_t strength1) {
 }
 
 uint32_t resolutionFlags(uint8_t resolution, bool driver) {
-  return ((resolution & 3u) << 1) | ((resolution & 4u) << (driver ? 10 : 3));
+  return ((resolution & 3u) << 1) | ((resolution & 12u) << (driver ? 10 : 3));
 }
 
 std::vector<uint8_t> makeStrengthDriverBytecode(uint8_t resolution = 0) {
@@ -3075,6 +3075,89 @@ TEST(DesignBytecode, WiredResolutionPreservesStrongerDriveDominance) {
             uint16_t{1} << 13);
 }
 
+TEST(DesignBytecode, ResolvesImplicitPullAndSupplyNetDrives) {
+  // IEEE 1800-2017 6.6.5, 6.6.6, and 28.15: tri0/tri1 contribute an
+  // implicit pull drive, while supply0/supply1 contribute a supply drive.
+  for (uint8_t resolution :
+       {uint8_t{5}, uint8_t{6}, uint8_t{7}, uint8_t{8}}) {
+    SCOPED_TRACE(static_cast<unsigned>(resolution));
+    Fixture fixture;
+    fixture.bytecode = makeStrengthDriverBytecode(resolution);
+    fixture.execution.bytecode = fixture.bytecode.data();
+    fixture.execution.bytecode_size = fixture.bytecode.size();
+    fixture.execution.state_bit_count = 260;
+    fixture.execution.checksum = imageChecksum(fixture.bytecode);
+
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    bool implicitValue = resolution == 6 || resolution == 8;
+    EXPECT_EQ((context->stateValue[0] & 1) != 0, implicitValue);
+    EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
+
+    auto setState = [&](uint64_t offset, bool value, bool unknown) {
+      uint64_t mask = UINT64_C(1) << (offset % 64);
+      if (value)
+        context->stateValue[offset / 64] |= mask;
+      else
+        context->stateValue[offset / 64] &= ~mask;
+      if (unknown)
+        context->stateUnknown[offset / 64] |= mask;
+      else
+        context->stateUnknown[offset / 64] &= ~mask;
+    };
+    setState(65, true, true);
+    setState(130, true, true);
+    setState(195, !implicitValue, false);
+    ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196),
+              OBELISK_RT_OK);
+    bool expected = resolution >= 7 ? implicitValue : !implicitValue;
+    EXPECT_EQ((context->stateValue[0] & 1) != 0, expected);
+    EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST(DesignBytecode, PullNetConflictsWithEqualPullStrength) {
+  for (uint8_t resolution : {uint8_t{5}, uint8_t{6}}) {
+    Fixture fixture;
+    fixture.bytecode = makeStrengthDriverBytecode(resolution);
+    size_t state = get64(fixture.bytecode, 168);
+    put32(fixture.bytecode, state + 96 + 4,
+          driverFlags(5, 5) | resolutionFlags(resolution, true));
+    put64(fixture.bytecode, 32, imageChecksum(fixture.bytecode));
+    fixture.execution.bytecode = fixture.bytecode.data();
+    fixture.execution.bytecode_size = fixture.bytecode.size();
+    fixture.execution.state_bit_count = 260;
+    fixture.execution.checksum = imageChecksum(fixture.bytecode);
+
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    auto setState = [&](uint64_t offset, bool value, bool unknown) {
+      uint64_t mask = UINT64_C(1) << (offset % 64);
+      if (value)
+        context->stateValue[offset / 64] |= mask;
+      else
+        context->stateValue[offset / 64] &= ~mask;
+      if (unknown)
+        context->stateUnknown[offset / 64] |= mask;
+      else
+        context->stateUnknown[offset / 64] &= ~mask;
+    };
+    setState(65, true, true);
+    setState(130, true, true);
+    setState(195, resolution == 5, false);
+    ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196),
+              OBELISK_RT_OK);
+    EXPECT_EQ(context->stateValue[0] & 1, 0u);
+    EXPECT_EQ(context->stateUnknown[0] & 1, 1u);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
 TEST(DesignBytecode, PublishesSplitStrengthBanksAtomically) {
   Fixture fixture;
   fixture.bytecode = makeStrengthDriverBytecode();
@@ -3261,6 +3344,69 @@ TEST(DesignBytecode, AcceptsLegacyMixedUWireWithoutDominanceFlags) {
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
       OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, UsesOnlyDominatingCollapsedNetImplicitDrive) {
+  Fixture fixture;
+  fixture.bytecode = makeConnectedDriverBytecode();
+  size_t state = get64(fixture.bytecode, 168);
+  size_t connectivity = get64(fixture.bytecode, 184);
+  put32(fixture.bytecode, state + 4,
+        1u | resolutionFlags(5, false)); // tri0
+  put32(fixture.bytecode, state + 32 + 4,
+        1u | resolutionFlags(3, false)); // wand
+  put32(fixture.bytecode, state + 64 + 4,
+        driverFlags(6, 6) | resolutionFlags(3, true));
+  fixture.bytecode[connectivity + 24] = 5;
+  fixture.bytecode[connectivity + 25] = 3;
+  fixture.bytecode[connectivity + 26] = 6;
+  put64(fixture.bytecode, 32, imageChecksum(fixture.bytecode));
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.state_bit_count = 195;
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  // IEEE 1800-2017 23.3.3.7: the dominating wand supplies the collapsed
+  // net type, so the dominated tri0 declaration contributes no pull0 drive.
+  EXPECT_EQ(context->stateValue[0] & 1, 1u);
+  EXPECT_EQ(context->stateUnknown[0] & 1, 1u);
+  EXPECT_EQ((context->stateValue[1] >> 1) & 1, 1u);
+  EXPECT_EQ((context->stateUnknown[1] >> 1) & 1, 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, SupplyDominanceDisablesCollapsedUWireDriverLimit) {
+  Fixture fixture;
+  fixture.bytecode = makeMixedUWireDriverBytecode(true);
+  size_t state = get64(fixture.bytecode, 168);
+  size_t connectivity = get64(fixture.bytecode, 184);
+  put32(fixture.bytecode, state + 4, 1u | resolutionFlags(2, false));
+  put32(fixture.bytecode, state + 32 + 4,
+        1u | resolutionFlags(7, false));
+  put32(fixture.bytecode, state + 64 + 4,
+        driverFlags(6, 6) | resolutionFlags(7, true));
+  put32(fixture.bytecode, connectivity - 32 + 4,
+        driverFlags(6, 6) | resolutionFlags(7, true));
+  fixture.bytecode[connectivity + 24] = 2;
+  fixture.bytecode[connectivity + 25] = 7;
+  fixture.bytecode[connectivity + 26] = 6;
+  put64(fixture.bytecode, 32, imageChecksum(fixture.bytecode));
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.state_bit_count = 195;
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  EXPECT_EQ(context->stateValue[0] & 1, 0u);
+  EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -4201,7 +4347,8 @@ TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
   Fixture invalidNetResolution;
   connected(invalidNetResolution);
   size_t invalidNetState = get64(invalidNetResolution.bytecode, 168);
-  put32(invalidNetResolution.bytecode, invalidNetState + 4, 35);
+  put32(invalidNetResolution.bytecode, invalidNetState + 4,
+        1u | resolutionFlags(9, false));
   rejected(invalidNetResolution);
 
   Fixture misalignedConnectivity;

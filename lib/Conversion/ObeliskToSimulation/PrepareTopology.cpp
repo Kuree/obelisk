@@ -462,6 +462,18 @@ materializeDesignDescriptors(ModuleOp module,
     case semantic::SVNetKind::TriOr:
       resolution = sim::NetResolutionKind::WOr;
       break;
+    case semantic::SVNetKind::Tri0:
+      resolution = sim::NetResolutionKind::Tri0;
+      break;
+    case semantic::SVNetKind::Tri1:
+      resolution = sim::NetResolutionKind::Tri1;
+      break;
+    case semantic::SVNetKind::Supply0:
+      resolution = sim::NetResolutionKind::Supply0;
+      break;
+    case semantic::SVNetKind::Supply1:
+      resolution = sim::NetResolutionKind::Supply1;
+      break;
     default:
       emitError(getSemanticLocation(op))
           << "unsupported net resolution kind "

@@ -27,7 +27,7 @@ module attributes {
           obelisk.sv.symbol.instance_body attributes {hierarchical_name = "wired_parent.child", name = "wired_child", node_id = 12 : i64, sym_name = "s8.wired_child"} {
             obelisk.sv.symbol.port attributes {direction = 1 : i32, hierarchical_name = "wired_parent.child.value", name = "value", node_id = 13 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s9.value"} {
             }
-            obelisk.sv.symbol.net attributes {hierarchical_name = "wired_parent.child.value", is_implicit = false, name = "value", net_kind = 3 : i32, node_id = 14 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s10.value"} {
+            obelisk.sv.symbol.net attributes {hierarchical_name = "wired_parent.child.value", is_implicit = false, name = "value", net_kind = 7 : i32, node_id = 14 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s10.value"} {
             }
           }
         }
@@ -36,9 +36,9 @@ module attributes {
   }
 }
 
-// IEEE 1800-2017 Table 23-1: an internal wor connected to an external wand
+// IEEE 1800-2017 Table 23-1: an internal tri0 connected to an external wand
 // uses the external wand type and issues a warning.
-// CHECK: warning: dissimilar wired net types require a port-collapse warning
+// CHECK: warning: dissimilar net types require a port-collapse warning
 // CHECK-DAG: obelisk_sim.net.decl 0 {{.*}} hierarchy "wired_parent.value" {{.*}}resolution_kind = 3 : i32
-// CHECK-DAG: obelisk_sim.net.decl 1 {{.*}} hierarchy "wired_parent.child.value" {{.*}}resolution_kind = 4 : i32
+// CHECK-DAG: obelisk_sim.net.decl 1 {{.*}} hierarchy "wired_parent.child.value" {{.*}}resolution_kind = 5 : i32
 // CHECK: obelisk_sim.net.connect.decl 0 {{.*}} 0[0] to 1[0] width 1 reversed = false provenance "ordered" rhs_dominates = false

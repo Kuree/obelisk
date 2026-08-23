@@ -169,11 +169,11 @@ struct ConnectivityRecord {
 };
 
 inline uint8_t decodeNetResolution(uint32_t argument) {
-  return static_cast<uint8_t>(((argument >> 1) & 3) | ((argument >> 3) & 4));
+  return static_cast<uint8_t>(((argument >> 1) & 3) | ((argument >> 3) & 12));
 }
 
 inline uint8_t decodeDriverResolution(uint32_t argument) {
-  return static_cast<uint8_t>(((argument >> 1) & 3) | ((argument >> 10) & 4));
+  return static_cast<uint8_t>(((argument >> 1) & 3) | ((argument >> 10) & 12));
 }
 
 uint32_t functionHomeRegion(const Function &function);

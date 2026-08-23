@@ -1470,10 +1470,6 @@ LogicalResult SimDesignOp::verifyRegions() {
           containsFourStateLeaf(rhs->second))
         return connection.emitOpError(
             "connects incompatible two-state and four-state nets");
-      bool lhsUWire = netResolutions.lookup(connection.getLhsNetId()) ==
-                      NetResolutionKind::UWire;
-      bool rhsUWire = netResolutions.lookup(connection.getRhsNetId()) ==
-                      NetResolutionKind::UWire;
       NetResolutionKind lhsResolution =
           netResolutions.lookup(connection.getLhsNetId());
       NetResolutionKind rhsResolution =
@@ -1487,17 +1483,22 @@ LogicalResult SimDesignOp::verifyRegions() {
       if (mixed && !connection.getRhsDominates())
         return connection.emitOpError(
             "must identify the dominant endpoint in mixed net topology");
+      auto isSupply = [](NetResolutionKind kind) {
+        return kind == NetResolutionKind::Supply0 ||
+               kind == NetResolutionKind::Supply1;
+      };
+      auto isWire = [](NetResolutionKind kind) {
+        return kind == NetResolutionKind::Wire;
+      };
       std::optional<bool> requiredDominance;
-      if (lhsUWire != rhsUWire)
-        requiredDominance = rhsUWire;
-      else if (lhsResolution == NetResolutionKind::Wire &&
-               (rhsResolution == NetResolutionKind::WAnd ||
-                rhsResolution == NetResolutionKind::WOr))
-        requiredDominance = true;
-      else if (rhsResolution == NetResolutionKind::Wire &&
-               (lhsResolution == NetResolutionKind::WAnd ||
-                lhsResolution == NetResolutionKind::WOr))
-        requiredDominance = false;
+      if (isSupply(lhsResolution) != isSupply(rhsResolution))
+        requiredDominance = isSupply(rhsResolution);
+      else if (!isSupply(lhsResolution) && !isSupply(rhsResolution) &&
+               ((lhsResolution == NetResolutionKind::UWire) !=
+                (rhsResolution == NetResolutionKind::UWire)))
+        requiredDominance = rhsResolution == NetResolutionKind::UWire;
+      else if (isWire(lhsResolution) != isWire(rhsResolution))
+        requiredDominance = isWire(lhsResolution);
       if (requiredDominance &&
           *connection.getRhsDominates() != *requiredDominance)
         return connection.emitOpError(

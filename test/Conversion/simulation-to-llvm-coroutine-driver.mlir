@@ -15,6 +15,7 @@ module attributes {
     obelisk_sim.code_unit.decl 6 in 0 function hierarchy "driver_lowering.drive_inertial"
     obelisk_sim.code_unit.decl 7 in 0 function hierarchy "driver_lowering.drive_delayed_net"
     obelisk_sim.code_unit.decl 8 in 0 function hierarchy "driver_lowering.drive_wand"
+    obelisk_sim.code_unit.decl 9 in 0 function hierarchy "driver_lowering.drive_tri0"
     obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<2> design
     obelisk_sim.driver.decl 0 in 0 drives 0 :
         !obelisk_sim.logic<2> design
@@ -46,6 +47,11 @@ module attributes {
         !obelisk_sim.logic<1> design
     obelisk_sim.driver.decl 6 in 0 drives 4 :
         !obelisk_sim.logic<1> design
+    obelisk_sim.net.decl 5 in 0 : !obelisk_sim.logic<1> design {
+      resolution_kind = 5 : i32
+    }
+    obelisk_sim.driver.decl 7 in 0 drives 5 :
+        !obelisk_sim.logic<1> design {resolution_kind = 5 : i32}
 
     obelisk_sim.func @drive(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
@@ -169,6 +175,19 @@ module attributes {
           !obelisk_sim.logic<1>
       obelisk_sim.return
     }
+
+    obelisk_sim.func @drive_tri0(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 9 : i64} {
+      %driver = obelisk_sim.context.driver %ctx[7] :
+          !obelisk_sim.driver<!obelisk_sim.logic<1>>
+      %one = obelisk_sim.logic.constant 1 : i1, 0 : i1 :
+          !obelisk_sim.logic<1>
+      obelisk_sim.driver.drive %driver = %one :
+          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
+          !obelisk_sim.logic<1>
+      obelisk_sim.return
+    }
   }
 }
 
@@ -229,6 +248,14 @@ module attributes {
 // CHECK-LABEL: llvm.func @drive_wand
 // CHECK: %[[WAND:.*]] = llvm.mlir.constant(3 : i32) : i32
 // CHECK: llvm.call @obelisk_rt_v1_strength_resolve_kind({{.*}}, {{.*}}, %[[WAND]])
+// CHECK-NOT: obelisk_sim.driver.drive
+
+// IEEE 1800-2017 6.6.5 gives tri0 an implicit pull0 contribution. Native
+// resolution seeds Figure 28-2 position -5 (bit index 2) and passes kind 5.
+// CHECK-LABEL: llvm.func @drive_tri0
+// CHECK: %[[PULL0:.*]] = llvm.mlir.constant(4 : i16) : i16
+// CHECK: %[[TRI0:.*]] = llvm.mlir.constant(5 : i32) : i32
+// CHECK: llvm.call @obelisk_rt_v1_strength_resolve_kind(%[[PULL0]], {{.*}}, %[[TRI0]])
 // CHECK-NOT: obelisk_sim.driver.drive
 
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x00010236 inputs=8 outputs=0 flags=0

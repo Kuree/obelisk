@@ -352,18 +352,52 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       internalDominates = external == sim::NetResolutionKind::Wire ||
                           external == sim::NetResolutionKind::Tri;
       warn = external == sim::NetResolutionKind::WOr ||
+             external == sim::NetResolutionKind::Tri0 ||
+             external == sim::NetResolutionKind::Tri1 ||
              external == sim::NetResolutionKind::UWire;
       break;
     case sim::NetResolutionKind::WOr:
       internalDominates = external == sim::NetResolutionKind::Wire ||
                           external == sim::NetResolutionKind::Tri;
       warn = external == sim::NetResolutionKind::WAnd ||
+             external == sim::NetResolutionKind::Tri0 ||
+             external == sim::NetResolutionKind::Tri1 ||
+             external == sim::NetResolutionKind::UWire;
+      break;
+    case sim::NetResolutionKind::Tri0:
+      internalDominates = external == sim::NetResolutionKind::Wire ||
+                          external == sim::NetResolutionKind::Tri;
+      warn = external == sim::NetResolutionKind::WAnd ||
+             external == sim::NetResolutionKind::WOr ||
+             external == sim::NetResolutionKind::Tri1 ||
+             external == sim::NetResolutionKind::UWire;
+      break;
+    case sim::NetResolutionKind::Tri1:
+      internalDominates = external == sim::NetResolutionKind::Wire ||
+                          external == sim::NetResolutionKind::Tri;
+      warn = external == sim::NetResolutionKind::WAnd ||
+             external == sim::NetResolutionKind::WOr ||
+             external == sim::NetResolutionKind::Tri0 ||
              external == sim::NetResolutionKind::UWire;
       break;
     case sim::NetResolutionKind::UWire:
-      internalDominates = external != sim::NetResolutionKind::UWire;
+      internalDominates = external != sim::NetResolutionKind::UWire &&
+                          external != sim::NetResolutionKind::Supply0 &&
+                          external != sim::NetResolutionKind::Supply1;
       warn = external == sim::NetResolutionKind::WAnd ||
-             external == sim::NetResolutionKind::WOr;
+             external == sim::NetResolutionKind::WOr ||
+             external == sim::NetResolutionKind::Tri0 ||
+             external == sim::NetResolutionKind::Tri1;
+      break;
+    case sim::NetResolutionKind::Supply0:
+      internalDominates = external != sim::NetResolutionKind::Supply0 &&
+                          external != sim::NetResolutionKind::Supply1;
+      warn = external == sim::NetResolutionKind::Supply1;
+      break;
+    case sim::NetResolutionKind::Supply1:
+      internalDominates = external != sim::NetResolutionKind::Supply0 &&
+                          external != sim::NetResolutionKind::Supply1;
+      warn = external == sim::NetResolutionKind::Supply0;
       break;
     }
     return std::pair(!internalDominates, warn);
@@ -392,7 +426,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
             portDominance(left.descriptor.netKind, right.descriptor.netKind);
         if (warn && !emittedNetTypeWarning) {
           emitWarning(getSemanticLocation(connection))
-              << "dissimilar wired net types require a port-collapse warning";
+              << "dissimilar net types require a port-collapse warning";
           emittedNetTypeWarning = true;
         }
         if (reverse < edge) {

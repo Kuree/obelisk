@@ -355,13 +355,19 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
 
     DenseSet<std::pair<uint64_t, uint64_t>> uwireComponents;
     for (const Net &net : layout.netLayouts) {
-      if (net.resolution != sim::NetResolutionKind::UWire)
-        continue;
       for (uint64_t bit = 0; bit != net.width; ++bit) {
-        ArrayRef<NetBit> component = connectivity.getComponent({net.id, bit});
-        NetBit canonical =
-            component.empty() ? NetBit{net.id, bit} : component.front();
-        uwireComponents.insert({canonical.net, canonical.offset});
+        std::pair<uint64_t, uint64_t> key{net.id, bit};
+        auto canonicalFound = layout.connectivityCanonical.find(key);
+        std::pair<uint64_t, uint64_t> canonical =
+            canonicalFound == layout.connectivityCanonical.end()
+                ? key
+                : canonicalFound->second;
+        sim::NetResolutionKind effective = net.resolution;
+        auto resolutionFound = layout.connectivityResolutions.find(canonical);
+        if (resolutionFound != layout.connectivityResolutions.end())
+          effective = resolutionFound->second;
+        if (effective == sim::NetResolutionKind::UWire)
+          uwireComponents.insert(canonical);
       }
     }
 

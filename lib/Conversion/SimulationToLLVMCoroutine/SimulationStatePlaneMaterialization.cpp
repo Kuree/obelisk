@@ -55,6 +55,32 @@ makeStatePlane(ModuleOp module, StringRef name, uint64_t bytes, bool unknown,
       }
     }
   }
+  for (const NativeStateLayout::Net &net : layout.netLayouts) {
+    for (unsigned bit = 0; bit < net.width; ++bit) {
+      std::pair<uint64_t, uint64_t> logical{net.id, bit};
+      auto canonicalFound = layout.connectivityCanonical.find(logical);
+      std::pair<uint64_t, uint64_t> canonical =
+          canonicalFound == layout.connectivityCanonical.end()
+              ? logical
+              : canonicalFound->second;
+      sim::NetResolutionKind resolution = net.resolution;
+      auto resolutionFound = layout.connectivityResolutions.find(canonical);
+      if (resolutionFound != layout.connectivityResolutions.end())
+        resolution = resolutionFound->second;
+      if (resolution != sim::NetResolutionKind::Tri0 &&
+          resolution != sim::NetResolutionKind::Tri1 &&
+          resolution != sim::NetResolutionKind::Supply0 &&
+          resolution != sim::NetResolutionKind::Supply1)
+        continue;
+      uint64_t absolute = net.offset + bit;
+      uint8_t mask = static_cast<uint8_t>(1u << (absolute % 8));
+      if (unknown || resolution == sim::NetResolutionKind::Tri0 ||
+          resolution == sim::NetResolutionKind::Supply0)
+        initial[absolute / 8] &= static_cast<uint8_t>(~mask);
+      else
+        initial[absolute / 8] |= mask;
+    }
+  }
   // A plane with any set bit is handed over as one blob. Building it with an
   // insertvalue per set byte is quadratic: each insert constant-folds into a
   // fresh `bytes`-element ConstantArray, so a design holding a large unpacked

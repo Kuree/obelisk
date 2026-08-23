@@ -19,6 +19,21 @@ static uint16_t strengthBit(int strength) {
   return static_cast<uint16_t>(uint16_t{1} << (strength + 7));
 }
 
+static uint16_t implicitNetStrength(uint8_t resolution) {
+  switch (resolution) {
+  case 5:
+    return strengthBit(-5); // tri0
+  case 6:
+    return strengthBit(5); // tri1
+  case 7:
+    return strengthBit(-7); // supply0
+  case 8:
+    return strengthBit(7); // supply1
+  default:
+    return strengthBit(0); // high impedance
+  }
+}
+
 static uint16_t combineStrengthRanges(uint16_t lhs, uint16_t rhs,
                                       uint8_t resolution = 0) {
   uint16_t result = 0;
@@ -408,7 +423,8 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
         result |= strengthBit(strength);
       return result;
     };
-    uint16_t resolvedStrengths = strengthBit(0);
+    uint16_t resolvedStrengths =
+        implicitNetStrength(cache.resolutionByRoot.at(root));
     auto componentDrivers = cache.driverBits.find(root);
     if (componentDrivers != cache.driverBits.end()) {
       for (const NetDriverBit &driver : componentDrivers->second) {
@@ -558,6 +574,18 @@ obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept {
           setBit(context->stateValue, driver.valueOffset + bitIndex, true);
           setBit(context->stateUnknown, driver.valueOffset + bitIndex, true);
         }
+      }
+    }
+    NetAliasCache *cache = getNetAliasCache(image, context);
+    if (!cache)
+      return OBELISK_RT_INVALID_DESIGN;
+    for (const auto &[root, resolution] : cache->resolutionByRoot) {
+      if (resolution < 5)
+        continue;
+      bool value = resolution == 6 || resolution == 8;
+      for (uint64_t destination : cache->members.at(root)) {
+        setBit(context->stateValue, destination, value);
+        setBit(context->stateUnknown, destination, false);
       }
     }
     return OBELISK_RT_OK;

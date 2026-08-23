@@ -514,6 +514,30 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @wire_tri0_wrong_dominance {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design
+    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 5 : i32}
+    // expected-error @+1 {{identifies the wrong dominant endpoint for these net types}}
+    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = false
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @uwire_supply_wrong_dominance {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 2 : i32}
+    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 7 : i32}
+    // expected-error @+1 {{identifies the wrong dominant endpoint for these net types}}
+    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = false
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @mixed_state_domain_connection {
     obelisk_sim.scope.decl 0
     obelisk_sim.net.decl 0 in 0 : i1 design

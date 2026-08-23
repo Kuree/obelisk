@@ -210,9 +210,14 @@ def SimNetTri : I32EnumAttrCase<"Tri", 1, "tri">;
 def SimNetUWire : I32EnumAttrCase<"UWire", 2, "uwire">;
 def SimNetWAnd : I32EnumAttrCase<"WAnd", 3, "wand">;
 def SimNetWOr : I32EnumAttrCase<"WOr", 4, "wor">;
+def SimNetTri0 : I32EnumAttrCase<"Tri0", 5, "tri0">;
+def SimNetTri1 : I32EnumAttrCase<"Tri1", 6, "tri1">;
+def SimNetSupply0 : I32EnumAttrCase<"Supply0", 7, "supply0">;
+def SimNetSupply1 : I32EnumAttrCase<"Supply1", 8, "supply1">;
 def SimNetResolutionKind
     : I32EnumAttr<"NetResolutionKind", "supported net resolution kind", [
-        SimNetWire, SimNetTri, SimNetUWire, SimNetWAnd, SimNetWOr
+        SimNetWire, SimNetTri, SimNetUWire, SimNetWAnd, SimNetWOr,
+        SimNetTri0, SimNetTri1, SimNetSupply0, SimNetSupply1
       ]> {
   let cppNamespace = "::obelisk::sim";
 }

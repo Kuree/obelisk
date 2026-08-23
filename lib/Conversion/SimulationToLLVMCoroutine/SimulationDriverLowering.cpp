@@ -187,6 +187,8 @@ public:
         if (net != layout.netLayouts.end() && onlyDriver && !connected &&
             driver->drivenLow == 0 && driver->drivenWidth == driver->width &&
             driver->width == net->width && driveType.getWidth() == net->width &&
+            static_cast<uint32_t>(net->resolution) <
+                static_cast<uint32_t>(sim::NetResolutionKind::Tri0) &&
             driver->strength0 != sim::Strength::HighZ &&
             driver->strength1 != sim::Strength::HighZ)
           bulkNet = &*net;
@@ -278,11 +280,29 @@ public:
         auto strengthBit = [](unsigned index) -> uint16_t {
           return static_cast<uint16_t>(uint16_t{1} << index);
         };
-        Value resolvedStrengths = strengthConstant(strengthBit(7));
         sim::NetResolutionKind resolution = net.resolution;
         auto foundResolution = layout.connectivityResolutions.find(canonical);
         if (foundResolution != layout.connectivityResolutions.end())
           resolution = foundResolution->second;
+        unsigned implicitStrengthIndex = 7;
+        switch (resolution) {
+        case sim::NetResolutionKind::Tri0:
+          implicitStrengthIndex = 2;
+          break;
+        case sim::NetResolutionKind::Tri1:
+          implicitStrengthIndex = 12;
+          break;
+        case sim::NetResolutionKind::Supply0:
+          implicitStrengthIndex = 0;
+          break;
+        case sim::NetResolutionKind::Supply1:
+          implicitStrengthIndex = 14;
+          break;
+        default:
+          break;
+        }
+        Value resolvedStrengths =
+            strengthConstant(strengthBit(implicitStrengthIndex));
         Value resolutionValue = arith::ConstantOp::create(
             rewriter, op.getLoc(), rewriter.getI32Type(),
             rewriter.getI32IntegerAttr(static_cast<uint32_t>(resolution)));

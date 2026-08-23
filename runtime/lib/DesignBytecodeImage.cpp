@@ -1636,8 +1636,8 @@ bool validateImage(const Image &image) {
     if (bitwiseDelay && (net.planeSize > UINT64_MAX / 24 ||
                          (delayBytes = net.planeSize * 24) == 0))
       return reject(__LINE__, "invalid bitwise net-delay size");
-    if ((net.argument & ~uint32_t{63}) != 0 ||
-        decodeNetResolution(net.argument) > 4 || net.planeSize == 0 ||
+    if ((net.argument & ~uint32_t{127}) != 0 ||
+        decodeNetResolution(net.argument) > 8 || net.planeSize == 0 ||
         net.valueOffset < previousNetEnd || (bitwiseDelay && !delayed) ||
         delayed != (net.unknownOffset != UINT64_MAX) ||
         (delayed && ((net.unknownOffset & 7) != 0 ||
@@ -1684,9 +1684,9 @@ bool validateImage(const Image &image) {
     uint32_t strength1 = (driver.argument >> 7) & 0xf;
     bool highStrengthBank = (driver.argument & (uint32_t{1} << 11)) != 0;
     if (driver.function != kDriverStateDescriptor ||
-        (driver.argument & ~uint32_t{0x1fff}) != 0 ||
+        (driver.argument & ~uint32_t{0x3fff}) != 0 ||
         (driver.argument & 1) == 0 ||
-        decodeDriverResolution(driver.argument) > 4 || strength0 > 8 ||
+        decodeDriverResolution(driver.argument) > 8 || strength0 > 8 ||
         strength1 > 8 || driver.planeSize == 0 ||
         driver.valueOffset < previousDriverEnd ||
         driver.valueOffset > image.stateBitCount ||
@@ -1756,7 +1756,7 @@ bool validateImage(const Image &image) {
     if (connection.width == 0 || (connection.flags & ~uint8_t{7}) != 0 ||
         ((connection.flags & 2) == 0 && (connection.flags & 4) != 0) ||
         connection.reserved != 0 || connection.tailReserved != 0 ||
-        connection.lhsResolution > 4 || connection.rhsResolution > 4 || !lhs ||
+        connection.lhsResolution > 8 || connection.rhsResolution > 8 || !lhs ||
         !rhs ||
         connection.lhsResolution != decodeNetResolution(lhs->argument) ||
         connection.rhsResolution != decodeNetResolution(rhs->argument) ||
@@ -1906,20 +1906,33 @@ bool validateImage(const Image &image) {
       continue;
     uint8_t winner = rhsDominates ? rhsResolution : lhsResolution;
     uint8_t loser = rhsDominates ? lhsResolution : rhsResolution;
-    if ((winner == 0 && (loser == 2 || loser == 3 || loser == 4)) ||
-        ((winner == 3 || winner == 4) && loser == 2))
+    auto isSupply = [](uint8_t kind) { return kind == 7 || kind == 8; };
+    bool invalidWinner = false;
+    if (isSupply(winner) != isSupply(loser))
+      invalidWinner = !isSupply(winner);
+    else if (!isSupply(winner) && ((winner == 2) != (loser == 2)))
+      invalidWinner = winner != 2;
+    else if (!isSupply(winner) && winner != 2 && loser != 2 &&
+             ((winner == 0) != (loser == 0)))
+      invalidWinner = winner == 0;
+    if (invalidWinner)
       return reject(__LINE__, "connectivity has an invalid dominant net type");
   }
+  std::unordered_map<uint64_t, uint8_t> effectiveResolutionByRoot;
   for (const auto &[root, kinds] : componentKinds) {
-    if (kinds.size() <= 1)
+    if (kinds.size() <= 1) {
+      effectiveResolutionByRoot.emplace(root, *kinds.begin());
       continue;
+    }
     // Older images could only contain mixed wire/tri and uwire topology, and
     // did not serialize dominance. Uwire is intrinsically dominant over the
     // other supported kinds, so accepting those images is unambiguous.
     bool legacyUWire = kinds.size() == 2 && kinds.count(0) && kinds.count(2);
     if (incompleteComponents.count(root)) {
-      if (legacyUWire && !directedComponents.count(root))
+      if (legacyUWire && !directedComponents.count(root)) {
+        effectiveResolutionByRoot.emplace(root, 2);
         continue;
+      }
       return reject(__LINE__, "mixed connectivity is missing port dominance");
     }
     std::unordered_map<uint64_t, uint64_t> incomingCount;
@@ -1960,6 +1973,7 @@ bool validateImage(const Image &image) {
     if (!dominantKind)
       return reject(__LINE__,
                     "mixed connectivity has ambiguous port dominance");
+    effectiveResolutionByRoot.emplace(root, *dominantKind);
   }
   // Every logical alias of one simulated-net bit must mature together. The
   // compiler normalizes each member to the dominating net's delay; enforce
@@ -1989,12 +2003,9 @@ bool validateImage(const Image &image) {
   // A uwire component has at most one design-lifetime driver for every
   // connected scalar equivalence class, including aliases of its target.
   std::unordered_set<uint64_t> uwireComponents;
-  for (const CaptureRecord &net : netRecords) {
-    if (decodeNetResolution(net.argument) != 2)
-      continue;
-    for (uint64_t bit = 0; bit != net.planeSize; ++bit)
-      uwireComponents.insert(findConnectivity(net.valueOffset + bit));
-  }
+  for (const auto &[root, resolution] : effectiveResolutionByRoot)
+    if (resolution == 2)
+      uwireComponents.insert(root);
   std::unordered_map<uint64_t, uint32_t> uwireDrivers;
   for (const CaptureRecord &driver : driverRecords) {
     if ((driver.argument & (uint32_t{1} << 11)) != 0)

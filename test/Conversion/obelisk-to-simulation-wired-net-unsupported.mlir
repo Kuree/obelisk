@@ -19,6 +19,14 @@ module attributes {
         }
         obelisk.sv.symbol.net attributes {hierarchical_name = "unsupported_wired_resolution.trior_value", is_implicit = false, name = "trior_value", net_kind = 6 : i32, node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s8.trior_value"} {
         }
+        obelisk.sv.symbol.net attributes {hierarchical_name = "unsupported_wired_resolution.tri0_value", is_implicit = false, name = "tri0_value", net_kind = 7 : i32, node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s9.tri0_value"} {
+        }
+        obelisk.sv.symbol.net attributes {hierarchical_name = "unsupported_wired_resolution.tri1_value", is_implicit = false, name = "tri1_value", net_kind = 8 : i32, node_id = 10 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s10.tri1_value"} {
+        }
+        obelisk.sv.symbol.net attributes {hierarchical_name = "unsupported_wired_resolution.supply0_value", is_implicit = false, name = "supply0_value", net_kind = 10 : i32, node_id = 11 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s11.supply0_value"} {
+        }
+        obelisk.sv.symbol.net attributes {hierarchical_name = "unsupported_wired_resolution.supply1_value", is_implicit = false, name = "supply1_value", net_kind = 11 : i32, node_id = 12 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s12.supply1_value"} {
+        }
       }
     }
   }
@@ -29,3 +37,9 @@ module attributes {
 // CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.or_value" {{.*}}resolution_kind = 4 : i32
 // CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.triand_value" {{.*}}resolution_kind = 3 : i32
 // CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.trior_value" {{.*}}resolution_kind = 4 : i32
+// IEEE 1800-2017 6.6.5, 6.6.6, and 28.15 define the implicit pull and supply
+// strengths carried by these net types.
+// CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.tri0_value" {{.*}}resolution_kind = 5 : i32
+// CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.tri1_value" {{.*}}resolution_kind = 6 : i32
+// CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.supply0_value" {{.*}}resolution_kind = 7 : i32
+// CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.supply1_value" {{.*}}resolution_kind = 8 : i32

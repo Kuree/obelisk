@@ -23,7 +23,7 @@ namespace obelisk::bytecode {
 static uint32_t encodeResolution(sim::NetResolutionKind resolution,
                                  bool driver) {
   uint32_t value = static_cast<uint32_t>(resolution);
-  return ((value & 3) << 1) | ((value & 4) << (driver ? 10 : 3));
+  return ((value & 3) << 1) | ((value & 12) << (driver ? 10 : 3));
 }
 
 SmallVector<uint8_t> serializeBytecodeImage(
