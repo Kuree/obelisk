@@ -1082,6 +1082,91 @@ TEST(RuntimeDPI, ValidatesDispatchContextAndNestedRestoration) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+struct DpiRealObservation {
+  uint32_t calls = 0;
+};
+
+obelisk_rt_status observeDpiRealCall(obelisk_rt_context *, uint32_t,
+                                     const obelisk_rt_import_input_v1 *inputs,
+                                     uint32_t inputCount,
+                                     obelisk_rt_import_output_v1 *outputs,
+                                     uint32_t outputCount, void *userData) {
+  auto &observation = *static_cast<DpiRealObservation *>(userData);
+  ++observation.calls;
+  EXPECT_EQ(inputCount, 2u);
+  EXPECT_EQ(outputCount, 2u);
+  EXPECT_EQ(inputs[0].kind, OBELISK_RT_DBREG_REAL32);
+  EXPECT_EQ(inputs[1].kind, OBELISK_RT_DBREG_REAL64);
+  EXPECT_EQ(outputs[0].kind, OBELISK_RT_DBREG_REAL32);
+  EXPECT_EQ(outputs[1].kind, OBELISK_RT_DBREG_REAL64);
+
+  float narrow = 0.0f;
+  double wide = 0.0;
+  float zeroNarrow = 1.0f;
+  double zeroWide = 1.0;
+  std::memcpy(&narrow, inputs[0].value, sizeof(narrow));
+  std::memcpy(&wide, inputs[1].value, sizeof(wide));
+  std::memcpy(&zeroNarrow, outputs[0].value, sizeof(zeroNarrow));
+  std::memcpy(&zeroWide, outputs[1].value, sizeof(zeroWide));
+  EXPECT_FLOAT_EQ(narrow, 1.25f);
+  EXPECT_DOUBLE_EQ(wide, 2.5);
+  EXPECT_FLOAT_EQ(zeroNarrow, 0.0f);
+  EXPECT_DOUBLE_EQ(zeroWide, 0.0);
+
+  narrow += 0.5f;
+  wide += 0.25;
+  std::memcpy(outputs[0].value, &narrow, sizeof(narrow));
+  std::memcpy(outputs[1].value, &wide, sizeof(wide));
+  return OBELISK_RT_OK;
+}
+
+TEST(RuntimeDPI, MarshalsBinary32AndBinary64WithoutOverwritingNeighbors) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  DpiRealObservation observation;
+  constexpr std::string_view name = "dpi_reals";
+  uint32_t importID = obelisk_rt_v1_import_id(
+      reinterpret_cast<const uint8_t *>(name.data()), name.size());
+  ASSERT_EQ(obelisk_rt_v1_context_register_import(
+                context, importID, observeDpiRealCall, &observation),
+            OBELISK_RT_OK);
+
+  alignas(8) float narrowInput = 1.25f;
+  double wideInput = 2.5;
+  const obelisk_rt_import_input_v1 inputs[] = {
+      {OBELISK_RT_DBREG_REAL32, 0, 0, 32,
+       reinterpret_cast<const uint64_t *>(&narrowInput), nullptr, 1},
+      {OBELISK_RT_DBREG_REAL64, 0, 0, 64,
+       reinterpret_cast<const uint64_t *>(&wideInput), nullptr, 1},
+  };
+  struct alignas(8) NarrowOutput {
+    float value;
+    uint32_t canary;
+  } narrowOutput{99.0f, UINT32_C(0xdeadbeef)};
+  double wideOutput = 99.0;
+  obelisk_rt_import_output_v1 outputs[] = {
+      {OBELISK_RT_DBREG_REAL32, 0, 0, 32,
+       reinterpret_cast<uint64_t *>(&narrowOutput.value), nullptr, 1},
+      {OBELISK_RT_DBREG_REAL64, 0, 0, 64,
+       reinterpret_cast<uint64_t *>(&wideOutput), nullptr, 1},
+  };
+  obelisk_rt_import_site_v1 site{
+      OBELISK_RT_VERSION, 0, importID, 0, UINT64_MAX, nullptr, 0, 0, 0, 0};
+  EXPECT_EQ(obelisk_rt_v1_import_call(context, &site, inputs, 2, outputs, 2),
+            OBELISK_RT_OK);
+  EXPECT_EQ(observation.calls, 1u);
+  EXPECT_FLOAT_EQ(narrowOutput.value, 1.75f);
+  EXPECT_EQ(narrowOutput.canary, UINT32_C(0xdeadbeef));
+  EXPECT_DOUBLE_EQ(wideOutput, 2.75);
+
+  obelisk_rt_import_input_v1 invalid = inputs[0];
+  invalid.flags = OBELISK_RT_DBREG_SIGNED;
+  EXPECT_EQ(obelisk_rt_v1_import_call(context, &site, &invalid, 1, outputs, 2),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(observation.calls, 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(RuntimeDPI, RejectsMalformedScopeMetadata) {
   static constexpr char name[] = "top";
   obelisk_rt_dpi_scope_v1 scope{1,  UINT64_MAX, name, sizeof(name) - 1,

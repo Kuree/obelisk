@@ -707,6 +707,14 @@ LogicalResult SimDPICallOp::verify() {
                  ? success()
                  : emitOpError(
                        "chandle DPI ABI entry requires a chandle value");
+    if (abi.getKind() == DPIABIKind::ShortReal)
+      return type.isF32()
+                 ? success()
+                 : emitOpError("shortreal DPI ABI entry requires an f32 value");
+    if (abi.getKind() == DPIABIKind::Real)
+      return type.isF64()
+                 ? success()
+                 : emitOpError("real DPI ABI entry requires an f64 value");
     std::optional<unsigned> width = getPackedWidth(type);
     bool fourState = isa<LogicType>(getPackedScalarType(type));
     if (!width || *width != abi.getWidth() || fourState != abi.getFourState())
@@ -745,8 +753,14 @@ LogicalResult SimDPICallOp::verify() {
         return emitOpError()
                << "is missing a physical DPI " << role << " plane";
       for (unsigned plane = 0; plane != planes; ++plane) {
-        auto integer = dyn_cast<IntegerType>(types[physical++]);
-        if (!integer || integer.getWidth() != abi.getWidth())
+        Type type = types[physical++];
+        bool valid =
+            abi.getKind() == DPIABIKind::ShortReal ? type.isF32()
+            : abi.getKind() == DPIABIKind::Real
+                ? type.isF64()
+                : isa<IntegerType>(type) &&
+                      cast<IntegerType>(type).getWidth() == abi.getWidth();
+        if (!valid)
           return emitOpError()
                  << "has a malformed physical DPI " << role << " plane";
       }

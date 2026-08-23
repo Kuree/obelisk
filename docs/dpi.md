@@ -6,9 +6,11 @@ runtime boundary and invoke the same generated C thunk, so marshalling,
 context functions, errors, and copy-outs are shared.
 
 Supported arguments and function results are `byte`, `shortint`, `int`,
-`longint`, scalar `bit` and `logic`, enums with one of those canonical base
-types, fixed packed 2-state or 4-state values, `string`, and `chandle`. Formal
-directions may be `input`, `output`, or `inout`. Renamed C identifiers,
+`longint`, `shortreal`, `real`/`realtime`, scalar `bit` and `logic`, enums with
+one of those canonical integral base types, fixed packed 2-state or 4-state
+values, `string`, and `chandle`. Formal directions may be `input`, `output`,
+or `inout`. IEEE binary32 `shortreal` maps directly to C `float`; binary64
+`real` and `realtime` map directly to C `double`. Renamed C identifiers,
 `pure`, and `context` imports are preserved. Fixed packed aggregates,
 including packed structs and unions, use the standard bit-vector or
 logic-vector representation.
@@ -21,11 +23,9 @@ copy-out C strings must be valid initialized null-terminated addresses and
 are copied immediately into simulator-owned managed strings. Neither side
 frees the other side's string storage.
 
-Open and unpacked arrays, `real`/`shortreal`, `ref`, DPI exports, task
-suspension, and disable acknowledgement are not supported yet. They produce
-diagnostics instead of falling back to a different ABI. The execution
-bytecode reserves distinct string, binary32, and binary64 register categories;
-binary32 and binary64 DPI marshalling are not implemented yet.
+Open and unpacked arrays, `ref`, DPI exports, task suspension, and disable
+acknowledgement are not supported yet. They produce diagnostics instead of
+falling back to a different ABI.
 
 ## Build an implementation
 

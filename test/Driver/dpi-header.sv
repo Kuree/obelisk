@@ -27,10 +27,14 @@ module dpi_header;
   import "DPI-C" function byte unsigned unsigned_types(
       input byte unsigned small_value, input unsigned_enum_t enum_value,
       input packed_struct_t structure, output packed_union_t union_value);
+  import "DPI-C" function real floating_types(
+      input shortreal narrow, inout realtime accumulated,
+      output shortreal rounded);
 endmodule
 
 // HEADER: #include <svdpi.h>
 // HEADER: extern "C" {
+// HEADER: double floating_types(float arg0, double *arg1, float *arg2);
 // HEADER: int64_t renamed(int8_t arg0, svLogic arg1);
 // HEADER: int transfer(const svLogicVecVal *arg0, svBitVecVal *arg1);
 // HEADER: uint8_t unsigned_types(uint8_t arg0, uint32_t arg1, const svLogicVecVal *arg2, svBitVecVal *arg3);

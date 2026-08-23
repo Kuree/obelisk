@@ -1701,6 +1701,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   auto getDPITransportWidth = [](Type type) -> std::optional<unsigned> {
     if (isa<sim::StringType, sim::ChandleType>(type))
       return 64;
+    if (type.isF32())
+      return 32;
+    if (type.isF64())
+      return 64;
     return sim::getPackedWidth(type);
   };
   auto isDPIFourState = [](Type type) {

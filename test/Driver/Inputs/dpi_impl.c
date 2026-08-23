@@ -35,6 +35,13 @@ void dpi_void(int32_t value, int32_t *doubled) {
   *doubled = value * 2;
 }
 
+double dpi_reals(double source_value, float scale, float *rounded,
+                 double *accumulated) {
+  *rounded = (float)(source_value + scale);
+  *accumulated += 0.25;
+  return source_value * scale;
+}
+
 int dpi_logic_inout(svLogicVecVal *value) {
   memset(value, 0, 3 * sizeof(*value));
   value[0].aval = 12;

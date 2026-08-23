@@ -35,6 +35,10 @@ Type dpiScalarType(MLIRContext *context, uint32_t category) {
     return IntegerType::get(context, 32);
   case 5:
     return IntegerType::get(context, 64);
+  case 10:
+    return Float32Type::get(context);
+  case 11:
+    return Float64Type::get(context);
   default:
     return {};
   }
@@ -50,9 +54,18 @@ bool isDPIChandle(uint32_t category) {
   return category == static_cast<uint32_t>(sim::DPIABIKind::Chandle);
 }
 
+bool isDPIReal(uint32_t category) {
+  return category == static_cast<uint32_t>(sim::DPIABIKind::ShortReal) ||
+         category == static_cast<uint32_t>(sim::DPIABIKind::Real);
+}
+
 uint8_t dpiDescriptorKind(const DPIOperandABI &abi) {
   if (isDPIString(abi.category))
     return OBELISK_RT_DBREG_STRING;
+  if (abi.category == static_cast<uint32_t>(sim::DPIABIKind::ShortReal))
+    return OBELISK_RT_DBREG_REAL32;
+  if (abi.category == static_cast<uint32_t>(sim::DPIABIKind::Real))
+    return OBELISK_RT_DBREG_REAL64;
   return abi.fourState ? OBELISK_RT_DBREG_LOGIC : OBELISK_RT_DBREG_BITS;
 }
 
@@ -230,9 +243,13 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   };
   auto readScalar = [&](uint64_t inputIndex,
                         const DPIOperandABI &entryABI) -> Value {
+    Type scalar = dpiScalarType(context, entryABI.category);
+    if (isDPIReal(entryABI.category))
+      return LLVM::LoadOp::create(builder, location, scalar,
+                                  planePointer(inputs, inputIndex, false),
+                                  entryABI.width / 8);
     Value value64 = LLVM::LoadOp::create(
         builder, location, i64, planePointer(inputs, inputIndex, false), 8);
-    Type scalar = dpiScalarType(context, entryABI.category);
     Value value = castIntegerWidth(builder, location, value64, scalar);
     if (entryABI.category != 1)
       return value;
@@ -480,6 +497,9 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
       LLVM::StoreOp::create(builder, location,
                             castIntegerWidth(builder, location, bval, i64),
                             planePointer(outputs, 0, true), 8);
+    } else if (isDPIReal(resultABI.category)) {
+      LLVM::StoreOp::create(builder, location, result, outputValue,
+                            resultABI.width / 8);
     } else {
       LLVM::StoreOp::create(builder, location,
                             castIntegerWidth(builder, location, result, i64),
@@ -528,6 +548,9 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
         LLVM::StoreOp::create(
             builder, location, castIntegerWidth(builder, location, bval, i64),
             planePointer(outputs, writeback.outputIndex, true), 8);
+      } else if (isDPIReal(writeback.abi.category)) {
+        LLVM::StoreOp::create(builder, location, value, outputValue,
+                              writeback.abi.width / 8);
       } else {
         LLVM::StoreOp::create(builder, location,
                               castIntegerWidth(builder, location, value, i64),

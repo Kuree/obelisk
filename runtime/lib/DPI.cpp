@@ -35,7 +35,17 @@ uint64_t limbCount(uint32_t width) { return (uint64_t{width} + 63) / 64; }
 
 bool validKind(obelisk_rt_design_register_kind kind) {
   return kind == OBELISK_RT_DBREG_BITS || kind == OBELISK_RT_DBREG_LOGIC ||
-         kind == OBELISK_RT_DBREG_STATUS || kind == OBELISK_RT_DBREG_STRING;
+         kind == OBELISK_RT_DBREG_STATUS || kind == OBELISK_RT_DBREG_STRING ||
+         kind == OBELISK_RT_DBREG_REAL32 || kind == OBELISK_RT_DBREG_REAL64;
+}
+
+bool validReal(obelisk_rt_design_register_kind kind, uint8_t flags,
+               uint32_t width, const uint64_t *unknown) {
+  if (kind == OBELISK_RT_DBREG_REAL32)
+    return flags == 0 && width == 32 && unknown == nullptr;
+  if (kind == OBELISK_RT_DBREG_REAL64)
+    return flags == 0 && width == 64 && unknown == nullptr;
+  return false;
 }
 
 bool validStringWord(const uint64_t *value) {
@@ -58,6 +68,9 @@ bool validInput(const obelisk_rt_import_input_v1 &input) {
   if (input.kind == OBELISK_RT_DBREG_STRING)
     return input.flags == 0 && input.bit_width == 64 &&
            input.unknown == nullptr && validStringWord(input.value);
+  if (input.kind == OBELISK_RT_DBREG_REAL32 ||
+      input.kind == OBELISK_RT_DBREG_REAL64)
+    return validReal(input.kind, input.flags, input.bit_width, input.unknown);
   return input.kind == OBELISK_RT_DBREG_LOGIC ? input.unknown != nullptr
                                               : input.unknown == nullptr;
 }
@@ -75,12 +88,18 @@ bool validOutput(const obelisk_rt_import_output_v1 &output) {
   if (output.kind == OBELISK_RT_DBREG_STRING)
     return output.flags == 0 && output.bit_width == 64 &&
            output.unknown == nullptr;
+  if (output.kind == OBELISK_RT_DBREG_REAL32 ||
+      output.kind == OBELISK_RT_DBREG_REAL64)
+    return validReal(output.kind, output.flags, output.bit_width,
+                     output.unknown);
   return output.kind == OBELISK_RT_DBREG_LOGIC ? output.unknown != nullptr
                                                : output.unknown == nullptr;
 }
 
 void normalize(obelisk_rt_import_output_v1 &output) {
-  if (output.kind == OBELISK_RT_DBREG_STRING)
+  if (output.kind == OBELISK_RT_DBREG_STRING ||
+      output.kind == OBELISK_RT_DBREG_REAL32 ||
+      output.kind == OBELISK_RT_DBREG_REAL64)
     return;
   uint32_t width =
       output.kind == OBELISK_RT_DBREG_STATUS ? 32 : output.bit_width;
@@ -212,7 +231,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_import_call(
     return OBELISK_RT_ARGUMENT_MISMATCH;
 
   for (uint32_t index = 0; index != outputCount; ++index) {
-    std::fill_n(outputs[index].value, outputs[index].limb_count, uint64_t{0});
+    if (outputs[index].kind == OBELISK_RT_DBREG_REAL32 ||
+        outputs[index].kind == OBELISK_RT_DBREG_REAL64)
+      std::memset(outputs[index].value, 0, outputs[index].bit_width / 8);
+    else
+      std::fill_n(outputs[index].value, outputs[index].limb_count, uint64_t{0});
     if (outputs[index].unknown)
       std::fill_n(outputs[index].unknown, outputs[index].limb_count,
                   uint64_t{0});

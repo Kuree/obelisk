@@ -2772,7 +2772,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                         read32(data + 12)};
       };
       auto validEntry = [](ABIEntry abi) {
-        if (abi.kind > 9 || abi.direction > 3 || abi.width == 0 ||
+        if (abi.kind > 11 || abi.direction > 3 || abi.width == 0 ||
             (abi.flags & ~uint32_t{3}) != 0)
           return false;
         bool fourState = (abi.flags & 1) != 0;
@@ -2796,6 +2796,10 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         case 8:
         case 9:
           return abi.width == 64 && !fourState && (abi.flags & 2) == 0;
+        case 10:
+          return abi.width == 32 && !fourState && (abi.flags & 2) == 0;
+        case 11:
+          return abi.width == 64 && !fourState && (abi.flags & 2) == 0;
         }
         return false;
       };
@@ -2808,6 +2812,10 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           return layout.kind == OBELISK_RT_DBREG_STRING && layout.width == 64;
         if (abi.kind == 9)
           return layout.kind == OBELISK_RT_DBREG_BITS && layout.width == 64;
+        if (abi.kind == 10)
+          return layout.kind == OBELISK_RT_DBREG_REAL32 && layout.width == 32;
+        if (abi.kind == 11)
+          return layout.kind == OBELISK_RT_DBREG_REAL64 && layout.width == 64;
         uint8_t expectedKind = (abi.flags & 1) != 0 ? OBELISK_RT_DBREG_LOGIC
                                                     : OBELISK_RT_DBREG_BITS;
         return layout.kind == expectedKind && layout.width == abi.width;

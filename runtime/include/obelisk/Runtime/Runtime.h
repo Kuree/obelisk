@@ -1001,9 +1001,12 @@ enum {
 // bytecode image contains only a deterministic 32-bit symbol ID and typed
 // register metadata; it never contains a host function or data pointer.
 // Generation one imports accept arbitrary-width bits/logic, status values,
-// opaque four-word stable/reference handles, and managed string words. A
-// callback may copy a handle but must not synthesize its representation. The
-// callback may inspect inputs and fill the zero-initialized output planes.
+// opaque four-word stable/reference handles, managed string words, and IEEE
+// binary32/binary64 values. A callback may copy a handle but must not synthesize
+// its representation. Floating values occupy exactly four or eight bytes at
+// the eight-byte-aligned `value`; `limb_count` remains one so descriptor counts
+// stay uniform. The callback may inspect inputs and fill the zero-initialized
+// output storage.
 typedef struct obelisk_rt_import_input_v1 {
   obelisk_rt_design_register_kind kind;
   uint8_t flags;

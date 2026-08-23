@@ -69,6 +69,28 @@ module attributes {
       obelisk_sim.dpi_import_id = 21 : i32,
       obelisk_sim.dpi_logical_inputs = 1 : i32
     }
+    obelisk_sim.code_unit.decl 7 in 0 function hierarchy "dpi.transform" {
+      obelisk_sim.dpi_abi_signature = [
+        #obelisk_sim.dpi_abi<kind = real, direction = input, width = 64,
+                              fourState = false, isSigned = false>,
+        #obelisk_sim.dpi_abi<kind = shortreal, direction = input, width = 32,
+                              fourState = false, isSigned = false>,
+        #obelisk_sim.dpi_abi<kind = shortreal, direction = output, width = 32,
+                              fourState = false, isSigned = false>,
+        #obelisk_sim.dpi_abi<kind = real, direction = inout, width = 64,
+                              fourState = false, isSigned = false>,
+        #obelisk_sim.dpi_abi<kind = shortreal, direction = result, width = 32,
+                              fourState = false, isSigned = false>,
+        #obelisk_sim.dpi_abi<kind = shortreal, direction = output, width = 32,
+                              fourState = false, isSigned = false>,
+        #obelisk_sim.dpi_abi<kind = real, direction = output, width = 64,
+                              fourState = false, isSigned = false>
+      ],
+      obelisk_sim.dpi_c_identifier = "transform",
+      obelisk_sim.dpi_import,
+      obelisk_sim.dpi_import_id = 22 : i32,
+      obelisk_sim.dpi_logical_inputs = 4 : i32
+    }
 
     obelisk_sim.func @call(
         %context: !obelisk_sim.context
@@ -156,6 +178,44 @@ module attributes {
             source_file = "dpi.mlir",
             source_line = 16 : i32
           } : (!obelisk_sim.string) -> (!obelisk_sim.string, !obelisk_rt.status)
+      %real = arith.constant 2.500000e+00 : f64
+      %short = arith.constant 1.500000e+00 : f32
+      %short_zero = arith.constant 0.000000e+00 : f32
+      %accumulated = arith.constant 4.000000e+00 : f64
+      %floating:4 = obelisk_sim.dpi.call "transform" id 22 scope 0
+          context %context : !obelisk_sim.context(
+            %real, %short, %short_zero, %accumulated) {
+            abi_signature = [
+              #obelisk_sim.dpi_abi<kind = real, direction = input,
+                                    width = 64, fourState = false,
+                                    isSigned = false>,
+              #obelisk_sim.dpi_abi<kind = shortreal, direction = input,
+                                    width = 32, fourState = false,
+                                    isSigned = false>,
+              #obelisk_sim.dpi_abi<kind = shortreal, direction = output,
+                                    width = 32, fourState = false,
+                                    isSigned = false>,
+              #obelisk_sim.dpi_abi<kind = real, direction = inout,
+                                    width = 64, fourState = false,
+                                    isSigned = false>,
+              #obelisk_sim.dpi_abi<kind = shortreal, direction = result,
+                                    width = 32, fourState = false,
+                                    isSigned = false>,
+              #obelisk_sim.dpi_abi<kind = shortreal, direction = output,
+                                    width = 32, fourState = false,
+                                    isSigned = false>,
+              #obelisk_sim.dpi_abi<kind = real, direction = output,
+                                    width = 64, fourState = false,
+                                    isSigned = false>
+            ],
+            is_context = false,
+            is_pure = false,
+            is_task = false,
+            source_column = 8 : i32,
+            source_file = "dpi.mlir",
+            source_line = 17 : i32
+          } : (f64, f32, f32, f64) ->
+              (f32, f32, f64, !obelisk_rt.status)
       obelisk_sim.return
     }
   }
@@ -163,6 +223,15 @@ module attributes {
 
 // BYTECODE: obelisk.bytecode.image = array<i8:
 
+// IEEE 1800-2017 Annex H.8 passes scalar input values directly and output or
+// inout formals by pointer. real/realtime use C double; shortreal uses C float.
+// CHECK: llvm.func @transform(f64, f32, !llvm.ptr, !llvm.ptr) -> f32
+// CHECK-LABEL: llvm.func internal @__obelisk_dpi_thunk_22(
+// CHECK: llvm.load %{{.*}} : !llvm.ptr -> f64
+// CHECK: llvm.load %{{.*}} : !llvm.ptr -> f32
+// CHECK: llvm.call @transform
+// CHECK: llvm.store %{{.*}}, %{{.*}} : f32, !llvm.ptr
+// CHECK: llvm.store %{{.*}}, %{{.*}} : f64, !llvm.ptr
 // CHECK-LABEL: llvm.func internal @__obelisk_dpi_thunk_21(
 // CHECK: llvm.call @obelisk_rt_v1_gc_managed_root_range_push
 // CHECK: llvm.call @mutate

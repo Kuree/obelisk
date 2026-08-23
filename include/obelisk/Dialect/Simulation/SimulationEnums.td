@@ -185,11 +185,14 @@ def SimDPIABILogicVector
     : I32EnumAttrCase<"LogicVector", 7, "logic_vector">;
 def SimDPIABIString : I32EnumAttrCase<"String", 8, "string">;
 def SimDPIABIChandle : I32EnumAttrCase<"Chandle", 9, "chandle">;
+def SimDPIABIShortReal : I32EnumAttrCase<"ShortReal", 10, "shortreal">;
+def SimDPIABIReal : I32EnumAttrCase<"Real", 11, "real">;
 def SimDPIABIKind
     : I32EnumAttr<"DPIABIKind", "DPI-C value ABI category", [
         SimDPIABIBit, SimDPIABILogic, SimDPIABIByte, SimDPIABIShortInt,
         SimDPIABIInt, SimDPIABILongInt, SimDPIABIBitVector,
-        SimDPIABILogicVector, SimDPIABIString, SimDPIABIChandle
+        SimDPIABILogicVector, SimDPIABIString, SimDPIABIChandle,
+        SimDPIABIShortReal, SimDPIABIReal
       ]> {
   let cppNamespace = "::obelisk::sim";
 }

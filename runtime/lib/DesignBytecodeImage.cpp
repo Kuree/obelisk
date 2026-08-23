@@ -668,12 +668,16 @@ bool validIntrinsic(const Image &image, const Function &function,
     for (uint32_t index = 1; index != site.inputCount; ++index)
       if (!input(index) || (input(index)->kind != OBELISK_RT_DBREG_BITS &&
                             input(index)->kind != OBELISK_RT_DBREG_LOGIC &&
-                            input(index)->kind != OBELISK_RT_DBREG_STRING))
+                            input(index)->kind != OBELISK_RT_DBREG_STRING &&
+                            input(index)->kind != OBELISK_RT_DBREG_REAL32 &&
+                            input(index)->kind != OBELISK_RT_DBREG_REAL64))
         return false;
     for (uint32_t index = 0; index + 1 != site.outputCount; ++index)
       if (!output(index) || (output(index)->kind != OBELISK_RT_DBREG_BITS &&
                              output(index)->kind != OBELISK_RT_DBREG_LOGIC &&
-                             output(index)->kind != OBELISK_RT_DBREG_STRING))
+                             output(index)->kind != OBELISK_RT_DBREG_STRING &&
+                             output(index)->kind != OBELISK_RT_DBREG_REAL32 &&
+                             output(index)->kind != OBELISK_RT_DBREG_REAL64))
         return false;
     return true;
   case OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC:

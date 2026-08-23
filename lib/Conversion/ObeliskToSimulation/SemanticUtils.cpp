@@ -933,6 +933,10 @@ FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
     return DPIABIType{DPIABIKind::String, 64, false, false};
   if (isa<semantic::ChandleType, sim::ChandleType>(type))
     return DPIABIType{DPIABIKind::Chandle, 64, false, false};
+  if (isa<semantic::ShortRealType>(type) || type.isF32())
+    return DPIABIType{DPIABIKind::ShortReal, 32, false, false};
+  if (isa<semantic::RealType, semantic::RealtimeType>(type) || type.isF64())
+    return DPIABIType{DPIABIKind::Real, 64, false, false};
   auto integral = dyn_cast<semantic::IntegralType>(type);
   if (integral) {
     std::optional<DPIABIKind> kind;
@@ -1023,6 +1027,10 @@ StringRef getDPICTypeSpelling(const DPIABIType &type) {
     return "const char *";
   case DPIABIKind::Chandle:
     return "void *";
+  case DPIABIKind::ShortReal:
+    return "float";
+  case DPIABIKind::Real:
+    return "double";
   }
   llvm_unreachable("unknown DPI ABI kind");
 }

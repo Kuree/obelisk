@@ -204,6 +204,14 @@ DPIABIAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
     if (isSigned)
       return emitError() << "DPI handle category cannot be signed";
     return require(64, false);
+  case DPIABIKind::ShortReal:
+    if (isSigned)
+      return emitError() << "DPI floating category cannot be signed";
+    return require(32, false);
+  case DPIABIKind::Real:
+    if (isSigned)
+      return emitError() << "DPI floating category cannot be signed";
+    return require(64, false);
   }
   llvm_unreachable("unknown DPI ABI category");
 }

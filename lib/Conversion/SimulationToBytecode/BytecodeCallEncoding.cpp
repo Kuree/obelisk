@@ -156,6 +156,8 @@ LogicalResult Encoder::encodeDPICall(FunctionPlan &plan,
     if (input == kInvalidRegister || (plan.layouts[input].kind != Bits &&
                                       plan.layouts[input].kind != Logic &&
                                       plan.layouts[input].kind != String &&
+                                      plan.layouts[input].kind != Real32 &&
+                                      plan.layouts[input].kind != Real64 &&
                                       plan.layouts[input].kind != Status))
       return call.emitOpError(
           "DPI imports require supported scalar or packed inputs");
@@ -167,6 +169,8 @@ LogicalResult Encoder::encodeDPICall(FunctionPlan &plan,
     if (output == kInvalidRegister || (plan.layouts[output].kind != Bits &&
                                        plan.layouts[output].kind != Logic &&
                                        plan.layouts[output].kind != String &&
+                                       plan.layouts[output].kind != Real32 &&
+                                       plan.layouts[output].kind != Real64 &&
                                        plan.layouts[output].kind != Status))
       return call.emitOpError(
           "DPI imports require supported scalar or packed results");

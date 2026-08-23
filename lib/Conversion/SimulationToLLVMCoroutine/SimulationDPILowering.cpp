@@ -54,6 +54,19 @@ uint64_t appendHash(uint64_t hash, uint64_t value, unsigned bytes) {
   return obelisk_stable_hash_append_uint_le(hash, value, bytes);
 }
 
+bool isDPIReal(const DPIOperandABI &abi) {
+  return abi.category == static_cast<uint32_t>(sim::DPIABIKind::ShortReal) ||
+         abi.category == static_cast<uint32_t>(sim::DPIABIKind::Real);
+}
+
+Type getDPIRealType(MLIRContext *context, const DPIOperandABI &abi) {
+  if (abi.category == static_cast<uint32_t>(sim::DPIABIKind::ShortReal))
+    return Float32Type::get(context);
+  if (abi.category == static_cast<uint32_t>(sim::DPIABIKind::Real))
+    return Float64Type::get(context);
+  return {};
+}
+
 Value padDPIPlane(OpBuilder &builder, Location location, Value value,
                   uint32_t width) {
   uint64_t paddedWidth = ((uint64_t{width} + 63) / 64) * 64;
@@ -116,6 +129,15 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
         return operation.emitOpError("is missing a physical DPI unknown plane");
       unknown = physicalInputs[physicalInput++];
     }
+    if (isDPIReal(abi[index])) {
+      Type realType = getDPIRealType(context, abi[index]);
+      if (value.getType() != realType || unknown)
+        return operation.emitOpError("has a malformed DPI floating input");
+      inputPlanes.emplace_back(
+          makeDPIPlaneStorage(rewriter, location, value, 8),
+          null);
+      continue;
+    }
     value = padDPIPlane(rewriter, location, value, abi[index].width);
     if (!value)
       return operation.emitOpError("has a malformed DPI value plane");
@@ -135,6 +157,13 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
   SmallVector<Value> physicalOutputValues;
   outputPlanes.reserve(logicalOutputs);
   for (uint64_t index = logicalInputs; index != abi.size(); ++index) {
+    if (isDPIReal(abi[index])) {
+      Type realType = getDPIRealType(context, abi[index]);
+      outputPlanes.emplace_back(makeZeroDPIPlaneStorage(rewriter, location,
+                                                        realType, 8),
+                                null);
+      continue;
+    }
     uint64_t paddedWidth = ((uint64_t{abi[index].width} + 63) / 64) * 64;
     Type valueType =
         IntegerType::get(context, static_cast<unsigned>(paddedWidth));
@@ -163,6 +192,10 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
     uint32_t kind =
         entry.category == static_cast<uint32_t>(sim::DPIABIKind::String)
             ? OBELISK_RT_DBREG_STRING
+        : entry.category == static_cast<uint32_t>(sim::DPIABIKind::ShortReal)
+            ? OBELISK_RT_DBREG_REAL32
+        : entry.category == static_cast<uint32_t>(sim::DPIABIKind::Real)
+            ? OBELISK_RT_DBREG_REAL64
         : entry.fourState ? OBELISK_RT_DBREG_LOGIC
                           : OBELISK_RT_DBREG_BITS;
     storeAt(rewriter, location, address,
@@ -267,6 +300,13 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
 
   for (uint64_t index = 0; index != logicalOutputs; ++index) {
     const DPIOperandABI &entry = abi[logicalInputs + index];
+    if (isDPIReal(entry)) {
+      Type resultType = getDPIRealType(context, entry);
+      physicalOutputValues.push_back(
+          LLVM::LoadOp::create(rewriter, location, resultType,
+                               outputPlanes[index].first, entry.width / 8));
+      continue;
+    }
     uint64_t paddedWidth = ((uint64_t{entry.width} + 63) / 64) * 64;
     Type paddedType =
         IntegerType::get(context, static_cast<unsigned>(paddedWidth));

@@ -443,6 +443,23 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @dpi_bad_real_kind {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "dpi_bad_real_kind"
+    obelisk_sim.func @caller(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
+      %value = arith.constant 1.000000e+00 : f64
+      // expected-error @+1 {{shortreal DPI ABI entry requires an f32 value}}
+      %call:2 = obelisk_sim.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !obelisk_sim.context(%value) {abi_signature = [#obelisk_sim.dpi_abi<kind = shortreal, direction = input, width = 32, fourState = false, isSigned = false>, #obelisk_sim.dpi_abi<kind = real, direction = result, width = 64, fourState = false, isSigned = false>], is_context = false, is_pure = false, is_task = false, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (f64) -> (f64, !obelisk_rt.status)
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @unknown_connection_endpoint {
     obelisk_sim.scope.decl 0
     obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<4> design

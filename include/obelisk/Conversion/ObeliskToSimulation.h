@@ -35,6 +35,8 @@ enum class DPIABIKind : uint32_t {
   LogicVector = 7,
   String = 8,
   Chandle = 9,
+  ShortReal = 10,
+  Real = 11,
 };
 
 struct DPIABIType {
