@@ -5203,6 +5203,41 @@ TEST(Scheduler, InertialVectorDriversRejectPulsesAndKeepStableDeadlines) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, InertialDriversAcceptGeneratedSchedulePlanes) {
+  // IEEE 1800-2017 10.3.3: a delayed continuous assignment drives its net
+  // through the inertial driver. A generated schedule owns its state planes
+  // and passes those, not the canonical ones, so refusing them would fail the
+  // delay at run time in the native tier alone.
+  AOTTestState state;
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state);
+  std::array<uint8_t, 1> planValue{};
+  std::array<uint8_t, 1> planUnknown{};
+  plan.state_value = planValue.data();
+  plan.state_unknown = planUnknown.data();
+  plan.state_bit_count = 4;
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 4;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 4),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+            OBELISK_RT_OK);
+  uint64_t handle = obelisk_rt_v1_native_state_static_handle(1);
+  uint8_t one = 1;
+  uint8_t zero = 0;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_inertial_driver(
+                context, plan.state_value, plan.state_unknown, 4, handle, 1, 31,
+                0, 0, 10, 20, 30, &one, &zero),
+            OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 10u);
+  EXPECT_EQ(context->scheduledNBAs.front().valuePlane, plan.state_value);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, InertialPendingTargetsIncludeTheirDestination) {
   obelisk_rt_execution_descriptor_v1 execution{};
   execution.version = OBELISK_RT_VERSION;

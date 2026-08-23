@@ -78,7 +78,17 @@ static bool validInertialStatePlanesUnlocked(const obelisk_rt_context *context,
   bool native = context->nativeStateBitCount == planeBitCount &&
                 valuePlane == context->nativeStateValue &&
                 (!unknownPlane || unknownPlane == context->nativeStateUnknown);
-  return canonical || native;
+  // A generated native schedule owns its state planes and hands those to every
+  // intrinsic it calls; they are imported into the canonical planes before the
+  // node runs, so they describe the same state. Rejecting them fails an IEEE
+  // 1800-2017 10.3.3 continuous-assignment delay -- and every other inertially
+  // delayed drive -- at run time in the native tier while the same design runs
+  // in the bytecode tier.
+  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  bool planned = plan && plan->state_bit_count == planeBitCount &&
+                 valuePlane == plan->state_value &&
+                 (!unknownPlane || unknownPlane == plan->state_unknown);
+  return canonical || native || planned;
 }
 
 static bool validInertialStrengthPairUnlocked(

@@ -3045,6 +3045,99 @@ TEST(DesignBytecode, ResolvesIEEEAmbiguousStrengthRangesBeforeFourState) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+// A generated native schedule owns the state planes its code reads. These
+// stand in for that ownership so a resolution can be observed reaching them.
+struct SchedulePlanState {
+  std::array<obelisk_rt_process_instance_v1 *, 2> actors{};
+};
+
+obelisk_rt_status planBind(void *opaque, obelisk_rt_context *, uint32_t slot,
+                           obelisk_rt_process_instance_v1 *instance) {
+  auto *state = static_cast<SchedulePlanState *>(opaque);
+  if (!state || slot >= state->actors.size())
+    return OBELISK_RT_INVALID_ARGUMENT;
+  state->actors[slot] = instance;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status planRun(void *, obelisk_rt_context *) {
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status planSnapshot(void *, obelisk_rt_context *context,
+                               obelisk_rt_aot_deopt_snapshot *snapshot) {
+  return obelisk_rt_v1_scheduler_snapshot_aot(context, snapshot);
+}
+
+TEST(DesignBytecode, ResolvedNetsReachGeneratedSchedulePlanes) {
+  // IEEE 1800-2017 10.3.3: the value a delayed continuous assignment finally
+  // publishes has to be the one the design reads. A generated schedule reads
+  // its own state planes, so publishing only into the canonical image leaves
+  // the design seeing the net's previous value forever.
+  Fixture fixture;
+  fixture.bytecode = makeStrengthDriverBytecode();
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.state_bit_count = 260;
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  SchedulePlanState state;
+  std::vector<uint8_t> planValue((260 + 7) / 8, 0);
+  std::vector<uint8_t> planUnknown((260 + 7) / 8, 0);
+  obelisk_rt_native_schedule_plan plan{};
+  plan.size = sizeof(plan);
+  plan.graph_layout_checksum = fixture.execution.checksum;
+  plan.mutable_state = &state;
+  plan.mutable_state_size = sizeof(state);
+  plan.actor_capacity = 2;
+  plan.state_value = planValue.data();
+  plan.state_unknown = planUnknown.data();
+  plan.state_bit_count = 260;
+  plan.bind = planBind;
+  plan.run = planRun;
+  plan.fallback_snapshot = planSnapshot;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+            OBELISK_RT_OK);
+
+  auto setState = [&](uint64_t offset, bool value, bool unknown) {
+    uint64_t mask = UINT64_C(1) << (offset % 64);
+    if (value)
+      context->stateValue[offset / 64] |= mask;
+    else
+      context->stateValue[offset / 64] &= ~mask;
+    if (unknown)
+      context->stateUnknown[offset / 64] |= mask;
+    else
+      context->stateUnknown[offset / 64] &= ~mask;
+  };
+  // A strong1 driver against two weaker ambiguous ones resolves to a known 1.
+  setState(65, true, true);
+  setState(130, false, true);
+  setState(195, true, false);
+  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196),
+            OBELISK_RT_OK);
+  EXPECT_EQ(context->stateValue[0] & 1, 1u);
+  EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
+  EXPECT_EQ(planValue[0] & 1, 1u);
+  EXPECT_EQ(planUnknown[0] & 1, 0u);
+
+  // Equal-strength opposite values resolve to x, so both planes change back.
+  setState(65, false, false);
+  setState(130, true, true);
+  setState(195, true, false);
+  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196),
+            OBELISK_RT_OK);
+  EXPECT_EQ(context->stateValue[0] & 1, 0u);
+  EXPECT_EQ(context->stateUnknown[0] & 1, 1u);
+  EXPECT_EQ(planValue[0] & 1, 0u);
+  EXPECT_EQ(planUnknown[0] & 1, 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(DesignBytecode, ResolvesWiredNetTruthTablesWithStrengths) {
   for (uint8_t resolution : {uint8_t{3}, uint8_t{4}}) {
     SCOPED_TRACE(resolution == 3 ? "wand/triand" : "wor/trior");

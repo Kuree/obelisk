@@ -2,6 +2,7 @@
 
 #include "DesignBytecodeNets.h"
 #include "DesignBytecodeLogic.h"
+#include "ProcessShared.h"
 #include "RuntimeInternal.h"
 
 #include <algorithm>
@@ -262,6 +263,14 @@ bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,
     setBit(context->stateUnknown, publication.destination, publication.unknown);
     obelisk_rt_sync_native_state_range_unlocked(context,
                                                 publication.destination, 1);
+    // A generated schedule reads its own state planes, so a net resolved here
+    // has to reach those as well as the canonical image. Otherwise the value an
+    // IEEE 1800-2017 10.3.3 delayed continuous assignment finally publishes
+    // stays invisible to the design waiting on it.
+    if (!storeNativeScheduleStateUnlocked(context, publication.destination, 1,
+                                          publication.value ? 1 : 0,
+                                          publication.unknown ? 1 : 0))
+      return false;
   }
   // Commit every logical alias first. Route occurrences by observer range so
   // each range is published and evaluated exactly once against the completed
