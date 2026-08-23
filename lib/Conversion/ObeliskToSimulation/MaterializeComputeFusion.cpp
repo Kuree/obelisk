@@ -110,13 +110,14 @@ bool isEvalDirectWait(Operation *operation) {
 }
 
 bool isTypedSuspend(Operation *operation) {
-  return isa<sim::SimSuspendDelayOp, sim::SimSuspendChangeOp,
-             sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
-             sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
-             sim::SimSuspendEventOp, sim::SimSuspendMailboxOp,
-             sim::SimSuspendSemaphoreOp, sim::SimSuspendObserveOp,
-             sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp,
-             sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp>(operation);
+  return isa<
+      sim::SimSuspendDelayOp, sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
+      sim::SimSuspendEdgeIffOp, sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
+      sim::SimSuspendEventOp, sim::SimSuspendEventOrderOp,
+      sim::SimSuspendMailboxOp, sim::SimSuspendSemaphoreOp,
+      sim::SimSuspendObserveOp, sim::SimSuspendForeverOp,
+      sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp>(
+      operation);
 }
 
 /// Build an AOT-only, non-suspending activation body while the original CFG
@@ -131,10 +132,8 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
     return success();
   bool portMethod = function.getEntryKind() == sim::EntryKind::PortInput ||
                     function.getEntryKind() == sim::EntryKind::PortOutput;
-  bool eventDrivenInitial =
-      function.getEntryKind() == sim::EntryKind::Initial;
-  bool generatedRegionBody =
-      function->hasAttr(sim::metadata::nativeRegionBody);
+  bool eventDrivenInitial = function.getEntryKind() == sim::EntryKind::Initial;
+  bool generatedRegionBody = function->hasAttr(sim::metadata::nativeRegionBody);
   if (!isSupportedEntryKind(function.getEntryKind()) &&
       function.getEntryKind() != sim::EntryKind::Continuous && !portMethod &&
       !eventDrivenInitial && !generatedRegionBody)
@@ -222,8 +221,7 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
   else if (auto suspend =
                dyn_cast<sim::SimSuspendEdgeOp>(wait->getTerminator()))
     activationSite = suspend.getSiteAttr();
-  else if (auto suspend =
-               dyn_cast<sim::SimSuspendAnyOp>(wait->getTerminator()))
+  else if (auto suspend = dyn_cast<sim::SimSuspendAnyOp>(wait->getTerminator()))
     activationSite = suspend.getSiteAttr();
   else if (auto suspend =
                dyn_cast<sim::SimSuspendObserveOp>(wait->getTerminator()))
@@ -1668,8 +1666,8 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     if (auto suspend =
             dyn_cast<sim::SimSuspendChangeOp>(candidate.wait->getTerminator()))
       site = suspend.getSiteAttr();
-    else if (auto suspend =
-                 dyn_cast<sim::SimSuspendEdgeOp>(candidate.wait->getTerminator()))
+    else if (auto suspend = dyn_cast<sim::SimSuspendEdgeOp>(
+                 candidate.wait->getTerminator()))
       site = suspend.getSiteAttr();
     if (!site)
       return rejectEval("source owner has no stable continuation");
@@ -1887,7 +1885,8 @@ FailureOr<sim::SimFuncOp> materializeFusion(
         sim::EntryKind::Function, evalAttributes, argumentAttrs);
     evalBody->setAttr("obelisk.eval.borrowed_captures", builder.getUnitAttr());
     evalBody->setAttr("obelisk.eval.raw_captures", builder.getUnitAttr());
-    evalBody->setAttr("obelisk.eval.instance_coordinator", builder.getUnitAttr());
+    evalBody->setAttr("obelisk.eval.instance_coordinator",
+                      builder.getUnitAttr());
     evalBody->setAttr("obelisk.eval.fusion_group",
                       fused->getAttr("obelisk.eval.fusion_group"));
     evalBody->setAttr("obelisk.eval.source_owners",

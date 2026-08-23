@@ -23,9 +23,9 @@ using namespace mlir;
 namespace obelisk::runtime {
 
 Operation *ObeliskRuntimeDialect::materializeConstant(OpBuilder &builder,
-                                                       Attribute value,
-                                                       Type type,
-                                                       Location location) {
+                                                      Attribute value,
+                                                      Type type,
+                                                      Location location) {
   if (!isa<ByteSpanType>(type))
     return nullptr;
   auto bytes = dyn_cast<StringAttr>(value);
@@ -110,6 +110,8 @@ static_assert(static_cast<uint32_t>(SuspensionKind::Forever) ==
               OBELISK_RT_SUSPEND_FOREVER);
 static_assert(static_cast<uint32_t>(SuspensionKind::Frontier) ==
               OBELISK_RT_SUSPEND_FRONTIER);
+static_assert(static_cast<uint32_t>(SuspensionKind::EventOrder) ==
+              OBELISK_RT_SUSPEND_EVENT_ORDER);
 
 static_assert(static_cast<uint32_t>(Radix::Binary) == OBELISK_RT_RADIX_BINARY);
 static_assert(static_cast<uint32_t>(Radix::Octal) == OBELISK_RT_RADIX_OCTAL);
@@ -314,8 +316,8 @@ LogicalResult RTScratchOp::verify() {
   if (getSizeAttr().getValue().isNegative())
     return emitOpError("scratch byte count must be nonnegative");
   return verifyLocalConsumers<RTFileReadOp, RTFileReadMemTokenOp,
-                              RTPackedFromBytesOp>(
-      *this, getResult(), "stack-backed scratch span");
+                              RTPackedFromBytesOp>(*this, getResult(),
+                                                   "stack-backed scratch span");
 }
 
 LogicalResult RTBytesSizeOp::verify() {
@@ -331,8 +333,8 @@ LogicalResult RTPackedFromBytesOp::verify() {
 }
 
 LogicalResult RTArgumentEmptyOp::verify() {
-  return verifyConsumers<RTArgumentArrayOp>(
-      *this, getResult(), "format argument");
+  return verifyConsumers<RTArgumentArrayOp>(*this, getResult(),
+                                            "format argument");
 }
 
 LogicalResult RTArgumentPackedOp::verify() {
@@ -351,8 +353,8 @@ LogicalResult RTArgumentRealOp::verify() {
 LogicalResult RTArgumentBytesOp::verify() {
   if (getDesignatedFormat() && !getIsFormatString())
     return emitOpError("designated format must also be a format string");
-  return verifyConsumers<RTArgumentArrayOp>(
-      *this, getResult(), "format argument");
+  return verifyConsumers<RTArgumentArrayOp>(*this, getResult(),
+                                            "format argument");
 }
 
 LogicalResult RTArgumentManagedStringOp::verify() {

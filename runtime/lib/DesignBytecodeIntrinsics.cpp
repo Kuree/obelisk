@@ -276,9 +276,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                  frame.data + layout.offset + planeSize);
         assocUnknownScratch.clear();
         if (layout.kind == OBELISK_RT_DBREG_LOGIC)
-          assocUnknownScratch.assign(
-              frame.data + layout.offset + planeSize,
-              frame.data + layout.offset + 2 * planeSize);
+          assocUnknownScratch.assign(frame.data + layout.offset + planeSize,
+                                     frame.data + layout.offset +
+                                         2 * planeSize);
       } catch (const std::bad_alloc &) {
         return false;
       }
@@ -1695,8 +1695,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       uint32_t kind = 0;
       uint64_t stableID = UINT64_MAX;
       std::memcpy(&kind, frame.data + input.offset, sizeof(kind));
-      std::memcpy(&stableID, frame.data + input.offset + 16,
-                  sizeof(stableID));
+      std::memcpy(&stableID, frame.data + input.offset + 16, sizeof(stableID));
       if (kind != OBELISK_RT_DESCRIPTOR_EVENT)
         return OBELISK_RT_INVALID_BYTECODE;
       return obelisk_rt_v1_object_write(object, offset, &stableID,
@@ -2209,9 +2208,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         return OBELISK_RT_INVALID_HANDLE;
       uint64_t selectedWidth = static_cast<uint64_t>(last - first);
       if (!driver && staticSiteID != UINT64_MAX && !stringValue &&
-          !managedValue &&
-          boundedStatic && selectedWidth <= 64 && context->nativeSchedulePlan &&
-          !context->nativeScheduleDeoptimized) {
+          !managedValue && boundedStatic && selectedWidth <= 64 &&
+          context->nativeSchedulePlan && !context->nativeScheduleDeoptimized) {
         uint64_t packedValue = extractScalarBits(
             value.value, static_cast<uint64_t>(first), selectedWidth);
         uint64_t packedUnknown =
@@ -2258,8 +2256,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           update.unknown[bitIndex / 8] |= mask;
       }
       if (!driver && staticSiteID != UINT64_MAX && !stringValue &&
-          !managedValue &&
-          boundedStatic && context->nativeSchedulePlan &&
+          !managedValue && boundedStatic && context->nativeSchedulePlan &&
           !context->nativeScheduleDeoptimized) {
         uint8_t *valuePlane =
             reinterpret_cast<uint8_t *>(context->stateValue.data());
@@ -2386,6 +2383,10 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (++eventState.generation == 0)
       eventState.generation = 1;
     eventState.lastTriggeredTime = context->schedulerTime;
+    if (!obelisk_rt_notify_event_order_waiters_unlocked(context, stableID))
+      return context->schedulerStatus == OBELISK_RT_OK
+                 ? OBELISK_RT_INVALID_DESIGN
+                 : context->schedulerStatus;
     if (!obelisk_rt_notify_observer_event_unlocked(context, stableID))
       return context->schedulerStatus == OBELISK_RT_OK
                  ? OBELISK_RT_INVALID_DESIGN
@@ -2409,6 +2410,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         context, static_cast<uint64_t>(start));
     return sentinel(0, triggered);
   }
+  case OBELISK_RT_INTRINSIC_V1_WAIT_ORDER_FAILED:
+    return sentinel(0, obelisk_rt_v1_scheduler_wait_order_failed(context));
   case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC:
   case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC_TYPED: {
     if (!context)
@@ -2585,8 +2588,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     std::optional<uint64_t> assertionID = scalar(0);
     if (!assertionID || *assertionID == 0)
       return OBELISK_RT_INVALID_BYTECODE;
-    return sentinel(
-        0, obelisk_rt_v1_assertion_kill_epoch(context, *assertionID));
+    return sentinel(0,
+                    obelisk_rt_v1_assertion_kill_epoch(context, *assertionID));
   }
   case OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER: {
     if (!context)

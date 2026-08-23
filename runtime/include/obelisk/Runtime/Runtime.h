@@ -899,6 +899,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_CLOCKING_NBA = UINT32_C(0x00010235),
   OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER = UINT32_C(0x00010236),
   OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER_STRENGTH_PAIR = UINT32_C(0x00010237),
+  OBELISK_RT_INTRINSIC_V1_WAIT_ORDER_FAILED = UINT32_C(0x00010238),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -1164,7 +1165,10 @@ enum {
   OBELISK_RT_SUSPEND_MAILBOX = 11,
   // Wait for a managed semaphore acquisition. The sole wait entry contains
   // the semaphore object address and payload is the nonnegative key count.
-  OBELISK_RT_SUSPEND_SEMAPHORE = 12
+  OBELISK_RT_SUSPEND_SEMAPHORE = 12,
+  // Wait for every event entry in order. The scheduler records success or an
+  // out-of-order failure at the event publication that determines it.
+  OBELISK_RT_SUSPEND_EVENT_ORDER = 13
 };
 
 #define OBELISK_RT_WAIT_MAILBOX_NOT_EMPTY UINT32_C(0)
@@ -2941,6 +2945,8 @@ void obelisk_rt_v1_scheduler_event_after(obelisk_rt_context *context,
                                          uint32_t nonblocking, uint64_t delay);
 uint32_t obelisk_rt_v1_scheduler_event_triggered(obelisk_rt_context *context,
                                                  uint64_t stable_id);
+uint32_t obelisk_rt_v1_scheduler_wait_order_failed(
+    obelisk_rt_context *context);
 void obelisk_rt_v1_scheduler_fail(obelisk_rt_context *context,
                                   obelisk_rt_status status);
 // Register one compiler-assigned static-state object. Static handles retain

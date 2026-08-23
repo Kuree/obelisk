@@ -3231,6 +3231,20 @@ def SimEventTriggeredOp
   let assemblyFormat = "$event attr-dict";
 }
 
+def SimWaitOrderFailedOp
+    : SimOp<"wait_order.failed",
+            [MemoryEffects<[MemRead<SimSchedulerResource>]>]> {
+  let summary = "read the outcome of the ordered event wait just resumed";
+  let description = [{
+    Returns true when the immediately preceding `suspend.event_order`
+    completed because an untriggered later event occurred out of order. The
+    scheduler retains this per-logical-process result while executing the
+    resumed continuation.
+  }];
+  let results = (outs I1:$result);
+  let assemblyFormat = "attr-dict";
+}
+
 def SimEventEqualOp : SimOp<"event.equal", [Pure, SameTypeOperands]> {
   let summary = "compare two event handles for synchronization-object identity";
   let arguments = (ins SimEventType:$lhs, SimEventType:$rhs);
@@ -3360,6 +3374,34 @@ def SimSuspendAnyOp : SimOp<"suspend.any", [
 def SimSuspendEventOp : SimSuspendOp<"suspend.event", (ins SimEventType:$event)> {
   let assemblyFormat = [{$event `to` $continuation
     (`(` $continuation_operands^ `:` type($continuation_operands) `)`)? attr-dict}];
+}
+
+def SimSuspendEventOrderOp : SimOp<"suspend.event_order", [
+    Terminator,
+    DeclareOpInterfaceMethods<BranchOpInterface>,
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "suspend until named events occur in source order or fail";
+  let description = [{
+    The first `event_count` values are event handles in required occurrence
+    order. Remaining values are successor operands. The scheduler observes
+    every event publication synchronously, so an out-of-order occurrence is
+    retained even when several events trigger before the continuation runs.
+  }];
+  let arguments = (ins Variadic<AnyType>:$values,
+                       I32Attr:$event_count,
+                       OptionalAttr<SimContinuationSiteAttr>:$site,
+                       OptionalAttr<SimEventRegion>:$resume_region);
+  let successors = (successor AnySuccessor:$continuation);
+  let assemblyFormat = [{$values `events` $event_count `to` $continuation
+    attr-dict `:` type($values)}];
+  let extraClassDeclaration = [{
+    ::mlir::Operation::operand_range getEvents();
+    ::mlir::Operation::operand_range getContinuationOperands();
+    ::mlir::MutableOperandRange getContinuationOperandsMutable();
+  }];
+  let hasVerifier = 1;
 }
 
 def SimSuspendMailboxOp : SimSuspendOp<"suspend.mailbox", (

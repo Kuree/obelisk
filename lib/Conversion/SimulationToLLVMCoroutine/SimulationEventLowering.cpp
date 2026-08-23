@@ -44,9 +44,9 @@ public:
             ValueRange{context, output})
             .getResult();
     reportManagedStatus(rewriter, location, context, status);
-    rewriter.replaceOp(operation, LLVM::LoadOp::create(
-                                      rewriter, location,
-                                      rewriter.getI64Type(), output, 8));
+    rewriter.replaceOp(operation,
+                       LLVM::LoadOp::create(rewriter, location,
+                                            rewriter.getI64Type(), output, 8));
     return success();
   }
 };
@@ -105,6 +105,28 @@ public:
   }
 };
 
+class WaitOrderFailedConversion final
+    : public OpConversionPattern<sim::SimWaitOrderFailedOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimWaitOrderFailedOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location location = operation.getLoc();
+    Value failed =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_scheduler_wait_order_failed"),
+            ValueRange{loadCurrentRuntimeContext(rewriter, location)})
+            .getResult();
+    rewriter.replaceOpWithNewOp<LLVM::TruncOp>(operation, rewriter.getI1Type(),
+                                               failed);
+    return success();
+  }
+};
+
 class EventEqualConversion final
     : public OpConversionPattern<sim::SimEventEqualOp> {
 public:
@@ -127,7 +149,7 @@ public:
 void populateEventToLLVMConversionPatterns(RewritePatternSet &patterns,
                                            TypeConverter &converter) {
   patterns.add<EventCreateConversion, EventTriggerConversion,
-               EventTriggeredConversion,
+               EventTriggeredConversion, WaitOrderFailedConversion,
                EventEqualConversion>(converter, patterns.getContext());
 }
 

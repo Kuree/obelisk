@@ -101,6 +101,7 @@ bool evaluateNativeObserver(obelisk_rt_context *context, uint64_t processToken,
   obelisk_rt_process_instance_v1 *producer = context->activeNativeProcess;
   uint64_t producerToken = context->activeLogicalProcessToken;
   uint64_t producerDesignTask = context->activeDesignTaskID;
+  bool producerWaitOrderFailed = context->activeWaitOrderFailed;
   bool producerDesignExecuting = context->designTaskExecuting;
   std::vector<uint64_t> producerControls = std::move(context->activeControls);
   std::vector<uint64_t> waiterControls = process->controls;
@@ -108,6 +109,7 @@ bool evaluateNativeObserver(obelisk_rt_context *context, uint64_t processToken,
   context->activeLogicalProcessToken =
       OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | processToken;
   context->activeDesignTaskID = 0;
+  context->activeWaitOrderFailed = false;
   context->designTaskExecuting = false;
   context->activeControls = std::move(waiterControls);
   ++context->observerDepth;
@@ -143,6 +145,7 @@ bool evaluateNativeObserver(obelisk_rt_context *context, uint64_t processToken,
   context->activeNativeProcess = producer;
   context->activeLogicalProcessToken = producerToken;
   context->activeDesignTaskID = producerDesignTask;
+  context->activeWaitOrderFailed = producerWaitOrderFailed;
   context->designTaskExecuting = producerDesignExecuting;
   for (auto capture = retainedCaptures.rbegin();
        capture != retainedCaptures.rend(); ++capture) {
@@ -216,7 +219,7 @@ bool evaluateNativeComputedWaiters(obelisk_rt_context *context,
         if (dependency.kind != dependencyKind)
           continue;
         if (dependencyKind == OBELISK_RT_OBSERVER_DEPENDENCY_EVENT ||
-            dependencyKind == OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED
+                    dependencyKind == OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED
                 ? dependency.stable_id == publishedHandle
                 : rangesOverlap(dependency.stable_id, dependency.width,
                                 publishedHandle, publishedWidth))

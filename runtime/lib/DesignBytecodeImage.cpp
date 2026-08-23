@@ -509,6 +509,9 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGERED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && handle(input(0)) && bits(output(0), 1);
+  case OBELISK_RT_INTRINSIC_V1_WAIT_ORDER_FAILED:
+    return signature.flags == 0 && site.inputCount == 0 &&
+           site.outputCount == 1 && bits(output(0), 1);
   case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC:
     if (signature.flags != 0 || site.inputCount == 0 || site.outputCount != 1 ||
         (!numeric(input(0)) && !floating(input(0)) && !managed(input(0)) &&
@@ -2759,7 +2762,7 @@ bool validateImage(const Image &image) {
             (instruction.auxiliary & OBELISK_RT_ACTION_RESUME_REGION_MASK) >>
             OBELISK_RT_ACTION_RESUME_REGION_SHIFT;
         if (instruction.flags < OBELISK_RT_SUSPEND_DELAY ||
-            instruction.flags > OBELISK_RT_SUSPEND_SEMAPHORE ||
+            instruction.flags > OBELISK_RT_SUSPEND_EVENT_ORDER ||
             instruction.destination || instruction.source1 ||
             instruction.source2 ||
             (instruction.auxiliary & ~resumeFlags) != 0 ||

@@ -589,6 +589,7 @@ static_assert(OBELISK_RT_SUSPEND_DELAY == 1);
 static_assert(OBELISK_RT_SUSPEND_CHANGE == 2);
 static_assert(OBELISK_RT_SUSPEND_EDGE == 3);
 static_assert(OBELISK_RT_SUSPEND_EVENT == 4);
+static_assert(OBELISK_RT_SUSPEND_EVENT_ORDER == 13);
 static_assert(OBELISK_RT_SUSPEND_AWAIT == 5);
 static_assert(OBELISK_RT_SUSPEND_JOIN == 6);
 static_assert(OBELISK_RT_SUSPEND_FOREVER == 7);
@@ -1150,6 +1151,8 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_event_after,
              void (*)(obelisk_rt_context *, uint64_t, uint32_t, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_event_triggered,
              uint32_t (*)(obelisk_rt_context *, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_wait_order_failed,
+             uint32_t (*)(obelisk_rt_context *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_fail,
              void (*)(obelisk_rt_context *, obelisk_rt_status));
 ABI_FUNCTION(obelisk_rt_v1_native_state_register_static,

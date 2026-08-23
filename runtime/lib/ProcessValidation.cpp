@@ -95,8 +95,8 @@ validateLayout(const obelisk_rt_process_descriptor_v1 &descriptor) {
     const obelisk_rt_frame_field_v1 &field = layout.fields[index];
     uint64_t end;
     if (field.kind < OBELISK_RT_FRAME_CAPTURE ||
-        field.kind > OBELISK_RT_FRAME_WAIT ||
-        field.size == 0 || !isPowerOfTwo(field.alignment) ||
+        field.kind > OBELISK_RT_FRAME_WAIT || field.size == 0 ||
+        !isPowerOfTwo(field.alignment) ||
         field.alignment > layout.frame_alignment ||
         field.offset % field.alignment != 0 ||
         addOverflow(field.offset, field.size, end) || end > layout.frame_size ||
@@ -123,8 +123,7 @@ validateLayout(const obelisk_rt_process_descriptor_v1 &descriptor) {
         return OBELISK_RT_LAYOUT_MISMATCH;
       previousEnd = unknownEnd;
     } else if (field.flags == OBELISK_RT_FRAME_MANAGED_ROOT) {
-      if (field.reserved != 0 ||
-          field.size != sizeof(obelisk_rt_object_v1 *) ||
+      if (field.reserved != 0 || field.size != sizeof(obelisk_rt_object_v1 *) ||
           field.alignment < alignof(obelisk_rt_object_v1 *))
         return OBELISK_RT_LAYOUT_MISMATCH;
       previousEnd = end;
@@ -147,9 +146,9 @@ validateLayout(const obelisk_rt_process_descriptor_v1 &descriptor) {
 
 obelisk_rt_status
 validateDescriptor(const obelisk_rt_process_descriptor_v1 &descriptor,
-                   obelisk_rt_context *context,
-                   uint64_t &nativeSize, uint64_t &nativeAlignment,
-                   uint64_t &scratchOffset, uint64_t &scratchSize) {
+                   obelisk_rt_context *context, uint64_t &nativeSize,
+                   uint64_t &nativeAlignment, uint64_t &scratchOffset,
+                   uint64_t &scratchSize) {
   obelisk_rt_status status = validateLayout(descriptor);
   if (status != OBELISK_RT_OK)
     return status;
@@ -321,8 +320,7 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
     return true;
   };
   bool valid = false;
-  uint32_t behaviorFlags =
-      wait->flags & ~OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
+  uint32_t behaviorFlags = wait->flags & ~OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
   bool suppressActiveSelf =
       (wait->flags & OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF) != 0;
   switch (wait->kind) {
@@ -330,8 +328,8 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
     valid = wait->flags == 0 && wait->count == 0 && wait->auxiliary == 0;
     break;
   case OBELISK_RT_SUSPEND_CHANGE:
-    valid = (behaviorFlags == 0 ||
-             behaviorFlags == OBELISK_RT_WAIT_LEVEL_TRUE) &&
+    valid =
+        (behaviorFlags == 0 || behaviorFlags == OBELISK_RT_WAIT_LEVEL_TRUE) &&
         (!suppressActiveSelf || behaviorFlags == 0) &&
         (wait->flags & ~(OBELISK_RT_WAIT_LEVEL_TRUE |
                          OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF)) == 0 &&
@@ -341,8 +339,7 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
   case OBELISK_RT_SUSPEND_EDGE:
     if (behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF)
       valid = wait->count == 2 && wait->payload == 0 && wait->auxiliary == 0 &&
-              !suppressActiveSelf &&
-              wait->flags == OBELISK_RT_WAIT_EDGE_IFF &&
+              !suppressActiveSelf && wait->flags == OBELISK_RT_WAIT_EDGE_IFF &&
               validEdge(entries[0].edge) && entries[0].reserved != 0 &&
               entries[1].edge == OBELISK_RT_WAIT_EDGE_NONE &&
               entries[1].reserved != 0 &&
@@ -351,13 +348,16 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
     else
       valid = behaviorFlags == 0 &&
               (wait->flags & ~OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF) == 0 &&
-              wait->count == 1 && wait->payload == 0 &&
-              wait->auxiliary == 0 &&
+              wait->count == 1 && wait->payload == 0 && wait->auxiliary == 0 &&
               entriesMatch(true, OBELISK_RT_WAIT_EDGE_NONE, true);
     break;
   case OBELISK_RT_SUSPEND_EVENT:
   case OBELISK_RT_SUSPEND_AWAIT:
     valid = wait->flags == 0 && wait->count == 1 && wait->payload == 0 &&
+            wait->auxiliary == 0 && entriesMatch(false, 0);
+    break;
+  case OBELISK_RT_SUSPEND_EVENT_ORDER:
+    valid = wait->flags == 0 && wait->count != 0 && wait->payload == 0 &&
             wait->auxiliary == 0 && entriesMatch(false, 0);
     break;
   case OBELISK_RT_SUSPEND_MAILBOX:
@@ -409,7 +409,7 @@ obelisk_rt_status validateAction(obelisk_rt_process_instance_v1 &instance,
     break;
   case OBELISK_RT_FRAGMENT_SUSPEND: {
     if (action.suspend_kind < OBELISK_RT_SUSPEND_DELAY ||
-        action.suspend_kind > OBELISK_RT_SUSPEND_SEMAPHORE)
+        action.suspend_kind > OBELISK_RT_SUSPEND_EVENT_ORDER)
       return OBELISK_RT_INVALID_ARGUMENT;
     obelisk_rt_status status = validateWait(instance, action, bytecode);
     if (status != OBELISK_RT_OK)

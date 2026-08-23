@@ -128,13 +128,116 @@ designTaskWait(const ScheduledDesignTask &task) {
       task.waitOffset > task.scratchOffset ||
       task.waitSize > task.scratchOffset - task.waitOffset)
     return nullptr;
-  return reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
-      task.frame.data() + task.waitOffset);
+  return reinterpret_cast<const obelisk_rt_wait_record_v1 *>(task.frame.data() +
+                                                             task.waitOffset);
 }
 
-static obelisk_rt_status semaphoreQueuedAcquisitionReady(
-    obelisk_rt_context *context, obelisk_rt_object_v1 *semaphore,
-    bool &ready) {
+bool obelisk_rt_initialize_event_order_wait_unlocked(
+    obelisk_rt_context *context, const obelisk_rt_wait_record_v1 *wait,
+    uint32_t &index, bool &ready, bool &failed) {
+  index = 0;
+  ready = false;
+  failed = false;
+  if (!context || !wait || wait->kind != OBELISK_RT_SUSPEND_EVENT_ORDER ||
+      wait->count == 0)
+    return false;
+  const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
+  auto triggeredThisSlot = [&](uint64_t stableID) {
+    auto found = context->events.find(stableID);
+    return found != context->events.end() && found->second.generation != 0 &&
+           found->second.lastTriggeredTime == context->schedulerTime;
+  };
+
+  // IEEE 1800-2017 15.5.4 permits only the first event to consume the
+  // persistent triggered state. Any later event already triggered in this
+  // slot therefore determines an immediate out-of-order failure.
+  for (uint32_t later = 1; later != wait->count; ++later) {
+    if (triggeredThisSlot(entries[later].stable_id)) {
+      ready = true;
+      failed = true;
+      return true;
+    }
+  }
+  if (triggeredThisSlot(entries[0].stable_id)) {
+    index = 1;
+    ready = wait->count == 1;
+  }
+  return true;
+}
+
+static bool updateEventOrderWait(const obelisk_rt_wait_record_v1 *wait,
+                                 uint64_t stableID, uint32_t &index,
+                                 bool &ready, bool &failed) {
+  if (!wait || wait->kind != OBELISK_RT_SUSPEND_EVENT_ORDER ||
+      wait->count == 0 || index >= wait->count)
+    return false;
+  if (ready)
+    return true;
+  const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
+
+  if (entries[index].stable_id == stableID) {
+    ++index;
+    if (index == wait->count) {
+      ready = true;
+      return true;
+    }
+    // One occurrence cannot satisfy two positions. Because the later alias
+    // now has persistent triggered state, it is already out of order at the
+    // point the expected occurrence was consumed.
+    for (uint32_t later = index; later != wait->count; ++later) {
+      if (entries[later].stable_id == stableID) {
+        ready = true;
+        failed = true;
+        return true;
+      }
+    }
+    return true;
+  }
+  for (uint32_t later = index + 1; later != wait->count; ++later) {
+    if (entries[later].stable_id == stableID) {
+      ready = true;
+      failed = true;
+      return true;
+    }
+  }
+  // Repetitions of an event already consumed in the prescribed order are
+  // explicitly harmless. Events outside the inventory are irrelevant.
+  return true;
+}
+
+bool obelisk_rt_notify_event_order_waiters_unlocked(obelisk_rt_context *context,
+                                                    uint64_t stableID) {
+  if (!context)
+    return false;
+  for (ScheduledProcess &process : context->scheduledProcesses) {
+    if (!process.instance ||
+        process.suspendKind != OBELISK_RT_SUSPEND_EVENT_ORDER ||
+        process.waitOrderReady)
+      continue;
+    if (!updateEventOrderWait(currentWait(process), stableID,
+                              process.waitOrderIndex, process.waitOrderReady,
+                              process.waitOrderFailed)) {
+      context->schedulerStatus = OBELISK_RT_INVALID_FRAME;
+      return false;
+    }
+  }
+  for (ScheduledDesignTask &task : context->scheduledDesignTasks) {
+    if (task.terminated || task.suspendKind != OBELISK_RT_SUSPEND_EVENT_ORDER ||
+        task.waitOrderReady)
+      continue;
+    if (!updateEventOrderWait(designTaskWait(task), stableID,
+                              task.waitOrderIndex, task.waitOrderReady,
+                              task.waitOrderFailed)) {
+      context->schedulerStatus = OBELISK_RT_INVALID_FRAME;
+      return false;
+    }
+  }
+  return true;
+}
+
+static obelisk_rt_status
+semaphoreQueuedAcquisitionReady(obelisk_rt_context *context,
+                                obelisk_rt_object_v1 *semaphore, bool &ready) {
   ready = false;
   uint64_t firstSequence = UINT64_MAX;
   const obelisk_rt_wait_record_v1 *first = nullptr;
@@ -149,8 +252,7 @@ static obelisk_rt_status semaphoreQueuedAcquisitionReady(
   for (const ScheduledProcess &process : context->scheduledProcesses)
     consider(process.instance != nullptr &&
                  process.instance != context->activeNativeProcess,
-             process.suspendKind,
-             process.waitSequence, currentWait(process));
+             process.suspendKind, process.waitSequence, currentWait(process));
   for (const ScheduledDesignTask &task : context->scheduledDesignTasks)
     consider(!task.terminated, task.suspendKind, task.waitSequence,
              designTaskWait(task));
@@ -180,9 +282,8 @@ obelisk_rt_semaphore_wait_ready(obelisk_rt_context *context,
            semaphore;
   };
   for (const ScheduledProcess &process : context->scheduledProcesses)
-    if (process.instance &&
-        isEarlier(process.suspendKind, process.waitSequence,
-                  currentWait(process)))
+    if (process.instance && isEarlier(process.suspendKind, process.waitSequence,
+                                      currentWait(process)))
       return OBELISK_RT_OK;
   for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
     if (!task.terminated &&
@@ -192,8 +293,9 @@ obelisk_rt_semaphore_wait_ready(obelisk_rt_context *context,
   return obelisk_rt_semaphore_keys_ready(semaphore, keys, ready);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_semaphore_try_get(
-    obelisk_rt_object_v1 *semaphore, int32_t keys, uint32_t *outSuccess) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_semaphore_try_get(obelisk_rt_object_v1 *semaphore, int32_t keys,
+                                uint32_t *outSuccess) {
   if (!semaphore || !outSuccess)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outSuccess = 0;
@@ -213,8 +315,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_semaphore_try_get(
   return obelisk_rt_semaphore_try_get_raw(semaphore, keys, outSuccess);
 }
 
-obelisk_rt_status obelisk_rt_semaphore_wait_acquire(
-    const obelisk_rt_wait_record_v1 *wait, bool &acquired) {
+obelisk_rt_status
+obelisk_rt_semaphore_wait_acquire(const obelisk_rt_wait_record_v1 *wait,
+                                  bool &acquired) {
   acquired = false;
   if (!wait || wait->flags != 0 || wait->count != 1 ||
       wait->payload > UINT32_MAX || static_cast<int32_t>(wait->payload) < 0 ||
@@ -255,6 +358,8 @@ bool nativeWaitReady(obelisk_rt_context &context,
         return true;
     }
     return false;
+  case OBELISK_RT_SUSPEND_EVENT_ORDER:
+    return process.waitOrderReady;
   case OBELISK_RT_SUSPEND_MAILBOX: {
     if (wait->count != 1)
       return false;
@@ -279,9 +384,8 @@ bool nativeWaitReady(obelisk_rt_context &context,
     return status == OBELISK_RT_OK && ready;
   }
   case OBELISK_RT_SUSPEND_AWAIT:
-    return wait->count == 1 &&
-           obelisk_rt_logical_process_terminated(
-               &context, entries[0].stable_id);
+    return wait->count == 1 && obelisk_rt_logical_process_terminated(
+                                   &context, entries[0].stable_id);
   case OBELISK_RT_SUSPEND_JOIN: {
     bool ready = wait->flags == 0;
     for (uint32_t index = 0; index != wait->count; ++index) {
@@ -397,7 +501,6 @@ void rebuildNativeSchedulerIndexUnlocked(obelisk_rt_context *context) {
   }
 }
 
-
 void obelisk_rt_erase_automatic_bookkeeping_unlocked(
     obelisk_rt_context *context, uint32_t automaticID) {
   if (!context)
@@ -459,10 +562,10 @@ void obelisk_rt_invalidate_signal_snapshots_unlocked(
       ++snapshot;
 }
 
-static obelisk_rt_status createProcessInstance(
-    obelisk_rt_context *context,
-    const obelisk_rt_process_descriptor_v1 *descriptor,
-    obelisk_rt_process_instance_v1 **outInstance) {
+static obelisk_rt_status
+createProcessInstance(obelisk_rt_context *context,
+                      const obelisk_rt_process_descriptor_v1 *descriptor,
+                      obelisk_rt_process_instance_v1 **outInstance) {
   if (!outInstance)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outInstance = nullptr;
@@ -476,9 +579,9 @@ static obelisk_rt_status createProcessInstance(
   if (context && descriptor->execution &&
       context->execution != descriptor->execution)
     return OBELISK_RT_INVALID_DESIGN;
-  obelisk_rt_status status = validateDescriptor(
-      *descriptor, context, nativeSize, nativeAlignment, scratchOffset,
-      scratchSize);
+  obelisk_rt_status status =
+      validateDescriptor(*descriptor, context, nativeSize, nativeAlignment,
+                         scratchOffset, scratchSize);
   if (status != OBELISK_RT_OK)
     return status;
 
@@ -536,8 +639,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_create(
   return createProcessInstance(nullptr, descriptor, outInstance);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_process_instance_create_for_context(
+extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_create_for_context(
     obelisk_rt_context *context,
     const obelisk_rt_process_descriptor_v1 *descriptor,
     obelisk_rt_process_instance_v1 **outInstance) {
@@ -706,13 +808,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_execute(
     return status;
   }
   instance->continuation = outAction->continuation;
-  instance->lifecycle = outAction->kind == OBELISK_RT_FRAGMENT_TERMINATE
-                            ? OBELISK_RT_PROCESS_TERMINATED
-                        : outAction->kind == OBELISK_RT_FRAGMENT_SUSPEND ||
-                                  outAction->kind ==
-                                      OBELISK_RT_FRAGMENT_PROCESS_SUSPEND
-                            ? OBELISK_RT_PROCESS_SUSPENDED
-                            : OBELISK_RT_PROCESS_READY;
+  instance->lifecycle =
+      outAction->kind == OBELISK_RT_FRAGMENT_TERMINATE
+          ? OBELISK_RT_PROCESS_TERMINATED
+      : outAction->kind == OBELISK_RT_FRAGMENT_SUSPEND ||
+              outAction->kind == OBELISK_RT_FRAGMENT_PROCESS_SUSPEND
+          ? OBELISK_RT_PROCESS_SUSPENDED
+          : OBELISK_RT_PROCESS_READY;
   if (instance->lifecycle == OBELISK_RT_PROCESS_TERMINATED &&
       instance->ownership_context) {
     unregisterManagedFrameRoots(instance);
@@ -799,23 +901,19 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
       return OBELISK_RT_OUT_OF_RESOURCES;
     }
     process.token = context->nextNativeProcessToken++;
-    process.parent =
-        (flags & OBELISK_RT_SCHEDULE_DETACHED_CONTROLS) == 0
-            ? context->activeLogicalProcessToken
-            : 0;
+    process.parent = (flags & OBELISK_RT_SCHEDULE_DETACHED_CONTROLS) == 0
+                         ? context->activeLogicalProcessToken
+                         : 0;
     obelisk_rt_random_split_unlocked(context, process.random);
     if ((flags & OBELISK_RT_SCHEDULE_DETACHED_CONTROLS) == 0)
       process.controls = context->activeControls;
     process.insertionSequence = context->nextProcessInsertionSequence++;
     process.observedEpoch = context->schedulerEpoch;
     process.phase = phase;
-    process.initialProcess =
-        (flags & OBELISK_RT_SCHEDULE_INITIAL) != 0;
-    process.startupProcess =
-        (flags & OBELISK_RT_SCHEDULE_STARTUP) != 0;
+    process.initialProcess = (flags & OBELISK_RT_SCHEDULE_INITIAL) != 0;
+    process.startupProcess = (flags & OBELISK_RT_SCHEDULE_STARTUP) != 0;
     process.urgent = process.startupProcess;
-    process.prioritySignal =
-        (flags & OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL) != 0;
+    process.prioritySignal = (flags & OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL) != 0;
     context->scheduledFinalProcessPresent |= phase == 1;
     process.homeRegion = homeRegion;
     process.queuedRegion = homeRegion;
@@ -840,13 +938,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
           context->scheduledProcesses.size() - 1;
       context->nativePollCandidates.insert(token);
       if ((flags & OBELISK_RT_SCHEDULE_DETACHED_CONTROLS) == 0)
-        obelisk_rt_register_unstarted_actor(
-            context, phase, kNativeLogicalProcessTag | token);
+        obelisk_rt_register_unstarted_actor(context, phase,
+                                            kNativeLogicalProcessTag | token);
     } catch (...) {
       context->scheduledProcessIndices.erase(token);
       context->nativePollCandidates.erase(token);
-      obelisk_rt_unregister_unstarted_actor(
-          context, phase, kNativeLogicalProcessTag | token);
+      obelisk_rt_unregister_unstarted_actor(context, phase,
+                                            kNativeLogicalProcessTag | token);
       context->scheduledProcesses.pop_back();
       throw;
     }
@@ -860,8 +958,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
   }
 }
 
-extern "C" uint32_t obelisk_rt_v1_scheduler_priority_signal_pending(
-    obelisk_rt_context *context) {
+extern "C" uint32_t
+obelisk_rt_v1_scheduler_priority_signal_pending(obelisk_rt_context *context) {
   if (!context || !context->prioritySignalPending)
     return 0;
   ContextMutexLock lock(context);
@@ -901,25 +999,20 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
   bool clockKernelTableValid =
       plan->clock_kernel_reserved == 0 &&
       ((plan->clock_kernel_count == 0 && plan->clock_kernels == nullptr &&
-        plan->merged_fragment_count == 0 &&
-        plan->merged_fragments == nullptr &&
+        plan->merged_fragment_count == 0 && plan->merged_fragments == nullptr &&
         plan->timeslot_coordinator == nullptr) ||
        (plan->clock_kernel_count != 0 && plan->clock_kernels != nullptr &&
-        plan->merged_fragment_count != 0 &&
-        plan->merged_fragments != nullptr &&
+        plan->merged_fragment_count != 0 && plan->merged_fragments != nullptr &&
         plan->timeslot_coordinator != nullptr)) &&
       plan->merged_fragment_count <= std::numeric_limits<size_t>::max();
   bool nbaCommitValid =
       ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_STATIC_NBA) != 0) ==
       (plan->nba_commit != nullptr);
   uint32_t expectedNBADirtyWords = (plan->nba_root_count + 63) / 64;
-  uint32_t expectedNBADirtySummaryWords =
-      (expectedNBADirtyWords + 63) / 64;
+  uint32_t expectedNBADirtySummaryWords = (expectedNBADirtyWords + 63) / 64;
   bool nbaDirtyRootsValid =
-      plan->nba_dirty_reserved == 0 &&
-      plan->nba_dirty_summary_reserved == 0 &&
-      ((plan->nba_dirty_word_count == 0 &&
-        plan->nba_dirty_roots == nullptr &&
+      plan->nba_dirty_reserved == 0 && plan->nba_dirty_summary_reserved == 0 &&
+      ((plan->nba_dirty_word_count == 0 && plan->nba_dirty_roots == nullptr &&
         plan->nba_dirty_summary_word_count == 0 &&
         plan->nba_dirty_summary == nullptr) ||
        (plan->nba_dirty_word_count == expectedNBADirtyWords &&
@@ -954,9 +1047,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
   if (!plan->mutable_state || plan->mutable_state_size == 0 ||
       plan->actor_capacity == 0 || !actorStorageFits || !statePlanesValid ||
       !nbaTablesValid || !fanoutTableValid || !actorRootTableValid ||
-      !clockKernelTableValid ||
-      !nbaCommitValid || !nbaDirtyRootsValid || !specializationFastValid ||
-      !cleanSuperstepValid || !evalSchedulerValid ||
+      !clockKernelTableValid || !nbaCommitValid || !nbaDirtyRootsValid ||
+      !specializationFastValid || !cleanSuperstepValid || !evalSchedulerValid ||
       (plan->flags & ~(OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
                        OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO |
                        OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
@@ -1042,9 +1134,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
     for (uint32_t previous = 0; previous != index; ++previous) {
       const obelisk_rt_native_clock_kernel &other = clockKernels[previous];
       if (std::tuple{other.static_state, other.low_bit, other.bit_width,
-                     other.edge} >=
-          std::tuple{kernel.static_state, kernel.low_bit, kernel.bit_width,
-                     kernel.edge})
+                     other.edge} >= std::tuple{kernel.static_state,
+                                               kernel.low_bit, kernel.bit_width,
+                                               kernel.edge})
         return OBELISK_RT_INVALID_ARGUMENT;
     }
   }
@@ -1056,13 +1148,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
          (merged.flags & OBELISK_RT_MERGED_FRAGMENT_FALLBACK) == 0 &&
          (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP) != 0);
     if (merged.actor_slot >= plan->actor_capacity ||
-        merged.compute_node == UINT32_MAX ||
-        !directFragmentValid ||
+        merged.compute_node == UINT32_MAX || !directFragmentValid ||
         (merged.flags & ~(OBELISK_RT_MERGED_FRAGMENT_SHARED |
                           OBELISK_RT_MERGED_FRAGMENT_FALLBACK)) != 0 ||
         (merged.kernel < clockKernelCount &&
-         merged.bit / 64 >=
-             clockKernels[merged.kernel].ingress_word_count))
+         merged.bit / 64 >= clockKernels[merged.kernel].ingress_word_count))
       return OBELISK_RT_INVALID_ARGUMENT;
     for (uint64_t previous = 0; previous != index; ++previous)
       if (mergedFragments[previous].kernel == merged.kernel &&
@@ -1201,8 +1291,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       for (uint64_t index = 0; index != fanoutEntryCount; ++index) {
         const obelisk_rt_static_fanout_entry &entry = fanoutEntries[index];
         if (entry.static_state < context->nativeScheduleFanoutRanges.size()) {
-          auto &range =
-              context->nativeScheduleFanoutRanges[entry.static_state];
+          auto &range = context->nativeScheduleFanoutRanges[entry.static_state];
           if (range.first == fanoutEntryCount)
             range.first = index;
           range.second = index + 1;
@@ -1217,8 +1306,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       size_t dirtySummaryWords = (dirtyWords + 63) / 64;
       context->nativeScheduleTransientDirtyMask.assign(dirtyWords, 0);
       context->nativeSchedulePersistentDirtyMask.assign(dirtyWords, 0);
-      context->nativeScheduleTransientDirtySummary.assign(dirtySummaryWords,
-                                                          0);
+      context->nativeScheduleTransientDirtySummary.assign(dirtySummaryWords, 0);
       context->nativeSchedulePersistentDirtySummary.assign(dirtySummaryWords,
                                                            0);
       context->staticNBAAccumulators.clear();
@@ -1251,9 +1339,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
             state->bitWidth == root.bit_width &&
             state->bitOffset <= plan->state_bit_count &&
             root.bit_width <= plan->state_bit_count - state->bitOffset;
-        bool generatedBatchRoot =
-            generatedRoot && root.bit_width == 256 &&
-            context->staticNBARootHasFanout[index] == 0;
+        bool generatedBatchRoot = generatedRoot && root.bit_width == 256 &&
+                                  context->staticNBARootHasFanout[index] == 0;
         context->nativeScheduleGeneratedBatchEligible &= generatedBatchRoot;
         if (generatedRoot)
           context->nativeScheduleGeneratedNBAOffsets[index] = state->bitOffset;
@@ -1413,14 +1500,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_enter(
   context->activeLogicalProcessToken =
       kNativeLogicalProcessTag | scheduled.token;
   context->activeLogicalProcessParent = scheduled.parent;
+  context->activeWaitOrderFailed = false;
   obelisk_rt_flush_deferred_immediate_reports_unlocked(
       context, context->activeLogicalProcessToken);
   *outInstance = actor;
   return OBELISK_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_leave(
-    obelisk_rt_context *context, uint32_t actorSlot) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_direct_fragment_leave(obelisk_rt_context *context,
+                                              uint32_t actorSlot) {
   if (!context || activeNativeAOTContext != context ||
       lockedNativeAOTContext != context ||
       context->nativeScheduleDirectActorSlot != actorSlot ||
@@ -1442,6 +1531,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_leave(
   context->activeExecRegion = UINT32_MAX;
   context->activeLogicalProcessToken = 0;
   context->activeLogicalProcessParent = 0;
+  context->activeWaitOrderFailed = false;
   if (context->schedulerSlotProgress == UINT64_MAX) {
     context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
     return context->schedulerStatus;
@@ -1585,8 +1675,7 @@ extern "C" uint64_t obelisk_rt_v1_scheduler_process_token(
   return 0;
 }
 
-extern "C" uint64_t
-obelisk_rt_v1_process_current(obelisk_rt_context *context) {
+extern "C" uint64_t obelisk_rt_v1_process_current(obelisk_rt_context *context) {
   if (!context)
     return 0;
   try {
@@ -1597,17 +1686,17 @@ obelisk_rt_v1_process_current(obelisk_rt_context *context) {
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_process_status(
-    obelisk_rt_context *context, uint64_t logicalProcess,
-    obelisk_rt_process_state *outState) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_process_status(obelisk_rt_context *context,
+                             uint64_t logicalProcess,
+                             obelisk_rt_process_state *outState) {
   if (!context || logicalProcess == 0 || !outState)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outState = OBELISK_RT_PROCESS_FINISHED;
   try {
     ContextMutexLock lock(context);
     if ((logicalProcess & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0) {
-      uint64_t token =
-          logicalProcess & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+      uint64_t token = logicalProcess & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
       if (context->killedNativeProcesses.count(token) != 0) {
         *outState = OBELISK_RT_PROCESS_KILLED;
         return OBELISK_RT_OK;
@@ -1685,15 +1774,14 @@ obelisk_rt_v1_monitor_register(obelisk_rt_context *context,
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_monitor_register_logical(
-    obelisk_rt_context *context, uint64_t logicalProcess) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_monitor_register_logical(obelisk_rt_context *context,
+                                       uint64_t logicalProcess) {
   if (logicalProcess == 0)
     return OBELISK_RT_INVALID_ARGUMENT;
-  bool native =
-      (logicalProcess & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0;
+  bool native = (logicalProcess & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0;
   uint64_t token = native
-                       ? logicalProcess &
-                             ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG
+                       ? logicalProcess & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG
                        : logicalProcess;
   return obelisk_rt_v1_monitor_register(context, token, native ? 0 : 1);
 }
@@ -1727,7 +1815,6 @@ extern "C" uint32_t obelisk_rt_v1_monitor_current(obelisk_rt_context *context) {
     return 0;
   }
 }
-
 
 extern "C" void obelisk_rt_v1_scheduler_fail(obelisk_rt_context *context,
                                              obelisk_rt_status status) {
@@ -1771,9 +1858,8 @@ obelisk_rt_v1_native_state_register_static(obelisk_rt_context *context,
 }
 
 extern "C" obelisk_rt_status
-obelisk_rt_v1_native_state_sync(obelisk_rt_context *context,
-                                uint8_t *value, uint8_t *unknown,
-                                uint64_t bitCount) {
+obelisk_rt_v1_native_state_sync(obelisk_rt_context *context, uint8_t *value,
+                                uint8_t *unknown, uint64_t bitCount) {
   if (!context || !value || !unknown)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
@@ -1914,6 +2000,9 @@ obelisk_rt_status runPreponedHooks(obelisk_rt_context *context) {
     if (++event.generation == 0)
       event.generation = 1;
     event.lastTriggeredTime = context->schedulerTime;
+    if (!obelisk_rt_notify_event_order_waiters_unlocked(
+            context, OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT))
+      return context->schedulerStatus;
     if (!obelisk_rt_notify_observer_event_unlocked(
             context, OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT))
       return context->schedulerStatus;
@@ -2000,8 +2089,8 @@ obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context,
     }
   } else {
     if (context->staticNBAAccumulatorsPending)
-      for (uint32_t root = 0;
-           root != context->staticNBAAccumulators.size(); ++root)
+      for (uint32_t root = 0; root != context->staticNBAAccumulators.size();
+           ++root)
         inspectNBARoot(root);
     if (context->nativeScheduleHasGeneratedNBAAccumulators)
       for (uint32_t root = 0; root != context->nativeScheduleNBARootCount;
@@ -2142,8 +2231,7 @@ bool hasSameDirectSignalWait(const ScheduledProcess &scheduled,
   for (uint32_t index = 0; index != wait->count; ++index) {
     const SignalSubscription *subscription =
         scheduled.signalSubscriptions[index].get();
-    if (!subscription ||
-        subscription->stableID != entries[index].stable_id ||
+    if (!subscription || subscription->stableID != entries[index].stable_id ||
         subscription->bitWidth != entries[index].reserved ||
         subscription->edge != entries[index].edge ||
         subscription->suppressActiveSelf != suppressActiveSelf ||
@@ -2153,9 +2241,10 @@ bool hasSameDirectSignalWait(const ScheduledProcess &scheduled,
   return true;
 }
 
-obelisk_rt_status adoptScheduledSuspendUnlocked(
-    obelisk_rt_context *context, ScheduledProcess &scheduled,
-    const obelisk_rt_fragment_action_v1 &action) {
+obelisk_rt_status
+adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
+                              ScheduledProcess &scheduled,
+                              const obelisk_rt_fragment_action_v1 &action) {
   scheduled.suspendKind = action.suspend_kind;
   scheduled.waitOffset = action.payload;
   scheduled.waitSize = action.auxiliary;
@@ -2169,15 +2258,17 @@ obelisk_rt_status adoptScheduledSuspendUnlocked(
   updateNativeAOTContinuationRank(scheduled, action.continuation);
   scheduled.observedEpoch = context->schedulerEpoch;
   scheduled.waitGenerations.clear();
+  scheduled.waitOrderIndex = 0;
+  scheduled.waitOrderReady = false;
+  scheduled.waitOrderFailed = false;
   scheduled.signalTriggered = false;
   scheduled.startupProcess = false;
   scheduled.urgent = false;
   const obelisk_rt_wait_record_v1 *wait = currentWait(scheduled);
   if (!wait && action.suspend_kind != OBELISK_RT_SUSPEND_OBSERVER)
     return OBELISK_RT_INVALID_FRAME;
-  bool directSignalSuspend =
-      action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE ||
-      action.suspend_kind == OBELISK_RT_SUSPEND_EDGE;
+  bool directSignalSuspend = action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE ||
+                             action.suspend_kind == OBELISK_RT_SUSPEND_EDGE;
   if (!directSignalSuspend && !scheduled.signalSubscriptions.empty())
     obelisk_rt_unregister_signal_wait_unlocked(
         context, scheduled.signalSubscriptions, scheduled.token, false);
@@ -2196,6 +2287,11 @@ obelisk_rt_status adoptScheduledSuspendUnlocked(
           event == context->events.end() ? 0 : event->second.generation);
     }
   }
+  if (action.suspend_kind == OBELISK_RT_SUSPEND_EVENT_ORDER &&
+      !obelisk_rt_initialize_event_order_wait_unlocked(
+          context, wait, scheduled.waitOrderIndex, scheduled.waitOrderReady,
+          scheduled.waitOrderFailed))
+    return OBELISK_RT_INVALID_FRAME;
   if (action.suspend_kind == OBELISK_RT_SUSPEND_DELAY)
     scheduled.wakeTime = wait->payload > UINT64_MAX - context->schedulerTime
                              ? UINT64_MAX
@@ -2353,9 +2449,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           return;
         bool runnable =
             nativeProcessReady(*context, candidate, forcedNativeNode);
-        bool signalResume = candidate.signalTriggered ||
-                            (candidate.signalLatch &&
-                             candidate.signalLatch->triggered);
+        bool signalResume =
+            candidate.signalTriggered ||
+            (candidate.signalLatch && candidate.signalLatch->triggered);
         if (runnable && candidate.queuedRegion >= unstartedActorRegion &&
             signalResume && !candidate.urgent && !candidate.prioritySignal)
           runnable = false;
@@ -2378,12 +2474,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         }
         if (nativeUrgentDistance != SIZE_MAX)
           return;
-        auto key = candidate.prioritySignal && signalResume
-                       ? std::tuple{candidate.queuedRegion, uint32_t{0},
-                                    uint64_t{0}}
-                       : std::tuple{candidate.queuedRegion,
-                                    candidate.scheduleRank,
-                                    candidate.insertionSequence};
+        auto key =
+            candidate.prioritySignal && signalResume
+                ? std::tuple{candidate.queuedRegion, uint32_t{0}, uint64_t{0}}
+                : std::tuple{candidate.queuedRegion, candidate.scheduleRank,
+                             candidate.insertionSequence};
         if (runnable && key < std::tuple{nativeRegion, nativeRank,
                                          nativeInsertionSequence}) {
           nativeRegion = std::get<0>(key);
@@ -2461,15 +2556,14 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             candidate.phase == (context->schedulerRunningFinals ? 1u : 0u) &&
             nativeProcessReady(*context, candidate,
                                context->nativeScheduleForcedSlot != UINT32_MAX);
-        bool signalResume = candidate.signalTriggered ||
-                            (candidate.signalLatch &&
-                             candidate.signalLatch->triggered);
-        auto key = candidate.prioritySignal && signalResume
-                       ? std::tuple{candidate.queuedRegion, uint32_t{0},
-                                    uint64_t{0}}
-                       : std::tuple{candidate.queuedRegion,
-                                    candidate.scheduleRank,
-                                    candidate.insertionSequence};
+        bool signalResume =
+            candidate.signalTriggered ||
+            (candidate.signalLatch && candidate.signalLatch->triggered);
+        auto key =
+            candidate.prioritySignal && signalResume
+                ? std::tuple{candidate.queuedRegion, uint32_t{0}, uint64_t{0}}
+                : std::tuple{candidate.queuedRegion, candidate.scheduleRank,
+                             candidate.insertionSequence};
         if (runnable &&
             (candidate.urgent ||
              (key == std::tuple{nativeRegion, nativeRank,
@@ -2504,15 +2598,14 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             selectedInsertionSequence = 0;
             break;
           }
-          bool signalResume = candidate.signalTriggered ||
-                              (candidate.signalLatch &&
-                               candidate.signalLatch->triggered);
-          auto key = candidate.prioritySignal && signalResume
-                         ? std::tuple{candidate.queuedRegion, uint32_t{0},
-                                      uint64_t{0}}
-                         : std::tuple{candidate.queuedRegion,
-                                      candidate.scheduleRank,
-                                      candidate.insertionSequence};
+          bool signalResume =
+              candidate.signalTriggered ||
+              (candidate.signalLatch && candidate.signalLatch->triggered);
+          auto key =
+              candidate.prioritySignal && signalResume
+                  ? std::tuple{candidate.queuedRegion, uint32_t{0}, uint64_t{0}}
+                  : std::tuple{candidate.queuedRegion, candidate.scheduleRank,
+                               candidate.insertionSequence};
           if (!(key < std::tuple{barrierRegion, uint32_t{0}, uint64_t{0}}))
             continue;
           if (selected && !(key < std::tuple{selectedRegion, selectedRank,
@@ -2528,9 +2621,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       if (selected) {
         ScheduledProcess &candidate =
             context->scheduledProcesses[selectedIndex];
-        selectedResuming =
-            candidate.started &&
-            candidate.suspendKind != OBELISK_RT_SUSPEND_NONE;
+        selectedResuming = candidate.started &&
+                           candidate.suspendKind != OBELISK_RT_SUSPEND_NONE;
         if (candidate.suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE) {
           bool acquired = false;
           obelisk_rt_status status = obelisk_rt_semaphore_wait_acquire(
@@ -2544,8 +2636,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         }
         context->schedulerCursor = (selectedIndex + 1) % processCount;
         if (candidate.aotActorSlot != UINT32_MAX) {
-          uint32_t node = findNativeAOTNodeUnlocked(
-              context, candidate.aotActorSlot, candidate.instance->continuation);
+          uint32_t node =
+              findNativeAOTNodeUnlocked(context, candidate.aotActorSlot,
+                                        candidate.instance->continuation);
           if (node != UINT32_MAX)
             clearNativeAOTNodeReadyUnlocked(context, node);
         }
@@ -2561,9 +2654,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         candidate.signalTriggered = false;
         context->nativePollCandidates.erase(candidate.token);
         if (!candidate.started)
-          obelisk_rt_unregister_unstarted_actor(
-              context, candidate.phase,
-              kNativeLogicalProcessTag | candidate.token);
+          obelisk_rt_unregister_unstarted_actor(context, candidate.phase,
+                                                kNativeLogicalProcessTag |
+                                                    candidate.token);
         candidate.started = true;
         candidate.observedEpoch = context->schedulerEpoch;
       }
@@ -3084,10 +3177,10 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                 static_cast<__int128>(baseOffset) + update.bitWidth,
                 staticState->bitWidth);
             if (first < last) {
-              uint64_t begin = staticState->bitOffset +
-                               static_cast<uint64_t>(first);
-              uint64_t end = staticState->bitOffset +
-                             static_cast<uint64_t>(last);
+              uint64_t begin =
+                  staticState->bitOffset + static_cast<uint64_t>(first);
+              uint64_t end =
+                  staticState->bitOffset + static_cast<uint64_t>(last);
               bool resolvedChanged = false;
               if (!obelisk::designbytecode::resolveDrivenNets(
                       context->designBytecodeImage, context,
@@ -3262,9 +3355,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                 break;
             }
             ScheduledNBA &update = context->scheduledNBAs[index];
-            bool due = update.cancelled ||
-                       (update.dueTime <= context->schedulerTime &&
-                        update.execRegion == barrierRegion);
+            bool due =
+                update.cancelled || (update.dueTime <= context->schedulerTime &&
+                                     update.execRegion == barrierRegion);
             if (!due) {
               if (retained != index)
                 context->scheduledNBAs[retained] = std::move(update);
@@ -3363,8 +3456,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               break;
             }
             if (sequence == nativeSequence) {
-              if (!prepareDelayedNetBatch(
-                      context->scheduledNBAs[nativeIndex]))
+              if (!prepareDelayedNetBatch(context->scheduledNBAs[nativeIndex]))
                 return context->schedulerStatus;
             } else if (!flushDelayedNetPublications()) {
               return context->schedulerStatus;
@@ -3412,6 +3504,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                 event.generation = 1;
               event.lastTriggeredTime = context->schedulerTime;
               bool notified =
+                  obelisk_rt_notify_event_order_waiters_unlocked(context,
+                                                                 stableID) &&
                   obelisk_rt_notify_observer_event_unlocked(context, stableID);
               if (retainedAutomaticID != 0) {
                 auto found =
@@ -3558,6 +3652,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           context->scheduledProcesses[selectedIndex].token;
       context->activeLogicalProcessParent =
           context->scheduledProcesses[selectedIndex].parent;
+      context->activeWaitOrderFailed =
+          selectedResuming &&
+          context->scheduledProcesses[selectedIndex].suspendKind ==
+              OBELISK_RT_SUSPEND_EVENT_ORDER &&
+          context->scheduledProcesses[selectedIndex].waitOrderReady &&
+          context->scheduledProcesses[selectedIndex].waitOrderFailed;
       if (selectedResuming)
         obelisk_rt_flush_deferred_immediate_reports_unlocked(
             context, context->activeLogicalProcessToken);
@@ -3598,9 +3698,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           context->scheduledProcesses[selectedIndex].instance == selected) {
         context->scheduledProcesses[selectedIndex].controls =
             std::move(context->activeControls);
-        killRequested = context->killedNativeProcesses.count(
-                            context->scheduledProcesses[selectedIndex].token) !=
-                        0;
+        killRequested =
+            context->killedNativeProcesses.count(
+                context->scheduledProcesses[selectedIndex].token) != 0;
       }
       context->activeControls.clear();
       context->activeNativeProcess = nullptr;
@@ -3608,6 +3708,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       context->activeExecRegion = UINT32_MAX;
       context->activeLogicalProcessToken = 0;
       context->activeLogicalProcessParent = 0;
+      context->activeWaitOrderFailed = false;
       terminationRequested = context->schedulerFinishRequested;
     }
     if (!terminationRequested && status != OBELISK_RT_OK)
@@ -3792,6 +3893,7 @@ obelisk_rt_v1_scheduler_prime(obelisk_rt_context *context,
     uint32_t phase = context->activeDesignTaskPhase;
     uint32_t home = context->activeHomeRegion;
     uint32_t region = context->activeExecRegion;
+    bool waitOrderFailed = context->activeWaitOrderFailed;
     bool designExecuting = context->designTaskExecuting;
     obelisk_rt_random_state_v1 *random = context->activeRandom;
     bool designFilter = context->nativeScheduleDesignTaskFilterActive;
@@ -3807,6 +3909,7 @@ obelisk_rt_v1_scheduler_prime(obelisk_rt_context *context,
       context->activeDesignTaskPhase = phase;
       context->activeHomeRegion = home;
       context->activeExecRegion = region;
+      context->activeWaitOrderFailed = waitOrderFailed;
       context->designTaskExecuting = designExecuting;
       context->activeRandom = random;
       context->nativeScheduleDesignTaskFilterActive = designFilter;
@@ -3854,6 +3957,7 @@ obelisk_rt_v1_scheduler_prime(obelisk_rt_context *context,
         context->activeLogicalProcessParent = scheduled.parent;
         context->activeHomeRegion = scheduled.homeRegion;
         context->activeExecRegion = scheduled.queuedRegion;
+        context->activeWaitOrderFailed = false;
         context->activeControls = std::move(scheduled.controls);
         bool requireBytecode =
             context->execution && (context->execution->flags &

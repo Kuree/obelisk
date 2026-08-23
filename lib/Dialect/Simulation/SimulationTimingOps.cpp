@@ -5,8 +5,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "SimulationVerifiers.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/OutputItemFlags.h"
 #include "obelisk/Runtime/StableHash.h"
@@ -15,12 +15,12 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/InliningUtils.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -38,7 +38,6 @@
 using namespace mlir;
 
 namespace obelisk::sim {
-
 
 LogicalResult SimTimeConstantOp::verify() {
   if (getValueAttr().getValue().isNegative())
@@ -97,9 +96,8 @@ OpFoldResult SimTimeAddOp::fold(FoldAdaptor adaptor) {
   return IntegerAttr::get(lhs.getType(), sum);
 }
 
-LogicalResult verifyContinuation(Operation *op,
-                                        ValueRange continuationOperands,
-                                        Block *continuation) {
+LogicalResult verifyContinuation(Operation *op, ValueRange continuationOperands,
+                                 Block *continuation) {
   if (!continuation)
     return op->emitOpError("requires a continuation successor");
   if (continuationOperands.getTypes() != continuation->getArgumentTypes())
@@ -148,6 +146,10 @@ SuccessorOperands SimSuspendAnyOp::getSuccessorOperands(unsigned index) {
 }
 SuccessorOperands SimSuspendEventOp::getSuccessorOperands(unsigned index) {
   return makeContinuationSuccessorOperands(*this, index);
+}
+SuccessorOperands SimSuspendEventOrderOp::getSuccessorOperands(unsigned index) {
+  assert(index == 0 && "ordered event suspension has one successor");
+  return SuccessorOperands(getContinuationOperandsMutable());
 }
 SuccessorOperands SimSuspendMailboxOp::getSuccessorOperands(unsigned index) {
   return makeContinuationSuccessorOperands(*this, index);
@@ -258,11 +260,39 @@ LogicalResult SimSuspendEventOp::verify() {
   return verifyContinuation(*this, getContinuationOperands(),
                             getContinuation());
 }
+Operation::operand_range SimSuspendEventOrderOp::getEvents() {
+  return getValues().take_front(
+      std::min<size_t>(getEventCount(), getNumOperands()));
+}
+
+Operation::operand_range SimSuspendEventOrderOp::getContinuationOperands() {
+  return getValues().drop_front(
+      std::min<size_t>(getEventCount(), getNumOperands()));
+}
+
+MutableOperandRange SimSuspendEventOrderOp::getContinuationOperandsMutable() {
+  unsigned eventCount = std::min<size_t>(getEventCount(), getNumOperands());
+  return MutableOperandRange(getOperation(), eventCount,
+                             getNumOperands() - eventCount);
+}
+
+LogicalResult SimSuspendEventOrderOp::verify() {
+  if (getEventCount() <= 0)
+    return emitOpError("requires at least one event handle");
+  if (static_cast<uint64_t>(getEventCount()) > getNumOperands())
+    return emitOpError("event inventory exceeds the operand inventory");
+  if (llvm::any_of(getEvents(), [](Value event) {
+        return !isa<EventType>(event.getType());
+      }))
+    return emitOpError("ordered values must be event handles");
+  return verifyContinuation(*this, getContinuationOperands(),
+                            getContinuation());
+}
 LogicalResult SimSuspendMailboxOp::verify() {
   if (llvm::none_of(getContinuationOperands(),
                     [&](Value value) { return value == getMailbox(); }))
-    return emitOpError(
-        "requires the mailbox as a continuation operand to preserve its GC root");
+    return emitOpError("requires the mailbox as a continuation operand to "
+                       "preserve its GC root");
   return verifyContinuation(*this, getContinuationOperands(),
                             getContinuation());
 }
@@ -615,6 +645,5 @@ LogicalResult SimFileReadMemTokenOp::verify() {
     return emitOpError("radix must be 2 or 16");
   return success();
 }
-
 
 } // namespace obelisk::sim

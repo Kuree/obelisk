@@ -114,6 +114,15 @@ Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
                       OBELISK_RT_SUSPEND_EVENT, OBELISK_RT_WAIT_FLAGS_NONE,
                       ArrayRef<uint32_t>(&edge, 1), {suspend.getEvent()});
   }
+  if (auto suspend = dyn_cast<sim::SimSuspendEventOrderOp>(operation)) {
+    SmallVector<uint32_t> edges(suspend.getEvents().size(),
+                                OBELISK_RT_WAIT_EDGE_NONE);
+    SmallVector<Value> events(suspend.getEvents());
+    return encodeWait(plan, suspend.getOperation(),
+                      suspend.getContinuationOperands(),
+                      OBELISK_RT_SUSPEND_EVENT_ORDER,
+                      OBELISK_RT_WAIT_FLAGS_NONE, edges, events);
+  }
   if (auto suspend = dyn_cast<sim::SimSuspendMailboxOp>(operation)) {
     uint32_t edge = OBELISK_RT_WAIT_EDGE_NONE;
     return encodeWait(

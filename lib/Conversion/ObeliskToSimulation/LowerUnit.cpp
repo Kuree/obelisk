@@ -455,10 +455,9 @@ void UnitLowering::ensureVirtualInterfaceInventory() {
         auto descriptor =
             member ? member.getAs<IntegerAttr>("descriptor") : IntegerAttr{};
         if (name && descriptor)
-          virtualInterfaceEventMembers[
-              memberKey(identity.getValue(), name.getValue())]
-              .push_back(
-                  {scope.getId(), descriptor.getValue().getZExtValue()});
+          virtualInterfaceEventMembers[memberKey(identity.getValue(),
+                                                 name.getValue())]
+              .push_back({scope.getId(), descriptor.getValue().getZExtValue()});
       }
       continue;
     }
@@ -532,8 +531,8 @@ void UnitLowering::ensureCoverageInventory() {
 // these ticks, so a duration that IEEE 1800-2017 states in a scope's own time
 // units -- a clocking skew, per 14.4 -- has to be divided by this to become a
 // delay the scheduler can use.
-FailureOr<uint64_t> UnitLowering::designTimePrecisionFemtoseconds(
-    Location location) {
+FailureOr<uint64_t>
+UnitLowering::designTimePrecisionFemtoseconds(Location location) {
   auto design = function->getParentOfType<sim::SimDesignOp>();
   IntegerAttr precisionFs = design ? design.getTimePrecisionFsAttr() : nullptr;
   if (!precisionFs || !precisionFs.getValue().isStrictlyPositive())
@@ -548,9 +547,10 @@ Block *UnitLowering::addBlock() {
   return block;
 }
 
-std::optional<Value> UnitLowering::getCurrentClockingOccurrence(
-    Block *block, Value clock, std::optional<sim::EdgeKind> edge,
-    bool clockingBlockOnly) const {
+std::optional<Value>
+UnitLowering::getCurrentClockingOccurrence(Block *block, Value clock,
+                                           std::optional<sim::EdgeKind> edge,
+                                           bool clockingBlockOnly) const {
   DenseSet<Block *> visiting;
   auto matches = [&](const ClockingOccurrence &occurrence) {
     if (clock && occurrence.clock != clock)
@@ -974,9 +974,8 @@ FailureOr<Value> UnitLowering::bindObserver(
         return failure();
       if (!isa<sim::RefType, sim::NetType, sim::EventType>(
               (*value).getType())) {
-        emitError(location)
-            << "observer dependency is not a watchable handle: "
-            << (*value).getType();
+        emitError(location) << "observer dependency is not a watchable handle: "
+                            << (*value).getType();
         return failure();
       }
       dependencies.push_back(*value);
@@ -1195,8 +1194,8 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
       Value bits =
           sim::SimRealToIntegerOp::create(builder, location, bitsType, value,
                                           builder.getBoolAttr(targetSigned));
-      Value converted = sim::SimLogicFromBitsOp::create(
-          builder, location, targetLogic, bits);
+      Value converted =
+          sim::SimLogicFromBitsOp::create(builder, location, targetLogic, bits);
 
       // IEEE 1800 real-to-integral conversion produces an unknown value for
       // NaN and either infinity. A two-state destination subsequently coerces
@@ -1204,19 +1203,17 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
       // Inspect the IEEE-754 exponent here so the integer conversion itself
       // can remain the shared two-state primitive.
       Type i64 = builder.getI64Type();
-      Value encoded =
-          arith::BitcastOp::create(builder, location, i64, value);
-      Value shift = arith::ConstantOp::create(
-          builder, location, i64, builder.getI64IntegerAttr(52));
+      Value encoded = arith::BitcastOp::create(builder, location, i64, value);
+      Value shift = arith::ConstantOp::create(builder, location, i64,
+                                              builder.getI64IntegerAttr(52));
       Value exponent =
           arith::ShRUIOp::create(builder, location, encoded, shift);
       Value exponentMask = arith::ConstantOp::create(
           builder, location, i64, builder.getI64IntegerAttr(0x7ff));
-      exponent = arith::AndIOp::create(builder, location, exponent,
-                                       exponentMask);
+      exponent =
+          arith::AndIOp::create(builder, location, exponent, exponentMask);
       Value finite = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ne, exponent,
-          exponentMask);
+          builder, location, arith::CmpIPredicate::ne, exponent, exponentMask);
       Value unknown = createDefaultValue(builder, location, targetLogic);
       return arith::SelectOp::create(builder, location, finite, converted,
                                      unknown)
@@ -1261,18 +1258,16 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
                 : OBELISK_RT_CONTAINER_DYNAMIC_ARRAY,
           bound);
       for (unsigned ordinal = 0; ordinal < sourceCount; ++ordinal) {
-        Type elementType =
-            sim::getAggregateElementType(sourceArray, ordinal);
+        Type elementType = sim::getAggregateElementType(sourceArray, ordinal);
         Value element = sim::SimAggregateExtractOp::create(
             builder, location, elementType, value, ordinal);
-        FailureOr<Value> converted = convert(element, containerElement,
-                                             sourceSigned, location,
-                                             targetSigned);
+        FailureOr<Value> converted = convert(
+            element, containerElement, sourceSigned, location, targetSigned);
         if (failed(converted))
           return failure();
-        Value index = arith::ConstantOp::create(
-            builder, location, builder.getI64Type(),
-            builder.getI64IntegerAttr(ordinal));
+        Value index =
+            arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                      builder.getI64IntegerAttr(ordinal));
         sim::SimContainerWriteOp::create(builder, location, container, index,
                                          *converted);
       }
@@ -2152,10 +2147,11 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
     FailureOr<Value> input = lowerInput(inputs.front());
     if (failed(input))
       return failure();
-    result = name == "not" ? Value(sim::SimLogicUnaryOp::create(
-                                 builder, location, logicType,
-                                 sim::UnaryKind::BitNot, *input))
-                           : normalizeGateInput(*input);
+    result =
+        name == "not"
+            ? Value(sim::SimLogicUnaryOp::create(
+                  builder, location, logicType, sim::UnaryKind::BitNot, *input))
+            : normalizeGateInput(*input);
   } else if (name == "bufif0" || name == "bufif1" || name == "notif0" ||
              name == "notif1") {
     if (inputs.size() != 2)
@@ -2166,11 +2162,11 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
         lowerInput(inputs[1], sim::LogicType::get(function.getContext(), 1));
     if (failed(data) || failed(control))
       return failure();
-    Value driven = name.starts_with("not")
-                       ? Value(sim::SimLogicUnaryOp::create(
-                             builder, location, logicType,
-                             sim::UnaryKind::BitNot, *data))
-                       : normalizeGateInput(*data);
+    Value driven =
+        name.starts_with("not")
+            ? Value(sim::SimLogicUnaryOp::create(builder, location, logicType,
+                                                 sim::UnaryKind::BitNot, *data))
+            : normalizeGateInput(*data);
     auto planeType =
         IntegerType::get(function.getContext(), logicType.getWidth());
     APInt highZ = APInt::getAllOnes(logicType.getWidth());
@@ -2472,7 +2468,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     // a scalar property from a self-determined `bit [0:0]` literal.
     auto property =
         SymbolTable::lookupNearestSymbolFrom<sim::SimClassFieldDeclOp>(function,
-                                                                      field);
+                                                                       field);
     if (!property) {
       emitError(location) << "class property initializer has no declared "
                              "property: "
@@ -2669,9 +2665,65 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
   }
   if (auto wait = dyn_cast<semantic::SVWaitStatementOp>(op))
     return lowerWait(wait);
-  if (isa<semantic::SVWaitOrderStatementOp>(op)) {
-    unsupported(op) << " (wait_order occurrence sequencing)";
-    return failure();
+  if (auto waitOrder = dyn_cast<semantic::SVWaitOrderStatementOp>(op)) {
+    int64_t eventCount = waitOrder.getEventCount();
+    size_t actionCount = static_cast<size_t>(waitOrder.getHasSuccessAction()) +
+                         static_cast<size_t>(waitOrder.getHasFailureAction());
+    if (eventCount <= 0 || static_cast<uint64_t>(eventCount) > UINT32_MAX ||
+        children.size() != static_cast<uint64_t>(eventCount) + actionCount) {
+      unsupported(op) << " (wait_order child inventory)";
+      return failure();
+    }
+
+    SmallVector<Value> events;
+    events.reserve(eventCount);
+    for (Operation *eventNode : ArrayRef(children).take_front(eventCount)) {
+      FailureOr<Value> event = lowerExpression(eventNode);
+      if (failed(event))
+        return failure();
+      if (!isa<sim::EventType>((*event).getType())) {
+        emitError(getSemanticLocation(eventNode))
+            << "wait_order operand is not an event handle";
+        return failure();
+      }
+      events.push_back(*event);
+    }
+
+    Block *resumed = addBlock();
+    Block *successBlock = addBlock();
+    Block *failureBlock = addBlock();
+    Block *done = addBlock();
+    sim::SimSuspendEventOrderOp::create(
+        builder, location, events,
+        builder.getI32IntegerAttr(static_cast<int32_t>(eventCount)),
+        sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, resumed);
+
+    setCurrent(resumed);
+    Value failedWait =
+        sim::SimWaitOrderFailedOp::create(builder, location).getResult();
+    cf::CondBranchOp::create(builder, location, failedWait, failureBlock,
+                             ValueRange{}, successBlock, ValueRange{});
+
+    size_t nextAction = static_cast<size_t>(eventCount);
+    setCurrent(successBlock);
+    if (waitOrder.getHasSuccessAction() &&
+        failed(lowerStatement(children[nextAction++])))
+      return failure();
+    emitBranch(done);
+
+    setCurrent(failureBlock);
+    if (waitOrder.getHasFailureAction()) {
+      if (failed(lowerStatement(children[nextAction++])))
+        return failure();
+    } else {
+      // IEEE 1800-2017 15.5.4 requires a run-time error only when the source
+      // omitted the fail statement. Scheduling otherwise continues.
+      sim::SimErrorOp::create(builder, location,
+                              function.getBody().front().getArgument(0));
+    }
+    emitBranch(done);
+    setCurrent(done);
+    return success();
   }
   if (isa<semantic::SVWaitForkStatementOp>(op)) {
     Block *continuation = addBlock();
@@ -2817,8 +2869,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     // Preponed plane once per time slot. Lower its observer evaluator with the
     // same sampled reads as a clocked assertion predicate; its private event
     // dependency controls when that evaluator is invoked.
-    sampleAssertionValues =
-        roots.front()->hasAttr(sampledObserverAttrName);
+    sampleAssertionValues = roots.front()->hasAttr(sampledObserverAttrName);
     FailureOr<Value> result = lowerExpression(roots.front());
     if (failed(result))
       return failure();
@@ -2969,11 +3020,11 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       if (isa<sim::SimSuspendDelayOp, sim::SimSuspendChangeOp,
               sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
               sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
-              sim::SimSuspendEventOp, sim::SimSuspendMailboxOp,
-              sim::SimSuspendSemaphoreOp, sim::SimSuspendForeverOp,
-              sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
-              sim::SimSuspendChildrenOp, sim::SimSuspendObserveOp,
-              sim::SimTaskCallOp>(terminator)) {
+              sim::SimSuspendEventOp, sim::SimSuspendEventOrderOp,
+              sim::SimSuspendMailboxOp, sim::SimSuspendSemaphoreOp,
+              sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp,
+              sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp,
+              sim::SimSuspendObserveOp, sim::SimTaskCallOp>(terminator)) {
         suspends = true;
         break;
       }

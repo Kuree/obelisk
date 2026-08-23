@@ -426,6 +426,11 @@ SmallVector<ComputeEffect> collectDirectEffects(const FunctionInfo &info,
           appendEffect(info, sim::ComputeEffectKind::Watch, op.getEvent(),
                        effects, sim::ComputeTriggerKind::Event);
         })
+        .Case<sim::SimSuspendEventOrderOp>([&](auto op) {
+          for (Value event : op.getEvents())
+            appendEffect(info, sim::ComputeEffectKind::Watch, event, effects,
+                         sim::ComputeTriggerKind::Event);
+        })
         .Case<sim::SimEventTriggerOp>([&](auto op) {
           appendEffect(info, sim::ComputeEffectKind::Trigger, op.getEvent(),
                        effects, sim::ComputeTriggerKind::None,

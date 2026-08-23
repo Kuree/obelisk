@@ -362,6 +362,7 @@ struct ScheduledProcess {
   uint64_t waitOffset = 0;
   uint64_t waitSize = 0;
   std::vector<uint64_t> waitGenerations;
+  uint32_t waitOrderIndex = 0;
   std::vector<std::unique_ptr<SignalSubscription>> signalSubscriptions;
   std::unique_ptr<SignalWaitLatch> signalLatch;
   std::vector<std::pair<uint32_t, uint32_t>> continuationRanks;
@@ -384,6 +385,8 @@ struct ScheduledProcess {
   bool urgent = false;
   bool prioritySignal = false;
   bool signalTriggered = false;
+  bool waitOrderReady = false;
+  bool waitOrderFailed = false;
   bool initialProcess = false;
   bool startupProcess = false;
   bool explicitlySuspended = false;
@@ -587,6 +590,7 @@ struct ScheduledDesignTask {
   uint64_t waitOffset = 0;
   uint64_t waitSize = 0;
   std::vector<uint64_t> waitGenerations;
+  uint32_t waitOrderIndex = 0;
   std::vector<std::unique_ptr<SignalSubscription>> signalSubscriptions;
   std::unique_ptr<SignalWaitLatch> signalLatch;
   uint32_t suspendKind = OBELISK_RT_SUSPEND_NONE;
@@ -601,6 +605,8 @@ struct ScheduledDesignTask {
   bool urgent = false;
   bool terminated = false;
   bool signalTriggered = false;
+  bool waitOrderReady = false;
+  bool waitOrderFailed = false;
   bool startupProcess = false;
   bool prioritySignal = false;
   bool explicitlySuspended = false;
@@ -963,6 +969,7 @@ struct obelisk_rt_context {
   uint64_t nextWaitSequence = 1;
   uint64_t activeDesignTaskID = 0;
   uint32_t activeDesignTaskPhase = 0;
+  bool activeWaitOrderFailed = false;
   uint32_t activeHomeRegion = UINT32_MAX;
   uint32_t activeExecRegion = UINT32_MAX;
   uint64_t activeLogicalProcessToken = 0;
@@ -1598,6 +1605,11 @@ void obelisk_rt_unregister_signal_wait_unlocked(
     uint64_t waiterToken = 0, bool designWaiter = false);
 bool obelisk_rt_notify_observer_event_unlocked(obelisk_rt_context *context,
                                                uint64_t stableID);
+bool obelisk_rt_initialize_event_order_wait_unlocked(
+    obelisk_rt_context *context, const obelisk_rt_wait_record_v1 *wait,
+    uint32_t &index, bool &ready, bool &failed);
+bool obelisk_rt_notify_event_order_waiters_unlocked(
+    obelisk_rt_context *context, uint64_t stableID);
 bool obelisk_rt_notify_observer_signal_unlocked(obelisk_rt_context *context,
                                                 uint64_t stableID,
                                                 uint64_t width);

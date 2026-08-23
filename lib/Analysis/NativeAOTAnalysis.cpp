@@ -145,11 +145,12 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       return;
     if (!xors.empty()) {
       arith::XOrIOp xorOp = xors.front();
-      Value other = xorOp.getLhs() == load.getResult() ? xorOp.getRhs()
+      Value other = xorOp.getLhs() == load.getResult()   ? xorOp.getRhs()
                     : xorOp.getRhs() == load.getResult() ? xorOp.getLhs()
                                                          : Value{};
       auto one = other ? other.getDefiningOp<arith::ConstantOp>() : nullptr;
-      auto integer = one ? dyn_cast<IntegerAttr>(one.getValue()) : IntegerAttr{};
+      auto integer =
+          one ? dyn_cast<IntegerAttr>(one.getValue()) : IntegerAttr{};
       if (!integer || integer.getValue().getBitWidth() != 1 ||
           !integer.getValue().isOne())
         return;
@@ -157,9 +158,9 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     Block *wait = delay->getBlock();
     Block *body = delay.getContinuation();
     auto back = dyn_cast<cf::BranchOp>(body->getTerminator());
-    result.periodicClockCandidate =
-        back && back.getDest() == wait && wait->getNumSuccessors() == 1 &&
-        wait->getSuccessor(0) == body;
+    result.periodicClockCandidate = back && back.getDest() == wait &&
+                                    wait->getNumSuccessors() == 1 &&
+                                    wait->getSuccessor(0) == body;
   });
 
   sim::SimDesignOp design;
@@ -366,8 +367,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
           fixed &= effect.getTarget() == sim::ComputeTargetKind::Descriptor &&
                    !effect.getDynamic() && !effect.getDeferred() &&
                    effect.getWidth() != 0 &&
-                   (effect.getResource() ==
-                        sim::ComputeResourceKind::Storage ||
+                   (effect.getResource() == sim::ComputeResourceKind::Storage ||
                     effect.getResource() == sim::ComputeResourceKind::Net) &&
                    effect.getTrigger() != sim::ComputeTriggerKind::None &&
                    effect.getTrigger() != sim::ComputeTriggerKind::Event;
@@ -377,7 +377,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         requireBytecodeFragment(operation, "computed or conditional wait");
         excludeBytecodeActor(operation);
       }
-    } else if (isa<sim::SimSuspendEventOp>(operation)) {
+    } else if (isa<sim::SimSuspendEventOp, sim::SimSuspendEventOrderOp>(
+                   operation)) {
       requireBytecodeFragment(operation, "event wait requires dynamic state");
       excludeBytecodeActor(operation);
     } else if (isa<sim::SimSuspendMailboxOp, sim::SimSuspendSemaphoreOp>(
@@ -461,11 +462,10 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       continue;
     uint64_t weight = std::max<uint64_t>(fragment.getCost(), 1);
     result.totalGraphCost += weight;
-    sim::SimFuncOp function =
-        lookupFunction(fragment.getFunction().getValue());
-    Block *block =
-        function ? lookupComputeGraphBlock(function, fragment.getBlock())
-                 : nullptr;
+    sim::SimFuncOp function = lookupFunction(fragment.getFunction().getValue());
+    Block *block = function
+                       ? lookupComputeGraphBlock(function, fragment.getBlock())
+                       : nullptr;
     if (!function || !block ||
         !result.actorSlots.contains(function.getOperation()))
       continue;

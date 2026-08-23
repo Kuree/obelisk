@@ -1069,16 +1069,14 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           (!obelisk_rt_stable_handle_decode(instruction.immediate, &decoded) ||
            decoded.kind == OBELISK_RT_STABLE_HANDLE_AUTOMATIC ||
            decoded.offset < 0 ||
-           width >
-               uint64_t{INT64_MAX} - static_cast<uint64_t>(decoded.offset)))
+           width > uint64_t{INT64_MAX} - static_cast<uint64_t>(decoded.offset)))
         return OBELISK_RT_INVALID_HANDLE;
-      int64_t begin =
-          preponedEvent ? static_cast<int64_t>(instruction.immediate)
-                        : decoded.offset;
+      int64_t begin = preponedEvent
+                          ? static_cast<int64_t>(instruction.immediate)
+                          : decoded.offset;
       int64_t end = begin + static_cast<int64_t>(width);
       uint64_t base = static_cast<uint64_t>(begin);
-      if (!preponedEvent &&
-          decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC) {
+      if (!preponedEvent && decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC) {
         if (!context || kind > OBELISK_RT_DESCRIPTOR_DRIVER)
           return OBELISK_RT_INVALID_HANDLE;
         std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -3367,8 +3365,8 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
       auto nativeUnwind = [&](const ScheduledProcess &process)
           -> std::optional<UnwindBoundary> {
         std::optional<size_t> control = targetedControl(process.controls);
-        if (!control || process.callerControlDepths.size() !=
-                            process.callers.size())
+        if (!control ||
+            process.callerControlDepths.size() != process.callers.size())
           return std::nullopt;
         for (size_t index = 0; index != process.callerControlDepths.size();
              ++index)
@@ -3538,8 +3536,8 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
           process.callerControlDepths.resize(unwind->caller);
           obelisk_rt_unregister_signal_wait_unlocked(
               context, process.signalSubscriptions, process.token, false);
-          for (size_t index = unwind->control;
-               index != process.controls.size(); ++index)
+          for (size_t index = unwind->control; index != process.controls.size();
+               ++index)
             obelisk_rt_release_control_unlocked(context,
                                                 process.controls[index]);
           process.controls.resize(unwind->control);
@@ -3582,12 +3580,12 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
         if (std::optional<UnwindBoundary> unwind = designUnwind(task)) {
           designTasks.push_back({task.id, task.function, task.scratchOffset,
                                  false, std::move(task.frame)});
-          for (size_t index = task.callers.size();
-               index != unwind->caller + 1; --index) {
+          for (size_t index = task.callers.size(); index != unwind->caller + 1;
+               --index) {
             DesignActivation &activation = task.callers[index - 1];
-            designTasks.push_back(
-                {task.id, activation.function, activation.scratchOffset, false,
-                 std::move(activation.frame)});
+            designTasks.push_back({task.id, activation.function,
+                                   activation.scratchOffset, false,
+                                   std::move(activation.frame)});
           }
           DesignActivation caller = std::move(task.callers[unwind->caller]);
           task.callers.resize(unwind->caller);
@@ -3599,10 +3597,9 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
           task.scheduleRank = caller.scheduleRank;
           obelisk_rt_unregister_signal_wait_unlocked(
               context, task.signalSubscriptions, task.id, true);
-          for (size_t index = unwind->control;
-               index != task.controls.size(); ++index)
-            obelisk_rt_release_control_unlocked(context,
-                                                task.controls[index]);
+          for (size_t index = unwind->control; index != task.controls.size();
+               ++index)
+            obelisk_rt_release_control_unlocked(context, task.controls[index]);
           task.controls.resize(unwind->control);
           task.suspendKind = OBELISK_RT_SUSPEND_NONE;
           task.waitOffset = 0;
@@ -3735,6 +3732,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       context->activeExecRegion = UINT32_MAX;
       context->activeLogicalProcessToken = 0;
       context->activeLogicalProcessParent = 0;
+      context->activeWaitOrderFailed = false;
       context->designTaskExecuting = false;
     } catch (...) {
     }
@@ -3779,6 +3777,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         bool awaited = false;
         bool childrenDone = false;
         bool eventTriggered = false;
+        bool eventOrderReady = iterator->waitOrderReady;
         bool mailboxReady = false;
         bool semaphoreReady = false;
         bool signalTriggered =
@@ -3793,6 +3792,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
           ++context->signalDiagnostics.readinessCalls;
         if (iterator->started &&
             (iterator->suspendKind == OBELISK_RT_SUSPEND_EVENT ||
+             iterator->suspendKind == OBELISK_RT_SUSPEND_EVENT_ORDER ||
              iterator->suspendKind == OBELISK_RT_SUSPEND_MAILBOX ||
              iterator->suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE ||
              iterator->suspendKind == OBELISK_RT_SUSPEND_AWAIT ||
@@ -3817,6 +3817,8 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
                 eventTriggered |=
                     generation != iterator->waitGenerations[index];
               }
+          } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_EVENT_ORDER) {
+            eventOrderReady = iterator->waitOrderReady;
           } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_MAILBOX) {
             if (wait->count == 1) {
               obelisk_rt_status status = obelisk_rt_mailbox_wait_ready(
@@ -3866,14 +3868,16 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         }
         bool runnable =
             !iterator->terminated && !iterator->explicitlySuspended &&
-            (!iterator->started || awaited || eventTriggered || mailboxReady ||
-             semaphoreReady || signalTriggered || childrenDone ||
+            (!iterator->started || awaited || eventTriggered ||
+             eventOrderReady || mailboxReady || semaphoreReady ||
+             signalTriggered || childrenDone ||
              iterator->suspendKind == OBELISK_RT_SUSPEND_NONE ||
              (iterator->suspendKind == OBELISK_RT_SUSPEND_DELAY
                   ? iterator->wakeTime <= context->schedulerTime
                   : (iterator->suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_EDGE &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_EVENT &&
+                     iterator->suspendKind != OBELISK_RT_SUSPEND_EVENT_ORDER &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_MAILBOX &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_SEMAPHORE &&
                      iterator->suspendKind != OBELISK_RT_SUSPEND_AWAIT &&
@@ -3968,6 +3972,9 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       context->activeExecRegion = task.queuedRegion;
       context->activeLogicalProcessToken = task.id;
       context->activeLogicalProcessParent = task.parent;
+      context->activeWaitOrderFailed =
+          resuming && task.suspendKind == OBELISK_RT_SUSPEND_EVENT_ORDER &&
+          task.waitOrderReady && task.waitOrderFailed;
       if (resuming)
         obelisk_rt_flush_deferred_immediate_reports_unlocked(context, task.id);
       context->activeControls = std::move(task.controls);
@@ -4037,6 +4044,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       context->activeExecRegion = UINT32_MAX;
       context->activeLogicalProcessToken = 0;
       context->activeLogicalProcessParent = 0;
+      context->activeWaitOrderFailed = false;
       context->designTaskExecuting = false;
       task.started = true;
       task.continuation = action.continuation;
@@ -4133,6 +4141,8 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         bool mailboxWait = action.suspend_kind == OBELISK_RT_SUSPEND_MAILBOX;
         bool semaphoreWait =
             action.suspend_kind == OBELISK_RT_SUSPEND_SEMAPHORE;
+        bool eventOrderWait =
+            action.suspend_kind == OBELISK_RT_SUSPEND_EVENT_ORDER;
         bool validFlags =
             mailboxWait
                 ? wait->flags <= OBELISK_RT_WAIT_MAILBOX_NOT_FULL
@@ -4155,6 +4165,8 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
              behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF && wait->count != 2) ||
             (action.suspend_kind == OBELISK_RT_SUSPEND_FOREVER &&
              wait->count != 0) ||
+            (eventOrderWait && (wait->count == 0 || wait->payload != 0 ||
+                                wait->auxiliary != 0)) ||
             (mailboxWait && wait->count != 1) ||
             (semaphoreWait && (wait->flags != 0 || wait->count != 1 ||
                                wait->payload > UINT32_MAX ||
@@ -4202,6 +4214,9 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
           task.waitSequence = 0;
         }
         task.waitGenerations.clear();
+        task.waitOrderIndex = 0;
+        task.waitOrderReady = false;
+        task.waitOrderFailed = false;
         task.signalTriggered = false;
         task.startupProcess = false;
         task.urgent = false;
@@ -4218,6 +4233,13 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
             task.waitGenerations.push_back(
                 event == context->events.end() ? 0 : event->second.generation);
           }
+        }
+        if (action.suspend_kind == OBELISK_RT_SUSPEND_EVENT_ORDER &&
+            !obelisk_rt_initialize_event_order_wait_unlocked(
+                context, wait, task.waitOrderIndex, task.waitOrderReady,
+                task.waitOrderFailed)) {
+          finalizeStatus = OBELISK_RT_INVALID_FRAME;
+          break;
         }
         if (action.suspend_kind == OBELISK_RT_SUSPEND_DELAY)
           task.wakeTime = wait->payload > UINT64_MAX - context->schedulerTime
@@ -4362,6 +4384,7 @@ obelisk_rt_status obelisk_rt_prime_design_task(obelisk_rt_context *context,
     uint32_t phase = context->activeDesignTaskPhase;
     uint32_t home = context->activeHomeRegion;
     uint32_t region = context->activeExecRegion;
+    bool waitOrderFailed = context->activeWaitOrderFailed;
     bool designExecuting = context->designTaskExecuting;
     obelisk_rt_random_state_v1 *random = context->activeRandom;
     bool designFilter = context->nativeScheduleDesignTaskFilterActive;
@@ -4377,6 +4400,7 @@ obelisk_rt_status obelisk_rt_prime_design_task(obelisk_rt_context *context,
       context->activeDesignTaskPhase = phase;
       context->activeHomeRegion = home;
       context->activeExecRegion = region;
+      context->activeWaitOrderFailed = waitOrderFailed;
       context->designTaskExecuting = designExecuting;
       context->activeRandom = random;
       context->nativeScheduleDesignTaskFilterActive = designFilter;
@@ -4396,6 +4420,7 @@ obelisk_rt_status obelisk_rt_prime_design_task(obelisk_rt_context *context,
     context->activeDesignTaskPhase = 0;
     context->activeHomeRegion = UINT32_MAX;
     context->activeExecRegion = UINT32_MAX;
+    context->activeWaitOrderFailed = false;
     context->designTaskExecuting = false;
     context->activeRandom = nullptr;
     context->nativeScheduleDesignTaskFilterActive = true;

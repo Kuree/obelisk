@@ -83,6 +83,10 @@ LogicalResult serializeRuntimeWait(Operation *operation, Value wait,
         watched.push_back(op.getEvent());
         watchedEdges.push_back(noEdge);
       })
+      .Case<sim::SimSuspendEventOrderOp>([&](auto op) {
+        llvm::append_range(watched, op.getEvents());
+        watchedEdges.append(op.getEvents().size(), noEdge);
+      })
       .Case<sim::SimSuspendMailboxOp>([&](auto op) {
         watched.push_back(op.getMailbox());
         watchedEdges.push_back(noEdge);

@@ -76,11 +76,10 @@ void wakeMonitorProcessUnlocked(obelisk_rt_context *context,
 }
 
 template <typename Matches>
-static bool publishSignalOccurrenceUnlocked(obelisk_rt_context *context,
-                                            uint64_t stableID,
-                                            uint64_t bitWidth,
-                                            Matches &&matches,
-                                            uint64_t *outSequence = nullptr) {
+static bool
+publishSignalOccurrenceUnlocked(obelisk_rt_context *context, uint64_t stableID,
+                                uint64_t bitWidth, Matches &&matches,
+                                uint64_t *outSequence = nullptr) {
   if (context->nextSchedulerSequence == 0) {
     context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
     return false;
@@ -231,11 +230,11 @@ static bool publishSignalOccurrenceUnlocked(obelisk_rt_context *context,
 }
 
 static bool signalTransitionBatchMatches(const SignalSubscription &subscription,
-                                  uint64_t stableID, uint64_t bitWidth,
-                                  const uint8_t *changed,
-                                  const uint8_t *posedge,
-                                  const uint8_t *negedge,
-                                  uint64_t edgeBitOffset) {
+                                         uint64_t stableID, uint64_t bitWidth,
+                                         const uint8_t *changed,
+                                         const uint8_t *posedge,
+                                         const uint8_t *negedge,
+                                         uint64_t edgeBitOffset) {
   int64_t publishedOffset = 0;
   int64_t subscribedOffset = 0;
   if ((stableID & OBELISK_RT_STABLE_HANDLE_TAG_MASK) ==
@@ -281,8 +280,9 @@ static bool signalTransitionBatchMatches(const SignalSubscription &subscription,
 }
 
 static bool staticAOTFanoutRangeHasConsumer(const obelisk_rt_context *context,
-                                     uint32_t staticID, uint64_t staticOffset,
-                                     uint64_t bitWidth) {
+                                            uint32_t staticID,
+                                            uint64_t staticOffset,
+                                            uint64_t bitWidth) {
   if (context->nativeScheduleFanoutEntryCount == 0)
     return false;
   const obelisk_rt_static_fanout_entry *begin =
@@ -300,11 +300,10 @@ static bool staticAOTFanoutRangeHasConsumer(const obelisk_rt_context *context,
       last = begin + lastIndex;
     }
   } else {
-    first = std::lower_bound(
-        begin, end, staticID,
-        [](const obelisk_rt_static_fanout_entry &entry, uint32_t id) {
-          return entry.static_state < id;
-        });
+    first =
+        std::lower_bound(begin, end, staticID,
+                         [](const obelisk_rt_static_fanout_entry &entry,
+                            uint32_t id) { return entry.static_state < id; });
     last = first;
     while (last != end && last->static_state == staticID)
       ++last;
@@ -346,8 +345,7 @@ static bool publishStaticAOTSignalTransitionUnlockedImpl(
   // does not add work to the generated periodic loop.
   bool metadataOnlyClockCoordinator = false;
   if constexpr (UseClockIngress) {
-    const obelisk_rt_native_schedule_plan *plan =
-        context->nativeSchedulePlan;
+    const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
     metadataOnlyClockCoordinator =
         plan->merged_fragment_count != 0 &&
         std::none_of(plan->merged_fragments,
@@ -372,11 +370,10 @@ static bool publishStaticAOTSignalTransitionUnlockedImpl(
       last = begin + lastIndex;
     }
   } else {
-    first = std::lower_bound(
-        begin, end, staticID,
-        [](const obelisk_rt_static_fanout_entry &entry, uint32_t id) {
-          return entry.static_state < id;
-        });
+    first =
+        std::lower_bound(begin, end, staticID,
+                         [](const obelisk_rt_static_fanout_entry &entry,
+                            uint32_t id) { return entry.static_state < id; });
     last = first;
     while (last != end && last->static_state == staticID)
       ++last;
@@ -397,9 +394,8 @@ static bool publishStaticAOTSignalTransitionUnlockedImpl(
       return true;
     }
     ScheduledProcess &scheduled = context->scheduledProcesses[index];
-    bool activeSelf =
-        context->activeLogicalProcessToken ==
-        (kNativeLogicalProcessTag | scheduled.token);
+    bool activeSelf = context->activeLogicalProcessToken ==
+                      (kNativeLogicalProcessTag | scheduled.token);
     if ((actor->continuation != entry->continuation && !activeSelf) ||
         scheduled.instance != actor || !scheduled.started ||
         (scheduled.signalTriggered && !activeSelf) ||
@@ -441,11 +437,9 @@ static bool publishStaticAOTSignalTransitionUnlockedImpl(
     if constexpr (UseClockIngress) {
       if (entry->reserved == OBELISK_RT_FANOUT_DIRECT ||
           metadataOnlyClockCoordinator) {
-        if (entry->kernel >=
-                context->nativeSchedulePlan->clock_kernel_count ||
+        if (entry->kernel >= context->nativeSchedulePlan->clock_kernel_count ||
             entry->merged_bit / 64 >=
-                context->nativeSchedulePlan
-                    ->clock_kernels[entry->kernel]
+                context->nativeSchedulePlan->clock_kernels[entry->kernel]
                     .ingress_word_count) {
           context->schedulerStatus = OBELISK_RT_INVALID_CONTINUATION;
           return true;
@@ -468,8 +462,7 @@ static bool publishStaticAOTSignalTransitionUnlockedImpl(
       context->schedulerStatus = OBELISK_RT_INVALID_CONTINUATION;
       return true;
     }
-    context->nativeScheduleReadyNodes[node / 64] |=
-        uint64_t{1} << (node % 64);
+    context->nativeScheduleReadyNodes[node / 64] |= uint64_t{1} << (node % 64);
     context->nativeScheduleMinimumActivatedNode =
         std::min(context->nativeScheduleMinimumActivatedNode, node);
   }
@@ -480,16 +473,14 @@ bool publishStaticAOTSignalTransitionUnlocked(
     obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
     uint64_t *outSequence, bool indexedExternalDeposit) {
-  bool useClockIngress =
-      context && context->nativeSchedulePlan &&
-      context->nativeSchedulePlan->clock_kernel_count != 0;
-  return useClockIngress
-             ? publishStaticAOTSignalTransitionUnlockedImpl<true>(
-                   context, stableID, bitWidth, changed, posedge, negedge,
-                   outSequence, indexedExternalDeposit)
-             : publishStaticAOTSignalTransitionUnlockedImpl<false>(
-                   context, stableID, bitWidth, changed, posedge, negedge,
-                   outSequence, indexedExternalDeposit);
+  bool useClockIngress = context && context->nativeSchedulePlan &&
+                         context->nativeSchedulePlan->clock_kernel_count != 0;
+  return useClockIngress ? publishStaticAOTSignalTransitionUnlockedImpl<true>(
+                               context, stableID, bitWidth, changed, posedge,
+                               negedge, outSequence, indexedExternalDeposit)
+                         : publishStaticAOTSignalTransitionUnlockedImpl<false>(
+                               context, stableID, bitWidth, changed, posedge,
+                               negedge, outSequence, indexedExternalDeposit);
 }
 
 static bool publishSignalTransitionBatchImpl(
@@ -512,7 +503,6 @@ static bool publishSignalTransitionBatchImpl(
       },
       outSequence);
 }
-
 
 bool obelisk_rt_publish_signal_transition_batch_unlocked(
     obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
@@ -696,9 +686,8 @@ bool publishNativeSignalTransitionUnlocked(
     uint64_t &valueLimb = context->stateValue[absolute / 64];
     uint64_t &unknownLimb = context->stateUnknown[absolute / 64];
     valueLimb = byteBit(newValue, bit) ? valueLimb | mask : valueLimb & ~mask;
-    unknownLimb = newUnknown && byteBit(newUnknown, bit)
-                      ? unknownLimb | mask
-                      : unknownLimb & ~mask;
+    unknownLimb = newUnknown && byteBit(newUnknown, bit) ? unknownLimb | mask
+                                                         : unknownLimb & ~mask;
   }
   obelisk_rt_invalidate_signal_snapshots_unlocked(context, bitOffset, bitWidth);
   if (obelisk_rt_has_conditional_signal_waiters(context)) {
@@ -918,12 +907,10 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
       return;
     }
   }
-  uint8_t posedgeKinds =
-      (uint8_t{1} << OBELISK_RT_WAIT_EDGE_POSEDGE) |
-      (uint8_t{1} << OBELISK_RT_WAIT_EDGE_BOTH);
-  uint8_t negedgeKinds =
-      (uint8_t{1} << OBELISK_RT_WAIT_EDGE_NEGEDGE) |
-      (uint8_t{1} << OBELISK_RT_WAIT_EDGE_BOTH);
+  uint8_t posedgeKinds = (uint8_t{1} << OBELISK_RT_WAIT_EDGE_POSEDGE) |
+                         (uint8_t{1} << OBELISK_RT_WAIT_EDGE_BOTH);
+  uint8_t negedgeKinds = (uint8_t{1} << OBELISK_RT_WAIT_EDGE_NEGEDGE) |
+                         (uint8_t{1} << OBELISK_RT_WAIT_EDGE_BOTH);
   uint64_t posedge = 0;
   uint64_t negedge = 0;
   if ((edgeKinds & (posedgeKinds | negedgeKinds)) != 0) {
@@ -932,11 +919,9 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
     uint64_t newZero = ~newUnknown & ~newValue & widthMask;
     uint64_t newOne = ~newUnknown & newValue & widthMask;
     if ((edgeKinds & posedgeKinds) != 0)
-      posedge =
-          ((oldZero & ~newZero) | (oldUnknown & newOne)) & widthMask;
+      posedge = ((oldZero & ~newZero) | (oldUnknown & newOne)) & widthMask;
     if ((edgeKinds & negedgeKinds) != 0)
-      negedge =
-          ((oldOne & ~newOne) | (oldUnknown & newZero)) & widthMask;
+      negedge = ((oldOne & ~newOne) | (oldUnknown & newZero)) & widthMask;
   }
   uint64_t observedEdges = 0;
   if ((edgeKinds & (uint8_t{1} << OBELISK_RT_WAIT_EDGE_CHANGE)) != 0)
@@ -966,11 +951,10 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
       last = begin + lastIndex;
     }
   } else {
-    first = std::lower_bound(
-        begin, end, staticState,
-        [](const obelisk_rt_static_fanout_entry &entry, uint32_t id) {
-          return entry.static_state < id;
-        });
+    first =
+        std::lower_bound(begin, end, staticState,
+                         [](const obelisk_rt_static_fanout_entry &entry,
+                            uint32_t id) { return entry.static_state < id; });
     last = first;
     while (last != end && last->static_state == staticState)
       ++last;
@@ -1019,9 +1003,8 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
       return;
     }
     ScheduledProcess &scheduled = context->scheduledProcesses[index];
-    bool activeSelf =
-        context->activeLogicalProcessToken ==
-        (kNativeLogicalProcessTag | scheduled.token);
+    bool activeSelf = context->activeLogicalProcessToken ==
+                      (kNativeLogicalProcessTag | scheduled.token);
     if ((actor->continuation != entry->continuation && !activeSelf) ||
         scheduled.instance != actor || !scheduled.started ||
         (scheduled.signalTriggered && !activeSelf) ||
@@ -1053,9 +1036,10 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
     context->schedulerEpoch = 1;
 }
 
-extern "C" void obelisk_rt_v1_scheduler_activate_static_nodes(
-    obelisk_rt_context *context, const uint64_t *nodeWords,
-    uint32_t wordCount) {
+extern "C" void
+obelisk_rt_v1_scheduler_activate_static_nodes(obelisk_rt_context *context,
+                                              const uint64_t *nodeWords,
+                                              uint32_t wordCount) {
   if (!context || !nodeWords)
     return;
   if (!context->nativeSchedulePlan ||
@@ -1106,9 +1090,8 @@ extern "C" void obelisk_rt_v1_scheduler_activate_static_nodes(
         return;
       }
       ScheduledProcess &scheduled = context->scheduledProcesses[index];
-      bool activeSelf =
-          context->activeLogicalProcessToken ==
-          (kNativeLogicalProcessTag | scheduled.token);
+      bool activeSelf = context->activeLogicalProcessToken ==
+                        (kNativeLogicalProcessTag | scheduled.token);
       if ((actor->continuation != entry.continuation && !activeSelf) ||
           scheduled.instance != actor || !scheduled.started ||
           (scheduled.signalTriggered && !activeSelf) ||
@@ -1187,8 +1170,9 @@ extern "C" void obelisk_rt_v1_scheduler_event(obelisk_rt_context *context,
   obelisk_rt_v1_scheduler_event_after(context, stableID, nonblocking, 0);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_event_create(
-    obelisk_rt_context *context, uint64_t *outStableID) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_event_create(obelisk_rt_context *context,
+                                     uint64_t *outStableID) {
   if (!context || !outStableID)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outStableID = UINT64_MAX;
@@ -1270,6 +1254,8 @@ extern "C" void obelisk_rt_v1_scheduler_event_after(obelisk_rt_context *context,
     if (++event.generation == 0)
       event.generation = 1;
     event.lastTriggeredTime = context->schedulerTime;
+    if (!obelisk_rt_notify_event_order_waiters_unlocked(context, stableID))
+      return;
     if (!obelisk_rt_notify_observer_event_unlocked(context, stableID))
       return;
     if (++context->schedulerEpoch == 0)
@@ -1293,6 +1279,19 @@ obelisk_rt_v1_scheduler_event_triggered(obelisk_rt_context *context,
     auto found = context->events.find(stableID);
     return found != context->events.end() && found->second.generation != 0 &&
            found->second.lastTriggeredTime == context->schedulerTime;
+  } catch (...) {
+    return 0;
+  }
+}
+
+extern "C" uint32_t
+obelisk_rt_v1_scheduler_wait_order_failed(obelisk_rt_context *context) {
+  if (!context)
+    return 0;
+  try {
+    ContextMutexLock lock(context);
+    return context->activeLogicalProcessToken != 0 &&
+           context->activeWaitOrderFailed;
   } catch (...) {
     return 0;
   }

@@ -39,6 +39,8 @@ uint32_t suspensionKind(Operation *operation) {
             sim::SimSuspendAnyOp>([](auto) { return OBELISK_RT_SUSPEND_EDGE; })
       .Case<sim::SimSuspendEventOp>(
           [](auto) { return OBELISK_RT_SUSPEND_EVENT; })
+      .Case<sim::SimSuspendEventOrderOp>(
+          [](auto) { return OBELISK_RT_SUSPEND_EVENT_ORDER; })
       .Case<sim::SimSuspendMailboxOp>(
           [](auto) { return OBELISK_RT_SUSPEND_MAILBOX; })
       .Case<sim::SimSuspendSemaphoreOp>(

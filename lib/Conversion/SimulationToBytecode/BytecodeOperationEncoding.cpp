@@ -317,6 +317,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   if (auto op = dyn_cast<sim::SimEventTriggeredOp>(operation))
     return emitIntrinsic(plan, kIntrinsicEventTriggered, {op.getEvent()},
                          {op.getResult()});
+  if (auto op = dyn_cast<sim::SimWaitOrderFailedOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicWaitOrderFailed, {}, {op.getResult()});
   if (auto op = dyn_cast<sim::SimEventEqualOp>(operation)) {
     emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getResult()),
           reg(plan, op.getLhs()), reg(plan, op.getRhs())});
@@ -762,10 +764,9 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   if (isa<sim::SimDumpFlushOp>(operation))
     return emitIntrinsic(plan, kIntrinsicDumpFlush, {}, {});
   if (auto op = dyn_cast<sim::SimDumpPortsOp>(operation))
-    return emitIntrinsic(plan, kIntrinsicDumpPorts,
-                         {op.getPath(), op.getScope(),
-                          op.getTimescaleExponent()},
-                         {});
+    return emitIntrinsic(
+        plan, kIntrinsicDumpPorts,
+        {op.getPath(), op.getScope(), op.getTimescaleExponent()}, {});
   if (auto op = dyn_cast<sim::SimDumpPortsControlOp>(operation))
     return emitIntrinsic(plan, kIntrinsicDumpPortsControl,
                          {op.getPath(), op.getValue()}, {},
