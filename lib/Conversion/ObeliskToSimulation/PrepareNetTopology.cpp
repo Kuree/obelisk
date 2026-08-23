@@ -305,6 +305,30 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     return true;
   };
 
+  std::function<bool(Operation *)> referencesUWireNet;
+  referencesUWireNet = [&](Operation *expression) {
+    if (!expression)
+      return false;
+    if (isa<semantic::SVNamedValueExpressionOp,
+            semantic::SVHierarchicalValueExpressionOp>(expression)) {
+      auto path = expression->getAttrOfType<StringAttr>("referenced_path");
+      auto descriptor = path ? descriptors.find(path.getValue())
+                             : descriptors.end();
+      return descriptor != descriptors.end() &&
+             descriptor->second.kind == DescriptorInfo::Kind::Net &&
+             descriptor->second.netKind == sim::NetResolutionKind::UWire;
+    }
+    SmallVector<Operation *> children = getChildren(expression);
+    if (isa<semantic::SVAssignmentExpressionOp,
+            semantic::SVMemberAccessExpressionOp,
+            semantic::SVElementSelectExpressionOp,
+            semantic::SVRangeSelectExpressionOp>(expression))
+      return !children.empty() && referencesUWireNet(children.front());
+    if (isa<semantic::SVConcatenationExpressionOp>(expression))
+      return llvm::any_of(children, referencesUWireNet);
+    return false;
+  };
+
   bool invalid = false;
   using StaticEdgeKey = std::tuple<uint64_t, uint64_t, uint64_t, uint64_t>;
   struct StaticEdgeMetadata {
@@ -316,7 +340,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
   std::map<StaticEdgeKey, StaticEdgeMetadata> staticEdges;
   auto appendStaticConnections = [&](semantic::SVPortConnectionOp connection,
                                      ArrayRef<NetRun> lhs,
-                                     ArrayRef<NetRun> rhs) {
+                                     ArrayRef<NetRun> rhs)
+      -> std::optional<bool> {
     size_t lhsIndex = 0, rhsIndex = 0;
     uint64_t lhsConsumed = 0, rhsConsumed = 0;
     while (lhsIndex != lhs.size() && rhsIndex != rhs.size()) {
@@ -355,7 +380,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
           emitError(getSemanticLocation(connection))
               << "static net connection has conflicting dominating sides";
           invalid = true;
-          return;
+          return std::nullopt;
         }
         if (!inserted &&
             std::tie(metadata.scopeId, metadata.provenance) <
@@ -373,12 +398,15 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
         rhsConsumed = 0;
       }
     }
-    if ((lhsIndex != lhs.size() || rhsIndex != rhs.size()) &&
+    bool fullyMerged = lhsIndex == lhs.size() && rhsIndex == rhs.size();
+    if (!fullyMerged &&
         connection.getDirection() != semantic::SVArgumentDirection::InOut) {
       emitError(getSemanticLocation(connection))
           << "static net connection has incompatible endpoint widths";
       invalid = true;
+      return std::nullopt;
     }
+    return fullyMerged;
   };
 
   for (semantic::SVPortConnectionOp connection : portConnections) {
@@ -418,8 +446,18 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       }
     }
     bool actualNet = flattenNetExpr(actual, rhs);
+    bool hasUWireSide =
+        (internalDescriptor->second.kind == DescriptorInfo::Kind::Net &&
+         internalDescriptor->second.netKind ==
+             sim::NetResolutionKind::UWire) ||
+        referencesUWireNet(actual);
     if (internalNet && actualNet) {
-      appendStaticConnections(connection, lhs, rhs);
+      std::optional<bool> fullyMerged =
+          appendStaticConnections(connection, lhs, rhs);
+      if (fullyMerged && !*fullyMerged && hasUWireSide)
+        emitWarning(getSemanticLocation(connection))
+            << "uwire port connection was not fully merged into a single "
+               "simulated net";
       continue;
     }
     if (connection.getDirection() == semantic::SVArgumentDirection::InOut) {
@@ -429,6 +467,10 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       invalid = true;
       continue;
     }
+    if (hasUWireSide)
+      emitWarning(getSemanticLocation(connection))
+          << "uwire port connection was not fully merged into a single "
+             "simulated net";
     sourceUnits.push_back(connection);
   }
   if (invalid)

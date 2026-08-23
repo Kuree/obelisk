@@ -1,4 +1,5 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s --check-prefix=WARN
 
 // A net port coerced to inout collapses the overlapping low-order bits even
 // when the formal and actual widths differ. The conversion-wrapped empty
@@ -30,7 +31,7 @@ module {
           obelisk.sv.symbol.instance_body attributes {hierarchical_name = "inout_width_top.child", name = "inout_width_child", node_id = 13 : i64, sym_name = "s8.inout_width_child"} {
             obelisk.sv.symbol.port attributes {direction = 1 : i32, hierarchical_name = "inout_width_top.child.formal", name = "formal", node_id = 14 : i64, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s9.formal"} {
             }
-            obelisk.sv.symbol.net attributes {hierarchical_name = "inout_width_top.child.formal", is_implicit = false, name = "formal", net_kind = 1 : i32, node_id = 15 : i64, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s10.formal"} {
+            obelisk.sv.symbol.net attributes {hierarchical_name = "inout_width_top.child.formal", is_implicit = false, name = "formal", net_kind = 12 : i32, node_id = 15 : i64, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s10.formal"} {
             }
           }
         }
@@ -45,3 +46,7 @@ module {
 // CHECK: obelisk_sim.net.connect.decl 0 {{.*}} 0[0] to 1[0] width 1 reversed = false provenance "ordered"
 // CHECK-NOT: port_output
 // CHECK-NOT: obelisk.sv.
+
+// IEEE 1800-2017 23.3.3.6: only the overlapping bit is collapsed, so the
+// uwire port connection is not fully merged and requires a warning.
+// WARN: warning: uwire port connection was not fully merged into a single simulated net

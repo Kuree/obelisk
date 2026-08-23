@@ -1,5 +1,6 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=NOWARN --implicit-check-not="uwire port connection"
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"
@@ -52,3 +53,4 @@ module attributes {
 // CHECK-DAG: obelisk_sim.net.decl 0 {{.*}} hierarchy "mixed_uwire.value"
 // CHECK-DAG: obelisk_sim.net.decl 1 {{.*}} hierarchy "mixed_uwire.child.value" {{.*}}resolution_kind = 2 : i32
 // CHECK: obelisk_sim.net.connect.decl 0 {{.*}} 0[0] to 1[0] width 1 reversed = false provenance "ordered" rhs_dominates = true
+// NOWARN: obelisk_sim.net.connect.decl 0
