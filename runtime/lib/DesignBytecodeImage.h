@@ -71,8 +71,7 @@ inline bool isDynamicEventStableHandle(uint64_t stable) {
 }
 
 inline bool isDynamicEventHandle(uint32_t kind, uint64_t stable) {
-  uint32_t descriptorKind =
-      kind & ~(kLocalHandleKind | kAutomaticHandleKind);
+  uint32_t descriptorKind = kind & ~(kLocalHandleKind | kAutomaticHandleKind);
   return descriptorKind == OBELISK_RT_DESCRIPTOR_EVENT &&
          isDynamicEventStableHandle(stable);
 }
@@ -168,6 +167,14 @@ struct ConnectivityRecord {
   uint8_t lhsResolution = 0, rhsResolution = 0, flags = 0, reserved = 0;
   uint32_t tailReserved = 0;
 };
+
+inline uint8_t decodeNetResolution(uint32_t argument) {
+  return static_cast<uint8_t>(((argument >> 1) & 3) | ((argument >> 3) & 4));
+}
+
+inline uint8_t decodeDriverResolution(uint32_t argument) {
+  return static_cast<uint8_t>(((argument >> 1) & 3) | ((argument >> 10) & 4));
+}
 
 uint32_t functionHomeRegion(const Function &function);
 uint32_t read32(const uint8_t *data);

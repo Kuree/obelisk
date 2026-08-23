@@ -1633,14 +1633,12 @@ bool validateImage(const Image &image) {
     bool delayed = (net.argument & (uint32_t{1} << 3)) != 0;
     bool bitwiseDelay = (net.argument & (uint32_t{1} << 4)) != 0;
     uint64_t delayBytes = 24;
-    if (bitwiseDelay &&
-        (net.planeSize > UINT64_MAX / 24 ||
-         (delayBytes = net.planeSize * 24) == 0))
+    if (bitwiseDelay && (net.planeSize > UINT64_MAX / 24 ||
+                         (delayBytes = net.planeSize * 24) == 0))
       return reject(__LINE__, "invalid bitwise net-delay size");
-    if ((net.argument & ~uint32_t{31}) != 0 ||
-        ((net.argument >> 1) & 3) > 2 ||
-        net.planeSize == 0 || net.valueOffset < previousNetEnd ||
-        (bitwiseDelay && !delayed) ||
+    if ((net.argument & ~uint32_t{63}) != 0 ||
+        decodeNetResolution(net.argument) > 4 || net.planeSize == 0 ||
+        net.valueOffset < previousNetEnd || (bitwiseDelay && !delayed) ||
         delayed != (net.unknownOffset != UINT64_MAX) ||
         (delayed && ((net.unknownOffset & 7) != 0 ||
                      net.unknownOffset > image.constantSize ||
@@ -1650,8 +1648,8 @@ bool validateImage(const Image &image) {
       return reject(__LINE__, "invalid or misordered net state record");
     if (delayed && bitwiseDelay)
       for (uint64_t bit = 0; bit != net.planeSize; ++bit) {
-        const uint8_t *triple = image.data + image.constants +
-                                net.unknownOffset + bit * 24;
+        const uint8_t *triple =
+            image.data + image.constants + net.unknownOffset + bit * 24;
         unsigned sentinels = (read64(triple) == UINT64_MAX) +
                              (read64(triple + 8) == UINT64_MAX) +
                              (read64(triple + 16) == UINT64_MAX);
@@ -1686,16 +1684,18 @@ bool validateImage(const Image &image) {
     uint32_t strength1 = (driver.argument >> 7) & 0xf;
     bool highStrengthBank = (driver.argument & (uint32_t{1} << 11)) != 0;
     if (driver.function != kDriverStateDescriptor ||
-        (driver.argument & ~uint32_t{0xfff}) != 0 ||
-        (driver.argument & 1) == 0 || ((driver.argument >> 1) & 3) > 2 ||
-        strength0 > 8 || strength1 > 8 || driver.planeSize == 0 ||
+        (driver.argument & ~uint32_t{0x1fff}) != 0 ||
+        (driver.argument & 1) == 0 ||
+        decodeDriverResolution(driver.argument) > 4 || strength0 > 8 ||
+        strength1 > 8 || driver.planeSize == 0 ||
         driver.valueOffset < previousDriverEnd ||
         driver.valueOffset > image.stateBitCount ||
         driver.planeSize > image.stateBitCount - driver.valueOffset ||
         driver.unknownOffset > image.stateBitCount ||
         driver.planeSize > image.stateBitCount - driver.unknownOffset ||
-        !target || ((driver.argument >> 1) & 3) !=
-                       ((target->argument >> 1) & 3))
+        !target ||
+        decodeDriverResolution(driver.argument) !=
+            decodeNetResolution(target->argument))
       return reject(__LINE__, "invalid or misordered driver state record");
     if (highStrengthBank) {
       if (driverRecords.empty())
@@ -1705,7 +1705,8 @@ bool validateImage(const Image &image) {
       if ((low.argument & (uint32_t{1} << 11)) != 0 || lowStrength1 != 1 ||
           strength0 != 1 || low.unknownOffset != driver.unknownOffset ||
           low.planeSize != driver.planeSize ||
-          ((low.argument >> 1) & 3) != ((driver.argument >> 1) & 3))
+          decodeDriverResolution(low.argument) !=
+              decodeDriverResolution(driver.argument))
         return reject(__LINE__, "invalid complementary driver strength banks");
     }
     // Driver ranges are resolved bitwise and may legally overlap. In
@@ -1724,8 +1725,9 @@ bool validateImage(const Image &image) {
   struct ScalarConnection {
     uint64_t lhs = 0, rhs = 0;
     uint8_t lhsResolution = 0, rhsResolution = 0;
+    uint8_t dominanceFlags = 0;
     auto tie() const {
-      return std::tie(lhs, rhs, lhsResolution, rhsResolution);
+      return std::tie(lhs, rhs, lhsResolution, rhsResolution, dominanceFlags);
     }
   };
   std::vector<ConnectivityRecord> connectionRecords;
@@ -1751,11 +1753,13 @@ bool validateImage(const Image &image) {
         containingNet(connection.lhsOffset, connection.width, false);
     const CaptureRecord *rhs = containingNet(
         connection.rhsOffset, connection.width, (connection.flags & 1) != 0);
-    if (connection.width == 0 || connection.flags > 1 ||
+    if (connection.width == 0 || (connection.flags & ~uint8_t{7}) != 0 ||
+        ((connection.flags & 2) == 0 && (connection.flags & 4) != 0) ||
         connection.reserved != 0 || connection.tailReserved != 0 ||
-        connection.lhsResolution > 2 || connection.rhsResolution > 2 || !lhs ||
-        !rhs || connection.lhsResolution != ((lhs->argument >> 1) & 3) ||
-        connection.rhsResolution != ((rhs->argument >> 1) & 3) ||
+        connection.lhsResolution > 4 || connection.rhsResolution > 4 || !lhs ||
+        !rhs ||
+        connection.lhsResolution != decodeNetResolution(lhs->argument) ||
+        connection.rhsResolution != decodeNetResolution(rhs->argument) ||
         ((lhs->argument ^ rhs->argument) & 1) != 0 ||
         (!firstConnection && key <= previousConnection) ||
         connection.width > UINT64_MAX - expandedConnections)
@@ -1777,8 +1781,9 @@ bool validateImage(const Image &image) {
         return reject(
             __LINE__,
             "connectivity edge endpoints are not canonically ordered");
-      scalarConnections.push_back(
-          {lhsBit, rhsBit, connection.lhsResolution, connection.rhsResolution});
+      scalarConnections.push_back({lhsBit, rhsBit, connection.lhsResolution,
+                                   connection.rhsResolution,
+                                   static_cast<uint8_t>(connection.flags & 6)});
       uint64_t lhsRoot = findConnectivity(lhsBit);
       uint64_t rhsRoot = findConnectivity(rhsBit);
       if (lhsRoot != rhsRoot)
@@ -1817,6 +1822,7 @@ bool validateImage(const Image &image) {
       const ScalarConnection &candidate = scalarConnections[next];
       if (candidate.lhsResolution != first.lhsResolution ||
           candidate.rhsResolution != first.rhsResolution ||
+          candidate.dominanceFlags != first.dominanceFlags ||
           candidate.lhs != first.lhs + width)
         break;
       if (!withinNet(lhsNet, candidate.lhs) ||
@@ -1834,9 +1840,9 @@ bool validateImage(const Image &image) {
       ++width;
       ++next;
     }
-    canonicalRecords.push_back({first.lhs, first.rhs, width,
-                                first.lhsResolution, first.rhsResolution,
-                                static_cast<uint8_t>(direction < 0), 0, 0});
+    canonicalRecords.push_back(
+        {first.lhs, first.rhs, width, first.lhsResolution, first.rhsResolution,
+         static_cast<uint8_t>((direction < 0) | first.dominanceFlags), 0, 0});
     scalar = next;
   }
   if (canonicalRecords.size() != connectionRecords.size())
@@ -1853,11 +1859,112 @@ bool validateImage(const Image &image) {
       return reject(__LINE__,
                     "connectivity table differs from its canonical encoding");
   }
+  // Mixed collapsed nets must retain the unique dominating scalar endpoint.
+  // This is both the source of the simulated net's resolution kind (23.3.3.7)
+  // and a trust-boundary check on the serialized dominance flags.
+  std::unordered_map<uint64_t, uint8_t> resolutionByBit;
+  for (const CaptureRecord &net : netRecords) {
+    uint8_t resolution = decodeNetResolution(net.argument);
+    if (resolution == 1)
+      resolution = 0;
+    for (uint64_t bit = 0; bit != net.planeSize; ++bit)
+      resolutionByBit.emplace(net.valueOffset + bit, resolution);
+  }
+  std::unordered_map<uint64_t, std::unordered_set<uint8_t>> componentKinds;
+  std::unordered_map<uint64_t, std::vector<uint64_t>> componentBits;
+  std::unordered_map<uint64_t, std::unordered_set<uint64_t>> dominatedBits;
+  std::unordered_map<uint64_t,
+                     std::unordered_map<uint64_t, std::vector<uint64_t>>>
+      dominanceOutgoingByRoot;
+  std::unordered_set<uint64_t> incompleteComponents;
+  std::unordered_set<uint64_t> directedComponents;
+  for (const auto &[bit, resolution] : resolutionByBit) {
+    uint64_t root = findConnectivity(bit);
+    componentKinds[root].insert(resolution);
+    componentBits[root].push_back(bit);
+  }
+  for (const ScalarConnection &connection : scalarConnections) {
+    uint8_t lhsResolution =
+        connection.lhsResolution == 1 ? 0 : connection.lhsResolution;
+    uint8_t rhsResolution =
+        connection.rhsResolution == 1 ? 0 : connection.rhsResolution;
+    bool hasDominance = (connection.dominanceFlags & 2) != 0;
+    bool rhsDominates = (connection.dominanceFlags & 4) != 0;
+    uint64_t root = findConnectivity(connection.lhs);
+    if (!hasDominance)
+      incompleteComponents.insert(root);
+    if (hasDominance) {
+      directedComponents.insert(root);
+      uint64_t dominated = rhsDominates ? connection.lhs : connection.rhs;
+      uint64_t dominating = rhsDominates ? connection.rhs : connection.lhs;
+      dominatedBits[root].insert(dominated);
+      dominanceOutgoingByRoot[root][dominated].push_back(dominating);
+    }
+    if (lhsResolution == rhsResolution)
+      continue;
+    if (!hasDominance)
+      continue;
+    uint8_t winner = rhsDominates ? rhsResolution : lhsResolution;
+    uint8_t loser = rhsDominates ? lhsResolution : rhsResolution;
+    if ((winner == 0 && (loser == 2 || loser == 3 || loser == 4)) ||
+        ((winner == 3 || winner == 4) && loser == 2))
+      return reject(__LINE__, "connectivity has an invalid dominant net type");
+  }
+  for (const auto &[root, kinds] : componentKinds) {
+    if (kinds.size() <= 1)
+      continue;
+    // Older images could only contain mixed wire/tri and uwire topology, and
+    // did not serialize dominance. Uwire is intrinsically dominant over the
+    // other supported kinds, so accepting those images is unambiguous.
+    bool legacyUWire = kinds.size() == 2 && kinds.count(0) && kinds.count(2);
+    if (incompleteComponents.count(root)) {
+      if (legacyUWire && !directedComponents.count(root))
+        continue;
+      return reject(__LINE__, "mixed connectivity is missing port dominance");
+    }
+    std::unordered_map<uint64_t, uint64_t> incomingCount;
+    for (uint64_t bit : componentBits[root])
+      incomingCount.emplace(bit, 0);
+    const auto &dominanceOutgoing = dominanceOutgoingByRoot[root];
+    for (const auto &[from, targets] : dominanceOutgoing)
+      for (uint64_t target : targets)
+        ++incomingCount[target];
+    std::vector<uint64_t> pending;
+    for (const auto &[bit, count] : incomingCount)
+      if (count == 0)
+        pending.push_back(bit);
+    uint64_t visited = 0;
+    while (!pending.empty()) {
+      uint64_t bit = pending.back();
+      pending.pop_back();
+      ++visited;
+      auto outgoing = dominanceOutgoing.find(bit);
+      if (outgoing != dominanceOutgoing.end())
+        for (uint64_t target : outgoing->second)
+          if (--incomingCount[target] == 0)
+            pending.push_back(target);
+    }
+    if (visited != incomingCount.size())
+      return reject(__LINE__, "mixed connectivity has cyclic port dominance");
+    std::optional<uint8_t> dominantKind;
+    for (uint64_t bit : componentBits[root]) {
+      if (dominatedBits[root].count(bit))
+        continue;
+      uint8_t kind = resolutionByBit.at(bit);
+      if (dominantKind && *dominantKind != kind)
+        return reject(
+            __LINE__,
+            "mixed connectivity has ambiguous dominant resolution kinds");
+      dominantKind = kind;
+    }
+    if (!dominantKind)
+      return reject(__LINE__,
+                    "mixed connectivity has ambiguous port dominance");
+  }
   // Every logical alias of one simulated-net bit must mature together. The
   // compiler normalizes each member to the dominating net's delay; enforce
   // the same invariant at the bytecode trust boundary.
-  std::unordered_map<uint64_t,
-                     std::optional<std::array<uint64_t, 3>>>
+  std::unordered_map<uint64_t, std::optional<std::array<uint64_t, 3>>>
       componentDelays;
   for (const CaptureRecord &net : netRecords) {
     bool delayed = (net.argument & (uint32_t{1} << 3)) != 0;
@@ -1865,9 +1972,8 @@ bool validateImage(const Image &image) {
     for (uint64_t bit = 0; bit != net.planeSize; ++bit) {
       std::optional<std::array<uint64_t, 3>> delay;
       if (delayed) {
-        const uint8_t *triple =
-            image.data + image.constants + net.unknownOffset +
-            (bitwise ? bit * 24 : 0);
+        const uint8_t *triple = image.data + image.constants +
+                                net.unknownOffset + (bitwise ? bit * 24 : 0);
         uint64_t rise = read64(triple);
         if (!bitwise || rise != UINT64_MAX)
           delay = std::array<uint64_t, 3>{rise, read64(triple + 8),
@@ -1884,7 +1990,7 @@ bool validateImage(const Image &image) {
   // connected scalar equivalence class, including aliases of its target.
   std::unordered_set<uint64_t> uwireComponents;
   for (const CaptureRecord &net : netRecords) {
-    if (((net.argument >> 1) & 3) != 2)
+    if (decodeNetResolution(net.argument) != 2)
       continue;
     for (uint64_t bit = 0; bit != net.planeSize; ++bit)
       uwireComponents.insert(findConnectivity(net.valueOffset + bit));
@@ -2272,9 +2378,9 @@ bool validateImage(const Image &image) {
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         }
-        if (!dynamic && (instruction.immediate > destination.width ||
-                         inserted.width >
-                             destination.width - instruction.immediate))
+        if (!dynamic &&
+            (instruction.immediate > destination.width ||
+             inserted.width > destination.width - instruction.immediate))
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
@@ -2428,8 +2534,7 @@ bool validateImage(const Image &image) {
             instruction.destination || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
             !reg(instruction.source0) ||
-            (!numeric(instruction.source1) &&
-             !floating(instruction.source1)) ||
+            (!numeric(instruction.source1) && !floating(instruction.source1)) ||
             layoutAt(image, function, instruction.source0).kind !=
                 OBELISK_RT_DBREG_HANDLE)
           return reject(__LINE__, "invalid instruction encoding or operands",

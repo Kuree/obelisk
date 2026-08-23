@@ -452,19 +452,18 @@ std::vector<uint8_t> makeRandomSolveProgram(bool solveBefore) {
   size_t metadataSize = solveBefore ? OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE +
                                           OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE
                                     : 0;
-  std::vector<uint8_t> bytes(OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE +
-                                 instructionCount *
-                                     OBELISK_RT_RANDOM_INSTRUCTION_SIZE +
-                                 metadataSize,
-                             0);
+  std::vector<uint8_t> bytes(
+      OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE +
+          instructionCount * OBELISK_RT_RANDOM_INSTRUCTION_SIZE + metadataSize,
+      0);
   put32(bytes, 0, OBELISK_RT_RANDOM_PROGRAM_MAGIC);
   put16(bytes, 4, OBELISK_RT_RANDOM_PROGRAM_VERSION);
   put16(bytes, 6, OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE);
   put32(bytes, 8, 2);
   put32(bytes, 12, instructionCount);
   put32(bytes, 16, 0);
-  put32(bytes, 20, solveBefore ? OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE
-                              : 0);
+  put32(bytes, 20,
+        solveBefore ? OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE : 0);
 
   size_t instruction = OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE;
   bytes[instruction] = OBELISK_RT_RANDOM_PUSH_LITERAL_V1;
@@ -473,8 +472,7 @@ std::vector<uint8_t> makeRandomSolveProgram(bool solveBefore) {
   instruction += OBELISK_RT_RANDOM_INSTRUCTION_SIZE;
   bytes[instruction] = OBELISK_RT_RANDOM_END_HARD_V1;
   bytes[instruction + 1] = 1;
-  put32(bytes, instruction + 4,
-        OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1);
+  put32(bytes, instruction + 4, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1);
 
   if (solveBefore) {
     size_t edge = instruction + OBELISK_RT_RANDOM_INSTRUCTION_SIZE;
@@ -553,8 +551,8 @@ std::vector<uint8_t> makeRandomSolveBytecode(bool stateful, uint64_t rngState,
 
   for (uint32_t reg = 0; reg != inputCount; ++reg) {
     uint64_t constant = reg == 0 ? 0 : 16 + (reg - 1) * 8;
-    instruction(bytes, codeOffset, reg, OBELISK_RT_DB_CONSTANT, 0, reg, 0, 0,
-                0, 0, constant);
+    instruction(bytes, codeOffset, reg, OBELISK_RT_DB_CONSTANT, 0, reg, 0, 0, 0,
+                0, constant);
   }
   uint32_t pc = inputCount;
   instruction(bytes, codeOffset, pc++, OBELISK_RT_DB_INTRINSIC);
@@ -571,8 +569,7 @@ std::vector<uint8_t> makeRandomSolveBytecode(bool stateful, uint64_t rngState,
 
   put64(bytes, constantOffset, programOffset);
   put64(bytes, constantOffset + 8, program.size());
-  std::array<uint64_t, 6> scalarInputs{{0, 3, 0, 4, rngState,
-                                        rngIncrement}};
+  std::array<uint64_t, 6> scalarInputs{{0, 3, 0, 4, rngState, rngIncrement}};
   for (uint32_t input = 1; input != inputCount; ++input)
     put64(bytes, constantOffset + 16 + (input - 1) * 8,
           scalarInputs[input - 1]);
@@ -603,11 +600,11 @@ std::vector<uint8_t> makeRandomSolveWideBytecode() {
   constexpr uint32_t operandCount = inputCount + outputCount;
 
   constexpr uint32_t programInstructionCount = 4;
-  std::vector<uint8_t> program(
-      OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2 +
-          programInstructionCount * OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2 +
-          2 * sizeof(uint64_t),
-      0);
+  std::vector<uint8_t> program(OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2 +
+                                   programInstructionCount *
+                                       OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2 +
+                                   2 * sizeof(uint64_t),
+                               0);
   put32(program, 0, OBELISK_RT_RANDOM_PROGRAM_MAGIC);
   put16(program, 4, OBELISK_RT_RANDOM_PROGRAM_VERSION_V2);
   put16(program, 6, OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2);
@@ -628,9 +625,9 @@ std::vector<uint8_t> makeRandomSolveWideBytecode() {
   put32(program, programInstruction + 4, 1);
   put32(program, programInstruction + 8,
         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1);
-  size_t literalOffset = OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2 +
-                         programInstructionCount *
-                             OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2;
+  size_t literalOffset =
+      OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2 +
+      programInstructionCount * OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2;
   put64(program, literalOffset, 5);
   put64(program, literalOffset + 8, 1);
 
@@ -677,12 +674,12 @@ std::vector<uint8_t> makeRandomSolveWideBytecode() {
   put64(bytes, functionOffset + 80, 1);
   put64(bytes, functionOffset + 88, 1);
 
-  constexpr std::array<uint32_t, registerCount> widths{
-      128, 65, 65, 64, 64, 64, 64, 65, 1, 64};
-  constexpr std::array<uint64_t, registerCount> offsets{
-      0, 16, 32, 48, 56, 64, 72, 80, 96, 104};
-  constexpr std::array<uint64_t, registerCount> extents{
-      16, 16, 16, 8, 8, 8, 8, 16, 8, 8};
+  constexpr std::array<uint32_t, registerCount> widths{128, 65, 65, 64, 64,
+                                                       64,  64, 65, 1,  64};
+  constexpr std::array<uint64_t, registerCount> offsets{0,  16, 32, 48, 56,
+                                                        64, 72, 80, 96, 104};
+  constexpr std::array<uint64_t, registerCount> extents{16, 16, 16, 8, 8,
+                                                        8,  8,  16, 8, 8};
   for (uint32_t reg = 0; reg != registerCount; ++reg) {
     size_t layout = layoutOffset + reg * 40;
     bytes[layout] = reg == 0 ? OBELISK_RT_DBREG_BYTES : OBELISK_RT_DBREG_BITS;
@@ -691,11 +688,11 @@ std::vector<uint8_t> makeRandomSolveWideBytecode() {
     put64(bytes, layout + 16, extents[reg]);
   }
 
-  constexpr std::array<uint64_t, inputCount> constants{0, 16, 32, 48,
+  constexpr std::array<uint64_t, inputCount> constants{0,  16, 32, 48,
                                                        56, 64, 72};
   for (uint32_t reg = 0; reg != inputCount; ++reg)
-    instruction(bytes, codeOffset, reg, OBELISK_RT_DB_CONSTANT, 0, reg, 0, 0,
-                0, 0, constants[reg]);
+    instruction(bytes, codeOffset, reg, OBELISK_RT_DB_CONSTANT, 0, reg, 0, 0, 0,
+                0, constants[reg]);
   uint32_t pc = inputCount;
   instruction(bytes, codeOffset, pc++, OBELISK_RT_DB_INTRINSIC);
   constexpr std::array<uint64_t, outputCount> frameOffsets{0, 16, 24};
@@ -739,7 +736,7 @@ std::vector<uint8_t> makeRandomSolveWideBytecode() {
 }
 
 std::vector<uint8_t> makeRandomCycleBytecode(uint64_t key, uint64_t position,
-                                            uint64_t width) {
+                                             uint64_t width) {
   constexpr uint32_t inputCount = 3;
   constexpr uint32_t outputCount = 2;
   constexpr uint32_t registerCount = inputCount + outputCount;
@@ -796,8 +793,8 @@ std::vector<uint8_t> makeRandomCycleBytecode(uint64_t key, uint64_t position,
   }
 
   for (uint32_t reg = 0; reg != inputCount; ++reg)
-    instruction(bytes, codeOffset, reg, OBELISK_RT_DB_CONSTANT, 0, reg, 0, 0,
-                0, 0, reg * 8);
+    instruction(bytes, codeOffset, reg, OBELISK_RT_DB_CONSTANT, 0, reg, 0, 0, 0,
+                0, reg * 8);
   uint32_t pc = inputCount;
   instruction(bytes, codeOffset, pc++, OBELISK_RT_DB_INTRINSIC);
   for (uint32_t output = 0; output != outputCount; ++output)
@@ -854,8 +851,8 @@ obelisk_rt_status importedLogic(obelisk_rt_context *, uint32_t importID,
   return OBELISK_RT_OK;
 }
 
-std::vector<uint8_t>
-makeSchedulerBytecode(uint64_t stateHandle = 0, uint64_t eventHandle = 7) {
+std::vector<uint8_t> makeSchedulerBytecode(uint64_t stateHandle = 0,
+                                           uint64_t eventHandle = 7) {
   constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 4 * 40;
@@ -994,7 +991,11 @@ uint32_t driverFlags(uint8_t strength0, uint8_t strength1) {
          ((static_cast<uint32_t>(strength1) + 1) << 7);
 }
 
-std::vector<uint8_t> makeStrengthDriverBytecode() {
+uint32_t resolutionFlags(uint8_t resolution, bool driver) {
+  return ((resolution & 3u) << 1) | ((resolution & 4u) << (driver ? 10 : 3));
+}
+
+std::vector<uint8_t> makeStrengthDriverBytecode(uint8_t resolution = 0) {
   constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 4 * 40;
@@ -1008,14 +1009,19 @@ std::vector<uint8_t> makeStrengthDriverBytecode() {
   // Drivers zero and one are the polarity banks of a conditional gate. Their
   // x values encode strong L and strong H respectively. Driver two is an
   // ordinary strong driver used to test how those ranges combine.
-  put32(bytes, stateOffset + 32 + 4, driverFlags(6, 0));
+  put32(bytes, stateOffset + 4, 1u | resolutionFlags(resolution, false));
+  put32(bytes, stateOffset + 32 + 4,
+        driverFlags(6, 0) | resolutionFlags(resolution, true));
   put32(bytes, secondDriver, UINT32_MAX);
-  put32(bytes, secondDriver + 4, driverFlags(0, 6) | (uint32_t{1} << 11));
+  put32(bytes, secondDriver + 4,
+        driverFlags(0, 6) | (uint32_t{1} << 11) |
+            resolutionFlags(resolution, true));
   put64(bytes, secondDriver + 8, 130);
   put64(bytes, secondDriver + 16, 0);
   put64(bytes, secondDriver + 24, 65);
   put32(bytes, thirdDriver, UINT32_MAX);
-  put32(bytes, thirdDriver + 4, driverFlags(6, 6));
+  put32(bytes, thirdDriver + 4,
+        driverFlags(6, 6) | resolutionFlags(resolution, true));
   put64(bytes, thirdDriver + 8, 195);
   put64(bytes, thirdDriver + 16, 0);
   put64(bytes, thirdDriver + 24, 65);
@@ -1033,8 +1039,7 @@ std::vector<uint8_t> makeStrengthDriverBytecode() {
               2, 1, 0);
   instruction(bytes, codeOffset, 2, OBELISK_RT_DB_MAKE_HANDLE, 0, 3,
               OBELISK_RT_DESCRIPTOR_DRIVER, 1, 0, 0, 130);
-  instruction(bytes, codeOffset, 4, OBELISK_RT_DB_BRANCH, 0, 2, 0, 0, 0, 0,
-              6);
+  instruction(bytes, codeOffset, 4, OBELISK_RT_DB_BRANCH, 0, 2, 0, 0, 0, 0, 6);
   instruction(bytes, codeOffset, 5, OBELISK_RT_DB_STORE_STATE, 0, 0, 3, 0);
   instruction(bytes, codeOffset, 6, OBELISK_RT_DB_TERMINATE);
   put64(bytes, constantOffset, 1);
@@ -1108,9 +1113,86 @@ std::vector<uint8_t> makeMixedUWireDriverBytecode(bool overlap) {
   size_t movedConnectivity = connectivityOffset + 32;
   bytes[movedConnectivity + 24] = 2;
   bytes[movedConnectivity + 25] = 0;
+  bytes[movedConnectivity + 26] = 2;
   put64(bytes, 24, bytes.size());
   put64(bytes, 176, 4);
   put64(bytes, 184, movedConnectivity);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
+std::vector<uint8_t> makeMixedWiredDriverBytecode(bool rhsDominates) {
+  std::vector<uint8_t> bytes = makeConnectedDriverBytecode();
+  size_t stateOffset = get64(bytes, 168);
+  size_t connectivityOffset = get64(bytes, 184);
+  bytes.insert(bytes.begin() + connectivityOffset, 32, 0);
+
+  // Net zero is wand, net one is wor, and each side contributes one strong
+  // driver. The preserved port-dominance bit selects the simulated net kind.
+  put32(bytes, stateOffset + 4, 1u | resolutionFlags(3, false));
+  put32(bytes, stateOffset + 32 + 4, 1u | resolutionFlags(4, false));
+  put32(bytes, stateOffset + 64 + 4,
+        driverFlags(6, 6) | resolutionFlags(4, true));
+  put32(bytes, connectivityOffset, UINT32_MAX);
+  put32(bytes, connectivityOffset + 4,
+        driverFlags(6, 6) | resolutionFlags(3, true));
+  put64(bytes, connectivityOffset + 8, 195);
+  put64(bytes, connectivityOffset + 16, 0);
+  put64(bytes, connectivityOffset + 24, 65);
+
+  size_t movedConnectivity = connectivityOffset + 32;
+  bytes[movedConnectivity + 24] = 3;
+  bytes[movedConnectivity + 25] = 4;
+  bytes[movedConnectivity + 26] = rhsDominates ? 6 : 2;
+  put64(bytes, 24, bytes.size());
+  put64(bytes, 176, 4);
+  put64(bytes, 184, movedConnectivity);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
+std::vector<uint8_t> makeMultiSinkWiredDriverBytecode() {
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t layoutOffset = functionOffset + 96;
+  constexpr size_t codeOffset = layoutOffset + 4 * 40;
+  std::vector<uint8_t> bytes = makeConnectedDriverBytecode();
+  size_t stateOffset = get64(bytes, 168);
+  size_t oldConnectivity = get64(bytes, 184);
+
+  // Insert a second wand net before the driver. Net zero (wire) is dominated
+  // independently by both wand endpoints, yielding two sinks of one kind.
+  bytes.insert(bytes.begin() + stateOffset + 64, 32, 0);
+  size_t connectivity = oldConnectivity + 32;
+  bytes.resize(bytes.size() + 32, 0);
+  put32(bytes, stateOffset + 32 + 4, 1u | resolutionFlags(3, false));
+  put32(bytes, stateOffset + 64, UINT32_MAX - 1);
+  put32(bytes, stateOffset + 64 + 4, 1u | resolutionFlags(3, false));
+  put64(bytes, stateOffset + 64 + 8, 130);
+  put64(bytes, stateOffset + 64 + 16, UINT64_MAX);
+  put64(bytes, stateOffset + 64 + 24, 65);
+  put32(bytes, stateOffset + 96 + 4,
+        driverFlags(6, 6) | resolutionFlags(3, true));
+  put64(bytes, stateOffset + 96 + 8, 195);
+  put64(bytes, stateOffset + 96 + 16, 65);
+
+  put32(bytes, codeOffset + 1 * 32 + 12, 195);
+  put64(bytes, codeOffset + 1 * 32 + 24, 195);
+  bytes.resize(connectivity + 130 * 32, 0);
+  for (uint64_t bit = 0; bit != 65; ++bit) {
+    for (uint64_t sink = 0; sink != 2; ++sink) {
+      size_t record = connectivity + (bit * 2 + sink) * 32;
+      put64(bytes, record, bit);
+      put64(bytes, record + 8, (sink == 0 ? 65 : 130) + bit);
+      put64(bytes, record + 16, 1);
+      bytes[record + 24] = 0;
+      bytes[record + 25] = 3;
+      bytes[record + 26] = 6;
+    }
+  }
+  put64(bytes, 24, bytes.size());
+  put64(bytes, 176, 4);
+  put64(bytes, 184, connectivity);
+  put64(bytes, 192, 130);
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
 }
@@ -2923,6 +3005,76 @@ TEST(DesignBytecode, ResolvesIEEEAmbiguousStrengthRangesBeforeFourState) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(DesignBytecode, ResolvesWiredNetTruthTablesWithStrengths) {
+  for (uint8_t resolution : {uint8_t{3}, uint8_t{4}}) {
+    SCOPED_TRACE(resolution == 3 ? "wand/triand" : "wor/trior");
+    Fixture fixture;
+    fixture.bytecode = makeStrengthDriverBytecode(resolution);
+    fixture.execution.bytecode = fixture.bytecode.data();
+    fixture.execution.bytecode_size = fixture.bytecode.size();
+    fixture.execution.state_bit_count = 260;
+    fixture.execution.checksum = imageChecksum(fixture.bytecode);
+
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    auto setState = [&](uint64_t offset, bool value, bool unknown) {
+      uint64_t mask = UINT64_C(1) << (offset % 64);
+      if (value)
+        context->stateValue[offset / 64] |= mask;
+      else
+        context->stateValue[offset / 64] &= ~mask;
+      if (unknown)
+        context->stateUnknown[offset / 64] |= mask;
+      else
+        context->stateUnknown[offset / 64] &= ~mask;
+    };
+    auto resolve = [&](bool expectedValue, bool expectedUnknown) {
+      ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196),
+                OBELISK_RT_OK);
+      EXPECT_EQ((context->stateValue[0] & 1) != 0, expectedValue);
+      EXPECT_EQ((context->stateUnknown[0] & 1) != 0, expectedUnknown);
+    };
+
+    // Equal-strength 0/1 conflict: wired AND selects 0, wired OR selects 1.
+    setState(65, false, false);
+    setState(130, true, true);
+    setState(195, true, false);
+    resolve(resolution == 4, false);
+
+    // Table 6-3/6-4: 0 combined with x is 0 for wand and x for wor.
+    setState(65, false, false);
+    setState(130, true, true);
+    setState(195, false, true);
+    resolve(false, resolution == 4);
+
+    // The symmetric 1/x row is x for wand and 1 for wor.
+    setState(65, true, true);
+    setState(130, true, false);
+    setState(195, false, true);
+    resolve(resolution == 4, resolution == 3);
+
+    // An undriven wired net retains the ordinary high-impedance identity.
+    setState(65, true, true);
+    setState(130, true, true);
+    setState(195, true, true);
+    resolve(true, true);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST(DesignBytecode, WiredResolutionPreservesStrongerDriveDominance) {
+  // IEEE 1800-2017 28.12.1: wired logic applies only to equal-strength
+  // conflicts. A strong 0 beats a weak 1 even on wor, and vice versa on wand.
+  EXPECT_EQ(obelisk_rt_v1_strength_resolve_kind(uint16_t{1} << 1,
+                                                uint16_t{1} << 10, 4),
+            uint16_t{1} << 1);
+  EXPECT_EQ(obelisk_rt_v1_strength_resolve_kind(uint16_t{1} << 4,
+                                                uint16_t{1} << 13, 3),
+            uint16_t{1} << 13);
+}
+
 TEST(DesignBytecode, PublishesSplitStrengthBanksAtomically) {
   Fixture fixture;
   fixture.bytecode = makeStrengthDriverBytecode();
@@ -3036,6 +3188,50 @@ TEST(DesignBytecode, ResolvesDriversAcrossLogicalNetAliases) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(DesignBytecode, UsesDominatingWiredKindAcrossNetAliases) {
+  for (bool rhsDominates : {false, true}) {
+    SCOPED_TRACE(rhsDominates ? "wor dominates" : "wand dominates");
+    Fixture fixture;
+    fixture.bytecode = makeMixedWiredDriverBytecode(rhsDominates);
+    fixture.execution.bytecode = fixture.bytecode.data();
+    fixture.execution.bytecode_size = fixture.bytecode.size();
+    fixture.execution.state_bit_count = 260;
+    fixture.execution.checksum = imageChecksum(fixture.bytecode);
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+
+    // The wor-side driver is 1 and the wand-side driver is 0. Both aliases
+    // publish the result selected by the dominating port endpoint.
+    context->stateValue[130 / 64] |= UINT64_C(1) << (130 % 64);
+    context->stateValue[195 / 64] &= ~(UINT64_C(1) << (195 % 64));
+    context->stateUnknown[130 / 64] &= ~(UINT64_C(1) << (130 % 64));
+    context->stateUnknown[195 / 64] &= ~(UINT64_C(1) << (195 % 64));
+    ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 130, 260),
+              OBELISK_RT_OK);
+    EXPECT_EQ((context->stateValue[0] & 1) != 0, rhsDominates);
+    EXPECT_EQ((context->stateValue[1] & 2) != 0, rhsDominates);
+    EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
+    EXPECT_EQ(context->stateUnknown[1] & 2, 0u);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST(DesignBytecode, AcceptsMultipleDominatingEndpointsOfOneWiredKind) {
+  Fixture fixture;
+  fixture.bytecode = makeMultiSinkWiredDriverBytecode();
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.state_bit_count = 260;
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(DesignBytecode, AcceptsDisjointUWireDriverComponents) {
   Fixture fixture;
   fixture.bytecode = makeMixedUWireDriverBytecode(false);
@@ -3044,6 +3240,23 @@ TEST(DesignBytecode, AcceptsDisjointUWireDriverComponents) {
   fixture.execution.state_bit_count = 195;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
   fixture.entry = {&fixture.execution, 0, 0};
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, AcceptsLegacyMixedUWireWithoutDominanceFlags) {
+  Fixture fixture;
+  fixture.bytecode = makeMixedUWireDriverBytecode(false);
+  size_t connectivity = fixture.bytecode.size() - 32;
+  fixture.bytecode[connectivity + 26] = 0;
+  put64(fixture.bytecode, 32, imageChecksum(fixture.bytecode));
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.state_bit_count = 195;
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
@@ -3985,6 +4198,12 @@ TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
   put32(invalidDriverStrength.bytecode, strengthState + 64 + 4, 1u | (9u << 3));
   rejected(invalidDriverStrength);
 
+  Fixture invalidNetResolution;
+  connected(invalidNetResolution);
+  size_t invalidNetState = get64(invalidNetResolution.bytecode, 168);
+  put32(invalidNetResolution.bytecode, invalidNetState + 4, 35);
+  rejected(invalidNetResolution);
+
   Fixture misalignedConnectivity;
   connected(misalignedConnectivity);
   put64(misalignedConnectivity.bytecode, 184,
@@ -4000,7 +4219,7 @@ TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
   Fixture invalidOrientation;
   connected(invalidOrientation);
   connectivity = invalidOrientation.bytecode.size() - 32;
-  invalidOrientation.bytecode[connectivity + 26] = 2;
+  invalidOrientation.bytecode[connectivity + 26] = 8;
   rejected(invalidOrientation);
 
   Fixture incompatibleKinds;
@@ -4008,6 +4227,67 @@ TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
   connectivity = incompatibleKinds.bytecode.size() - 32;
   incompatibleKinds.bytecode[connectivity + 24] = 2;
   rejected(incompatibleKinds);
+
+  Fixture missingWiredDominance;
+  missingWiredDominance.bytecode = makeMixedWiredDriverBytecode(false);
+  missingWiredDominance.execution.bytecode =
+      missingWiredDominance.bytecode.data();
+  missingWiredDominance.execution.bytecode_size =
+      missingWiredDominance.bytecode.size();
+  missingWiredDominance.execution.state_bit_count = 260;
+  missingWiredDominance.execution.checksum =
+      imageChecksum(missingWiredDominance.bytecode);
+  missingWiredDominance.entry = {&missingWiredDominance.execution, 0, 0};
+  connectivity = missingWiredDominance.bytecode.size() - 32;
+  missingWiredDominance.bytecode[connectivity + 26] = 0;
+  rejected(missingWiredDominance);
+
+  Fixture missingSameKindDominance;
+  missingSameKindDominance.bytecode = makeMultiSinkWiredDriverBytecode();
+  connectivity = get64(missingSameKindDominance.bytecode, 184);
+  size_t sameKindConnectivityEnd = missingSameKindDominance.bytecode.size();
+  missingSameKindDominance.bytecode.resize(sameKindConnectivityEnd + 32, 0);
+  put64(missingSameKindDominance.bytecode, sameKindConnectivityEnd, 65);
+  put64(missingSameKindDominance.bytecode, sameKindConnectivityEnd + 8, 130);
+  put64(missingSameKindDominance.bytecode, sameKindConnectivityEnd + 16, 65);
+  missingSameKindDominance.bytecode[sameKindConnectivityEnd + 24] = 3;
+  missingSameKindDominance.bytecode[sameKindConnectivityEnd + 25] = 3;
+  put64(missingSameKindDominance.bytecode, 24,
+        missingSameKindDominance.bytecode.size());
+  put64(missingSameKindDominance.bytecode, 192, 131);
+  missingSameKindDominance.execution.state_bit_count = 260;
+  rejected(missingSameKindDominance);
+
+  Fixture cyclicWiredDominance;
+  cyclicWiredDominance.bytecode = makeMultiSinkWiredDriverBytecode();
+  size_t cyclicState = get64(cyclicWiredDominance.bytecode, 168);
+  connectivity = get64(cyclicWiredDominance.bytecode, 184);
+  put32(cyclicWiredDominance.bytecode, cyclicState + 4,
+        1u | resolutionFlags(3, false));
+  put32(cyclicWiredDominance.bytecode, cyclicState + 64 + 4,
+        1u | resolutionFlags(4, false));
+  for (uint64_t bit = 0; bit != 65; ++bit) {
+    size_t first = connectivity + bit * 2 * 32;
+    cyclicWiredDominance.bytecode[first + 24] = 3;
+    cyclicWiredDominance.bytecode[first + 25] = 3;
+    cyclicWiredDominance.bytecode[first + 26] = 6;
+    cyclicWiredDominance.bytecode[first + 32 + 24] = 3;
+    cyclicWiredDominance.bytecode[first + 32 + 25] = 4;
+    cyclicWiredDominance.bytecode[first + 32 + 26] = 2;
+  }
+  size_t cyclicConnectivityEnd = cyclicWiredDominance.bytecode.size();
+  cyclicWiredDominance.bytecode.resize(cyclicConnectivityEnd + 32, 0);
+  put64(cyclicWiredDominance.bytecode, cyclicConnectivityEnd, 65);
+  put64(cyclicWiredDominance.bytecode, cyclicConnectivityEnd + 8, 130);
+  put64(cyclicWiredDominance.bytecode, cyclicConnectivityEnd + 16, 65);
+  cyclicWiredDominance.bytecode[cyclicConnectivityEnd + 24] = 3;
+  cyclicWiredDominance.bytecode[cyclicConnectivityEnd + 25] = 4;
+  cyclicWiredDominance.bytecode[cyclicConnectivityEnd + 26] = 6;
+  put64(cyclicWiredDominance.bytecode, 24,
+        cyclicWiredDominance.bytecode.size());
+  put64(cyclicWiredDominance.bytecode, 192, 131);
+  cyclicWiredDominance.execution.state_bit_count = 260;
+  rejected(cyclicWiredDominance);
 
   Fixture incompatibleStateDomains;
   connected(incompatibleStateDomains);

@@ -312,8 +312,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     if (isa<semantic::SVNamedValueExpressionOp,
             semantic::SVHierarchicalValueExpressionOp>(expression)) {
       auto path = expression->getAttrOfType<StringAttr>("referenced_path");
-      auto descriptor = path ? descriptors.find(path.getValue())
-                             : descriptors.end();
+      auto descriptor =
+          path ? descriptors.find(path.getValue()) : descriptors.end();
       return descriptor != descriptors.end() &&
              descriptor->second.kind == DescriptorInfo::Kind::Net &&
              descriptor->second.netKind == sim::NetResolutionKind::UWire;
@@ -338,12 +338,42 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     bool rhsDominates;
   };
   std::map<StaticEdgeKey, StaticEdgeMetadata> staticEdges;
-  auto appendStaticConnections = [&](semantic::SVPortConnectionOp connection,
-                                     ArrayRef<NetRun> lhs,
-                                     ArrayRef<NetRun> rhs)
-      -> std::optional<bool> {
+  auto portDominance = [&](sim::NetResolutionKind internal,
+                           sim::NetResolutionKind external) {
+    // IEEE 1800-2017 Table 23-1. `tri`, `triand`, and `trior` have already
+    // been canonicalized to their functionally identical resolution kinds.
+    bool internalDominates = false;
+    bool warn = false;
+    switch (internal) {
+    case sim::NetResolutionKind::Wire:
+    case sim::NetResolutionKind::Tri:
+      break;
+    case sim::NetResolutionKind::WAnd:
+      internalDominates = external == sim::NetResolutionKind::Wire ||
+                          external == sim::NetResolutionKind::Tri;
+      warn = external == sim::NetResolutionKind::WOr ||
+             external == sim::NetResolutionKind::UWire;
+      break;
+    case sim::NetResolutionKind::WOr:
+      internalDominates = external == sim::NetResolutionKind::Wire ||
+                          external == sim::NetResolutionKind::Tri;
+      warn = external == sim::NetResolutionKind::WAnd ||
+             external == sim::NetResolutionKind::UWire;
+      break;
+    case sim::NetResolutionKind::UWire:
+      internalDominates = external != sim::NetResolutionKind::UWire;
+      warn = external == sim::NetResolutionKind::WAnd ||
+             external == sim::NetResolutionKind::WOr;
+      break;
+    }
+    return std::pair(!internalDominates, warn);
+  };
+  auto appendStaticConnections =
+      [&](semantic::SVPortConnectionOp connection, ArrayRef<NetRun> lhs,
+          ArrayRef<NetRun> rhs) -> std::optional<bool> {
     size_t lhsIndex = 0, rhsIndex = 0;
     uint64_t lhsConsumed = 0, rhsConsumed = 0;
+    bool emittedNetTypeWarning = false;
     while (lhsIndex != lhs.size() && rhsIndex != rhs.size()) {
       const NetRun &left = lhs[lhsIndex];
       const NetRun &right = rhs[rhsIndex];
@@ -356,13 +386,15 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
                            right.descriptor.id, rightOffset + bit};
         StaticEdgeKey reverse{right.descriptor.id, rightOffset + bit,
                               left.descriptor.id, leftOffset + bit};
-        // IEEE 1800-2017 Table 23-1: an internal uwire dominates an
-        // external wire/tri. In every other combination currently supported
-        // by the simulation dialect, the external net dominates. `left` is
-        // the internal endpoint and `right` is the external actual here.
-        bool rhsDominates =
-            left.descriptor.netKind != sim::NetResolutionKind::UWire ||
-            right.descriptor.netKind == sim::NetResolutionKind::UWire;
+        // IEEE 1800-2017 Table 23-1. `left` is the internal endpoint and
+        // `right` is the external actual here.
+        auto [rhsDominates, warn] =
+            portDominance(left.descriptor.netKind, right.descriptor.netKind);
+        if (warn && !emittedNetTypeWarning) {
+          emitWarning(getSemanticLocation(connection))
+              << "dissimilar wired net types require a port-collapse warning";
+          emittedNetTypeWarning = true;
+        }
         if (reverse < edge) {
           edge = reverse;
           rhsDominates = !rhsDominates;
@@ -448,8 +480,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     bool actualNet = flattenNetExpr(actual, rhs);
     bool hasUWireSide =
         (internalDescriptor->second.kind == DescriptorInfo::Kind::Net &&
-         internalDescriptor->second.netKind ==
-             sim::NetResolutionKind::UWire) ||
+         internalDescriptor->second.netKind == sim::NetResolutionKind::UWire) ||
         referencesUWireNet(actual);
     if (internalNet && actualNet) {
       std::optional<bool> fullyMerged =
@@ -555,16 +586,29 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
           });
       analysis::NetDominance dominance =
           connectivity.getDominance({netId, bit});
+      ArrayRef<analysis::NetBit> dominatingBits =
+          connectivity.getDominatingBits({netId, bit});
       if (componentHasDelay &&
           (dominance.kind == analysis::NetDominanceKind::Incomplete ||
-           dominance.kind == analysis::NetDominanceKind::Ambiguous)) {
+           dominatingBits.empty())) {
         declaration.emitError(
             dominance.kind == analysis::NetDominanceKind::Incomplete
                 ? "delayed collapsed net is missing port-dominance direction"
                 : "delayed collapsed net has ambiguous port dominance");
         return failure();
       }
-      effectiveDelays[netId][bit] = declaredDelay(dominance.bit);
+      if (componentHasDelay &&
+          llvm::any_of(dominatingBits, [&](analysis::NetBit member) {
+            return declaredDelay(member) !=
+                   declaredDelay(dominatingBits.front());
+          })) {
+        declaration.emitError(
+            "delayed collapsed net has ambiguous dominating delays");
+        return failure();
+      }
+      analysis::NetBit effective =
+          dominatingBits.empty() ? dominance.bit : dominatingBits.front();
+      effectiveDelays[netId][bit] = declaredDelay(effective);
     }
   }
   for (auto entry : netDeclarations) {

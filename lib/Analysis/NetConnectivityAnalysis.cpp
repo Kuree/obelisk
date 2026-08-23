@@ -70,6 +70,7 @@ NetConnectivityAnalysis::NetConnectivityAnalysis(sim::SimDesignOp design) {
   for (const auto &[root, members] : components) {
     if (members.size() == 1) {
       dominance[root] = {NetDominanceKind::Isolated, members.front()};
+      dominatingBits[root].push_back(members.front());
       continue;
     }
     bool incomplete = false;
@@ -97,11 +98,6 @@ NetConnectivityAnalysis::NetConnectivityAnalysis(sim::SimDesignOp design) {
       if (!outgoing.count(flat))
         sinks.push_back(flat);
     }
-    if (sinks.size() != 1) {
-      dominance[root] = {NetDominanceKind::Ambiguous, members.front()};
-      continue;
-    }
-    uint64_t sink = sinks.front();
     DenseMap<uint64_t, uint64_t> incomingCount;
     SmallVector<uint64_t> pending;
     for (NetBit member : members)
@@ -128,13 +124,17 @@ NetConnectivityAnalysis::NetConnectivityAnalysis(sim::SimDesignOp design) {
       dominance[root] = {NetDominanceKind::Ambiguous, members.front()};
       continue;
     }
-    NetBit dominating = members.front();
-    for (NetBit member : members)
-      if (netBases.lookup(member.net) + member.offset == sink) {
-        dominating = member;
-        break;
-      }
-    dominance[root] = {NetDominanceKind::Unique, dominating};
+    for (uint64_t sink : sinks)
+      for (NetBit member : members)
+        if (netBases.lookup(member.net) + member.offset == sink) {
+          dominatingBits[root].push_back(member);
+          break;
+        }
+    if (dominatingBits[root].size() == 1)
+      dominance[root] = {NetDominanceKind::Unique,
+                         dominatingBits[root].front()};
+    else
+      dominance[root] = {NetDominanceKind::Ambiguous, members.front()};
   }
 }
 
@@ -170,6 +170,20 @@ NetDominance NetConnectivityAnalysis::getDominance(NetBit bit) const {
   return found == dominance.end()
              ? NetDominance{NetDominanceKind::Incomplete, bit}
              : found->second;
+}
+
+ArrayRef<NetBit> NetConnectivityAnalysis::getDominatingBits(NetBit bit) const {
+  auto base = netBases.find(bit.net);
+  auto width = netWidths.find(bit.net);
+  if (base == netBases.end() || width == netWidths.end() ||
+      bit.offset >= width->second)
+    return {};
+  uint64_t root = base->second + bit.offset;
+  while (parents[root] != root)
+    root = parents[root];
+  auto found = dominatingBits.find(root);
+  return found == dominatingBits.end() ? ArrayRef<NetBit>()
+                                       : ArrayRef<NetBit>(found->second);
 }
 
 std::optional<uint64_t>

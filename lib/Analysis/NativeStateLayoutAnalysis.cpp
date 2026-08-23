@@ -232,8 +232,11 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
     NetConnectivityAnalysis connectivity(designs.front());
     DenseMap<uint64_t, SmallVector<std::optional<std::array<uint64_t, 3>>>>
         declaredDelays;
+    DenseMap<uint64_t, sim::NetResolutionKind> declaredResolutions;
     for (const Net &net : layout.netLayouts)
       declaredDelays[net.id] = net.propagationDelays;
+    for (const Net &net : layout.netLayouts)
+      declaredResolutions[net.id] = net.resolution;
     for (Net &net : layout.netLayouts) {
       for (uint64_t bit = 0; bit != net.width; ++bit) {
         ArrayRef<NetBit> component = connectivity.getComponent({net.id, bit});
@@ -244,9 +247,11 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
                  declaration->second[member.offset].has_value();
         });
         NetDominance dominance = connectivity.getDominance({net.id, bit});
+        ArrayRef<NetBit> dominatingBits =
+            connectivity.getDominatingBits({net.id, bit});
         if (componentHasDelay &&
             (dominance.kind == NetDominanceKind::Incomplete ||
-             dominance.kind == NetDominanceKind::Ambiguous)) {
+             dominatingBits.empty())) {
           module.emitError()
               << (dominance.kind == NetDominanceKind::Incomplete
                       ? "delayed collapsed net is missing port-dominance "
@@ -254,12 +259,75 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
                       : "delayed collapsed net has ambiguous port dominance");
           return failure();
         }
-        auto dominating = declaredDelays.find(dominance.bit.net);
+        auto getDelay =
+            [&](NetBit member) -> std::optional<std::array<uint64_t, 3>> {
+          auto declaration = declaredDelays.find(member.net);
+          return declaration != declaredDelays.end() &&
+                         member.offset < declaration->second.size()
+                     ? declaration->second[member.offset]
+                     : std::nullopt;
+        };
+        if (componentHasDelay &&
+            llvm::any_of(dominatingBits, [&](NetBit member) {
+              return getDelay(member) != getDelay(dominatingBits.front());
+            })) {
+          module.emitError(
+              "delayed collapsed net has ambiguous dominating delays");
+          return failure();
+        }
+        NetBit effective =
+            dominatingBits.empty() ? dominance.bit : dominatingBits.front();
+        auto dominating = declaredDelays.find(effective.net);
         net.propagationDelays[bit] =
             dominating != declaredDelays.end() &&
-                    dominance.bit.offset < dominating->second.size()
-                ? dominating->second[dominance.bit.offset]
+                    effective.offset < dominating->second.size()
+                ? dominating->second[effective.offset]
                 : std::nullopt;
+      }
+    }
+
+    DenseSet<std::pair<uint64_t, uint64_t>> checkedMixedComponents;
+    for (const Net &net : layout.netLayouts) {
+      for (uint64_t bit = 0; bit != net.width; ++bit) {
+        ArrayRef<NetBit> component = connectivity.getComponent({net.id, bit});
+        if (component.empty())
+          continue;
+        std::pair<uint64_t, uint64_t> canonical{component.front().net,
+                                                component.front().offset};
+        if (!checkedMixedComponents.insert(canonical).second)
+          continue;
+        auto category = [&](NetBit member) {
+          sim::NetResolutionKind kind = declaredResolutions.lookup(member.net);
+          return kind == sim::NetResolutionKind::Tri
+                     ? sim::NetResolutionKind::Wire
+                     : kind;
+        };
+        sim::NetResolutionKind first = category(component.front());
+        bool mixed = llvm::any_of(component, [&](NetBit member) {
+          return category(member) != first;
+        });
+        if (!mixed)
+          continue;
+        NetDominance dominance = connectivity.getDominance({net.id, bit});
+        ArrayRef<NetBit> dominatingBits =
+            connectivity.getDominatingBits({net.id, bit});
+        if (dominance.kind == NetDominanceKind::Incomplete ||
+            dominatingBits.empty()) {
+          module.emitError()
+              << (dominance.kind == NetDominanceKind::Incomplete
+                      ? "mixed collapsed net is missing port-dominance "
+                        "direction"
+                      : "mixed collapsed net has ambiguous port dominance");
+          return failure();
+        }
+        sim::NetResolutionKind effective = category(dominatingBits.front());
+        if (llvm::any_of(dominatingBits, [&](NetBit member) {
+              return category(member) != effective;
+            })) {
+          module.emitError(
+              "mixed collapsed net has ambiguous dominant resolution kinds");
+          return failure();
+        }
       }
     }
 
@@ -272,9 +340,16 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
         std::pair<uint64_t, uint64_t> canonical{component.front().net,
                                                 component.front().offset};
         layout.connectivityCanonical[key] = canonical;
-        if (key == canonical)
+        if (key == canonical) {
           llvm::append_range(layout.connectivityComponents[canonical],
                              component);
+          ArrayRef<NetBit> dominatingBits =
+              connectivity.getDominatingBits({net.id, bit});
+          NetBit effective = dominatingBits.empty() ? component.front()
+                                                    : dominatingBits.front();
+          layout.connectivityResolutions[canonical] =
+              declaredResolutions.lookup(effective.net);
+        }
       }
     }
 

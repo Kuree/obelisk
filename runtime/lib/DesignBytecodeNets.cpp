@@ -9,6 +9,7 @@
 #include <map>
 #include <new>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace obelisk::designbytecode {
 
@@ -18,7 +19,8 @@ static uint16_t strengthBit(int strength) {
   return static_cast<uint16_t>(uint16_t{1} << (strength + 7));
 }
 
-static uint16_t combineStrengthRanges(uint16_t lhs, uint16_t rhs) {
+static uint16_t combineStrengthRanges(uint16_t lhs, uint16_t rhs,
+                                      uint8_t resolution = 0) {
   uint16_t result = 0;
   for (unsigned lhsIndex = 0; lhsIndex != strengthCount; ++lhsIndex) {
     if ((lhs & (uint16_t{1} << lhsIndex)) == 0)
@@ -38,6 +40,13 @@ static uint16_t combineStrengthRanges(uint16_t lhs, uint16_t rhs) {
       }
       if (std::abs(left) != std::abs(right)) {
         result |= strengthBit(std::abs(left) > std::abs(right) ? left : right);
+        continue;
+      }
+      // IEEE 1800-2017 28.12.4 applies wired logic to equal-strength
+      // conflicts. wand/triand select 0; wor/trior select 1.
+      if (resolution == 3 || resolution == 4) {
+        int magnitude = std::abs(left);
+        result |= strengthBit(resolution == 3 ? -magnitude : magnitude);
         continue;
       }
       for (int strength = -std::abs(left); strength <= std::abs(left);
@@ -82,6 +91,7 @@ NetAliasCache *getNetAliasCache(const Image &image,
   cache.execution = context->execution;
   std::vector<CaptureRecord> nets;
   std::vector<CaptureRecord> drivers;
+  std::unordered_map<uint64_t, uint8_t> resolutionByBit;
   for (uint64_t index = 0; index != image.stateDescriptorCount; ++index) {
     CaptureRecord record = captureAt(image, index);
     if (record.function == kNetStateDescriptor) {
@@ -104,6 +114,11 @@ NetAliasCache *getNetAliasCache(const Image &image,
       cache.nets.push_back({record.valueOffset, record.valueOffset,
                             record.planeSize, (record.argument & 1) != 0,
                             propagationDelays});
+      uint8_t resolution = decodeNetResolution(record.argument);
+      if (resolution == 1)
+        resolution = 0; // tri and wire have identical resolution.
+      for (uint64_t bit = 0; bit != record.planeSize; ++bit)
+        resolutionByBit.emplace(record.valueOffset + bit, resolution);
     } else if (record.function == kDriverStateDescriptor) {
       drivers.push_back(record);
       cache.drivers.push_back(
@@ -127,6 +142,7 @@ NetAliasCache *getNetAliasCache(const Image &image,
   for (const CaptureRecord &net : nets)
     for (uint64_t bit = 0; bit != net.planeSize; ++bit)
       parents.try_emplace(net.valueOffset + bit, net.valueOffset + bit);
+  std::vector<std::pair<uint64_t, uint64_t>> dominanceEdges;
   for (uint64_t index = 0; index != image.connectivityCount; ++index) {
     ConnectivityRecord connection = connectivityAt(image, index);
     for (uint64_t bitIndex = 0; bitIndex != connection.width; ++bitIndex) {
@@ -137,6 +153,10 @@ NetAliasCache *getNetAliasCache(const Image &image,
       uint64_t rhsRoot = findRoot(rhs);
       if (lhsRoot != rhsRoot)
         parents[std::max(lhsRoot, rhsRoot)] = std::min(lhsRoot, rhsRoot);
+      if ((connection.flags & 2) != 0)
+        dominanceEdges.push_back((connection.flags & 4) != 0
+                                     ? std::pair{lhs, rhs}
+                                     : std::pair{rhs, lhs});
     }
   }
 
@@ -154,10 +174,34 @@ NetAliasCache *getNetAliasCache(const Image &image,
       cache.driverBits[findRoot(driver.unknownOffset + bit)].push_back(
           {driver.valueOffset + bit, strength0, strength1});
   }
+  std::unordered_map<uint64_t, std::unordered_set<uint64_t>> dominatedByRoot;
+  for (const auto &edge : dominanceEdges)
+    dominatedByRoot[findRoot(edge.first)].insert(edge.first);
   for (auto &[root, component] : cache.members) {
     std::sort(component.begin(), component.end());
     component.erase(std::unique(component.begin(), component.end()),
                     component.end());
+    uint8_t resolution = resolutionByBit.at(component.front());
+    bool mixed =
+        std::any_of(component.begin(), component.end(), [&](uint64_t member) {
+          return resolutionByBit.at(member) != resolution;
+        });
+    if (mixed) {
+      // Legacy images omitted port dominance for their only supported mixed
+      // topology. Uwire is intrinsically dominant over wire/tri.
+      auto uwire = std::find_if(
+          component.begin(), component.end(),
+          [&](uint64_t member) { return resolutionByBit.at(member) == 2; });
+      if (uwire != component.end())
+        resolution = 2;
+      const auto &dominated = dominatedByRoot[root];
+      auto winner = std::find_if(
+          component.begin(), component.end(),
+          [&](uint64_t member) { return !dominated.count(member); });
+      if (!dominated.empty() && winner != component.end())
+        resolution = resolutionByBit.at(*winner);
+    }
+    cache.resolutionByRoot.emplace(root, resolution);
   }
   context->netAliases = std::move(cache);
   return &context->netAliases;
@@ -174,8 +218,8 @@ bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,
                publication.oldUnknown != publication.unknown;
     setBit(context->stateValue, publication.destination, publication.value);
     setBit(context->stateUnknown, publication.destination, publication.unknown);
-    obelisk_rt_sync_native_state_range_unlocked(
-        context, publication.destination, 1);
+    obelisk_rt_sync_native_state_range_unlocked(context,
+                                                publication.destination, 1);
   }
   // Commit every logical alias first. Route occurrences by observer range so
   // each range is published and evaluated exactly once against the completed
@@ -294,16 +338,15 @@ bool scheduleNetBit(obelisk_rt_context *context, uint64_t root,
     context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
     return false;
   }
-  uint64_t handle = obelisk_rt_canonical_state_handle_unlocked(
-      context, destination, 1);
+  uint64_t handle =
+      obelisk_rt_canonical_state_handle_unlocked(context, destination, 1);
   if (handle == UINT64_MAX) {
     context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
     return false;
   }
   uint64_t delay = !unknown ? delays[value ? 0 : 1]
-                             : value ? delays[2]
-                                     : std::min({delays[0], delays[1],
-                                                 delays[2]});
+                   : value  ? delays[2]
+                            : std::min({delays[0], delays[1], delays[2]});
   ScheduledNBA update;
   update.sequence = context->nextSchedulerSequence++;
   update.dueTime = delay > UINT64_MAX - context->schedulerTime
@@ -314,14 +357,14 @@ bool scheduleNetBit(obelisk_rt_context *context, uint64_t root,
   // Write those planes as the scheduled destination while applyNative also
   // maintains the canonical context image. Pure bytecode contexts have no
   // binding and use the canonical planes directly.
-  update.valuePlane = context->nativeStateValue
-                          ? context->nativeStateValue
-                          : reinterpret_cast<uint8_t *>(
-                                context->stateValue.data());
-  update.unknownPlane = context->nativeStateUnknown
-                            ? context->nativeStateUnknown
-                            : reinterpret_cast<uint8_t *>(
-                                  context->stateUnknown.data());
+  update.valuePlane =
+      context->nativeStateValue
+          ? context->nativeStateValue
+          : reinterpret_cast<uint8_t *>(context->stateValue.data());
+  update.unknownPlane =
+      context->nativeStateUnknown
+          ? context->nativeStateUnknown
+          : reinterpret_cast<uint8_t *>(context->stateUnknown.data());
   update.planeBitCount = context->execution->state_bit_count;
   update.bitOffset = handle;
   update.bitWidth = 1;
@@ -374,7 +417,8 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
         resolvedStrengths = combineStrengthRanges(
             resolvedStrengths,
             driverStrengths(driverValue, driverUnknown, driver.strength0,
-                            driver.strength1));
+                            driver.strength1),
+            cache.resolutionByRoot.at(root));
       }
     }
     bool hasZero = (resolvedStrengths & strengthBit(0)) != 0;
@@ -479,6 +523,12 @@ extern "C" uint16_t obelisk_rt_v1_strength_resolve(uint16_t lhs, uint16_t rhs) {
   return combineStrengthRanges(lhs, rhs);
 }
 
+extern "C" uint16_t obelisk_rt_v1_strength_resolve_kind(uint16_t lhs,
+                                                        uint16_t rhs,
+                                                        uint32_t resolution) {
+  return combineStrengthRanges(lhs, rhs, static_cast<uint8_t>(resolution));
+}
+
 obelisk_rt_status
 obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept {
   if (!context || !context->execution)
@@ -547,8 +597,9 @@ obelisk_rt_status obelisk_rt_resolve_design_drivers(obelisk_rt_context *context,
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_resolve_drivers(
-    obelisk_rt_context *context, uint64_t begin, uint64_t end) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_resolve_drivers(obelisk_rt_context *context,
+                                        uint64_t begin, uint64_t end) {
   return obelisk_rt_resolve_design_drivers(context, begin, end);
 }
 

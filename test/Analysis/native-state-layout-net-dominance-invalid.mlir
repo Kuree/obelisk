@@ -10,13 +10,15 @@ module {
       propagation_delays = array<i64: 1, 1, 1>
     }
     obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.net.decl 2 in 0 : !obelisk_sim.logic<1> design
+    obelisk_sim.net.decl 2 in 0 : !obelisk_sim.logic<1> design {
+      propagation_delays = array<i64: 2, 2, 2>
+    }
     obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = true
     obelisk_sim.net.connect.decl 1 in 0 0[0] to 2[0] width 1 reversed = false rhs_dominates = true
   }
 }
 
-// AMBIGUOUS: error: delayed collapsed net has ambiguous port dominance
+// AMBIGUOUS: error: delayed collapsed net has ambiguous dominating delays
 
 //--- cycle.mlir
 module {

@@ -14,6 +14,7 @@ module attributes {
     obelisk_sim.code_unit.decl 5 in 0 function hierarchy "driver_lowering.drive_strength"
     obelisk_sim.code_unit.decl 6 in 0 function hierarchy "driver_lowering.drive_inertial"
     obelisk_sim.code_unit.decl 7 in 0 function hierarchy "driver_lowering.drive_delayed_net"
+    obelisk_sim.code_unit.decl 8 in 0 function hierarchy "driver_lowering.drive_wand"
     obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<2> design
     obelisk_sim.driver.decl 0 in 0 drives 0 :
         !obelisk_sim.logic<2> design
@@ -37,6 +38,13 @@ module attributes {
       propagation_delays = array<i64: 7, 11, 13>
     }
     obelisk_sim.driver.decl 4 in 0 drives 3 :
+        !obelisk_sim.logic<1> design
+    obelisk_sim.net.decl 4 in 0 : !obelisk_sim.logic<1> design {
+      resolution_kind = 3 : i32
+    }
+    obelisk_sim.driver.decl 5 in 0 drives 4 :
+        !obelisk_sim.logic<1> design
+    obelisk_sim.driver.decl 6 in 0 drives 4 :
         !obelisk_sim.logic<1> design
 
     obelisk_sim.func @drive(
@@ -148,6 +156,19 @@ module attributes {
           !obelisk_sim.logic<1>
       obelisk_sim.return
     }
+
+    obelisk_sim.func @drive_wand(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 8 : i64} {
+      %driver = obelisk_sim.context.driver %ctx[5] :
+          !obelisk_sim.driver<!obelisk_sim.logic<1>>
+      %zero = obelisk_sim.logic.constant 0 : i1, 0 : i1 :
+          !obelisk_sim.logic<1>
+      obelisk_sim.driver.drive %driver = %zero :
+          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
+          !obelisk_sim.logic<1>
+      obelisk_sim.return
+    }
   }
 }
 
@@ -185,7 +206,7 @@ module attributes {
 // A highz1 driver cannot use the single-driver memcpy shortcut. Native
 // lowering resolves the same Figure 28-2 range representation as bytecode.
 // CHECK-LABEL: llvm.func @drive_strength
-// CHECK-COUNT-1: llvm.call @obelisk_rt_v1_strength_resolve
+// CHECK-COUNT-1: llvm.call @obelisk_rt_v1_strength_resolve_kind
 // CHECK-NOT: obelisk_sim.driver.drive
 
 // CHECK-LABEL: llvm.func @drive_inertial
@@ -202,6 +223,13 @@ module attributes {
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_resolve_drivers
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
 // CHECK-NOT: obelisk_sim.driver.drive_delayed_net
+
+// Native wired resolution passes the effective kind to the shared exact
+// strength resolver. 3 is the canonical wand/triand kind.
+// CHECK-LABEL: llvm.func @drive_wand
+// CHECK: %[[WAND:.*]] = llvm.mlir.constant(3 : i32) : i32
+// CHECK: llvm.call @obelisk_rt_v1_strength_resolve_kind({{.*}}, {{.*}}, %[[WAND]])
+// CHECK-NOT: obelisk_sim.driver.drive
 
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x00010236 inputs=8 outputs=0 flags=0
 // BYTECODE: site {{[0-9]+}}: signature={{[0-9]+}} id=0x00010236 inputs={{\[[0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+\]}} outputs=[]

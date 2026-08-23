@@ -93,8 +93,7 @@ public:
     // native globals and canonical image are updated together before the
     // resolver reads the contribution.
     const NativeStateLayout *storeLayout = &layout;
-    if constexpr (std::is_same_v<DriveOp,
-                                 sim::SimDriverDriveDelayedNetOp>)
+    if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveDelayedNetOp>)
       storeLayout = nullptr;
     storeStatePlane(rewriter, op.getLoc(), adaptor.getDriver().front(),
                     driveValue, "__obelisk_state_value", layout.bitCount,
@@ -111,10 +110,8 @@ public:
     // A conditional gate stores its complementary low-polarity bank before
     // its high-polarity bank. The first store deliberately stops here so the
     // second drive resolves and publishes one atomic logical transition.
-    bool deferResolution =
-        op->hasAttr("obelisk_sim.defer_net_resolution");
-    if constexpr (std::is_same_v<DriveOp,
-                                 sim::SimDriverDriveDelayedNetOp>)
+    bool deferResolution = op->hasAttr("obelisk_sim.defer_net_resolution");
+    if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveDelayedNetOp>)
       deferResolution = op.getDeferResolution();
     if (deferResolution) {
       if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveChangedOp>)
@@ -124,15 +121,13 @@ public:
       return success();
     }
 
-    if constexpr (std::is_same_v<DriveOp,
-                                 sim::SimDriverDriveDelayedNetOp>) {
+    if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveDelayedNetOp>) {
       std::optional<uint64_t> driverID = getStaticDriverID(op.getDriver());
-      auto driver =
-          driverID ? llvm::find_if(layout.driverLayouts,
-                                   [&](const auto &candidate) {
-                                     return candidate.id == *driverID;
-                                   })
-                   : layout.driverLayouts.end();
+      auto driver = driverID ? llvm::find_if(layout.driverLayouts,
+                                             [&](const auto &candidate) {
+                                               return candidate.id == *driverID;
+                                             })
+                             : layout.driverLayouts.end();
       if (driver == layout.driverLayouts.end())
         return failure();
       uint64_t begin = driver->offset + driver->drivenLow;
@@ -142,23 +137,21 @@ public:
       Type i64 = rewriter.getI64Type();
       Value contextAddress = LLVM::AddressOfOp::create(
           rewriter, op.getLoc(), pointer, "__obelisk_current_context");
-      Value runtimeContext = LLVM::LoadOp::create(
-          rewriter, op.getLoc(), pointer, contextAddress, 8);
+      Value runtimeContext = LLVM::LoadOp::create(rewriter, op.getLoc(),
+                                                  pointer, contextAddress, 8);
       Value status =
           LLVM::CallOp::create(
               rewriter, op.getLoc(), TypeRange{i32},
-              SymbolRefAttr::get(
-                  rewriter.getContext(),
-                  "obelisk_rt_v1_scheduler_resolve_drivers"),
+              SymbolRefAttr::get(rewriter.getContext(),
+                                 "obelisk_rt_v1_scheduler_resolve_drivers"),
               ValueRange{runtimeContext,
                          llvmConstant(rewriter, op.getLoc(), i64, begin),
                          llvmConstant(rewriter, op.getLoc(), i64, end)})
               .getResult();
-      LLVM::CallOp::create(
-          rewriter, op.getLoc(), TypeRange{},
-          SymbolRefAttr::get(rewriter.getContext(),
-                             "obelisk_rt_v1_scheduler_fail"),
-          ValueRange{runtimeContext, status});
+      LLVM::CallOp::create(rewriter, op.getLoc(), TypeRange{},
+                           SymbolRefAttr::get(rewriter.getContext(),
+                                              "obelisk_rt_v1_scheduler_fail"),
+                           ValueRange{runtimeContext, status});
       rewriter.eraseOp(op);
       return success();
     }
@@ -172,15 +165,13 @@ public:
     // vector-shaped through LLVM lowering so very wide constants do not turn
     // into millions of scalar loads, selects, and stores.
     const NativeStateLayout::Net *bulkNet = nullptr;
-    if (op.getDriver()
-            .template getDefiningOp<sim::SimContextDriverOp>()) {
+    if (op.getDriver().template getDefiningOp<sim::SimContextDriverOp>()) {
       std::optional<uint64_t> driverID = getStaticDriverID(op.getDriver());
-      auto driver = driverID
-                        ? llvm::find_if(layout.driverLayouts,
-                                        [&](const auto &candidate) {
-                                          return candidate.id == *driverID;
-                                        })
-                        : layout.driverLayouts.end();
+      auto driver = driverID ? llvm::find_if(layout.driverLayouts,
+                                             [&](const auto &candidate) {
+                                               return candidate.id == *driverID;
+                                             })
+                             : layout.driverLayouts.end();
       if (driver != layout.driverLayouts.end()) {
         auto net = llvm::find_if(layout.netLayouts, [&](const auto &candidate) {
           return candidate.id == driver->netId;
@@ -189,8 +180,8 @@ public:
             llvm::count_if(layout.driverLayouts, [&](const auto &candidate) {
               return candidate.netId == driver->netId;
             }) == 1;
-        bool connected = llvm::any_of(
-            layout.connectivityCanonical, [&](const auto &entry) {
+        bool connected =
+            llvm::any_of(layout.connectivityCanonical, [&](const auto &entry) {
               return entry.first.first == driver->netId;
             });
         if (net != layout.netLayouts.end() && onlyDriver && !connected &&
@@ -206,36 +197,36 @@ public:
           rewriter, op.getLoc(), rewriter.getI64Type(),
           rewriter.getI64IntegerAttr(
               encodeNativeStaticHandle(bulkNet->handleID)));
-      Value oldValue = loadStatePlane(
-          rewriter, op.getLoc(), netHandle, driveType,
-          "__obelisk_state_value", false, layout.bitCount, &layout);
-      Value oldUnknown = loadStatePlane(
-          rewriter, op.getLoc(), netHandle, driveType,
-          "__obelisk_state_unknown", true, layout.bitCount, &layout);
+      Value oldValue = loadStatePlane(rewriter, op.getLoc(), netHandle,
+                                      driveType, "__obelisk_state_value", false,
+                                      layout.bitCount, &layout);
+      Value oldUnknown = loadStatePlane(rewriter, op.getLoc(), netHandle,
+                                        driveType, "__obelisk_state_unknown",
+                                        true, layout.bitCount, &layout);
       Value publishValue = driveValue;
       Value publishUnknown = driveUnknown;
       if (!bulkNet->fourState) {
         Value allOnes =
             integerConstant(APInt::getAllOnes(driveType.getWidth()));
-        publishValue = arith::AndIOp::create(
-            rewriter, op.getLoc(), driveValue,
-            arith::XOrIOp::create(rewriter, op.getLoc(), driveUnknown,
-                                  allOnes));
+        publishValue =
+            arith::AndIOp::create(rewriter, op.getLoc(), driveValue,
+                                  arith::XOrIOp::create(rewriter, op.getLoc(),
+                                                        driveUnknown, allOnes));
         publishUnknown = integerConstant(APInt::getZero(driveType.getWidth()));
       }
-      Value valueChanged = storeStatePlane(
-          rewriter, op.getLoc(), netHandle, publishValue,
-          "__obelisk_state_value", layout.bitCount, &layout);
-      Value unknownChanged = storeStatePlane(
-          rewriter, op.getLoc(), netHandle, publishUnknown,
-          "__obelisk_state_unknown", layout.bitCount, &layout);
+      Value valueChanged =
+          storeStatePlane(rewriter, op.getLoc(), netHandle, publishValue,
+                          "__obelisk_state_value", layout.bitCount, &layout);
+      Value unknownChanged =
+          storeStatePlane(rewriter, op.getLoc(), netHandle, publishUnknown,
+                          "__obelisk_state_unknown", layout.bitCount, &layout);
       changed = arith::OrIOp::create(rewriter, op.getLoc(), valueChanged,
-                                    unknownChanged);
-      notifySignal(rewriter, op.getLoc(), netHandle, bulkNet->width, oldValue,
-                   oldUnknown, publishValue,
-                   bulkNet->fourState ? publishUnknown : Value{},
-                   resolveDirectStaticStateRange(netHandle, bulkNet->width,
-                                                 &layout));
+                                     unknownChanged);
+      notifySignal(
+          rewriter, op.getLoc(), netHandle, bulkNet->width, oldValue,
+          oldUnknown, publishValue,
+          bulkNet->fourState ? publishUnknown : Value{},
+          resolveDirectStaticStateRange(netHandle, bulkNet->width, &layout));
       if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveChangedOp>)
         rewriter.replaceOp(op, changed);
       else
@@ -288,6 +279,13 @@ public:
           return static_cast<uint16_t>(uint16_t{1} << index);
         };
         Value resolvedStrengths = strengthConstant(strengthBit(7));
+        sim::NetResolutionKind resolution = net.resolution;
+        auto foundResolution = layout.connectivityResolutions.find(canonical);
+        if (foundResolution != layout.connectivityResolutions.end())
+          resolution = foundResolution->second;
+        Value resolutionValue = arith::ConstantOp::create(
+            rewriter, op.getLoc(), rewriter.getI32Type(),
+            rewriter.getI32IntegerAttr(static_cast<uint32_t>(resolution)));
         for (const NativeStateLayout::Driver &driver : layout.driverLayouts) {
           for (const analysis::NetBit &member : component) {
             if (member.net != driver.netId ||
@@ -328,8 +326,9 @@ public:
                 LLVM::CallOp::create(
                     rewriter, op.getLoc(), TypeRange{strengthType},
                     SymbolRefAttr::get(rewriter.getContext(),
-                                       "obelisk_rt_v1_strength_resolve"),
-                    ValueRange{resolvedStrengths, driverStrengths})
+                                       "obelisk_rt_v1_strength_resolve_kind"),
+                    ValueRange{resolvedStrengths, driverStrengths,
+                               resolutionValue})
                     .getResult();
           }
         }
@@ -380,14 +379,12 @@ public:
               rewriter, op.getLoc(), rewriter.getI64Type(),
               rewriter.getI64IntegerAttr(encodeNativeStaticHandle(
                   memberNet->handleID, static_cast<int32_t>(member.offset))));
-          Value oldResolvedValue =
-              loadStatePlane(rewriter, op.getLoc(), netHandle, i1,
-                             "__obelisk_state_value", false, layout.bitCount,
-                             &layout);
-          Value oldResolvedUnknown =
-              loadStatePlane(rewriter, op.getLoc(), netHandle, i1,
-                             "__obelisk_state_unknown", true, layout.bitCount,
-                             &layout);
+          Value oldResolvedValue = loadStatePlane(
+              rewriter, op.getLoc(), netHandle, i1, "__obelisk_state_value",
+              false, layout.bitCount, &layout);
+          Value oldResolvedUnknown = loadStatePlane(
+              rewriter, op.getLoc(), netHandle, i1, "__obelisk_state_unknown",
+              true, layout.bitCount, &layout);
           Value publishValue = resolvedValue;
           Value publishUnknown = resolvedUnknown;
           if (!memberNet->fourState) {
@@ -418,19 +415,16 @@ public:
                           publication.unknown, "__obelisk_state_unknown",
                           layout.bitCount, &layout));
     }
-    auto packBits = [&](ArrayRef<Publication> run,
-                        Value Publication::*member) {
-      Value packed = llvmConstant(rewriter, op.getLoc(),
-                                  rewriter.getI64Type(), uint64_t{0});
+    auto packBits = [&](ArrayRef<Publication> run, Value Publication::*member) {
+      Value packed = llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(),
+                                  uint64_t{0});
       for (auto [bit, publication] : llvm::enumerate(run)) {
         Value extended = LLVM::ZExtOp::create(
-            rewriter, op.getLoc(), rewriter.getI64Type(),
-            publication.*member);
+            rewriter, op.getLoc(), rewriter.getI64Type(), publication.*member);
         if (bit != 0)
           extended = arith::ShLIOp::create(
               rewriter, op.getLoc(), extended,
-              llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(),
-                           bit));
+              llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(), bit));
         packed = arith::OrIOp::create(rewriter, op.getLoc(), packed, extended);
       }
       return packed;
@@ -499,8 +493,7 @@ void annotateStaticDriverNets(ModuleOp module,
     }
   };
   module.walk([&](sim::SimDriverDriveOp drive) { annotate(drive); });
-  module.walk(
-      [&](sim::SimDriverDriveChangedOp drive) { annotate(drive); });
+  module.walk([&](sim::SimDriverDriveChangedOp drive) { annotate(drive); });
 }
 
 void populateDriverToLLVMConversionPatterns(RewritePatternSet &patterns,

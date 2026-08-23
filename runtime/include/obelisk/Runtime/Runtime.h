@@ -77,6 +77,8 @@ typedef int32_t obelisk_rt_status;
 // represent supply0..highz..supply1. Generated native code and bytecode use
 // this shared primitive so their ambiguous-strength resolution is identical.
 uint16_t obelisk_rt_v1_strength_resolve(uint16_t lhs, uint16_t rhs);
+uint16_t obelisk_rt_v1_strength_resolve_kind(uint16_t lhs, uint16_t rhs,
+                                             uint32_t resolution);
 
 // Tokens in an IEEE 1800 $readmemb/$readmemh input stream. Address tokens are
 // always hexadecimal; data tokens use the radix selected by the system task.
@@ -1942,9 +1944,10 @@ obelisk_rt_status obelisk_rt_v1_string_scan_field(
 obelisk_rt_status
 obelisk_rt_v1_string_parse_integer(obelisk_rt_string_v1 string, uint32_t radix,
                                    uint64_t *out_value);
-obelisk_rt_status obelisk_rt_v1_string_parse_logic(
-    obelisk_rt_string_v1 string, uint32_t radix, uint64_t *out_value,
-    uint64_t *out_unknown);
+obelisk_rt_status obelisk_rt_v1_string_parse_logic(obelisk_rt_string_v1 string,
+                                                   uint32_t radix,
+                                                   uint64_t *out_value,
+                                                   uint64_t *out_unknown);
 obelisk_rt_status obelisk_rt_v1_string_parse_real(obelisk_rt_string_v1 string,
                                                   double *out_value);
 obelisk_rt_status
@@ -2787,14 +2790,15 @@ obelisk_rt_status obelisk_rt_v1_scheduler_driver_nba(
 obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
     obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
     uint64_t plane_bit_count, uint64_t bit_offset, uint64_t bit_width,
-    uint64_t code_unit, uint32_t component, uint32_t flags,
-    uint64_t rise_delay, uint64_t fall_delay, uint64_t turnoff_delay,
-    const uint8_t *value, const uint8_t *unknown);
+    uint64_t code_unit, uint32_t component, uint32_t flags, uint64_t rise_delay,
+    uint64_t fall_delay, uint64_t turnoff_delay, const uint8_t *value,
+    const uint8_t *unknown);
 // Resolve a canonical driver-state range after an immediate native store.
 // Net declarations with propagation delays schedule their post-resolution
 // visible transitions; other nets publish immediately.
-obelisk_rt_status obelisk_rt_v1_scheduler_resolve_drivers(
-    obelisk_rt_context *context, uint64_t begin, uint64_t end);
+obelisk_rt_status
+obelisk_rt_v1_scheduler_resolve_drivers(obelisk_rt_context *context,
+                                        uint64_t begin, uint64_t end);
 // Clocking-output forms retain the clock-variable identity so coincident
 // synchronous drives can be checked and resolved bitwise at the NBA barrier.
 obelisk_rt_status obelisk_rt_v1_scheduler_clocking_nba(

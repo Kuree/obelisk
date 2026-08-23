@@ -51,8 +51,8 @@ FailureOr<Layout> getLayout(Type type) {
     layout.kind = Bits;
     layout.width = 64;
   } else if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
-                 sim::ContextType, sim::ObserverType,
-                 runtime::ContextType>(type)) {
+                 sim::ContextType, sim::ObserverType, runtime::ContextType>(
+                 type)) {
     layout.kind = Handle;
     layout.width = 256;
   } else if (isa<runtime::StatusType>(type)) {
@@ -151,9 +151,8 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
   result.bits = analyzed->bitCount;
 
   for (const auto &net : analyzed->netLayouts)
-    result.netLayouts.push_back(
-        {net.id, net.offset, net.width, net.fourState, net.resolution,
-         net.propagationDelays});
+    result.netLayouts.push_back({net.id, net.offset, net.width, net.fourState,
+                                 net.resolution, net.propagationDelays});
   for (const auto &driver : analyzed->driverLayouts) {
     auto net = llvm::find_if(analyzed->netLayouts, [&](const auto &candidate) {
       return candidate.id == driver.netId;
@@ -173,7 +172,7 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
   // merging across that boundary emits a record no net contains.
   using ScalarConnection =
       std::tuple<sim::NetResolutionKind, sim::NetResolutionKind, uint64_t,
-                 uint64_t>;
+                 uint64_t, std::optional<bool>>;
   std::map<std::pair<uint64_t, uint64_t>, ScalarConnection> scalarConnections;
   for (sim::SimNetConnectDeclOp connection :
        design.getBody().getOps<sim::SimNetConnectDeclOp>()) {
@@ -194,19 +193,23 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
       sim::NetResolutionKind lhsResolution = lhs->resolution;
       sim::NetResolutionKind rhsResolution = rhs->resolution;
       uint64_t lhsNet = lhs->id, rhsNet = rhs->id;
+      std::optional<bool> rhsDominates = connection.getRhsDominates();
       if (rhsBit < lhsBit) {
         std::swap(lhsBit, rhsBit);
         std::swap(lhsResolution, rhsResolution);
         std::swap(lhsNet, rhsNet);
+        if (rhsDominates)
+          rhsDominates = !*rhsDominates;
       }
       if (lhsBit == rhsBit)
         continue;
       auto [found, inserted] = scalarConnections.try_emplace(
           std::pair{lhsBit, rhsBit},
-          ScalarConnection{lhsResolution, rhsResolution, lhsNet, rhsNet});
+          ScalarConnection{lhsResolution, rhsResolution, lhsNet, rhsNet,
+                           rhsDominates});
       if (!inserted &&
-          found->second !=
-              ScalarConnection{lhsResolution, rhsResolution, lhsNet, rhsNet})
+          found->second != ScalarConnection{lhsResolution, rhsResolution,
+                                            lhsNet, rhsNet, rhsDominates})
         return connection.emitOpError(
                    "has inconsistent duplicate scalar connectivity"),
                failure();
@@ -215,7 +218,8 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
   for (auto scalar = scalarConnections.begin();
        scalar != scalarConnections.end();) {
     auto [lhsOffset, rhsOffset] = scalar->first;
-    auto [lhsResolution, rhsResolution, lhsNet, rhsNet] = scalar->second;
+    auto [lhsResolution, rhsResolution, lhsNet, rhsNet, rhsDominates] =
+        scalar->second;
     uint64_t width = 1;
     int direction = 0;
     auto next = std::next(scalar);
@@ -236,7 +240,9 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
       ++next;
     }
     result.connections.push_back({lhsOffset, rhsOffset, width, lhsResolution,
-                                  rhsResolution, direction < 0});
+                                  rhsResolution, direction < 0,
+                                  rhsDominates.has_value(),
+                                  rhsDominates.value_or(false)});
     scalar = next;
   }
 

@@ -1474,12 +1474,34 @@ LogicalResult SimDesignOp::verifyRegions() {
                       NetResolutionKind::UWire;
       bool rhsUWire = netResolutions.lookup(connection.getRhsNetId()) ==
                       NetResolutionKind::UWire;
-      if (lhsUWire != rhsUWire &&
-          (!connection.getRhsDominates() ||
-           *connection.getRhsDominates() != rhsUWire))
+      NetResolutionKind lhsResolution =
+          netResolutions.lookup(connection.getLhsNetId());
+      NetResolutionKind rhsResolution =
+          netResolutions.lookup(connection.getRhsNetId());
+      auto category = [](NetResolutionKind kind) {
+        return kind == NetResolutionKind::Tri ? NetResolutionKind::Wire : kind;
+      };
+      lhsResolution = category(lhsResolution);
+      rhsResolution = category(rhsResolution);
+      bool mixed = lhsResolution != rhsResolution;
+      if (mixed && !connection.getRhsDominates())
         return connection.emitOpError(
-            "must identify the uwire endpoint as dominant in mixed "
-            "wire/tri topology");
+            "must identify the dominant endpoint in mixed net topology");
+      std::optional<bool> requiredDominance;
+      if (lhsUWire != rhsUWire)
+        requiredDominance = rhsUWire;
+      else if (lhsResolution == NetResolutionKind::Wire &&
+               (rhsResolution == NetResolutionKind::WAnd ||
+                rhsResolution == NetResolutionKind::WOr))
+        requiredDominance = true;
+      else if (rhsResolution == NetResolutionKind::Wire &&
+               (lhsResolution == NetResolutionKind::WAnd ||
+                lhsResolution == NetResolutionKind::WOr))
+        requiredDominance = false;
+      if (requiredDominance &&
+          *connection.getRhsDominates() != *requiredDominance)
+        return connection.emitOpError(
+            "identifies the wrong dominant endpoint for these net types");
     }
   }
 

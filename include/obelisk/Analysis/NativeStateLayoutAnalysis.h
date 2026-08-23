@@ -63,12 +63,12 @@ struct NativeStateLayoutAnalysis {
   mlir::SmallVector<Bound> bounds;
   mlir::SmallVector<Net> netLayouts;
   mlir::SmallVector<Driver> driverLayouts;
-  llvm::DenseMap<std::pair<uint64_t, uint64_t>,
-                 std::pair<uint64_t, uint64_t>>
+  llvm::DenseMap<std::pair<uint64_t, uint64_t>, std::pair<uint64_t, uint64_t>>
       connectivityCanonical;
-  llvm::DenseMap<std::pair<uint64_t, uint64_t>,
-                 mlir::SmallVector<NetBit>>
+  llvm::DenseMap<std::pair<uint64_t, uint64_t>, mlir::SmallVector<NetBit>>
       connectivityComponents;
+  llvm::DenseMap<std::pair<uint64_t, uint64_t>, sim::NetResolutionKind>
+      connectivityResolutions;
   uint64_t bitCount = 0;
 };
 

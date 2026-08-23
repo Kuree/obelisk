@@ -60,6 +60,11 @@ public:
   /// LRM 23.3.3.7 dominating member for the simulated-net component.
   NetDominance getDominance(NetBit bit) const;
 
+  /// Sink members of an acyclic, completely directed collapse component.
+  /// Multiple sinks can still determine one effective net type when all have
+  /// the same resolution category.
+  mlir::ArrayRef<NetBit> getDominatingBits(NetBit bit) const;
+
   /// Fixed packed width of a logical net descriptor, when known.
   std::optional<uint64_t> getNetWidth(uint64_t net) const;
 
@@ -69,6 +74,7 @@ private:
   mlir::SmallVector<uint64_t> parents;
   llvm::DenseMap<uint64_t, mlir::SmallVector<NetBit>> components;
   llvm::DenseMap<uint64_t, NetDominance> dominance;
+  llvm::DenseMap<uint64_t, mlir::SmallVector<NetBit>> dominatingBits;
 };
 
 } // namespace obelisk::analysis

@@ -208,9 +208,11 @@ def SimDPIArgumentDirection
 def SimNetWire : I32EnumAttrCase<"Wire", 0, "wire">;
 def SimNetTri : I32EnumAttrCase<"Tri", 1, "tri">;
 def SimNetUWire : I32EnumAttrCase<"UWire", 2, "uwire">;
+def SimNetWAnd : I32EnumAttrCase<"WAnd", 3, "wand">;
+def SimNetWOr : I32EnumAttrCase<"WOr", 4, "wor">;
 def SimNetResolutionKind
     : I32EnumAttr<"NetResolutionKind", "supported net resolution kind", [
-        SimNetWire, SimNetTri, SimNetUWire
+        SimNetWire, SimNetTri, SimNetUWire, SimNetWAnd, SimNetWOr
       ]> {
   let cppNamespace = "::obelisk::sim";
 }

@@ -1080,8 +1080,7 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_inertial_driver,
              obelisk_rt_status (*)(obelisk_rt_context *, uint8_t *, uint8_t *,
                                    uint64_t, uint64_t, uint64_t, uint64_t,
                                    uint32_t, uint32_t, uint64_t, uint64_t,
-                                   uint64_t, const uint8_t *,
-                                   const uint8_t *));
+                                   uint64_t, const uint8_t *, const uint8_t *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_resolve_drivers,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_clocking_nba,
@@ -1150,6 +1149,8 @@ ABI_FUNCTION(obelisk_rt_v1_native_state_static_handle, uint64_t (*)(uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_native_handle_offset,
              uint64_t (*)(uint64_t, int64_t));
 ABI_FUNCTION(obelisk_rt_v1_strength_resolve, uint16_t (*)(uint16_t, uint16_t));
+ABI_FUNCTION(obelisk_rt_v1_strength_resolve_kind,
+             uint16_t (*)(uint16_t, uint16_t, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_native_state_alloc,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t,
                                    const uint8_t *, const uint8_t *,

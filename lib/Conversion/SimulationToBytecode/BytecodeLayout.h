@@ -85,6 +85,8 @@ struct StateLayout {
     sim::NetResolutionKind lhsResolution;
     sim::NetResolutionKind rhsResolution;
     bool rhsReversed;
+    bool hasDominance;
+    bool rhsDominates;
   };
   llvm::DenseMap<uint64_t, uint64_t> storage;
   llvm::DenseMap<uint64_t, uint64_t> nets;

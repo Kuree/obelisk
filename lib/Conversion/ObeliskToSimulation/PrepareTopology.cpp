@@ -263,8 +263,8 @@ static bool isStaticReturnVariable(Operation *op) {
   // always models that compiler-generated variable as automatic, so the
   // subroutine's own lifetime decides here.
   auto subroutine = op->getParentOfType<semantic::SVSubroutineSymbolOp>();
-  if (!subroutine || subroutine.getDefaultLifetime() !=
-                         semantic::SVVariableLifetime::Static)
+  if (!subroutine ||
+      subroutine.getDefaultLifetime() != semantic::SVVariableLifetime::Static)
     return false;
   std::optional<StringRef> returnPath = subroutine.getReturnVariablePath();
   return returnPath && *returnPath == getHierarchyName(op);
@@ -293,11 +293,12 @@ bool isNestedInCodeUnit(Operation *op) {
   return false;
 }
 
-FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
-    ModuleOp module, semantic::SVRootSymbolOp semanticRoot,
-    const PreparedPortAliases &portAliases,
-    const PreparedScopeDeclarations &scopes, uint64_t designPrecisionFs,
-    OpBuilder &builder) {
+FailureOr<llvm::StringMap<DescriptorInfo>>
+materializeDesignDescriptors(ModuleOp module,
+                             semantic::SVRootSymbolOp semanticRoot,
+                             const PreparedPortAliases &portAliases,
+                             const PreparedScopeDeclarations &scopes,
+                             uint64_t designPrecisionFs, OpBuilder &builder) {
   llvm::StringMap<DescriptorInfo> descriptors;
   uint64_t nextStorageId = 0;
   uint64_t nextNetId = 0;
@@ -310,9 +311,9 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     auto variable = dyn_cast<semantic::SVVariableSymbolOp>(op);
     auto classProperty = dyn_cast<semantic::SVClassPropertySymbolOp>(op);
     bool staticVariable =
-        variable && (variable.getLifetime() ==
-                         semantic::SVVariableLifetime::Static ||
-                     isStaticReturnVariable(variable));
+        variable &&
+        (variable.getLifetime() == semantic::SVVariableLifetime::Static ||
+         isStaticReturnVariable(variable));
     bool staticClassProperty =
         classProperty &&
         classProperty.getLifetime() == semantic::SVVariableLifetime::Static;
@@ -420,7 +421,8 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       if (op->getParentOfType<semantic::SVSubroutineSymbolOp>())
         declaration->setAttr(sim::metadata::subroutineStorage,
                              builder.getUnitAttr());
-      if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(op->getParentOp());
+      if (auto body =
+              dyn_cast<semantic::SVInstanceBodySymbolOp>(op->getParentOp());
           body && body->hasAttr("virtual_interface_identity") &&
           !isCompileTimeOnlyInstanceMember(body))
         declaration->setAttr("obelisk_sim.virtual_interface_member", debug);
@@ -451,6 +453,14 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       break;
     case semantic::SVNetKind::UWire:
       resolution = sim::NetResolutionKind::UWire;
+      break;
+    case semantic::SVNetKind::WAnd:
+    case semantic::SVNetKind::TriAnd:
+      resolution = sim::NetResolutionKind::WAnd;
+      break;
+    case semantic::SVNetKind::WOr:
+    case semantic::SVNetKind::TriOr:
+      resolution = sim::NetResolutionKind::WOr;
       break;
     default:
       emitError(getSemanticLocation(op))
@@ -488,24 +498,23 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       }
       int64_t rise = ticks[0];
       int64_t fall = ticks.size() == 1 ? rise : ticks[1];
-      int64_t turnoff = ticks.size() == 1
-                            ? rise
-                            : ticks.size() == 2 ? std::min(rise, fall)
-                                                : ticks[2];
-      propagationDelays =
-          builder.getDenseI64ArrayAttr({rise, fall, turnoff});
+      int64_t turnoff = ticks.size() == 1   ? rise
+                        : ticks.size() == 2 ? std::min(rise, fall)
+                                            : ticks[2];
+      propagationDelays = builder.getDenseI64ArrayAttr({rise, fall, turnoff});
     }
     uint64_t id = nextNetId++;
     descriptors[path] = {DescriptorInfo::Kind::Net, id, scopeId, *type,
                          resolution};
     descriptors[path].rootType = *type;
     descriptors[path].delayedNet = static_cast<bool>(propagationDelays);
-    auto declaration = sim::SimNetDeclOp::create(
-        builder, getSemanticLocation(op), id, scopeId, *type,
-        sim::Lifetime::Design, hierarchy, debug,
-        sim::ComputeObservabilityKindAttr{}, resolution, propagationDelays,
-        UnitAttr{});
-    if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(op->getParentOp());
+    auto declaration =
+        sim::SimNetDeclOp::create(builder, getSemanticLocation(op), id, scopeId,
+                                  *type, sim::Lifetime::Design, hierarchy,
+                                  debug, sim::ComputeObservabilityKindAttr{},
+                                  resolution, propagationDelays, UnitAttr{});
+    if (auto body =
+            dyn_cast<semantic::SVInstanceBodySymbolOp>(op->getParentOp());
         body && body->hasAttr("virtual_interface_identity") &&
         !isCompileTimeOnlyInstanceMember(body))
       declaration->setAttr("obelisk_sim.virtual_interface_member", debug);
@@ -713,8 +722,7 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     if (source->second.kind != DescriptorInfo::Kind::Storage &&
         source->second.kind != DescriptorInfo::Kind::Net) {
       emitError(getSemanticLocation(connection))
-          << "module port does not reference packed storage or a net: "
-          << path;
+          << "module port does not reference packed storage or a net: " << path;
       invalid = true;
       continue;
     }
@@ -770,12 +778,10 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     std::string portHierarchy =
         (Twine(portScopeHierarchy) + "." + formalName).str();
     sim::SimPortDeclOp::create(
-        builder, getSemanticLocation(connection), nextPortId++,
-        *portScopeId, source->second.id,
-        source->second.kind == DescriptorInfo::Kind::Net,
+        builder, getSemanticLocation(connection), nextPortId++, *portScopeId,
+        source->second.id, source->second.kind == DescriptorInfo::Kind::Net,
         source->second.viewOffset, source->second.type, direction,
-        connection.getFormalOrdinal(),
-        builder.getStringAttr(portHierarchy),
+        connection.getFormalOrdinal(), builder.getStringAttr(portHierarchy),
         connection.getFormalName()
             ? builder.getStringAttr(*connection.getFormalName())
             : StringAttr{});

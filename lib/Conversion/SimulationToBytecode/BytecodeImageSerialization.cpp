@@ -20,6 +20,12 @@ using namespace mlir;
 
 namespace obelisk::bytecode {
 
+static uint32_t encodeResolution(sim::NetResolutionKind resolution,
+                                 bool driver) {
+  uint32_t value = static_cast<uint32_t>(resolution);
+  return ((value & 3) << 1) | ((value & 4) << (driver ? 10 : 3));
+}
+
 SmallVector<uint8_t> serializeBytecodeImage(
     MutableArrayRef<FunctionPlan> plans, ArrayRef<Instruction> instructions,
     ArrayRef<OperandMap> operandMaps, ArrayRef<uint8_t> constants,
@@ -176,7 +182,7 @@ SmallVector<uint8_t> serializeBytecodeImage(
     append32(output, UINT32_MAX - 1);
     bool delayed = netDelayOffsets[index] != UINT64_MAX;
     append32(output, (net.fourState ? 1u : 0u) |
-                         (static_cast<uint32_t>(net.resolution) << 1) |
+                         encodeResolution(net.resolution, false) |
                          (delayed ? uint32_t{1} << 3 : 0) |
                          (netDelayBitwise[index] ? uint32_t{1} << 4 : 0));
     append64(output, net.offset);
@@ -192,7 +198,7 @@ SmallVector<uint8_t> serializeBytecodeImage(
     // explicit codes are one greater than the Figure 28-2 scale position.
     uint32_t strength0 = static_cast<uint32_t>(driver.strength0) + 1;
     uint32_t strength1 = static_cast<uint32_t>(driver.strength1) + 1;
-    append32(output, 1u | (static_cast<uint32_t>(driver.resolution) << 1) |
+    append32(output, 1u | encodeResolution(driver.resolution, true) |
                          (strength0 << 3) | (strength1 << 7) |
                          (driver.strengthBank == 1 ? uint32_t{1} << 11 : 0));
     append64(output, driver.offset + driver.drivenLow);
@@ -207,7 +213,9 @@ SmallVector<uint8_t> serializeBytecodeImage(
     append64(output, connection.width);
     output.push_back(static_cast<uint8_t>(connection.lhsResolution));
     output.push_back(static_cast<uint8_t>(connection.rhsResolution));
-    output.push_back(connection.rhsReversed ? 1 : 0);
+    output.push_back((connection.rhsReversed ? 1 : 0) |
+                     (connection.hasDominance ? 2 : 0) |
+                     (connection.rhsDominates ? 4 : 0));
     output.push_back(0);
     append32(output, 0);
   }

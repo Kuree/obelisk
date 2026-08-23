@@ -482,7 +482,31 @@ module {
     obelisk_sim.scope.decl 0
     obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design
     obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 2 : i32}
-    // expected-error @+1 {{must identify the uwire endpoint as dominant in mixed wire/tri topology}}
+    // expected-error @+1 {{identifies the wrong dominant endpoint for these net types}}
+    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = false
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @mixed_wired_missing_dominance {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 3 : i32}
+    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 4 : i32}
+    // expected-error @+1 {{must identify the dominant endpoint in mixed net topology}}
+    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @wire_wired_wrong_dominance {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design
+    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 3 : i32}
+    // expected-error @+1 {{identifies the wrong dominant endpoint for these net types}}
     obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = false
   }
 }

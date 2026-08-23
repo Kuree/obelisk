@@ -171,9 +171,8 @@ public:
     auto found = std::lower_bound(
         randomStates.begin(), randomStates.end(), token,
         [](const auto &entry, uint64_t value) { return entry.first < value; });
-    return found != randomStates.end() && found->first == token
-               ? &found->second
-               : nullptr;
+    return found != randomStates.end() && found->first == token ? &found->second
+                                                                : nullptr;
   }
   bool empty() const { return ranges.empty(); }
 
@@ -396,14 +395,16 @@ obelisk_rt_status obelisk_rt_mailbox_wait_ready(obelisk_rt_object_v1 *mailbox,
 obelisk_rt_status
 obelisk_rt_semaphore_keys_ready(obelisk_rt_object_v1 *semaphore, int32_t keys,
                                 bool &ready);
-obelisk_rt_status obelisk_rt_semaphore_try_get_raw(
-    obelisk_rt_object_v1 *semaphore, int32_t keys, uint32_t *outSuccess);
+obelisk_rt_status
+obelisk_rt_semaphore_try_get_raw(obelisk_rt_object_v1 *semaphore, int32_t keys,
+                                 uint32_t *outSuccess);
 obelisk_rt_status
 obelisk_rt_semaphore_wait_ready(obelisk_rt_context *context,
                                 obelisk_rt_object_v1 *semaphore, int32_t keys,
                                 uint64_t waitSequence, bool &ready);
-obelisk_rt_status obelisk_rt_semaphore_wait_acquire(
-    const obelisk_rt_wait_record_v1 *wait, bool &acquired);
+obelisk_rt_status
+obelisk_rt_semaphore_wait_acquire(const obelisk_rt_wait_record_v1 *wait,
+                                  bool &acquired);
 
 struct SignalValueSnapshot {
   uint64_t sequence = 0;
@@ -751,6 +752,7 @@ struct NetAliasCache {
   std::unordered_map<uint64_t, uint64_t> rootByBit;
   std::unordered_map<uint64_t, std::vector<uint64_t>> members;
   std::unordered_map<uint64_t, std::vector<NetDriverBit>> driverBits;
+  std::unordered_map<uint64_t, uint8_t> resolutionByRoot;
   std::vector<NetAliasRange> nets;
   std::vector<NetAliasRange> drivers;
 };
@@ -1095,22 +1097,22 @@ struct obelisk_rt_context {
   ~obelisk_rt_context();
 };
 
-inline void obelisk_rt_sync_native_state_range_unlocked(
-    obelisk_rt_context *context, uint64_t begin, uint64_t width) {
-  if (!context || !context->nativeStateValue ||
-      !context->nativeStateUnknown || begin >= context->nativeStateBitCount)
+inline void
+obelisk_rt_sync_native_state_range_unlocked(obelisk_rt_context *context,
+                                            uint64_t begin, uint64_t width) {
+  if (!context || !context->nativeStateValue || !context->nativeStateUnknown ||
+      begin >= context->nativeStateBitCount)
     return;
-  uint64_t end =
-      width > context->nativeStateBitCount - begin
-          ? context->nativeStateBitCount
-          : begin + width;
+  uint64_t end = width > context->nativeStateBitCount - begin
+                     ? context->nativeStateBitCount
+                     : begin + width;
   for (uint64_t bit = begin; bit != end; ++bit) {
     uint8_t mask = static_cast<uint8_t>(UINT8_C(1) << (bit % 8));
     uint64_t byte = bit / 8;
-    bool value = (context->stateValue[bit / 64] &
-                  (uint64_t{1} << (bit % 64))) != 0;
-    bool unknown = (context->stateUnknown[bit / 64] &
-                    (uint64_t{1} << (bit % 64))) != 0;
+    bool value =
+        (context->stateValue[bit / 64] & (uint64_t{1} << (bit % 64))) != 0;
+    bool unknown =
+        (context->stateUnknown[bit / 64] & (uint64_t{1} << (bit % 64))) != 0;
     context->nativeStateValue[byte] =
         value ? context->nativeStateValue[byte] | mask
               : context->nativeStateValue[byte] & ~mask;
@@ -1159,8 +1161,9 @@ inline void obelisk_rt_unregister_unstarted_actor(obelisk_rt_context *context,
   obelisk_rt_unstarted_actors(context, phase).erase(logicalToken);
 }
 
-inline bool obelisk_rt_logical_process_terminated(
-    const obelisk_rt_context *context, uint64_t logicalToken) {
+inline bool
+obelisk_rt_logical_process_terminated(const obelisk_rt_context *context,
+                                      uint64_t logicalToken) {
   if (!context || logicalToken == 0)
     return false;
   if ((logicalToken & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0)
