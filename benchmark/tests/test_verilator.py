@@ -263,8 +263,10 @@ class ExcludedTest(unittest.TestCase):
     def test_every_exclusion_cites_the_clause_that_settles_it(self):
         for name, excluded in verilator.EXCLUDED.items():
             with self.subTest(test=name):
+                # An annex clause (A.2.1.2, A.6.7.1) is as much a citation as
+                # a numbered one, so its leading letter is part of the shape.
                 self.assertRegex(excluded.clause,
-                                 r"^IEEE 1800-2017 \d+(\.\d+)*$")
+                                 r"^IEEE 1800-2017 (?:[A-Z]\.)?\d+(\.\d+)*$")
                 self.assertTrue(excluded.reason.strip())
 
     def test_a_test_outside_the_list_is_still_judged(self):
