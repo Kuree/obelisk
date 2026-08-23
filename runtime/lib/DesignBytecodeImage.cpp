@@ -1639,7 +1639,6 @@ bool validateImage(const Image &image) {
     if ((net.argument & ~uint32_t{127}) != 0 ||
         decodeNetResolution(net.argument) > 9 || net.planeSize == 0 ||
         (decodeNetResolution(net.argument) == 9 && (net.argument & 1) == 0) ||
-        (decodeNetResolution(net.argument) == 9 && delayed) ||
         net.valueOffset < previousNetEnd || (bitwiseDelay && !delayed) ||
         delayed != (net.unknownOffset != UINT64_MAX) ||
         (delayed && ((net.unknownOffset & 7) != 0 ||
@@ -1648,16 +1647,20 @@ bool validateImage(const Image &image) {
         net.valueOffset > image.stateBitCount ||
         net.planeSize > image.stateBitCount - net.valueOffset)
       return reject(__LINE__, "invalid or misordered net state record");
-    if (delayed && bitwiseDelay)
-      for (uint64_t bit = 0; bit != net.planeSize; ++bit) {
+    if (delayed) {
+      uint64_t tripleCount = bitwiseDelay ? net.planeSize : 1;
+      for (uint64_t bit = 0; bit != tripleCount; ++bit) {
         const uint8_t *triple =
             image.data + image.constants + net.unknownOffset + bit * 24;
-        unsigned sentinels = (read64(triple) == UINT64_MAX) +
-                             (read64(triple + 8) == UINT64_MAX) +
-                             (read64(triple + 16) == UINT64_MAX);
-        if (sentinels != 0 && sentinels != 3)
-          return reject(__LINE__, "invalid absent bitwise net delay");
+        bool riseAbsent = read64(triple) == UINT64_MAX;
+        bool fallAbsent = read64(triple + 8) == UINT64_MAX;
+        bool thirdAbsent = read64(triple + 16) == UINT64_MAX;
+        bool absentBit = riseAbsent && fallAbsent && thirdAbsent;
+        if ((absentBit && !bitwiseDelay) || riseAbsent != fallAbsent ||
+            (riseAbsent && !thirdAbsent))
+          return reject(__LINE__, "invalid net-delay sentinel pattern");
       }
+    }
     netRecords.push_back(net);
     previousNetEnd = net.valueOffset + net.planeSize;
   }
@@ -1994,9 +1997,15 @@ bool validateImage(const Image &image) {
         const uint8_t *triple = image.data + image.constants +
                                 net.unknownOffset + (bitwise ? bit * 24 : 0);
         uint64_t rise = read64(triple);
-        if (!bitwise || rise != UINT64_MAX)
+        if (!bitwise || rise != UINT64_MAX) {
           delay = std::array<uint64_t, 3>{rise, read64(triple + 8),
                                           read64(triple + 16)};
+          if ((*delay)[2] == UINT64_MAX &&
+              effectiveResolutionByRoot.at(
+                  findConnectivity(net.valueOffset + bit)) != 9)
+            return reject(__LINE__,
+                          "omitted charge decay requires an effective trireg");
+        }
       }
       uint64_t root = findConnectivity(net.valueOffset + bit);
       auto [found, inserted] = componentDelays.try_emplace(root, delay);

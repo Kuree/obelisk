@@ -4465,6 +4465,226 @@ TEST(Scheduler, NetDeclarationDelaysApplyAfterDriverResolution) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, TriregChargeDecayStartsCancelsAndUsesItsOwnDelay) {
+  // IEEE 1800-2017 28.16.2 defines a trireg triple as rise, fall, and
+  // charge-decay time.  The driver descriptor targets the scalar net at bit
+  // zero; its own contribution is stored at bit eight.
+  constexpr uint64_t descriptorsOffset = 24;
+  std::vector<uint8_t> bytes(descriptorsOffset + 2 * 32, 0);
+  auto write32 = [&](uint64_t offset, uint32_t value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  };
+  auto write64 = [&](uint64_t offset, uint64_t value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  };
+  write64(0, 7);
+  write64(8, 11);
+  write64(16, 13);
+  auto writeDescriptor = [&](uint64_t index, uint32_t function,
+                             uint32_t argument, uint64_t valueOffset,
+                             uint64_t unknownOffset) {
+    uint64_t record = descriptorsOffset + index * 32;
+    write32(record, function);
+    write32(record + 4, argument);
+    write64(record + 8, valueOffset);
+    write64(record + 16, unknownOffset);
+    write64(record + 24, 1);
+  };
+  // Net resolution 9 encodes as bits 1 and 6. The delayed and four-state
+  // flags occupy bits 3 and 0. Driver resolution 9 uses bits 1 and 13.
+  writeDescriptor(0, obelisk::designbytecode::kNetStateDescriptor,
+                  1u | 8u | 2u | 64u, 0, 0);
+  writeDescriptor(1, obelisk::designbytecode::kDriverStateDescriptor,
+                  1u | 2u | 8192u, 8, 0);
+
+  obelisk::designbytecode::Image image{};
+  image.data = bytes.data();
+  image.size = bytes.size();
+  image.constants = 0;
+  image.constantSize = 24;
+  image.stateDescriptors = descriptorsOffset;
+  image.stateDescriptorCount = 2;
+  image.stateBitCount = 9;
+  ASSERT_TRUE(obelisk::designbytecode::validateImage(image));
+
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 9;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 2, 8, 1),
+            OBELISK_RT_OK);
+  context->designBytecodeImage = image;
+  auto set = [&](uint64_t offset, bool value, bool unknown) {
+    uint64_t mask = uint64_t{1} << offset;
+    context->stateValue[0] =
+        value ? context->stateValue[0] | mask : context->stateValue[0] & ~mask;
+    context->stateUnknown[0] = unknown ? context->stateUnknown[0] | mask
+                                       : context->stateUnknown[0] & ~mask;
+  };
+  auto state = [&] {
+    return std::pair((context->stateValue[0] & 1) != 0,
+                     (context->stateUnknown[0] & 1) != 0);
+  };
+  auto resolve = [&] {
+    bool changed = false;
+    ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(image, context, 8, 9,
+                                                           changed));
+    EXPECT_FALSE(changed);
+  };
+
+  // A driven 1 observes the rise delay. Turning the driver off starts decay
+  // from the turn-off time without changing the retained value.
+  set(0, false, true);
+  set(8, true, false);
+  resolve();
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 7u);
+  EXPECT_FALSE(context->scheduledNBAs.front().inertialNetChargeDecay);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(state(), std::pair(true, false));
+  EXPECT_EQ(context->schedulerTime, 7u);
+
+  set(8, true, true);
+  resolve();
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 20u);
+  EXPECT_TRUE(context->scheduledNBAs.front().inertialNetChargeDecay);
+  EXPECT_EQ(state(), std::pair(true, false));
+
+  // Re-resolving all-z does not restart decay. A driver returning with the
+  // retained value ends decay immediately and needs no replacement event.
+  context->schedulerTime = 10;
+  resolve();
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 20u);
+  context->schedulerTime = 12;
+  set(8, true, false);
+  resolve();
+  EXPECT_TRUE(context->scheduledNBAs.empty());
+  EXPECT_TRUE(context->inertialNetPending.empty());
+  EXPECT_EQ(state(), std::pair(true, false));
+
+  // With no returning driver, a stored known value decays to x.
+  context->schedulerTime = 14;
+  set(8, true, true);
+  resolve();
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 27u);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->schedulerTime, 27u);
+  EXPECT_EQ(state(), std::pair(false, true));
+  EXPECT_TRUE(context->inertialNetPending.empty());
+
+  // A driven x ends pending decay and uses min(rise, fall), never the third
+  // charge-decay value, as its ordinary propagation delay.
+  context->schedulerTime = 30;
+  set(8, true, false);
+  resolve();
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->schedulerTime, 37u);
+  EXPECT_EQ(state(), std::pair(true, false));
+  set(8, true, true);
+  resolve();
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 50u);
+  context->schedulerTime = 40;
+  set(8, false, true);
+  resolve();
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 47u);
+  EXPECT_FALSE(context->scheduledNBAs.front().inertialNetChargeDecay);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->schedulerTime, 47u);
+  EXPECT_EQ(state(), std::pair(false, true));
+
+  // The fall delay applies when a driver supplies 0, and stored 0 decays by
+  // the same third value as stored 1.
+  context->schedulerTime = 50;
+  set(8, false, false);
+  resolve();
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 61u);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(state(), std::pair(false, false));
+  set(8, true, true);
+  resolve();
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 74u);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(state(), std::pair(false, true));
+
+  // Turning the only driver off before its rise reaches the trireg rejects
+  // the pulse. Since the visible retained state is already x, decay does not
+  // create a redundant x event.
+  context->schedulerTime = 80;
+  set(8, true, false);
+  resolve();
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 87u);
+  context->schedulerTime = 83;
+  set(8, true, true);
+  resolve();
+  EXPECT_TRUE(context->scheduledNBAs.empty());
+  EXPECT_TRUE(context->inertialNetPending.empty());
+  EXPECT_EQ(state(), std::pair(false, true));
+  obelisk_rt_v1_context_destroy(context);
+
+  // Omitted decay is encoded separately from zero-time decay and is legal
+  // only for an effectively trireg component. It retains known charge forever.
+  write64(16, UINT64_MAX);
+  ASSERT_TRUE(obelisk::designbytecode::validateImage(image));
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  set(0, true, false);
+  set(8, true, true);
+  bool changed = false;
+  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(image, context, 8, 9,
+                                                         changed));
+  EXPECT_TRUE(context->scheduledNBAs.empty());
+  EXPECT_EQ(context->stateValue[0] & 1, 1u);
+  EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
+  obelisk_rt_v1_context_destroy(context);
+
+  // Zero is a real decay time, not the omitted-decay sentinel. It schedules
+  // the stored known value to become x in the current time slot.
+  write64(16, 0);
+  ASSERT_TRUE(obelisk::designbytecode::validateImage(image));
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 2, 8, 1),
+            OBELISK_RT_OK);
+  context->designBytecodeImage = image;
+  set(0, true, false);
+  set(8, true, true);
+  changed = false;
+  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(image, context, 8, 9,
+                                                         changed));
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 0u);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(state(), std::pair(false, true));
+  obelisk_rt_v1_context_destroy(context);
+
+  // The image trust boundary rejects the same omitted third slot for an
+  // ordinary wire, and rejects malformed partial/all-absent uniform triples.
+  write64(16, UINT64_MAX);
+  write32(descriptorsOffset + 4, 1u | 8u);
+  write32(descriptorsOffset + 32 + 4, 1u);
+  EXPECT_FALSE(obelisk::designbytecode::validateImage(image));
+  write32(descriptorsOffset + 4, 1u | 8u | 2u | 64u);
+  write32(descriptorsOffset + 32 + 4, 1u | 2u | 8192u);
+  write64(0, UINT64_MAX);
+  EXPECT_FALSE(obelisk::designbytecode::validateImage(image));
+  write64(8, UINT64_MAX);
+  EXPECT_FALSE(obelisk::designbytecode::validateImage(image));
+}
+
 TEST(Scheduler, DominatingNetDelayPublishesEveryCollapsedAlias) {
   constexpr uint64_t constantsOffset = 0;
   constexpr uint64_t descriptorsOffset = 48;

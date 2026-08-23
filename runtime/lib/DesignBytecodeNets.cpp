@@ -315,35 +315,38 @@ bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,
   return true;
 }
 
+void cancelNetBit(obelisk_rt_context *context, uint64_t destination) {
+  // Resolution can run while the scheduler is applying a propagation-
+  // delayed driver from this same vector. Marking the superseded net event
+  // avoids invalidating the scheduler's current reference; barrier scans
+  // ignore the tombstone and a later compaction removes it.
+  if (context->schedulerApplyingNativeUpdate) {
+    for (ScheduledNBA &update : context->scheduledNBAs)
+      if (update.inertialNetBit == destination)
+        update.cancelled = true;
+  } else {
+    context->scheduledNBAs.erase(
+        std::remove_if(context->scheduledNBAs.begin(),
+                       context->scheduledNBAs.end(),
+                       [&](const ScheduledNBA &update) {
+                         return update.inertialNetBit == destination;
+                       }),
+        context->scheduledNBAs.end());
+  }
+  context->inertialNetPending.erase(destination);
+}
+
 bool scheduleNetBit(obelisk_rt_context *context, uint64_t root,
                     uint64_t destination, bool value, bool unknown,
-                    const std::array<uint64_t, 3> &delays) {
-  auto cancel = [&] {
-    // Resolution can run while the scheduler is applying a propagation-
-    // delayed driver from this same vector. Marking the superseded net event
-    // avoids invalidating the scheduler's current reference; barrier scans
-    // ignore the tombstone and a later compaction removes it.
-    if (context->schedulerApplyingNativeUpdate) {
-      for (ScheduledNBA &update : context->scheduledNBAs)
-        if (update.inertialNetBit == destination)
-          update.cancelled = true;
-    } else {
-      context->scheduledNBAs.erase(
-          std::remove_if(context->scheduledNBAs.begin(),
-                         context->scheduledNBAs.end(),
-                         [&](const ScheduledNBA &update) {
-                           return update.inertialNetBit == destination;
-                         }),
-          context->scheduledNBAs.end());
-    }
-    context->inertialNetPending.erase(destination);
-  };
+                    const std::array<uint64_t, 3> &delays, uint8_t resolution,
+                    bool chargeDecay) {
   if (auto pending = context->inertialNetPending.find(destination);
       pending != context->inertialNetPending.end() &&
-      pending->second.value == value && pending->second.unknown == unknown)
+      pending->second.value == value && pending->second.unknown == unknown &&
+      pending->second.chargeDecay == chargeDecay)
     return true;
 
-  cancel();
+  cancelNetBit(context, destination);
   bool currentValue = bit(context->stateValue, destination);
   bool currentUnknown = bit(context->stateUnknown, destination);
   if (currentValue == value && currentUnknown == unknown)
@@ -359,9 +362,17 @@ bool scheduleNetBit(obelisk_rt_context *context, uint64_t root,
     context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
     return false;
   }
-  uint64_t delay = !unknown ? delays[value ? 0 : 1]
-                   : value  ? delays[2]
-                            : std::min({delays[0], delays[1], delays[2]});
+  uint64_t delay;
+  if (chargeDecay)
+    delay = delays[2];
+  else if (!unknown)
+    delay = delays[value ? 0 : 1];
+  else if (value)
+    delay = delays[2];
+  else if (resolution == 9)
+    delay = std::min(delays[0], delays[1]);
+  else
+    delay = std::min({delays[0], delays[1], delays[2]});
   ScheduledNBA update;
   update.sequence = context->nextSchedulerSequence++;
   update.dueTime = delay > UINT64_MAX - context->schedulerTime
@@ -388,9 +399,10 @@ bool scheduleNetBit(obelisk_rt_context *context, uint64_t root,
   update.inlineUnknown = unknown;
   update.inertialNetBit = destination;
   update.inertialNetGroup = root;
+  update.inertialNetChargeDecay = chargeDecay;
   context->scheduledNBAs.push_back(std::move(update));
-  context->inertialNetPending.emplace(destination,
-                                      InertialNetPending{value, unknown});
+  context->inertialNetPending.emplace(
+      destination, InertialNetPending{value, unknown, chargeDecay});
   return true;
 }
 
@@ -447,6 +459,7 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
     bool resolvedUnknown =
         resolvedZ || (hasNegative + hasZero + hasPositive) != 1;
     bool resolvedValue = resolvedZ || (!resolvedUnknown && hasPositive);
+    uint8_t resolution = cache.resolutionByRoot.at(root);
     for (uint64_t destination : members->second) {
       const NetAliasRange *net = nullptr;
       for (const NetAliasRange &candidate : cache.nets)
@@ -461,7 +474,7 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
       bool publishValue = net->fourState
                               ? resolvedValue
                               : (resolvedUnknown ? false : resolvedValue);
-      if (cache.resolutionByRoot.at(root) == 9 && resolvedZ) {
+      if (resolution == 9 && resolvedZ) {
         publishValue = bit(context->stateValue, destination);
         publishUnknown = bit(context->stateUnknown, destination);
       }
@@ -481,8 +494,16 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
       const auto &delays =
           net->propagationDelays[destination - net->valueOffset];
       if (delays) {
-        if (!scheduleNetBit(context, root, destination, publishValue,
-                            publishUnknown, *delays))
+        bool decay = resolution == 9 && resolvedZ && !forced && !assigned &&
+                     !publishUnknown && (*delays)[2] != UINT64_MAX;
+        if (decay) {
+          if (!scheduleNetBit(context, root, destination, false, true, *delays,
+                              resolution, true))
+            return false;
+        } else if (resolution == 9 && resolvedZ) {
+          cancelNetBit(context, destination);
+        } else if (!scheduleNetBit(context, root, destination, publishValue,
+                                   publishUnknown, *delays, resolution, false))
           return false;
       } else {
         publications.push_back(publication);

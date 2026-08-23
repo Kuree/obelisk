@@ -3106,7 +3106,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                 context->inertialNetPending.find(update.inertialNetBit);
             if (pending != context->inertialNetPending.end() &&
                 pending->second.value == (update.inlineValue != 0) &&
-                pending->second.unknown == (update.inlineUnknown != 0))
+                pending->second.unknown == (update.inlineUnknown != 0) &&
+                pending->second.chargeDecay == update.inertialNetChargeDecay)
               context->inertialNetPending.erase(pending);
           }
           if (update.inertialSite.codeUnit == UINT64_MAX)

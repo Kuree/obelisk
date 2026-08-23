@@ -97,10 +97,13 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
           size_t index = values.size() == 3 ? 0 : size_t{bit} * 3;
           if (values[index] == -1)
             continue;
-          propagationDelays[bit] =
-              std::array<uint64_t, 3>{static_cast<uint64_t>(values[index]),
-                                      static_cast<uint64_t>(values[index + 1]),
-                                      static_cast<uint64_t>(values[index + 2])};
+          uint64_t turnoffOrDecay =
+              values[index + 2] == -1
+                  ? std::numeric_limits<uint64_t>::max()
+                  : static_cast<uint64_t>(values[index + 2]);
+          propagationDelays[bit] = std::array<uint64_t, 3>{
+              static_cast<uint64_t>(values[index]),
+              static_cast<uint64_t>(values[index + 1]), turnoffOrDecay};
         }
       }
       layout.netLayouts.push_back(

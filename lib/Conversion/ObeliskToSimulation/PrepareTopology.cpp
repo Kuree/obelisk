@@ -484,13 +484,6 @@ materializeDesignDescriptors(ModuleOp module,
       invalid = true;
       return;
     }
-    if (resolution == sim::NetResolutionKind::TriReg &&
-        (net.getDelayFs() || net.getUnsupportedDelay())) {
-      emitError(getSemanticLocation(op))
-          << "trireg net delays and charge decay are not supported";
-      invalid = true;
-      return;
-    }
     if (net.getUnsupportedDelay()) {
       emitError(getSemanticLocation(op))
           << "net delays are not supported: " << *net.getUnsupportedDelay();
@@ -520,10 +513,20 @@ materializeDesignDescriptors(ModuleOp module,
       }
       int64_t rise = ticks[0];
       int64_t fall = ticks.size() == 1 ? rise : ticks[1];
-      int64_t turnoff = ticks.size() == 1   ? rise
-                        : ticks.size() == 2 ? std::min(rise, fall)
-                                            : ticks[2];
-      propagationDelays = builder.getDenseI64ArrayAttr({rise, fall, turnoff});
+      // IEEE 1800-2017 28.16.2: a trireg's third delay is charge
+      // decay, not turn-off.  One- and two-value declarations therefore
+      // retain charge indefinitely; -1 is the internal no-decay sentinel.
+      int64_t turnoffOrDecay;
+      if (resolution == sim::NetResolutionKind::TriReg)
+        turnoffOrDecay = ticks.size() == 3 ? ticks[2] : -1;
+      else if (ticks.size() == 1)
+        turnoffOrDecay = rise;
+      else if (ticks.size() == 2)
+        turnoffOrDecay = std::min(rise, fall);
+      else
+        turnoffOrDecay = ticks[2];
+      propagationDelays =
+          builder.getDenseI64ArrayAttr({rise, fall, turnoffOrDecay});
     }
     uint64_t id = nextNetId++;
     descriptors[path] = {DescriptorInfo::Kind::Net, id, scopeId, *type,

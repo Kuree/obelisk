@@ -463,6 +463,7 @@ struct InertialDriverPending {
 struct InertialNetPending {
   bool value = false;
   bool unknown = false;
+  bool chargeDecay = false;
 };
 
 struct NativeStaticState {
@@ -502,6 +503,7 @@ struct ScheduledNBA {
   InertialDriverSite inertialSite{UINT64_MAX, 0};
   uint64_t inertialNetBit = UINT64_MAX;
   uint64_t inertialNetGroup = UINT64_MAX;
+  bool inertialNetChargeDecay = false;
   bool cancelled = false;
 };
 

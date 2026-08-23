@@ -121,6 +121,13 @@ def SimStorageDeclOp : SimOp<"storage.decl", [MemoryEffects<[MemWrite<SimInvento
 
 def SimNetDeclOp : SimOp<"net.decl", [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
   let summary = "immutable resolved-net descriptor";
+  let description = [{
+    Declares the immutable metadata for a resolved net. `propagation_delays`
+    contains either one uniform rise/fall/third-delay triple or one triple per
+    packed bit. An all--1 per-bit triple denotes an immediate bit. For a
+    `trireg`, the third value is charge decay rather than turn-off, and -1 in
+    that slot denotes indefinite charge retention.
+  }];
   let arguments = (ins I64Attr:$id, I64Attr:$scope_id, TypeAttr:$type,
                        SimLifetime:$lifetime,
                        OptionalAttr<StrAttr>:$hierarchical_name,

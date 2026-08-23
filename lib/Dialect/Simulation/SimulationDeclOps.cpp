@@ -146,9 +146,6 @@ LogicalResult SimNetDeclOp::verify() {
       !isEntirelyFourState(getType()))
     return emitOpError("trireg nets require an entirely four-state type");
   if (auto delays = getPropagationDelays()) {
-    if (getResolutionKind() == NetResolutionKind::TriReg)
-      return emitOpError(
-          "trireg charge decay cannot use ordinary propagation delays");
     std::optional<unsigned> width = getPackedWidth(getType());
     if (!width ||
         (delays->size() != 3 && delays->size() != uint64_t{*width} * 3))
@@ -158,10 +155,17 @@ LogicalResult SimNetDeclOp::verify() {
     for (size_t index = 0; index != delays->size(); index += 3) {
       bool absent = (*delays)[index] == -1 && (*delays)[index + 1] == -1 &&
                     (*delays)[index + 2] == -1;
-      if (!absent && ((*delays)[index] < 0 || (*delays)[index + 1] < 0 ||
-                      (*delays)[index + 2] < 0))
+      if (absent)
+        continue;
+      // IEEE 1800-2017 28.16.2 assigns -1 in the third slot to omitted
+      // trireg charge decay. A collapsed alias can carry this normalized
+      // triple while retaining its declared non-trireg resolution kind, so
+      // the design verifier checks its effective scalar component kind.
+      if ((*delays)[index] < 0 || (*delays)[index + 1] < 0 ||
+          (*delays)[index + 2] < -1)
         return emitOpError(
-            "each propagation-delay triple must be nonnegative or all -1");
+            "each net-delay triple must have nonnegative rise/fall delays "
+            "and a nonnegative or -1 third delay");
     }
   }
   return verifyElementType([&] { return emitOpError(); }, getType());
@@ -1194,7 +1198,9 @@ LogicalResult SimDesignOp::verifyRegions() {
       portIds, connectionIds, covergroupIds, classIds;
   llvm::DenseMap<uint64_t, SimCodeUnitDeclOp> codeUnits;
   llvm::DenseMap<uint64_t, Type> storageTypes, netTypes, driverTypes;
+  llvm::DenseMap<uint64_t, SimNetDeclOp> nets;
   llvm::DenseMap<uint64_t, NetResolutionKind> netResolutions;
+  SmallVector<SimNetConnectDeclOp> netConnections;
   llvm::StringMap<SimClassDeclOp> classes;
   SmallVector<SimFuncOp> functions;
   bool sawRoot = false;
@@ -1226,6 +1232,7 @@ LogicalResult SimDesignOp::verifyRegions() {
     } else if (auto net = dyn_cast<SimNetDeclOp>(op)) {
       if (failed(addId(net.getIdAttr(), netIds, "net")))
         return failure();
+      nets[net.getId()] = net;
       netTypes[net.getId()] = net.getType();
       netResolutions[net.getId()] = net.getResolutionKind();
     } else if (auto driver = dyn_cast<SimDriverDeclOp>(op)) {
@@ -1239,6 +1246,7 @@ LogicalResult SimDesignOp::verifyRegions() {
       if (failed(
               addId(connection.getIdAttr(), connectionIds, "net connection")))
         return failure();
+      netConnections.push_back(connection);
     } else if (auto covergroup = dyn_cast<SimCovergroupDeclOp>(op)) {
       if (failed(addId(covergroup.getIdAttr(), covergroupIds, "covergroup")))
         return failure();
@@ -1530,6 +1538,156 @@ LogicalResult SimDesignOp::verifyRegions() {
           *connection.getRhsDominates() != *requiredDominance)
         return connection.emitOpError(
             "identifies the wrong dominant endpoint for these net types");
+    }
+  }
+
+  // IEEE 1800-2017 28.16.2 gives -1 in a normalized triple the special
+  // meaning "no charge decay". Port collapsing copies the dominating net's
+  // delay to every logical alias, so legality is a property of each scalar
+  // connectivity component's effective resolution rather than of the alias's
+  // declared resolution kind.
+  bool hasOmittedDecay = false;
+  for (auto entry : nets) {
+    auto delays = entry.second.getPropagationDelays();
+    if (!delays)
+      continue;
+    for (size_t index = 0; index != delays->size(); index += 3)
+      hasOmittedDecay |= (*delays)[index] != -1 && (*delays)[index + 2] == -1;
+  }
+  if (hasOmittedDecay) {
+    llvm::DenseMap<uint64_t, uint64_t> netBases;
+    SmallVector<NetResolutionKind> resolutionByBit;
+    for (uint64_t id = 0; id != netIds.size(); ++id) {
+      SimNetDeclOp net = nets.lookup(id);
+      std::optional<uint64_t> width = getProvenanceSpan(net.getType());
+      if (!width || *width > UINT64_MAX - resolutionByBit.size())
+        return net.emitOpError(
+            "cannot verify omitted charge decay for this net type");
+      netBases[id] = resolutionByBit.size();
+      resolutionByBit.append(*width, net.getResolutionKind());
+    }
+    SmallVector<uint64_t> parents(resolutionByBit.size());
+    for (uint64_t bit = 0; bit != parents.size(); ++bit)
+      parents[bit] = bit;
+    auto findRoot = [&](uint64_t bit) {
+      uint64_t root = bit;
+      while (parents[root] != root)
+        root = parents[root];
+      while (parents[bit] != bit) {
+        uint64_t next = parents[bit];
+        parents[bit] = root;
+        bit = next;
+      }
+      return root;
+    };
+    struct DominanceEdge {
+      uint64_t dominated;
+      uint64_t dominating;
+    };
+    SmallVector<DominanceEdge> dominanceEdges;
+    SmallVector<uint64_t> incompleteBits;
+    for (SimNetConnectDeclOp connection : netConnections) {
+      for (uint64_t index = 0; index != connection.getWidth(); ++index) {
+        uint64_t lhs = netBases.lookup(connection.getLhsNetId()) +
+                       connection.getLhsOffset() + index;
+        uint64_t rhsOffset = connection.getRhsReversed()
+                                 ? connection.getRhsOffset() - index
+                                 : connection.getRhsOffset() + index;
+        uint64_t rhs = netBases.lookup(connection.getRhsNetId()) + rhsOffset;
+        uint64_t lhsRoot = findRoot(lhs);
+        uint64_t rhsRoot = findRoot(rhs);
+        if (lhsRoot != rhsRoot)
+          parents[std::max(lhsRoot, rhsRoot)] = std::min(lhsRoot, rhsRoot);
+        if (std::optional<bool> rhsDominates = connection.getRhsDominates())
+          dominanceEdges.push_back(*rhsDominates ? DominanceEdge{lhs, rhs}
+                                                 : DominanceEdge{rhs, lhs});
+        else
+          incompleteBits.push_back(lhs);
+      }
+    }
+    llvm::DenseMap<uint64_t, SmallVector<uint64_t>> componentBits;
+    llvm::DenseMap<uint64_t, llvm::SmallSet<NetResolutionKind, 2>>
+        componentKinds;
+    for (uint64_t bit = 0; bit != resolutionByBit.size(); ++bit) {
+      uint64_t root = findRoot(bit);
+      componentBits[root].push_back(bit);
+      NetResolutionKind kind = resolutionByBit[bit];
+      if (kind == NetResolutionKind::Tri)
+        kind = NetResolutionKind::Wire;
+      componentKinds[root].insert(kind);
+    }
+    llvm::DenseMap<uint64_t, llvm::DenseSet<uint64_t>> dominatedBits;
+    llvm::DenseMap<uint64_t, llvm::DenseMap<uint64_t, SmallVector<uint64_t, 2>>>
+        dominanceOutgoing;
+    for (const DominanceEdge &edge : dominanceEdges) {
+      uint64_t root = findRoot(edge.dominated);
+      dominatedBits[root].insert(edge.dominated);
+      dominanceOutgoing[root][edge.dominated].push_back(edge.dominating);
+    }
+    llvm::DenseSet<uint64_t> incompleteComponents;
+    for (uint64_t bit : incompleteBits)
+      incompleteComponents.insert(findRoot(bit));
+    llvm::DenseMap<uint64_t, NetResolutionKind> effectiveResolution;
+    for (const auto &[root, kinds] : componentKinds) {
+      if (kinds.size() == 1) {
+        effectiveResolution[root] = *kinds.begin();
+        continue;
+      }
+      if (incompleteComponents.count(root))
+        continue;
+      llvm::DenseMap<uint64_t, uint64_t> incomingCount;
+      for (uint64_t bit : componentBits.lookup(root))
+        incomingCount[bit] = 0;
+      for (const auto &entry : dominanceOutgoing[root])
+        for (uint64_t target : entry.second)
+          ++incomingCount[target];
+      SmallVector<uint64_t> pending;
+      for (const auto &[bit, count] : incomingCount)
+        if (count == 0)
+          pending.push_back(bit);
+      uint64_t visited = 0;
+      while (!pending.empty()) {
+        uint64_t bit = pending.pop_back_val();
+        ++visited;
+        auto outgoing = dominanceOutgoing[root].find(bit);
+        if (outgoing != dominanceOutgoing[root].end())
+          for (uint64_t target : outgoing->second)
+            if (--incomingCount[target] == 0)
+              pending.push_back(target);
+      }
+      if (visited != componentBits.lookup(root).size())
+        continue;
+      std::optional<NetResolutionKind> effective;
+      for (uint64_t bit : componentBits.lookup(root)) {
+        if (dominatedBits[root].count(bit))
+          continue;
+        NetResolutionKind kind = resolutionByBit[bit];
+        if (kind == NetResolutionKind::Tri)
+          kind = NetResolutionKind::Wire;
+        if (effective && *effective != kind) {
+          effective.reset();
+          break;
+        }
+        effective = kind;
+      }
+      if (effective)
+        effectiveResolution[root] = *effective;
+    }
+    for (uint64_t id = 0; id != netIds.size(); ++id) {
+      SimNetDeclOp net = nets.lookup(id);
+      auto delays = net.getPropagationDelays();
+      if (!delays)
+        continue;
+      uint64_t width = *getPackedWidth(net.getType());
+      for (uint64_t bit = 0; bit != width; ++bit) {
+        size_t index = delays->size() == 3 ? 0 : size_t{bit} * 3;
+        if ((*delays)[index] == -1 || (*delays)[index + 2] != -1)
+          continue;
+        uint64_t root = findRoot(netBases.lookup(id) + bit);
+        if (effectiveResolution.lookup(root) != NetResolutionKind::TriReg)
+          return net.emitOpError(
+              "omitted charge decay requires an effective trireg component");
+      }
     }
   }
 
