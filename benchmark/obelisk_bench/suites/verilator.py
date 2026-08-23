@@ -333,6 +333,19 @@ USE_BEFORE_DECLARATION = Exclusion(
     "meaning; the test needs Verilator's tolerance of the forward reference "
     "(compiling the same sources with --allow-use-before-declare runs them to "
     "their marker)")
+MIXED_PORT_HEADER_STYLES = Exclusion(
+    "IEEE 1800-2017 23.2.2.2",
+    "a module \"shall be declared either entirely with the list_of_ports "
+    "syntax ... or entirely with the list_of_port_declarations syntax\", and "
+    "the test's header names a bare port and then declares the next one with "
+    "`input`; the test needs Verilator's tolerance of the two styles mixed")
+NON_STANDARD_KEYWORD_LEVEL = Exclusion(
+    "IEEE 1800-2017 22.14",
+    "the language's own way to reserve an earlier standard's keyword set is "
+    "`begin_keywords \"1364-2005\"`, which the source does not use, so `do` is "
+    "the reserved keyword Annex B makes it and cannot name a port; the test "
+    "selects the older keyword set with Verilator's +1364-2005ext+ flag "
+    "instead")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dynarray": PATTERN_RADIX,
     "t_dynarray_method": PATTERN_RADIX,
@@ -439,6 +452,10 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_timing_initial_always": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_unroll_complexcond": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_sys_file_basic": NON_STANDARD_REWIND_SPELLING,
+    "t_clk_concat2": MIXED_PORT_HEADER_STYLES,
+    "t_clk_concat5": MIXED_PORT_HEADER_STYLES,
+    "t_clk_concat6": MIXED_PORT_HEADER_STYLES,
+    "t_langext_order": NON_STANDARD_KEYWORD_LEVEL,
 }
 
 
