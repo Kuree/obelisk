@@ -11,7 +11,7 @@ module {
     }
     obelisk.sv.symbol.instance attributes {hierarchical_name = "collapsed_delay_top", is_uninstantiated = false, name = "collapsed_delay_top", node_id = 4 : i64, referenced_path = "collapsed_delay_top", referenced_symbol = @s0.top, sym_name = "s4.top"} {
       obelisk.sv.symbol.instance_body attributes {hierarchical_name = "collapsed_delay_top", name = "collapsed_delay_top", node_id = 5 : i64, sym_name = "s5.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.net attributes {delay_fs = array<i64: 5000000>, hierarchical_name = "collapsed_delay_top.external", is_implicit = false, name = "external", net_kind = 1 : i32, node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.external"} {
+        obelisk.sv.symbol.net attributes {delay_fs = array<i64: 5000000>, hierarchical_name = "collapsed_delay_top.external", is_implicit = false, name = "external", net_kind = 12 : i32, node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.external"} {
           obelisk.sv.timing.delay attributes {node_id = 7 : i64} {
             obelisk.sv.expression.integer_literal attributes {constant_value = "5", node_id = 8 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
             }
@@ -45,9 +45,9 @@ module {
   }
 }
 
-// LRM 23.3.3.7: wire/tri port collapsing selects the external net. Its delay
-// therefore applies to both logical declarations in the simulated net.
-// CHECK-DAG: obelisk_sim.net.decl 0 {{.*}} hierarchy "collapsed_delay_top.external" {{.*}}propagation_delays = array<i64: 5, 5, 5>
+// LRM 23.3.3.7/Table 23-1: an external uwire dominates an internal wire. Its
+// delay therefore applies to both logical declarations in the simulated net.
+// CHECK-DAG: obelisk_sim.net.decl 0 {{.*}} hierarchy "collapsed_delay_top.external" {{.*}}propagation_delays = array<i64: 5, 5, 5>{{.*}}resolution_kind = 2 : i32
 // CHECK-DAG: obelisk_sim.net.decl 1 {{.*}} hierarchy "collapsed_delay_top.child.formal" {{.*}}propagation_delays = array<i64: 5, 5, 5>
 // CHECK: obelisk_sim.net.connect.decl 0 {{.*}} 0[0] to 1[0] width 1 reversed = false provenance "ordered" rhs_dominates = false
 // CHECK: obelisk_sim.func private @unit_0

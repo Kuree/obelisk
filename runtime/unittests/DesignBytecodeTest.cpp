@@ -1086,28 +1086,28 @@ std::vector<uint8_t> makeConnectedDriverBytecode() {
   return bytes;
 }
 
-std::vector<uint8_t> makePartialUWireDriverBytecode(bool overlap) {
+std::vector<uint8_t> makeMixedUWireDriverBytecode(bool overlap) {
   std::vector<uint8_t> bytes = makeConnectedDriverBytecode();
   size_t stateOffset = get64(bytes, 168);
   size_t connectivityOffset = get64(bytes, 184);
   bytes.insert(bytes.begin() + connectivityOffset, 32, 0);
 
-  // Both logical nets and both driver slices are unresolved. The first
-  // driver targets aliased component zero; the second either targets distinct
-  // component one or intentionally overlaps component zero.
+  // Net zero is uwire and net one is wire. Both drivers target the wire side
+  // of the aliases, so component-wide effective uwire semantics must still
+  // reject overlap. The second driver otherwise targets distinct component 1.
   put32(bytes, stateOffset + 4, 5);
-  put32(bytes, stateOffset + 32 + 4, 5);
-  put32(bytes, stateOffset + 64 + 4, 5);
+  put32(bytes, stateOffset + 32 + 4, 1);
+  put32(bytes, stateOffset + 64 + 4, 1);
   put64(bytes, stateOffset + 64 + 24, 1);
   put32(bytes, connectivityOffset, UINT32_MAX);
-  put32(bytes, connectivityOffset + 4, 5);
+  put32(bytes, connectivityOffset + 4, 1);
   put64(bytes, connectivityOffset + 8, 131);
   put64(bytes, connectivityOffset + 16, overlap ? 65 : 66);
   put64(bytes, connectivityOffset + 24, 1);
 
   size_t movedConnectivity = connectivityOffset + 32;
   bytes[movedConnectivity + 24] = 2;
-  bytes[movedConnectivity + 25] = 2;
+  bytes[movedConnectivity + 25] = 0;
   put64(bytes, 24, bytes.size());
   put64(bytes, 176, 4);
   put64(bytes, 184, movedConnectivity);
@@ -3038,7 +3038,7 @@ TEST(DesignBytecode, ResolvesDriversAcrossLogicalNetAliases) {
 
 TEST(DesignBytecode, AcceptsDisjointUWireDriverComponents) {
   Fixture fixture;
-  fixture.bytecode = makePartialUWireDriverBytecode(false);
+  fixture.bytecode = makeMixedUWireDriverBytecode(false);
   fixture.execution.bytecode = fixture.bytecode.data();
   fixture.execution.bytecode_size = fixture.bytecode.size();
   fixture.execution.state_bit_count = 195;
@@ -4069,7 +4069,7 @@ TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
   rejected(truncatedConnectivity);
 
   Fixture overlappingUWireDrivers;
-  overlappingUWireDrivers.bytecode = makePartialUWireDriverBytecode(true);
+  overlappingUWireDrivers.bytecode = makeMixedUWireDriverBytecode(true);
   overlappingUWireDrivers.execution.bytecode =
       overlappingUWireDrivers.bytecode.data();
   overlappingUWireDrivers.execution.bytecode_size =

@@ -5,6 +5,7 @@
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Runtime/StableHandle.h"
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/MathExtras.h"
 
@@ -277,15 +278,21 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
       }
     }
 
+    DenseSet<std::pair<uint64_t, uint64_t>> uwireComponents;
+    for (const Net &net : layout.netLayouts) {
+      if (net.resolution != sim::NetResolutionKind::UWire)
+        continue;
+      for (uint64_t bit = 0; bit != net.width; ++bit) {
+        ArrayRef<NetBit> component = connectivity.getComponent({net.id, bit});
+        NetBit canonical =
+            component.empty() ? NetBit{net.id, bit} : component.front();
+        uwireComponents.insert({canonical.net, canonical.offset});
+      }
+    }
+
     DenseMap<std::pair<uint64_t, uint64_t>, uint64_t> uwireDrivers;
     for (const Driver &driver : layout.driverLayouts) {
       if (driver.strengthBank == 1)
-        continue;
-      auto target = llvm::find_if(layout.netLayouts, [&](const auto &net) {
-        return net.id == driver.netId;
-      });
-      if (target == layout.netLayouts.end() ||
-          target->resolution != sim::NetResolutionKind::UWire)
         continue;
       for (uint64_t bit = driver.drivenLow;
            bit != uint64_t{driver.drivenLow} + driver.drivenWidth; ++bit) {
@@ -293,6 +300,8 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
             connectivity.getComponent({driver.netId, bit});
         NetBit canonical =
             component.empty() ? NetBit{driver.netId, bit} : component.front();
+        if (!uwireComponents.contains({canonical.net, canonical.offset}))
+          continue;
         if (++uwireDrivers[{canonical.net, canonical.offset}] > 1) {
           module.emitError()
               << "uwire connectivity component " << canonical.net << "["

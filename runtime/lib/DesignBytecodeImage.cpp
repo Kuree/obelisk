@@ -16,6 +16,7 @@
 #include <new>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace obelisk::designbytecode {
@@ -1756,7 +1757,6 @@ bool validateImage(const Image &image) {
         !rhs || connection.lhsResolution != ((lhs->argument >> 1) & 3) ||
         connection.rhsResolution != ((rhs->argument >> 1) & 3) ||
         ((lhs->argument ^ rhs->argument) & 1) != 0 ||
-        ((connection.lhsResolution == 2) != (connection.rhsResolution == 2)) ||
         (!firstConnection && key <= previousConnection) ||
         connection.width > UINT64_MAX - expandedConnections)
       return reject(__LINE__, "invalid or noncanonical connectivity record");
@@ -1882,14 +1882,21 @@ bool validateImage(const Image &image) {
   }
   // A uwire component has at most one design-lifetime driver for every
   // connected scalar equivalence class, including aliases of its target.
+  std::unordered_set<uint64_t> uwireComponents;
+  for (const CaptureRecord &net : netRecords) {
+    if (((net.argument >> 1) & 3) != 2)
+      continue;
+    for (uint64_t bit = 0; bit != net.planeSize; ++bit)
+      uwireComponents.insert(findConnectivity(net.valueOffset + bit));
+  }
   std::unordered_map<uint64_t, uint32_t> uwireDrivers;
   for (const CaptureRecord &driver : driverRecords) {
-    if (((driver.argument >> 1) & 3) != 2)
-      continue;
     if ((driver.argument & (uint32_t{1} << 11)) != 0)
       continue;
     for (uint64_t bit = 0; bit != driver.planeSize; ++bit) {
       uint64_t root = findConnectivity(driver.unknownOffset + bit);
+      if (!uwireComponents.count(root))
+        continue;
       if (++uwireDrivers[root] > 1)
         return reject(__LINE__,
                       "uwire connectivity component has multiple drivers");

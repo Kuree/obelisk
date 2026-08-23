@@ -1474,9 +1474,12 @@ LogicalResult SimDesignOp::verifyRegions() {
                       NetResolutionKind::UWire;
       bool rhsUWire = netResolutions.lookup(connection.getRhsNetId()) ==
                       NetResolutionKind::UWire;
-      if (lhsUWire != rhsUWire)
+      if (lhsUWire != rhsUWire &&
+          (!connection.getRhsDominates() ||
+           *connection.getRhsDominates() != rhsUWire))
         return connection.emitOpError(
-            "mixes uwire with resolved wire/tri topology");
+            "must identify the uwire endpoint as dominant in mixed "
+            "wire/tri topology");
     }
   }
 

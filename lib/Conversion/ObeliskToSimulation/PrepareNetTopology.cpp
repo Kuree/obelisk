@@ -326,22 +326,21 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
           std::min(left.width - lhsConsumed, right.width - rhsConsumed);
       uint64_t leftOffset = left.offset + lhsConsumed;
       uint64_t rightOffset = right.offset + rhsConsumed;
-      if ((left.descriptor.netKind == sim::NetResolutionKind::UWire) !=
-          (right.descriptor.netKind == sim::NetResolutionKind::UWire)) {
-        emitError(getSemanticLocation(connection))
-            << "connected component mixes uwire with resolved wire/tri nets";
-        invalid = true;
-        return;
-      }
       for (uint64_t bit = 0; bit != width; ++bit) {
         StaticEdgeKey edge{left.descriptor.id, leftOffset + bit,
                            right.descriptor.id, rightOffset + bit};
         StaticEdgeKey reverse{right.descriptor.id, rightOffset + bit,
                               left.descriptor.id, leftOffset + bit};
-        bool rhsDominates = true;
+        // IEEE 1800-2017 Table 23-1: an internal uwire dominates an
+        // external wire/tri. In every other combination currently supported
+        // by the simulation dialect, the external net dominates. `left` is
+        // the internal endpoint and `right` is the external actual here.
+        bool rhsDominates =
+            left.descriptor.netKind != sim::NetResolutionKind::UWire ||
+            right.descriptor.netKind == sim::NetResolutionKind::UWire;
         if (reverse < edge) {
           edge = reverse;
-          rhsDominates = false;
+          rhsDominates = !rhsDominates;
         }
         if (std::get<0>(edge) == std::get<2>(edge) &&
             std::get<1>(edge) == std::get<3>(edge))

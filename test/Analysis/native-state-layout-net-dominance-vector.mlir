@@ -9,9 +9,15 @@ module attributes {
     obelisk_sim.code_unit.decl 1 in 0 function hierarchy "vector_dominance.empty"
     obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<2> design
     obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design {
-      propagation_delays = array<i64: 7, 11, 13>
+      propagation_delays = array<i64: 7, 11, 13>,
+      resolution_kind = 2 : i32
     }
     obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = true
+    // Both drivers target the wire declaration, but only bit zero is in an
+    // effective uwire component. The distinct bit-one driver is therefore
+    // legal and exercises per-bit mixed-vector classification.
+    obelisk_sim.driver.decl 0 in 0 drives 0 : !obelisk_sim.logic<2> design {driven_low = 0 : i64, driven_width = 1 : i64}
+    obelisk_sim.driver.decl 1 in 0 drives 0 : !obelisk_sim.logic<2> design {driven_low = 1 : i64, driven_width = 1 : i64}
     obelisk_sim.func @empty(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {code_unit_id = 1 : i64, entry_kind = 8 : i32} {
       obelisk_sim.return
     }
