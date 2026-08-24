@@ -1108,9 +1108,17 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
       saved->insert_range(dependencies);
     Block *statementEnd = current;
     if (dependencies.empty()) {
-      unsupported(control)
-          << " (@* controlled statement has no readable dependency)";
-      return failure();
+      // IEEE 1800-2017 9.4.2.2 derives the implicit event expression from
+      // readable operands in the controlled statement.  If there are none,
+      // the process has no event that can resume it.  Keep the continuation
+      // in the CFG for ordinary structured lowering, but permanently suspend
+      // instead of rejecting the legal (and intentionally inert) process.
+      setCurrent(waitBlock);
+      sim::SimSuspendForeverOp::create(builder, location, ValueRange{},
+                                       sim::ContinuationSiteAttr{},
+                                       sim::EventRegionAttr{}, continuation);
+      setCurrent(statementEnd);
+      return success();
     }
     setCurrent(waitBlock);
     SmallVector<int32_t> edges(dependencies.size(),
