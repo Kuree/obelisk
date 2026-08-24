@@ -320,6 +320,55 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return constant(builder.getI1Type(), 0);
   };
 
+  if (name == "$timeunit" || name == "$timeprecision") {
+    if (children.size() > 1) {
+      emitError(location) << name << " accepts zero or one scope";
+      return failure();
+    }
+    StringAttr targetPath = op.getSystemScopePathAttr();
+    if (!children.empty())
+      targetPath =
+          children.front()->getAttrOfType<StringAttr>("referenced_path");
+    if (!targetPath) {
+      emitError(location) << name << " has no elaborated target scope";
+      return failure();
+    }
+    sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
+    sim::SimScopeDeclOp targetScope;
+    if (design)
+      for (sim::SimScopeDeclOp scope :
+           design.getBody().front().getOps<sim::SimScopeDeclOp>())
+        if (scope.getHierarchicalName() &&
+            *scope.getHierarchicalName() == targetPath.getValue()) {
+          targetScope = scope;
+          break;
+        }
+    if (!targetScope) {
+      emitError(location) << name << " target scope '" << targetPath.getValue()
+                          << "' has no simulation descriptor";
+      return failure();
+    }
+    StringRef scaleName = name == "$timeunit" ? "dpi_unit_femtoseconds"
+                                               : "dpi_precision_femtoseconds";
+    auto scale = targetScope->getAttrOfType<IntegerAttr>(scaleName);
+    if (!scale || !scale.getValue().isStrictlyPositive()) {
+      emitError(location) << name << " target has no frozen time scale";
+      return failure();
+    }
+    uint64_t femtoseconds = scale.getValue().getZExtValue();
+    int32_t exponent = -15;
+    while (femtoseconds > 1 && femtoseconds % 10 == 0) {
+      femtoseconds /= 10;
+      ++exponent;
+    }
+    if (femtoseconds != 1) {
+      emitError(location) << name
+                          << " target time scale is not a decimal power";
+      return failure();
+    }
+    return convertResult(constant(i32, exponent));
+  }
+
   if (name == "$asserton" || name == "$assertoff" || name == "$assertkill" ||
       name == "$assertpasson" || name == "$assertpassoff" ||
       name == "$assertfailon" || name == "$assertfailoff" ||
