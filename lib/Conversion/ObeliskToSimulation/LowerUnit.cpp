@@ -1124,6 +1124,24 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
                                                   value)
         .getResult();
   }
+  if (isa<sim::DynamicArrayType, sim::QueueType>(targetType)) {
+    // A bit-stream cast partitions a fixed packed source from its most-
+    // significant end into the dynamically sized target's element type.
+    // Materialize directly so a wide cast does not allocate and traverse an
+    // intermediate one-bit queue.
+    Type sourceScalar = sim::getPackedScalarType(value.getType());
+    std::optional<unsigned> sourceWidth = sim::getPackedWidth(value.getType());
+    if (sourceScalar && sourceWidth && *sourceWidth != 0) {
+      FailureOr<Value> scalar = toPackedScalar(value, location);
+      if (failed(scalar))
+        return failure();
+      Value totalWidth = arith::ConstantOp::create(
+          builder, location, builder.getI64Type(),
+          builder.getI64IntegerAttr(*sourceWidth));
+      return materializeDynamicBitStreamTarget(Value{}, totalWidth, targetType,
+                                               location, *scalar);
+    }
+  }
   if (isa<sim::DynamicArrayType, sim::QueueType>(value.getType()) &&
       isa<sim::DynamicArrayType, sim::QueueType>(targetType)) {
     Type sourceElement =

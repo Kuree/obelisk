@@ -274,6 +274,20 @@ for bytecode and 73.759 seconds compile / 0.019 seconds simulate for native,
 with zero UVM errors or fatals. The full regression suite passes 1289/1289
 tests and all 427 runtime tests.
 
+L12's ninth closure tranche implements bit-stream casts from fixed packed
+values into queues and dynamic arrays. Elements are assembled most-significant
+first, four-state bits remain four-state, and bounded queues retain their
+declared capacity. Direct casts read packed bits into the target in one pass;
+streaming concatenations reuse the same target materializer after applying
+their slice ordering. A 131072-bit cast compiles without element-count
+unrolling and simulates in 0.22 seconds native / 0.33 seconds bytecode. The
+former `t_stream_bitqueue` compiler failure is closed; that source now reaches
+its later Verilator-only hexadecimal `%p` expectation, which 21.2.1.7 does not
+require. The UVM smoke ran in 36.784 seconds compile / 0.182 seconds simulate
+for bytecode and 74.971 seconds compile / 0.019 seconds simulate for native,
+with zero UVM errors or fatals. The full regression suite passes 1290/1290
+tests and all 427 runtime tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -286,7 +300,7 @@ tests and all 427 runtime tests.
 | 8 Classes | Partial | Construction, inheritance, polymorphism, virtual/interface methods, parameterized classes, copying, managed properties, garbage collection, and the UVM-used surface execute. Complete the residual class/type/operator/constructor long tail exposed by focused probes and the aggregate/reference gaps shared with Clauses 6, 7, and 11. |
 | 9 Processes | Partial | Structured procedures, all fork/join forms, `wait fork`, `disable fork`, timed and recursive tasks, `process` handles and control, automatic capture, and cancellation execute. Named-block disable exits the exact live target activation across process and task boundaries, cancels only its descendants, preserves outer task copy-out, suppresses abandoned inner copy-out, and supports concurrent and repeated activations in native and bytecode tiers. Nonrecursive function-call exits also execute; recursive zero-time function-call corner cases remain in the core long tail. |
 | 10 Assignment statements | Partial | Blocking/NBA assignment, intra-assignment timing, assignment patterns, queue/unpacked slice lvalues, net aliasing, static continuous-assignment delays, strengths, and procedural force/assign execute for every legal target category: whole variables including fixed unpacked aggregates, dynamic arrays, queues, associative arrays, strings, class handles, and class properties; whole built-in nets and constant built-in-net selects; and legal concatenations. Signal-dependent RHS expressions reevaluate from exact scalar and managed-container dependencies; overlapping packed statements retain per-bit ownership through alias roots, managed values remain precisely rooted, and release/deassign retires detached evaluators. Clause 10.6 excludes automatic variables, variable selects, nonconstant net selects, and user-defined nettypes from these targets; those are tested diagnostics rather than implementation gaps. Continue differential closure for residual assignment corner cases. |
-| 11 Operators and expressions | Partial | Legal equality, ordering, logical operations, concatenation, replication, and packed selection execute for strings, containers, unpacked aggregates, handles, and arbitrary-width packed values. This includes handle wildcard identity equality, two-state XNOR, compact integral power, constant ordinary part-selects, dynamic indexed part-selects with partial out-of-range behavior, dynamic string replication, and fixed/dynamic unpacked concatenation with per-element conversion. Ordinary part-select bounds must be constant and strings are not sliceable, so those former diagnostic branches are not missing language features. Public `--timing=min|typ|max` selects constant and dynamic expressions. Remaining expression work is tracked by references, randomization, assertions, and the differential long tail. |
+| 11 Operators and expressions | Partial | Legal equality, ordering, logical operations, concatenation, replication, streaming and bit-stream casts, and packed selection execute for strings, containers, unpacked aggregates, handles, and arbitrary-width packed values. This includes packed-to-queue/dynamic-array casts, handle wildcard identity equality, two-state XNOR, compact integral power, constant ordinary part-selects, dynamic indexed part-selects with partial out-of-range behavior, dynamic string replication, and fixed/dynamic unpacked concatenation with per-element conversion. Ordinary part-select bounds must be constant and strings are not sliceable, so those former diagnostic branches are not missing language features. Public `--timing=min|typ|max` selects constant and dynamic expressions. Remaining expression work is tracked by references, randomization, assertions, and the differential long tail. |
 | 12 Procedural statements | Partial | Conditional, ordinary/pattern case, loops, jumps, `randcase`, and most `randsequence` forms execute. Recursive randsequence productions and value-returning productions still require activation frames and expression-valued production calls. |
 | 13 Tasks and functions | Executable for the audited non-DPI surface | Static/automatic, recursive, virtual, class/interface, timed task, value/output/inout/ref, default argument, and cancellation behavior execute. Continue differential closure for unusual aggregate and hierarchical formal cases; DPI is tracked separately in Clause 35. |
 | 14 Clocking blocks | Partial | Input/output skews, `#1step`, synchronous drives, event lists and `iff`, cycle delays, defaults, and virtual-interface clocking handles execute. Global clocking and the remaining assertion clock-inference, clock-formal, and multi-clock composition cases remain. |

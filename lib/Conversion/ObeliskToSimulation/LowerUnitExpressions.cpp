@@ -1386,6 +1386,198 @@ FailureOr<Value> UnitLowering::sliceStreamingContainer(Value container,
 }
 
 FailureOr<Value>
+UnitLowering::materializeDynamicBitStreamTarget(Value stream, Value totalWidth,
+                                                Type targetType,
+                                                Location location,
+                                                Value packedSource) {
+  auto i64Constant = [&](uint64_t value) -> Value {
+    return arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                     builder.getI64IntegerAttr(value));
+  };
+  Value zero = i64Constant(0);
+  Value one = i64Constant(1);
+  Type bitType;
+  std::optional<unsigned> packedSourceWidth;
+  if (packedSource) {
+    packedSourceWidth = sim::getPackedWidth(packedSource.getType());
+    if (!packedSourceWidth || *packedSourceWidth == 0)
+      return emitError(location) << "internal packed bit stream is invalid",
+             failure();
+    bitType = isa<sim::LogicType>(packedSource.getType())
+                  ? Type(sim::LogicType::get(function.getContext(), 1))
+                  : Type(builder.getI1Type());
+  } else {
+    auto streamType = dyn_cast<sim::QueueType>(stream.getType());
+    if (!streamType)
+      return emitError(location) << "internal bit stream is not a queue",
+             failure();
+    bitType = streamType.getElementType();
+  }
+  bool stringTarget = isa<sim::StringType>(targetType);
+  Type targetElement =
+      isa<sim::DynamicArrayType>(targetType)
+          ? cast<sim::DynamicArrayType>(targetType).getElementType()
+      : isa<sim::QueueType>(targetType)
+          ? cast<sim::QueueType>(targetType).getElementType()
+          : Type(builder.getI8Type());
+  Type targetScalar = sim::getPackedScalarType(targetElement);
+  std::optional<unsigned> targetWidth = sim::getPackedWidth(targetElement);
+  if (!targetScalar || !targetWidth || *targetWidth == 0)
+    return emitError(location)
+               << "a dynamic stream target must have fixed-size bit-stream "
+                  "elements",
+           failure();
+  Value elementWidth = i64Constant(*targetWidth);
+  Value fullElements =
+      arith::DivUIOp::create(builder, location, totalWidth, elementWidth);
+  Value trailingBits =
+      arith::RemUIOp::create(builder, location, totalWidth, elementWidth);
+  Value hasTrailing = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::ne, trailingBits, zero);
+  Value trailingElement = arith::ExtUIOp::create(
+      builder, location, builder.getI64Type(), hasTrailing);
+  Value targetSize =
+      arith::AddIOp::create(builder, location, fullElements, trailingElement);
+  Value result;
+  if (stringTarget) {
+    result = sim::SimStringLiteralOp::create(builder, location, targetType, "");
+  } else {
+    FailureOr<ContainerElementDescriptor> targetDescriptor =
+        describeContainerElement(targetElement, location);
+    if (failed(targetDescriptor))
+      return failure();
+    uint32_t containerKind = isa<sim::DynamicArrayType>(targetType)
+                                 ? OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
+                                 : OBELISK_RT_CONTAINER_QUEUE;
+    uint64_t bound = 0;
+    if (auto queue = dyn_cast<sim::QueueType>(targetType))
+      bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
+    Value allocationSize = containerKind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
+                               ? targetSize
+                               : zero;
+    result = sim::SimContainerCreateOp::create(
+        builder, location, targetType, allocationSize,
+        targetDescriptor->typeID, targetDescriptor->kind,
+        targetDescriptor->flags, targetDescriptor->valueSize,
+        targetDescriptor->alignment, targetDescriptor->bitWidth,
+        builder.getDenseI64ArrayAttr(targetDescriptor->traceOffsets),
+        builder.getDenseI32ArrayAttr(targetDescriptor->traceKinds),
+        containerKind, bound);
+  }
+
+  Block *elementHeader = addBlock();
+  elementHeader->addArgument(builder.getI64Type(), location);
+  if (stringTarget)
+    elementHeader->addArgument(targetType, location);
+  Block *elementBody = addBlock();
+  Block *elementExit = addBlock();
+  if (stringTarget)
+    elementExit->addArgument(targetType, location);
+  cf::BranchOp::create(builder, location, elementHeader,
+                       stringTarget ? ValueRange{zero, result}
+                                    : ValueRange{zero});
+  setCurrent(elementHeader);
+  Value elementIndex = elementHeader->getArgument(0);
+  Value currentString =
+      stringTarget ? elementHeader->getArgument(1) : Value{};
+  Value moreElements = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::ult, elementIndex, targetSize);
+  cf::CondBranchOp::create(
+      builder, location, moreElements, elementBody, ValueRange{}, elementExit,
+      stringTarget ? ValueRange{currentString} : ValueRange{});
+  setCurrent(elementBody);
+  Value assembled;
+  if (isa<sim::LogicType>(targetScalar)) {
+    auto logicType = cast<sim::LogicType>(targetScalar);
+    auto planeType = IntegerType::get(function.getContext(), *targetWidth);
+    assembled = sim::SimLogicConstantOp::create(
+        builder, location, logicType, builder.getIntegerAttr(planeType, 0),
+        builder.getIntegerAttr(planeType, 0));
+  } else {
+    assembled = arith::ConstantOp::create(
+        builder, location, targetScalar,
+        builder.getIntegerAttr(targetScalar, 0));
+  }
+  for (unsigned ordinal = 0; ordinal < *targetWidth; ++ordinal) {
+    Value sourceIndex = arith::AddIOp::create(
+        builder, location,
+        arith::MulIOp::create(builder, location, elementIndex, elementWidth),
+        i64Constant(ordinal));
+    Block *present = addBlock();
+    Block *resume = addBlock();
+    resume->addArgument(targetScalar, location);
+    Value inRange = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ult, sourceIndex, totalWidth);
+    cf::CondBranchOp::create(builder, location, inRange, present, ValueRange{},
+                             resume, ValueRange{assembled});
+    setCurrent(present);
+    Value bit;
+    if (packedSource) {
+      Value low = arith::SubIOp::create(
+          builder, location, i64Constant(*packedSourceWidth - 1), sourceIndex);
+      if (isa<sim::LogicType>(packedSource.getType()))
+        bit = sim::SimLogicDynExtractOp::create(builder, location, bitType,
+                                                packedSource, low);
+      else
+        bit = sim::SimBitsDynExtractOp::create(builder, location, bitType,
+                                               packedSource, low);
+    } else {
+      bit = sim::SimContainerReadOp::create(builder, location, bitType, stream,
+                                            sourceIndex);
+    }
+    Value inserted;
+    unsigned low = *targetWidth - ordinal - 1;
+    if (isa<sim::LogicType>(targetScalar)) {
+      FailureOr<Value> logicBit = toLogic(bit, location);
+      if (failed(logicBit))
+        return failure();
+      inserted = sim::SimLogicInsertOp::create(
+          builder, location, targetScalar, assembled, *logicBit, low);
+    } else {
+      FailureOr<Value> bits =
+          convert(bit, builder.getI1Type(), false, location);
+      if (failed(bits))
+        return failure();
+      Value extended = *bits;
+      if (extended.getType() != targetScalar)
+        extended =
+            arith::ExtUIOp::create(builder, location, targetScalar, *bits);
+      if (low) {
+        Value amount = arith::ConstantOp::create(
+            builder, location, targetScalar,
+            builder.getIntegerAttr(targetScalar, low));
+        extended = arith::ShLIOp::create(builder, location, extended, amount);
+      }
+      inserted = arith::OrIOp::create(builder, location, assembled, extended);
+    }
+    cf::BranchOp::create(builder, location, resume, ValueRange{inserted});
+    setCurrent(resume);
+    assembled = resume->getArgument(0);
+  }
+  Value element = assembled;
+  if (targetScalar != targetElement)
+    element = sim::SimPackedUnflattenOp::create(builder, location,
+                                                targetElement, assembled);
+  Value nextElement =
+      arith::AddIOp::create(builder, location, elementIndex, one);
+  if (stringTarget) {
+    Value item = sim::SimStringFromPackedOp::create(builder, location,
+                                                    targetType, element);
+    Value joined = sim::SimStringConcatOp::create(
+        builder, location, targetType, ValueRange{currentString, item});
+    cf::BranchOp::create(builder, location, elementHeader,
+                         ValueRange{nextElement, joined});
+  } else {
+    sim::SimContainerWriteOp::create(builder, location, result, elementIndex,
+                                     element);
+    cf::BranchOp::create(builder, location, elementHeader,
+                         ValueRange{nextElement});
+  }
+  setCurrent(elementExit);
+  return stringTarget ? elementExit->getArgument(0) : result;
+}
+
+FailureOr<Value>
 UnitLowering::lowerStreaming(semantic::SVStreamingConcatenationExpressionOp op,
                              Type assignmentType) {
   Location location = getSemanticLocation(op);
@@ -1425,7 +1617,6 @@ UnitLowering::lowerStreaming(semantic::SVStreamingConcatenationExpressionOp op,
                                        builder.getI64IntegerAttr(value));
     };
     Value zero = i64Constant(0);
-    Value one = i64Constant(1);
     bool fourState = false;
     for (auto &part : children)
       fourState |= streamNodeContainsFourState(part.first);
@@ -1461,7 +1652,6 @@ UnitLowering::lowerStreaming(semantic::SVStreamingConcatenationExpressionOp op,
         reorderBitStream(*generic, op.getSliceSize(), location);
     if (failed(stream))
       return failure();
-    Type bitType = cast<sim::QueueType>((*stream).getType()).getElementType();
 
     // A dynamic stream can itself be a stream_expression in an enclosing
     // streaming concatenation. Preserve the ordered bit queue as the internal
@@ -1487,158 +1677,8 @@ UnitLowering::lowerStreaming(semantic::SVStreamingConcatenationExpressionOp op,
       return readBitStreamValue(*stream, zero, assignmentType, location);
     }
 
-    bool stringTarget = isa<sim::StringType>(assignmentType);
-    Type targetElement =
-        isa<sim::DynamicArrayType>(assignmentType)
-            ? cast<sim::DynamicArrayType>(assignmentType).getElementType()
-        : isa<sim::QueueType>(assignmentType)
-            ? cast<sim::QueueType>(assignmentType).getElementType()
-            : Type(builder.getI8Type());
-    Type targetScalar = sim::getPackedScalarType(targetElement);
-    std::optional<unsigned> targetWidth = sim::getPackedWidth(targetElement);
-    if (!targetScalar || !targetWidth || *targetWidth == 0)
-      return emitError(location)
-                 << "a dynamic stream target must have fixed-size bit-stream "
-                    "elements",
-             failure();
-    Value elementWidth = i64Constant(*targetWidth);
-    Value fullElements =
-        arith::DivUIOp::create(builder, location, totalWidth, elementWidth);
-    Value trailingBits =
-        arith::RemUIOp::create(builder, location, totalWidth, elementWidth);
-    Value hasTrailing = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ne, trailingBits, zero);
-    Value trailingElement = arith::ExtUIOp::create(
-        builder, location, builder.getI64Type(), hasTrailing);
-    Value targetSize =
-        arith::AddIOp::create(builder, location, fullElements, trailingElement);
-    Value result;
-    if (stringTarget) {
-      result = sim::SimStringLiteralOp::create(builder, location,
-                                               assignmentType, "");
-    } else {
-      FailureOr<ContainerElementDescriptor> targetDescriptor =
-          describeContainerElement(targetElement, location);
-      if (failed(targetDescriptor))
-        return failure();
-      uint32_t containerKind = isa<sim::DynamicArrayType>(assignmentType)
-                                   ? OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
-                                   : OBELISK_RT_CONTAINER_QUEUE;
-      uint64_t bound = 0;
-      if (auto queue = dyn_cast<sim::QueueType>(assignmentType))
-        bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
-      Value allocationSize = containerKind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
-                                 ? targetSize
-                                 : zero;
-      result = sim::SimContainerCreateOp::create(
-          builder, location, assignmentType, allocationSize,
-          targetDescriptor->typeID, targetDescriptor->kind,
-          targetDescriptor->flags, targetDescriptor->valueSize,
-          targetDescriptor->alignment, targetDescriptor->bitWidth,
-          builder.getDenseI64ArrayAttr(targetDescriptor->traceOffsets),
-          builder.getDenseI32ArrayAttr(targetDescriptor->traceKinds),
-          containerKind, bound);
-    }
-
-    Block *elementHeader = addBlock();
-    elementHeader->addArgument(builder.getI64Type(), location);
-    if (stringTarget)
-      elementHeader->addArgument(assignmentType, location);
-    Block *elementBody = addBlock();
-    Block *elementExit = addBlock();
-    if (stringTarget)
-      elementExit->addArgument(assignmentType, location);
-    cf::BranchOp::create(builder, location, elementHeader,
-                         stringTarget ? ValueRange{zero, result}
-                                      : ValueRange{zero});
-    setCurrent(elementHeader);
-    Value elementIndex = elementHeader->getArgument(0);
-    Value currentString =
-        stringTarget ? elementHeader->getArgument(1) : Value{};
-    Value moreElements = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ult, elementIndex, targetSize);
-    cf::CondBranchOp::create(
-        builder, location, moreElements, elementBody, ValueRange{}, elementExit,
-        stringTarget ? ValueRange{currentString} : ValueRange{});
-    setCurrent(elementBody);
-    Value assembled;
-    if (isa<sim::LogicType>(targetScalar)) {
-      auto logicType = cast<sim::LogicType>(targetScalar);
-      auto planeType = IntegerType::get(function.getContext(), *targetWidth);
-      assembled = sim::SimLogicConstantOp::create(
-          builder, location, logicType, builder.getIntegerAttr(planeType, 0),
-          builder.getIntegerAttr(planeType, 0));
-    } else {
-      assembled =
-          arith::ConstantOp::create(builder, location, targetScalar,
-                                    builder.getIntegerAttr(targetScalar, 0));
-    }
-    for (unsigned ordinal = 0; ordinal < *targetWidth; ++ordinal) {
-      Value sourceIndex = arith::AddIOp::create(
-          builder, location,
-          arith::MulIOp::create(builder, location, elementIndex, elementWidth),
-          i64Constant(ordinal));
-      Block *present = addBlock();
-      Block *resume = addBlock();
-      resume->addArgument(targetScalar, location);
-      Value inRange =
-          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ult,
-                                sourceIndex, totalWidth);
-      cf::CondBranchOp::create(builder, location, inRange, present,
-                               ValueRange{}, resume, ValueRange{assembled});
-      setCurrent(present);
-      Value bit = sim::SimContainerReadOp::create(builder, location, bitType,
-                                                  *stream, sourceIndex);
-      Value inserted;
-      unsigned low = *targetWidth - ordinal - 1;
-      if (isa<sim::LogicType>(targetScalar)) {
-        FailureOr<Value> logicBit = toLogic(bit, location);
-        if (failed(logicBit))
-          return failure();
-        inserted = sim::SimLogicInsertOp::create(
-            builder, location, targetScalar, assembled, *logicBit, low);
-      } else {
-        FailureOr<Value> bits =
-            convert(bit, builder.getI1Type(), false, location);
-        if (failed(bits))
-          return failure();
-        Value extended = *bits;
-        if (extended.getType() != targetScalar)
-          extended =
-              arith::ExtUIOp::create(builder, location, targetScalar, *bits);
-        if (low) {
-          Value amount = arith::ConstantOp::create(
-              builder, location, targetScalar,
-              builder.getIntegerAttr(targetScalar, low));
-          extended = arith::ShLIOp::create(builder, location, extended, amount);
-        }
-        inserted = arith::OrIOp::create(builder, location, assembled, extended);
-      }
-      cf::BranchOp::create(builder, location, resume, ValueRange{inserted});
-      setCurrent(resume);
-      assembled = resume->getArgument(0);
-    }
-    Value element = assembled;
-    if (targetScalar != targetElement)
-      element = sim::SimPackedUnflattenOp::create(builder, location,
-                                                  targetElement, assembled);
-    Value nextElement =
-        arith::AddIOp::create(builder, location, elementIndex, one);
-    if (stringTarget) {
-      Value item = sim::SimStringFromPackedOp::create(builder, location,
-                                                      assignmentType, element);
-      Value joined = sim::SimStringConcatOp::create(
-          builder, location, assignmentType, ValueRange{currentString, item});
-      cf::BranchOp::create(builder, location, elementHeader,
-                           ValueRange{nextElement, joined});
-    } else {
-      sim::SimContainerWriteOp::create(builder, location, result, elementIndex,
-                                       element);
-      cf::BranchOp::create(builder, location, elementHeader,
-                           ValueRange{nextElement});
-    }
-    setCurrent(elementExit);
-    return stringTarget ? elementExit->getArgument(0) : result;
+    return materializeDynamicBitStreamTarget(*stream, totalWidth,
+                                             assignmentType, location);
   }
 
   SmallVector<Value> inputs;

@@ -165,6 +165,12 @@ private:
   reorderBitStream(::mlir::Value stream, uint64_t slice,
                    ::mlir::Location location, ::mlir::Value limit = {});
   ::mlir::FailureOr<::mlir::Value>
+  materializeDynamicBitStreamTarget(::mlir::Value stream,
+                                    ::mlir::Value totalWidth,
+                                    ::mlir::Type targetType,
+                                    ::mlir::Location location,
+                                    ::mlir::Value packedSource = {});
+  ::mlir::FailureOr<::mlir::Value>
   sliceStreamingContainer(::mlir::Value container, ::mlir::Operation *withRange,
                           ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
