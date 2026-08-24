@@ -107,6 +107,13 @@ bool isSuspensionOp(::mlir::Operation *operation);
 /// suspension or termination before ordinary initial actors begin.
 bool isStartupEntryKind(EntryKind kind);
 
+/// Marks a process of a startup entry kind that nonetheless begins by running
+/// rather than by waiting, so the prepare pass spawns it among the initial
+/// procedures instead of ahead of them. IEEE 1800-2017 9.2.2.1 leaves an
+/// always procedure with no timing control no suspension to reach.
+inline constexpr ::llvm::StringLiteral startupWithoutSuspensionAttrName =
+    "obelisk_sim.starts_without_waiting";
+
 /// Number of ordinary wait entries required by a suspension operation.
 /// Computed-observer waits use their own variable-sized record.
 uint32_t getWaitEntryCount(::mlir::Operation *operation);

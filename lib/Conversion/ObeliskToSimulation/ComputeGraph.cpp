@@ -1455,7 +1455,9 @@ void ComputeGraphBuilder::buildControlEdges() {
     // initial procedures. Runtime startup priority separately keeps both
     // groups ahead of deferred always_comb/always_latch activation; expressing
     // that global phase boundary as graph edges would introduce false cycles
-    // between otherwise independent top-level processes.
+    // between otherwise independent top-level processes. A startup process the
+    // prepare pass marked as starting without waiting is spawned among the
+    // initial procedures instead of ahead of them, so it takes no such edge.
     if (fragment.function.getEntryKind() == sim::EntryKind::RootInitializer) {
       SmallVector<uint32_t> startupEntries;
       SmallVector<uint32_t> initialEntries;
@@ -1467,7 +1469,8 @@ void ComputeGraphBuilder::buildControlEdges() {
         if (target.getBody().empty())
           continue;
         uint32_t entry = fragmentForBlock.lookup(&target.getBody().front());
-        if (sim::isStartupEntryKind(target.getEntryKind())) {
+        if (sim::isStartupEntryKind(target.getEntryKind()) &&
+            !target->hasAttr(sim::startupWithoutSuspensionAttrName)) {
           startupEntries.push_back(entry);
         } else if (target.getEntryKind() == sim::EntryKind::Initial) {
           initialEntries.push_back(entry);

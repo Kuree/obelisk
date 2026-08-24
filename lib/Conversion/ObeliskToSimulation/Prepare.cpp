@@ -7514,9 +7514,40 @@ void ObeliskSimPreparePass::runOnOperation() {
            unit.entryKind != sim::EntryKind::Task &&
            unit.entryKind != sim::EntryKind::Observer;
   };
-  auto startsByWaiting = [](const PreparedUnit &unit) {
-    return unit.entryKind == sim::EntryKind::Always ||
-           unit.entryKind == sim::EntryKind::AlwaysFF;
+  // The statement an always procedure reaches first, looking through the
+  // begin-end blocks that only group what follows.
+  std::function<Operation *(Operation *)> leadingStatement =
+      [&](Operation *statement) -> Operation * {
+    if (!isa<semantic::SVBlockStatementOp, semantic::SVStatementListOp>(
+            statement))
+      return statement;
+    SmallVector<Operation *> children = getChildren(statement);
+    if (children.empty())
+      return nullptr;
+    return leadingStatement(children.front());
+  };
+  // IEEE 1800-2017 9.2.2.1: "If an always procedure has no control for
+  // simulation time to advance, it will create a simulation deadlock
+  // condition." Such a procedure does not start by waiting -- it runs its body
+  // the moment it is spawned -- so putting it ahead of the continuous drivers
+  // would let it read a net before any driver had propagated, where 6.5 makes
+  // "the resultant value of multiple drivers ... determined by the resolution
+  // function of the net type". A clocking-event or sequence-endpoint monitor
+  // carries no procedural block of its own and always begins at its event
+  // control.
+  auto startsByWaiting = [&](const PreparedUnit &unit) {
+    if (unit.entryKind != sim::EntryKind::Always &&
+        unit.entryKind != sim::EntryKind::AlwaysFF)
+      return false;
+    auto procedure =
+        dyn_cast<semantic::SVProceduralBlockSymbolOp>(unit.source);
+    if (!procedure)
+      return true;
+    SmallVector<Operation *> body = getChildren(procedure);
+    if (body.empty())
+      return false;
+    Operation *leading = leadingStatement(body.front());
+    return leading && isa<semantic::SVTimedStatementOp>(leading);
   };
   auto hasDeferredTimeZeroActivation = [](const PreparedUnit &unit) {
     return unit.entryKind == sim::EntryKind::AlwaysComb ||
@@ -7539,7 +7570,14 @@ void ObeliskSimPreparePass::runOnOperation() {
   // Establish explicit always-process sensitivities before initial processes
   // can trigger events or mutate their watched values. This deterministic
   // Active-region order prevents a source-order race from losing an event
-  // before an `always @(event)` has suspended.
+  // before an `always @(event)` has suspended. An always process that is left
+  // out of that first group carries the reason on its function, so the compute
+  // graph does not order it ahead of the initial procedures it now follows.
+  for (PreparedUnit &unit : units)
+    if (isRootSpawned(unit) && sim::isStartupEntryKind(unit.entryKind) &&
+        !startsByWaiting(unit) && !propagatesConstantsAtTimeZero(unit))
+      unit.function->setAttr(sim::startupWithoutSuspensionAttrName,
+                             UnitAttr::get(context));
   for (PreparedUnit &unit : units)
     if (isRootSpawned(unit) && startsByWaiting(unit))
       if (failed(spawnRootUnit(unit)))
