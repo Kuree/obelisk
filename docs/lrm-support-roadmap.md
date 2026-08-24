@@ -200,6 +200,21 @@ bytecode and 71.710 seconds compile / 0.020 seconds simulate for native, with
 zero UVM errors or fatals. The full regression suite passes 1280/1280 tests
 and all 426 runtime tests.
 
+L12's fourth closure tranche makes implicit constructors recognize the
+class-level `Class::this` receiver used by declaration initializers, preserves
+virtual dispatch for a call through an inherited `super.member` handle, and
+keys pattern-variable bindings by semantic symbol so separate match arms can
+reuse one source name with different payload types. These are compile-time
+identity fixes: they add no scheduler or runtime lookup. The audit also
+classified Verilator's seven-element fixed-array index 7 behavior as a storage
+padding alias rather than IEEE behavior; 7.4.6 requires the element type's
+default uninitialized value for an invalid index. The UVM smoke ran in 36.078
+seconds compile / 0.182 seconds simulate for bytecode and 73.998 seconds
+compile / 0.019 seconds simulate for native, with zero UVM errors or fatals.
+Both timings remain within the 10% gate despite the two tiers being compiled
+concurrently. The full regression suite passes 1283/1283 tests and all 426
+runtime tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |

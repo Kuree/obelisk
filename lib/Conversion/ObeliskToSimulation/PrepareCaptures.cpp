@@ -246,7 +246,8 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
             Operation *referencedSymbol) -> std::optional<std::string> {
       if (!reference || !referencedSymbol ||
           !isAutomaticLocalSymbol(referencedSymbol) ||
-          !descriptors.contains(path))
+          (!descriptors.contains(path) &&
+           !isa<semantic::SVPatternVarSymbolOp>(referencedSymbol)))
         return std::nullopt;
       StringRef symbolPath = getHierarchyName(referencedSymbol);
       std::string localPath = (symbolPath.empty() ? path : symbolPath).str();
@@ -342,6 +343,10 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
                      dyn_cast<semantic::SVVariableDeclStatementOp>(nested)) {
         path = declaration.getReferencedPath();
         reference = declaration.getReferencedSymbol();
+      } else if (auto pattern =
+                     dyn_cast<semantic::SVVariablePatternOp>(nested)) {
+        path = pattern.getReferencedPath();
+        reference = pattern.getReferencedSymbol();
       } else if (auto member =
                      dyn_cast<semantic::SVMemberAccessExpressionOp>(nested)) {
         if (!member->hasAttr(staticClassPropertyAttrName))

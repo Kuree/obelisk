@@ -413,7 +413,11 @@ UnitLowering::lowerReferencedValue(Operation *op, StringRef path, bool lvalue) {
     if (event && isa<sim::EventType>(event.getType()))
       value = event;
   }
-  if (!value && thisObject && path.ends_with(".this"))
+  // Explicit methods name their receiver `Class::method.this`, while an
+  // implicit constructor's declaration initializers refer to Slang's
+  // class-level `Class::this` symbol. Both denote the frozen receiver.
+  if (!value && thisObject &&
+      (path.ends_with(".this") || path.ends_with("::this")))
     value = thisObject;
   if (!value) {
     emitError(location) << "named value has no frozen unit-local binding: "

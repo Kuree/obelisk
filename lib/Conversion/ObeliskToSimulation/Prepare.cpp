@@ -5928,10 +5928,15 @@ void ObeliskSimPreparePass::runOnOperation() {
         targetSubroutine && getOwningClass(targetSubroutine) &&
         !targetSubroutine.getIsStatic().value_or(false)) {
       call->setAttr("obelisk_sim.class_instance", builder.getUnitAttr());
-      if (call.getIsSuperClass())
+      // In `super.member.method()`, Slang carries the super qualifier onto
+      // the outer call even though the selected member is the receiver. Only
+      // a call without an explicit receiver is a direct super-method call.
+      bool directSuperDispatch =
+          call.getIsSuperClass() && !call.getHasThisClass();
+      if (directSuperDispatch)
         call->setAttr("obelisk_sim.class_super", builder.getUnitAttr());
       if (targetSubroutine.getIsVirtual().value_or(false) &&
-          !call.getIsSuperClass())
+          !directSuperDispatch)
         call->setAttr("obelisk_sim.class_virtual", builder.getUnitAttr());
       if (FlatSymbolRefAttr method =
               classMethodSymbols.lookup(targetSubroutine)) {

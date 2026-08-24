@@ -140,6 +140,12 @@ ARRAY_ASSIGNMENT_ORDER = Exclusion(
     "an unpacked array assignment pairs the elements by position, and the test "
     "assigns between ranges that run opposite ways expecting Verilator's "
     "pairing by storage slot")
+OUT_OF_RANGE_FIXED_ARRAY_INDEX = Exclusion(
+    "IEEE 1800-2017 7.4.6",
+    "an invalid fixed-array index reads the default uninitialized value of "
+    "the element type; the test indexes the seven-element `int A[7]` with 7 "
+    "and expects Verilator's storage-padding alias to `A[0]` instead of the "
+    "required default value")
 BOUNDED_QUEUE_CAPACITY = Exclusion(
     "IEEE 1800-2017 7.10",
     "a queue's bound is its maximum index, so `int q[$:5]` holds six elements "
@@ -386,6 +392,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_tri_cond_eqcase_with_1": UNTIMED_ALWAYS,
     "t_tri_eqcase_input": UNTIMED_ALWAYS,
     "t_param_avec": ARRAY_ASSIGNMENT_ORDER,
+    "t_array_mda": OUT_OF_RANGE_FIXED_ARRAY_INDEX,
     "t_property_until": FOUR_STATE_CLOCK_STARTUP,
     "t_property_until_implication": ACTION_BLOCK_PER_ATTEMPT,
     "t_queue_slice": BOUNDED_QUEUE_CAPACITY,
