@@ -1310,6 +1310,7 @@ bool validateInitialization(const Image &image, const Function &function,
     case OBELISK_RT_DB_ADD:
     case OBELISK_RT_DB_SUB:
     case OBELISK_RT_DB_MUL:
+    case OBELISK_RT_DB_POWER:
     case OBELISK_RT_DB_UDIV:
     case OBELISK_RT_DB_SDIV:
     case OBELISK_RT_DB_UREM:
@@ -1470,6 +1471,7 @@ bool validateInitialization(const Image &image, const Function &function,
     case OBELISK_RT_DB_ADD:
     case OBELISK_RT_DB_SUB:
     case OBELISK_RT_DB_MUL:
+    case OBELISK_RT_DB_POWER:
     case OBELISK_RT_DB_UDIV:
     case OBELISK_RT_DB_SDIV:
     case OBELISK_RT_DB_UREM:
@@ -2207,6 +2209,15 @@ bool validateImage(const Image &image) {
         if (instruction.flags || instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
             !reg(instruction.destination) || !reg(instruction.source0) ||
+            !compatible(layoutAt(image, function, instruction.destination),
+                        layoutAt(image, function, instruction.source0)))
+          return reject(__LINE__, "invalid instruction encoding or operands",
+                        functionIndex, pc, instruction.opcode);
+        break;
+      case OBELISK_RT_DB_POWER:
+        if (instruction.flags || instruction.source2 || instruction.auxiliary ||
+            instruction.immediate || !numeric(instruction.destination) ||
+            !numeric(instruction.source0) || !numeric(instruction.source1) ||
             !compatible(layoutAt(image, function, instruction.destination),
                         layoutAt(image, function, instruction.source0)))
           return reject(__LINE__, "invalid instruction encoding or operands",

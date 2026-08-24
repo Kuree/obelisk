@@ -504,7 +504,8 @@ def ConvertObeliskSimProcessesToLLVMCoroutinesPass
     "mlir::cf::ControlFlowDialect",
     "mlir::func::FuncDialect",
     "mlir::LLVM::LLVMDialect",
-    "mlir::math::MathDialect"
+    "mlir::math::MathDialect",
+    "mlir::scf::SCFDialect"
   ];
 }
 

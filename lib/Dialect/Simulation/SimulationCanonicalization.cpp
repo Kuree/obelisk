@@ -515,6 +515,35 @@ OpFoldResult SimLogicBinaryOp::fold(FoldAdaptor adaptor) {
   return getLogicAttribute(getContext(), std::move(result));
 }
 
+LogicalResult SimLogicPowerOp::verify() {
+  if (getBase().getType() != getResult().getType())
+    return emitOpError("base and result types must match");
+  return success();
+}
+
+OpFoldResult SimLogicPowerOp::fold(FoldAdaptor adaptor) {
+  auto base = getLogicPlanes(adaptor.getBase());
+  auto exponent = getLogicPlanes(adaptor.getExponent());
+  if (!base || !exponent)
+    return {};
+  unsigned width = getResult().getType().getWidth();
+  if (!base->unknown.isZero() || !exponent->unknown.isZero())
+    return getLogicAttribute(getContext(), getCanonicalUnknown(width));
+
+  APInt value(width, 1);
+  APInt factor = base->value;
+  APInt remaining = exponent->value;
+  while (!remaining.isZero()) {
+    if (remaining[0])
+      value *= factor;
+    remaining.lshrInPlace(1);
+    if (!remaining.isZero())
+      factor *= factor;
+  }
+  return getLogicAttribute(
+      getContext(), {std::move(value), APInt::getZero(width)});
+}
+
 OpFoldResult SimLogicLogicalOp::fold(FoldAdaptor adaptor) {
   auto lhs = getLogicPlanes(adaptor.getLhs());
   auto rhs = getLogicPlanes(adaptor.getRhs());

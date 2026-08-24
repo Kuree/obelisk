@@ -3003,6 +3003,22 @@ def SimLogicBinaryOp
   let hasCanonicalizer = 1;
 }
 
+def SimLogicPowerOp : SimOp<"logic.power", [Pure]> {
+  let summary = "four-state integral exponentiation";
+  let description = [{
+    Computes the base-width modular power for a nonnegative exponent. The
+    exponent has its own packed width, as required by SystemVerilog. Unknown
+    bits in either operand produce an all-X result; signed negative-exponent
+    selection is represented by the surrounding semantic lowering.
+  }];
+  let arguments = (ins SimLogicType:$base, SimLogicType:$exponent);
+  let results = (outs SimLogicType:$result);
+  let assemblyFormat =
+      "$base `,` $exponent attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
 def SimLogicLogicalOp : SimOp<"logic.logical", [Pure, Commutative]> {
   let summary = "four-state logical conjunction or disjunction";
   let arguments = (ins SimLogicalKind

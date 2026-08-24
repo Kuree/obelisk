@@ -526,6 +526,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   }
   if (auto op = dyn_cast<sim::SimLogicBinaryOp>(operation))
     return encodeLogicBinary(plan, op);
+  if (auto op = dyn_cast<sim::SimLogicPowerOp>(operation))
+    return encodeLogicPower(plan, op);
   if (auto op = dyn_cast<sim::SimLogicLogicalOp>(operation)) {
     Type truthType = sim::LogicType::get(op.getContext(), 1);
     uint32_t leftTruth = temporaryLike(plan, truthType, op.getResult());

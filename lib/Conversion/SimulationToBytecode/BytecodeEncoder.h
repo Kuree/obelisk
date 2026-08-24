@@ -135,6 +135,8 @@ private:
 
   mlir::LogicalResult encodeLogicBinary(FunctionPlan &plan,
                                         sim::SimLogicBinaryOp op);
+  mlir::LogicalResult encodeLogicPower(FunctionPlan &plan,
+                                       sim::SimLogicPowerOp op);
   mlir::LogicalResult encodeLogicCompare(FunctionPlan &plan,
                                          sim::SimLogicCompareOp op);
   mlir::LogicalResult encodeConcat(FunctionPlan &plan,

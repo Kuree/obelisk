@@ -75,6 +75,8 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   MLIRMathToLLVM
   MLIRMathTransforms
   MLIRPass
+  MLIRSCFDialect
+  MLIRSCFToControlFlow
   MLIRTransforms
 )
 

@@ -728,7 +728,10 @@ enum {
   // Reinterpret the payload of an IEEE real as an equal-width two-state
   // integer, or vice versa. Integer register padding is not part of the
   // payload.
-  OBELISK_RT_DB_BITCAST = 59
+  OBELISK_RT_DB_BITCAST = 59,
+  // Integral modular exponentiation. The destination and base widths match;
+  // the exponent retains its independent SystemVerilog packed width.
+  OBELISK_RT_DB_POWER = 60
 };
 
 // StoreState writes its exact post-resolution transition predicate to the

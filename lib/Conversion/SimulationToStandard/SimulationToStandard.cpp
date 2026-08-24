@@ -1169,6 +1169,46 @@ public:
   }
 };
 
+class PowerConversion final : public LogicOpConversion<sim::SimLogicPowerOp> {
+public:
+  using LogicOpConversion::LogicOpConversion;
+
+  LogicalResult
+  matchAndRewrite(sim::SimLogicPowerOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    ArrayRef<ValueRange> operands = adaptor.getOperands();
+    Location loc = op.getLoc();
+    LogicValue base = getLogic(operands, 0);
+    LogicValue exponent = getLogic(operands, 1);
+    auto baseType = integerType(base.value);
+    auto exponentType = integerType(exponent.value);
+    Value anyUnknown = boolOr(
+        rewriter, loc, isNonZero(rewriter, loc, base.unknown),
+        isNonZero(rewriter, loc, exponent.unknown));
+    Value zeroBase = zero(rewriter, loc, baseType);
+    Value zeroExponent = zero(rewriter, loc, exponentType);
+    Value safeBase =
+        select(rewriter, loc, anyUnknown, zeroBase, base.value);
+    Value safeExponent =
+        select(rewriter, loc, anyUnknown, zeroExponent, exponent.value);
+    unsigned commonWidth =
+        std::max(baseType.getWidth(), exponentType.getWidth());
+    Value commonBase =
+        resizeInteger(rewriter, loc, safeBase, commonWidth, false);
+    Value commonExponent =
+        resizeInteger(rewriter, loc, safeExponent, commonWidth, false);
+    Value powered = math::IPowIOp::create(rewriter, loc, commonBase,
+                                          commonExponent);
+    powered = resizeInteger(rewriter, loc, powered, baseType.getWidth(), false);
+    Value resultValue =
+        select(rewriter, loc, anyUnknown, zeroBase, powered);
+    Value resultUnknown = select(rewriter, loc, anyUnknown,
+                                 ones(rewriter, loc, baseType), zeroBase);
+    replaceLogic(op, {resultValue, resultUnknown}, rewriter);
+    return success();
+  }
+};
+
 class LogicalConversion final
     : public LogicOpConversion<sim::SimLogicLogicalOp> {
 public:
@@ -1716,7 +1756,8 @@ public:
         sim::SimLogicIsTrueOp, sim::SimLogicMuxOp, sim::SimLogicCountBitsOp,
         sim::SimLogicClog2Op,
         sim::SimLogicResizeOp, sim::SimLogicUnaryOp, sim::SimLogicReductionOp,
-        sim::SimLogicBinaryOp, sim::SimLogicLogicalOp, sim::SimLogicShiftOp,
+        sim::SimLogicBinaryOp, sim::SimLogicPowerOp, sim::SimLogicLogicalOp,
+        sim::SimLogicShiftOp,
         sim::SimLogicCompareOp, sim::SimLogicConcatOp, sim::SimLogicReplicateOp,
         sim::SimLogicExtractOp, sim::SimLogicDynExtractOp,
         sim::SimBitsDynExtractOp, sim::SimLogicDynInsertOp,
@@ -1750,7 +1791,8 @@ static void populateSimulationToStandardPatternsImpl(
                IsTrueConversion, MuxConversion, CountBitsConversion,
                Clog2Conversion,
                ResizeConversion, UnaryConversion, ReductionConversion,
-               BinaryConversion, LogicalConversion, ShiftConversion,
+               BinaryConversion, PowerConversion, LogicalConversion,
+               ShiftConversion,
                CompareConversion, ConcatConversion, ReplicateConversion,
                ExtractConversion, DynamicExtractConversion,
                BitsDynamicExtractConversion, DynamicInsertConversion,

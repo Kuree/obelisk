@@ -284,6 +284,36 @@ Logic multiply(const Logic &left, const Logic &right) {
   return result;
 }
 
+Logic power(const Logic &base, const Logic &exponent) {
+  if (anyUnknown(base) || anyUnknown(exponent))
+    return allX(base.width, base.fourState);
+
+  Logic result{base.width, base.fourState, LimbVector(limbCount(base.width)),
+               LimbVector(limbCount(base.width))};
+  result.value.front() = 1;
+  size_t activeLimbs = exponent.value.size();
+  while (activeLimbs != 0 && exponent.value[activeLimbs - 1] == 0)
+    --activeLimbs;
+  if (activeLimbs == 0)
+    return result;
+
+  uint64_t high = exponent.value[activeLimbs - 1];
+  unsigned highBits = 0;
+  while (high != 0) {
+    ++highBits;
+    high >>= 1;
+  }
+  uint64_t activeBits = (activeLimbs - 1) * 64 + highBits;
+  Logic factor = base;
+  for (uint64_t index = 0; index != activeBits; ++index) {
+    if (bit(exponent.value, index))
+      result = multiply(result, factor);
+    if (index + 1 != activeBits)
+      factor = multiply(factor, factor);
+  }
+  return result;
+}
+
 bool bit(const LimbVector &value, uint64_t index) {
   return ((value[index / 64] >> (index % 64)) & 1) != 0;
 }

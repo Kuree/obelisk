@@ -61,11 +61,10 @@ module {
 // CHECK-LABEL: obelisk_sim.func private @unit_0
 // CHECK: %[[BASE:.*]] = obelisk_sim.packed.flatten
 // CHECK: %[[EXP:.*]] = obelisk_sim.packed.flatten
-// CHECK: %[[LOW:.*]] = obelisk_sim.logic.extract %[[EXP]] from 0
-// The squaring loop over the exponent's bits produces the positive-exponent
-// column; its last selector is also the exponent's sign bit.
 // CHECK: %[[SIGN:.*]] = obelisk_sim.logic.extract %[[EXP]] from 7
-// CHECK: %[[MAGNITUDE:.*]] = obelisk_sim.logic.mux %[[SIGN]] ?
+// CHECK: %[[MASKED:.*]] = obelisk_sim.logic.mux %[[SIGN]] ? %{{.*}} : %[[EXP]]
+// CHECK: %[[MAGNITUDE:.*]] = obelisk_sim.logic.power %[[BASE]], %[[MASKED]]
+// CHECK: %[[LOW:.*]] = obelisk_sim.logic.extract %[[EXP]] from 0
 // CHECK: %[[MINUS_ONE:.*]] = obelisk_sim.logic.constant -1 : i8, 0 : i8
 // CHECK: %[[ONE:.*]] = obelisk_sim.logic.constant 1 : i8, 0 : i8
 // CHECK: %[[PARITY:.*]] = obelisk_sim.logic.mux %[[LOW]] ? %[[MINUS_ONE]] : %[[ONE]]
@@ -80,8 +79,9 @@ module {
 // CHECK: obelisk_sim.logic.mux %[[SIGN]] ? %[[NEG3]] : %[[MAGNITUDE]]
 
 // An unsigned exponent cannot be negative, so the table's lower half is not
-// selected for at all and only the squaring loop and the x-propagating mux
-// remain.
+// selected for at all and only the compact power operation and the
+// x-propagating mux remain.
 // CHECK-LABEL: obelisk_sim.func private @unit_1
 // CHECK-NOT: obelisk_sim.logic.constant -1 : i8, 0 : i8
+// CHECK: obelisk_sim.logic.power
 // CHECK: obelisk_sim.ref.store

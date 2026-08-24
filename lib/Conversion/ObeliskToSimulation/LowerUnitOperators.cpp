@@ -626,12 +626,22 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
     }
     return convert(result, *resultType, false, location);
   }
+  // Handle values have no x/z representation, so wildcard equality has the
+  // same identity semantics as logical and case equality. Keep this test on
+  // the handle-only path; ordinary scalar operators remain unchanged.
+  auto handleEquality = [&] {
+    return kind == Binary::Equality || kind == Binary::CaseEquality ||
+           kind == Binary::WildcardEquality;
+  };
+  auto handleInequality = [&] {
+    return kind == Binary::Inequality || kind == Binary::CaseInequality ||
+           kind == Binary::WildcardInequality;
+  };
   if (isa<sim::ClassHandleType>((*lhs).getType()) ||
       isa<sim::ClassHandleType>((*rhs).getType())) {
     if (!isa<sim::ClassHandleType>((*lhs).getType()) ||
         !isa<sim::ClassHandleType>((*rhs).getType()) ||
-        (kind != Binary::Equality && kind != Binary::Inequality &&
-         kind != Binary::CaseEquality && kind != Binary::CaseInequality)) {
+        (!handleEquality() && !handleInequality())) {
       unsupported(op) << " (class-handle operator)";
       return failure();
     }
@@ -639,10 +649,9 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
         sim::SimClassIdOp::create(builder, location, *lhs).getResult();
     Value rhsID =
         sim::SimClassIdOp::create(builder, location, *rhs).getResult();
-    arith::CmpIPredicate predicate =
-        kind == Binary::Equality || kind == Binary::CaseEquality
-            ? arith::CmpIPredicate::eq
-            : arith::CmpIPredicate::ne;
+    arith::CmpIPredicate predicate = handleEquality()
+                                        ? arith::CmpIPredicate::eq
+                                        : arith::CmpIPredicate::ne;
     Value compared =
         arith::CmpIOp::create(builder, location, predicate, lhsID, rhsID);
     return convert(compared, *resultType, false, location);
@@ -651,13 +660,12 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       isa<sim::ChandleType>((*rhs).getType())) {
     if (!isa<sim::ChandleType>((*lhs).getType()) ||
         !isa<sim::ChandleType>((*rhs).getType()) ||
-        (kind != Binary::Equality && kind != Binary::Inequality &&
-         kind != Binary::CaseEquality && kind != Binary::CaseInequality)) {
+        (!handleEquality() && !handleInequality())) {
       unsupported(op) << " (chandle operator)";
       return failure();
     }
     Value equal = sim::SimChandleEqualOp::create(builder, location, *lhs, *rhs);
-    if (kind == Binary::Inequality || kind == Binary::CaseInequality)
+    if (handleInequality())
       equal = arith::XOrIOp::create(
           builder, location, equal,
           arith::ConstantOp::create(builder, location, builder.getI1Type(),
@@ -668,8 +676,7 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       isa<sim::VirtualInterfaceType>((*rhs).getType())) {
     if (!isa<sim::VirtualInterfaceType>((*lhs).getType()) ||
         !isa<sim::VirtualInterfaceType>((*rhs).getType()) ||
-        (kind != Binary::Equality && kind != Binary::Inequality &&
-         kind != Binary::CaseEquality && kind != Binary::CaseInequality)) {
+        (!handleEquality() && !handleInequality())) {
       unsupported(op) << " (virtual-interface operator)";
       return failure();
     }
@@ -682,7 +689,7 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
     }
     Value equal = sim::SimVirtualInterfaceEqualOp::create(builder, location,
                                                            *lhs, *rhs);
-    if (kind == Binary::Inequality || kind == Binary::CaseInequality)
+    if (handleInequality())
       equal = arith::XOrIOp::create(
           builder, location, equal,
           arith::ConstantOp::create(builder, location, builder.getI1Type(),
@@ -693,13 +700,12 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       isa<sim::ProcessType>((*rhs).getType())) {
     if (!isa<sim::ProcessType>((*lhs).getType()) ||
         !isa<sim::ProcessType>((*rhs).getType()) ||
-        (kind != Binary::Equality && kind != Binary::Inequality &&
-         kind != Binary::CaseEquality && kind != Binary::CaseInequality)) {
+        (!handleEquality() && !handleInequality())) {
       unsupported(op) << " (process-handle operator)";
       return failure();
     }
     Value equal = sim::SimProcessEqualOp::create(builder, location, *lhs, *rhs);
-    if (kind == Binary::Inequality || kind == Binary::CaseInequality)
+    if (handleInequality())
       equal = arith::XOrIOp::create(
           builder, location, equal,
           arith::ConstantOp::create(builder, location, builder.getI1Type(),
@@ -710,14 +716,13 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       isa<sim::EventType>((*rhs).getType())) {
     if (!isa<sim::EventType>((*lhs).getType()) ||
         !isa<sim::EventType>((*rhs).getType()) ||
-        (kind != Binary::Equality && kind != Binary::Inequality &&
-         kind != Binary::CaseEquality && kind != Binary::CaseInequality)) {
+        (!handleEquality() && !handleInequality())) {
       unsupported(op) << " (event-handle operator)";
       return failure();
     }
     Value equal = sim::SimEventEqualOp::create(builder, location,
                                                builder.getI1Type(), *lhs, *rhs);
-    if (kind == Binary::Inequality || kind == Binary::CaseInequality)
+    if (handleInequality())
       equal = arith::XOrIOp::create(
           builder, location, equal,
           arith::ConstantOp::create(builder, location, builder.getI1Type(),
@@ -902,9 +907,7 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
             builder.getIntegerAttr(planeType, bits),
             builder.getIntegerAttr(planeType, unknown));
       };
-      Value value = logicConstant(APInt(logicType.getWidth(), 1),
-                                  APInt(logicType.getWidth(), 0));
-      Value base = *lhs;
+      Value value;
       std::optional<unsigned> exponentWidth =
           sim::getPackedWidth((*rhs).getType());
       if (!exponentWidth || *exponentWidth == 0) {
@@ -930,16 +933,41 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
         return sim::SimLogicFromBitsOp::create(builder, location,
                                                predicateType, bitValue);
       };
-      for (unsigned bit = 0; bit != *exponentWidth; ++bit) {
-        Value condition = exponentBit(bit);
-        Value multiplied = sim::SimLogicBinaryOp::create(
-            builder, location, logicType, sim::BinaryKind::Mul, value, base);
-        value = sim::SimLogicMuxOp::create(builder, location, logicType,
-                                           condition, multiplied, value);
-        if (bit + 1 != *exponentWidth)
-          base = sim::SimLogicBinaryOp::create(
-              builder, location, logicType, sim::BinaryKind::Mul, base, base);
+      Value exponent = *rhs;
+      if (!isa<sim::LogicType>(exponent.getType())) {
+        auto exponentLogicType =
+            sim::LogicType::get(function.getContext(), *exponentWidth);
+        exponent = sim::SimLogicFromBitsOp::create(
+            builder, location, exponentLogicType, exponent);
       }
+      Value exponentSign;
+      if (isSignedNode(children[1])) {
+        auto exponentLogicType = cast<sim::LogicType>(exponent.getType());
+        auto exponentPlaneType =
+            builder.getIntegerType(exponentLogicType.getWidth());
+        exponentSign = sim::SimLogicExtractOp::create(
+            builder, location, predicateType, exponent,
+            *exponentWidth - 1);
+        Value zeroExponent = sim::SimLogicConstantOp::create(
+            builder, location, exponentLogicType,
+            builder.getIntegerAttr(
+                exponentPlaneType, APInt::getZero(*exponentWidth)),
+            builder.getIntegerAttr(
+                exponentPlaneType, APInt::getZero(*exponentWidth)));
+        // The negative-exponent result is selected from Table 11-4 below.
+        // Avoid evaluating its two's-complement bit pattern as a huge
+        // unsigned magnitude first.
+        exponent = sim::SimLogicMuxOp::create(
+            builder, location, exponentLogicType, exponentSign, zeroExponent,
+            exponent);
+      }
+      // Keep exponentiation as one pure operation. Expanding a squaring stage
+      // per exponent bit made native compilation quadratic in the packed
+      // width and produced multi-gigabyte compiler peaks for ordinary wide
+      // vectors. Native lowering uses a compact loop and bytecode uses one
+      // limb-aware instruction.
+      value = sim::SimLogicPowerOp::create(builder, location, logicType, *lhs,
+                                           exponent);
       Value lhsKnown = sim::SimLogicCompareOp::create(
           builder, location, predicateType, sim::CompareKind::Eq, *lhs, *lhs);
       Value rhsKnown;
@@ -957,11 +985,11 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       Value allUnknown = logicConstant(APInt(logicType.getWidth(), 0),
                                        APInt::getAllOnes(logicType.getWidth()));
       // IEEE 1800-2017 11.4.4, Table 11-4: a negative exponent leaves the
-      // result decided by the base alone. The squaring loop above read the
-      // exponent's bits as a magnitude, so its value is meaningless here and
-      // is replaced rather than corrected. Only an exponent whose own
+      // result decided by the base alone. The unsigned power above read the
+      // exponent's bit pattern as a magnitude, so its value is meaningless
+      // here and is replaced rather than corrected. Only an exponent whose own
       // self-determined type is signed can be negative.
-      if (isSignedNode(children[1])) {
+      if (exponentSign) {
         unsigned width = logicType.getWidth();
         Value zero = logicConstant(APInt(width, 0), APInt(width, 0));
         Value one = logicConstant(APInt(width, 1), APInt(width, 0));
@@ -991,8 +1019,7 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
                                               equals(zero), allUnknown,
                                               negative);
         value = sim::SimLogicMuxOp::create(builder, location, logicType,
-                                           exponentBit(*exponentWidth - 1),
-                                           negative, value);
+                                           exponentSign, negative, value);
       }
       value = sim::SimLogicMuxOp::create(builder, location, logicType, known,
                                          value, allUnknown);
@@ -1151,6 +1178,15 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
   case Binary::BinaryXor:
     value = arith::XOrIOp::create(builder, location, *lhs, *rhs);
     break;
+  case Binary::BinaryXnor: {
+    auto type = cast<IntegerType>((*lhs).getType());
+    Value allOnes = arith::ConstantOp::create(
+        builder, location, type,
+        builder.getIntegerAttr(type, APInt::getAllOnes(type.getWidth())));
+    Value xored = arith::XOrIOp::create(builder, location, *lhs, *rhs);
+    value = arith::XOrIOp::create(builder, location, xored, allOnes);
+    break;
+  }
   case Binary::LogicalShiftLeft:
   case Binary::ArithmeticShiftLeft:
   case Binary::LogicalShiftRight:

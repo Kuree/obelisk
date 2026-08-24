@@ -75,6 +75,13 @@ LogicalResult Encoder::encodeLogicBinary(FunctionPlan &plan,
   return success();
 }
 
+LogicalResult Encoder::encodeLogicPower(FunctionPlan &plan,
+                                        sim::SimLogicPowerOp op) {
+  emit({Power, 0, reg(plan, op.getResult()), reg(plan, op.getBase()),
+        reg(plan, op.getExponent())});
+  return success();
+}
+
 LogicalResult Encoder::encodeLogicCompare(FunctionPlan &plan,
                                           sim::SimLogicCompareOp op) {
   static constexpr uint16_t map[] = {

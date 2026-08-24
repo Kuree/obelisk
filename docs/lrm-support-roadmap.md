@@ -95,6 +95,13 @@ in 34.590 seconds compile / 0.204 seconds simulate for bytecode and 74.951
 seconds compile / 0.041 seconds simulate for native, with zero UVM errors or
 fatals. Charge-strength work is gated on trireg component resolution.
 
+L5's required single UVM smoke ran in 34.171 seconds compile / 0.203 seconds
+simulate for bytecode and 76.234 seconds compile / 0.041 seconds simulate for
+native, with zero UVM errors or fatals. A 4096-bit integral-power stress case
+reduced native `-O0 -fno-lto` compilation from a 30-second timeout at 5.2 GB
+RSS to 0.55 seconds at 117 MB RSS; native and bytecode execution both complete
+in under 0.01 seconds. The full regression suite passes 1255/1255 tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -107,7 +114,7 @@ fatals. Charge-strength work is gated on trireg component resolution.
 | 8 Classes | Partial | Construction, inheritance, polymorphism, virtual/interface methods, parameterized classes, copying, managed properties, garbage collection, and the UVM-used surface execute. Complete the residual class/type/operator/constructor long tail exposed by focused probes and the aggregate/reference gaps shared with Clauses 6, 7, and 11. |
 | 9 Processes | Partial | Structured procedures, all fork/join forms, `wait fork`, `disable fork`, timed and recursive tasks, `process` handles and control, automatic capture, and cancellation execute. Disabling a named block owned by another live process is still rejected instead of canceling only the target scope. |
 | 10 Assignment statements | Partial | Blocking/NBA assignment, intra-assignment timing, common aggregate patterns, net aliasing, static continuous-assignment delays, strengths, and a restricted procedural force/assign surface execute. Complete signal-dependent force/assign reevaluation, automatic/class/unpacked/managed targets, concatenations and dynamic selects, plus the remaining queue/unpacked slice lvalues. |
-| 11 Operators and expressions | Partial | The common packed, real, string, class, chandle, event, process, virtual-interface, aggregate, pattern, cast, streaming, and min/typ/max surface is broad enough for the green sv-tests and UVM tests. Public `--timing=min|typ|max` selection applies to constant and dynamic selected expressions. Live diagnostics remain for several type-specific operators, dynamic/simple range selection, string ranges, unpacked concatenation/result forms, assignment-pattern setters, and dynamic string replication. |
+| 11 Operators and expressions | Partial | Legal equality, ordering, and logical operations execute for strings, sequential containers, associative arrays, unpacked aggregates, class/chandle/process/event/virtual-interface handles, and arbitrary-width packed values. This includes handle wildcard identity equality, two-state XNOR, and compact arbitrary-width integral power with a self-determined exponent. Public `--timing=min|typ|max` selection applies to constant and dynamic selected expressions. Remaining work is concentrated in dynamic/simple range selection, string ranges, unpacked concatenation/result forms, assignment-pattern setters, and dynamic string replication. |
 | 12 Procedural statements | Partial | Conditional, ordinary/pattern case, loops, jumps, `randcase`, and most `randsequence` forms execute. Recursive randsequence productions and value-returning productions still require activation frames and expression-valued production calls. |
 | 13 Tasks and functions | Executable for the audited non-DPI surface | Static/automatic, recursive, virtual, class/interface, timed task, value/output/inout/ref, default argument, and cancellation behavior execute. Continue differential closure for unusual aggregate and hierarchical formal cases; DPI is tracked separately in Clause 35. |
 | 14 Clocking blocks | Partial | Input/output skews, `#1step`, synchronous drives, event lists and `iff`, cycle delays, defaults, and virtual-interface clocking handles execute. Global clocking and the remaining assertion clock-inference, clock-formal, and multi-clock composition cases remain. |
@@ -169,9 +176,13 @@ one commit.
    Small/medium/large stored charge, retention, third-delay decay, connected
    charge sharing, and strength resolution execute in native and bytecode
    tiers. Charge metadata is absent from ordinary-net hot paths.
-5. **L5 — Operator/type matrix closure (6, 7, 8, 11).** Finish legal string,
-   sequential-container, unpacked-aggregate, class/chandle/virtual-interface,
-   process/event, and wide packed operators.
+5. **L5 — Operator/type matrix closure (6.13, 6.16.1, 7.2.1, 7.4.2,
+   7.5, 7.9, 7.10, 8.2, 9.7, 11.4.4-11.4.8, 15.5, 25.9), completed.**
+   Legal string, sequential-container, associative-array, unpacked-aggregate,
+   class/chandle/virtual-interface, process/event, and wide packed operators
+   execute. Handle wildcard equality uses identity semantics, two-state XNOR
+   covers both spellings, and integral power stays compact across unequal
+   arbitrary operand widths in native and bytecode tiers.
 6. **L6 — Select/concatenation/replication closure (10.10, 11.4-11.5).** Finish
    dynamic range selections, string ranges and dynamic string replication,
    unpacked concatenation results, and assignment-compatible conversions.

@@ -29,6 +29,7 @@
 #include "mlir/Conversion/LLVMCommon/LoweringOptions.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Conversion/MathToLLVM/MathToLLVM.h"
+#include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -36,6 +37,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Math/Transforms/Passes.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
@@ -44,6 +46,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
@@ -69,6 +72,55 @@ static void populateSimulationCoroutineBodyToLLVMPatterns(
 #include "obelisk/Conversion/Passes.h.inc"
 
 namespace {
+
+class ExpandIntegerPower final : public OpRewritePattern<math::IPowIOp> {
+public:
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(math::IPowIOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto type = cast<IntegerType>(op.getType());
+    Value one = arith::ConstantOp::create(
+        rewriter, loc, type, rewriter.getIntegerAttr(type, 1));
+    SmallVector<Type> loopTypes{type, type, type};
+    SmallVector<Value> initial{one, op.getLhs(), op.getRhs()};
+    auto loop = scf::WhileOp::create(
+        rewriter, loc, loopTypes, initial,
+        [&](OpBuilder &nested, Location nestedLoc, ValueRange arguments) {
+          Value zero = arith::ConstantOp::create(
+              nested, nestedLoc, type, nested.getIntegerAttr(type, 0));
+          Value keepGoing = arith::CmpIOp::create(
+              nested, nestedLoc, arith::CmpIPredicate::ne, arguments[2], zero);
+          scf::ConditionOp::create(nested, nestedLoc, keepGoing, arguments);
+        },
+        [&](OpBuilder &nested, Location nestedLoc, ValueRange arguments) {
+          Value lowBit = arguments[2];
+          if (type.getWidth() != 1)
+            lowBit = arith::TruncIOp::create(
+                nested, nestedLoc, nested.getI1Type(), lowBit);
+          Value multiplied = arith::MulIOp::create(
+              nested, nestedLoc, arguments[0], arguments[1]);
+          Value selected = arith::SelectOp::create(
+              nested, nestedLoc, lowBit, multiplied, arguments[0]);
+          Value squared = arith::MulIOp::create(
+              nested, nestedLoc, arguments[1], arguments[1]);
+          Value one = arith::ConstantOp::create(
+              nested, nestedLoc, type, nested.getIntegerAttr(type, 1));
+          Value remaining = arith::ShRUIOp::create(
+              nested, nestedLoc, arguments[2], one);
+          scf::YieldOp::create(
+              nested, nestedLoc,
+              ValueRange{selected, squared, remaining});
+        });
+    if (!loop || loop->getNumResults() != loopTypes.size())
+      return rewriter.notifyMatchFailure(op,
+                                         "failed to build power loop results");
+    SmallVector<Value> replacement{loop.getResult(0)};
+    rewriter.replaceOp(op, replacement);
+    return success();
+  }
+};
 
 using detail::buildNativeEvalOwnershipPlan;
 using detail::buildNativePeriodicAliasPlan;
@@ -4390,6 +4442,31 @@ public:
     }
     markTiming("serial runtime conversion");
 
+    // Integer power is intentionally kept compact through packed-value type
+    // conversion. Expand it only now, when its operands are ordinary integer
+    // planes and CFG construction no longer runs inside one-to-many dialect
+    // conversion.
+    SmallVector<Operation *> integerPowers;
+    module.walk([&](math::IPowIOp power) {
+      integerPowers.push_back(power.getOperation());
+    });
+    RewritePatternSet integerPowerPatterns(&getContext());
+    integerPowerPatterns.add<ExpandIntegerPower>(&getContext());
+    GreedyRewriteConfig integerPowerConfig;
+    integerPowerConfig
+        .setStrictness(GreedyRewriteStrictness::ExistingOps)
+        .setRegionSimplificationLevel(GreedySimplifyRegionLevel::Disabled)
+        .enableFolding(false)
+        .enableConstantCSE(false);
+    if (failed(applyOpPatternsGreedily(
+            integerPowers,
+            FrozenRewritePatternSet(std::move(integerPowerPatterns)),
+            integerPowerConfig))) {
+      signalPassFailure();
+      return;
+    }
+    markTiming("integer power expansion");
+
     RewritePatternSet patterns(&getContext());
     populateSimulationCoroutineBodyToLLVMPatterns(converter, patterns);
     if (failed(verify(module)))
@@ -4591,6 +4668,7 @@ static void populateSimulationCoroutineBodyToLLVMPatterns(
   // have none. Name those three so the math dialect's own expansions supply
   // them, and so the expansions that would displace an intrinsic stay out.
   math::populateExpansionPatterns(patterns, {"asinh", "acosh", "atanh"});
+  populateSCFToControlFlowConversionPatterns(patterns);
   populateFuncToLLVMConversionPatterns(converter, patterns);
 }
 

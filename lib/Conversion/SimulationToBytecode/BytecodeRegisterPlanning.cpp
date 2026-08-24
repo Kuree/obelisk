@@ -92,6 +92,9 @@ planTwoStateRegisters(sim::SimDesignOp design) {
             constrain(op.getResult(), op.getInput());
         } else if (auto op = dyn_cast<sim::SimLogicBinaryOp>(operation)) {
           constrainResultTo(op.getResult(), op.getOperands());
+        } else if (auto op = dyn_cast<sim::SimLogicPowerOp>(operation)) {
+          constrain(op.getResult(), op.getBase());
+          force(op.getExponent());
         } else if (auto op = dyn_cast<sim::SimLogicMuxOp>(operation)) {
           constrain(op.getResult(), op.getTrueValue());
           constrain(op.getResult(), op.getFalseValue());

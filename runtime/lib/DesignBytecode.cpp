@@ -665,6 +665,10 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             multiply(read(instruction.source0), read(instruction.source1)));
       break;
     }
+    case OBELISK_RT_DB_POWER:
+      write(instruction.destination,
+            power(read(instruction.source0), read(instruction.source1)));
+      break;
     case OBELISK_RT_DB_FADD:
     case OBELISK_RT_DB_FSUB:
     case OBELISK_RT_DB_FMUL:
