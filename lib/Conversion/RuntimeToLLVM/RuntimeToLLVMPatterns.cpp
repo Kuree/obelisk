@@ -306,6 +306,7 @@ enum class RuntimeMaterializer {
   PackedFromBytes,
   ArgumentEmpty,
   ArgumentPacked,
+  ArgumentEnum,
   ArgumentReal,
   ArgumentBytes,
   ArgumentManagedString,
@@ -500,6 +501,76 @@ public:
           llvmIntegerConstant(rewriter, location, abi.i64, width), 2);
       argument = insertStructValue(rewriter, location, argument, *data, 3);
       argument = insertStructValue(rewriter, location, argument, unknown, 4);
+      rewriter.replaceOp(operation, argument);
+      return success();
+    }
+    case RuntimeMaterializer::ArgumentEnum: {
+      auto op = cast<runtime::RTArgumentEnumOp>(operation);
+      auto valueType = cast<IntegerType>(operands.front().getType());
+      unsigned width = valueType.getWidth();
+      uint64_t wordCount = (static_cast<uint64_t>(width) + 63) / 64;
+      uint64_t paddedWidth64 = wordCount * 64;
+      if (paddedWidth64 > std::numeric_limits<unsigned>::max())
+        return operation->emitOpError("enum argument width is unsupported");
+      auto paddedType = IntegerType::get(rewriter.getContext(),
+                                         static_cast<unsigned>(paddedWidth64));
+      unsigned alignment =
+          abi.layout.getABIIntegerTypeAlignment(paddedType.getWidth()).value();
+      auto storePlane = [&](Value plane) -> FailureOr<Value> {
+        FailureOr<Value> address = allocateAtFunctionEntry(
+            operation, rewriter, abi, paddedType, 1, alignment);
+        if (failed(address))
+          return failure();
+        Value padded = plane;
+        if (width != paddedType.getWidth())
+          padded = LLVM::ZExtOp::create(rewriter, location, paddedType, plane);
+        LLVM::StoreOp::create(rewriter, location, padded, *address, alignment);
+        return *address;
+      };
+      FailureOr<Value> data = storePlane(operands.front());
+      if (failed(data))
+        return failure();
+      Value unknown = LLVM::ZeroOp::create(rewriter, location, abi.pointer);
+      if (op.getUnknown()) {
+        FailureOr<Value> stored = storePlane(operands[1]);
+        if (failed(stored))
+          return failure();
+        unknown = *stored;
+      }
+      Value descriptor =
+          LLVM::ZeroOp::create(rewriter, location, abi.enumArgument);
+      descriptor = insertStructValue(
+          rewriter, location, descriptor,
+          llvmIntegerConstant(rewriter, location, abi.i64, width), 0);
+      descriptor = insertStructValue(
+          rewriter, location, descriptor,
+          llvmIntegerConstant(rewriter, location, abi.i32,
+                              op.getIsSigned() ? OBELISK_RT_ARG_SIGNED : 0),
+          1);
+      descriptor = insertStructValue(rewriter, location, descriptor, *data, 3);
+      descriptor =
+          insertStructValue(rewriter, location, descriptor, unknown, 4);
+      descriptor = insertStructValue(rewriter, location, descriptor,
+                                     operands.back(), 5);
+      FailureOr<Value> descriptorAddress = allocateAtFunctionEntry(
+          operation, rewriter, abi, abi.enumArgument, 1, abi.alignments.i64);
+      if (failed(descriptorAddress))
+        return failure();
+      LLVM::StoreOp::create(rewriter, location, descriptor, *descriptorAddress,
+                            abi.alignments.i64);
+      Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
+      argument = insertStructValue(
+          rewriter, location, argument,
+          llvmIntegerConstant(rewriter, location, abi.i32,
+                              OBELISK_RT_ARG_ENUM),
+          0);
+      argument = insertStructValue(
+          rewriter, location, argument,
+          llvmIntegerConstant(rewriter, location, abi.i32,
+                              op.getIsSigned() ? OBELISK_RT_ARG_SIGNED : 0),
+          1);
+      argument = insertStructValue(rewriter, location, argument,
+                                   *descriptorAddress, 3);
       rewriter.replaceOp(operation, argument);
       return success();
     }
@@ -1018,6 +1089,7 @@ void populateRuntimePatterns(const TypeConverter &converter,
   OBELISK_RUNTIME_MATERIALIZER(RTPackedFromBytesOp, PackedFromBytes);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentEmptyOp, ArgumentEmpty);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentPackedOp, ArgumentPacked);
+  OBELISK_RUNTIME_MATERIALIZER(RTArgumentEnumOp, ArgumentEnum);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentRealOp, ArgumentReal);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentBytesOp, ArgumentBytes);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentManagedStringOp,

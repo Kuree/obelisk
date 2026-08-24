@@ -314,6 +314,9 @@ private:
                        bool interpretLiteralsAsFormats,
                        std::optional<unsigned> designatedFormat = std::nullopt);
   ::mlir::FailureOr<::mlir::Value>
+  lowerEnumFormatName(::mlir::Value receiver, ::mlir::ArrayAttr values,
+                      ::mlir::ArrayAttr names, ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value>
   lowerStringFormatSystemCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
   lowerDumpSystemCall(semantic::SVCallExpressionOp op);

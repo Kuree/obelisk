@@ -215,6 +215,23 @@ Both timings remain within the 10% gate despite the two tiers being compiled
 concurrently. The full regression suite passes 1283/1283 tests and all 426
 runtime tests.
 
+L12's fifth closure tranche implements the all-omitted `foreach` forms of
+12.7.3 as compile-time no-ops for fixed and dynamic arrays, including multiple
+suppressed dimensions; the collection expression is not evaluated and no
+iterator or loop control reaches executable IR. It also preserves enum
+identity through the formatted-output boundary required by 21.2.1.7. Each
+formatted enum is one logical argument carrying its packed value plus a
+compiler-selected mnemonic, so dynamic format strings choose required `%p`
+names, compatible `%s` names, or ordinary numeric conversions without a
+runtime symbol-table lookup. Invalid enum values retain the packed fallback.
+The upstream `t_foreach_noivar`,
+`t_enum_large_methods`, and `t_enum_huge_methods` cases now pass. The UVM smoke
+ran in 36.814 seconds compile / 0.178 seconds simulate for bytecode and 74.094
+seconds compile / 0.020 seconds simulate for native, with zero UVM errors or
+fatals; both compile times remain within 3% of the preceding concurrent
+baseline. The full regression suite passes 1286/1286 tests and all 427 runtime
+tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |

@@ -57,6 +57,13 @@ def RTArgumentPackedOp : RTOp<"argument.packed", [MemoryEffects<[MemAlloc]>]> {
   let hasVerifier = 1;
 }
 
+def RTArgumentEnumOp : RTOp<"argument.enum", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins AnyInteger:$value, Optional<AnyInteger>:$unknown,
+                       I64:$name, BoolAttr:$is_signed);
+  let results = (outs RTArgumentType:$result);
+  let hasVerifier = 1;
+}
+
 def RTArgumentRealOp : RTOp<"argument.real", [MemoryEffects<[MemAlloc]>]> {
   let arguments = (ins F64:$value);
   let results = (outs RTArgumentType:$result);

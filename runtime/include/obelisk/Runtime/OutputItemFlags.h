@@ -20,7 +20,10 @@ enum {
   OBELISK_RT_OUTPUT_ITEM_FORMAT = 1u << 7,
   OBELISK_RT_OUTPUT_ITEM_VIRTUAL_INTERFACE = 1u << 8,
   OBELISK_RT_OUTPUT_ITEM_PROCESS = 1u << 9,
-  OBELISK_RT_OUTPUT_ITEM_ALL = (1u << 10) - 1
+  // One logical enum item is carried as two physical operands: its packed
+  // value followed by its precomputed mnemonic string.
+  OBELISK_RT_OUTPUT_ITEM_ENUM = 1u << 10,
+  OBELISK_RT_OUTPUT_ITEM_ALL = (1u << 11) - 1
 };
 
 #endif // OBELISK_RUNTIME_OUTPUTITEMFLAGS_H

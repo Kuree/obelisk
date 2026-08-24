@@ -3195,6 +3195,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     realValues.reserve(itemCount);
     std::vector<obelisk_rt_arg_v1> arguments;
     arguments.reserve(itemCount);
+    std::vector<obelisk_rt_enum_arg_v1> enumArguments;
+    enumArguments.reserve(itemCount);
     for (uint32_t index = 0; index != itemCount; ++index) {
       uint32_t itemFlags = read32(flags + uint64_t{index} * 4);
       if ((itemFlags & ~uint32_t{OBELISK_RT_OUTPUT_ITEM_ALL}) != 0 ||
@@ -3210,7 +3212,37 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         return OBELISK_RT_INVALID_BYTECODE;
       uint32_t reg = inputRegister(physical++);
       Layout layout = layoutAt(image, frame.function, reg);
-      if (layout.kind == OBELISK_RT_DBREG_BYTES) {
+      if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_ENUM) != 0) {
+        if (itemFlags != OBELISK_RT_OUTPUT_ITEM_ENUM &&
+            itemFlags !=
+                (OBELISK_RT_OUTPUT_ITEM_ENUM | OBELISK_RT_OUTPUT_ITEM_SIGNED))
+          return OBELISK_RT_INVALID_BYTECODE;
+        if (physical >= site.inputCount ||
+            (layout.kind != OBELISK_RT_DBREG_BITS &&
+             layout.kind != OBELISK_RT_DBREG_LOGIC))
+          return OBELISK_RT_INVALID_BYTECODE;
+        uint32_t nameReg = inputRegister(physical++);
+        Layout nameLayout = layoutAt(image, frame.function, nameReg);
+        if (nameLayout.kind != OBELISK_RT_DBREG_STRING || nameLayout.size != 8)
+          return OBELISK_RT_INVALID_BYTECODE;
+        values.push_back(readLogic(frame.data, layout));
+        Logic &value = values.back();
+        obelisk_rt_string_v1 name = 0;
+        std::memcpy(&name, frame.data + nameLayout.offset, sizeof(name));
+        enumArguments.push_back(
+            {value.width,
+             static_cast<uint32_t>((itemFlags & OBELISK_RT_OUTPUT_ITEM_SIGNED)
+                                       ? OBELISK_RT_ARG_SIGNED
+                                       : 0),
+             0, value.value.data(),
+             value.fourState ? value.unknown.data() : nullptr, name});
+        arguments.push_back({OBELISK_RT_ARG_ENUM,
+                             static_cast<obelisk_rt_arg_flags>(
+                                 (itemFlags & OBELISK_RT_OUTPUT_ITEM_SIGNED)
+                                     ? OBELISK_RT_ARG_SIGNED
+                                     : 0),
+                             0, &enumArguments.back(), nullptr});
+      } else if (layout.kind == OBELISK_RT_DBREG_BYTES) {
         auto value = readByteSpan(image, frame, reg);
         if (!value || (itemFlags != 0 &&
                        itemFlags != OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT))

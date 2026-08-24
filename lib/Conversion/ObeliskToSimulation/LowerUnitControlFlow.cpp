@@ -235,8 +235,14 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
       dimensions.push_back(std::move(lowered));
     }
     if (dimensions.empty())
-      return emitError(location) << "foreach statement has no dimensions",
-             failure();
+      return success();
+    // IEEE 1800-2017 12.7.3: an omitted loop variable suppresses iteration
+    // over that dimension. If every variable is omitted the body is never
+    // executed, including for runtime-sized collections.
+    if (llvm::none_of(dimensions, [](const RuntimeDimension &dimension) {
+          return dimension.hasIterator;
+        }))
+      return success();
 
     FailureOr<Value> collection = lowerExpression(children[0]);
     if (failed(collection))
@@ -524,10 +530,8 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
     dimensions.push_back({leftValue, rightValue, distance.getZExtValue(), 0,
                           path.getValue().str(), *iteratorType});
   }
-  if (dimensions.empty()) {
-    emitError(location) << "foreach statement has no iterator";
-    return failure();
-  }
+  if (dimensions.empty())
+    return success();
 
   uint64_t iterationCount = 1;
   for (Dimension &dimension : llvm::reverse(dimensions)) {

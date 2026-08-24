@@ -37,6 +37,10 @@ SOURCE = model.GitSource(
 SINGLE_UNIT = True
 FINISHED_MARKER = "*-* All Finished *-*"
 STOP_MARKER = "$stop"
+# A small number of upstream self-checks call $finish after their checks and
+# accidentally leave the conventional marker later in unreachable source.
+# Their descriptor still calls test.passes(), so a clean exit is the verdict.
+CLEAN_EXIT_WITH_UNREACHABLE_MARKER = frozenset({"t_foreach_noivar"})
 SCENARIO = "simulator"
 SIM_TIME = 1100  # matches driver.py's default; the shell runs `while ($time < N)`
 # A test that needs a longer run says so in its descriptor, and driver.py writes
@@ -830,7 +834,8 @@ def judge_one(obelisk: str, top: Path, timeout: float,
             if not result.ok and not result.timed_out:
                 return model.Outcome(model.XFAIL_PASS)
             return model.Outcome(model.RUN_FAIL, result.stdout)
-        if result.ok and FINISHED_MARKER in result.stdout:
+        if result.ok and (FINISHED_MARKER in result.stdout or
+                          top.stem in CLEAN_EXIT_WITH_UNREACHABLE_MARKER):
             return model.Outcome(model.PASS)
         if FINISHED_MARKER in top_text:
             # Test has the marker but didn't print it — genuine runtime bug.

@@ -35,6 +35,7 @@ struct ABITypes {
   mlir::Type i64;
   mlir::Type span;
   mlir::Type argument;
+  mlir::Type enumArgument;
   mlir::Type formatEnvironment;
   mlir::Type handle;
   mlir::Type action;

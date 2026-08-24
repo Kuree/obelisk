@@ -498,6 +498,9 @@ TEST(RuntimeABI, StableScalarLayout) {
   EXPECT_EQ(offsetof(obelisk_rt_arg_v1, kind), 0u);
   EXPECT_EQ(offsetof(obelisk_rt_arg_v1, flags), 4u);
   EXPECT_EQ(offsetof(obelisk_rt_arg_v1, size), 8u);
+  EXPECT_EQ(sizeof(obelisk_rt_enum_arg_v1), 40u);
+  EXPECT_EQ(offsetof(obelisk_rt_enum_arg_v1, value), 16u);
+  EXPECT_EQ(offsetof(obelisk_rt_enum_arg_v1, name), 32u);
   EXPECT_EQ(sizeof(obelisk_rt_activation_descriptor_v1), 24u);
   EXPECT_EQ(offsetof(obelisk_rt_activation_descriptor_v1, native_entry), 8u);
   EXPECT_EQ(offsetof(obelisk_rt_activation_descriptor_v1, bytecode_function),
@@ -1666,9 +1669,7 @@ TEST_F(RuntimeTest, ReadMemTokenizerPreservesFourStateWordsAndAddresses) {
 TEST_F(RuntimeTest, ReadMemTokenizerRejectsMalformedInput) {
   TempDirectory temporary;
   std::filesystem::path path = temporary.file("bad.hex");
-  {
-    std::ofstream(path) << "@";
-  }
+  { std::ofstream(path) << "@"; }
   uint32_t descriptor = open(path, "r");
   uint8_t value = 0, unknown = 0;
   uint32_t kind = 0;
@@ -3783,6 +3784,37 @@ TEST_F(ManagedHeapTest, FormatsClassHandlesAsSingularPatterns) {
   EXPECT_EQ(obelisk_rt_v1_format(context, "%p", 2, invalid, std::size(invalid),
                                  &environment, output.out()),
             OBELISK_RT_INVALID_HANDLE);
+}
+
+TEST_F(ManagedHeapTest, FormatsEnumsWithNamesAndPackedFallbacks) {
+  obelisk_rt_string_v1 name = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "ELARGE", 6, &name),
+            OBELISK_RT_OK);
+  uint64_t value = UINT64_C(0xf00d);
+  obelisk_rt_enum_arg_v1 enumeration{
+      32, OBELISK_RT_ARG_SIGNED, 0, &value, nullptr, name};
+  obelisk_rt_arg_v1 argument{OBELISK_RT_ARG_ENUM, OBELISK_RT_ARG_SIGNED, 0,
+                             &enumeration, nullptr};
+  const obelisk_rt_arg_v1 named[] = {argument, argument, argument};
+  RuntimeBuffer output;
+  ASSERT_EQ(obelisk_rt_v1_format(context, "%p|%0h|%s", 9, named,
+                                 std::size(named), nullptr, output.out()),
+            OBELISK_RT_OK);
+  EXPECT_EQ(output.str(), "ELARGE|f00d|ELARGE");
+
+  enumeration.name = 0;
+  value = 17;
+  RuntimeBuffer fallbackOutput;
+  ASSERT_EQ(obelisk_rt_v1_format(context, "%p", 2, &argument, 1, nullptr,
+                                 fallbackOutput.out()),
+            OBELISK_RT_OK);
+  EXPECT_EQ(fallbackOutput.str(), "17");
+
+  enumeration.reserved = 1;
+  RuntimeBuffer invalidOutput;
+  EXPECT_EQ(obelisk_rt_v1_format(context, "%p", 2, &argument, 1, nullptr,
+                                 invalidOutput.out()),
+            OBELISK_RT_INVALID_ARGUMENT);
 }
 
 TEST_F(ManagedHeapTest, CollectsCyclesAndClearsWeakReferences) {

@@ -530,6 +530,20 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
     if (itemIndex == items.size())
       return operation->emitOpError("item flags require more display operands");
     Value item = items[itemIndex++];
+    if ((flags & OBELISK_RT_OUTPUT_ITEM_ENUM) != 0) {
+      if (flags != OBELISK_RT_OUTPUT_ITEM_ENUM &&
+          flags !=
+              (OBELISK_RT_OUTPUT_ITEM_ENUM | OBELISK_RT_OUTPUT_ITEM_SIGNED))
+        return operation->emitOpError(
+            "enum display items may only also carry the signed flag");
+      if (!isa<IntegerType, LogicType>(item.getType()) ||
+          itemIndex == items.size() ||
+          !isa<StringType>(items[itemIndex].getType()))
+        return operation->emitOpError(
+            "enum display items require a packed value and mnemonic string");
+      ++itemIndex;
+      continue;
+    }
     if (!isa<BytesType, StringType, DynamicArrayType, QueueType, AssocArrayType,
              ClassHandleType, VirtualInterfaceType, ProcessType, IntegerType,
              LogicType>(item.getType()) &&

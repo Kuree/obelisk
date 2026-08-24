@@ -107,6 +107,26 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
           rewriter, loc, runtime::ArgumentType::get(rewriter.getContext())));
       continue;
     }
+    if ((flags & OBELISK_RT_OUTPUT_ITEM_ENUM) != 0) {
+      if (itemIndex + 1 >= op.getItems().size())
+        return rewriter.notifyMatchFailure(
+            op, "enum output item has no packed value and mnemonic");
+      ValueRange converted = adaptor.getItems()[itemIndex];
+      Type sourceType = op.getItems()[itemIndex++].getType();
+      ValueRange convertedName = adaptor.getItems()[itemIndex];
+      Type nameType = op.getItems()[itemIndex++].getType();
+      if (!isa<IntegerType, sim::LogicType>(sourceType) ||
+          converted.size() < 1 || converted.size() > 2 ||
+          !isa<sim::StringType>(nameType) || convertedName.size() != 1)
+        return rewriter.notifyMatchFailure(
+            op, "enum output item did not convert to packed value and string");
+      Value unknown = converted.size() == 2 ? converted[1] : Value();
+      arguments.push_back(runtime::RTArgumentEnumOp::create(
+          rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
+          converted.front(), unknown, convertedName.front(),
+          (flags & OBELISK_RT_OUTPUT_ITEM_SIGNED) != 0));
+      continue;
+    }
     ValueRange converted = adaptor.getItems()[itemIndex];
     Type sourceType = op.getItems()[itemIndex++].getType();
     if (isa<sim::BytesType>(sourceType)) {

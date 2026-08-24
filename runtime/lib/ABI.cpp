@@ -325,6 +325,14 @@ ABI_OFFSET(obelisk_rt_arg_v1, size, 8);
 ABI_OFFSET(obelisk_rt_arg_v1, data, 16);
 ABI_OFFSET(obelisk_rt_arg_v1, unknown, 24);
 
+ABI_SIZE_ALIGN(obelisk_rt_enum_arg_v1, 40, 8);
+ABI_OFFSET(obelisk_rt_enum_arg_v1, width, 0);
+ABI_OFFSET(obelisk_rt_enum_arg_v1, flags, 8);
+ABI_OFFSET(obelisk_rt_enum_arg_v1, reserved, 12);
+ABI_OFFSET(obelisk_rt_enum_arg_v1, value, 16);
+ABI_OFFSET(obelisk_rt_enum_arg_v1, unknown, 24);
+ABI_OFFSET(obelisk_rt_enum_arg_v1, name, 32);
+
 ABI_SIZE_ALIGN(obelisk_rt_format_env_v1, 64, 8);
 ABI_OFFSET(obelisk_rt_format_env_v1, scope, 0);
 ABI_OFFSET(obelisk_rt_format_env_v1, scope_size, 8);
@@ -719,6 +727,7 @@ static_assert(OBELISK_RT_ARG_MANAGED_CONTAINER == 6);
 static_assert(OBELISK_RT_ARG_MANAGED_OBJECT == 7);
 static_assert(OBELISK_RT_ARG_VIRTUAL_INTERFACE == 8);
 static_assert(OBELISK_RT_ARG_PROCESS == 9);
+static_assert(OBELISK_RT_ARG_ENUM == 10);
 static_assert(OBELISK_RT_ARG_SIGNED == 1);
 static_assert(OBELISK_RT_ARG_FORMAT_STRING == 2);
 static_assert(OBELISK_RT_ARG_DESIGNATED_FORMAT == 4);

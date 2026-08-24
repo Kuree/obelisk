@@ -345,6 +345,14 @@ LogicalResult RTArgumentPackedOp::verify() {
       *this, getResult(), "stack-backed packed format argument");
 }
 
+LogicalResult RTArgumentEnumOp::verify() {
+  if (Value unknown = getUnknown())
+    if (unknown.getType() != getValue().getType())
+      return emitOpError("unknown plane must match the value plane type");
+  return verifyLocalConsumers<RTArgumentArrayOp>(
+      *this, getResult(), "stack-backed enum format argument");
+}
+
 LogicalResult RTArgumentRealOp::verify() {
   return verifyLocalConsumers<RTArgumentArrayOp>(
       *this, getResult(), "stack-backed real format argument");

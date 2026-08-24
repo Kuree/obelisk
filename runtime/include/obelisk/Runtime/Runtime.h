@@ -2821,8 +2821,7 @@ obelisk_rt_status obelisk_rt_v1_control_disable(obelisk_rt_context *context,
                                                 uint32_t all_activations);
 // Consume the escape request produced when a disable in a task selected a
 // named block owned by an older task activation in the same logical process.
-uint32_t
-obelisk_rt_v1_control_escape_pending(obelisk_rt_context *context);
+uint32_t obelisk_rt_v1_control_escape_pending(obelisk_rt_context *context);
 // Return one exactly once for each nonzero site ID in a context and zero on
 // later claims. This guards descriptor-backed static local initialization.
 uint32_t obelisk_rt_v1_static_once(obelisk_rt_context *context,
@@ -3265,7 +3264,9 @@ enum {
   OBELISK_RT_ARG_VIRTUAL_INTERFACE = 8,
   // data points to one uint64_t stable process identity; size must be zero.
   // Zero is the null process handle. This representation is accepted by %p.
-  OBELISK_RT_ARG_PROCESS = 9
+  OBELISK_RT_ARG_PROCESS = 9,
+  // data points to an obelisk_rt_enum_arg_v1; size and unknown must be zero.
+  OBELISK_RT_ARG_ENUM = 10
 };
 
 typedef uint32_t obelisk_rt_arg_flags;
@@ -3277,6 +3278,19 @@ enum {
   // are diagnosed and ignored rather than formatted as subsequent items.
   OBELISK_RT_ARG_DESIGNATED_FORMAT = 1u << 2
 };
+
+// Runtime-only pairing of an enum's executable packed representation with
+// the compiler-selected mnemonic. Keeping the pair in one logical format
+// argument lets dynamic format strings choose %p or a numeric conversion
+// without a runtime enum-table lookup.
+typedef struct obelisk_rt_enum_arg_v1 {
+  uint64_t width;
+  uint32_t flags;
+  uint32_t reserved;
+  const uint64_t *value;
+  const uint64_t *unknown;
+  obelisk_rt_string_v1 name;
+} obelisk_rt_enum_arg_v1;
 
 // LOGIC: size is the bit width, data points to little-endian uint64_t value
 // words, and unknown points to matching unknown words (or is null for known

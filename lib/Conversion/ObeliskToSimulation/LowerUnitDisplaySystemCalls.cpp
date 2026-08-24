@@ -262,6 +262,39 @@ UnitLowering::formatUnpackedAggregatePattern(Value value, Location location) {
       .getResult();
 }
 
+FailureOr<Value> UnitLowering::lowerEnumFormatName(Value receiver,
+                                                   ArrayAttr values,
+                                                   ArrayAttr names,
+                                                   Location location) {
+  if (!values || values.empty() || !names || values.size() != names.size() ||
+      !sim::getPackedScalarType(receiver.getType()))
+    return failure();
+  Type stringType = sim::StringType::get(function.getContext());
+  Value result = sim::SimStringLiteralOp::create(
+      builder, location, stringType, builder.getStringAttr(""));
+  for (auto [valueAttribute, nameAttribute] :
+       llvm::zip_equal(values, names)) {
+    auto frozen = dyn_cast<sim::FrozenConstantAttr>(valueAttribute);
+    auto spelling = dyn_cast<StringAttr>(nameAttribute);
+    FailureOr<Value> member =
+        frozen && frozen.getType() == receiver.getType()
+            ? sim::materializeFrozenConstant(builder, location, frozen)
+            : FailureOr<Value>(failure());
+    if (failed(member) || !spelling)
+      return failure();
+    FailureOr<Value> equal = conditionalEqual(
+        receiver, *member, receiver.getType(), location,
+        /*caseEquality=*/true);
+    if (failed(equal))
+      return failure();
+    Value candidate = sim::SimStringLiteralOp::create(builder, location,
+                                                      stringType, spelling);
+    result =
+        arith::SelectOp::create(builder, location, *equal, candidate, result);
+  }
+  return result;
+}
+
 FailureOr<UnitLowering::LoweredOutputList>
 UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
                                    bool interpretLiteralsAsFormats,
@@ -422,6 +455,27 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
       // pattern, which the compiler can build because the shape is static.
       output.items.push_back(*pattern);
       output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING);
+    } else if (auto enumValues =
+                   child->getAttrOfType<ArrayAttr>(enumFormatValuesAttrName)) {
+      auto enumNames =
+          child->getAttrOfType<ArrayAttr>(enumFormatNamesAttrName);
+      FailureOr<Value> scalar =
+          toPackedScalar(*value, getSemanticLocation(child));
+      FailureOr<Value> name =
+          succeeded(scalar)
+              ? lowerEnumFormatName(*scalar, enumValues, enumNames,
+                                    getSemanticLocation(child))
+              : FailureOr<Value>(failure());
+      if (failed(scalar) || failed(name)) {
+        emitError(getSemanticLocation(child))
+            << "formatted enum has malformed frozen inventory";
+        return failure();
+      }
+      output.items.push_back(*scalar);
+      output.items.push_back(*name);
+      output.flags.push_back(
+          OBELISK_RT_OUTPUT_ITEM_ENUM |
+          (isSignedNode(child) ? OBELISK_RT_OUTPUT_ITEM_SIGNED : 0));
     } else {
       FailureOr<Value> scalar =
           toPackedScalar(*value, getSemanticLocation(child));

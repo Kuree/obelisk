@@ -68,7 +68,37 @@ bool getLogicView(const obelisk_rt_arg_v1 &argument, LogicView &view) {
     view = {64, false, static_cast<const uint64_t *>(argument.data), nullptr};
     return true;
   }
+  if (argument.kind == OBELISK_RT_ARG_ENUM) {
+    if (argument.size != 0 || argument.unknown || !argument.data ||
+        (argument.flags & ~OBELISK_RT_ARG_SIGNED) != 0)
+      return false;
+    const auto *enumeration =
+        static_cast<const obelisk_rt_enum_arg_v1 *>(argument.data);
+    if (enumeration->width == 0 ||
+        enumeration->width > std::numeric_limits<uint32_t>::max() ||
+        !enumeration->value || enumeration->reserved != 0 ||
+        enumeration->flags != argument.flags)
+      return false;
+    view = {enumeration->width,
+            (enumeration->flags & OBELISK_RT_ARG_SIGNED) != 0,
+            enumeration->value, enumeration->unknown};
+    return true;
+  }
   return false;
+}
+
+bool getEnumName(const obelisk_rt_arg_v1 &argument, char scratch[8],
+                 const char *&data, uint64_t &size) {
+  data = "";
+  size = 0;
+  LogicView ignored;
+  if (argument.kind != OBELISK_RT_ARG_ENUM ||
+      !getLogicView(argument, ignored))
+    return false;
+  const auto *enumeration =
+      static_cast<const obelisk_rt_enum_arg_v1 *>(argument.data);
+  return obelisk_rt_v1_string_view(enumeration->name, scratch, &data, &size) ==
+         OBELISK_RT_OK;
 }
 
 bool getStringBytes(const obelisk_rt_arg_v1 &argument, char scratch[8],
@@ -604,6 +634,25 @@ obelisk_rt_status formatArgument(std::string &output,
     return OBELISK_RT_OK;
   }
   case 's':
+    if (argument.kind == OBELISK_RT_ARG_ENUM) {
+      char scratch[8];
+      const char *bytes = nullptr;
+      uint64_t size = 0;
+      if (!getEnumName(argument, scratch, bytes, size) ||
+          size > std::numeric_limits<size_t>::max())
+        return OBELISK_RT_INVALID_ARGUMENT;
+      if (size != 0)
+        return formatStringValue(
+            output, std::string(bytes, static_cast<size_t>(size)), options);
+      if (!getLogicView(argument, view))
+        return OBELISK_RT_ARGUMENT_MISMATCH;
+      std::string numeric;
+      if (std::optional<char> symbol = decimalUnknown(view))
+        numeric.assign(1, *symbol);
+      else
+        numeric = knownDecimal(view);
+      return formatStringValue(output, std::move(numeric), options);
+    }
     if (argument.kind == OBELISK_RT_ARG_STRING ||
         argument.kind == OBELISK_RT_ARG_MANAGED_STRING) {
       char scratch[8];
@@ -698,6 +747,17 @@ obelisk_rt_status formatArgument(std::string &output,
       return OBELISK_RT_ARGUMENT_MISMATCH;
     return appendRaw(output, view, spec == 'z');
   case 'p': {
+    if (argument.kind == OBELISK_RT_ARG_ENUM) {
+      char scratch[8];
+      const char *bytes = nullptr;
+      uint64_t size = 0;
+      if (!getEnumName(argument, scratch, bytes, size) ||
+          size > std::numeric_limits<size_t>::max())
+        return OBELISK_RT_INVALID_ARGUMENT;
+      if (size != 0)
+        return formatStringValue(
+            output, std::string(bytes, static_cast<size_t>(size)), options);
+    }
     if (argument.kind == OBELISK_RT_ARG_MANAGED_CONTAINER) {
       if (argument.size != 0 || !argument.data || argument.unknown)
         return OBELISK_RT_INVALID_ARGUMENT;
@@ -924,6 +984,7 @@ char defaultSpecifier(const obelisk_rt_arg_v1 &argument,
   switch (argument.kind) {
   case OBELISK_RT_ARG_LOGIC:
   case OBELISK_RT_ARG_TIME:
+  case OBELISK_RT_ARG_ENUM:
     return radix == OBELISK_RT_RADIX_BINARY  ? 'b'
            : radix == OBELISK_RT_RADIX_OCTAL ? 'o'
            : radix == OBELISK_RT_RADIX_HEX   ? 'h'

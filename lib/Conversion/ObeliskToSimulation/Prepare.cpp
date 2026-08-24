@@ -469,6 +469,10 @@ void ObeliskSimPreparePass::runOnOperation() {
   // preserve the LRM membership and name lookups without consulting semantic
   // symbols. The frontend inventory is required because anonymous and local
   // typedef enums do not necessarily have a standalone semantic declaration.
+  llvm::DenseMap<Type, semantic::SVEnumTypeOp> enumDeclarations;
+  semanticRoot.walk([&](semantic::SVEnumTypeOp enumeration) {
+    enumDeclarations.try_emplace(enumeration.getSemanticType(), enumeration);
+  });
   auto freezeEnumValues = [&](Operation *owner, Operation *typedValue,
                               ArrayAttr spellings,
                               StringRef description) -> FailureOr<ArrayAttr> {
@@ -516,6 +520,67 @@ void ObeliskSimPreparePass::runOnOperation() {
   };
 
   semanticRoot->walk([&](semantic::SVCallExpressionOp call) {
+    bool outputCall =
+        call.getIsSystemCall() &&
+        llvm::StringSwitch<bool>(call.getCalleeName())
+            .Cases({"$strobe",   "$strobeb",   "$strobeo",   "$strobeh",
+                    "$fstrobe",  "$fstrobeb",  "$fstrobeo",  "$fstrobeh",
+                    "$monitor",  "$monitorb",  "$monitoro",  "$monitorh",
+                    "$fmonitor", "$fmonitorb", "$fmonitoro", "$fmonitorh",
+                    "$display",  "$displayb",  "$displayo",  "$displayh",
+                    "$write",    "$writeb",    "$writeo",    "$writeh",
+                    "$fdisplay", "$fdisplayb", "$fdisplayo", "$fdisplayh",
+                    "$fwrite",   "$fwriteb",   "$fwriteo",   "$fwriteh",
+                    "$info",     "$warning",   "$error",     "$fatal",
+                    "$swrite",   "$swriteb",   "$swriteo",   "$swriteh",
+                    "$sformat",  "$sformatf",  "$psprintf"},
+                   true)
+            .Default(false);
+    if (outputCall) {
+      // IEEE 1800-2017 21.2.1.7: %p renders a valid enumeration value by
+      // its declared mnemonic. Preserve both the packed value and a compact
+      // name selection; ordinary numeric conversions continue to use the
+      // packed half of the resulting runtime argument.
+      for (Operation *argument : getChildren(call)) {
+        auto type = argument->getAttrOfType<TypeAttr>("semantic_type");
+        if (!type || !isa<semantic::EnumType>(type.getValue()))
+          continue;
+        auto declaration = enumDeclarations.find(type.getValue());
+        if (declaration == enumDeclarations.end()) {
+          emitError(getSemanticLocation(argument))
+              << "formatted enum has no declaration inventory";
+          invalid = true;
+          continue;
+        }
+        SmallVector<Attribute> valueSpellings;
+        SmallVector<Attribute> names;
+        for (Operation *member : getChildren(declaration->second)) {
+          auto enumerator = dyn_cast<semantic::SVEnumValueSymbolOp>(member);
+          if (!enumerator)
+            continue;
+          auto value = enumerator->getAttrOfType<StringAttr>("constant_value");
+          auto name = enumerator->getAttrOfType<StringAttr>("name");
+          if (!value || !name) {
+            emitError(getSemanticLocation(enumerator))
+                << "formatted enum has malformed declaration inventory";
+            invalid = true;
+            continue;
+          }
+          valueSpellings.push_back(value);
+          names.push_back(name);
+        }
+        ArrayAttr spellings = ArrayAttr::get(context, valueSpellings);
+        FailureOr<ArrayAttr> values =
+            freezeEnumValues(call, argument, spellings, "formatted enum");
+        if (failed(values) || names.size() != valueSpellings.size()) {
+          invalid = true;
+          continue;
+        }
+        argument->setAttr(enumFormatValuesAttrName, *values);
+        argument->setAttr(enumFormatNamesAttrName,
+                          ArrayAttr::get(context, names));
+      }
+    }
     ArrayAttr spellings = call.getEnumMethodValuesAttr();
     bool enumMethod =
         call.getIsSystemCall() && spellings &&
@@ -1699,10 +1764,6 @@ void ObeliskSimPreparePass::runOnOperation() {
     uint64_t width;
     SmallVector<RandomDomainPattern> patterns;
   };
-  llvm::DenseMap<Type, semantic::SVEnumTypeOp> enumDeclarations;
-  semanticRoot.walk([&](semantic::SVEnumTypeOp enumeration) {
-    enumDeclarations.try_emplace(enumeration.getSemanticType(), enumeration);
-  });
   llvm::DenseMap<Type, SmallVector<uint64_t>> enumValues;
 
   auto widthMask = [](uint64_t width) {
