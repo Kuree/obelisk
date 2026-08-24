@@ -42,9 +42,13 @@ getDriverStrengths(Operation *unit) {
   // continuous assignments and ordinary gates. Pull sources instead default
   // to pull strength (28.10).
   sim::Strength defaultStrength = sim::Strength::Strong;
+  bool pullup = false;
+  bool pulldown = false;
   if (auto primitive = dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(unit)) {
     auto name = primitive->getAttrOfType<StringAttr>("primitive_name");
-    if (name && (name.getValue() == "pullup" || name.getValue() == "pulldown"))
+    pullup = name && name.getValue() == "pullup";
+    pulldown = name && name.getValue() == "pulldown";
+    if (pullup || pulldown)
       defaultStrength = sim::Strength::Pull;
   }
   sim::Strength strength0 = defaultStrength;
@@ -68,6 +72,13 @@ getDriverStrengths(Operation *unit) {
     strength0 = lowerDriveStrength(*semanticStrength0);
   if (semanticStrength1)
     strength1 = lowerDriveStrength(*semanticStrength1);
+  // IEEE 1800-2017 28.10: only the strength1 of a pullup and strength0 of a
+  // pulldown has meaning. Canonicalize the ignored polarity instead of
+  // retaining source metadata that must never become observable.
+  if (pullup)
+    strength0 = sim::Strength::Pull;
+  if (pulldown)
+    strength1 = sim::Strength::Pull;
   return {strength0, strength1};
 }
 

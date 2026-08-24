@@ -2135,8 +2135,24 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
 
   Value result;
   std::optional<std::array<Value, 2>> strengthResults;
-  if (name == "and" || name == "nand" || name == "or" || name == "nor" ||
-      name == "xor" || name == "xnor") {
+  if (name == "pullup" || name == "pulldown") {
+    if (!inputs.empty())
+      return emitError(location)
+             << "primitive '" << name << "' requires no inputs";
+    // IEEE 1800-2017 28.10: pull sources continuously drive their sole
+    // terminal with 1 or 0. Their default pull strength, and any explicit
+    // strength for the driven polarity, are properties of the driver
+    // declaration prepared by PrepareNetTopology rather than of logic<N>.
+    auto planeType =
+        IntegerType::get(function.getContext(), logicType.getWidth());
+    APInt bits = name == "pullup" ? APInt::getAllOnes(logicType.getWidth())
+                                  : APInt::getZero(logicType.getWidth());
+    result = sim::SimLogicConstantOp::create(
+        builder, location, logicType, builder.getIntegerAttr(planeType, bits),
+        builder.getIntegerAttr(planeType,
+                               APInt::getZero(logicType.getWidth())));
+  } else if (name == "and" || name == "nand" || name == "or" ||
+             name == "nor" || name == "xor" || name == "xnor") {
     if (inputs.empty())
       return emitError(location)
              << "primitive '" << name << "' requires at least one input";
