@@ -536,10 +536,41 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
           call->getAttrOfType<ArrayAttr>(randomPropertiesAttrName);
       if (!properties)
         return;
+      bool scopeRandomize = call->hasAttr(randomizeScopeAttrName);
+      SmallVector<Attribute> rewrittenProperties;
+      rewrittenProperties.reserve(properties.size());
+      bool rewroteProperties = false;
       for (Attribute attribute : properties) {
         auto property = dyn_cast<DictionaryAttr>(attribute);
-        if (!property)
+        if (!property) {
+          rewrittenProperties.push_back(attribute);
           continue;
+        }
+        if (scopeRandomize) {
+          auto path = property.getAs<StringAttr>(randomPropertyPathAttrName);
+          auto reference =
+              property.getAs<SymbolRefAttr>(randomPropertySymbolAttrName);
+          Operation *referencedSymbol = nullptr;
+          if (reference) {
+            auto symbol =
+                semanticSymbols.find(reference.getLeafReference());
+            if (symbol != semanticSymbols.end())
+              referencedSymbol = symbol->second;
+          }
+          auto qualified =
+              path ? qualifiedAutomaticPath(path.getValue(), reference,
+                                             referencedSymbol)
+                   : std::nullopt;
+          if (qualified) {
+            NamedAttrList rewritten(property);
+            rewritten.set(randomPropertyPathAttrName,
+                          StringAttr::get(call.getContext(), *qualified));
+            property =
+                DictionaryAttr::get(call.getContext(), rewritten.getAttrs());
+            rewroteProperties = true;
+          }
+        }
+        rewrittenProperties.push_back(property);
         for (StringRef name :
              {randomPropertyPathAttrName, randomRandCKeyPathAttrName,
               randomRandCPositionPathAttrName}) {
@@ -549,6 +580,11 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
           auto descriptor = descriptors.find(path.getValue());
           if (descriptor == descriptors.end() ||
               descriptor->second.kind != DescriptorInfo::Kind::Storage) {
+            // Scope-randomized automatic locals and formal arguments are
+            // already present in the unit-local binding inventory. Only
+            // design/static scope variables have descriptor-backed state.
+            if (scopeRandomize)
+              continue;
             emitError(getSemanticLocation(call))
                 << "static randomization state has no storage descriptor: "
                 << path.getValue();
@@ -561,6 +597,9 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
           writtenDescriptors[unit.source].insert(path.getValue());
         }
       }
+      if (rewroteProperties)
+        call->setAttr(randomPropertiesAttrName,
+                      ArrayAttr::get(call.getContext(), rewrittenProperties));
     });
 
     // Manual covergroup sampling evaluates declaration expressions in the

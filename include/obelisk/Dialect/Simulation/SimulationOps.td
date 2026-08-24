@@ -724,6 +724,25 @@ def SimRandomNextOp : SimOp<"random.next", [
   let results = (outs I64:$result);
 }
 
+def SimRandomStateOp : SimOp<"random.state", [
+    MemoryEffects<[MemRead<SimRNGResource>]>
+  ]> {
+  let summary = "read the active random stream state";
+  let description = [{
+    Returns the two opaque words comprising the active process stream, or the
+    initialization stream when no logical process is active.
+  }];
+  let arguments = (ins SimContextType:$context);
+  let results = (outs I64:$state, I64:$increment);
+}
+
+def SimRandomSetStateOp : SimOp<"random.set_state", [
+    MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>]>
+  ]> {
+  let summary = "restore the active random stream state";
+  let arguments = (ins SimContextType:$context, I64:$state, I64:$increment);
+}
+
 def SimRandomBoundedOp : SimOp<"random.bounded", [
     MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>]>
   ]> {

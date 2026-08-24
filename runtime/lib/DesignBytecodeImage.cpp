@@ -832,6 +832,14 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_RANDOM_SEED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && twoStateBits(input(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_GET_STATE:
+    return signature.flags == 0 && site.inputCount == 0 &&
+           site.outputCount == 2 && twoStateBits(output(0), 64) &&
+           twoStateBits(output(1), 64);
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_SET_STATE:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 0 && twoStateBits(input(0), 64) &&
+           twoStateBits(input(1), 64);
   case OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE:
     if (signature.flags != 0 || site.inputCount < 5 || site.outputCount != 2 ||
         !bytes(input(0)) || !twoStateBits(output(0), 64) ||

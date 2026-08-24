@@ -196,6 +196,8 @@ inline constexpr ::mlir::StringLiteral assertionLocalTypesAttrName =
     "obelisk_sim.assertion_local_types";
 inline constexpr ::mlir::StringLiteral randomizeAttrName =
     "obelisk_sim.randomize";
+inline constexpr ::mlir::StringLiteral randomizeScopeAttrName =
+    "obelisk_sim.randomize_scope";
 inline constexpr ::mlir::StringLiteral randomizeDispatchAttrName =
     "obelisk_sim.randomize_dispatch";
 inline constexpr ::mlir::StringLiteral randomizeHelperAttrName =
@@ -311,6 +313,8 @@ inline constexpr ::mlir::StringLiteral randomNestedStatePathAttrName =
     "obelisk_sim.random_nested_state_path";
 inline constexpr ::mlir::StringLiteral randomPropertyPathAttrName =
     "reference_path";
+inline constexpr ::mlir::StringLiteral randomPropertySymbolAttrName =
+    "reference_symbol";
 inline constexpr ::mlir::StringLiteral randomPropertyModeStorageAttrName =
     "rand_mode_storage";
 inline constexpr ::mlir::StringLiteral randomRandCKeyPathAttrName =

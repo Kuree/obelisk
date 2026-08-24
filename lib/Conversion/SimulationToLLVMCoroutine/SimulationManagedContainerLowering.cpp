@@ -568,6 +568,67 @@ public:
   }
 };
 
+class RandomStateConversion final
+    : public OpConversionPattern<sim::SimRandomStateOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimRandomStateOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getContext().size() != 1)
+      return failure();
+    Value context = adaptor.getContext().front();
+    Type i64 = rewriter.getI64Type();
+    Value snapshot = entryAlloca(rewriter, op.getLoc(), i64, 2, 8);
+    Value incrementAddress = byteGEP(rewriter, op.getLoc(), snapshot, 8);
+    Value status = LLVM::CallOp::create(
+                       rewriter, op.getLoc(),
+                       TypeRange{rewriter.getI32Type()},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_random_get_state"),
+                       ValueRange{context, snapshot})
+                       .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    Value state =
+        LLVM::LoadOp::create(rewriter, op.getLoc(), i64, snapshot, 8);
+    Value increment = LLVM::LoadOp::create(rewriter, op.getLoc(), i64,
+                                           incrementAddress, 8);
+    rewriter.replaceOp(op, ValueRange{state, increment});
+    return success();
+  }
+};
+
+class RandomSetStateConversion final
+    : public OpConversionPattern<sim::SimRandomSetStateOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimRandomSetStateOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getContext().size() != 1 || adaptor.getState().size() != 1 ||
+        adaptor.getIncrement().size() != 1)
+      return failure();
+    Value context = adaptor.getContext().front();
+    Type i64 = rewriter.getI64Type();
+    Value snapshot = entryAlloca(rewriter, op.getLoc(), i64, 2, 8);
+    LLVM::StoreOp::create(rewriter, op.getLoc(), adaptor.getState().front(),
+                          snapshot, 8);
+    Value incrementAddress = byteGEP(rewriter, op.getLoc(), snapshot, 8);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          adaptor.getIncrement().front(), incrementAddress, 8);
+    Value status = LLVM::CallOp::create(
+                       rewriter, op.getLoc(),
+                       TypeRange{rewriter.getI32Type()},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_random_set_state"),
+                       ValueRange{context, snapshot})
+                       .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 class SampledReadConversion final
     : public OpConversionPattern<sim::SimSampledReadOp> {
 public:
@@ -1230,7 +1291,9 @@ void populateManagedContainerToLLVMConversionPatterns(
            MailboxTryReadConversion<sim::SimMailboxTryPeekOp, false>,
            MailboxTryReadConversion<sim::SimMailboxTryGetOp, true>,
            ContainerReadConversion, ContainerWriteConversion,
-           RandomNextConversion, RandomSeedConversion, RandomBoundedConversion,
+           RandomNextConversion, RandomStateConversion,
+           RandomSetStateConversion, RandomSeedConversion,
+           RandomBoundedConversion,
            RandomDistributionConversion, RandomCycleNextConversion,
            RandomSolveConversion>(converter, context);
   patterns.add<RandomSolveWideConversion, SampledReadConversion,

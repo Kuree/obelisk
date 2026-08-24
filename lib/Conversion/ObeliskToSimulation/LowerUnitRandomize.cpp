@@ -374,26 +374,40 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       constraintModeStaticStoragesAttrName);
   auto constraintTemplateAttr =
       op->getAttrOfType<FlatSymbolRefAttr>(randomizeConstraintTemplateAttrName);
-  if (children.empty() || !properties || !containerProperties ||
+  bool scopeRandomize = op->hasAttr(randomizeScopeAttrName);
+  if ((!scopeRandomize && children.empty()) || !properties ||
+      !containerProperties ||
       !nestedConstraintModes || !nestedHooks || !recursiveAliasGuards ||
-      !totalWidthAttr || !receiverIndexAttr || !constraintCountAttr) {
+      !totalWidthAttr || (!scopeRandomize && !receiverIndexAttr) ||
+      !constraintCountAttr) {
     emitError(location) << "randomize call has no frozen constraint plan";
     return failure();
   }
-  APInt receiverIndexValue = receiverIndexAttr.getValue();
   APInt totalWidthValue = totalWidthAttr.getValue();
   APInt constraintCountValue = constraintCountAttr.getValue();
-  if (receiverIndexValue.isNegative() ||
-      receiverIndexValue.getActiveBits() > 64 || totalWidthValue.isNegative() ||
+  if (totalWidthValue.isNegative() ||
       totalWidthValue.getActiveBits() > 64 ||
       constraintCountValue.isNegative() ||
-      constraintCountValue.getActiveBits() > 64 ||
-      receiverIndexValue.getZExtValue() >= children.size()) {
+      constraintCountValue.getActiveBits() > 64) {
     emitError(location) << "randomize call has malformed constraint metadata";
     return failure();
   }
-  unsigned receiverIndex =
-      static_cast<unsigned>(receiverIndexValue.getZExtValue());
+  unsigned receiverIndex = std::numeric_limits<unsigned>::max();
+  if (!scopeRandomize) {
+    APInt receiverIndexValue = receiverIndexAttr.getValue();
+    if (receiverIndexValue.isNegative() ||
+        receiverIndexValue.getActiveBits() > 64 ||
+        receiverIndexValue.getZExtValue() >= children.size()) {
+      emitError(location)
+          << "randomize call has malformed receiver metadata";
+      return failure();
+    }
+    receiverIndex =
+        static_cast<unsigned>(receiverIndexValue.getZExtValue());
+  }
+  auto isReceiverChild = [&](size_t index) {
+    return !scopeRandomize && index == receiverIndex;
+  };
   uint64_t totalWidth = totalWidthValue.getZExtValue();
   uint64_t constraintCount = constraintCountValue.getZExtValue();
   bool checkerOnly = op->hasAttr(randomizeCheckerOnlyAttrName);
@@ -409,30 +423,42 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return failure();
   }
 
-  FailureOr<Value> loweredReceiver =
-      receiverOverride ? FailureOr<Value>(receiverOverride)
-                       : lowerExpression(children[receiverIndex]);
-  if (receiverOverride) {
-    auto planClass =
-        op->getAttrOfType<FlatSymbolRefAttr>(randomizePlanClassAttrName);
-    if (!planClass) {
-      emitError(location) << "randomize receiver override has no target class";
+  Value receiver;
+  sim::ClassHandleType objectType;
+  if (scopeRandomize) {
+    if (receiverOverride || constraintTemplateAttr) {
+      emitError(location)
+          << "std::randomize cannot carry an object receiver or class "
+             "constraint template";
       return failure();
     }
-    Type targetType =
-        sim::ClassHandleType::get(function.getContext(), planClass);
-    if ((*loweredReceiver).getType() != targetType)
-      loweredReceiver = sim::SimClassCastOp::create(
-                            builder, location, targetType, *loweredReceiver)
-                            .getResult();
+  } else {
+    FailureOr<Value> loweredReceiver =
+        receiverOverride ? FailureOr<Value>(receiverOverride)
+                         : lowerExpression(children[receiverIndex]);
+    if (receiverOverride) {
+      auto planClass =
+          op->getAttrOfType<FlatSymbolRefAttr>(randomizePlanClassAttrName);
+      if (!planClass) {
+        emitError(location)
+            << "randomize receiver override has no target class";
+        return failure();
+      }
+      Type targetType =
+          sim::ClassHandleType::get(function.getContext(), planClass);
+      if ((*loweredReceiver).getType() != targetType)
+        loweredReceiver = sim::SimClassCastOp::create(
+                              builder, location, targetType, *loweredReceiver)
+                              .getResult();
+    }
+    objectType =
+        succeeded(loweredReceiver)
+            ? dyn_cast<sim::ClassHandleType>((*loweredReceiver).getType())
+            : sim::ClassHandleType{};
+    if (failed(loweredReceiver) || !objectType)
+      return failure();
+    receiver = *loweredReceiver;
   }
-  auto objectType =
-      succeeded(loweredReceiver)
-          ? dyn_cast<sim::ClassHandleType>((*loweredReceiver).getType())
-          : sim::ClassHandleType{};
-  if (failed(loweredReceiver) || !objectType)
-    return failure();
-  Value receiver = *loweredReceiver;
 
   sim::SimRandomConstraintTemplateOp constraintTemplate;
   if (constraintTemplateAttr) {
@@ -1145,54 +1171,95 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   bool hasRandC = llvm::any_of(
       planned, [](const Property &property) { return property.isRandC; });
 
-  sim::SimClassDeclOp declaration =
-      SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-          function, objectType.getClassName());
-  while (declaration &&
-         !declaration->hasAttr("obelisk_sim.random_state_field")) {
-    if (!declaration.getBaseAttr())
-      break;
-    declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-        function, declaration.getBaseAttr());
+  Value stateReference;
+  Value randomContext;
+  Value state;
+  Value increment;
+  Value mode;
+  Value constraintMode;
+  if (scopeRandomize) {
+    // IEEE 1800-2017 18.12 and 18.14: scope randomization belongs to the
+    // calling process's random stream, the same stream used by $urandom and
+    // process random-state methods. Keep the opaque increment unchanged while
+    // the generated solver advances and commits the state word.
+    randomContext = function.getBody().front().getArgument(0);
+    auto randomState =
+        sim::SimRandomStateOp::create(builder, location, randomContext);
+    state = randomState.getState();
+    increment = randomState.getIncrement();
+    mode = arith::ConstantOp::create(builder, location, i64,
+                                     builder.getI64IntegerAttr(0));
+    constraintMode = arith::ConstantOp::create(
+        builder, location, i64, builder.getI64IntegerAttr(0));
+  } else {
+    sim::SimClassDeclOp declaration =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+            function, objectType.getClassName());
+    while (declaration &&
+           !declaration->hasAttr("obelisk_sim.random_state_field")) {
+      if (!declaration.getBaseAttr())
+        break;
+      declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+          function, declaration.getBaseAttr());
+    }
+    auto stateField =
+        declaration ? declaration->getAttrOfType<FlatSymbolRefAttr>(
+                          "obelisk_sim.random_state_field")
+                    : FlatSymbolRefAttr{};
+    auto incrementField =
+        declaration ? declaration->getAttrOfType<FlatSymbolRefAttr>(
+                          "obelisk_sim.random_increment_field")
+                    : FlatSymbolRefAttr{};
+    auto modeField = declaration
+                         ? declaration->getAttrOfType<FlatSymbolRefAttr>(
+                               "obelisk_sim.random_mode_field")
+                         : FlatSymbolRefAttr{};
+    auto constraintModeField =
+        declaration ? declaration->getAttrOfType<FlatSymbolRefAttr>(
+                          "obelisk_sim.constraint_mode_field")
+                    : FlatSymbolRefAttr{};
+    if (!declaration || !stateField || !incrementField || !modeField ||
+        !constraintModeField) {
+      emitError(location)
+          << "randomize receiver has no object-local stream or mode state";
+      return failure();
+    }
+    Type randomReferenceType = sim::ManagedRefType::get(
+        function.getContext(), i64, objectType.getClassName());
+    stateReference = sim::SimClassFieldRefOp::create(
+        builder, location, randomReferenceType, receiver, stateField);
+    Value incrementReference = sim::SimClassFieldRefOp::create(
+        builder, location, randomReferenceType, receiver, incrementField);
+    Value modeReference = sim::SimClassFieldRefOp::create(
+        builder, location, randomReferenceType, receiver, modeField);
+    Value constraintModeReference = sim::SimClassFieldRefOp::create(
+        builder, location, randomReferenceType, receiver, constraintModeField);
+    state =
+        sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
+    increment = sim::SimManagedLoadOp::create(builder, location, i64,
+                                              incrementReference);
+    mode =
+        sim::SimManagedLoadOp::create(builder, location, i64, modeReference);
+    constraintMode = sim::SimManagedLoadOp::create(
+        builder, location, i64, constraintModeReference);
   }
-  auto stateField = declaration ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                                      "obelisk_sim.random_state_field")
-                                : FlatSymbolRefAttr{};
-  auto incrementField = declaration
-                            ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                                  "obelisk_sim.random_increment_field")
-                            : FlatSymbolRefAttr{};
-  auto modeField = declaration ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                                     "obelisk_sim.random_mode_field")
-                               : FlatSymbolRefAttr{};
-  auto constraintModeField =
-      declaration ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                        "obelisk_sim.constraint_mode_field")
-                  : FlatSymbolRefAttr{};
-  if (!declaration || !stateField || !incrementField || !modeField ||
-      !constraintModeField) {
-    emitError(location)
-        << "randomize receiver has no object-local stream or mode state";
-    return failure();
-  }
-  Type randomReferenceType = sim::ManagedRefType::get(
-      function.getContext(), i64, objectType.getClassName());
-  Value stateReference = sim::SimClassFieldRefOp::create(
-      builder, location, randomReferenceType, receiver, stateField);
-  Value incrementReference = sim::SimClassFieldRefOp::create(
-      builder, location, randomReferenceType, receiver, incrementField);
-  Value modeReference = sim::SimClassFieldRefOp::create(
-      builder, location, randomReferenceType, receiver, modeField);
-  Value constraintModeReference = sim::SimClassFieldRefOp::create(
-      builder, location, randomReferenceType, receiver, constraintModeField);
-  Value state =
-      sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
-  Value increment =
-      sim::SimManagedLoadOp::create(builder, location, i64, incrementReference);
-  Value mode =
-      sim::SimManagedLoadOp::create(builder, location, i64, modeReference);
-  Value constraintMode = sim::SimManagedLoadOp::create(builder, location, i64,
-                                                       constraintModeReference);
+
+  auto loadRandomState = [&]() -> Value {
+    if (scopeRandomize)
+      return sim::SimRandomStateOp::create(builder, location, randomContext)
+          .getState();
+    return sim::SimManagedLoadOp::create(builder, location, i64,
+                                         stateReference);
+  };
+  auto storeRandomState = [&](Value nextState) {
+    if (scopeRandomize) {
+      sim::SimRandomSetStateOp::create(builder, location, randomContext,
+                                       nextState, increment);
+      return;
+    }
+    sim::SimManagedStoreOp::create(builder, location, nextState,
+                                   stateReference);
+  };
 
   auto constant64 = [&](uint64_t value) -> Value {
     return arith::ConstantOp::create(
@@ -2399,7 +2466,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   bool hasSoftConstraint = false;
   bool hasRuntimeForeachConstraint = false;
   for (auto [index, child] : llvm::enumerate(children)) {
-    if (index == receiverIndex)
+    if (isReceiverChild(index))
       continue;
     child->walk([&](semantic::SVExpressionConstraintOp expression) {
       hasSoftConstraint |= expression.getIsSoft();
@@ -2461,7 +2528,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return propertyMasks[indexAttr.getValue().getZExtValue()];
   };
   for (auto [index, root] : llvm::enumerate(children)) {
-    if (index == receiverIndex)
+    if (isReceiverChild(index))
       continue;
     uint32_t solveConstraintBlock = OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1;
     if (auto block =
@@ -4081,15 +4148,17 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   // IEEE 1800-2017 18.7: a name an inline constraint does not resolve in the
   // randomize() with object class resolves in the scope containing the call,
   // so that scope's object stays reachable alongside the receiver.
-  enclosingThisObject = programSavedThis;
-  thisObject = receiver;
+  if (!scopeRandomize) {
+    enclosingThisObject = programSavedThis;
+    thisObject = receiver;
+  }
   bool emittedHard = false;
   bool emittedSoft = false;
   llvm::DenseMap<Operation *, uint64_t> softPriorities;
   uint64_t nextSoftPriority = 0;
   auto assignSoftPriorities = [&](bool inlineConstraints) {
     for (auto [index, root] : llvm::enumerate(children)) {
-      if (index == receiverIndex ||
+      if (isReceiverChild(index) ||
           root->hasAttr(randomConstraintBlockAttrName) == inlineConstraints)
         continue;
       SmallVector<Operation *> items = isa<semantic::SVConstraintListOp>(root)
@@ -4114,7 +4183,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   }
   if (constraintTemplate) {
     for (auto [index, root] : llvm::enumerate(children)) {
-      if (index != receiverIndex && isa<semantic::SVConstraintListOp>(root)) {
+      if (!isReceiverChild(index) &&
+          isa<semantic::SVConstraintListOp>(root)) {
         emitError(getSemanticLocation(root))
             << "randomize call mixes a reusable template with cloned "
                "constraints";
@@ -4139,7 +4209,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
   }
   for (auto [index, root] : llvm::enumerate(children)) {
-    if (index == receiverIndex)
+    if (isReceiverChild(index))
       continue;
     uint32_t constraintBlock = OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1;
     if (auto block =
@@ -6118,7 +6188,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return sampledIndices;
   };
   SmallVector<Value> sampledDomainIndices = sampleProposalDomainIndices(state);
-  sim::SimManagedStoreOp::create(builder, location, state, stateReference);
+  storeRandomState(state);
 
   Block *dispatchBlock = current;
   Block *loop = addBlock();
@@ -6155,14 +6225,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 
   if (invalidCaptureBoundsBlock) {
     setCurrent(invalidCaptureBoundsBlock);
-    sim::SimManagedStoreOp::create(builder, location, invalidCaptureBoundsState,
-                                   stateReference);
+    storeRandomState(invalidCaptureBoundsState);
     cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
   }
   if (invalidDistWeightsBlock) {
     setCurrent(invalidDistWeightsBlock);
-    sim::SimManagedStoreOp::create(builder, location, invalidDistWeightsState,
-                                   stateReference);
+    storeRandomState(invalidDistWeightsState);
     cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
   }
 
@@ -6207,8 +6275,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       enclosingThisObject = savedEnclosingThis;
       randomizeCandidateValues = std::move(savedCandidates);
     });
-    enclosingThisObject = savedThis;
-    thisObject = receiver;
+    if (!scopeRandomize) {
+      enclosingThisObject = savedThis;
+      thisObject = receiver;
+    }
     randomizeCandidateValues = *candidates;
 
     Value softSatisfied;
@@ -6691,7 +6761,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
     }
     for (auto [index, constraint] : llvm::enumerate(children)) {
-      if (index == receiverIndex)
+      if (isReceiverChild(index))
         continue;
       bool hasHard = false;
       SmallVector<semantic::SVExpressionConstraintOp> softConstraints;
@@ -6842,11 +6912,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           ValueRange{entryKey, entryPosition, entryRemaining, entryFreshCycle});
 
       setCurrent(rekeyBlock);
-      Value rekeyState =
-          sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
+      Value rekeyState = loadRandomState();
       Value newKey = next64(rekeyState);
-      sim::SimManagedStoreOp::create(builder, location, rekeyState,
-                                     stateReference);
+      storeRandomState(rekeyState);
       cf::BranchOp::create(
           builder, location, cycleBlock,
           ValueRange{newKey, entryPosition, constant64(semanticCardinality),
@@ -6951,12 +7019,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     nextSampledDomainIndices.assign(loopSampledDomainIndices.begin(),
                                     loopSampledDomainIndices.end());
   } else {
-    Value retryState =
-        sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
+    Value retryState = loadRandomState();
     next = nextAssignment(retryState);
     nextSampledDomainIndices = sampleProposalDomainIndices(retryState);
-    sim::SimManagedStoreOp::create(builder, location, retryState,
-                                   stateReference);
+    storeRandomState(retryState);
   }
   next = arith::OrIOp::create(
       builder, location,
@@ -6983,37 +7049,33 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         << analysis.backend << ")";
     cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
   } else if (wideProgram) {
-    Value fallbackState =
-        sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
+    Value fallbackState = loadRandomState();
     auto fallback = sim::SimRandomSolveWideOp::create(
         builder, location, function.getBody().front().getArgument(0),
         fallbackStart, mutableMask, relevantConstraintMode,
         constant64(fallbackAttempts), fallbackState, increment, programCaptures,
         builder.getStringAttr(StringRef(
             reinterpret_cast<const char *>(program.data()), program.size())));
-    sim::SimManagedStoreOp::create(builder, location,
-                                   fallback.getNextRngState(), stateReference);
+    storeRandomState(fallback.getNextRngState());
     cf::CondBranchOp::create(builder, location, fallback.getSuccess(), commit,
                              ValueRange{fallback.getAssignment()}, failedBlock,
                              ValueRange{});
   } else {
-    Value fallbackState =
-        sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
+    Value fallbackState = loadRandomState();
     auto fallback = sim::SimRandomSolveOp::create(
         builder, location, function.getBody().front().getArgument(0),
         fallbackStart, mutableMask, relevantConstraintMode,
         constant64(fallbackAttempts), fallbackState, increment, programCaptures,
         builder.getStringAttr(StringRef(
             reinterpret_cast<const char *>(program.data()), program.size())));
-    sim::SimManagedStoreOp::create(builder, location,
-                                   fallback.getNextRngState(), stateReference);
+    storeRandomState(fallback.getNextRngState());
     cf::CondBranchOp::create(builder, location, fallback.getSuccess(), commit,
                              ValueRange{fallback.getAssignment()}, failedBlock,
                              ValueRange{});
   }
 
   setCurrent(modeSamplingDispatchBlock);
-  sim::SimManagedStoreOp::create(builder, location, modeState, stateReference);
+  storeRandomState(modeState);
   if (!hasRuntimeForeachConstraint && (hasSolveBefore || hasFiniteDomains))
     cf::BranchOp::create(builder, location, modeFallbackBlock,
                          ValueRange{modeStart});
@@ -7035,11 +7097,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     modeNext =
         arith::AddIOp::create(builder, location, modeCounter, constant64(1));
   } else {
-    Value modeRetryState =
-        sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
+    Value modeRetryState = loadRandomState();
     modeNext = nextAssignment(modeRetryState);
-    sim::SimManagedStoreOp::create(builder, location, modeRetryState,
-                                   stateReference);
+    storeRandomState(modeRetryState);
   }
   modeNext = arith::OrIOp::create(
       builder, location,
@@ -7061,30 +7121,26 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 
   setCurrent(modeFallbackBlock);
   if (wideProgram) {
-    Value fallbackState =
-        sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
+    Value fallbackState = loadRandomState();
     auto modeFallback = sim::SimRandomSolveWideOp::create(
         builder, location, function.getBody().front().getArgument(0),
         modeFallbackStart, mutableMask, relevantConstraintMode,
         constant64(fallbackAttempts), fallbackState, increment, programCaptures,
         builder.getStringAttr(StringRef(
             reinterpret_cast<const char *>(program.data()), program.size())));
-    sim::SimManagedStoreOp::create(
-        builder, location, modeFallback.getNextRngState(), stateReference);
+    storeRandomState(modeFallback.getNextRngState());
     cf::CondBranchOp::create(builder, location, modeFallback.getSuccess(),
                              commit, ValueRange{modeFallback.getAssignment()},
                              failedBlock, ValueRange{});
   } else {
-    Value fallbackState =
-        sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
+    Value fallbackState = loadRandomState();
     auto modeFallback = sim::SimRandomSolveOp::create(
         builder, location, function.getBody().front().getArgument(0),
         modeFallbackStart, mutableMask, relevantConstraintMode,
         constant64(fallbackAttempts), fallbackState, increment, programCaptures,
         builder.getStringAttr(StringRef(
             reinterpret_cast<const char *>(program.data()), program.size())));
-    sim::SimManagedStoreOp::create(
-        builder, location, modeFallback.getNextRngState(), stateReference);
+    storeRandomState(modeFallback.getNextRngState());
     cf::CondBranchOp::create(builder, location, modeFallback.getSuccess(),
                              commit, ValueRange{modeFallback.getAssignment()},
                              failedBlock, ValueRange{});
@@ -7386,8 +7442,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     Value size =
         sim::SimContainerSizeOp::create(builder, location, i64, container);
-    Value containerState =
-        sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
+    Value containerState = loadRandomState();
     header->addArgument(i64, location);
     header->addArgument(i64, location);
     cf::BranchOp::create(builder, location, header,
@@ -7414,8 +7469,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return failure();
     sim::SimContainerWriteOp::create(builder, location, container, index,
                                      *element);
-    sim::SimManagedStoreOp::create(builder, location, nextState,
-                                   stateReference);
+    storeRandomState(nextState);
     Value nextIndex =
         arith::AddIOp::create(builder, location, index, constant64(1));
     cf::BranchOp::create(builder, location, header,

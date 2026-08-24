@@ -868,6 +868,23 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     return seed ? obelisk_rt_v1_random_seed(context, *seed)
                 : OBELISK_RT_INVALID_BYTECODE;
   }
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_GET_STATE: {
+    obelisk_rt_random_state_v1 state{};
+    obelisk_rt_status status =
+        obelisk_rt_v1_random_get_state(context, &state);
+    if (status != OBELISK_RT_OK)
+      return status;
+    status = sentinel(0, state.state);
+    return status == OBELISK_RT_OK ? sentinel(1, state.increment) : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_SET_STATE: {
+    auto state = scalar(0);
+    auto increment = scalar(1);
+    if (!state || !increment)
+      return OBELISK_RT_INVALID_BYTECODE;
+    obelisk_rt_random_state_v1 snapshot{*state, *increment};
+    return obelisk_rt_v1_random_set_state(context, &snapshot);
+  }
   case OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE: {
     std::optional<ByteSpan> program = bytes(0);
     auto start = scalar(1), mutableMask = scalar(2), constraintMask = scalar(3),

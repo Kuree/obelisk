@@ -5,7 +5,7 @@
 
 // UNRELATED-PROPERTY: error: randomize property argument does not belong to the receiver class hierarchy
 // EXPRESSION-PROPERTY: error: randomize property argument must be a class property name
-// STD-RANDOMIZE: error: std::randomize is outside the executable object-randomization boundary
+// STD-RANDOMIZE: error: std::randomize arguments must be variable identifiers
 
 //--- expression-property.mlir
 

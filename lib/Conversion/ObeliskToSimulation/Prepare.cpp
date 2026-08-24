@@ -1595,6 +1595,275 @@ void ObeliskSimPreparePass::runOnOperation() {
     return hasBehavior;
   };
 
+  auto freezeScopeRandomizeContract =
+      [&](semantic::SVCallExpressionOp call,
+          SmallVector<Operation *> callChildren) -> bool {
+    Location location = getSemanticLocation(call);
+    uint64_t argumentCount = call.getArgumentCount();
+    if (argumentCount > callChildren.size()) {
+      emitError(location) << "std::randomize has malformed argument metadata";
+      invalid = true;
+      return true;
+    }
+    size_t argumentStart = callChildren.size() - argumentCount;
+    ArrayRef<Operation *> argumentNodes =
+        ArrayRef(callChildren).drop_front(argumentStart);
+    ArrayRef<Operation *> constraintRoots =
+        ArrayRef(callChildren).take_front(argumentStart);
+
+    struct ScopeProperty {
+      StringAttr path;
+      SymbolRefAttr symbol;
+      Type type;
+      uint64_t width;
+      bool isSigned;
+      SmallVector<RandomSubdomain> domains;
+    };
+    SmallVector<ScopeProperty> properties;
+    llvm::DenseMap<Operation *, unsigned> randomIndices;
+    uint64_t totalWidth = 0;
+    for (Operation *argument : argumentNodes) {
+      auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(argument);
+      SmallVector<Operation *> operands =
+          assignment ? getChildren(assignment) : SmallVector<Operation *>{};
+      Operation *variable = operands.size() == 2 ? operands.front() : nullptr;
+      if (!assignment || operands.size() != 2 ||
+          !isa<semantic::SVEmptyArgumentExpressionOp>(operands.back()) ||
+          !variable ||
+          !isa<semantic::SVNamedValueExpressionOp,
+               semantic::SVHierarchicalValueExpressionOp>(variable)) {
+        emitError(getSemanticLocation(argument))
+            << "std::randomize arguments must be variable identifiers";
+        invalid = true;
+        return true;
+      }
+      auto reference =
+          variable->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+      auto path = variable->getAttrOfType<StringAttr>("referenced_path");
+      auto semanticTypeAttr =
+          variable->getAttrOfType<TypeAttr>("semantic_type");
+      auto symbol = reference
+                        ? semanticSymbols.find(reference.getLeafReference())
+                        : semanticSymbols.end();
+      if (!reference || !path || !semanticTypeAttr ||
+          symbol == semanticSymbols.end()) {
+        emitError(getSemanticLocation(variable))
+            << "std::randomize variable does not resolve in its call scope";
+        invalid = true;
+        return true;
+      }
+      if (randomIndices.contains(symbol->second)) {
+        emitError(getSemanticLocation(variable))
+            << "std::randomize lists the same variable more than once";
+        invalid = true;
+        return true;
+      }
+      FailureOr<Type> type = getNormalizedSemanticType(variable);
+      std::optional<unsigned> width =
+          succeeded(type) ? sim::getPackedWidth(*type) : std::nullopt;
+      if (failed(type) || !width || *width == 0) {
+        emitError(getSemanticLocation(variable))
+            << "std::randomize variables must have fixed packed types";
+        invalid = true;
+        return true;
+      }
+      if (*width > UINT32_MAX - totalWidth) {
+        emitError(location)
+            << "the executable std::randomize plan exceeds its 32-bit bit "
+               "offset space";
+        invalid = true;
+        return true;
+      }
+      SmallVector<RandomSubdomain> domains;
+      if (failed(collectRandomSubdomains(semanticTypeAttr.getValue(), 0,
+                                         domains,
+                                         getSemanticLocation(variable)))) {
+        emitError(getSemanticLocation(variable))
+            << "std::randomize variable has an unsupported semantic domain";
+        invalid = true;
+        return true;
+      }
+      unsigned index = properties.size();
+      randomIndices[symbol->second] = index;
+      properties.push_back(
+          ScopeProperty{path, reference, *type, *width,
+                        isSignedSemanticType(semanticTypeAttr.getValue()),
+                        std::move(domains)});
+      totalWidth += *width;
+    }
+    if (properties.size() > 64) {
+      emitError(location)
+          << "the executable std::randomize property boundary is 64";
+      invalid = true;
+      return true;
+    }
+
+    unsigned softConstraintCount = 0;
+    for (Operation *root : constraintRoots) {
+      if (!isa<semantic::SVConstraintListOp>(root)) {
+        emitError(getSemanticLocation(root))
+            << "std::randomize has malformed inline constraint metadata";
+        invalid = true;
+        return true;
+      }
+      root->walk([&](Operation *nested) {
+        if (isa<semantic::SVCallExpressionOp>(nested)) {
+          emitError(getSemanticLocation(nested))
+              << "constraint functions in std::randomize require a frozen "
+                 "scope-function plan";
+          invalid = true;
+          return;
+        }
+        if (auto expression =
+                dyn_cast<semantic::SVExpressionConstraintOp>(nested)) {
+          if (expression.getIsSoft())
+            ++softConstraintCount;
+          return;
+        }
+        if (auto solve = dyn_cast<semantic::SVSolveBeforeConstraintOp>(nested)) {
+          auto solveCount = solve->getAttrOfType<IntegerAttr>("solve_count");
+          auto afterCount = solve->getAttrOfType<IntegerAttr>("after_count");
+          SmallVector<Operation *> operands = getChildren(solve);
+          if (!solveCount || !afterCount || solveCount.getValue().isNegative() ||
+              afterCount.getValue().isNegative() ||
+              solveCount.getValue().getActiveBits() > 64 ||
+              afterCount.getValue().getActiveBits() > 64 ||
+              solveCount.getValue().getZExtValue() > operands.size() ||
+              afterCount.getValue().getZExtValue() !=
+                  operands.size() - solveCount.getValue().getZExtValue()) {
+            emitError(getSemanticLocation(solve))
+                << "std::randomize solve-before metadata is malformed";
+            invalid = true;
+            return;
+          }
+          return;
+        }
+        if (isa<semantic::SVConstraintListOp,
+                semantic::SVImplicationConstraintOp,
+                semantic::SVConditionalConstraintOp,
+                semantic::SVUniquenessConstraintOp,
+                semantic::SVForeachConstraintOp>(nested))
+          return;
+        if (nested->hasTrait<OpTrait::SemanticDeclarativeNode>() &&
+            !isa<semantic::SVExpressionConstraintOp>(nested)) {
+          emitError(getSemanticLocation(nested))
+              << "constraint form is outside the executable hard-expression "
+                 "boundary: "
+              << nested->getName();
+          invalid = true;
+          return;
+        }
+        if (nested->hasTrait<OpTrait::SemanticASTNode>() &&
+            !isSupportedRandomConstraintExpression(nested)) {
+          emitError(getSemanticLocation(nested))
+              << "constraint expression is outside the total side-effect-free "
+                 "executable boundary: "
+              << nested->getName();
+          invalid = true;
+        }
+      });
+    }
+    if (softConstraintCount > 64) {
+      emitError(location)
+          << "the executable soft-constraint priority boundary is 64";
+      invalid = true;
+    }
+    if (invalid)
+      return true;
+
+    for (Operation *root : constraintRoots) {
+      root->walk([&](Operation *nested) {
+        auto reference =
+            nested->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+        if (!reference)
+          return;
+        auto symbol = semanticSymbols.find(reference.getLeafReference());
+        if (symbol == semanticSymbols.end())
+          return;
+        auto random = randomIndices.find(symbol->second);
+        if (random != randomIndices.end()) {
+          nested->setAttr(randomVariableAttrName,
+                          builder.getI32IntegerAttr(random->second));
+          return;
+        }
+        if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
+                semantic::SVSpecparamSymbolOp>(symbol->second))
+          if (auto constant = symbol->second->getAttrOfType<StringAttr>(
+                  "constant_value"))
+            nested->setAttr("obelisk_sim.constant_value", constant);
+      });
+    }
+
+    SmallVector<Attribute> propertyAttrs;
+    propertyAttrs.reserve(properties.size());
+    for (auto [index, property] : llvm::enumerate(properties)) {
+      SmallVector<NamedAttribute> attributes{
+          builder.getNamedAttr("type", TypeAttr::get(property.type)),
+          builder.getNamedAttr("width",
+                               builder.getI64IntegerAttr(property.width)),
+          builder.getNamedAttr(randomPropertyModeIndexAttrName,
+                               builder.getI32IntegerAttr(index)),
+          builder.getNamedAttr("is_signed",
+                               builder.getBoolAttr(property.isSigned)),
+          builder.getNamedAttr("is_randc", builder.getBoolAttr(false)),
+          builder.getNamedAttr(randomPropertyPathAttrName, property.path),
+          builder.getNamedAttr(randomPropertySymbolAttrName, property.symbol),
+      };
+      if (!property.domains.empty()) {
+        SmallVector<Attribute> domains;
+        for (const RandomSubdomain &domain : property.domains) {
+          SmallVector<Attribute> patterns;
+          for (const RandomDomainPattern &pattern : domain.patterns)
+            patterns.push_back(builder.getDictionaryAttr({
+                builder.getNamedAttr(
+                    "mask", builder.getIntegerAttr(builder.getI64Type(),
+                                                    APInt(64, pattern.mask))),
+                builder.getNamedAttr(
+                    "value", builder.getIntegerAttr(builder.getI64Type(),
+                                                     APInt(64, pattern.value))),
+            }));
+          domains.push_back(builder.getDictionaryAttr({
+              builder.getNamedAttr("offset",
+                                   builder.getI64IntegerAttr(domain.offset)),
+              builder.getNamedAttr("width",
+                                   builder.getI64IntegerAttr(domain.width)),
+              builder.getNamedAttr("patterns", builder.getArrayAttr(patterns)),
+          }));
+        }
+        attributes.push_back(
+            builder.getNamedAttr("domains", builder.getArrayAttr(domains)));
+      }
+      propertyAttrs.push_back(builder.getDictionaryAttr(attributes));
+    }
+
+    call->setAttr(randomizeAttrName, builder.getUnitAttr());
+    call->setAttr(randomizeScopeAttrName, builder.getUnitAttr());
+    call->setAttr(randomizeExplicitPropertiesAttrName, builder.getUnitAttr());
+    if (properties.empty())
+      call->setAttr(randomizeCheckerOnlyAttrName, builder.getUnitAttr());
+    call->setAttr(randomPropertiesAttrName,
+                  builder.getArrayAttr(propertyAttrs));
+    call->setAttr(randomContainerPropertiesAttrName,
+                  builder.getArrayAttr({}));
+    call->setAttr(randomNestedConstraintModesAttrName,
+                  builder.getArrayAttr({}));
+    call->setAttr(randomNestedHooksAttrName, builder.getArrayAttr({}));
+    call->setAttr(randomRecursiveAliasGuardsAttrName,
+                  builder.getArrayAttr({}));
+    call->setAttr(randomTotalWidthAttrName,
+                  builder.getI64IntegerAttr(totalWidth));
+    call->setAttr(randomConstraintCountAttrName,
+                  builder.getI32IntegerAttr(0));
+    call->setAttr(constraintModeStaticStoragesAttrName,
+                  builder.getDenseI64ArrayAttr({}));
+
+    for (Operation *argument : argumentNodes)
+      argument->erase();
+    call->setAttr("argument_count", builder.getI64IntegerAttr(0));
+    call->setAttr("defaulted_arguments", builder.getDenseI64ArrayAttr({}));
+    return true;
+  };
+
   std::function<bool(semantic::SVCallExpressionOp)> freezeRandomizeContract;
   freezeRandomizeContract = [&](semantic::SVCallExpressionOp call) -> bool {
     if (!call.getIsSystemCall() || call.getCalleeName() != "randomize")
@@ -1606,13 +1875,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVector<Operation *> callChildren = getChildren(call);
     uint64_t argumentCount = call.getArgumentCount();
     bool hasInlineConstraints = call.getHasInlineConstraints();
-    if (argumentCount == 0) {
-      emitError(getSemanticLocation(call))
-          << "std::randomize is outside the executable object-randomization "
-             "boundary";
-      invalid = true;
-      return true;
-    }
+    if (argumentCount == 0)
+      return freezeScopeRandomizeContract(call, std::move(callChildren));
     if (argumentCount > callChildren.size()) {
       emitError(getSemanticLocation(call))
           << "randomize call has malformed argument metadata";
@@ -1621,6 +1885,14 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     unsigned receiverIndex =
         static_cast<unsigned>(callChildren.size() - argumentCount);
+    // Slang represents every std::randomize variable argument as an
+    // assignment-expression wrapper, whereas an object method call starts
+    // with the synthesized class-handle receiver. Check the syntax shape
+    // before the semantic type so std::randomize(class_handle_variable) is
+    // never mistaken for class_handle_variable.randomize().
+    if (isa<semantic::SVAssignmentExpressionOp>(
+            callChildren[receiverIndex]))
+      return freezeScopeRandomizeContract(call, std::move(callChildren));
     bool frozenChecker = call->hasAttr(randomizeCheckerOnlyAttrName);
     bool checkerOnly =
         frozenChecker || (argumentCount == 2 &&
@@ -1636,11 +1908,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             ? dyn_cast<semantic::ClassHandleType>(receiverTypeAttr.getValue())
             : semantic::ClassHandleType{};
     if (!receiverType) {
-      emitError(getSemanticLocation(call))
-          << "std::randomize is outside the executable object-randomization "
-             "boundary";
-      invalid = true;
-      return true;
+      return freezeScopeRandomizeContract(call, std::move(callChildren));
     }
     if (checkerOnly)
       call->setAttr(randomizeCheckerOnlyAttrName, builder.getUnitAttr());
