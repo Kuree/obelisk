@@ -19,6 +19,20 @@ using namespace mlir;
 
 namespace obelisk::simlowering {
 
+static bool containsSequentialContainer(Type type) {
+  if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(type))
+    return true;
+  if (auto array = dyn_cast<sim::UnpackedArrayType>(type))
+    return containsSequentialContainer(array.getElementType());
+  if (isa<sim::UnpackedStructType>(type))
+    for (unsigned index = 0, count = sim::getAggregateNumElements(type);
+         index != count; ++index)
+      if (containsSequentialContainer(
+              sim::getAggregateElementType(type, index)))
+        return true;
+  return false;
+}
+
 static bool isUserNetDriver(Value value) {
   while (value) {
     if (auto argument = dyn_cast<BlockArgument>(value)) {
@@ -1457,6 +1471,30 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     if (destination.children.size() != 1)
       return failure();
     CapturedLValue &base = destination.children.front();
+    if (!nonblocking && base.kind == CapturedLValue::Kind::Reference &&
+        isa<sim::RefType>(base.reference.getType()) &&
+        !isa<sim::UnpackedUnionType>(base.type) &&
+        !containsSequentialContainer(destination.type) &&
+        (!sim::isManagedHandleType(destination.type) ||
+         isa<sim::StringType>(destination.type))) {
+      // A fixed aggregate member backed by ordinary storage is itself a
+      // writable variable. Preserve that subelement identity instead of
+      // rebuilding and storing the whole aggregate: IEEE 1800-2017 10.3.2
+      // permits separate continuous assignments to disjoint members, and a
+      // direct store is also the compact path for procedural member writes.
+      CapturedLValue selected;
+      selected.kind = CapturedLValue::Kind::Reference;
+      selected.semanticNode = destination.semanticNode;
+      selected.type = destination.type;
+      selected.reference = sim::SimRefSubelementOp::create(
+          builder, location,
+          sim::RefType::get(function.getContext(), destination.type),
+          base.reference,
+          builder.getDenseI64ArrayAttr(
+              {static_cast<int64_t>(destination.ordinal)}));
+      return writeCapturedLValue(selected, value, sourceSigned, false, location,
+                                 delay);
+    }
     if (nonblocking && base.kind == CapturedLValue::Kind::Reference) {
       if (auto array = dyn_cast<sim::UnpackedArrayType>(base.type)) {
         int64_t sourceIndex = array.getLeft() <= array.getRight()

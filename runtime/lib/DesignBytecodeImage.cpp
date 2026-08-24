@@ -2653,7 +2653,10 @@ bool validateImage(const Image &image) {
                         1)
                  : instruction.destination != 0) ||
             ((instruction.flags & OBELISK_RT_DB_STORE_STATE_CONTINUOUS) != 0 &&
-             !numeric(instruction.source1) && !floating(instruction.source1)) ||
+             !numeric(instruction.source1) && !floating(instruction.source1) &&
+             (!reg(instruction.source1) ||
+              layoutAt(image, function, instruction.source1).kind !=
+                  OBELISK_RT_DBREG_STRING)) ||
             instruction.source2 || instruction.auxiliary ||
             instruction.immediate || !reg(instruction.source0) ||
             (!numeric(instruction.source1) && !floating(instruction.source1) &&

@@ -232,6 +232,22 @@ fatals; both compile times remain within 3% of the preceding concurrent
 baseline. The full regression suite passes 1286/1286 tests and all 427 runtime
 tests.
 
+L12's sixth closure tranche preserves the variable identity of fixed unpacked
+structure and array members through blocking assignment lowering. Disjoint
+continuous assignments therefore own only the member ranges they actually
+drive, as required by 10.3.2, rather than conflicting on a synthetic
+whole-aggregate read/modify/write. The direct path also removes the aggregate
+load, insert, and store chain from ordinary procedural member writes; unions
+and members containing value-semantic sequential containers retain their
+specialized reconstruction paths. Bytecode validation now admits the string
+state-store path that its executor already implements, so disjoint string and
+packed members behave identically in both execution tiers. The upstream
+`t_unpacked_struct_eq` case now passes. The UVM smoke ran in 37.259 seconds
+compile / 0.181 seconds simulate for bytecode and 75.108 seconds compile /
+0.020 seconds simulate for native, with zero UVM errors or fatals; both compile
+times remain within 2% of the preceding concurrent baseline. The full
+regression suite passes 1287/1287 tests and all 427 runtime tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
