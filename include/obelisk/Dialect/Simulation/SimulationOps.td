@@ -1071,11 +1071,13 @@ def SimStringScanFieldOp : SimOp<"string.scan_field", [
   let description = [{
     `prefix` is the format text before the conversion: whitespace in it
     matches any run of input whitespace including none, and every other
-    character must match exactly. `ok` is zero when the prefix did not match
-    or the field was empty, and `next_cursor` then repeats `cursor`.
+    character must match exactly. A zero `width` is unbounded; every other
+    value limits the field to that many input characters. `ok` is zero when
+    the prefix did not match or the field was empty, and `next_cursor` then
+    repeats `cursor`.
   }];
   let arguments = (ins SimStringType:$input, I32:$cursor, StrAttr:$prefix,
-                       I32Attr:$specifier);
+                       I32Attr:$specifier, I64Attr:$width);
   let results = (outs SimStringType:$field, I32:$next_cursor, I32:$ok);
 }
 
@@ -2039,7 +2041,7 @@ def SimFileGetlineStringOp : SimFileOp<"file.getline_string",
 
 def SimFileScanFieldOp : SimFileOp<"file.scan_field",
     (ins SimContextType:$context, I32:$descriptor, I32:$enabled,
-         StrAttr:$prefix, I32Attr:$specifier),
+         StrAttr:$prefix, I32Attr:$specifier, I64Attr:$width),
     (outs SimStringType:$field, I32:$ok, I32:$eof),
     [MemRead<SimIOResource>, MemWrite<SimIOResource>,
      MemRead<SimHeapResource>, MemWrite<SimHeapResource>]> {

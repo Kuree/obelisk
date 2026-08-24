@@ -449,20 +449,21 @@ public:
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
                                "obelisk_rt_v1_string_scan_field"),
-            ValueRange{lane, adaptor.getInput().front(),
-                       adaptor.getCursor().front(), prefixData,
-                       llvmConstant(rewriter, op.getLoc(), i64, prefix.size()),
-                       llvmConstant(rewriter, op.getLoc(), i32,
-                                    op.getSpecifier()),
-                       fieldOutput, cursorOutput, okOutput})
+            ValueRange{
+                lane, adaptor.getInput().front(), adaptor.getCursor().front(),
+                prefixData,
+                llvmConstant(rewriter, op.getLoc(), i64, prefix.size()),
+                llvmConstant(rewriter, op.getLoc(), i32, op.getSpecifier()),
+                llvmConstant(rewriter, op.getLoc(), i64, op.getWidth()),
+                fieldOutput, cursorOutput, okOutput})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     rewriter.replaceOp(
-        op, ValueRange{
-                LLVM::LoadOp::create(rewriter, op.getLoc(), i64, fieldOutput, 8),
-                LLVM::LoadOp::create(rewriter, op.getLoc(), i32, cursorOutput,
-                                     4),
-                LLVM::LoadOp::create(rewriter, op.getLoc(), i32, okOutput, 4)});
+        op,
+        ValueRange{
+            LLVM::LoadOp::create(rewriter, op.getLoc(), i64, fieldOutput, 8),
+            LLVM::LoadOp::create(rewriter, op.getLoc(), i32, cursorOutput, 4),
+            LLVM::LoadOp::create(rewriter, op.getLoc(), i32, okOutput, 4)});
     return success();
   }
 };
@@ -513,6 +514,7 @@ public:
                 adaptor.getEnabled().front(), prefixData,
                 llvmConstant(rewriter, op.getLoc(), i64, prefix.size()),
                 llvmConstant(rewriter, op.getLoc(), i32, op.getSpecifier()),
+                llvmConstant(rewriter, op.getLoc(), i64, op.getWidth()),
                 fieldOutput, okOutput, eofOutput})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);

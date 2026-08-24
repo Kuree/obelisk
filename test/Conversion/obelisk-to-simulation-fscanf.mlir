@@ -6,10 +6,10 @@
 
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
 // CHECK-NOT: obelisk_sim.file.getline_string
-// CHECK: %[[FIELD:.*]], %[[OK:.*]], %[[EOF:.*]] = obelisk_sim.file.scan_field {{.*}} {prefix = "", specifier = 100 : i32}
+// CHECK: %[[FIELD:.*]], %[[OK:.*]], %[[EOF:.*]] = obelisk_sim.file.scan_field {{.*}} {prefix = "", specifier = 100 : i32, width = 0 : i64}
 // CHECK: arith.cmpi ne, %[[EOF]]
-// CHECK: obelisk_sim.string.parse_logic %[[FIELD]] radix = 10 : <64>
 // CHECK: arith.cmpi ne, %[[OK]]
+// CHECK: obelisk_sim.string.parse_logic %[[FIELD]] radix = 10 : <64>
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "t", name = "t", node_id = 0 : i64, sym_name = "s0.t"} {

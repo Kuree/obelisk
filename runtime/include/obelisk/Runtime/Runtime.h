@@ -1986,12 +1986,13 @@ obelisk_rt_status obelisk_rt_v1_string_case_convert(
 // conversion: whitespace in it matches any run of input whitespace including
 // none, and every other character must match exactly. `specifier` is the
 // conversion letter, whose field is returned as text for the caller to parse.
-// `out_ok` is zero when the prefix failed to match or the field was empty, in
-// which case the cursor does not advance.
+// A zero `width` is unbounded. `out_ok` is zero when the prefix failed to match
+// or the field was empty, in which case the cursor does not advance.
 obelisk_rt_status obelisk_rt_v1_string_scan_field(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_string_v1 input, uint32_t cursor,
     const char *prefix, uint64_t prefix_size, uint32_t specifier,
-    obelisk_rt_string_v1 *out_field, uint32_t *out_cursor, uint32_t *out_ok);
+    uint64_t width, obelisk_rt_string_v1 *out_field, uint32_t *out_cursor,
+    uint32_t *out_ok);
 obelisk_rt_status
 obelisk_rt_v1_string_parse_integer(obelisk_rt_string_v1 string, uint32_t radix,
                                    uint64_t *out_value);
@@ -3698,8 +3699,8 @@ obelisk_rt_status obelisk_rt_v1_file_getline_string(
 obelisk_rt_status obelisk_rt_v1_file_scan_field(
     obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
     uint32_t descriptor, uint32_t enabled, const char *prefix,
-    uint64_t prefix_size, uint32_t specifier, obelisk_rt_string_v1 *out_field,
-    uint32_t *out_ok, uint32_t *out_eof);
+    uint64_t prefix_size, uint32_t specifier, uint64_t width,
+    obelisk_rt_string_v1 *out_field, uint32_t *out_ok, uint32_t *out_eof);
 obelisk_rt_status obelisk_rt_v1_file_eof(obelisk_rt_context *context,
                                          uint32_t descriptor,
                                          uint32_t *out_is_eof);

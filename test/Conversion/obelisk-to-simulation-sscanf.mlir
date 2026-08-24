@@ -7,13 +7,13 @@
 // conversion leaves every later destination untouched.
 
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: %[[FIELD0:.*]], %[[CURSOR0:.*]], %[[OK0:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = "", specifier = 100 : i32}
-// CHECK: obelisk_sim.string.parse_logic %[[FIELD0]] radix = 10 : <64>
+// CHECK: %[[FIELD0:.*]], %[[CURSOR0:.*]], %[[OK0:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = "", specifier = 100 : i32, width = 0 : i64}
 // CHECK: arith.cmpi ne, %[[OK0]]
+// CHECK: obelisk_sim.string.parse_logic %[[FIELD0]] radix = 10 : <64>
 // CHECK: cf.cond_br
-// CHECK: %[[FIELD1:.*]], %[[CURSOR1:.*]], %[[OK1:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = " ", specifier = 102 : i32}
+// CHECK: %[[FIELD1:.*]], %[[CURSOR1:.*]], %[[OK1:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = " ", specifier = 102 : i32, width = 0 : i64}
 // CHECK: obelisk_sim.string.parse_real %[[FIELD1]]
-// CHECK: %[[FIELD2:.*]], %[[CURSOR2:.*]], %[[OK2:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = " ", specifier = 115 : i32}
+// CHECK: %[[FIELD2:.*]], %[[CURSOR2:.*]], %[[OK2:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = " ", specifier = 115 : i32, width = 0 : i64}
 // CHECK: %[[MATCHED2:.*]] = arith.cmpi ne, %[[OK2]]
 // CHECK: %[[LIVE2:.*]] = arith.andi {{.*}}, %[[MATCHED2]]
 // CHECK: cf.cond_br %[[LIVE2]]

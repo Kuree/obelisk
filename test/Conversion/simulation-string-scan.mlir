@@ -38,17 +38,17 @@ module attributes {
       %input = obelisk_sim.string.literal "a b cd e"
       %zero = arith.constant 0 : i32
       %x_field, %x_cursor, %x_ok = obelisk_sim.string.scan_field
-          %input, %zero {prefix = "", specifier = 99 : i32} :
+          %input, %zero {prefix = "", specifier = 99 : i32, width = 0 : i64} :
           (!obelisk_sim.string, i32) -> (!obelisk_sim.string, i32, i32)
       %x = obelisk_sim.string.to_packed %x_field :
           (!obelisk_sim.string) -> i8
       %y_field, %y_cursor, %y_ok = obelisk_sim.string.scan_field
-          %input, %x_cursor {prefix = " ", specifier = 99 : i32} :
+          %input, %x_cursor {prefix = " ", specifier = 99 : i32, width = 0 : i64} :
           (!obelisk_sim.string, i32) -> (!obelisk_sim.string, i32, i32)
       %y = obelisk_sim.string.to_packed %y_field :
           (!obelisk_sim.string) -> i8
       %z_field, %z_cursor, %z_ok = obelisk_sim.string.scan_field
-          %input, %y_cursor {prefix = " ", specifier = 115 : i32} :
+          %input, %y_cursor {prefix = " ", specifier = 115 : i32, width = 0 : i64} :
           (!obelisk_sim.string, i32) -> (!obelisk_sim.string, i32, i32)
       %z = obelisk_sim.string.to_packed %z_field :
           (!obelisk_sim.string) -> i24
@@ -64,7 +64,7 @@ module attributes {
 
       %logic_input = obelisk_sim.string.literal "01xz"
       %logic_field, %logic_cursor, %logic_ok = obelisk_sim.string.scan_field
-          %logic_input, %zero {prefix = "", specifier = 98 : i32} :
+          %logic_input, %zero {prefix = "", specifier = 98 : i32, width = 0 : i64} :
           (!obelisk_sim.string, i32) -> (!obelisk_sim.string, i32, i32)
       %logic = obelisk_sim.string.parse_logic %logic_field radix = 2 :
           !obelisk_sim.logic<64>

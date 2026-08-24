@@ -112,7 +112,8 @@ ScanResult putBack(FILE *stream, int character) {
 }
 
 ScanResult scanFileField(FILE *stream, const char *prefix, uint64_t prefixSize,
-                         uint32_t specifier, std::string &field) {
+                         uint32_t specifier, uint64_t width,
+                         std::string &field) {
   for (uint64_t position = 0; position != prefixSize; ++position) {
     unsigned char expected = static_cast<unsigned char>(prefix[position]);
     if (scanSpace(expected)) {
@@ -136,22 +137,44 @@ ScanResult scanFileField(FILE *stream, const char *prefix, uint64_t prefixSize,
 
   char letter =
       static_cast<char>(std::tolower(static_cast<unsigned char>(specifier)));
-  int character = std::fgetc(stream);
+  uint64_t remaining = width == 0 ? UINT64_MAX : width;
+  auto readFieldCharacter = [&]() {
+    if (remaining == 0)
+      return EOF;
+    int character = std::fgetc(stream);
+    if (character != EOF)
+      --remaining;
+    return character;
+  };
   if (letter == 'c') {
+    int character = readFieldCharacter();
     if (character == EOF)
       return std::ferror(stream) ? ScanResult::Error : ScanResult::EndOfFile;
-    field.push_back(static_cast<char>(character));
+    uint64_t count = width == 0 ? 1 : width;
+    do {
+      field.push_back(static_cast<char>(character));
+      if (field.size() == count)
+        break;
+      character = readFieldCharacter();
+    } while (character != EOF);
     return ScanResult::Match;
   }
+  int character = std::fgetc(stream);
+  // Whitespace skipped by a conversion does not count toward its field
+  // width, so read that prefix without the bounded helper.
   while (character != EOF && scanSpace(character))
     character = std::fgetc(stream);
   if (character == EOF)
     return std::ferror(stream) ? ScanResult::Error : ScanResult::EndOfFile;
 
+  remaining = width == 0 ? UINT64_MAX : width;
+  if (remaining != UINT64_MAX)
+    --remaining;
+
   if (letter == 's') {
     do {
       field.push_back(static_cast<char>(character));
-      character = std::fgetc(stream);
+      character = readFieldCharacter();
     } while (character != EOF && !scanSpace(character));
     return putBack(stream, character) == ScanResult::Error ? ScanResult::Error
                                                            : ScanResult::Match;
@@ -159,7 +182,7 @@ ScanResult scanFileField(FILE *stream, const char *prefix, uint64_t prefixSize,
 
   if (character == '+' || character == '-') {
     field.push_back(static_cast<char>(character));
-    character = std::fgetc(stream);
+    character = readFieldCharacter();
   }
   bool real = letter == 'e' || letter == 'f' || letter == 'g';
   uint32_t radix = letter == 'b'   ? 2
@@ -172,27 +195,27 @@ ScanResult scanFileField(FILE *stream, const char *prefix, uint64_t prefixSize,
     if (scanDigit(character, real ? 10 : radix)) {
       field.push_back(static_cast<char>(character));
       haveDigit |= character != '_';
-      character = std::fgetc(stream);
+      character = readFieldCharacter();
       continue;
     }
     if (real && character == '.' && !havePoint) {
       havePoint = true;
       field.push_back('.');
-      character = std::fgetc(stream);
+      character = readFieldCharacter();
       continue;
     }
     break;
   }
   if (real && haveDigit && (character == 'e' || character == 'E')) {
     field.push_back(static_cast<char>(character));
-    character = std::fgetc(stream);
+    character = readFieldCharacter();
     if (character == '+' || character == '-') {
       field.push_back(static_cast<char>(character));
-      character = std::fgetc(stream);
+      character = readFieldCharacter();
     }
     while (character != EOF && scanDigit(character, 10)) {
       field.push_back(static_cast<char>(character));
-      character = std::fgetc(stream);
+      character = readFieldCharacter();
     }
   }
   if (putBack(stream, character) == ScanResult::Error)
@@ -801,8 +824,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_getline_string(
 extern "C" obelisk_rt_status obelisk_rt_v1_file_scan_field(
     obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
     uint32_t descriptor, uint32_t enabled, const char *prefix,
-    uint64_t prefixSize, uint32_t specifier, obelisk_rt_string_v1 *outField,
-    uint32_t *outOk, uint32_t *outEOF) {
+    uint64_t prefixSize, uint32_t specifier, uint64_t width,
+    obelisk_rt_string_v1 *outField, uint32_t *outOk, uint32_t *outEOF) {
   if (!context || !lane || !outField || !outOk || !outEOF || enabled > 1 ||
       (!prefix && prefixSize != 0))
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -835,8 +858,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_scan_field(
     }
     std::string field;
     errno = 0;
-    ScanResult result =
-        scanFileField(entry->stream, prefix, prefixSize, specifier, field);
+    ScanResult result = scanFileField(entry->stream, prefix, prefixSize,
+                                      specifier, width, field);
     if (result == ScanResult::Error) {
       recordIOError(context, *entry, "formatted file read failed");
       return OBELISK_RT_IO_ERROR;
@@ -847,8 +870,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_scan_field(
     }
     if (result == ScanResult::Mismatch)
       return OBELISK_RT_OK;
-    status = obelisk_rt_v1_string_create(lane, field.data(), field.size(),
-                                         outField);
+    status =
+        obelisk_rt_v1_string_create(lane, field.data(), field.size(), outField);
     if (status == OBELISK_RT_OK)
       *outOk = 1;
     return status;

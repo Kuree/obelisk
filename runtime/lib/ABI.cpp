@@ -937,7 +937,7 @@ ABI_FUNCTION(obelisk_rt_v1_file_getline_string,
 ABI_FUNCTION(obelisk_rt_v1_file_scan_field,
              obelisk_rt_status (*)(obelisk_rt_context *,
                                    obelisk_rt_gc_lane_v1 *, uint32_t, uint32_t,
-                                   const char *, uint64_t, uint32_t,
+                                   const char *, uint64_t, uint32_t, uint64_t,
                                    obelisk_rt_string_v1 *, uint32_t *,
                                    uint32_t *));
 ABI_FUNCTION(obelisk_rt_v1_file_eof,

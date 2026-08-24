@@ -1746,7 +1746,7 @@ TEST_F(RuntimeTest, ReadsWithoutReadAccessReportEndOfFileInsteadOfIOError) {
   uint32_t ok = 1;
   uint32_t scanEOF = 0;
   EXPECT_EQ(obelisk_rt_v1_file_scan_field(context, lane, descriptor, 1, nullptr,
-                                          0, 'd', &field, &ok, &scanEOF),
+                                          0, 'd', 0, &field, &ok, &scanEOF),
             OBELISK_RT_OK);
   EXPECT_EQ(field, 0u);
   EXPECT_EQ(ok, 0u);
@@ -1779,7 +1779,7 @@ TEST_F(RuntimeTest, ScansOnAnInvalidDescriptorReportEndOfFile) {
   uint32_t ok = 1;
   uint32_t scanEOF = 0;
   EXPECT_EQ(obelisk_rt_v1_file_scan_field(context, lane, 0, 1, nullptr, 0, 'd',
-                                          &field, &ok, &scanEOF),
+                                          0, &field, &ok, &scanEOF),
             OBELISK_RT_OK);
   EXPECT_EQ(field, 0u);
   EXPECT_EQ(ok, 0u);
@@ -1789,7 +1789,7 @@ TEST_F(RuntimeTest, ScansOnAnInvalidDescriptorReportEndOfFile) {
   // lowering stops issuing them once an earlier one failed.
   scanEOF = 1;
   EXPECT_EQ(obelisk_rt_v1_file_scan_field(context, lane, 0, 0, nullptr, 0, 'd',
-                                          &field, &ok, &scanEOF),
+                                          0, &field, &ok, &scanEOF),
             OBELISK_RT_OK);
   EXPECT_EQ(scanEOF, 0u);
 

@@ -615,7 +615,8 @@ void declareNativeRuntimeABI(ModuleOp module) {
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_file_scan_field", managedI32,
                            {managedPointer, managedPointer, managedI32,
                             managedI32, managedPointer, managedI64, managedI32,
-                            managedPointer, managedPointer, managedPointer});
+                            managedI64, managedPointer, managedPointer,
+                            managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_file_error_string",
                            managedI32,
                            {managedPointer, managedPointer, managedI32,
@@ -623,7 +624,7 @@ void declareNativeRuntimeABI(ModuleOp module) {
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_string_scan_field", managedI32,
       {managedPointer, managedI64, managedI32, managedPointer, managedI64,
-       managedI32, managedPointer, managedPointer, managedPointer});
+       managedI32, managedI64, managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_plusarg_test", managedI32,
                            {managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_plusarg_value", managedI32,

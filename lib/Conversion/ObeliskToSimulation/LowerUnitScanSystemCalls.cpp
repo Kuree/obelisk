@@ -17,6 +17,8 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
+#include <limits>
+
 using namespace mlir;
 
 namespace obelisk::simlowering {
@@ -27,6 +29,8 @@ namespace {
 struct ScanConversion {
   std::string prefix;
   char specifier = 0;
+  uint64_t width = 0;
+  bool suppressed = false;
 };
 
 // Split a format string into its conversions. Returns std::nullopt on a
@@ -45,19 +49,39 @@ splitScanFormat(StringRef format, std::string &unsupported) {
       unsupported = "%";
       return std::nullopt;
     }
+    size_t conversionStart = index;
     char specifier = format[++index];
     if (specifier == '%') {
       pending.push_back('%');
       continue;
     }
-    // Assignment suppression consumes a field without a destination, which
-    // would desynchronize the destination list built here.
-    if (specifier == '*' || !StringRef("bBoOdDhHxXeEfFgGsScC").contains(
-                                specifier)) {
-      unsupported = std::string("%") + specifier;
+    bool suppressed = specifier == '*';
+    if (suppressed) {
+      if (++index >= format.size()) {
+        unsupported = format.substr(conversionStart).str();
+        return std::nullopt;
+      }
+      specifier = format[index];
+    }
+    uint64_t width = 0;
+    while (specifier >= '0' && specifier <= '9') {
+      uint64_t digit = static_cast<uint64_t>(specifier - '0');
+      if (width > (std::numeric_limits<uint64_t>::max() - digit) / 10)
+        width = std::numeric_limits<uint64_t>::max();
+      else
+        width = width * 10 + digit;
+      if (++index >= format.size()) {
+        unsupported = format.substr(conversionStart).str();
+        return std::nullopt;
+      }
+      specifier = format[index];
+    }
+    if (!StringRef("bBoOdDhHxXeEfFgGsScC").contains(specifier)) {
+      unsupported =
+          format.substr(conversionStart, index - conversionStart + 1).str();
       return std::nullopt;
     }
-    conversions.push_back({pending, specifier});
+    conversions.push_back({pending, specifier, width, suppressed});
     pending.clear();
   }
   return conversions;
@@ -170,8 +194,12 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
         << "unsupported " << name << " conversion '" << unsupported << "'";
     return failure();
   }
-  if (conversions->size() != children.size() - 2) {
-    emitError(location) << name << " format has " << conversions->size()
+  size_t destinationCount =
+      llvm::count_if(*conversions, [](const ScanConversion &conversion) {
+        return !conversion.suppressed;
+      });
+  if (destinationCount != children.size() - 2) {
+    emitError(location) << name << " format has " << destinationCount
                         << " conversions but " << (children.size() - 2)
                         << " destinations";
     return failure();
@@ -185,23 +213,27 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
   Value eofSeen = arith::ConstantOp::create(builder, location,
                                             builder.getI1Type(),
                                             builder.getBoolAttr(false));
-  for (auto [index, conversion] : llvm::enumerate(*conversions)) {
-    Operation *actual = children[index + 2];
-    if (auto assignment =
-            dyn_cast<semantic::SVAssignmentExpressionOp>(actual)) {
-      SmallVector<Operation *> outputChildren = getChildren(assignment);
-      if (outputChildren.size() == 2 &&
-          isa<semantic::SVEmptyArgumentExpressionOp>(outputChildren[1]))
-        actual = outputChildren.front();
+  size_t destinationIndex = 0;
+  for (const ScanConversion &conversion : *conversions) {
+    std::optional<CapturedLValue> destination;
+    if (!conversion.suppressed) {
+      Operation *actual = children[destinationIndex++ + 2];
+      if (auto assignment =
+              dyn_cast<semantic::SVAssignmentExpressionOp>(actual)) {
+        SmallVector<Operation *> outputChildren = getChildren(assignment);
+        if (outputChildren.size() == 2 &&
+            isa<semantic::SVEmptyArgumentExpressionOp>(outputChildren[1]))
+          actual = outputChildren.front();
+      }
+      FailureOr<CapturedLValue> captured =
+          captureLValue(actual, getSemanticLocation(actual));
+      if (failed(captured)) {
+        emitError(getSemanticLocation(actual))
+            << name << " destination must be a writable variable";
+        return failure();
+      }
+      destination = std::move(*captured);
     }
-    FailureOr<CapturedLValue> destination =
-        captureLValue(actual, getSemanticLocation(actual));
-    if (failed(destination)) {
-      emitError(getSemanticLocation(actual))
-          << name << " destination must be a writable variable";
-      return failure();
-    }
-    Type destinationType = destination->type;
 
     Value field;
     Value scanOk;
@@ -211,7 +243,8 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
           builder, location, TypeRange{stringType, i32, i32}, text, cursor,
           conversion.prefix,
           static_cast<uint32_t>(
-              static_cast<unsigned char>(conversion.specifier)));
+              static_cast<unsigned char>(conversion.specifier)),
+          conversion.width);
       field = scan.getField();
       scanOk = scan.getOk();
       nextCursor = scan.getNextCursor();
@@ -221,7 +254,8 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
           builder, location, TypeRange{stringType, i32, i32}, context,
           fileDescriptor, enabled, conversion.prefix,
           static_cast<uint32_t>(
-              static_cast<unsigned char>(conversion.specifier)));
+              static_cast<unsigned char>(conversion.specifier)),
+          conversion.width);
       field = scan.getField();
       scanOk = scan.getOk();
       Value eof =
@@ -230,22 +264,6 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
       eofSeen = arith::OrIOp::create(builder, location, eofSeen, eof);
     }
 
-    unsigned radix = scanRadix(conversion.specifier);
-    Value parsed;
-    if (radix == kTextRadix)
-      parsed = field;
-    else if (radix == kRealRadix)
-      parsed = sim::SimStringParseRealOp::create(builder, location,
-                                                 builder.getF64Type(), field);
-    else
-      parsed = sim::SimStringParseLogicOp::create(
-          builder, location,
-          sim::LogicType::get(function.getContext(), 64), field, radix);
-    FailureOr<Value> value =
-        convert(parsed, destinationType, radix != kTextRadix, location);
-    if (failed(value))
-      return failure();
-
     Value matched = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::ne, scanOk, constant(0));
     live = arith::AndIOp::create(builder, location, live, matched);
@@ -253,22 +271,42 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
     // destinations. Captured lvalues cover container elements, aggregate
     // slices, class properties, and string characters without manufacturing
     // an unstable interior pointer.
-    Block *store = addBlock();
-    Block *resume = addBlock();
-    cf::CondBranchOp::create(builder, location, live, store, ValueRange{},
-                             resume, ValueRange{});
-    setCurrent(store);
-    if (failed(
-            writeCapturedLValue(*destination, *value, false, false, location)))
-      return failure();
-    cf::BranchOp::create(builder, location, resume);
-    setCurrent(resume);
+    if (destination) {
+      unsigned radix = scanRadix(conversion.specifier);
+      Value parsed;
+      if (radix == kTextRadix)
+        parsed = field;
+      else if (radix == kRealRadix)
+        parsed = sim::SimStringParseRealOp::create(builder, location,
+                                                   builder.getF64Type(), field);
+      else
+        parsed = sim::SimStringParseLogicOp::create(
+            builder, location, sim::LogicType::get(function.getContext(), 64),
+            field, radix);
+      FailureOr<Value> value =
+          convert(parsed, destination->type, radix != kTextRadix, location);
+      if (failed(value))
+        return failure();
+
+      Block *store = addBlock();
+      Block *resume = addBlock();
+      cf::CondBranchOp::create(builder, location, live, store, ValueRange{},
+                               resume, ValueRange{});
+      setCurrent(store);
+      if (failed(writeCapturedLValue(*destination, *value, false, false,
+                                     location)))
+        return failure();
+      cf::BranchOp::create(builder, location, resume);
+      setCurrent(resume);
+    }
 
     if (name == "$sscanf")
       cursor =
           arith::SelectOp::create(builder, location, live, nextCursor, cursor);
-    Value increment = arith::ExtUIOp::create(builder, location, i32, live);
-    assigned = arith::AddIOp::create(builder, location, assigned, increment);
+    if (!conversion.suppressed) {
+      Value increment = arith::ExtUIOp::create(builder, location, i32, live);
+      assigned = arith::AddIOp::create(builder, location, assigned, increment);
+    }
   }
   if (name == "$fscanf") {
     Value noneAssigned = arith::CmpIOp::create(

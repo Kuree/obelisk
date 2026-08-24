@@ -1331,11 +1331,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
   }
   case OBELISK_RT_INTRINSIC_V1_STRING_SCAN_FIELD: {
     obelisk_rt_string_v1 input = 0;
-    auto cursor = scalar(1), specifier = scalar(3);
+    auto cursor = scalar(1), specifier = scalar(3), width = scalar(4);
     auto prefix = bytes(2);
     obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
     if (!readString(inputRegister(0), input) || !cursor || !specifier ||
-        !prefix || *cursor > UINT32_MAX || *specifier > UINT32_MAX)
+        !width || !prefix || *cursor > UINT32_MAX || *specifier > UINT32_MAX)
       return OBELISK_RT_INVALID_BYTECODE;
     if (!lane)
       return OBELISK_RT_INVALID_LIFECYCLE;
@@ -1345,7 +1345,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     obelisk_rt_status status = obelisk_rt_v1_string_scan_field(
         lane, input, static_cast<uint32_t>(*cursor),
         reinterpret_cast<const char *>(prefix->data), prefix->size,
-        static_cast<uint32_t>(*specifier), &field, &nextCursor, &ok);
+        static_cast<uint32_t>(*specifier), *width, &field, &nextCursor, &ok);
     if (status != OBELISK_RT_OK)
       return status;
     if (!writeString(outputRegister(0), field))
@@ -1354,10 +1354,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     return status == OBELISK_RT_OK ? sentinel(2, ok) : status;
   }
   case OBELISK_RT_INTRINSIC_V1_FILE_SCAN_FIELD: {
-    auto descriptor = scalar(0), enabled = scalar(1), specifier = scalar(3);
+    auto descriptor = scalar(0), enabled = scalar(1), specifier = scalar(3),
+         width = scalar(4);
     auto prefix = bytes(2);
     obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
-    if (!descriptor || !enabled || !specifier || !prefix ||
+    if (!descriptor || !enabled || !specifier || !width || !prefix ||
         *descriptor > UINT32_MAX || *enabled > 1 || *specifier > UINT32_MAX)
       return OBELISK_RT_INVALID_BYTECODE;
     if (!lane)
@@ -1369,7 +1370,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         context, lane, static_cast<uint32_t>(*descriptor),
         static_cast<uint32_t>(*enabled),
         reinterpret_cast<const char *>(prefix->data), prefix->size,
-        static_cast<uint32_t>(*specifier), &field, &ok, &eof);
+        static_cast<uint32_t>(*specifier), *width, &field, &ok, &eof);
     if (status != OBELISK_RT_OK)
       return status;
     if (!writeString(outputRegister(0), field))

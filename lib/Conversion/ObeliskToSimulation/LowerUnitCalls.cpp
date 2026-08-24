@@ -554,11 +554,11 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                                                builder.getI32IntegerAttr(0));
       auto stateField = sim::SimStringScanFieldOp::create(
           builder, location, TypeRange{stringType, i32, i32}, *argument, cursor,
-          builder.getStringAttr(""), static_cast<uint32_t>('x'));
+          builder.getStringAttr(""), static_cast<uint32_t>('x'), 0);
       auto incrementField = sim::SimStringScanFieldOp::create(
           builder, location, TypeRange{stringType, i32, i32}, *argument,
           stateField.getNextCursor(), builder.getStringAttr(":"),
-          static_cast<uint32_t>('x'));
+          static_cast<uint32_t>('x'), 0);
       Value parsedState = sim::SimStringParseIntegerOp::create(
           builder, location, i64, stateField.getField(),
           builder.getI32IntegerAttr(16));
@@ -1201,11 +1201,11 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                                                  builder.getI32IntegerAttr(0));
         auto stateField = sim::SimStringScanFieldOp::create(
             builder, location, TypeRange{stringType, i32, i32}, methodArgument,
-            cursor, builder.getStringAttr(""), static_cast<uint32_t>('x'));
+            cursor, builder.getStringAttr(""), static_cast<uint32_t>('x'), 0);
         auto incrementField = sim::SimStringScanFieldOp::create(
             builder, location, TypeRange{stringType, i32, i32}, methodArgument,
             stateField.getNextCursor(), builder.getStringAttr(":"),
-            static_cast<uint32_t>('x'));
+            static_cast<uint32_t>('x'), 0);
         Value parsedState = sim::SimStringParseIntegerOp::create(
             builder, location, i64, stateField.getField(),
             builder.getI32IntegerAttr(16));

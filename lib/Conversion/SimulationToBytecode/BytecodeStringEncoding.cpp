@@ -64,12 +64,14 @@ Encoder::encodeStringOperation(FunctionPlan &plan, Operation *operation) {
         plan, {reinterpret_cast<const uint8_t *>(op.getPrefix().data()),
                op.getPrefix().size()});
     uint32_t specifier = emitU64Constant(plan, op.getSpecifier());
-    if (prefix == kInvalidRegister || specifier == kInvalidRegister)
+    uint32_t width = emitU64Constant(plan, op.getWidth());
+    if (prefix == kInvalidRegister || specifier == kInvalidRegister ||
+        width == kInvalidRegister)
       return op.emitOpError("cannot allocate scan-field operand registers");
     return emitIntrinsicRegisters(
         plan, kIntrinsicStringScanField,
-        {reg(plan, op.getInput()), reg(plan, op.getCursor()), prefix,
-         specifier},
+        {reg(plan, op.getInput()), reg(plan, op.getCursor()), prefix, specifier,
+         width},
         {reg(plan, op.getField()), reg(plan, op.getNextCursor()),
          reg(plan, op.getOk())});
   }
@@ -78,12 +80,14 @@ Encoder::encodeStringOperation(FunctionPlan &plan, Operation *operation) {
         plan, {reinterpret_cast<const uint8_t *>(op.getPrefix().data()),
                op.getPrefix().size()});
     uint32_t specifier = emitU64Constant(plan, op.getSpecifier());
-    if (prefix == kInvalidRegister || specifier == kInvalidRegister)
+    uint32_t width = emitU64Constant(plan, op.getWidth());
+    if (prefix == kInvalidRegister || specifier == kInvalidRegister ||
+        width == kInvalidRegister)
       return op.emitOpError("cannot allocate file scan-field operands");
     return emitIntrinsicRegisters(
         plan, kIntrinsicFileScanField,
         {reg(plan, op.getDescriptor()), reg(plan, op.getEnabled()), prefix,
-         specifier},
+         specifier, width},
         {reg(plan, op.getField()), reg(plan, op.getOk()),
          reg(plan, op.getEof())});
   }

@@ -29,7 +29,8 @@ module attributes {
         -> (!obelisk_sim.string, i32, i32)
         attributes {code_unit_id = 1 : i64, entry_kind = 8 : i32} {
       %field, %ok, %eof = obelisk_sim.file.scan_field
-          %ctx, %descriptor, %enabled {prefix = " ", specifier = 100 : i32} :
+          %ctx, %descriptor, %enabled
+          {prefix = " ", specifier = 100 : i32, width = 0 : i64} :
           (!obelisk_sim.context, i32, i32) -> (!obelisk_sim.string, i32, i32)
       obelisk_sim.return %field, %ok, %eof : !obelisk_sim.string, i32, i32
     }
