@@ -261,6 +261,19 @@ compile / 0.184 seconds simulate for bytecode and 73.926 seconds compile /
 times remain within 2% of the preceding concurrent baseline. The full
 regression suite passes 1288/1288 tests and all 427 runtime tests.
 
+L12's eighth closure tranche implements the unpacked-memory form of `$fread`
+from 21.3.4.3, including ascending and descending declarations, the optional
+start and count arguments, non-byte-aligned packed elements, partial final
+elements, and exact byte-count results. Memory traversal follows increasing
+numeric addresses regardless of declared direction. Lowering emits one
+runtime loop rather than unrolling by memory extent: an 8192-element probe
+compiles in 0.04 seconds in each tier and simulates in 0.00 seconds native /
+0.01 seconds bytecode. The complete upstream `t_sys_fread` golden output now
+matches. The UVM smoke ran in 36.464 seconds compile / 0.183 seconds simulate
+for bytecode and 73.759 seconds compile / 0.019 seconds simulate for native,
+with zero UVM errors or fatals. The full regression suite passes 1289/1289
+tests and all 427 runtime tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -283,7 +296,7 @@ regression suite passes 1288/1288 tests and all 427 runtime tests.
 | 18 Constrained random generation | Partial | Object streams, broad packed constraints, modes, finite domains, soft constraints, direct solve ordering, distributions, bounded `randc`, lifecycle hooks, and much of randsequence execute. The authoritative boundary is `docs/randomization-support.md`; R1-R7 below close the remaining standard surface without treating a solver resource cap as language semantics. |
 | 19 Functional coverage | Excluded | Explicitly outside this project goal. |
 | 20 Utility system tasks/functions | Partial | Simulation/time control, conversions, data/array queries, real math, bit-vector functions, severity, random distributions, most assertion control, and the implemented sampled functions execute. Missing normative families include `$system`, `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam`, the synchronous/asynchronous PLA tasks, the global-clock sampled functions, and complete assertion statistics/control behavior. |
-| 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning—including captured dynamic, associative, and nested aggregate copy-out targets—read-memory, plusargs, and VCD/dumpports execute. `$writememb`/`$writememh` and formatting/file corner cases remain. |
+| 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning—including `$fread` into fixed unpacked memories and captured dynamic, associative, and nested aggregate copy-out targets—read-memory, plusargs, and VCD/dumpports execute. `$writememb`/`$writememh` and formatting/file corner cases remain. |
 | 22 Compiler directives | Executable for the audited surface | The Slang preprocessor implements the normative directive family. Directive persistence, separate-compilation-unit reset, and command-line default-timescale precedence have native/bytecode tests. Protected envelopes are a separate Clause 34 feature, not ordinary pragma acceptance. |
 | 23 Modules and hierarchy | Partial | ANSI/non-ANSI modules, parameters, ports, arrays, hierarchy, bind, and common upward references elaborate. External runs retain module-library lookup, port mismatch, hierarchical path, generate-scope, and parameter-binding failures that need clause-minimal reproducers and fixes. |
 | 24 Programs | Partial | Program instances and their Reactive/Re-Inactive/Re-NBA process home execute. The normative `$exit` program-control task is missing. |

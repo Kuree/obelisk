@@ -6,6 +6,8 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
+#include <limits>
+
 using namespace mlir;
 
 namespace obelisk::simlowering {
@@ -910,9 +912,14 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
   }
 
   if (name == "$fgets" || name == "$fread") {
-    if (children.size() != 2) {
-      emitError(location)
-          << name << " currently requires a packed destination and descriptor";
+    bool validArity = name == "$fgets" ? children.size() == 2
+                                       : children.size() >= 2 &&
+                                             children.size() <= 4;
+    if (!validArity) {
+      emitError(location) << name
+                          << (name == "$fgets"
+                                  ? " requires a destination and descriptor"
+                                  : " requires two to four arguments");
       return failure();
     }
     Operation *actual = children[0];
@@ -930,7 +937,7 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     auto reference = dyn_cast<sim::RefType>((*destination).getType());
     if (!reference) {
       emitError(getSemanticLocation(actual))
-          << name << " destination must be a packed variable";
+          << name << " destination must be a variable";
       return failure();
     }
     if (name == "$fgets" && isa<sim::StringType>(reference.getElementType())) {
@@ -941,6 +948,134 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       sim::SimRefStoreOp::create(builder, location, read.getData(),
                                  *destination);
       return convertResult(read.getCount());
+    }
+    if (name == "$fread") {
+      if (auto memory =
+              dyn_cast<sim::UnpackedArrayType>(reference.getElementType())) {
+        Type elementType = memory.getElementType();
+        std::optional<unsigned> elementWidth =
+            sim::getPackedWidth(elementType);
+        if (!elementWidth || *elementWidth == 0 ||
+            isa<sim::UnpackedArrayType>(elementType)) {
+          emitError(getSemanticLocation(actual))
+              << "$fread memory elements must be packed values";
+          return failure();
+        }
+
+        uint64_t left = static_cast<uint64_t>(memory.getLeft());
+        uint64_t right = static_cast<uint64_t>(memory.getRight());
+        uint64_t distance = memory.getLeft() >= memory.getRight()
+                                ? left - right
+                                : right - left;
+        if (distance == std::numeric_limits<uint64_t>::max() ||
+            distance + 1 >
+                static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+          emitError(getSemanticLocation(actual))
+              << "$fread memory range is too large";
+          return failure();
+        }
+        int64_t extent = static_cast<int64_t>(distance + 1);
+        auto optionalInteger = [&](size_t index,
+                                   int64_t fallback) -> FailureOr<Value> {
+          if (index >= children.size() ||
+              isa<semantic::SVEmptyArgumentExpressionOp>(children[index]))
+            return constant(i64, fallback);
+          return lowerInteger(children[index], i64);
+        };
+        // The memory form advances from the lowest numeric address, not from
+        // the declaration's left bound when the range is descending.
+        FailureOr<Value> start = optionalInteger(
+            2, std::min(memory.getLeft(), memory.getRight()));
+        FailureOr<Value> count = optionalInteger(3, extent);
+        if (failed(start) || failed(count))
+          return failure();
+
+        Block *header = addBlock();
+        header->addArgument(i64, location);
+        header->addArgument(i64, location);
+        header->addArgument(i64, location);
+        Block *readElement = addBlock();
+        Block *storeElement = addBlock();
+        Block *continueRead = addBlock();
+        Block *done = addBlock();
+        done->addArgument(i64, location);
+
+        cf::BranchOp::create(builder, location, header,
+                             ValueRange{*start, *count, constant(i64, 0)});
+
+        setCurrent(header);
+        Value index = header->getArgument(0);
+        Value remaining = header->getArgument(1);
+        Value total = header->getArgument(2);
+        Value withinLow = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::sge, index,
+            constant(i64, std::min(memory.getLeft(), memory.getRight())));
+        Value withinHigh = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::sle, index,
+            constant(i64, std::max(memory.getLeft(), memory.getRight())));
+        Value within =
+            arith::AndIOp::create(builder, location, withinLow, withinHigh);
+        Value hasRemaining = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::sgt, remaining,
+            constant(i64, 0));
+        Value shouldRead = arith::AndIOp::create(builder, location, within,
+                                                  hasRemaining);
+        cf::CondBranchOp::create(builder, location, shouldRead, readElement,
+                                 ValueRange{}, done, ValueRange{total});
+
+        setCurrent(readElement);
+        IntegerType packedType = builder.getIntegerType(*elementWidth);
+        auto read = sim::SimFileReadPackedOp::create(
+            builder, location, TypeRange{packedType, i32}, context,
+            *descriptor);
+        Value count64 = arith::ExtUIOp::create(builder, location, i64,
+                                               read.getCount());
+        Value readAny = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, read.getCount(),
+            constant(i32, 0));
+        cf::CondBranchOp::create(builder, location, readAny, storeElement,
+                                 ValueRange{}, done, ValueRange{total});
+
+        setCurrent(storeElement);
+        FailureOr<Value> converted =
+            convert(read.getData(), elementType, false, location);
+        if (failed(converted))
+          return failure();
+        Value elementReference = sim::SimRefArrayElementOp::create(
+            builder, location,
+            sim::RefType::get(function.getContext(), elementType),
+            *destination, index);
+        sim::SimRefStoreOp::create(builder, location, *converted,
+                                   elementReference);
+        Value nextTotal =
+            arith::AddIOp::create(builder, location, total, count64);
+        uint64_t elementBytes = (static_cast<uint64_t>(*elementWidth) + 7) / 8;
+        Value complete = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq, count64,
+            constant(i64, static_cast<int64_t>(elementBytes)));
+        cf::CondBranchOp::create(builder, location, complete, continueRead,
+                                 ValueRange{}, done, ValueRange{nextTotal});
+
+        setCurrent(continueRead);
+        Value step = constant(i64, 1);
+        Value nextIndex =
+            arith::AddIOp::create(builder, location, index, step);
+        Value nextRemaining = arith::SubIOp::create(
+            builder, location, remaining, constant(i64, 1));
+        cf::BranchOp::create(
+            builder, location, header,
+            ValueRange{nextIndex, nextRemaining, nextTotal});
+
+        setCurrent(done);
+        Value result = arith::TruncIOp::create(builder, location, i32,
+                                               done->getArgument(0));
+        return convertResult(result);
+      }
+      if (children.size() != 2) {
+        emitError(getSemanticLocation(actual))
+            << "$fread start and count arguments require an unpacked memory";
+        return failure();
+      }
     }
     std::optional<unsigned> width =
         sim::getPackedWidth(reference.getElementType());
