@@ -130,6 +130,7 @@ Logic doubleToInteger(double value, uint32_t width);
 Logic add(const Logic &left, const Logic &right, bool subtract);
 Logic multiply(const Logic &left, const Logic &right);
 Logic power(const Logic &base, const Logic &exponent);
+Logic replicate(const Logic &input, uint32_t resultWidth, uint64_t count);
 bool bit(const LimbVector &value, uint64_t index);
 void setBit(LimbVector &value, uint64_t index, bool enabled);
 bool bit(const std::vector<uint64_t> &value, uint64_t index);

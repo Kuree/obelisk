@@ -314,6 +314,54 @@ Logic power(const Logic &base, const Logic &exponent) {
   return result;
 }
 
+Logic replicate(const Logic &input, uint32_t resultWidth, uint64_t count) {
+  assert(input.width != 0 && count != 0 &&
+         uint64_t{input.width} * count == resultWidth &&
+         "replication width mismatch");
+  Logic result{resultWidth, input.fourState, LimbVector(limbCount(resultWidth)),
+               LimbVector(limbCount(resultWidth))};
+  // Fill common scalar patterns one limb at a time. This includes the usual
+  // single-bit replication and byte/short/int-sized fields.
+  if (input.width <= 64 && 64 % input.width == 0) {
+    uint64_t valuePattern = input.value.front() & finalMask(input.width);
+    uint64_t unknownPattern =
+        input.unknown.front() & finalMask(input.width);
+    for (uint64_t offset = input.width; offset < 64; offset += input.width) {
+      valuePattern |= input.value.front() << offset;
+      unknownPattern |= input.unknown.front() << offset;
+    }
+    std::fill(result.value.begin(), result.value.end(), valuePattern);
+    if (input.fourState)
+      std::fill(result.unknown.begin(), result.unknown.end(), unknownPattern);
+    mask(result);
+    return result;
+  }
+  // A limb-aligned multiword input can likewise be copied without inspecting
+  // individual bits.
+  if (input.width % 64 == 0) {
+    size_t inputLimbs = input.value.size();
+    for (uint64_t copy = 0; copy != count; ++copy) {
+      size_t offset = static_cast<size_t>(copy) * inputLimbs;
+      std::copy(input.value.begin(), input.value.end(),
+                result.value.begin() + offset);
+      if (input.fourState)
+        std::copy(input.unknown.begin(), input.unknown.end(),
+                  result.unknown.begin() + offset);
+    }
+    return result;
+  }
+  // The general unaligned case still takes work proportional to the output
+  // width and allocates no progressively wider temporaries.
+  for (uint64_t copy = 0; copy != count; ++copy)
+    for (uint64_t inputBit = 0; inputBit != input.width; ++inputBit) {
+      uint64_t outputBit = copy * input.width + inputBit;
+      setBit(result.value, outputBit, bit(input.value, inputBit));
+      if (input.fourState)
+        setBit(result.unknown, outputBit, bit(input.unknown, inputBit));
+    }
+  return result;
+}
+
 bool bit(const LimbVector &value, uint64_t index) {
   return ((value[index / 64] >> (index % 64)) & 1) != 0;
 }

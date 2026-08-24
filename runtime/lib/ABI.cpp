@@ -634,6 +634,7 @@ static_assert(OBELISK_RT_PROCESS_CONTROL_KILL_CURRENT == 2);
 static_assert(OBELISK_RT_DB_PROCESS_CONTROL == 58);
 static_assert(OBELISK_RT_DB_BITCAST == 59);
 static_assert(OBELISK_RT_DB_POWER == 60);
+static_assert(OBELISK_RT_DB_REPLICATE == 61);
 static_assert(OBELISK_RT_FRAGMENT_NATIVE == 0);
 static_assert(OBELISK_RT_FRAGMENT_BYTECODE == 1);
 static_assert(OBELISK_RT_BC_TYPE_NONE == 0);

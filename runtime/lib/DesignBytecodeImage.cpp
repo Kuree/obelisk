@@ -1311,6 +1311,7 @@ bool validateInitialization(const Image &image, const Function &function,
     case OBELISK_RT_DB_SUB:
     case OBELISK_RT_DB_MUL:
     case OBELISK_RT_DB_POWER:
+    case OBELISK_RT_DB_REPLICATE:
     case OBELISK_RT_DB_UDIV:
     case OBELISK_RT_DB_SDIV:
     case OBELISK_RT_DB_UREM:
@@ -1472,6 +1473,7 @@ bool validateInitialization(const Image &image, const Function &function,
     case OBELISK_RT_DB_SUB:
     case OBELISK_RT_DB_MUL:
     case OBELISK_RT_DB_POWER:
+    case OBELISK_RT_DB_REPLICATE:
     case OBELISK_RT_DB_UDIV:
     case OBELISK_RT_DB_SDIV:
     case OBELISK_RT_DB_UREM:
@@ -2223,6 +2225,24 @@ bool validateImage(const Image &image) {
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
+      case OBELISK_RT_DB_REPLICATE: {
+        if (instruction.flags || instruction.source1 || instruction.source2 ||
+            instruction.auxiliary || instruction.immediate == 0 ||
+            !numeric(instruction.destination) ||
+            !numeric(instruction.source0))
+          return reject(__LINE__, "invalid instruction encoding or operands",
+                        functionIndex, pc, instruction.opcode);
+        Layout destination =
+            layoutAt(image, function, instruction.destination);
+        Layout source = layoutAt(image, function, instruction.source0);
+        if (destination.kind != source.kind || source.width == 0 ||
+            instruction.immediate > UINT32_MAX / source.width ||
+            uint64_t{source.width} * instruction.immediate !=
+                destination.width)
+          return reject(__LINE__, "invalid instruction encoding or operands",
+                        functionIndex, pc, instruction.opcode);
+        break;
+      }
       case OBELISK_RT_DB_REDUCE:
         if (instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||

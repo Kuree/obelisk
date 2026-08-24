@@ -1916,26 +1916,22 @@ FailureOr<Value> UnitLowering::lowerReplication(Operation *op) {
         builder.getI64IntegerAttr(repetitions));
     return convert(result, *resultType, false, location);
   }
-  auto resultInteger = cast<IntegerType>(scalarResultType);
-  auto inputInteger = cast<IntegerType>((*input).getType());
-  Value combined =
-      arith::ConstantOp::create(builder, location, resultInteger,
-                                builder.getIntegerAttr(resultInteger, 0));
-  FailureOr<Value> extended = convert(*input, resultInteger, false, location);
-  if (failed(extended))
+  // Use the same compact semantic operation for a two-state replication.
+  // Expanding one shift/or pair per copy makes source such as
+  // `{65536{dynamic_bit}}` consume compiler memory proportional to its value,
+  // even though the expression itself has constant size. State-domain
+  // analysis proves the temporary logic value two-state, so bytecode keeps a
+  // one-plane register and native lowering only needs logarithmically many
+  // operations.
+  FailureOr<Value> logicInput = toLogic(*input, location);
+  if (failed(logicInput))
     return failure();
-  for (uint64_t index = 0; index < repetitions; ++index) {
-    unsigned shift = inputInteger.getWidth() * (repetitions - index - 1);
-    Value piece = *extended;
-    if (shift) {
-      Value amount = arith::ConstantOp::create(
-          builder, location, resultInteger,
-          builder.getIntegerAttr(resultInteger, shift));
-      piece = arith::ShLIOp::create(builder, location, piece, amount);
-    }
-    combined = arith::OrIOp::create(builder, location, combined, piece);
-  }
-  return convert(combined, *resultType, false, location);
+  auto resultLogic = sim::LogicType::get(
+      function.getContext(), cast<IntegerType>(scalarResultType).getWidth());
+  Value result = sim::SimLogicReplicateOp::create(
+      builder, location, resultLogic, *logicInput,
+      builder.getI64IntegerAttr(repetitions));
+  return convert(result, *resultType, false, location);
 }
 
 FailureOr<Value>

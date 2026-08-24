@@ -669,6 +669,13 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       write(instruction.destination,
             power(read(instruction.source0), read(instruction.source1)));
       break;
+    case OBELISK_RT_DB_REPLICATE: {
+      Layout destination = layout(instruction.destination);
+      write(instruction.destination,
+            replicate(read(instruction.source0), destination.width,
+                      instruction.immediate));
+      break;
+    }
     case OBELISK_RT_DB_FADD:
     case OBELISK_RT_DB_FSUB:
     case OBELISK_RT_DB_FMUL:

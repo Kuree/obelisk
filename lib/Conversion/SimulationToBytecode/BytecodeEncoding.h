@@ -343,6 +343,7 @@ enum Opcode : uint16_t {
   ProcessControl = OBELISK_RT_DB_PROCESS_CONTROL,
   Bitcast = OBELISK_RT_DB_BITCAST,
   Power = OBELISK_RT_DB_POWER,
+  Replicate = OBELISK_RT_DB_REPLICATE,
 };
 
 } // namespace obelisk::bytecode

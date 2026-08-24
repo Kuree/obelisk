@@ -102,6 +102,14 @@ reduced native `-O0 -fno-lto` compilation from a 30-second timeout at 5.2 GB
 RSS to 0.55 seconds at 117 MB RSS; native and bytecode execution both complete
 in under 0.01 seconds. The full regression suite passes 1255/1255 tests.
 
+L6's required single UVM smoke ran in 33.938 seconds compile / 0.198 seconds
+simulate for bytecode and 74.707 seconds compile / 0.043 seconds simulate for
+native, with zero UVM errors or fatals. A mixed 65536-bit replication stress
+case compiles in 0.57 seconds / 73 MB RSS for bytecode and 1.73 seconds / 113
+MB RSS for native, then simulates in 0.01 seconds or less. Bytecode represents
+each packed replication with one instruction instead of one concatenation and
+temporary register per copy. The full regression suite passes 1258/1258 tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -110,11 +118,11 @@ in under 0.01 seconds. The full regression suite passes 1255/1255 tests.
 | 4 Scheduling semantics | Partial | Active, Inactive, NBA, Observed, Reactive, Re-Inactive, Re-NBA, Postponed, and the Preponed snapshot hook execute through one native/bytecode scheduler. Remaining language gaps are attached to the timed constructs below. PLI callback regions are excluded with VPI. |
 | 5 Lexical conventions | Executable for the audited surface | Slang supplies the lexer, preprocessor-facing tokens, literals, attributes, keywords, and identifiers. Keep this clause under differential testing, especially revision switches and literal corner cases. |
 | 6 Data types | Partial | Packed 2/4-state values, real/realtime variables and nets, strings, chandles, events, enums, typedefs, parameters, casts, strengths, common net kinds, user-defined nettypes/resolution functions, typed/heterogeneous fixed-array `interconnect`, and trireg charge strength/retention/decay/sharing execute. Remaining gaps are tracked by the operator, aggregate, and container chunks below. |
-| 7 Aggregate data types | Partial | Fixed arrays/structs/unions, tagged managed unions, dynamic arrays, queues, associative arrays, queries, traversal, and the registered manipulation methods execute. Remaining work includes all legal slice/reference lvalues, string range selection and character reference/NBA paths, and safe semantics for an untagged union containing a managed handle. |
+| 7 Aggregate data types | Partial | Fixed arrays/structs/unions, tagged managed unions, dynamic arrays, queues, associative arrays, queries, traversal, and the registered manipulation methods execute. Remaining work includes all legal slice/reference lvalues, escaping string-character reference/NBA paths, and safe semantics for an untagged union containing a managed handle. Strings permit character selection but are not sliceable. |
 | 8 Classes | Partial | Construction, inheritance, polymorphism, virtual/interface methods, parameterized classes, copying, managed properties, garbage collection, and the UVM-used surface execute. Complete the residual class/type/operator/constructor long tail exposed by focused probes and the aggregate/reference gaps shared with Clauses 6, 7, and 11. |
 | 9 Processes | Partial | Structured procedures, all fork/join forms, `wait fork`, `disable fork`, timed and recursive tasks, `process` handles and control, automatic capture, and cancellation execute. Disabling a named block owned by another live process is still rejected instead of canceling only the target scope. |
 | 10 Assignment statements | Partial | Blocking/NBA assignment, intra-assignment timing, common aggregate patterns, net aliasing, static continuous-assignment delays, strengths, and a restricted procedural force/assign surface execute. Complete signal-dependent force/assign reevaluation, automatic/class/unpacked/managed targets, concatenations and dynamic selects, plus the remaining queue/unpacked slice lvalues. |
-| 11 Operators and expressions | Partial | Legal equality, ordering, and logical operations execute for strings, sequential containers, associative arrays, unpacked aggregates, class/chandle/process/event/virtual-interface handles, and arbitrary-width packed values. This includes handle wildcard identity equality, two-state XNOR, and compact arbitrary-width integral power with a self-determined exponent. Public `--timing=min|typ|max` selection applies to constant and dynamic selected expressions. Remaining work is concentrated in dynamic/simple range selection, string ranges, unpacked concatenation/result forms, assignment-pattern setters, and dynamic string replication. |
+| 11 Operators and expressions | Partial | Legal equality, ordering, logical operations, concatenation, replication, and packed selection execute for strings, containers, unpacked aggregates, handles, and arbitrary-width packed values. This includes handle wildcard identity equality, two-state XNOR, compact integral power, constant ordinary part-selects, dynamic indexed part-selects with partial out-of-range behavior, dynamic string replication, and fixed/dynamic unpacked concatenation with per-element conversion. Ordinary part-select bounds must be constant and strings are not sliceable, so those former diagnostic branches are not missing language features. Public `--timing=min|typ|max` selects constant and dynamic expressions. Remaining expression work is tracked by aggregate patterns, references, randomization, assertions, and the differential long tail. |
 | 12 Procedural statements | Partial | Conditional, ordinary/pattern case, loops, jumps, `randcase`, and most `randsequence` forms execute. Recursive randsequence productions and value-returning productions still require activation frames and expression-valued production calls. |
 | 13 Tasks and functions | Executable for the audited non-DPI surface | Static/automatic, recursive, virtual, class/interface, timed task, value/output/inout/ref, default argument, and cancellation behavior execute. Continue differential closure for unusual aggregate and hierarchical formal cases; DPI is tracked separately in Clause 35. |
 | 14 Clocking blocks | Partial | Input/output skews, `#1step`, synchronous drives, event lists and `iff`, cycle delays, defaults, and virtual-interface clocking handles execute. Global clocking and the remaining assertion clock-inference, clock-formal, and multi-clock composition cases remain. |
@@ -183,9 +191,14 @@ one commit.
    execute. Handle wildcard equality uses identity semantics, two-state XNOR
    covers both spellings, and integral power stays compact across unequal
    arbitrary operand widths in native and bytecode tiers.
-6. **L6 — Select/concatenation/replication closure (10.10, 11.4-11.5).** Finish
-   dynamic range selections, string ranges and dynamic string replication,
-   unpacked concatenation results, and assignment-compatible conversions.
+6. **L6 — Select/concatenation/replication closure (6.16, 10.10,
+   11.4.12.1, 11.5.1), completed.** Constant ordinary and dynamic indexed
+   packed selections, including partially out-of-range windows, execute.
+   Dynamic string replication, fixed/dynamic unpacked concatenation, and
+   assignment-compatible per-element conversions execute. Packed replication
+   stays compact for both state domains and is one limb-aware bytecode
+   instruction. The audit also proved that dynamic ordinary part-select bounds
+   and string ranges are illegal rather than implementation gaps.
 7. **L7 — Aggregate and pattern closure (7, 10.9, 11.9).** Finish legal
    assignment-pattern setters, tagged-union four-state formatting, and a safe
    policy/representation for untagged unions containing managed handles.

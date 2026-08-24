@@ -136,31 +136,8 @@ LogicalResult Encoder::encodeReplicate(FunctionPlan &plan,
   uint64_t count = op.getCount();
   if (count == 0)
     return op.emitOpError("zero replication count");
-  if (count == 1) {
-    emit({Move, 0, reg(plan, op.getResult()), reg(plan, op.getInput())});
-    return success();
-  }
-  uint32_t accumulated = reg(plan, op.getInput());
-  unsigned inputWidth =
-      cast<sim::LogicType>(op.getInput().getType()).getWidth();
-  for (uint64_t copy = 1; copy != count; ++copy) {
-    uint32_t destination;
-    if (copy + 1 == count) {
-      destination = reg(plan, op.getResult());
-    } else {
-      uint64_t width = uint64_t{inputWidth} * (copy + 1);
-      if (width > std::numeric_limits<unsigned>::max())
-        return op.emitOpError("replication width exceeds bytecode ABI");
-      destination = temporaryLike(
-          plan,
-          sim::LogicType::get(op.getContext(), static_cast<unsigned>(width)),
-          op.getResult());
-      if (destination == kInvalidRegister)
-        return failure();
-    }
-    emit({Concat, 0, destination, accumulated, reg(plan, op.getInput())});
-    accumulated = destination;
-  }
+  emit({Replicate, 0, reg(plan, op.getResult()), reg(plan, op.getInput()), 0,
+        0, 0, count});
   return success();
 }
 

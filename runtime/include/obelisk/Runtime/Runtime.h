@@ -731,7 +731,10 @@ enum {
   OBELISK_RT_DB_BITCAST = 59,
   // Integral modular exponentiation. The destination and base widths match;
   // the exponent retains its independent SystemVerilog packed width.
-  OBELISK_RT_DB_POWER = 60
+  OBELISK_RT_DB_POWER = 60,
+  // Packed replication. The immediate is the positive replication count;
+  // destination width equals source width times that count.
+  OBELISK_RT_DB_REPLICATE = 61
 };
 
 // StoreState writes its exact post-resolution transition predicate to the
