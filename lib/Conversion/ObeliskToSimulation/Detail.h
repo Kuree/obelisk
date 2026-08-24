@@ -185,6 +185,12 @@ inline constexpr ::llvm::StringLiteral descriptorIdAttrName =
     sim::metadata::descriptorId;
 inline constexpr ::mlir::StringLiteral observerResultAttrName =
     "obelisk_sim.observer_result";
+/// Optional packed/real result type imposed by the context that requested an
+/// observer. Procedural continuous assignments use the target's assignment
+/// type so every reevaluation has exactly the same conversion as the initial
+/// statement execution.
+inline constexpr ::mlir::StringLiteral observerCoercedTypeAttrName =
+    "obelisk_sim.observer_coerced_type";
 inline constexpr ::mlir::StringLiteral observerEventPrimaryAttrName =
     "obelisk_sim.event_primary";
 /// Unit lowering is a parallel nested-function pipeline. Observer users mark

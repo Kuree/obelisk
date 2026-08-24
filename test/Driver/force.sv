@@ -10,8 +10,6 @@
 // RUN: diff -u %t.native-o0.out %t.bytecode-o0.out
 // RUN: diff -u %t.native-o0.out %t.bytecode-o3.out
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.native-o0.out
-// RUN: not obelisk -fno-lto -DDEPENDENT %s -o %t.dependent 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=DEPENDENT
 // RUN: not obelisk -fno-lto -DAUTOMATIC %s -o %t.automatic 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=AUTOMATIC
 
@@ -32,8 +30,6 @@ module force_driver;
     automatic logic temporary = 0;
     force temporary = 1;
   end
-`elsif DEPENDENT
-  initial force value = driver;
 `else
   initial begin
     value = 1;
@@ -76,6 +72,17 @@ module force_driver;
     $display("alias-forced=%b/%b", alias_net, alias_child.p);
     release alias_child.p;
     $display("alias-released=%b/%b", alias_net, alias_child.p);
+
+    driver = 4'b0001;
+    force alias_child.p = driver[0];
+    force alias_net = driver[1];
+    driver = 4'b0010;
+    #1;
+    $display("alias-dynamic=%b/%b", alias_net, alias_child.p);
+    release alias_net;
+    driver = 4'b0001;
+    #1;
+    $display("alias-dynamic-released=%b/%b", alias_net, alias_child.p);
   end
 `endif
 endmodule
@@ -94,6 +101,7 @@ endmodule
 // OUTPUT-NEXT: alias-before=0/0
 // OUTPUT-NEXT: alias-forced=1/1
 // OUTPUT-NEXT: alias-released=0/0
+// OUTPUT-NEXT: alias-dynamic=1/1
+// OUTPUT-NEXT: alias-dynamic-released=0/0
 
-// DEPENDENT: signal-dependent force and procedural assign right-hand sides are not yet supported
 // AUTOMATIC: cannot refer to automatic variable 'temporary' from non-procedural context

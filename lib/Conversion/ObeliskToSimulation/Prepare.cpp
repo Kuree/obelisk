@@ -6547,6 +6547,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (unit.observerResult == ObserverResult::Truth ||
           unit.observerResult == ObserverResult::Event) {
         resultType = builder.getI1Type();
+      } else if (auto coerced = unit.source->getAttrOfType<TypeAttr>(
+                     observerCoercedTypeAttrName)) {
+        resultType = coerced.getValue();
       } else {
         FailureOr<Type> normalized = getNormalizedSemanticType(unit.source);
         if (failed(normalized)) {

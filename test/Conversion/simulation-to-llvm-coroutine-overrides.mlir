@@ -18,6 +18,11 @@ module attributes {
       %value = arith.constant 10 : i4
       obelisk_sim.override %storage = %value assign false :
           !obelisk_sim.ref<i4>, i4
+      %owner = obelisk_sim.process.current
+      obelisk_sim.dynamic_override %storage = %value owner %owner
+          assign false claim true : !obelisk_sim.ref<i4>, i4
+      obelisk_sim.dynamic_override %storage = %value owner %owner
+          assign false claim false : !obelisk_sim.ref<i4>, i4
       obelisk_sim.release_override %storage assign false :
           !obelisk_sim.ref<i4>
       obelisk_sim.return
@@ -27,6 +32,8 @@ module attributes {
 
 // CHECK-LABEL: llvm.func @root(
 // CHECK: llvm.call @obelisk_rt_v1_native_override
+// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_dynamic_override
 // CHECK: llvm.call @obelisk_rt_v1_native_release_override
 // CHECK-NOT: obelisk_sim.override
+// CHECK-NOT: obelisk_sim.dynamic_override
 // CHECK-NOT: obelisk_sim.release_override

@@ -821,6 +821,13 @@ obelisk_rt_force_design_nets(obelisk_rt_context *context, uint64_t begin,
   }
 }
 
+uint64_t
+obelisk_rt_canonical_net_bit_unlocked(const obelisk_rt_context *context,
+                                      uint64_t bit) noexcept {
+  auto found = context->netAliases.rootByBit.find(bit);
+  return found == context->netAliases.rootByBit.end() ? bit : found->second;
+}
+
 obelisk_rt_status obelisk_rt_release_design_nets(obelisk_rt_context *context,
                                                  uint64_t begin,
                                                  uint64_t width) noexcept {

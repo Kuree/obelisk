@@ -1081,6 +1081,12 @@ struct obelisk_rt_context {
   std::vector<uint64_t> assignMask;
   std::vector<uint64_t> assignValue;
   std::vector<uint64_t> assignUnknown;
+  // A nonzero entry identifies the detached evaluator that owns a dynamic
+  // force/procedural-assign bit. Sparse ownership keeps ordinary designs free
+  // of per-bit allocation and lets partially overlapping overrides retire an
+  // evaluator exactly when its final bit is superseded or released.
+  std::unordered_map<uint64_t, uint64_t> dynamicForceOwners;
+  std::unordered_map<uint64_t, uint64_t> dynamicAssignOwners;
   // Latest values published by continuous assignments to variable storage.
   // Unlike procedural writes, these remain active beneath force / assign and
   // are republished as soon as the higher-priority override is released.
@@ -1662,6 +1668,21 @@ obelisk_rt_status obelisk_rt_force_design_nets(obelisk_rt_context *context,
 obelisk_rt_status obelisk_rt_release_design_nets(obelisk_rt_context *context,
                                                  uint64_t begin,
                                                  uint64_t width) noexcept;
+uint64_t
+obelisk_rt_canonical_net_bit_unlocked(const obelisk_rt_context *context,
+                                      uint64_t bit) noexcept;
+void obelisk_rt_claim_override_range_unlocked(
+    obelisk_rt_context *context, uint64_t begin, uint64_t width, bool assign,
+    uint64_t owner, std::vector<uint64_t> &retiredOwners);
+void obelisk_rt_release_override_range_unlocked(
+    obelisk_rt_context *context, uint64_t begin, uint64_t width, bool assign,
+    std::vector<uint64_t> &retiredOwners);
+bool obelisk_rt_override_owner_matches_unlocked(
+    const obelisk_rt_context *context, uint64_t bit, bool assign,
+    uint64_t owner);
+obelisk_rt_status
+obelisk_rt_retire_override_owners(obelisk_rt_context *context,
+                                  std::vector<uint64_t> retiredOwners);
 
 bool obelisk_rt_checked_design_record(
     const obelisk_rt_execution_descriptor_v1 *execution, uint64_t offset,

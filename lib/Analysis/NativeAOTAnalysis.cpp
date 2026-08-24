@@ -337,6 +337,11 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     } else if (isa<sim::SimDPICallOp>(operation)) {
       requireBytecodeFragment(operation, "DPI reentrancy is present");
       excludeBytecodeActor(operation);
+    } else if (isa<sim::SimDynamicOverrideOp>(operation)) {
+      // Dynamic override ownership can retire a detached evaluator process.
+      // Keep the scheduler fully runtime-owned until generated plans expose a
+      // transactional actor-removal protocol.
+      rejectPlan("dynamic override ownership requires generic ordering");
     } else if (isa<sim::SimOverrideOp, sim::SimReleaseOverrideOp>(operation)) {
       requireBytecodeFragment(operation, "force/release state is present");
       excludeBytecodeActor(operation);

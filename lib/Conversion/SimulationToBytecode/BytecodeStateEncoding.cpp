@@ -107,6 +107,16 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
          0, reg(plan, op.getTarget()), reg(plan, op.getValue())});
     return success();
   }
+  if (auto op = dyn_cast<sim::SimDynamicOverrideOp>(operation)) {
+    uint16_t flags = op.getIsAssign() ? OBELISK_RT_DB_OVERRIDE_ASSIGN
+                                      : OBELISK_RT_DB_OVERRIDE_FORCE;
+    flags |= OBELISK_RT_DB_OVERRIDE_DYNAMIC;
+    if (op.getClaim())
+      flags |= OBELISK_RT_DB_OVERRIDE_CLAIM;
+    emit({OverrideState, flags, 0, reg(plan, op.getTarget()),
+          reg(plan, op.getValue()), reg(plan, op.getOwner())});
+    return success();
+  }
   if (auto op = dyn_cast<sim::SimReleaseOverrideOp>(operation)) {
     emit(
         {ReleaseState,

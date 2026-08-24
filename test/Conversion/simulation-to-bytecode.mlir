@@ -84,6 +84,13 @@ module attributes {
           : !obelisk_sim.ref<!obelisk_sim.logic<65>>
       obelisk_sim.override %storage = %extended assign false
           : !obelisk_sim.ref<!obelisk_sim.logic<65>>, !obelisk_sim.logic<65>
+      %owner = obelisk_sim.process.current
+      obelisk_sim.dynamic_override %storage = %extended owner %owner
+          assign false claim true :
+          !obelisk_sim.ref<!obelisk_sim.logic<65>>, !obelisk_sim.logic<65>
+      obelisk_sim.dynamic_override %storage = %extended owner %owner
+          assign false claim false :
+          !obelisk_sim.ref<!obelisk_sim.logic<65>>, !obelisk_sim.logic<65>
       obelisk_sim.release_override %storage assign false
           : !obelisk_sim.ref<!obelisk_sim.logic<65>>
       %sum = obelisk_sim.call @add(%ctx, %two, %three)

@@ -132,6 +132,15 @@ scheduled work. Implicit sensitivity rebuilds container watches from current
 direct and class-property handles after each activation. The full regression
 suite passes 1266/1266 tests.
 
+L9's final UVM smoke ran in 34.314 seconds compile / 0.180 seconds simulate for
+bytecode and 71.704 seconds compile / 0.019 seconds simulate for native, with
+zero UVM errors or fatals. A 100,000-change dynamic-force stress compiles in
+0.03 seconds for bytecode and 0.07 seconds for native, then simulates in 0.57
+seconds and 0.18 seconds respectively. RHS evaluators use indexed computed
+observers rather than scheduler polling, and release or overlapping
+replacement kills an evaluator as soon as its final owned bit is gone. The
+full regression suite passes 1267/1267 tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -143,7 +152,7 @@ suite passes 1266/1266 tests.
 | 7 Aggregate data types | Partial | Fixed arrays/structs/unions, tagged managed unions, and untagged managed unions using validated candidate roots execute, including four-state overlapping arms. Dynamic arrays, queues, associative arrays, queries, traversal, ordering, registered manipulation methods, queue/unpacked slice lvalues, and persistent element references execute. Whole-container replacement and structural mutation preserve the LRM's reference lifetime rules. String character selection and NBA execute; strings are not sliceable, and a string character select is not a legal `ref` actual under 13.5.2. Continue differential closure for residual aggregate corner cases. |
 | 8 Classes | Partial | Construction, inheritance, polymorphism, virtual/interface methods, parameterized classes, copying, managed properties, garbage collection, and the UVM-used surface execute. Complete the residual class/type/operator/constructor long tail exposed by focused probes and the aggregate/reference gaps shared with Clauses 6, 7, and 11. |
 | 9 Processes | Partial | Structured procedures, all fork/join forms, `wait fork`, `disable fork`, timed and recursive tasks, `process` handles and control, automatic capture, and cancellation execute. Disabling a named block owned by another live process is still rejected instead of canceling only the target scope. |
-| 10 Assignment statements | Partial | Blocking/NBA assignment, intra-assignment timing, assignment patterns, queue/unpacked slice lvalues, net aliasing, static continuous-assignment delays, strengths, and a restricted procedural force/assign surface execute. Complete signal-dependent force/assign reevaluation, automatic/class/unpacked/managed targets, concatenations, and dynamic selects. |
+| 10 Assignment statements | Partial | Blocking/NBA assignment, intra-assignment timing, assignment patterns, queue/unpacked slice lvalues, net aliasing, static continuous-assignment delays, strengths, and procedural force/assign execute for whole statically allocated packed variables/nets and constant net selects. Signal-dependent integral, real, and function-call RHS expressions reevaluate from exact dependencies; overlapping statements retain per-bit ownership through alias roots, and release/deassign retires detached evaluators. Complete automatic/class/unpacked/managed targets, concatenations, dynamic selects, and user-defined nets. |
 | 11 Operators and expressions | Partial | Legal equality, ordering, logical operations, concatenation, replication, and packed selection execute for strings, containers, unpacked aggregates, handles, and arbitrary-width packed values. This includes handle wildcard identity equality, two-state XNOR, compact integral power, constant ordinary part-selects, dynamic indexed part-selects with partial out-of-range behavior, dynamic string replication, and fixed/dynamic unpacked concatenation with per-element conversion. Ordinary part-select bounds must be constant and strings are not sliceable, so those former diagnostic branches are not missing language features. Public `--timing=min|typ|max` selects constant and dynamic expressions. Remaining expression work is tracked by references, randomization, assertions, and the differential long tail. |
 | 12 Procedural statements | Partial | Conditional, ordinary/pattern case, loops, jumps, `randcase`, and most `randsequence` forms execute. Recursive randsequence productions and value-returning productions still require activation frames and expression-valued production calls. |
 | 13 Tasks and functions | Executable for the audited non-DPI surface | Static/automatic, recursive, virtual, class/interface, timed task, value/output/inout/ref, default argument, and cancellation behavior execute. Continue differential closure for unusual aggregate and hierarchical formal cases; DPI is tracked separately in Clause 35. |
@@ -243,9 +252,14 @@ one commit.
    character select is not a legal `ref` actual under 13.5.2 rather than an
    implementation gap. Bulk fixed/container transfers keep large ordering
    operations compact, and managed mutation waits use indexed tokens.
-9. **L9 — Procedural force/assign reevaluation (10.6).** Make signal-dependent
-   right-hand sides continuously reevaluate with exact dependency and release
-   semantics.
+9. **L9 — Procedural force/assign reevaluation (10.6), completed.**
+   Signal-dependent integral, real, and function-call right-hand sides use
+   indexed computed observers for continuous reevaluation in native and
+   bytecode tiers. Sparse per-bit ownership follows resolved alias roots, so
+   partial overlap, later force/assign replacement, release, and deassign
+   cannot resurrect superseded values; detached evaluators are killed when
+   their last bit is released or replaced. Dependency-free expressions retain
+   the direct static fast path.
 10. **L10 — General force/assign targets (10.6).** Add automatic and class
     variables, unpacked/managed values, concatenations, dynamic selects, and
     user-defined nets.

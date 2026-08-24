@@ -2694,6 +2694,33 @@ def SimOverrideOp : SimOp<"override", [
   let hasVerifier = 1;
 }
 
+def SimDynamicOverrideOp : SimOp<"dynamic_override", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "claim or reevaluate a dependency-driven static-target override";
+  let description = [{
+    The owner is the evaluator process spawned for one execution of a force or
+    procedural assign statement. A claim replaces prior ownership for the
+    target range and publishes the initial value. A reevaluation updates only
+    bits the owner still controls, so partially overlapping later overrides do
+    not resurrect superseded bits. Release and replacement retire an evaluator
+    as soon as it owns no bits.
+  }];
+  let arguments = (ins
+    Arg<AnyType, "", [
+      MemWrite<SimStorageResource>, MemWrite<SimNetResource>
+    ]>:$target,
+    AnyType:$value,
+    SimProcessType:$owner,
+    BoolAttr:$is_assign,
+    BoolAttr:$claim);
+  let assemblyFormat = "$target `=` $value `owner` $owner `assign` $is_assign "
+                       "`claim` $claim attr-dict `:` type($target) `,` "
+                       "type($value)";
+  let hasVerifier = 1;
+}
+
 def SimReleaseOverrideOp : SimOp<"release_override", [
     MemoryEffects<[MemWrite<SimSchedulerResource>]>
   ]> {

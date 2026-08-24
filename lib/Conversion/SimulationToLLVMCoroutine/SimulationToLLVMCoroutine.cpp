@@ -1994,8 +1994,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   // through the ordinary scheduler boundaries.
   bool hasLanguageOverride = false;
   module.walk([&](Operation *operation) {
-    hasLanguageOverride |=
-        isa<sim::SimOverrideOp, sim::SimReleaseOverrideOp>(operation);
+    hasLanguageOverride |= isa<sim::SimOverrideOp, sim::SimDynamicOverrideOp,
+                               sim::SimReleaseOverrideOp>(operation);
   });
   if (vpi.getMode() == sim::ComputeVPIMode::Off && !hasLanguageOverride) {
     auto authorizeFixedHandles = [&](const auto &descriptors) {

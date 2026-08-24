@@ -792,7 +792,14 @@ enum {
 };
 
 typedef uint16_t obelisk_rt_design_override_kind;
-enum { OBELISK_RT_DB_OVERRIDE_FORCE = 0, OBELISK_RT_DB_OVERRIDE_ASSIGN = 1 };
+enum {
+  OBELISK_RT_DB_OVERRIDE_FORCE = 0,
+  OBELISK_RT_DB_OVERRIDE_ASSIGN = 1,
+  OBELISK_RT_DB_OVERRIDE_DYNAMIC = 2,
+  OBELISK_RT_DB_OVERRIDE_CLAIM = 4,
+  OBELISK_RT_DB_OVERRIDE_KIND_MASK = 1,
+  OBELISK_RT_DB_OVERRIDE_FLAG_MASK = 7
+};
 
 // COMPARE flags. Case comparisons return a known two-state result. Wildcard
 // equality masks unknown RHS bits but can return X for a relevant unknown LHS
@@ -3024,6 +3031,11 @@ obelisk_rt_status obelisk_rt_v1_native_override(
     uint64_t global_bit_count, uint64_t handle, uint64_t bit_width,
     uint32_t descriptor_kind, uint32_t assign, const uint8_t *value,
     const uint8_t *unknown);
+obelisk_rt_status obelisk_rt_v1_native_dynamic_override(
+    obelisk_rt_context *context, uint8_t *global_value, uint8_t *global_unknown,
+    uint64_t global_bit_count, uint64_t handle, uint64_t bit_width,
+    uint32_t descriptor_kind, uint32_t assign, uint64_t owner_process,
+    uint32_t claim, const uint8_t *value, const uint8_t *unknown);
 obelisk_rt_status obelisk_rt_v1_native_release_override(
     obelisk_rt_context *context, uint8_t *global_value, uint8_t *global_unknown,
     uint64_t global_bit_count, uint64_t handle, uint64_t bit_width,

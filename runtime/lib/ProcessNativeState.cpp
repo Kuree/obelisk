@@ -268,6 +268,69 @@ bool staticOverrideRange(obelisk_rt_context *context, uint64_t handle,
 
 } // namespace
 
+void obelisk_rt_claim_override_range_unlocked(
+    obelisk_rt_context *context, uint64_t begin, uint64_t width, bool assign,
+    uint64_t owner, std::vector<uint64_t> &retiredOwners) {
+  auto &owners =
+      assign ? context->dynamicAssignOwners : context->dynamicForceOwners;
+  for (uint64_t offset = 0; offset != width; ++offset) {
+    uint64_t bit = begin + offset;
+    auto previous = owners.find(bit);
+    if (previous != owners.end() && previous->second != owner)
+      retiredOwners.push_back(previous->second);
+    if (owner != 0)
+      owners[bit] = owner;
+    else if (previous != owners.end())
+      owners.erase(previous);
+  }
+}
+
+void obelisk_rt_release_override_range_unlocked(
+    obelisk_rt_context *context, uint64_t begin, uint64_t width, bool assign,
+    std::vector<uint64_t> &retiredOwners) {
+  obelisk_rt_claim_override_range_unlocked(context, begin, width, assign, 0,
+                                           retiredOwners);
+}
+
+bool obelisk_rt_override_owner_matches_unlocked(
+    const obelisk_rt_context *context, uint64_t bit, bool assign,
+    uint64_t owner) {
+  const auto &owners =
+      assign ? context->dynamicAssignOwners : context->dynamicForceOwners;
+  auto found = owners.find(bit);
+  return found != owners.end() && found->second == owner;
+}
+
+obelisk_rt_status
+obelisk_rt_retire_override_owners(obelisk_rt_context *context,
+                                  std::vector<uint64_t> retiredOwners) {
+  std::sort(retiredOwners.begin(), retiredOwners.end());
+  retiredOwners.erase(std::unique(retiredOwners.begin(), retiredOwners.end()),
+                      retiredOwners.end());
+  for (uint64_t owner : retiredOwners) {
+    if (owner == 0)
+      continue;
+    {
+      ContextMutexLock lock(context);
+      auto stillOwned = [&](const auto &owners) {
+        return std::any_of(
+            owners.begin(), owners.end(),
+            [&](const auto &entry) { return entry.second == owner; });
+      };
+      if (stillOwned(context->dynamicForceOwners) ||
+          stillOwned(context->dynamicAssignOwners))
+        continue;
+    }
+    obelisk_rt_process_control_disposition disposition =
+        OBELISK_RT_PROCESS_CONTROL_CONTINUE;
+    obelisk_rt_status status = obelisk_rt_v1_process_control(
+        context, owner, OBELISK_RT_PROCESS_CONTROL_KILL, &disposition);
+    if (status != OBELISK_RT_OK && status != OBELISK_RT_INVALID_HANDLE)
+      return status;
+  }
+  return OBELISK_RT_OK;
+}
+
 bool obelisk_rt_publish_native_signal_transition_unlocked(
     obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
@@ -289,14 +352,15 @@ bool obelisk_rt_publish_native_signal_transition_unlocked(
                                                newValue, newUnknown);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_native_override(obelisk_rt_context *context, uint8_t *globalValue,
-                              uint8_t *globalUnknown, uint64_t globalBitCount,
-                              uint64_t handle, uint64_t bitWidth,
-                              uint32_t descriptorKind, uint32_t assign,
-                              const uint8_t *value, const uint8_t *unknown) {
+static obelisk_rt_status
+nativeOverride(obelisk_rt_context *context, uint8_t *globalValue,
+               uint8_t *globalUnknown, uint64_t globalBitCount, uint64_t handle,
+               uint64_t bitWidth, uint32_t descriptorKind, uint32_t assign,
+               bool dynamic, uint64_t ownerProcess, bool claim,
+               const uint8_t *value, const uint8_t *unknown) {
   if (!context || !globalValue || !globalUnknown || !value || bitWidth == 0 ||
       bitWidth > UINT64_MAX - 7 || assign > 1 ||
+      (dynamic && ownerProcess == 0) ||
       (descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE &&
        descriptorKind != OBELISK_RT_DESCRIPTOR_NET) ||
       (assign && descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE) ||
@@ -306,6 +370,7 @@ obelisk_rt_v1_native_override(obelisk_rt_context *context, uint8_t *globalValue,
   ContextTransaction transaction(context);
   try {
     uint64_t absolute = 0;
+    std::vector<uint64_t> retiredOwners;
     uint64_t byteCount = (bitWidth + 7) / 8;
     if (byteCount > std::numeric_limits<size_t>::max())
       return OBELISK_RT_INVALID_ARGUMENT;
@@ -315,8 +380,67 @@ obelisk_rt_v1_native_override(obelisk_rt_context *context, uint8_t *globalValue,
         if (!staticOverrideRange(context, handle, bitWidth, absolute))
           return OBELISK_RT_INVALID_HANDLE;
       }
-      return obelisk_rt_force_design_nets(context, absolute, bitWidth, value,
-                                          unknown);
+      obelisk_rt_status status = OBELISK_RT_OK;
+      if (!dynamic || claim) {
+        status = obelisk_rt_force_design_nets(context, absolute, bitWidth,
+                                              value, unknown);
+        if (status == OBELISK_RT_OK) {
+          ContextMutexLock lock(context);
+          for (uint64_t offset = 0; offset != bitWidth; ++offset)
+            obelisk_rt_claim_override_range_unlocked(
+                context,
+                obelisk_rt_canonical_net_bit_unlocked(context,
+                                                      absolute + offset),
+                1, assign != 0, dynamic ? ownerProcess : 0, retiredOwners);
+        }
+      } else {
+        uint64_t offset = 0;
+        while (offset != bitWidth) {
+          {
+            ContextMutexLock lock(context);
+            while (offset != bitWidth &&
+                   !obelisk_rt_override_owner_matches_unlocked(
+                       context,
+                       obelisk_rt_canonical_net_bit_unlocked(context,
+                                                             absolute + offset),
+                       assign != 0, ownerProcess))
+              ++offset;
+          }
+          if (offset == bitWidth)
+            break;
+          uint64_t runBegin = offset;
+          {
+            ContextMutexLock lock(context);
+            while (offset != bitWidth &&
+                   obelisk_rt_override_owner_matches_unlocked(
+                       context,
+                       obelisk_rt_canonical_net_bit_unlocked(context,
+                                                             absolute + offset),
+                       assign != 0, ownerProcess))
+              ++offset;
+          }
+          uint64_t runWidth = offset - runBegin;
+          std::vector<uint8_t> runValue(static_cast<size_t>((runWidth + 7) / 8),
+                                        0);
+          std::vector<uint8_t> runUnknown(
+              static_cast<size_t>((runWidth + 7) / 8), 0);
+          for (uint64_t bit = 0; bit != runWidth; ++bit) {
+            setByteBit(runValue.data(), bit, byteBit(value, runBegin + bit));
+            if (unknown)
+              setByteBit(runUnknown.data(), bit,
+                         byteBit(unknown, runBegin + bit));
+          }
+          status = obelisk_rt_force_design_nets(
+              context, absolute + runBegin, runWidth, runValue.data(),
+              unknown ? runUnknown.data() : nullptr);
+          if (status != OBELISK_RT_OK)
+            break;
+        }
+      }
+      if (status != OBELISK_RT_OK)
+        return status;
+      return obelisk_rt_retire_override_owners(context,
+                                               std::move(retiredOwners));
     }
     std::vector<uint8_t> oldValue(static_cast<size_t>(byteCount), 0);
     std::vector<uint8_t> oldUnknown(static_cast<size_t>(byteCount), 0);
@@ -326,6 +450,10 @@ obelisk_rt_v1_native_override(obelisk_rt_context *context, uint8_t *globalValue,
       ContextMutexLock lock(context);
       if (!staticOverrideRange(context, handle, bitWidth, absolute))
         return OBELISK_RT_INVALID_HANDLE;
+      if (!dynamic || claim)
+        obelisk_rt_claim_override_range_unlocked(
+            context, absolute, bitWidth, assign != 0,
+            dynamic ? ownerProcess : 0, retiredOwners);
       size_t limbs = context->stateValue.size();
       if (assign) {
         if (context->assignMask.empty()) {
@@ -346,6 +474,13 @@ obelisk_rt_v1_native_override(obelisk_rt_context *context, uint8_t *globalValue,
         bool nextU = unknown && byteBit(unknown, bit);
         setByteBit(oldValue.data(), bit, oldV);
         setByteBit(oldUnknown.data(), bit, oldU);
+        if (dynamic && !claim &&
+            !obelisk_rt_override_owner_matches_unlocked(
+                context, destination, assign != 0, ownerProcess)) {
+          setByteBit(publishedValue.data(), bit, oldV);
+          setByteBit(publishedUnknown.data(), bit, oldU);
+          continue;
+        }
         if (assign) {
           context->assignMask[limb] |= mask;
           context->assignValue[limb] = nextV
@@ -378,12 +513,35 @@ obelisk_rt_v1_native_override(obelisk_rt_context *context, uint8_t *globalValue,
     publishOverrideEstablishmentTransition(
         context, handle, bitWidth, oldValue.data(), oldUnknown.data(),
         publishedValue.data(), publishedUnknown.data());
-    return OBELISK_RT_OK;
+    return obelisk_rt_retire_override_owners(context, std::move(retiredOwners));
   } catch (const std::bad_alloc &) {
     return OBELISK_RT_OUT_OF_MEMORY;
   } catch (...) {
     return OBELISK_RT_INVALID_DESIGN;
   }
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_native_override(obelisk_rt_context *context, uint8_t *globalValue,
+                              uint8_t *globalUnknown, uint64_t globalBitCount,
+                              uint64_t handle, uint64_t bitWidth,
+                              uint32_t descriptorKind, uint32_t assign,
+                              const uint8_t *value, const uint8_t *unknown) {
+  return nativeOverride(context, globalValue, globalUnknown, globalBitCount,
+                        handle, bitWidth, descriptorKind, assign, false, 0,
+                        true, value, unknown);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_native_dynamic_override(
+    obelisk_rt_context *context, uint8_t *globalValue, uint8_t *globalUnknown,
+    uint64_t globalBitCount, uint64_t handle, uint64_t bitWidth,
+    uint32_t descriptorKind, uint32_t assign, uint64_t ownerProcess,
+    uint32_t claim, const uint8_t *value, const uint8_t *unknown) {
+  if (claim > 1)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return nativeOverride(context, globalValue, globalUnknown, globalBitCount,
+                        handle, bitWidth, descriptorKind, assign, true,
+                        ownerProcess, claim != 0, value, unknown);
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_native_release_override(
@@ -401,6 +559,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_release_override(
   ContextTransaction transaction(context);
   try {
     uint64_t absolute = 0;
+    std::vector<uint64_t> retiredOwners;
     uint64_t byteCount = (bitWidth + 7) / 8;
     if (byteCount > std::numeric_limits<size_t>::max())
       return OBELISK_RT_INVALID_ARGUMENT;
@@ -409,8 +568,18 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_release_override(
         ContextMutexLock lock(context);
         if (!staticOverrideRange(context, handle, bitWidth, absolute))
           return OBELISK_RT_INVALID_HANDLE;
+        for (uint64_t offset = 0; offset != bitWidth; ++offset)
+          obelisk_rt_release_override_range_unlocked(
+              context,
+              obelisk_rt_canonical_net_bit_unlocked(context, absolute + offset),
+              1, assign != 0, retiredOwners);
       }
-      return obelisk_rt_release_design_nets(context, absolute, bitWidth);
+      obelisk_rt_status status =
+          obelisk_rt_release_design_nets(context, absolute, bitWidth);
+      if (status != OBELISK_RT_OK)
+        return status;
+      return obelisk_rt_retire_override_owners(context,
+                                               std::move(retiredOwners));
     }
     std::vector<uint8_t> oldValue(static_cast<size_t>(byteCount), 0);
     std::vector<uint8_t> oldUnknown(static_cast<size_t>(byteCount), 0);
@@ -421,6 +590,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_release_override(
       ContextMutexLock lock(context);
       if (!staticOverrideRange(context, handle, bitWidth, absolute))
         return OBELISK_RT_INVALID_HANDLE;
+      obelisk_rt_release_override_range_unlocked(context, absolute, bitWidth,
+                                                 assign != 0, retiredOwners);
       for (uint64_t bit = 0; bit != bitWidth; ++bit) {
         uint64_t destination = absolute + bit;
         uint64_t mask = uint64_t{1} << (destination % 64);
@@ -470,7 +641,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_release_override(
       obelisk_rt_v1_scheduler_signal_transition(
           context, handle, bitWidth, oldValue.data(), oldUnknown.data(),
           publishedValue.data(), publishedUnknown.data());
-    return OBELISK_RT_OK;
+    return obelisk_rt_retire_override_owners(context, std::move(retiredOwners));
   } catch (const std::bad_alloc &) {
     return OBELISK_RT_OUT_OF_MEMORY;
   } catch (...) {

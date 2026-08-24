@@ -1023,6 +1023,9 @@ FailureOr<Value> UnitLowering::bindObserver(
   if (*parsedResult == ObserverResult::Truth ||
       *parsedResult == ObserverResult::Event) {
     resultType = builder.getI1Type();
+  } else if (auto coerced = expression->getAttrOfType<TypeAttr>(
+                 observerCoercedTypeAttrName)) {
+    resultType = coerced.getValue();
   } else {
     FailureOr<Type> normalized = getNormalizedSemanticType(expression);
     if (failed(normalized))
@@ -2648,36 +2651,6 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     }
 
     Operation *rhs = assignmentChildren[1];
-    std::function<bool(Operation *)> isConstantRHS =
-        [&](Operation *expression) -> bool {
-      if (getConstantSpelling(expression) ||
-          expression->hasAttr("constant_value"))
-        return true;
-      StringRef path;
-      if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(expression))
-        path = named.getReferencedPath();
-      else if (auto hierarchical =
-                   dyn_cast<semantic::SVHierarchicalValueExpressionOp>(
-                       expression))
-        path = hierarchical.getReferencedPath();
-      if (!path.empty()) {
-        Value bound = values.lookup(path);
-        return bound && foldConstantValue(bound);
-      }
-      if (isa<semantic::SVCallExpressionOp>(expression))
-        return false;
-      SmallVector<Operation *> operands = getChildren(expression);
-      return !operands.empty() &&
-             llvm::all_of(operands, [&](Operation *operand) {
-               return isConstantRHS(operand);
-             });
-    };
-    if (!isConstantRHS(rhs)) {
-      emitError(getSemanticLocation(rhs))
-          << "signal-dependent force and procedural assign right-hand sides "
-             "are not yet supported";
-      return failure();
-    }
     FailureOr<Value> value = lowerExpression(rhs);
     if (failed(value))
       return failure();
@@ -2693,6 +2666,140 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
         convert(*value, elementType, isSignedNode(rhs), location);
     if (failed(converted))
       return failure();
+
+    // IEEE 1800-2017 10.6 requires a nonconstant RHS to remain continuously
+    // active until release/deassign. Reuse the computed-event observer plan so
+    // reevaluation is driven by its exact static dependencies rather than by
+    // scheduler polling. A dependency-free expression needs only the immediate
+    // publication below.
+    if (!rhs->hasAttr("obelisk_sim.observer")) {
+      sim::SimOverrideOp::create(builder, location, *target, *converted,
+                                 builder.getBoolAttr(isAssign));
+      return success();
+    }
+    FailureOr<Value> observed = bindObserver(rhs);
+    if (failed(observed))
+      return failure();
+    auto binding = observed->getDefiningOp<sim::SimObserverBindOp>();
+    if (!binding)
+      return failure();
+    if (!binding.getDependencies().empty()) {
+      auto nodeID = override->getAttrOfType<IntegerAttr>("node_id");
+      auto parentHierarchy =
+          function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+      if (!nodeID || !parentHierarchy)
+        return emitError(location)
+                   << "dynamic override has no stable source identity",
+               failure();
+      std::string identity =
+          (Twine(parentHierarchy.getValue()) + ".$override." +
+           Twine(nodeID.getValue().getZExtValue()))
+              .str();
+      uint64_t evaluatorCodeUnitID = stableCodeUnitID(identity);
+      uint64_t scopeID = 0;
+      auto design = function->getParentOfType<sim::SimDesignOp>();
+      if (!design)
+        return emitError(location) << "dynamic override has no design",
+               failure();
+      if (auto parentID = function.getCodeUnitId())
+        for (sim::SimCodeUnitDeclOp declaration :
+             design.getBody().front().getOps<sim::SimCodeUnitDeclOp>())
+          if (declaration.getId() == *parentID) {
+            scopeID = declaration.getScopeId();
+            break;
+          }
+      MLIRContext *context = function.getContext();
+      OpBuilder declarationBuilder(function);
+      declarationBuilder.setInsertionPoint(function);
+      sim::SimCodeUnitDeclOp::create(
+          declarationBuilder, location, evaluatorCodeUnitID, scopeID,
+          sim::EntryKind::Fork, declarationBuilder.getStringAttr(identity),
+          declarationBuilder.getStringAttr("dynamic override evaluator"),
+          declarationBuilder.getUnitAttr());
+      OpBuilder outlineBuilder(function);
+      outlineBuilder.setInsertionPointAfter(function);
+      SmallVector<Type> inputs{sim::ContextType::get(context),
+                               (*target).getType()};
+      SmallVector<DictionaryAttr> argumentAttrs{
+          captureMetadata(outlineBuilder, sim::CaptureKind::Context),
+          captureMetadata(outlineBuilder, sim::CaptureKind::Formal)};
+      for (Value operand : binding.getValues()) {
+        inputs.push_back(operand.getType());
+        argumentAttrs.push_back(
+            captureMetadata(outlineBuilder, sim::CaptureKind::Formal));
+      }
+      SmallVector<NamedAttribute> attributes{
+          outlineBuilder.getNamedAttr(
+              "code_unit_id",
+              outlineBuilder.getI64IntegerAttr(evaluatorCodeUnitID)),
+          outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
+          outlineBuilder.getNamedAttr("home_region",
+                                      function.getHomeRegionAttr()),
+          outlineBuilder.getNamedAttr("domain", function.getDomainAttr()),
+          outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
+                                      outlineBuilder.getStringAttr(identity))};
+      sim::SimFuncOp evaluator = sim::SimFuncOp::create(
+          outlineBuilder, location, identity,
+          FunctionType::get(context, inputs, TypeRange{}), sim::EntryKind::Fork,
+          attributes, argumentAttrs);
+      SymbolTable::setSymbolVisibility(evaluator,
+                                       SymbolTable::Visibility::Private);
+      Block &entry = evaluator.getBody().front();
+      Block *update = new Block();
+      evaluator.getBody().push_back(update);
+      OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
+      cf::BranchOp::create(entryBuilder, location, update);
+
+      OpBuilder updateBuilder = OpBuilder::atBlockEnd(update);
+      SmallVector<Value> localObserverOperands;
+      for (unsigned index = 0; index != binding.getValues().size(); ++index)
+        localObserverOperands.push_back(entry.getArgument(index + 2));
+      Value localObserver = sim::SimObserverBindOp::create(
+          updateBuilder, location, binding.getResult().getType(),
+          binding.getEvaluatorAttr(), localObserverOperands,
+          binding.getCaptureCountAttr());
+      SmallVector<Value> callOperands{entry.getArgument(0)};
+      for (unsigned index = 0; index != binding.getCaptureCount(); ++index)
+        callOperands.push_back(entry.getArgument(index + 2));
+      Type observedType = cast<sim::ObserverType>(binding.getResult().getType())
+                              .getResultType();
+      Value observedCurrent =
+          sim::SimCallOp::create(updateBuilder, location,
+                                 TypeRange{observedType},
+                                 binding.getEvaluatorAttr(), callOperands,
+                                 ArrayAttr{}, ArrayAttr{})
+              .getResult(0);
+      Value current = observedCurrent;
+      if (current.getType() != elementType)
+        current = sim::SimPackedUnflattenOp::create(updateBuilder, location,
+                                                    elementType, current);
+      Value owner =
+          sim::SimProcessCurrentOp::create(updateBuilder, location).getResult();
+      sim::SimDynamicOverrideOp::create(updateBuilder, location,
+                                        entry.getArgument(1), current, owner,
+                                        updateBuilder.getBoolAttr(isAssign),
+                                        updateBuilder.getBoolAttr(false));
+      sim::SimSuspendObserveOp::create(
+          updateBuilder, location, ValueRange{localObserver, observedCurrent},
+          0, ArrayRef<int32_t>{static_cast<int32_t>(sim::EdgeKind::Change)},
+          ArrayRef<int32_t>{-1}, sim::ContinuationSiteAttr{},
+          sim::EventRegionAttr{}, update);
+      evaluator->setAttr(sim::metadata::lowered, builder.getUnitAttr());
+
+      SmallVector<Value> spawnOperands{
+          function.getBody().front().getArgument(0), *target};
+      llvm::append_range(spawnOperands, binding.getValues());
+      Value ownerProcess =
+          sim::SimSpawnOp::create(builder, location, evaluator.getSymNameAttr(),
+                                  spawnOperands, ArrayAttr{}, ArrayAttr{})
+              .getProcess();
+      sim::SimDynamicOverrideOp::create(
+          builder, location, *target, *converted, ownerProcess,
+          builder.getBoolAttr(isAssign), builder.getBoolAttr(true));
+      binding.erase();
+      return success();
+    }
+    binding.erase();
     sim::SimOverrideOp::create(builder, location, *target, *converted,
                                builder.getBoolAttr(isAssign));
     return success();
@@ -2993,6 +3100,12 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                    .getResult();
     } else if (*parsedResult == ObserverResult::Truth) {
       result = truthValue(*result, function.getLoc());
+      if (failed(result))
+        return failure();
+    } else if (auto coerced = roots.front()->getAttrOfType<TypeAttr>(
+                   observerCoercedTypeAttrName)) {
+      result = convert(*result, coerced.getValue(), isSignedNode(roots.front()),
+                       function.getLoc());
       if (failed(result))
         return failure();
     } else if (!isa<FloatType>((*result).getType())) {

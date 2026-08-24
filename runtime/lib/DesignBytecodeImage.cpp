@@ -2661,11 +2661,18 @@ bool validateImage(const Image &image) {
                         functionIndex, pc, instruction.opcode);
         break;
       case OBELISK_RT_DB_OVERRIDE_STATE:
-        if (instruction.flags > OBELISK_RT_DB_OVERRIDE_ASSIGN ||
-            instruction.destination || instruction.source2 ||
-            instruction.auxiliary || instruction.immediate ||
-            !reg(instruction.source0) ||
+        if ((instruction.flags & ~OBELISK_RT_DB_OVERRIDE_FLAG_MASK) != 0 ||
+            ((instruction.flags & OBELISK_RT_DB_OVERRIDE_CLAIM) != 0 &&
+             (instruction.flags & OBELISK_RT_DB_OVERRIDE_DYNAMIC) == 0) ||
+            instruction.destination || instruction.auxiliary ||
+            instruction.immediate || !reg(instruction.source0) ||
             (!numeric(instruction.source1) && !floating(instruction.source1)) ||
+            ((instruction.flags & OBELISK_RT_DB_OVERRIDE_DYNAMIC) != 0
+                 ? (!reg(instruction.source2) ||
+                    layoutAt(image, function, instruction.source2).kind !=
+                        OBELISK_RT_DBREG_BITS ||
+                    layoutAt(image, function, instruction.source2).width != 64)
+                 : instruction.source2 != 0) ||
             layoutAt(image, function, instruction.source0).kind !=
                 OBELISK_RT_DBREG_HANDLE)
           return reject(__LINE__, "invalid instruction encoding or operands",

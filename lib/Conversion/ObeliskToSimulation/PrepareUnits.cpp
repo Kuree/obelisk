@@ -364,6 +364,42 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
   for (size_t unitIndex = 0; unitIndex != ordinaryUnitCount; ++unitIndex) {
     PreparedUnit &unit = result.units[unitIndex];
     unit.source->walk<WalkOrder::PreOrder>([&](Operation *nested) {
+      if (auto override =
+              dyn_cast<semantic::SVProceduralAssignStatementOp>(nested)) {
+        SmallVector<Operation *> statementChildren = getChildren(override);
+        auto assignment = statementChildren.size() == 1
+                              ? dyn_cast<semantic::SVAssignmentExpressionOp>(
+                                    statementChildren.front())
+                              : semantic::SVAssignmentExpressionOp{};
+        SmallVector<Operation *> assignmentChildren =
+            assignment ? getChildren(assignment) : SmallVector<Operation *>{};
+        if (assignmentChildren.size() != 2) {
+          emitError(getSemanticLocation(override))
+              << "procedural force/assign has no binary assignment expression";
+          invalid = true;
+          return;
+        }
+        FailureOr<Type> targetType =
+            getNormalizedSemanticType(assignmentChildren.front());
+        if (failed(targetType)) {
+          invalid = true;
+          return;
+        }
+        Type observerType = isa<FloatType>(*targetType)
+                                ? *targetType
+                                : sim::getPackedScalarType(*targetType);
+        if (!observerType) {
+          emitError(getSemanticLocation(override))
+              << "procedural override target has no packed scalar value";
+          invalid = true;
+          return;
+        }
+        Operation *rhs = assignmentChildren.back();
+        rhs->setAttr(observerCoercedTypeAttrName, TypeAttr::get(observerType));
+        observerCandidates.push_back({rhs, ObserverResult::Value,
+                                      "override_rhs", unit.id, unit.hierarchy});
+        return;
+      }
       if (auto assertion =
               dyn_cast<semantic::SVConcurrentAssertionStatementOp>(nested)) {
         SmallVector<Operation *> children = getChildren(assertion);

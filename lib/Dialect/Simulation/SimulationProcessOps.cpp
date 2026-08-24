@@ -1579,6 +1579,23 @@ LogicalResult SimOverrideOp::verify() {
   return success();
 }
 
+LogicalResult SimDynamicOverrideOp::verify() {
+  Type elementType;
+  if (auto reference = dyn_cast<RefType>(getTarget().getType()))
+    elementType = reference.getElementType();
+  else if (auto net = dyn_cast<NetType>(getTarget().getType()))
+    elementType = net.getElementType();
+  else
+    return emitOpError("target must be a static reference or built-in net");
+  if (getIsAssign() && !isa<RefType>(getTarget().getType()))
+    return emitOpError("procedural assign requires a variable reference");
+  if (elementType != getValue().getType())
+    return emitOpError("target element type must match the override value");
+  if (!getOverrideBitWidth(elementType))
+    return emitOpError("requires a fixed-width scalar integral or real value");
+  return success();
+}
+
 LogicalResult SimNBAEnqueueOp::verify() {
   Type elementType;
   if (auto reference = dyn_cast<RefType>(getDestination().getType()))

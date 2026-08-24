@@ -1526,7 +1526,24 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       bool isLoad = instruction.opcode == OBELISK_RT_DB_LOAD_STATE;
       bool isOverride = instruction.opcode == OBELISK_RT_DB_OVERRIDE_STATE;
       bool isAssignOverride =
-          isOverride && instruction.flags == OBELISK_RT_DB_OVERRIDE_ASSIGN;
+          isOverride &&
+          (instruction.flags & OBELISK_RT_DB_OVERRIDE_KIND_MASK) ==
+              OBELISK_RT_DB_OVERRIDE_ASSIGN;
+      bool dynamicOverride =
+          isOverride &&
+          (instruction.flags & OBELISK_RT_DB_OVERRIDE_DYNAMIC) != 0;
+      bool overrideClaim =
+          dynamicOverride &&
+          (instruction.flags & OBELISK_RT_DB_OVERRIDE_CLAIM) != 0;
+      uint64_t overrideOwner = 0;
+      if (dynamicOverride) {
+        Logic owner = read(instruction.source2);
+        if (owner.width != 64 || anyUnknown(owner) || owner.value.empty())
+          return OBELISK_RT_INVALID_HANDLE;
+        overrideOwner = owner.value[0];
+        if (overrideOwner == 0)
+          return OBELISK_RT_INVALID_HANDLE;
+      }
       bool isContinuous =
           !isLoad && !isOverride &&
           (instruction.flags & OBELISK_RT_DB_STORE_STATE_CONTINUOUS) != 0;
@@ -1605,6 +1622,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                          (isAssignOverride &&
                           descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE)))
         return OBELISK_RT_INVALID_HANDLE;
+      std::vector<uint64_t> retiredOverrideOwners;
       if (isOverride && descriptorKind == OBELISK_RT_DESCRIPTOR_NET) {
         if (start < 0 || value.width == 0 ||
             value.width > static_cast<uint64_t>(end - start))
@@ -1619,12 +1637,67 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             return OBELISK_RT_INVALID_HANDLE;
           absolute = found->second.bitOffset + static_cast<uint64_t>(start);
         }
-        obelisk_rt_status status = obelisk_rt_force_design_nets(
-            context, absolute, value.width,
-            reinterpret_cast<const uint8_t *>(value.value.data()),
-            value.fourState
-                ? reinterpret_cast<const uint8_t *>(value.unknown.data())
-                : nullptr);
+        obelisk_rt_status status = OBELISK_RT_OK;
+        uint64_t offset = 0;
+        while (offset != value.width) {
+          if (dynamicOverride && !overrideClaim) {
+            std::lock_guard<std::recursive_mutex> lock(context->mutex);
+            while (offset != value.width &&
+                   !obelisk_rt_override_owner_matches_unlocked(
+                       context,
+                       obelisk_rt_canonical_net_bit_unlocked(context,
+                                                             absolute + offset),
+                       false, overrideOwner))
+              ++offset;
+          }
+          if (offset == value.width)
+            break;
+          uint64_t runBegin = offset;
+          if (dynamicOverride && !overrideClaim) {
+            std::lock_guard<std::recursive_mutex> lock(context->mutex);
+            while (offset != value.width &&
+                   obelisk_rt_override_owner_matches_unlocked(
+                       context,
+                       obelisk_rt_canonical_net_bit_unlocked(context,
+                                                             absolute + offset),
+                       false, overrideOwner))
+              ++offset;
+          } else {
+            offset = value.width;
+          }
+          uint64_t runWidth = offset - runBegin;
+          std::vector<uint8_t> runValue(static_cast<size_t>((runWidth + 7) / 8),
+                                        0);
+          std::vector<uint8_t> runUnknown(
+              static_cast<size_t>((runWidth + 7) / 8), 0);
+          for (uint64_t bitIndex = 0; bitIndex != runWidth; ++bitIndex) {
+            if (bit(value.value, runBegin + bitIndex))
+              runValue[bitIndex / 8] |=
+                  static_cast<uint8_t>(1u << (bitIndex % 8));
+            if (value.fourState && bit(value.unknown, runBegin + bitIndex))
+              runUnknown[bitIndex / 8] |=
+                  static_cast<uint8_t>(1u << (bitIndex % 8));
+          }
+          status = obelisk_rt_force_design_nets(
+              context, absolute + runBegin, runWidth, runValue.data(),
+              value.fourState ? runUnknown.data() : nullptr);
+          if (status != OBELISK_RT_OK)
+            break;
+        }
+        if (status == OBELISK_RT_OK && (!dynamicOverride || overrideClaim)) {
+          std::lock_guard<std::recursive_mutex> lock(context->mutex);
+          for (uint64_t offset = 0; offset != value.width; ++offset)
+            obelisk_rt_claim_override_range_unlocked(
+                context,
+                obelisk_rt_canonical_net_bit_unlocked(context,
+                                                      absolute + offset),
+                1, false, dynamicOverride ? overrideOwner : 0,
+                retiredOverrideOwners);
+        }
+        if (status != OBELISK_RT_OK)
+          return status;
+        status = obelisk_rt_retire_override_owners(
+            context, std::move(retiredOverrideOwners));
         if (status != OBELISK_RT_OK)
           return status;
         break;
@@ -1791,6 +1864,19 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             return OBELISK_RT_INVALID_HANDLE;
           staticState = &found->second;
         }
+        if (isOverride) {
+          if (start < 0 || value.width == 0 ||
+              value.width > static_cast<uint64_t>(end - start))
+            return OBELISK_RT_INVALID_HANDLE;
+          uint64_t overrideBegin =
+              boundedStatic
+                  ? staticState->bitOffset + static_cast<uint64_t>(start)
+                  : static_cast<uint64_t>(start);
+          if (!dynamicOverride || overrideClaim)
+            obelisk_rt_claim_override_range_unlocked(
+                context, overrideBegin, value.width, isAssignOverride,
+                dynamicOverride ? overrideOwner : 0, retiredOverrideOwners);
+        }
         auto automaticBit = [](const std::vector<uint8_t> &plane,
                                uint64_t index) {
           return index / 8 < plane.size() &&
@@ -1951,6 +2037,10 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                 automatic ? automaticBit(automaticState->unknown, absolute)
                 : local   ? bit(localValue.unknown, storageBit)
                           : bit(context->stateUnknown, storageBit);
+            if (dynamicOverride && !overrideClaim &&
+                !obelisk_rt_override_owner_matches_unlocked(
+                    context, storageBit, isAssignOverride, overrideOwner))
+              continue;
             if (realValue)
               setBit(oldReal.value, bitIndex, oldValue);
             if (isOverride) {
@@ -2109,6 +2199,12 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       }
       if (local && instruction.opcode == OBELISK_RT_DB_STORE_STATE)
         writeLogic(localFrame->data, localLayout, localValue);
+      if (isOverride) {
+        obelisk_rt_status status = obelisk_rt_retire_override_owners(
+            context, std::move(retiredOverrideOwners));
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
       if (isLoad) {
         if (!eventValue) {
           write(valueRegister, value);
@@ -2184,6 +2280,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                         : static_cast<uint64_t>(start);
       uint64_t width = static_cast<uint64_t>(end - start);
       bool releaseAssign = instruction.flags == OBELISK_RT_DB_OVERRIDE_ASSIGN;
+      std::vector<uint64_t> retiredOverrideOwners;
 
       struct PendingTransition {
         uint64_t bitIndex;
@@ -2198,6 +2295,18 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           std::min<uint64_t>(width, std::numeric_limits<size_t>::max())));
       {
         std::lock_guard<std::recursive_mutex> lock(context->mutex);
+        if (descriptorKind == OBELISK_RT_DESCRIPTOR_NET) {
+          for (uint64_t offset = 0; offset != width; ++offset)
+            obelisk_rt_release_override_range_unlocked(
+                context,
+                obelisk_rt_canonical_net_bit_unlocked(context,
+                                                      storageBegin + offset),
+                1, releaseAssign, retiredOverrideOwners);
+        } else {
+          obelisk_rt_release_override_range_unlocked(context, storageBegin,
+                                                     width, releaseAssign,
+                                                     retiredOverrideOwners);
+        }
         for (uint64_t bitIndex = 0; bitIndex != width; ++bitIndex) {
           uint64_t storageBit = storageBegin + bitIndex;
           uint64_t mask = uint64_t{1} << (storageBit % 64);
@@ -2280,10 +2389,20 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             obelisk_rt_release_design_nets(context, storageBegin, width);
         if (status != OBELISK_RT_OK)
           return status;
+        status = obelisk_rt_retire_override_owners(
+            context, std::move(retiredOverrideOwners));
+        if (status != OBELISK_RT_OK)
+          return status;
         break;
       }
       if (!transitions.empty() && ++context->schedulerEpoch == 0)
         context->schedulerEpoch = 1;
+      {
+        obelisk_rt_status status = obelisk_rt_retire_override_owners(
+            context, std::move(retiredOverrideOwners));
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
       break;
     }
     case OBELISK_RT_DB_JUMP:
