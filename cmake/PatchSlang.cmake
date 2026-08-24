@@ -153,6 +153,34 @@ if(patched_at EQUAL -1)
   string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
 endif()
 
+# IEEE 1800-2017 20.4.2 gives each $timeformat argument a default and permits
+# an empty argument to select it. Slang v11 marks the arguments optional by
+# count but still rejects an explicit empty position before lowering sees it.
+set(old_code [[
+class DisplayTask : public SystemTaskBase {
+]])
+set(new_code [[
+class TimeFormatTask : public SimpleSystemTask {
+public:
+    TimeFormatTask(const Type& voidType, const Type& intType, const Type& stringType) :
+        SimpleSystemTask(KnownSystemName::TimeFormat, voidType, 0,
+                         {&intType, &intType, &stringType, &intType}) {}
+
+    bool allowEmptyArgument(size_t) const final { return true; }
+};
+
+class DisplayTask : public SystemTaskBase {
+]])
+string(FIND "${contents}" "class TimeFormatTask : public SimpleSystemTask" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's display task location no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+
 set(old_code [[
     TASK(KnownSystemName::DumpFile, 0, &stringType);
 ]])
@@ -165,6 +193,22 @@ if(patched_at EQUAL -1)
   if(unpatched_at EQUAL -1)
     message(FATAL_ERROR
       "Slang's dumpfile registration no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+
+set(old_code [[
+    TASK(KnownSystemName::TimeFormat, 0, &intType, &intType, &stringType, &intType);
+]])
+set(new_code [[
+    addSystemSubroutine(std::make_shared<TimeFormatTask>(voidType, intType, stringType));
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's timeformat registration no longer matches the expected source")
   endif()
   string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
 endif()
