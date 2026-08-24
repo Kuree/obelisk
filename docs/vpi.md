@@ -52,8 +52,10 @@ skips bytecode stabilization when no observer, conditional wait, force, or
 dirty specialization state is active. Deposits without an exact mapping and
 force/release operations retain the guarded bytecode handoff.
 
-Callbacks, delayed writes, system task/function registration, strengths,
-trireg behavior, and VPI-registered waveform dumping are not implemented.
+Callbacks, delayed writes, system task/function registration, VPI strength
+and trireg access, and VPI-registered waveform dumping are not implemented.
+SystemVerilog trireg execution itself, including charge strength, retention,
+decay, and connected charge sharing, is implemented independently of VPI.
 Registration calls made from a startup table produce a clear
 unsupported-startup failure rather than an unresolved-symbol loader crash.
 Waveform dumping itself is available through the `$dump` system tasks and is

@@ -91,6 +91,19 @@ static uint8_t decodeDriverStrength(uint32_t flags, unsigned shift) {
   return encoded == 0 ? 6 : static_cast<uint8_t>(encoded - 1);
 }
 
+static uint8_t decodeChargeStrength(uint32_t flags) {
+  switch ((flags >> 7) & 3) {
+  case 0: // Legacy/default trireg descriptors use medium charge.
+  case 2:
+    return 2;
+  case 1:
+    return 1;
+  case 3:
+    return 4;
+  }
+  return 2;
+}
+
 bool appendSignalEvent(obelisk_rt_context *context, uint64_t bitOffset,
                        bool oldValue, bool oldUnknown, bool newValue,
                        bool newUnknown, bool evaluateComputedObservers = true) {
@@ -133,8 +146,12 @@ NetAliasCache *getNetAliasCache(const Image &image,
       uint8_t resolution = decodeNetResolution(record.argument);
       if (resolution == 1)
         resolution = 0; // tri and wire have identical resolution.
-      for (uint64_t bit = 0; bit != record.planeSize; ++bit)
+      for (uint64_t bit = 0; bit != record.planeSize; ++bit) {
         resolutionByBit.emplace(record.valueOffset + bit, resolution);
+        if (resolution == 9)
+          cache.chargeStrengthByBit.emplace(
+              record.valueOffset + bit, decodeChargeStrength(record.argument));
+      }
     } else if (record.function == kDriverStateDescriptor) {
       if ((record.argument & (uint32_t{1} << 11)) != 0 && !drivers.empty()) {
         const CaptureRecord &low = drivers.back();
@@ -496,6 +513,43 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
         resolvedZ || (hasNegative + hasZero + hasPositive) != 1;
     bool resolvedValue = resolvedZ || (!resolvedUnknown && hasPositive);
     uint8_t resolution = cache.resolutionByRoot.at(root);
+    bool chargeValue = false;
+    bool chargeUnknown = true;
+    if (resolution == 9 && resolvedZ) {
+      // IEEE 1800-2017 6.6.4 and 28.16: once every active driver is Z,
+      // resolve the stored charges on the component at their declared
+      // small/medium/large strengths. This is charge sharing; unlike an
+      // active driver, a weaker stored charge can lose to a stronger one.
+      uint16_t chargeStrengths = strengthBit(0);
+      for (uint64_t member : members->second) {
+        auto strength = cache.chargeStrengthByBit.find(member);
+        if (strength == cache.chargeStrengthByBit.end())
+          continue;
+        bool value = bit(context->stateValue, member);
+        bool unknown = bit(context->stateUnknown, member);
+        uint16_t stored = 0;
+        if (!unknown) {
+          stored = strengthBit(value ? strength->second
+                                     : -static_cast<int>(strength->second));
+        } else if (value) {
+          stored = strengthBit(0);
+        } else {
+          for (int point = -static_cast<int>(strength->second);
+               point <= static_cast<int>(strength->second); ++point)
+            stored |= strengthBit(point);
+        }
+        chargeStrengths = combineStrengthRanges(chargeStrengths, stored);
+      }
+      bool chargeHasZero = (chargeStrengths & strengthBit(0)) != 0;
+      bool chargeHasNegative = (chargeStrengths & negativeMask) != 0;
+      bool chargeHasPositive = (chargeStrengths & positiveMask) != 0;
+      bool chargeKnownZero =
+          chargeHasNegative && !chargeHasZero && !chargeHasPositive;
+      bool chargeKnownOne =
+          chargeHasPositive && !chargeHasNegative && !chargeHasZero;
+      chargeUnknown = !(chargeKnownZero || chargeKnownOne);
+      chargeValue = chargeKnownOne;
+    }
     for (uint64_t destination : members->second) {
       const NetAliasRange *net = nullptr;
       for (const NetAliasRange &candidate : cache.nets)
@@ -511,8 +565,8 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
                               ? resolvedValue
                               : (resolvedUnknown ? false : resolvedValue);
       if (resolution == 9 && resolvedZ) {
-        publishValue = bit(context->stateValue, destination);
-        publishUnknown = bit(context->stateUnknown, destination);
+        publishValue = chargeValue;
+        publishUnknown = chargeUnknown;
       }
       uint64_t mask = uint64_t{1} << (destination % 64);
       bool forced = destination / 64 < context->forceMask.size() &&
@@ -532,12 +586,17 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
       if (delays) {
         bool decay = resolution == 9 && resolvedZ && !forced && !assigned &&
                      !publishUnknown && (*delays)[2] != UINT64_MAX;
-        if (decay) {
-          if (!scheduleNetBit(context, root, destination, false, true, *delays,
-                              resolution, true))
-            return false;
-        } else if (resolution == 9 && resolvedZ) {
-          cancelNetBit(context, destination);
+        if (resolution == 9 && resolvedZ) {
+          // Charge sharing takes effect on entry to the capacitive state;
+          // decay is a later transition from that shared value to x.
+          publications.push_back(publication);
+          if (decay) {
+            if (!scheduleNetBit(context, root, destination, false, true,
+                                *delays, resolution, true))
+              return false;
+          } else {
+            cancelNetBit(context, destination);
+          }
         } else if (!scheduleNetBit(context, root, destination, publishValue,
                                    publishUnknown, *delays, resolution, false))
           return false;

@@ -3405,6 +3405,57 @@ TEST(DesignBytecode, RetainsEffectiveCollapsedTriregChargeAcrossAliases) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(DesignBytecode, SharesCollapsedTriregChargeByDeclaredStrength) {
+  Fixture fixture;
+  fixture.bytecode = makeConnectedDriverBytecode();
+  size_t stateOffset = get64(fixture.bytecode, 168);
+
+  // IEEE 1800-2017 28.16 and 28.16.2: both aliases are trireg nets. Net zero
+  // retains a small-strength zero and net one retains a large-strength one.
+  // When the active driver is z, the large stored charge wins and the result
+  // is shared atomically by the whole connected component.
+  put32(fixture.bytecode, stateOffset + 4,
+        1u | resolutionFlags(9, false) | (1u << 7));
+  put32(fixture.bytecode, stateOffset + 32 + 4,
+        1u | resolutionFlags(9, false) | (3u << 7));
+  put32(fixture.bytecode, stateOffset + 64 + 4,
+        driverFlags(6, 6) | resolutionFlags(9, true));
+  size_t connectivity = get64(fixture.bytecode, 184);
+  fixture.bytecode[connectivity + 24] = 9;
+  fixture.bytecode[connectivity + 25] = 9;
+  put64(fixture.bytecode, 32, imageChecksum(fixture.bytecode));
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.state_bit_count = 195;
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  auto setState = [&](uint64_t offset, bool value, bool unknown) {
+    uint64_t mask = UINT64_C(1) << (offset % 64);
+    if (value)
+      context->stateValue[offset / 64] |= mask;
+    else
+      context->stateValue[offset / 64] &= ~mask;
+    if (unknown)
+      context->stateUnknown[offset / 64] |= mask;
+    else
+      context->stateUnknown[offset / 64] &= ~mask;
+  };
+  setState(0, false, false);
+  setState(65, true, false);
+  setState(130, true, true);
+  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 130, 131),
+            OBELISK_RT_OK);
+  EXPECT_EQ((context->stateValue[0] & 1) != 0, true);
+  EXPECT_EQ((context->stateUnknown[0] & 1) != 0, false);
+  EXPECT_EQ((context->stateValue[1] & 2) != 0, true);
+  EXPECT_EQ((context->stateUnknown[1] & 2) != 0, false);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(DesignBytecode, PublishesSplitStrengthBanksAtomically) {
   Fixture fixture;
   fixture.bytecode = makeStrengthDriverBytecode();
@@ -4597,6 +4648,12 @@ TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
   put32(invalidNetResolution.bytecode, invalidNetState + 4,
         1u | resolutionFlags(10, false));
   rejected(invalidNetResolution);
+
+  Fixture chargeStrengthOnWire;
+  connected(chargeStrengthOnWire);
+  size_t chargeStrengthState = get64(chargeStrengthOnWire.bytecode, 168);
+  put32(chargeStrengthOnWire.bytecode, chargeStrengthState + 4, 1u | (1u << 7));
+  rejected(chargeStrengthOnWire);
 
   Fixture twoStateTrireg;
   twoStateTrireg.bytecode = makeStrengthDriverBytecode(9);

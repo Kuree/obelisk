@@ -126,7 +126,9 @@ def SimNetDeclOp : SimOp<"net.decl", [MemoryEffects<[MemWrite<SimInventoryResour
     contains either one uniform rise/fall/third-delay triple or one triple per
     packed bit. An all--1 per-bit triple denotes an immediate bit. For a
     `trireg`, the third value is charge decay rather than turn-off, and -1 in
-    that slot denotes indefinite charge retention.
+    that slot denotes indefinite charge retention. `charge_strength` records
+    the Figure 28-2 small/medium/large strength of stored charge and is present
+    only on declared `trireg` storage.
   }];
   let arguments = (ins I64Attr:$id, I64Attr:$scope_id, TypeAttr:$type,
                        SimLifetime:$lifetime,
@@ -136,6 +138,7 @@ def SimNetDeclOp : SimOp<"net.decl", [MemoryEffects<[MemWrite<SimInventoryResour
                        DefaultValuedAttr<SimNetResolutionKind,
                          "::obelisk::sim::NetResolutionKind::Wire">:$resolution_kind,
                        OptionalAttr<DenseI64ArrayAttr>:$propagation_delays,
+                       OptionalAttr<SimStrength>:$charge_strength,
                        OptionalAttr<UnitAttr>:$internal);
   let assemblyFormat = [{$id `in` $scope_id `:` $type $lifetime
     (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)? attr-dict}];

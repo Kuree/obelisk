@@ -152,7 +152,8 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
 
   for (const auto &net : analyzed->netLayouts)
     result.netLayouts.push_back({net.id, net.offset, net.width, net.fourState,
-                                 net.resolution, net.propagationDelays});
+                                 net.resolution, net.chargeStrength,
+                                 net.propagationDelays});
   for (const auto &driver : analyzed->driverLayouts) {
     auto net = llvm::find_if(analyzed->netLayouts, [&](const auto &candidate) {
       return candidate.id == driver.netId;

@@ -773,6 +773,7 @@ struct NetAliasCache {
   std::unordered_map<uint64_t, std::vector<uint64_t>> members;
   std::unordered_map<uint64_t, std::vector<NetDriverBit>> driverBits;
   std::unordered_map<uint64_t, uint8_t> resolutionByRoot;
+  std::unordered_map<uint64_t, uint8_t> chargeStrengthByBit;
   std::vector<NetAliasRange> nets;
   std::vector<NetAliasRange> drivers;
   std::vector<NetStrengthDriverPairRange> strengthDriverPairs;

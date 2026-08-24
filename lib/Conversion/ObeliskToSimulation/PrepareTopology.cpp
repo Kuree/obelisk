@@ -22,6 +22,18 @@ using namespace mlir;
 namespace obelisk::simlowering {
 namespace {
 
+static sim::Strength lowerChargeStrength(semantic::SVChargeStrength strength) {
+  switch (strength) {
+  case semantic::SVChargeStrength::Small:
+    return sim::Strength::Small;
+  case semantic::SVChargeStrength::Medium:
+    return sim::Strength::Medium;
+  case semantic::SVChargeStrength::Large:
+    return sim::Strength::Large;
+  }
+  llvm_unreachable("unknown SystemVerilog charge strength");
+}
+
 FailureOr<StaticStorageView> getStaticStorageView(Operation *expression) {
   StringRef path;
   if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(expression))
@@ -475,7 +487,8 @@ materializeDesignDescriptors(ModuleOp module,
               sim::Lifetime::Design, leafPath,
               builder.getStringAttr((Twine(getDebugName(op)) + ".leaf").str()),
               sim::ComputeObservabilityKindAttr{},
-              sim::NetResolutionKind::Wire, DenseI64ArrayAttr{}, UnitAttr{});
+              sim::NetResolutionKind::Wire, DenseI64ArrayAttr{},
+              sim::StrengthAttr{}, UnitAttr{});
         }
         return;
       }
@@ -528,13 +541,6 @@ materializeDesignDescriptors(ModuleOp module,
     }
 
     auto net = cast<semantic::SVNetSymbolOp>(op);
-    if (net.getChargeStrength()) {
-      emitError(getSemanticLocation(op))
-          << "trireg charge strengths are not supported: "
-          << semantic::stringifySVChargeStrength(*net.getChargeStrength());
-      invalid = true;
-      return;
-    }
     sim::NetResolutionKind resolution;
     switch (net.getNetKind()) {
     case semantic::SVNetKind::Wire:
@@ -639,11 +645,18 @@ materializeDesignDescriptors(ModuleOp module,
                          resolution};
     descriptors[path].rootType = *type;
     descriptors[path].delayedNet = static_cast<bool>(propagationDelays);
-    auto declaration =
-        sim::SimNetDeclOp::create(builder, getSemanticLocation(op), id, scopeId,
-                                  *type, sim::Lifetime::Design, hierarchy,
-                                  debug, sim::ComputeObservabilityKindAttr{},
-                                  resolution, propagationDelays, UnitAttr{});
+    auto declaration = sim::SimNetDeclOp::create(
+        builder, getSemanticLocation(op), id, scopeId, *type,
+        sim::Lifetime::Design, hierarchy, debug,
+        sim::ComputeObservabilityKindAttr{}, resolution, propagationDelays,
+        resolution == sim::NetResolutionKind::TriReg
+            ? sim::StrengthAttr::get(
+                  builder.getContext(),
+                  net.getChargeStrength()
+                      ? lowerChargeStrength(*net.getChargeStrength())
+                      : sim::Strength::Medium)
+            : sim::StrengthAttr{},
+        UnitAttr{});
     if (net.getNetKind() == semantic::SVNetKind::UserDefined ||
         net->hasAttr("obelisk_sim.inferred_user_net")) {
       declaration->setAttr("obelisk_sim.user_defined_net",

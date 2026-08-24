@@ -589,6 +589,26 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @charge_strength_on_wire {
+    obelisk_sim.scope.decl 0
+    // expected-error @+1 {{only trireg nets may declare charge strength}}
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design {charge_strength = 2 : i32}
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @invalid_trireg_charge_strength {
+    obelisk_sim.scope.decl 0
+    // expected-error @+1 {{trireg charge strength must be small, medium, or large}}
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design {charge_strength = 6 : i32, resolution_kind = 9 : i32}
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @mixed_state_domain_connection {
     obelisk_sim.scope.decl 0
     obelisk_sim.net.decl 0 in 0 : i1 design

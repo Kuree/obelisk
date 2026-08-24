@@ -109,7 +109,13 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
       layout.netLayouts.push_back(
           {declaration.getId(), nextHandleID - 1, offset, netWidth,
            containsFourStateLogic(declaration.getType()),
-           declaration.getResolutionKind(), propagationDelays});
+           declaration.getResolutionKind(),
+           declaration.getResolutionKind() == sim::NetResolutionKind::TriReg
+               ? std::optional<sim::Strength>(
+                     declaration.getChargeStrength().value_or(
+                         sim::Strength::Medium))
+               : std::nullopt,
+           propagationDelays});
     } else if (auto declaration = dyn_cast<sim::SimDriverDeclOp>(operation)) {
       auto found = layout.nets.find(declaration.getNetId());
       if (found == layout.nets.end()) {

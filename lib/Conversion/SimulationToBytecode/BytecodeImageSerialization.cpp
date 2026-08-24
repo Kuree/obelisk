@@ -26,6 +26,21 @@ static uint32_t encodeResolution(sim::NetResolutionKind resolution,
   return ((value & 3) << 1) | ((value & 12) << (driver ? 10 : 3));
 }
 
+static uint32_t encodeChargeStrength(std::optional<sim::Strength> strength) {
+  if (!strength)
+    return 0;
+  switch (*strength) {
+  case sim::Strength::Small:
+    return 1;
+  case sim::Strength::Medium:
+    return 2;
+  case sim::Strength::Large:
+    return 3;
+  default:
+    llvm_unreachable("invalid trireg charge strength");
+  }
+}
+
 SmallVector<uint8_t> serializeBytecodeImage(
     MutableArrayRef<FunctionPlan> plans, ArrayRef<Instruction> instructions,
     ArrayRef<OperandMap> operandMaps, ArrayRef<uint8_t> constants,
@@ -184,7 +199,8 @@ SmallVector<uint8_t> serializeBytecodeImage(
     append32(output, (net.fourState ? 1u : 0u) |
                          encodeResolution(net.resolution, false) |
                          (delayed ? uint32_t{1} << 3 : 0) |
-                         (netDelayBitwise[index] ? uint32_t{1} << 4 : 0));
+                         (netDelayBitwise[index] ? uint32_t{1} << 4 : 0) |
+                         (encodeChargeStrength(net.chargeStrength) << 7));
     append64(output, net.offset);
     append64(output, netDelayOffsets[index]);
     append64(output, net.width);

@@ -11,6 +11,10 @@ module {
     obelisk_sim.code_unit.decl 14 in 1 observer hierarchy "top.child.observer"
     obelisk_sim.storage.decl 0 in 1 : !obelisk_sim.logic<8> design hierarchy "top.child.state"
     obelisk_sim.net.decl 0 in 1 : !obelisk_sim.logic<8> design hierarchy "top.child.wire"
+    obelisk_sim.net.decl 1 in 1 : !obelisk_sim.logic<1> design hierarchy "top.child.cap" {
+      charge_strength = 4 : i32,
+      resolution_kind = 9 : i32
+    }
     obelisk_sim.driver.decl 0 in 1 drives 0 : !obelisk_sim.logic<8> design
         {strength0 = 5 : i32, strength1 = 3 : i32}
 
@@ -118,6 +122,9 @@ module {
 // CHECK: obelisk_sim.code_unit.decl 11 in 0 function hierarchy "top.callee"
 // CHECK: obelisk_sim.storage.decl 0 in 1 : !obelisk_sim.logic<8>
 // CHECK: obelisk_sim.net.decl 0 in 1 : !obelisk_sim.logic<8>
+// CHECK: obelisk_sim.net.decl 1 in 1 : !obelisk_sim.logic<1>
+// CHECK-SAME: charge_strength = 4 : i32
+// CHECK-SAME: resolution_kind = 9 : i32
 // CHECK: obelisk_sim.driver.decl 0 in 1 drives 0
 // CHECK-SAME: strength0 = 5 : i32
 // CHECK-SAME: strength1 = 3 : i32

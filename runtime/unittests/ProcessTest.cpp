@@ -4904,6 +4904,86 @@ TEST(Scheduler, TriregChargeDecayStartsCancelsAndUsesItsOwnDelay) {
   EXPECT_FALSE(obelisk::designbytecode::validateImage(image));
 }
 
+TEST(Scheduler, DelayedTriregSharesChargeBeforeDecay) {
+  constexpr uint64_t descriptorsOffset = 48;
+  constexpr uint64_t connectivityOffset = descriptorsOffset + 3 * 32;
+  std::vector<uint8_t> bytes(connectivityOffset + 32, 0);
+  auto write32 = [&](uint64_t offset, uint32_t value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  };
+  auto write64 = [&](uint64_t offset, uint64_t value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  };
+  for (uint64_t offset : {uint64_t{0}, uint64_t{24}}) {
+    write64(offset, 0);
+    write64(offset + 8, 0);
+    write64(offset + 16, 13);
+  }
+  auto writeDescriptor = [&](uint64_t index, uint32_t function,
+                             uint32_t argument, uint64_t valueOffset,
+                             uint64_t unknownOffset) {
+    uint64_t record = descriptorsOffset + index * 32;
+    write32(record, function);
+    write32(record + 4, argument);
+    write64(record + 8, valueOffset);
+    write64(record + 16, unknownOffset);
+    write64(record + 24, 1);
+  };
+  // The two delayed triregs hold small 0 and large 1 respectively. Their
+  // active driver is z, so IEEE 1800-2017 28.16.2 requires the shared large 1
+  // to become visible immediately, before both charges decay to x at time 13.
+  writeDescriptor(0, obelisk::designbytecode::kNetStateDescriptor,
+                  1u | 8u | 2u | 64u | 128u, 0, 0);
+  writeDescriptor(1, obelisk::designbytecode::kNetStateDescriptor,
+                  1u | 8u | 2u | 64u | 384u, 1, 24);
+  writeDescriptor(2, obelisk::designbytecode::kDriverStateDescriptor,
+                  1u | 2u | 8192u, 8, 0);
+  write64(connectivityOffset, 0);
+  write64(connectivityOffset + 8, 1);
+  write64(connectivityOffset + 16, 1);
+  bytes[connectivityOffset + 24] = 9;
+  bytes[connectivityOffset + 25] = 9;
+
+  obelisk::designbytecode::Image image{};
+  image.data = bytes.data();
+  image.size = bytes.size();
+  image.constants = 0;
+  image.constantSize = 48;
+  image.stateDescriptors = descriptorsOffset;
+  image.stateDescriptorCount = 3;
+  image.connectivity = connectivityOffset;
+  image.connectivityCount = 1;
+  image.stateBitCount = 9;
+  ASSERT_TRUE(obelisk::designbytecode::validateImage(image));
+
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 9;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 2),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 2, 8, 1),
+            OBELISK_RT_OK);
+  context->designBytecodeImage = image;
+  context->stateValue[0] = (uint64_t{1} << 1) | (uint64_t{1} << 8);
+  context->stateUnknown[0] = uint64_t{1} << 8;
+  bool changed = false;
+  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(image, context, 8, 9,
+                                                         changed));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(context->stateValue[0] & 3, 3u);
+  EXPECT_EQ(context->stateUnknown[0] & 3, 0u);
+  ASSERT_EQ(context->scheduledNBAs.size(), 2u);
+  EXPECT_EQ(context->scheduledNBAs[0].dueTime, 13u);
+  EXPECT_EQ(context->scheduledNBAs[1].dueTime, 13u);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->stateValue[0] & 3, 0u);
+  EXPECT_EQ(context->stateUnknown[0] & 3, 3u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, DominatingNetDelayPublishesEveryCollapsedAlias) {
   constexpr uint64_t constantsOffset = 0;
   constexpr uint64_t descriptorsOffset = 48;

@@ -143,6 +143,15 @@ LogicalResult SimNetDeclOp::verify() {
   if (getResolutionKind() == NetResolutionKind::TriReg &&
       !isEntirelyFourState(getType()))
     return emitOpError("trireg nets require an entirely four-state type");
+  if (getResolutionKind() == NetResolutionKind::TriReg) {
+    if (getChargeStrength() && *getChargeStrength() != Strength::Small &&
+        *getChargeStrength() != Strength::Medium &&
+        *getChargeStrength() != Strength::Large)
+      return emitOpError(
+          "trireg charge strength must be small, medium, or large");
+  } else if (getChargeStrength()) {
+    return emitOpError("only trireg nets may declare charge strength");
+  }
   if (auto delays = getPropagationDelays()) {
     std::optional<unsigned> width = getPackedWidth(getType());
     if (auto floating = dyn_cast<FloatType>(getType()))

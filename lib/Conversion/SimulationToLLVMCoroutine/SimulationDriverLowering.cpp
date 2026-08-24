@@ -398,17 +398,20 @@ public:
                     .getResult();
           }
         }
-        auto hasStrength = [&](uint16_t mask) {
-          Value masked = arith::AndIOp::create(
-              rewriter, op.getLoc(), resolvedStrengths, strengthConstant(mask));
+        auto hasStrength = [&](Value strengths, uint16_t mask) {
+          Value masked = arith::AndIOp::create(rewriter, op.getLoc(), strengths,
+                                               strengthConstant(mask));
           return arith::CmpIOp::create(rewriter, op.getLoc(),
                                        arith::CmpIPredicate::ne, masked,
                                        strengthConstant(0));
         };
-        Value hasNegative = hasStrength((uint16_t{1} << 7) - 1);
-        Value hasZero = hasStrength(strengthBit(7));
-        Value hasPositive = hasStrength(static_cast<uint16_t>(
-            ((uint16_t{1} << 15) - 1) & ~((uint16_t{1} << 8) - 1)));
+        Value hasNegative =
+            hasStrength(resolvedStrengths, (uint16_t{1} << 7) - 1);
+        Value hasZero = hasStrength(resolvedStrengths, strengthBit(7));
+        Value hasPositive =
+            hasStrength(resolvedStrengths,
+                        static_cast<uint16_t>(((uint16_t{1} << 15) - 1) &
+                                              ~((uint16_t{1} << 8) - 1)));
         auto logicalNot = [&](Value value) {
           return arith::XOrIOp::create(rewriter, op.getLoc(), value,
                                        boolean(true));
@@ -433,6 +436,84 @@ public:
                                             knownOne)));
         Value resolvedValue =
             arith::OrIOp::create(rewriter, op.getLoc(), resolvedZ, knownOne);
+
+        // IEEE 1800-2017 28.16.2: when every active driver is high
+        // impedance, a connected trireg component resolves its retained
+        // charges at their declared small, medium, or large charge strengths.
+        // Compute that component value once so publication remains atomic.
+        Value chargeValue;
+        Value chargeUnknown;
+        if (resolution == sim::NetResolutionKind::TriReg) {
+          Value chargeStrengths = strengthConstant(strengthBit(7));
+          for (const analysis::NetBit &member : component) {
+            auto memberNet =
+                llvm::find_if(layout.netLayouts, [&](const auto &candidate) {
+                  return candidate.id == member.net;
+                });
+            if (memberNet == layout.netLayouts.end() ||
+                member.offset >= memberNet->width || !memberNet->chargeStrength)
+              continue;
+            Value memberHandle = arith::ConstantOp::create(
+                rewriter, op.getLoc(), rewriter.getI64Type(),
+                rewriter.getI64IntegerAttr(encodeNativeStaticHandle(
+                    memberNet->handleID, static_cast<int32_t>(member.offset))));
+            Value memberValue = loadStatePlane(
+                rewriter, op.getLoc(), memberHandle, i1,
+                "__obelisk_state_value", false, layout.bitCount, &layout);
+            Value memberUnknown = loadStatePlane(
+                rewriter, op.getLoc(), memberHandle, i1,
+                "__obelisk_state_unknown", true, layout.bitCount, &layout);
+            unsigned strength =
+                static_cast<unsigned>(*memberNet->chargeStrength);
+            uint16_t zeroMask = strengthBit(7 - strength);
+            uint16_t oneMask = strengthBit(7 + strength);
+            uint16_t xMask = 0;
+            for (unsigned index = 7 - strength; index <= 7 + strength; ++index)
+              xMask |= strengthBit(index);
+            Value knownStrengths = arith::SelectOp::create(
+                rewriter, op.getLoc(), memberValue, strengthConstant(oneMask),
+                strengthConstant(zeroMask));
+            Value storedStrengths = arith::SelectOp::create(
+                rewriter, op.getLoc(), memberUnknown, strengthConstant(xMask),
+                knownStrengths);
+            chargeStrengths =
+                LLVM::CallOp::create(
+                    rewriter, op.getLoc(), TypeRange{strengthType},
+                    SymbolRefAttr::get(rewriter.getContext(),
+                                       "obelisk_rt_v1_strength_resolve_kind"),
+                    ValueRange{chargeStrengths, storedStrengths,
+                               resolutionValue})
+                    .getResult();
+          }
+          Value chargeNegative =
+              hasStrength(chargeStrengths, (uint16_t{1} << 7) - 1);
+          Value chargeZero = hasStrength(chargeStrengths, strengthBit(7));
+          Value chargePositive =
+              hasStrength(chargeStrengths,
+                          static_cast<uint16_t>(((uint16_t{1} << 15) - 1) &
+                                                ~((uint16_t{1} << 8) - 1)));
+          Value chargeKnownZero = arith::AndIOp::create(
+              rewriter, op.getLoc(), chargeNegative,
+              arith::AndIOp::create(rewriter, op.getLoc(),
+                                    logicalNot(chargeZero),
+                                    logicalNot(chargePositive)));
+          Value chargeKnownOne = arith::AndIOp::create(
+              rewriter, op.getLoc(), chargePositive,
+              arith::AndIOp::create(rewriter, op.getLoc(),
+                                    logicalNot(chargeNegative),
+                                    logicalNot(chargeZero)));
+          Value chargeZ = arith::AndIOp::create(
+              rewriter, op.getLoc(), chargeZero,
+              arith::AndIOp::create(rewriter, op.getLoc(),
+                                    logicalNot(chargeNegative),
+                                    logicalNot(chargePositive)));
+          chargeUnknown = arith::OrIOp::create(
+              rewriter, op.getLoc(), chargeZ,
+              logicalNot(arith::OrIOp::create(
+                  rewriter, op.getLoc(), chargeKnownZero, chargeKnownOne)));
+          chargeValue = arith::OrIOp::create(rewriter, op.getLoc(), chargeZ,
+                                             chargeKnownOne);
+        }
         for (const analysis::NetBit &member : component) {
           auto memberNet =
               llvm::find_if(layout.netLayouts, [&](const auto &candidate) {
@@ -455,11 +536,10 @@ public:
           Value publishUnknown = resolvedUnknown;
           if (resolution == sim::NetResolutionKind::TriReg) {
             publishValue = arith::SelectOp::create(
-                rewriter, op.getLoc(), resolvedZ, oldResolvedValue,
-                resolvedValue);
-            publishUnknown = arith::SelectOp::create(
-                rewriter, op.getLoc(), resolvedZ, oldResolvedUnknown,
-                resolvedUnknown);
+                rewriter, op.getLoc(), resolvedZ, chargeValue, resolvedValue);
+            publishUnknown =
+                arith::SelectOp::create(rewriter, op.getLoc(), resolvedZ,
+                                        chargeUnknown, resolvedUnknown);
           }
           if (!memberNet->fourState) {
             publishValue =

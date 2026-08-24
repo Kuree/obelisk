@@ -1659,13 +1659,15 @@ bool validateImage(const Image &image) {
       break;
     bool delayed = (net.argument & (uint32_t{1} << 3)) != 0;
     bool bitwiseDelay = (net.argument & (uint32_t{1} << 4)) != 0;
+    uint32_t chargeStrength = (net.argument >> 7) & 3;
     uint64_t delayBytes = 24;
     if (bitwiseDelay && (net.planeSize > UINT64_MAX / 24 ||
                          (delayBytes = net.planeSize * 24) == 0))
       return reject(__LINE__, "invalid bitwise net-delay size");
-    if ((net.argument & ~uint32_t{127}) != 0 ||
+    if ((net.argument & ~uint32_t{511}) != 0 ||
         decodeNetResolution(net.argument) > 9 || net.planeSize == 0 ||
         (decodeNetResolution(net.argument) == 9 && (net.argument & 1) == 0) ||
+        (decodeNetResolution(net.argument) != 9 && chargeStrength != 0) ||
         net.valueOffset < previousNetEnd || (bitwiseDelay && !delayed) ||
         delayed != (net.unknownOffset != UINT64_MAX) ||
         (delayed && ((net.unknownOffset & 7) != 0 ||
