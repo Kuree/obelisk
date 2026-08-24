@@ -324,6 +324,18 @@ seconds compile / 0.019 seconds simulate for native, with zero UVM errors or
 fatals. The full regression suite passes 1293/1293 tests and all 427 runtime
 tests.
 
+L12's thirteenth closure tranche implements class-handle event expressions.
+Their observer value is the runtime's existing stable object ID: null is zero,
+each live object has a nonzero lifetime-stable identity, and no native address
+is exposed. Reassigning a handle to a different object or null therefore
+triggers exactly once, while an equal reassignment or a mutation inside the
+referenced object does not. Managed field tokens keep activation and mutation
+lookup indexed without polling. The upstream `t_timing_at_class` case passes
+in native and bytecode execution. The UVM smoke ran in 34.670 seconds compile /
+0.181 seconds simulate for bytecode and 71.355 seconds compile / 0.020 seconds
+simulate for native, with zero UVM errors or fatals. The full regression suite
+passes 1294/1294 tests and all 427 runtime tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |

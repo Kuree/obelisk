@@ -3322,8 +3322,14 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         return failure();
     } else if (auto coerced = roots.front()->getAttrOfType<TypeAttr>(
                    observerCoercedTypeAttrName)) {
-      result = convert(*result, coerced.getValue(), isSignedNode(roots.front()),
-                       function.getLoc());
+      if (isa<sim::ClassHandleType>((*result).getType()) &&
+          coerced.getValue() == builder.getI64Type())
+        result = sim::SimClassIdOp::create(builder, function.getLoc(),
+                                           builder.getI64Type(), *result)
+                     .getResult();
+      else
+        result = convert(*result, coerced.getValue(),
+                         isSignedNode(roots.front()), function.getLoc());
       if (failed(result))
         return failure();
     } else if (!isa<FloatType>((*result).getType())) {

@@ -619,7 +619,13 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       if (failed(initial))
         return failure();
       FailureOr<Value> scalar =
-          toPackedScalar(*initial, getSemanticLocation(children.front()));
+          isa<sim::ClassHandleType>((*initial).getType())
+              ? FailureOr<Value>(sim::SimClassIdOp::create(
+                                    builder, location, builder.getI64Type(),
+                                    *initial)
+                                    .getResult())
+              : toPackedScalar(*initial,
+                               getSemanticLocation(children.front()));
       if (failed(scalar))
         return failure();
       Value watch = sim::SimManagedWatchOp::create(

@@ -563,6 +563,14 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
               : getNormalizedSemanticType(children.front());
       if (succeeded(primaryType) && isa<sim::EventType>(*primaryType))
         primaryResult = ObserverResult::Event;
+      else if (succeeded(primaryType) &&
+               isa<sim::ClassHandleType>(*primaryType))
+        // Event expressions compare class-handle identity, not object
+        // contents. Observers operate on packed values, so carry the stable
+        // non-address object ID across their comparison boundary.
+        children.front()->setAttr(
+            observerCoercedTypeAttrName,
+            TypeAttr::get(IntegerType::get(module.getContext(), 64)));
       observerCandidates.push_back({children.front(), primaryResult, "primary",
                                     unit.id, unit.hierarchy});
       if (event.getHasIff() && children.size() == 2)
