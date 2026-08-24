@@ -3260,6 +3260,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               context->inertialDriverPending.find(update.inertialSite);
           if (pending == context->inertialDriverPending.end())
             return;
+          if (update.inertialDriverVector &&
+              (pending->second.destination != update.bitOffset ||
+               pending->second.width != update.bitWidth ||
+               pending->second.value != update.value ||
+               pending->second.unknown != update.unknown))
+            return;
           if (pending->second.remaining <= 1)
             context->inertialDriverPending.erase(pending);
           else

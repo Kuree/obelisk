@@ -510,8 +510,12 @@ struct ScheduledNBA {
   std::vector<uint8_t> value;
   std::vector<uint8_t> unknown;
   InertialDriverSite inertialSite{UINT64_MAX, 0};
+  bool inertialDriverVector = false;
+  bool inertialDriverInitialProjection = false;
   uint64_t inertialNetBit = UINT64_MAX;
   uint64_t inertialNetGroup = UINT64_MAX;
+  uint64_t inertialNetCancelGroup = UINT64_MAX;
+  bool inertialNetInitialProjection = false;
   bool inertialNetChargeDecay = false;
   bool cancelled = false;
 };
@@ -756,6 +760,7 @@ struct NetAliasRange {
   uint64_t targetOffset = 0;
   uint64_t width = 0;
   bool fourState = false;
+  bool bitwiseDelay = false;
   std::vector<std::optional<std::array<uint64_t, 3>>> propagationDelays;
 };
 
@@ -776,6 +781,8 @@ struct NetAliasCache {
   std::unordered_map<uint64_t, uint64_t> rootByBit;
   std::unordered_map<uint64_t, std::vector<uint64_t>> members;
   std::unordered_map<uint64_t, std::vector<NetDriverBit>> driverBits;
+  std::unordered_map<uint64_t, std::vector<uint64_t>>
+      uniformDelayedRootsByRoot;
   std::unordered_map<uint64_t, uint8_t> resolutionByRoot;
   std::unordered_map<uint64_t, uint8_t> chargeStrengthByBit;
   std::vector<NetAliasRange> nets;

@@ -127,12 +127,12 @@ NetAliasCache *getNetAliasCache(const Image &image,
       nets.push_back(record);
       std::vector<std::optional<std::array<uint64_t, 3>>> propagationDelays(
           record.planeSize);
+      bool bitwiseDelay = (record.argument & (uint32_t{1} << 4)) != 0;
       if ((record.argument & (uint32_t{1} << 3)) != 0) {
         const uint8_t *encoded =
             image.data + image.constants + record.unknownOffset;
-        bool bitwise = (record.argument & (uint32_t{1} << 4)) != 0;
         for (uint64_t bit = 0; bit != record.planeSize; ++bit) {
-          const uint8_t *triple = encoded + (bitwise ? bit * 24 : 0);
+          const uint8_t *triple = encoded + (bitwiseDelay ? bit * 24 : 0);
           uint64_t rise = read64(triple);
           if (rise == UINT64_MAX)
             continue;
@@ -142,7 +142,7 @@ NetAliasCache *getNetAliasCache(const Image &image,
       }
       cache.nets.push_back({record.valueOffset, record.valueOffset,
                             record.planeSize, (record.argument & 1) != 0,
-                            propagationDelays});
+                            bitwiseDelay, propagationDelays});
       uint8_t resolution = decodeNetResolution(record.argument);
       if (resolution == 1)
         resolution = 0; // tri and wire have identical resolution.
@@ -211,6 +211,26 @@ NetAliasCache *getNetAliasCache(const Image &image,
     for (uint64_t bit = 0; bit != driver.planeSize; ++bit)
       cache.driverBits[findRoot(driver.unknownOffset + bit)].push_back(
           {driver.valueOffset + bit, strength0, strength1});
+  }
+  for (const NetAliasRange &net : cache.nets) {
+    if (net.bitwiseDelay || net.propagationDelays.empty() ||
+        !net.propagationDelays.front())
+      continue;
+    std::vector<uint64_t> roots;
+    roots.reserve(net.width);
+    for (uint64_t bit = 0; bit != net.width; ++bit)
+      roots.push_back(cache.rootByBit.at(net.valueOffset + bit));
+    std::sort(roots.begin(), roots.end());
+    roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
+    for (uint64_t root : roots) {
+      auto &expansion = cache.uniformDelayedRootsByRoot[root];
+      expansion.insert(expansion.end(), roots.begin(), roots.end());
+    }
+  }
+  for (auto &[root, expansion] : cache.uniformDelayedRootsByRoot) {
+    std::sort(expansion.begin(), expansion.end());
+    expansion.erase(std::unique(expansion.begin(), expansion.end()),
+                    expansion.end());
   }
   std::unordered_map<uint64_t, std::unordered_set<uint64_t>> dominatedByRoot;
   for (const auto &edge : dominanceEdges)
@@ -368,29 +388,56 @@ bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,
   return true;
 }
 
-void cancelNetBit(obelisk_rt_context *context, uint64_t destination) {
+void cancelNetBit(obelisk_rt_context *context, uint64_t destination,
+                  bool preserveInitialProjection = false) {
   // Resolution can run while the scheduler is applying a propagation-
   // delayed driver from this same vector. Marking the superseded net event
   // avoids invalidating the scheduler's current reference; barrier scans
   // ignore the tombstone and a later compaction removes it.
   if (context->schedulerApplyingNativeUpdate) {
     for (ScheduledNBA &update : context->scheduledNBAs)
-      if (update.inertialNetBit == destination)
+      if (update.inertialNetBit == destination &&
+          (!preserveInitialProjection ||
+           !update.inertialNetInitialProjection))
         update.cancelled = true;
   } else {
     context->scheduledNBAs.erase(
         std::remove_if(context->scheduledNBAs.begin(),
                        context->scheduledNBAs.end(),
                        [&](const ScheduledNBA &update) {
-                         return update.inertialNetBit == destination;
+                         return update.inertialNetBit == destination &&
+                                (!preserveInitialProjection ||
+                                 !update.inertialNetInitialProjection);
                        }),
         context->scheduledNBAs.end());
   }
   context->inertialNetPending.erase(destination);
 }
 
+void cancelNetGroup(obelisk_rt_context *context, uint64_t group) {
+  std::vector<uint64_t> destinations;
+  for (ScheduledNBA &update : context->scheduledNBAs) {
+    if (update.inertialNetCancelGroup != group)
+      continue;
+    destinations.push_back(update.inertialNetBit);
+    if (context->schedulerApplyingNativeUpdate)
+      update.cancelled = true;
+  }
+  if (!context->schedulerApplyingNativeUpdate)
+    context->scheduledNBAs.erase(
+        std::remove_if(context->scheduledNBAs.begin(),
+                       context->scheduledNBAs.end(),
+                       [&](const ScheduledNBA &update) {
+                         return update.inertialNetCancelGroup == group;
+                       }),
+        context->scheduledNBAs.end());
+  for (uint64_t destination : destinations)
+    context->inertialNetPending.erase(destination);
+}
+
 bool scheduleNetBit(obelisk_rt_context *context, uint64_t root,
-                    uint64_t destination, bool value, bool unknown,
+                    uint64_t cancelGroup, uint64_t destination, bool value,
+                    bool unknown,
                     const std::array<uint64_t, 3> &delays, uint8_t resolution,
                     bool chargeDecay) {
   if (auto pending = context->inertialNetPending.find(destination);
@@ -399,11 +446,27 @@ bool scheduleNetBit(obelisk_rt_context *context, uint64_t root,
       pending->second.chargeDecay == chargeDecay)
     return true;
 
-  cancelNetBit(context, destination);
   bool currentValue = bit(context->stateValue, destination);
   bool currentUnknown = bit(context->stateUnknown, destination);
-  if (currentValue == value && currentUnknown == unknown)
+  if (currentValue == value && currentUnknown == unknown) {
+    cancelNetBit(context, destination);
     return true;
+  }
+  // Preserve the first projected value that establishes a wire from its
+  // implicit high-impedance initialization. Once a value has matured, normal
+  // inertial pulse rejection replaces the older pending projection.
+  bool initialProjection = false;
+  if (!chargeDecay && currentValue && currentUnknown) {
+    initialProjection = std::none_of(
+        context->scheduledNBAs.begin(), context->scheduledNBAs.end(),
+        [&](const ScheduledNBA &update) {
+          return update.inertialNetBit == destination &&
+                 update.inertialNetInitialProjection && !update.cancelled;
+        });
+    cancelNetBit(context, destination, true);
+  } else {
+    cancelNetBit(context, destination);
+  }
   if (context->nextSchedulerSequence == 0 ||
       context->nextSchedulerSequence == UINT64_MAX) {
     context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
@@ -452,6 +515,8 @@ bool scheduleNetBit(obelisk_rt_context *context, uint64_t root,
   update.inlineUnknown = unknown;
   update.inertialNetBit = destination;
   update.inertialNetGroup = root;
+  update.inertialNetCancelGroup = cancelGroup;
+  update.inertialNetInitialProjection = initialProjection;
   update.inertialNetChargeDecay = chargeDecay;
   context->scheduledNBAs.push_back(std::move(update));
   context->inertialNetPending.emplace(
@@ -463,10 +528,33 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
                      std::vector<uint64_t> affectedRoots, bool &changed) {
   if (affectedRoots.empty())
     return false;
+  // A uniform vector net delay rejects transitions as one vector even when
+  // only one contributing driver bit changed. Expand the worklist to every
+  // bit of each affected vector before computing its replacement target.
+  std::unordered_set<uint64_t> affectedSet(affectedRoots.begin(),
+                                           affectedRoots.end());
+  for (size_t index = 0; index != affectedRoots.size(); ++index) {
+    auto expansion = cache.uniformDelayedRootsByRoot.find(affectedRoots[index]);
+    if (expansion == cache.uniformDelayedRootsByRoot.end())
+      continue;
+    for (uint64_t root : expansion->second)
+      if (affectedSet.insert(root).second)
+        affectedRoots.push_back(root);
+  }
   std::sort(affectedRoots.begin(), affectedRoots.end());
   affectedRoots.erase(std::unique(affectedRoots.begin(), affectedRoots.end()),
                       affectedRoots.end());
   std::vector<NetPublication> publications;
+  struct DelayedNetPublication {
+    uint64_t root = 0;
+    uint64_t cancelGroup = 0;
+    NetPublication publication{};
+    std::array<uint64_t, 3> delays{};
+    uint8_t resolution = 0;
+    bool initiallyHighZ = false;
+  };
+  std::vector<DelayedNetPublication> delayedPublications;
+  std::unordered_map<uint64_t, bool> initiallyHighZGroups;
   for (uint64_t root : affectedRoots) {
     auto members = cache.members.find(root);
     if (members == cache.members.end())
@@ -591,19 +679,66 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
           // decay is a later transition from that shared value to x.
           publications.push_back(publication);
           if (decay) {
-            if (!scheduleNetBit(context, root, destination, false, true,
+            if (!scheduleNetBit(context, root, root, destination, false, true,
                                 *delays, resolution, true))
               return false;
           } else {
             cancelNetBit(context, destination);
           }
-        } else if (!scheduleNetBit(context, root, destination, publishValue,
-                                   publishUnknown, *delays, resolution, false))
-          return false;
+        } else {
+          uint64_t group =
+              net->bitwiseDelay ? destination : net->valueOffset;
+          auto [initial, inserted] =
+              initiallyHighZGroups.try_emplace(group, true);
+          if (inserted)
+            for (uint64_t bit = 0; bit != net->width; ++bit)
+              initial->second &=
+                  obelisk::designbytecode::bit(context->stateValue,
+                                               net->valueOffset + bit) &&
+                  obelisk::designbytecode::bit(context->stateUnknown,
+                                               net->valueOffset + bit);
+          delayedPublications.push_back({root, group, publication, *delays,
+                                         resolution, initial->second});
+        }
       } else {
         publications.push_back(publication);
       }
     }
+  }
+  if (!delayedPublications.empty()) {
+    std::unordered_set<uint64_t> groupsToCancel;
+    std::unordered_set<uint64_t> groupsWithPending;
+    for (const ScheduledNBA &update : context->scheduledNBAs)
+      if (update.inertialNetBit != UINT64_MAX &&
+          !update.inertialNetInitialProjection && !update.cancelled)
+        groupsWithPending.insert(update.inertialNetCancelGroup);
+    for (const DelayedNetPublication &delayed : delayedPublications) {
+      if (delayed.initiallyHighZ)
+        continue;
+      auto pending =
+          context->inertialNetPending.find(delayed.publication.destination);
+      bool matchingPending =
+          pending != context->inertialNetPending.end() &&
+          pending->second.value == delayed.publication.value &&
+          pending->second.unknown == delayed.publication.unknown &&
+          !pending->second.chargeDecay;
+      bool targetChanged =
+          delayed.publication.oldValue != delayed.publication.value ||
+          delayed.publication.oldUnknown != delayed.publication.unknown;
+      if ((pending != context->inertialNetPending.end() && !matchingPending) ||
+          (targetChanged && !matchingPending &&
+           groupsWithPending.count(delayed.cancelGroup)))
+        groupsToCancel.insert(delayed.cancelGroup);
+    }
+    for (uint64_t group : groupsToCancel)
+      cancelNetGroup(context, group);
+    for (const DelayedNetPublication &delayed : delayedPublications)
+      if (!scheduleNetBit(context, delayed.root, delayed.cancelGroup,
+                          delayed.publication.destination,
+                          delayed.publication.value,
+                          delayed.publication.unknown, delayed.delays,
+                          delayed.resolution, false))
+        return false;
   }
   if (publications.empty())
     return true;

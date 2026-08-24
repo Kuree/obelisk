@@ -177,6 +177,18 @@ control boundaries, frame lanes are created only when the hidden edge can
 reach a use before redefinition, and merge arguments are inserted lazily.
 The full regression suite passes 1276/1276 tests.
 
+L12's second closure tranche removes the remaining audited compiler crash in
+delayed-net lowering by recording stable driver identities before parallel
+dialect conversion rewrites SSA signatures. It also makes uniform vector net
+and continuous-assignment delays reject pulses atomically while preserving the
+initial value projected from a net's implicit high-impedance state. Bitwise
+delay behavior and collapsed-alias publication batching remain independent.
+Uniform delayed-vector root expansions are cached once with the design image,
+and ordinary nets do not scan delayed events. The UVM smoke ran in 34.608
+seconds compile / 0.179 seconds simulate for bytecode and 71.801 seconds
+compile / 0.019 seconds simulate for native, with zero UVM errors or fatals.
+The full regression suite passes 1277/1277 tests and all 426 runtime tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |

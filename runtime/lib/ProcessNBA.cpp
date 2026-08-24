@@ -467,6 +467,17 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
           context->scheduledNBAs.end());
       context->inertialDriverPending.erase(site);
     };
+    auto preserveInitialProjection = [&] {
+      context->scheduledNBAs.erase(
+          std::remove_if(context->scheduledNBAs.begin(),
+                         context->scheduledNBAs.end(),
+                         [&](const ScheduledNBA &update) {
+                           return update.inertialSite == site &&
+                                  !update.inertialDriverInitialProjection;
+                         }),
+          context->scheduledNBAs.end());
+      context->inertialDriverPending.erase(site);
+    };
     // Dynamic driver selections use the invalid handle as a no-drive value.
     // Re-evaluation still rejects an older pulse from this assignment site.
     if (bitOffset == UINT64_MAX) {
@@ -552,8 +563,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
         !realBitsAreNaN(targetValue))
       return OBELISK_RT_OK;
 
-    cancelPending();
-
     auto sourceBit = [](const std::vector<uint8_t> &plane, uint64_t bit) {
       return bit / 8 < plane.size() && byteBit(plane.data(), bit);
     };
@@ -574,7 +583,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
       return newValue ? turnoffDelay
                       : std::min({riseDelay, fallDelay, turnoffDelay});
     };
-    auto enqueue = [&](uint64_t first, uint64_t width, uint64_t delay) {
+    auto enqueue = [&](uint64_t first, uint64_t width, uint64_t delay,
+                       bool initialProjection) {
       if (context->nextSchedulerSequence == 0 ||
           context->nextSchedulerSequence == UINT64_MAX)
         return false;
@@ -606,6 +616,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
                            ? UINT64_MAX
                            : context->schedulerTime + delay;
       update.inertialSite = site;
+      update.inertialDriverVector =
+          (flags & OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY) != 0;
+      update.inertialDriverInitialProjection = initialProjection;
       uint64_t bytes = (width - 1) / 8 + 1;
       update.value.assign(static_cast<size_t>(bytes), 0);
       if (unknownPlane)
@@ -624,6 +637,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
     if ((flags & OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY) != 0) {
       bool changed = false;
       bool oldNonzero = false;
+      bool oldHighZ = !realValue;
       bool newZero = true;
       bool newHighZ = true;
       if (realValue) {
@@ -656,23 +670,41 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
           bool newUnknown = sourceBit(targetUnknown, bit);
           changed |= oldValue != newValue || oldUnknown != newUnknown;
           oldNonzero |= !oldUnknown && oldValue;
+          oldHighZ &= oldUnknown && oldValue;
           newZero &= !newUnknown && !newValue;
           newHighZ &= newUnknown && newValue;
         }
       }
       if (changed) {
+        // The first projected value of a continuous assignment starts from
+        // the net's implicit high-impedance state and must be allowed to
+        // establish that initial value. Later input pulses reject an older
+        // pending projection from the same assignment site.
+        bool hasInitialProjection = std::any_of(
+            context->scheduledNBAs.begin(), context->scheduledNBAs.end(),
+            [&](const ScheduledNBA &update) {
+              return update.inertialSite == site &&
+                     update.inertialDriverInitialProjection;
+            });
+        if (oldHighZ)
+          preserveInitialProjection();
+        else
+          cancelPending();
         if (context->nextSchedulerSequence == 0 ||
             context->nextSchedulerSequence == UINT64_MAX)
           return OBELISK_RT_OUT_OF_RESOURCES;
-        uint64_t delay = realValue       ? riseDelay
-                         : newHighZ       ? turnoffDelay
+        uint64_t delay = realValue               ? riseDelay
+                         : newHighZ              ? turnoffDelay
                          : oldNonzero && newZero ? fallDelay
-                                                   : riseDelay;
-        if (!enqueue(0, bitWidth, delay))
+                                                 : riseDelay;
+        if (!enqueue(0, bitWidth, delay,
+                     oldHighZ && !hasInitialProjection))
           return OBELISK_RT_OUT_OF_RESOURCES;
         scheduled = 1;
-      }
+      } else
+        cancelPending();
     } else {
+      cancelPending();
       for (uint64_t bit = 0; bit != bitWidth; ++bit) {
         bool newValue = sourceBit(targetValue, bit);
         bool newUnknown = sourceBit(targetUnknown, bit);
@@ -691,7 +723,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
         if (currentBit(false, bit) == newValue &&
             currentBit(true, bit) == newUnknown)
           continue;
-        if (!enqueue(bit, 1, delayFor(newValue, newUnknown)))
+        if (!enqueue(bit, 1, delayFor(newValue, newUnknown), false))
           return OBELISK_RT_OUT_OF_RESOURCES;
       }
     }

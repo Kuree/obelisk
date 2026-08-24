@@ -168,12 +168,16 @@ public:
     }
 
     if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveDelayedNetOp>) {
-      std::optional<uint64_t> driverID = getStaticDriverID(op.getDriver());
-      auto driver = driverID ? llvm::find_if(layout.driverLayouts,
-                                             [&](const auto &candidate) {
-                                               return candidate.id == *driverID;
-                                             })
-                             : layout.driverLayouts.end();
+      auto driverID =
+          op->template getAttrOfType<IntegerAttr>("obelisk.native.driver_id");
+      auto driver =
+          driverID
+              ? llvm::find_if(layout.driverLayouts,
+                              [&](const auto &candidate) {
+                                return candidate.id ==
+                                       static_cast<uint64_t>(driverID.getInt());
+                              })
+              : layout.driverLayouts.end();
       if (driver == layout.driverLayouts.end())
         return failure();
       uint64_t begin = driver->offset + driver->drivenLow;
@@ -211,13 +215,17 @@ public:
     // vector-shaped through LLVM lowering so very wide constants do not turn
     // into millions of scalar loads, selects, and stores.
     const NativeStateLayout::Net *bulkNet = nullptr;
-    if (op.getDriver().template getDefiningOp<sim::SimContextDriverOp>()) {
-      std::optional<uint64_t> driverID = getStaticDriverID(op.getDriver());
-      auto driver = driverID ? llvm::find_if(layout.driverLayouts,
-                                             [&](const auto &candidate) {
-                                               return candidate.id == *driverID;
-                                             })
-                             : layout.driverLayouts.end();
+    if (op->hasAttr("obelisk.native.whole_driver")) {
+      auto driverID =
+          op->template getAttrOfType<IntegerAttr>("obelisk.native.driver_id");
+      auto driver =
+          driverID
+              ? llvm::find_if(layout.driverLayouts,
+                              [&](const auto &candidate) {
+                                return candidate.id ==
+                                       static_cast<uint64_t>(driverID.getInt());
+                              })
+              : layout.driverLayouts.end();
       if (driver != layout.driverLayouts.end()) {
         auto net = llvm::find_if(layout.netLayouts, [&](const auto &candidate) {
           return candidate.id == driver->netId;
@@ -634,9 +642,15 @@ private:
 void annotateStaticDriverNets(ModuleOp module,
                               const NativeStateLayout &layout) {
   auto annotate = [&](auto drive) {
+    if (drive.getDriver().template getDefiningOp<sim::SimContextDriverOp>())
+      drive->setAttr("obelisk.native.whole_driver",
+                     UnitAttr::get(module.getContext()));
     std::optional<uint64_t> driverID = getStaticDriverID(drive.getDriver());
     if (!driverID)
       return;
+    drive->setAttr(
+        "obelisk.native.driver_id",
+        IntegerAttr::get(IntegerType::get(module.getContext(), 64), *driverID));
     for (const NativeStateLayout::Driver &driver : layout.driverLayouts) {
       if (driver.id != *driverID)
         continue;
@@ -647,6 +661,7 @@ void annotateStaticDriverNets(ModuleOp module,
     }
   };
   module.walk([&](sim::SimDriverDriveOp drive) { annotate(drive); });
+  module.walk([&](sim::SimDriverDriveDelayedNetOp drive) { annotate(drive); });
   module.walk([&](sim::SimDriverDriveChangedOp drive) { annotate(drive); });
 }
 
