@@ -3370,6 +3370,27 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     return obelisk_rt_v1_scheduler_error(context);
   case OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED:
     return sentinel(0, obelisk_rt_v1_scheduler_termination_requested(context));
+  case OBELISK_RT_INTRINSIC_V1_NET_COUNT_DRIVERS: {
+    Layout net = layoutAt(image, frame.function, inputRegister(0));
+    if (net.kind != OBELISK_RT_DBREG_HANDLE)
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t stable = UINT64_MAX;
+    if (!encodeCanonicalHandle(frame.data + net.offset, stable))
+      return OBELISK_RT_INVALID_HANDLE;
+    uint32_t forced = 0, total = 0, zero = 0, one = 0, unknown = 0;
+    obelisk_rt_status query = obelisk_rt_count_design_drivers(
+        context, stable, &forced, &total, &zero, &one, &unknown, false);
+    if (query != OBELISK_RT_OK)
+      return query;
+    const uint32_t values[] = {forced, total, zero, one, unknown};
+    for (uint32_t index = 0; index != 5; ++index) {
+      uint32_t value = values[index];
+      obelisk_rt_status written = sentinel(index, value);
+      if (written != OBELISK_RT_OK)
+        return written;
+    }
+    return OBELISK_RT_OK;
+  }
   case OBELISK_RT_INTRINSIC_V1_TIME_NOW:
     return sentinel(0, obelisk_rt_v1_scheduler_time(context));
   case OBELISK_RT_INTRINSIC_V1_SAMPLED_READ: {

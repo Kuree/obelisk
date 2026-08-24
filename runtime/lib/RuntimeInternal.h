@@ -774,6 +774,10 @@ struct NetStrengthDriverPairRange {
   uint64_t lowOffset = 0;
   uint64_t highOffset = 0;
   uint64_t width = 0;
+  uint8_t lowStrength0 = 6;
+  uint8_t lowStrength1 = 6;
+  uint8_t highStrength0 = 6;
+  uint8_t highStrength1 = 6;
 };
 
 struct NetAliasCache {

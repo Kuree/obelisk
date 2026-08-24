@@ -2,6 +2,7 @@
 
 #include "DesignBytecodeNets.h"
 #include "DesignBytecodeLogic.h"
+#include "ProcessPacking.h"
 #include "ProcessShared.h"
 #include "RuntimeInternal.h"
 
@@ -156,7 +157,11 @@ NetAliasCache *getNetAliasCache(const Image &image,
       if ((record.argument & (uint32_t{1} << 11)) != 0 && !drivers.empty()) {
         const CaptureRecord &low = drivers.back();
         cache.strengthDriverPairs.push_back(
-            {low.valueOffset, record.valueOffset, record.planeSize});
+            {low.valueOffset, record.valueOffset, record.planeSize,
+             decodeDriverStrength(low.argument, 3),
+             decodeDriverStrength(low.argument, 7),
+             decodeDriverStrength(record.argument, 3),
+             decodeDriverStrength(record.argument, 7)});
       }
       drivers.push_back(record);
       cache.drivers.push_back(
@@ -792,6 +797,150 @@ using namespace obelisk::designbytecode;
 
 extern "C" uint16_t obelisk_rt_v1_strength_resolve(uint16_t lhs, uint16_t rhs) {
   return combineStrengthRanges(lhs, rhs);
+}
+
+obelisk_rt_status obelisk_rt_count_design_drivers(
+    obelisk_rt_context *context, uint64_t netHandle, uint32_t *outForced,
+    uint32_t *outTotal, uint32_t *outZero, uint32_t *outOne,
+    uint32_t *outUnknown, bool useNativeState) noexcept {
+  if (!context || !context->execution || !outForced || !outTotal || !outZero ||
+      !outOne || !outUnknown)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outForced = *outTotal = *outZero = *outOne = *outUnknown = 0;
+  try {
+    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    Image image;
+    if (!loadValidatedImage(entry, context, image))
+      return OBELISK_RT_INVALID_BYTECODE;
+    ContextTransaction transaction(context);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+
+    int64_t coordinate = 0;
+    uint64_t absolute = 0;
+    uint32_t staticID = 0;
+    if (decodeNativeStatic(netHandle, staticID, coordinate)) {
+      const NativeStaticState *state = findNativeStaticState(context, staticID);
+      if (!state || coordinate < 0 ||
+          static_cast<uint64_t>(coordinate) >= state->bitWidth)
+        return OBELISK_RT_INVALID_HANDLE;
+      absolute = state->bitOffset + static_cast<uint64_t>(coordinate);
+    } else if (decodeNativeGlobal(netHandle, coordinate)) {
+      if (coordinate < 0)
+        return OBELISK_RT_INVALID_HANDLE;
+      absolute = static_cast<uint64_t>(coordinate);
+    } else {
+      return OBELISK_RT_INVALID_HANDLE;
+    }
+
+    NetAliasCache *cache = getNetAliasCache(image, context);
+    auto rootFound = cache->rootByBit.find(absolute);
+    if (rootFound == cache->rootByBit.end())
+      return OBELISK_RT_INVALID_HANDLE;
+    uint64_t root = rootFound->second;
+    auto members = cache->members.find(root);
+    if (members == cache->members.end())
+      return OBELISK_RT_INVALID_HANDLE;
+    for (uint64_t member : members->second)
+      if (member / 64 < context->forceMask.size() &&
+          (context->forceMask[member / 64] & (uint64_t{1} << (member % 64))) !=
+              0) {
+        *outForced = 1;
+        break;
+      }
+
+    auto contribution = [&](uint16_t strengths) {
+      bool hasZ = (strengths & strengthBit(0)) != 0;
+      constexpr uint16_t negative = (uint16_t{1} << 7) - 1;
+      constexpr uint16_t positive = static_cast<uint16_t>(
+          ((uint16_t{1} << strengthCount) - 1) & ~((uint16_t{1} << 8) - 1));
+      bool hasZero = (strengths & negative) != 0;
+      bool hasOne = (strengths & positive) != 0;
+      if (hasZ && !hasZero && !hasOne)
+        return;
+      ++*outTotal;
+      if (hasZero && !hasZ && !hasOne)
+        ++*outZero;
+      else if (hasOne && !hasZ && !hasZero)
+        ++*outOne;
+      else
+        ++*outUnknown;
+    };
+    auto stateBit = [&](bool unknownPlane, uint64_t offset) {
+      const uint8_t *native = unknownPlane ? context->nativeStateUnknown
+                                           : context->nativeStateValue;
+      if (useNativeState && native && offset < context->nativeStateBitCount)
+        return (native[offset / 8] &
+                static_cast<uint8_t>(1u << (offset % 8))) != 0;
+      return bit(unknownPlane ? context->stateUnknown : context->stateValue,
+                 offset);
+    };
+    auto strengthsFor = [&](uint64_t offset, uint8_t strength0,
+                            uint8_t strength1) {
+      bool value = stateBit(false, offset);
+      bool unknown = stateBit(true, offset);
+      if (!unknown)
+        return strengthBit(value ? strength1 : -static_cast<int>(strength0));
+      if (value)
+        return strengthBit(0);
+      uint16_t strengths = 0;
+      for (int point = -static_cast<int>(strength0);
+           point <= static_cast<int>(strength1); ++point)
+        strengths |= strengthBit(point);
+      return strengths;
+    };
+    auto containingPair =
+        [&](uint64_t offset,
+            bool highBank) -> const NetStrengthDriverPairRange * {
+      auto pair = std::upper_bound(
+          cache->strengthDriverPairs.begin(), cache->strengthDriverPairs.end(),
+          offset,
+          [&](uint64_t needle, const NetStrengthDriverPairRange &range) {
+            return needle < (highBank ? range.highOffset : range.lowOffset);
+          });
+      if (pair == cache->strengthDriverPairs.begin())
+        return static_cast<const NetStrengthDriverPairRange *>(nullptr);
+      --pair;
+      uint64_t start = highBank ? pair->highOffset : pair->lowOffset;
+      if (offset < start || offset - start >= pair->width)
+        return static_cast<const NetStrengthDriverPairRange *>(nullptr);
+      return &*pair;
+    };
+
+    auto drivers = cache->driverBits.find(root);
+    if (drivers == cache->driverBits.end())
+      return OBELISK_RT_OK;
+    for (const NetDriverBit &driver : drivers->second) {
+      if (containingPair(driver.valueOffset, true))
+        continue;
+      const NetStrengthDriverPairRange *pair =
+          containingPair(driver.valueOffset, false);
+      uint16_t strengths =
+          strengthsFor(driver.valueOffset, driver.strength0, driver.strength1);
+      if (pair) {
+        uint64_t highOffset =
+            pair->highOffset + (driver.valueOffset - pair->lowOffset);
+        strengths = combineStrengthRanges(
+            strengths,
+            strengthsFor(highOffset, pair->highStrength0, pair->highStrength1));
+      }
+      contribution(strengths);
+    }
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_BYTECODE;
+  }
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_net_count_drivers(obelisk_rt_context *context, uint64_t netHandle,
+                                uint32_t *outForced, uint32_t *outTotal,
+                                uint32_t *outZero, uint32_t *outOne,
+                                uint32_t *outUnknown) {
+  return obelisk_rt_count_design_drivers(context, netHandle, outForced,
+                                         outTotal, outZero, outOne, outUnknown,
+                                         true);
 }
 
 extern "C" uint16_t obelisk_rt_v1_strength_resolve_kind(uint16_t lhs,

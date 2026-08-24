@@ -780,3 +780,30 @@ if(patched_at EQUAL -1)
 endif()
 
 file(WRITE "${select_expressions_source}" "${contents}")
+
+# Annex D.2 permits a scalar net or a bit-select of a vector net. Slang v11
+# asks getSymbolReference to reject every packed select before checking the
+# selected expression's width, diagnosing the specified vector form.
+set(non_const_funcs_source
+  "${SOURCE_DIR}/source/ast/builtins/NonConstFuncs.cpp")
+file(READ "${non_const_funcs_source}" contents)
+set(old_code [[
+        auto sym = args[0]->getSymbolReference(/* allowPacked */ false);
+        if (!sym || sym->kind != SymbolKind::Net)
+            context.addDiag(diag::ExpectedNetRef, args[0]->sourceRange);
+]])
+set(new_code [[
+        auto sym = args[0]->getSymbolReference(/* allowPacked */ true);
+        if (!sym || sym->kind != SymbolKind::Net || args[0]->type->getBitWidth() != 1)
+            context.addDiag(diag::ExpectedNetRef, args[0]->sourceRange);
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's countdrivers net-reference check no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+  file(WRITE "${non_const_funcs_source}" "${contents}")
+endif()

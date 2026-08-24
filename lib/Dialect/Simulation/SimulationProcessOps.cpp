@@ -1691,6 +1691,14 @@ LogicalResult SimNetExtractOp::verify() {
   return success();
 }
 
+LogicalResult SimNetCountDriversOp::verify() {
+  std::optional<unsigned> width =
+      getPackedWidth(getNet().getType().getElementType());
+  if (!width || *width != 1)
+    return emitOpError("requires a scalar net or one-bit net view");
+  return success();
+}
+
 LogicalResult SimDriverDriveInertialStrengthPairOp::verify() {
   Type lowType = getLowDriver().getType().getElementType();
   Type highType = getHighDriver().getType().getElementType();

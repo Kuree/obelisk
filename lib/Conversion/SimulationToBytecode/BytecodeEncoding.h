@@ -96,6 +96,8 @@ constexpr uint32_t kIntrinsicEventTriggered =
     OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGERED;
 constexpr uint32_t kIntrinsicWaitOrderFailed =
     OBELISK_RT_INTRINSIC_V1_WAIT_ORDER_FAILED;
+constexpr uint32_t kIntrinsicNetCountDrivers =
+    OBELISK_RT_INTRINSIC_V1_NET_COUNT_DRIVERS;
 constexpr uint32_t kIntrinsicStateAlloc = OBELISK_RT_INTRINSIC_V1_STATE_ALLOC;
 constexpr uint32_t kIntrinsicStateAllocTyped =
     OBELISK_RT_INTRINSIC_V1_STATE_ALLOC_TYPED;

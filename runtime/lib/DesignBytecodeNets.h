@@ -12,6 +12,11 @@
 struct NetAliasCache;
 struct obelisk_rt_context;
 
+obelisk_rt_status obelisk_rt_count_design_drivers(
+    obelisk_rt_context *context, uint64_t netHandle, uint32_t *outForced,
+    uint32_t *outTotal, uint32_t *outZero, uint32_t *outOne,
+    uint32_t *outUnknown, bool useNativeState) noexcept;
+
 namespace obelisk::designbytecode {
 
 using obelisk::runtime::rangesOverlap;

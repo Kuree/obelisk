@@ -917,6 +917,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_WAIT_ORDER_FAILED = UINT32_C(0x00010238),
   OBELISK_RT_INTRINSIC_V1_CONTROL_BOUNDARY = UINT32_C(0x00010239),
   OBELISK_RT_INTRINSIC_V1_CONTROL_ESCAPE_PENDING = UINT32_C(0x0001023a),
+  OBELISK_RT_INTRINSIC_V1_NET_COUNT_DRIVERS = UINT32_C(0x0001023b),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -3069,6 +3070,13 @@ obelisk_rt_status obelisk_rt_v1_native_release_override(
     uint32_t descriptor_kind, uint32_t assign);
 uint64_t obelisk_rt_v1_native_state_static_handle(uint32_t id);
 uint64_t obelisk_rt_v1_native_handle_offset(uint64_t handle, int64_t offset);
+// IEEE 1800-2017 Annex D.2 scalar-net driver query. Z contributions are
+// excluded; paired conditional-primitive strength banks count as one driver.
+obelisk_rt_status
+obelisk_rt_v1_net_count_drivers(obelisk_rt_context *context,
+                                uint64_t net_handle, uint32_t *out_forced,
+                                uint32_t *out_total, uint32_t *out_zero,
+                                uint32_t *out_one, uint32_t *out_unknown);
 obelisk_rt_status obelisk_rt_v1_native_state_alloc(obelisk_rt_context *context,
                                                    uint64_t bit_width,
                                                    const uint8_t *value,

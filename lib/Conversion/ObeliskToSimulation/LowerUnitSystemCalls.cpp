@@ -391,6 +391,63 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return dummyTaskResult();
   }
 
+  if (name == "$countdrivers") {
+    if (children.empty() || children.size() > 6) {
+      emitError(location) << "$countdrivers requires one to six arguments";
+      return failure();
+    }
+    FailureOr<Value> net = lowerExpression(children.front(), true);
+    auto netType = succeeded(net) ? dyn_cast<sim::NetType>((*net).getType())
+                                  : sim::NetType{};
+    if (!netType || sim::getPackedWidth(netType.getElementType()) != 1) {
+      emitError(getSemanticLocation(children.front()))
+          << "$countdrivers requires a scalar net or a bit-select of a "
+             "vector net";
+      return failure();
+    }
+    auto counts = sim::SimNetCountDriversOp::create(
+        builder, location, TypeRange{i32, i32, i32, i32, i32}, *net);
+    SmallVector<Value, 5> values{counts.getForced(), counts.getTotal(),
+                                 counts.getZero(), counts.getOne(),
+                                 counts.getUnknown()};
+    for (size_t index = 1; index != children.size(); ++index) {
+      Operation *actual = children[index];
+      if (auto assignment =
+              dyn_cast<semantic::SVAssignmentExpressionOp>(actual)) {
+        SmallVector<Operation *> outputChildren = getChildren(assignment);
+        if (outputChildren.size() == 2) {
+          Operation *placeholder = outputChildren[1];
+          while (isa<semantic::SVConversionExpressionOp>(placeholder)) {
+            SmallVector<Operation *> converted = getChildren(placeholder);
+            if (converted.size() != 1)
+              break;
+            placeholder = converted.front();
+          }
+          if (isa<semantic::SVEmptyArgumentExpressionOp>(placeholder))
+            actual = outputChildren.front();
+        }
+      }
+      FailureOr<Value> destination = lowerExpression(actual, true);
+      Type destinationType = succeeded(destination)
+                                 ? getReferenceElementType(*destination)
+                                 : Type{};
+      if (!destinationType) {
+        emitError(getSemanticLocation(actual))
+            << "$countdrivers output argument must be a writable variable";
+        return failure();
+      }
+      FailureOr<Value> converted =
+          convert(values[index - 1], destinationType, false, location);
+      if (failed(converted) ||
+          failed(storeReference(*destination, *converted, location)))
+        return failure();
+    }
+    Value multiple =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ugt,
+                              counts.getTotal(), constant(i32, 1));
+    return convertResult(multiple);
+  }
+
   bool realConversion =
       llvm::StringSwitch<bool>(name)
           .Cases({"$itor", "$rtoi", "$bitstoreal", "$realtobits",

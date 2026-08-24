@@ -17,6 +17,23 @@ namespace {
 constexpr StringLiteral continuousStoreAttrName =
     "obelisk_sim.continuous_store";
 
+Value loadCurrentRuntimeContext(ConversionPatternRewriter &rewriter,
+                                Location location) {
+  Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+  Value address = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                            "__obelisk_current_context");
+  return LLVM::LoadOp::create(rewriter, location, pointer, address, 8);
+}
+
+void reportRuntimeControlStatus(ConversionPatternRewriter &rewriter,
+                                Location location, Value context,
+                                Value status) {
+  LLVM::CallOp::create(
+      rewriter, location, TypeRange{},
+      SymbolRefAttr::get(rewriter.getContext(), "obelisk_rt_v1_scheduler_fail"),
+      ValueRange{context, status});
+}
+
 bool useTwoStateSpecialization(Operation *operation, bool moduleWide) {
   if (moduleWide)
     return true;
@@ -428,6 +445,46 @@ private:
   bool experimentalTwoState;
 };
 
+class NetCountDriversConversion final
+    : public OpConversionPattern<sim::SimNetCountDriversOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimNetCountDriversOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getNet().size() != 1)
+      return failure();
+    Location location = op.getLoc();
+    Type i32 = rewriter.getI32Type();
+    Value context = loadCurrentRuntimeContext(rewriter, location);
+    SmallVector<Value, 5> outputs;
+    outputs.reserve(5);
+    for (unsigned index = 0; index != 5; ++index) {
+      Value output = entryAlloca(rewriter, location, i32, 1, 4);
+      LLVM::StoreOp::create(rewriter, location,
+                            llvmConstant(rewriter, location, i32, 0), output,
+                            4);
+      outputs.push_back(output);
+    }
+    SmallVector<Value, 7> arguments{context, adaptor.getNet().front()};
+    llvm::append_range(arguments, outputs);
+    Value status = LLVM::CallOp::create(
+                       rewriter, location, TypeRange{i32},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_net_count_drivers"),
+                       arguments)
+                       .getResult();
+    reportRuntimeControlStatus(rewriter, location, context, status);
+    SmallVector<Value, 5> replacements;
+    for (Value output : outputs)
+      replacements.push_back(
+          LLVM::LoadOp::create(rewriter, location, i32, output, 4));
+    rewriter.replaceOp(op, replacements);
+    return success();
+  }
+};
+
 } // namespace
 
 void populateStateReadWriteToLLVMConversionPatterns(
@@ -440,6 +497,7 @@ void populateStateReadWriteToLLVMConversionPatterns(
   patterns.add<NetReadConversion, DriverReadConversion, NetWriteConversion>(
       converter, patterns.getContext(), stateBitCount, directLayout,
       experimentalTwoState);
+  patterns.add<NetCountDriversConversion>(converter, patterns.getContext());
 }
 
 } // namespace obelisk::detail

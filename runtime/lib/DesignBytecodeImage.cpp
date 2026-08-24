@@ -514,6 +514,14 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_WAIT_ORDER_FAILED:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && bits(output(0), 1);
+  case OBELISK_RT_INTRINSIC_V1_NET_COUNT_DRIVERS:
+    if (signature.flags != 0 || site.inputCount != 1 || site.outputCount != 5 ||
+        !handle(input(0)))
+      return false;
+    for (uint32_t index = 0; index != 5; ++index)
+      if (!twoStateBits(output(index), 32))
+        return false;
+    return true;
   case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC:
     if (signature.flags != 0 || site.inputCount == 0 || site.outputCount != 1 ||
         (!numeric(input(0)) && !floating(input(0)) && !managed(input(0)) &&

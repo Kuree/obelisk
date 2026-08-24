@@ -519,6 +519,7 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
   module.walk(
       [&](obelisk::sim::SimSampledReadOp) { needsSampledStatePlan = true; });
   bool needsWaveformMetadata = false;
+  bool needsNetDriverTopology = false;
   module.walk([&](mlir::Operation *operation) {
     needsWaveformMetadata |= mlir::isa<
         obelisk::sim::SimDumpOpenOp, obelisk::sim::SimDumpOpenStringOp,
@@ -527,10 +528,17 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
         obelisk::sim::SimDumpLimitOp, obelisk::sim::SimDumpFlushOp,
         obelisk::sim::SimDumpPortsOp, obelisk::sim::SimDumpPortsControlOp>(
         operation);
+    needsNetDriverTopology |=
+        mlir::isa<obelisk::sim::SimNetCountDriversOp>(operation);
   });
+  // The query reads raw driver contributions through the runtime. Bind the
+  // generated native planes even when no force/VPI feature otherwise needs
+  // canonical state synchronization.
+  requiresStateSync |= needsNetDriverTopology;
   bool needsDesignEncoding = bytecode || needsHybridBytecode || vpi != "off" ||
                              hasLanguageOverride || needsWaveformMetadata ||
-                             hasDriverNBA || hasDelayedNet || hasInertialDriver;
+                             hasDriverNBA || hasDelayedNet ||
+                             hasInertialDriver || needsNetDriverTopology;
   requiresStateSync |= needsSampledStatePlan && !needsDesignEncoding;
   if (needsDesignEncoding) {
     // Bytecode and native lowering must observe the same suspension-safe SSA

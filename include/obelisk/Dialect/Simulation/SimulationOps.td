@@ -2897,6 +2897,24 @@ def SimNetReadOp : SimOp<"net.read", [
   let assemblyFormat = "$net attr-dict `:` qualified(type($net)) `->` type($result)";
 }
 
+def SimNetCountDriversOp : SimOp<"net.count_drivers", [
+    MemoryEffects<[MemRead<SimNetResource>]>
+  ]> {
+  let summary = "count active scalar-net driver contributions";
+  let description = [{
+    Implements the state query underlying IEEE 1800-2017 Annex D.2. The net
+    operand must denote one scalar net bit. Results report whether that bit is
+    forced, followed by the counts of non-Z drivers in total, 0, 1, and x
+    states. Collapsed net components and paired conditional-primitive strength
+    drivers are counted as their logical SystemVerilog drivers.
+  }];
+  let arguments = (ins SimNetType:$net);
+  let results = (outs I32:$forced, I32:$total, I32:$zero, I32:$one,
+                       I32:$unknown);
+  let assemblyFormat = "$net attr-dict `:` qualified(type($net))";
+  let hasVerifier = 1;
+}
+
 def SimNetWriteOp : SimOp<"net.write", [
     MemoryEffects<[MemWrite<SimNetResource>]>,
     SimNetElementMatches<"net", "value">

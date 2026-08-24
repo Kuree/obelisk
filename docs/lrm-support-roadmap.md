@@ -482,6 +482,23 @@ bytecode and 73.117 seconds compile / 0.019 seconds simulate for native, with
 zero UVM errors or fatals. The full regression suite passes 1304/1304 tests and
 all 427 runtime tests.
 
+L12's twentieth closure tranche implements the informative Annex D.2
+`$countdrivers` compatibility query for scalar nets and vector bit-selects.
+It reports optional force, total, zero, one, and unknown counts; excludes Z
+contributions; preserves underlying counts during force; follows collapsed
+inout components; and counts the complementary strength banks of one
+conditional primitive as one logical driver. Native and bytecode execution
+read their own authoritative state planes, and each query walks only the
+queried component's drivers with logarithmic paired-bank lookup, leaving the
+ordinary net-resolution hot path unchanged. Four of the five upstream
+`countdrivers` cases now pass; the remaining case is blocked independently by
+the missing `tran` primitive. The focused O3 case compiles in 0.06 seconds at
+77 MB RSS for bytecode and 0.42 seconds at 94 MB RSS for native, then simulates
+below 0.01 seconds in either tier. The UVM smoke ran in 34.910 seconds compile /
+0.181 seconds simulate for bytecode and 72.585 seconds compile / 0.020 seconds
+simulate for native, with zero UVM errors or fatals. The full regression suite
+passes 1305/1305 tests and all 427 runtime tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -754,12 +771,13 @@ one commit.
 ## Optional non-standard annex tail
 
 Informative Annex D says its tasks are not part of IEEE 1800-2017.  If Obelisk
-chooses compatibility beyond the conformance target, track `$countdrivers`,
-`$getpattern`, `$input`, `$key`/`$nokey`, `$list`, `$log`/`$nolog`,
-`$reset` and its queries, `$save`/`$restart`/`$incsave`, `$scale`, `$scope`,
-`$showscopes`, `$showvars`, and `$sreadmemb`/`$sreadmemh` separately.  The
-ivtest `$countdrivers` failures belong here, not in the normative Chapter 20
-plan.  Annex E directives are treated the same way.
+chooses compatibility beyond the conformance target, track `$getpattern`,
+`$input`, `$key`/`$nokey`, `$list`, `$log`/`$nolog`, `$reset` and its queries,
+`$save`/`$restart`/`$incsave`, `$scale`, `$scope`, `$showscopes`, `$showvars`,
+and `$sreadmemb`/`$sreadmemh` separately. The Annex D.2 `$countdrivers`
+compatibility subset is executable for the standardized scalar-net and
+bit-select forms; it remains outside the normative Chapter 20 conformance
+plan. Annex E directives are treated the same way.
 
 ## Completion rule
 
