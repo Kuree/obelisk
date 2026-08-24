@@ -67,6 +67,12 @@ public:
       flags |= OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY;
     if (op.getDeferResolution())
       flags |= OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION;
+    if (op->hasAttr("obelisk_sim.user_net_raw_drive"))
+      flags |= OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW;
+    if (op.getValue().getType().isF32())
+      flags |= OBELISK_RT_INERTIAL_DRIVER_REAL32;
+    if (op.getValue().getType().isF64())
+      flags |= OBELISK_RT_INERTIAL_DRIVER_REAL64;
     Value status =
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},

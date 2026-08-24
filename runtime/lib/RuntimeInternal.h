@@ -499,6 +499,8 @@ struct ScheduledNBA {
   bool driver = false;
   bool deferDriverResolution = false;
   bool forceDriverResolution = false;
+  bool publishDriverTransition = false;
+  uint32_t realWidth = 0;
   bool managedValue = false;
   bool inlinePacked = false;
   obelisk_rt_string_v1 rootedString = 0;

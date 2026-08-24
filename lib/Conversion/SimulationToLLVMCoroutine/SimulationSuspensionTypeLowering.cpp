@@ -81,6 +81,8 @@ SmallVector<int32_t> suspensionWaitWidths(Operation *operation) {
       type = reference.getElementType();
     else if (auto net = dyn_cast<sim::NetType>(type))
       type = net.getElementType();
+    else if (auto driver = dyn_cast<sim::DriverType>(type))
+      type = driver.getElementType();
     else
       type = {};
     std::optional<unsigned> width =

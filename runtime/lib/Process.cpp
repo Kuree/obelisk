@@ -2705,6 +2705,24 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         };
         auto applyNative = [&](const ScheduledNBA &update) {
           bool publicationChanged = false;
+          uint64_t oldRealBits = 0;
+          uint64_t newRealBits = 0;
+          auto realBitsChanged = [&](uint64_t oldBits, uint64_t newBits) {
+            if (update.realWidth == 32) {
+              uint32_t oldNarrow = static_cast<uint32_t>(oldBits);
+              uint32_t newNarrow = static_cast<uint32_t>(newBits);
+              float oldReal = 0.0f;
+              float newReal = 0.0f;
+              std::memcpy(&oldReal, &oldNarrow, sizeof(oldReal));
+              std::memcpy(&newReal, &newNarrow, sizeof(newReal));
+              return oldReal != newReal || std::isnan(newReal);
+            }
+            double oldReal = 0.0;
+            double newReal = 0.0;
+            std::memcpy(&oldReal, &oldBits, sizeof(oldReal));
+            std::memcpy(&newReal, &newBits, sizeof(newReal));
+            return oldReal != newReal || std::isnan(newReal);
+          };
           uint32_t automaticID = 0;
           uint32_t staticID = 0;
           int64_t baseOffset = 0;
@@ -2737,14 +2755,16 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               !automatic && context->execution &&
               context->execution->state_bit_count == update.planeBitCount;
           if (update.driver &&
-              (automatic || !staticState || update.managedValue ||
-               update.stringValue || !canonical)) {
+              (automatic || update.managedValue || update.stringValue ||
+               ((!canonical || !staticState) &&
+                !update.deferDriverResolution))) {
             context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
             return;
           }
           if (canonical &&
-              (context->stateValue.size() != (update.planeBitCount + 63) / 64 ||
-               context->stateUnknown.size() != context->stateValue.size())) {
+              (context->stateValue.size() < (update.planeBitCount + 63) / 64 ||
+               context->stateUnknown.size() <
+                   (update.planeBitCount + 63) / 64)) {
             context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
             return;
           }
@@ -2963,6 +2983,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                                      : (uint64_t{1} << update.bitWidth) - 1;
             uint64_t changedBits =
                 ((oldValue ^ newValue) | (oldUnknown ^ newUnknown)) & widthMask;
+            oldRealBits = oldValue;
+            newRealBits = newValue;
             uint64_t oldZero = ~oldUnknown & ~oldValue & widthMask;
             uint64_t oldOne = ~oldUnknown & oldValue & widthMask;
             uint64_t newZero = ~newUnknown & ~newValue & widthMask;
@@ -2989,7 +3011,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
               return;
             }
-            publicationChanged = changedBits != 0;
+            publicationChanged = update.realWidth != 0
+                                     ? realBitsChanged(oldRealBits, newRealBits)
+                                     : changedBits != 0;
             if (!update.driver)
               changed |= publicationChanged;
             if (update.inertialNetBit != UINT64_MAX)
@@ -3068,6 +3092,10 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                       ? ((update.inlineUnknown >> bit) & uint64_t{1}) != 0
                       : !update.unknown.empty() &&
                             (update.unknown[sourceByte] & sourceMask) != 0;
+              if (update.realWidth != 0 && bit < 64) {
+                oldRealBits |= static_cast<uint64_t>(oldValue) << bit;
+                newRealBits |= static_cast<uint64_t>(newValue) << bit;
+              }
               auto apply = [&](uint8_t *globalPlane, bool unknown, bool value) {
                 uint8_t *plane = globalPlane;
                 if (automatic) {
@@ -3112,13 +3140,34 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                       {planeBit, oldValue, oldUnknown, newValue, newUnknown});
               }
             }
-          if (publicationChanged && !update.driver) {
+          if (update.realWidth != 0)
+            publicationChanged = realBitsChanged(oldRealBits, newRealBits);
+          if (publicationChanged &&
+              (!update.driver || update.publishDriverTransition)) {
             // One collapsed simulated net can occupy several logical state
             // ranges. Commit all of its same-time inertial publications before
             // evaluating any observer so no callback can see a half-updated
             // alias set.
             if (update.inertialNetBit != UINT64_MAX)
               return;
+            if (update.realWidth != 0) {
+              if (!obelisk_rt_publish_signal_occurrence_unlocked(
+                      context, update.bitOffset, update.bitWidth,
+                      OBELISK_RT_SIGNAL_CHANGE))
+                return;
+              obelisk_rt_invalidate_signal_snapshots_unlocked(
+                  context, update.bitOffset, update.bitWidth);
+              if (!obelisk_rt_latch_conditional_signal_range_unlocked(
+                      context, update.bitOffset, update.bitWidth,
+                      OBELISK_RT_SIGNAL_CHANGE))
+                return;
+              if (!obelisk_rt_notify_observer_signal_unlocked(
+                      context, update.bitOffset, update.bitWidth))
+                return;
+              if (++context->schedulerEpoch == 0)
+                context->schedulerEpoch = 1;
+              return;
+            }
             uint64_t sequence = 0;
             if (!obelisk_rt_publish_signal_transition_batch_unlocked(
                     context, update.bitOffset, update.bitWidth,

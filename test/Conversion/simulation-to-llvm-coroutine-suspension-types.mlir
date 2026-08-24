@@ -31,6 +31,8 @@ module attributes {
             {obelisk_sim.capture_kind = 1 : i32},
         %net: !obelisk_sim.net<i9>
             {obelisk_sim.capture_kind = 1 : i32},
+        %driver: !obelisk_sim.driver<f64>
+            {obelisk_sim.capture_kind = 1 : i32},
         %event: !obelisk_sim.event
             {obelisk_sim.capture_kind = 1 : i32},
         %child: !obelisk_sim.process
@@ -50,8 +52,10 @@ module attributes {
           edges [0] indices [-1] to ^change :
           !obelisk_sim.observer<i1>, i1
     ^change:
-      obelisk_sim.suspend.change %ref to ^edge :
-          !obelisk_sim.ref<!obelisk_sim.logic<17>>
+      // IEEE 1800-2017 6.6.7: generated resolution waits observe raw driver
+      // contribution changes, including atomic real-valued drivers.
+      obelisk_sim.suspend.change %driver to ^edge :
+          !obelisk_sim.driver<f64>
     ^edge:
       obelisk_sim.suspend.edge posedge %net to ^any : !obelisk_sim.net<i9>
     ^any:

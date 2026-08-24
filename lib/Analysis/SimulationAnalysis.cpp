@@ -179,6 +179,17 @@ DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function) {
     auto width = getPackedValueWidth(argument.getType());
     if (kind == sim::ComputeResourceKind::Unknown || !width)
       continue;
+    // User-defined net resolvers wait on raw driver storage, not on the
+    // resolved net. Driver provenance is normally canonicalized to its net so
+    // ordinary continuous assignments participate in the packed-net compute
+    // graph. Keep this uncommon wait dynamic instead: the coroutine/bytecode
+    // suspension registers the exact driver handles and avoids confusing a
+    // raw-driver transition with publication of the resolved net value.
+    if (isa<sim::DriverType>(argument.getType()) &&
+        function.getArgAttr(index, "obelisk_sim.user_net_driver")) {
+      provenanceMap[argument] = {};
+      continue;
+    }
     DescriptorProvenance provenance;
     provenance.resource = kind;
     provenance.width = *width;

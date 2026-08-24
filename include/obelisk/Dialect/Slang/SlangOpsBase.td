@@ -364,6 +364,8 @@ class SlangNetSymbolASTNodeOp<string mnemonic>
     : SlangSymbolASTNodeOp<mnemonic, [], (ins
         SlangNetKind:$net_kind,
         BoolAttr:$is_implicit,
+        OptionalAttr<SymbolRefAttr>:$resolution_function_symbol,
+        OptionalAttr<StrAttr>:$resolution_function_path,
         OptionalAttr<SlangDriveStrength>:$drive_strength0,
         OptionalAttr<SlangDriveStrength>:$drive_strength1,
         OptionalAttr<SlangChargeStrength>:$charge_strength,

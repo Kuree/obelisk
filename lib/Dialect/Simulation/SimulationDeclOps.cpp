@@ -140,13 +140,13 @@ LogicalResult SimNetDeclOp::verify() {
   if (failed(verifyNonnegative(*this, getIdAttr(), "net ID")) ||
       failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")))
     return failure();
-  if (getType().isF64())
-    return emitOpError("real-valued nets are not supported");
   if (getResolutionKind() == NetResolutionKind::TriReg &&
       !isEntirelyFourState(getType()))
     return emitOpError("trireg nets require an entirely four-state type");
   if (auto delays = getPropagationDelays()) {
     std::optional<unsigned> width = getPackedWidth(getType());
+    if (auto floating = dyn_cast<FloatType>(getType()))
+      width = floating.getWidth();
     if (!width ||
         (delays->size() != 3 && delays->size() != uint64_t{*width} * 3))
       return emitOpError(
@@ -209,8 +209,6 @@ LogicalResult SimDriverDeclOp::verify() {
     if (!typeWidth || low > *typeWidth || width > *typeWidth - low)
       return emitOpError("driven range exceeds the driver type");
   }
-  if (getType().isF64())
-    return emitOpError("real-valued drivers are not supported");
   return verifyElementType([&] { return emitOpError(); }, getType());
 }
 

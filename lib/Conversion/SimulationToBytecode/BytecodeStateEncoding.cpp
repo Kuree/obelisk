@@ -77,6 +77,10 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
     emit({LoadState, 0, reg(plan, op.getResult()), reg(plan, op.getNet())});
     return success();
   }
+  if (auto op = dyn_cast<sim::SimDriverReadOp>(operation)) {
+    emit({LoadState, 0, reg(plan, op.getResult()), reg(plan, op.getDriver())});
+    return success();
+  }
   if (auto op = dyn_cast<sim::SimRefStoreOp>(operation)) {
     sim::EntryKind entryKind = plan.function.getEntryKind();
     bool continuous = op->hasAttr(continuousStoreAttrName) ||
@@ -89,6 +93,10 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
                                     : 0),
           0, reg(plan, op.getReference()),
           reg(plan, op.getValue())});
+    return success();
+  }
+  if (auto op = dyn_cast<sim::SimNetWriteOp>(operation)) {
+    emit({StoreState, 0, 0, reg(plan, op.getNet()), reg(plan, op.getValue())});
     return success();
   }
   if (auto op = dyn_cast<sim::SimOverrideOp>(operation)) {

@@ -115,15 +115,80 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     std::string path;
     std::optional<uint64_t> nodeId;
   };
+  auto appendInterconnectLeaves = [&](StringRef root,
+                                      SmallVectorImpl<NetRun> &runs) {
+    auto symbol = semanticSymbols.find(root);
+    auto net = symbol == semanticSymbols.end()
+                   ? semantic::SVNetSymbolOp{}
+                   : dyn_cast<semantic::SVNetSymbolOp>(symbol->second);
+    auto definitions =
+        net ? net->getAttrOfType<ArrayAttr>(interconnectLeavesAttrName)
+            : ArrayAttr{};
+    if (!definitions) {
+      std::string prefix = (root + Twine("[")).str();
+      SmallVector<std::pair<StringRef, const DescriptorInfo *>> matches;
+      for (const auto &entry : descriptors)
+        if (entry.getKey().starts_with(prefix) &&
+            entry.second.kind == DescriptorInfo::Kind::Net)
+          matches.push_back({entry.getKey(), &entry.second});
+      llvm::sort(matches, [](const auto &lhs, const auto &rhs) {
+        return lhs.second->id < rhs.second->id;
+      });
+      for (const auto &[path, descriptor] : matches) {
+        std::optional<unsigned> width =
+            analysis::getSimulationStorageBitWidth(descriptor->type);
+        if (!width)
+          return false;
+        runs.push_back(
+            {*descriptor, 0, *width, path.str(), std::nullopt});
+      }
+      return !matches.empty();
+    }
+    for (Attribute attribute : definitions) {
+      auto definition = dyn_cast<DictionaryAttr>(attribute);
+      auto path = definition ? definition.getAs<StringAttr>("path")
+                             : StringAttr{};
+      auto descriptor =
+          path ? descriptors.find(path.getValue()) : descriptors.end();
+      if (descriptor == descriptors.end() ||
+          descriptor->second.kind != DescriptorInfo::Kind::Net)
+        return false;
+      std::optional<unsigned> width =
+          analysis::getSimulationStorageBitWidth(descriptor->second.type);
+      if (!width)
+        return false;
+      runs.push_back({descriptor->second, 0, *width, path.getValue().str(),
+                      std::nullopt});
+    }
+    return !runs.empty();
+  };
   std::function<bool(Operation *, SmallVectorImpl<NetRun> &)> flattenNetExpr;
   flattenNetExpr = [&](Operation *expression,
                        SmallVectorImpl<NetRun> &runs) -> bool {
     if (!expression)
       return false;
-    if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(expression)) {
-      auto descriptor = descriptors.find(named.getReferencedPath());
+    if (auto leafPath = expression->getAttrOfType<StringAttr>(
+            interconnectLeafPathAttrName)) {
+      auto descriptor = descriptors.find(leafPath.getValue());
       if (descriptor == descriptors.end() ||
           descriptor->second.kind != DescriptorInfo::Kind::Net)
+        return false;
+      std::optional<unsigned> width =
+          analysis::getSimulationStorageBitWidth(descriptor->second.type);
+      if (!width)
+        return false;
+      std::optional<uint64_t> nodeId;
+      if (auto id = expression->getAttrOfType<IntegerAttr>("node_id"))
+        nodeId = id.getValue().getZExtValue();
+      runs.push_back({descriptor->second, 0, *width,
+                      leafPath.getValue().str(), nodeId});
+      return true;
+    }
+    if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(expression)) {
+      auto descriptor = descriptors.find(named.getReferencedPath());
+      if (descriptor == descriptors.end())
+        return appendInterconnectLeaves(named.getReferencedPath(), runs);
+      if (descriptor->second.kind != DescriptorInfo::Kind::Net)
         return false;
       std::optional<unsigned> width =
           analysis::getSimulationStorageBitWidth(descriptor->second.type);
@@ -139,8 +204,10 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     if (auto hierarchical =
             dyn_cast<semantic::SVHierarchicalValueExpressionOp>(expression)) {
       auto descriptor = descriptors.find(hierarchical.getReferencedPath());
-      if (descriptor == descriptors.end() ||
-          descriptor->second.kind != DescriptorInfo::Kind::Net)
+      if (descriptor == descriptors.end())
+        return appendInterconnectLeaves(hierarchical.getReferencedPath(),
+                                        runs);
+      if (descriptor->second.kind != DescriptorInfo::Kind::Net)
         return false;
       std::optional<unsigned> width =
           analysis::getSimulationStorageBitWidth(descriptor->second.type);
@@ -341,6 +408,10 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
   };
 
   bool invalid = false;
+  // Keep the net pair ahead of offsets in the sort key. This lets a wide port
+  // collapse become one run even when the same declaration connects to
+  // several other declarations; sorting by the lhs bit first would interleave
+  // those peers and expand every real/vector connection into scalar records.
   using StaticEdgeKey = std::tuple<uint64_t, uint64_t, uint64_t, uint64_t>;
   struct StaticEdgeMetadata {
     uint64_t scopeId;
@@ -439,10 +510,10 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       uint64_t leftOffset = left.offset + lhsConsumed;
       uint64_t rightOffset = right.offset + rhsConsumed;
       for (uint64_t bit = 0; bit != width; ++bit) {
-        StaticEdgeKey edge{left.descriptor.id, leftOffset + bit,
-                           right.descriptor.id, rightOffset + bit};
-        StaticEdgeKey reverse{right.descriptor.id, rightOffset + bit,
-                              left.descriptor.id, leftOffset + bit};
+        StaticEdgeKey edge{left.descriptor.id, right.descriptor.id,
+                           leftOffset + bit, rightOffset + bit};
+        StaticEdgeKey reverse{right.descriptor.id, left.descriptor.id,
+                              rightOffset + bit, leftOffset + bit};
         // IEEE 1800-2017 Table 23-1. `left` is the internal endpoint and
         // `right` is the external actual here.
         auto [rhsDominates, warn] =
@@ -456,8 +527,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
           edge = reverse;
           rhsDominates = !rhsDominates;
         }
-        if (std::get<0>(edge) == std::get<2>(edge) &&
-            std::get<1>(edge) == std::get<3>(edge))
+        if (std::get<0>(edge) == std::get<1>(edge) &&
+            std::get<2>(edge) == std::get<3>(edge))
           continue;
         StaticEdgeMetadata metadata{
             scopes.lookup(connection),
@@ -503,7 +574,12 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       continue;
     StringRef internalPath = connection.getInternalPath().value_or(StringRef{});
     auto internalDescriptor = descriptors.find(internalPath);
-    if (internalDescriptor == descriptors.end()) {
+    SmallVector<NetRun> implicitInternalLeaves;
+    bool hasImplicitInternalLeaves =
+        internalDescriptor == descriptors.end() &&
+        appendInterconnectLeaves(internalPath, implicitInternalLeaves);
+    if (internalDescriptor == descriptors.end() &&
+        !hasImplicitInternalLeaves) {
       if (connection.getInterfaceInstanceSymbol() ||
           isa<semantic::UntypedType>(connection.getFormalType()))
         continue;
@@ -525,7 +601,11 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     bool internalNet = false;
     if (internalExpression) {
       internalNet = flattenNetExpr(internalExpression, lhs);
-    } else if (internalDescriptor->second.kind == DescriptorInfo::Kind::Net) {
+    } else if (hasImplicitInternalLeaves) {
+      lhs = std::move(implicitInternalLeaves);
+      internalNet = true;
+    } else if (internalDescriptor != descriptors.end() &&
+               internalDescriptor->second.kind == DescriptorInfo::Kind::Net) {
       if (std::optional<unsigned> width =
               analysis::getSimulationStorageBitWidth(
                   internalDescriptor->second.type)) {
@@ -536,7 +616,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     }
     bool actualNet = flattenNetExpr(actual, rhs);
     bool hasUWireSide =
-        (internalDescriptor->second.kind == DescriptorInfo::Kind::Net &&
+        (internalDescriptor != descriptors.end() &&
+         internalDescriptor->second.kind == DescriptorInfo::Kind::Net &&
          internalDescriptor->second.netKind == sim::NetResolutionKind::UWire) ||
         referencesUWireNet(actual);
     if (internalNet && actualNet) {
@@ -566,13 +647,13 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
 
   uint64_t nextConnectionId = 0;
   for (auto edge = staticEdges.begin(); edge != staticEdges.end();) {
-    auto [lhsNet, lhsOffset, rhsNet, rhsOffset] = edge->first;
+    auto [lhsNet, rhsNet, lhsOffset, rhsOffset] = edge->first;
     const StaticEdgeMetadata metadata = edge->second;
     uint64_t width = 1;
     int direction = 0;
     auto next = std::next(edge);
     while (next != staticEdges.end()) {
-      auto [nextLhsNet, nextLhsOffset, nextRhsNet, nextRhsOffset] = next->first;
+      auto [nextLhsNet, nextRhsNet, nextLhsOffset, nextRhsOffset] = next->first;
       if (next->second.scopeId != metadata.scopeId ||
           next->second.provenance != metadata.provenance ||
           next->second.rhsDominates != metadata.rhsDominates ||

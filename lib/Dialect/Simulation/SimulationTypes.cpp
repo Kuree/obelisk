@@ -561,16 +561,12 @@ RefType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 LogicalResult
 NetType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                 Type elementType) {
-  if (elementType.isF64())
-    return emitError() << "real-valued nets are not supported";
   return verifyElementType(emitError, elementType);
 }
 
 LogicalResult
 DriverType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                    Type elementType) {
-  if (elementType.isF64())
-    return emitError() << "real-valued drivers are not supported";
   return verifyElementType(emitError, elementType);
 }
 

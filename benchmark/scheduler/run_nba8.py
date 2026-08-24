@@ -222,7 +222,9 @@ def main() -> int:
                     waiters,
                 )
                 records, output = measure(binary, arguments.runs)
-                if arguments.native_scheduler == "aot":
+                # Whole-design bytecode intentionally uses the generic
+                # scheduler; --native-scheduler only selects the native tier.
+                if tier == "native" and arguments.native_scheduler == "aot":
                     diagnostics = records[len(records) // 2]["diagnostics"]
                     forbidden = {
                         key: diagnostics.get(key, 0)

@@ -170,3 +170,110 @@ if(patched_at EQUAL -1)
 endif()
 
 file(WRITE "${system_tasks_source}" "${contents}")
+
+# IEEE 1800-2017 6.6.7 permits a package-qualified user-defined nettype in an
+# ANSI or non-ANSI port declaration. Slang v11 only probes an unqualified
+# simple type name while deciding whether a catch-all port header denotes a
+# variable or a net, so a qualified nettype is misclassified as a variable.
+set(port_symbols_source
+  "${SOURCE_DIR}/source/ast/symbols/PortSymbols.cpp")
+file(READ "${port_symbols_source}" contents)
+
+set(old_code [[
+namespace {
+
+const NetType& getDefaultNetType(const Scope& scope, SourceLocation location) {
+]])
+set(new_code [[
+namespace {
+
+const NetType* lookupPortNetType(const Scope& scope, const DataTypeSyntax& syntax) {
+    if (syntax.kind == SyntaxKind::NamedType) {
+        const auto& named = syntax.as<NamedTypeSyntax>();
+        ASTContext context(scope, LookupLocation::max, ASTFlags::AllowNetType);
+        LookupResult result;
+        Lookup::name(*named.name, context, LookupFlags::Type, result);
+        if (result.found && result.found->kind == SymbolKind::NetType)
+            return &result.found->as<NetType>();
+    }
+
+    std::string_view simpleName = SyntaxFacts::getSimpleTypeName(syntax);
+    if (simpleName.empty())
+        return nullptr;
+    const Symbol* found = Lookup::unqualified(scope, simpleName, LookupFlags::Type);
+    return found && found->kind == SymbolKind::NetType ? &found->as<NetType>() : nullptr;
+}
+
+const NetType& getDefaultNetType(const Scope& scope, SourceLocation location) {
+]])
+string(FIND "${contents}" "const NetType* lookupPortNetType" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's port nettype lookup helper location no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+
+set(old_code [[
+                std::string_view simpleName = SyntaxFacts::getSimpleTypeName(*header.dataType);
+                if (!simpleName.empty()) {
+                    auto found = Lookup::unqualified(scope, simpleName, LookupFlags::Type);
+                    if (found && found->kind == SymbolKind::NetType) {
+                        return add(decl, getDirection(header.direction), nullptr,
+                                   &found->as<NetType>(), syntax.attributes);
+                    }
+
+                    // If we didn't find a valid type, try to find a definition.
+]])
+set(new_code [[
+                std::string_view simpleName = SyntaxFacts::getSimpleTypeName(*header.dataType);
+                if (!simpleName.empty() || header.dataType->kind == SyntaxKind::NamedType) {
+                    auto netType = lookupPortNetType(scope, *header.dataType);
+                    if (netType) {
+                        return add(decl, getDirection(header.direction), nullptr,
+                                   netType, syntax.attributes);
+                    }
+
+                    auto found = simpleName.empty()
+                                     ? nullptr
+                                     : Lookup::unqualified(scope, simpleName,
+                                                           LookupFlags::Type);
+
+                    // If we didn't find a valid type, try to find a definition.
+]])
+string(FIND "${contents}" "auto netType = lookupPortNetType(scope, *header.dataType);" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's ANSI port nettype lookup no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+
+set(old_code [[
+                        auto typeName = SyntaxFacts::getSimpleTypeName(*varHeader.dataType);
+                        auto result = Lookup::unqualified(scope, typeName, LookupFlags::Type);
+                        if (result && result->kind == SymbolKind::NetType) {
+                            auto net = comp.emplace<NetSymbol>(name, declLoc,
+                                                               result->as<NetType>());
+]])
+set(new_code [[
+                        auto result = lookupPortNetType(scope, *varHeader.dataType);
+                        if (result) {
+                            auto net = comp.emplace<NetSymbol>(name, declLoc,
+                                                               *result);
+]])
+string(FIND "${contents}" "auto result = lookupPortNetType(scope, *varHeader.dataType);" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's non-ANSI port nettype lookup no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+
+file(WRITE "${port_symbols_source}" "${contents}")

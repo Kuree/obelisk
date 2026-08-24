@@ -18,6 +18,33 @@
 using namespace mlir;
 
 namespace obelisk::simlowering {
+
+static bool isUserNetDriver(Value value) {
+  while (value) {
+    if (auto argument = dyn_cast<BlockArgument>(value)) {
+      auto function =
+          dyn_cast<sim::SimFuncOp>(argument.getOwner()->getParentOp());
+      return function &&
+             static_cast<bool>(function.getArgAttr(
+                 argument.getArgNumber(), "obelisk_sim.user_net_driver"));
+    }
+    Operation *definition = value.getDefiningOp();
+    if (auto extract = dyn_cast_or_null<sim::SimDriverExtractOp>(definition))
+      value = extract.getInput();
+    else if (auto extract =
+                 dyn_cast_or_null<sim::SimDriverDynExtractOp>(definition))
+      value = extract.getInput();
+    else if (auto subelement =
+                 dyn_cast_or_null<sim::SimDriverSubelementOp>(definition))
+      value = subelement.getInput();
+    else if (auto element =
+                 dyn_cast_or_null<sim::SimDriverArrayElementOp>(definition))
+      value = element.getInput();
+    else
+      return false;
+  }
+  return false;
+}
 namespace {
 
 constexpr StringLiteral continuousStoreAttrName =
@@ -784,6 +811,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         emitError(location) << "nonblocking assignment cannot target a driver";
         return failure();
       }
+      bool userRaw = isUserNetDriver(destination.reference);
       if (auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
               "obelisk_sim.propagation_delays")) {
         if (delays.empty() || delays.size() > 3)
@@ -808,6 +836,8 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
               "delayed drive has no stable code unit identity");
         std::optional<unsigned> drivenWidth =
             sim::getPackedWidth(published.getType());
+        if (auto floating = dyn_cast<FloatType>(published.getType()))
+          drivenWidth = floating.getWidth();
         if (!drivenWidth)
           return function.emitError(
               "delayed drive value has no fixed packed width");
@@ -819,24 +849,33 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         Value riseDelay = timeConstant(rise);
         Value fallDelay = timeConstant(fall);
         Value turnoffDelay = timeConstant(turnoff);
-        sim::SimDriverDriveInertialOp::create(
+        auto drive = sim::SimDriverDriveInertialOp::create(
             builder, location, destination.reference, published, riseDelay,
             fallDelay, turnoffDelay, codeUnitID,
             builder.getI32IntegerAttr(
                 static_cast<uint32_t>(nextInertialDriveComponent++)),
             builder.getBoolAttr(vectorDelay),
-            builder.getBoolAttr(deferDriverResolution));
+            builder.getBoolAttr(deferDriverResolution || userRaw));
+        if (userRaw)
+          drive->setAttr("obelisk_sim.user_net_raw_drive",
+                         builder.getUnitAttr());
         return success();
       }
       if (drivesDelayedNet(function, destination.reference)) {
-        sim::SimDriverDriveDelayedNetOp::create(
+        auto drive = sim::SimDriverDriveDelayedNetOp::create(
             builder, location, destination.reference, published,
-            builder.getBoolAttr(deferDriverResolution));
+            builder.getBoolAttr(deferDriverResolution || userRaw));
+        if (userRaw)
+          drive->setAttr("obelisk_sim.user_net_raw_drive",
+                         builder.getUnitAttr());
       } else {
         auto drive = sim::SimDriverDriveOp::create(
             builder, location, destination.reference, published);
-        if (deferDriverResolution)
+        if (deferDriverResolution || userRaw)
           drive->setAttr("obelisk_sim.defer_net_resolution",
+                         builder.getUnitAttr());
+        if (userRaw)
+          drive->setAttr("obelisk_sim.user_net_raw_drive",
                          builder.getUnitAttr());
       }
     } else {
@@ -3325,11 +3364,23 @@ UnitLowering::lowerPortConnection(semantic::SVPortConnectionOp op) {
       if (continuousStore)
         store->setAttr(continuousStoreAttrName, builder.getUnitAttr());
     } else if (drivesDelayedNet(function, destination)) {
-      sim::SimDriverDriveDelayedNetOp::create(
+      bool userRaw = isUserNetDriver(destination);
+      auto drive = sim::SimDriverDriveDelayedNetOp::create(
           builder, location, destination, *converted,
-          builder.getBoolAttr(false));
+          builder.getBoolAttr(userRaw));
+      if (userRaw)
+        drive->setAttr("obelisk_sim.user_net_raw_drive",
+                       builder.getUnitAttr());
     } else {
-      sim::SimDriverDriveOp::create(builder, location, destination, *converted);
+      auto drive =
+          sim::SimDriverDriveOp::create(builder, location, destination,
+                                        *converted);
+      if (isUserNetDriver(destination)) {
+        drive->setAttr("obelisk_sim.defer_net_resolution",
+                       builder.getUnitAttr());
+        drive->setAttr("obelisk_sim.user_net_raw_drive",
+                       builder.getUnitAttr());
+      }
     }
     return success();
   };

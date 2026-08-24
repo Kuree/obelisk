@@ -166,6 +166,14 @@ inline constexpr ::mlir::StringLiteral staticNetConstantAttrName =
 /// Written by the Slang importer, so the spelling is fixed there as well.
 inline constexpr ::mlir::StringLiteral foldedConstantAttrName =
     "folded_constant";
+/// A fixed unpacked `interconnect` can acquire a distinct data/net type for
+/// every leaf (IEEE 1800-2017 6.6.8). Prepare represents those typeless
+/// structural aggregates as independent typed descriptors and freezes the
+/// selected descriptor path directly on each semantic leaf expression.
+inline constexpr ::mlir::StringLiteral interconnectLeafPathAttrName =
+    "obelisk_sim.interconnect_leaf_path";
+inline constexpr ::mlir::StringLiteral interconnectLeavesAttrName =
+    "obelisk_sim.interconnect_leaves";
 /// Identity a type reference shares with every reference to a matching type
 /// (IEEE 1800-2017 6.22.1). Written by the Slang importer, so the spelling is
 /// fixed there as well.

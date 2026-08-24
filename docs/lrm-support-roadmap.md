@@ -84,6 +84,12 @@ The 2026-08-23 audit baselines on this workspace were 34.036 seconds compile /
 simulate for native. Both completed the run phase at 1 ns with zero UVM errors
 or fatals. These are comparison baselines, not portable promises across hosts.
 
+L3's three-run medians were 33.741 seconds compile / 0.202 seconds simulate for
+bytecode and 75.323 seconds compile / 0.041 seconds simulate for native, with
+zero UVM errors or fatals. The strict native scheduler matrix retained zero
+generic candidate scans, readiness calls, and AOT fallbacks at 0, 1024, and
+3072 dormant waiters through one million cycles.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -91,7 +97,7 @@ or fatals. These are comparison baselines, not portable promises across hosts.
 | 3 Design and verification building blocks | Partial | Modules, programs, interfaces, packages, ordinary hierarchy, and basic configuration selection elaborate. Compilation-unit, package, module, directive, and command-line time-unit/precision precedence executes across the full legal 1 fs through 100 s scale range. Checker bodies are semantic only and UDP behavior is absent. |
 | 4 Scheduling semantics | Partial | Active, Inactive, NBA, Observed, Reactive, Re-Inactive, Re-NBA, Postponed, and the Preponed snapshot hook execute through one native/bytecode scheduler. Remaining language gaps are attached to the timed constructs below. PLI callback regions are excluded with VPI. |
 | 5 Lexical conventions | Executable for the audited surface | Slang supplies the lexer, preprocessor-facing tokens, literals, attributes, keywords, and identifiers. Keep this clause under differential testing, especially revision switches and literal corner cases. |
-| 6 Data types | Partial | Packed 2/4-state values, reals as variables, strings, chandles, events, enums, typedefs, parameters, casts, strengths, and the common net kinds execute. Real-valued nets, user-defined net types/resolution functions, remaining `interconnect` forms, and trireg charge strength/sharing remain live gaps. |
+| 6 Data types | Partial | Packed 2/4-state values, real/realtime variables and nets, strings, chandles, events, enums, typedefs, parameters, casts, strengths, common net kinds, user-defined nettypes/resolution functions, and typed/heterogeneous fixed-array `interconnect` execute. Trireg charge strength, retention, decay, and sharing remain the principal net-type gap. |
 | 7 Aggregate data types | Partial | Fixed arrays/structs/unions, tagged managed unions, dynamic arrays, queues, associative arrays, queries, traversal, and the registered manipulation methods execute. Remaining work includes all legal slice/reference lvalues, string range selection and character reference/NBA paths, and safe semantics for an untagged union containing a managed handle. |
 | 8 Classes | Partial | Construction, inheritance, polymorphism, virtual/interface methods, parameterized classes, copying, managed properties, garbage collection, and the UVM-used surface execute. Complete the residual class/type/operator/constructor long tail exposed by focused probes and the aggregate/reference gaps shared with Clauses 6, 7, and 11. |
 | 9 Processes | Partial | Structured procedures, all fork/join forms, `wait fork`, `disable fork`, timed and recursive tasks, `process` handles and control, automatic capture, and cancellation execute. Disabling a named block owned by another live process is still rejected instead of canceling only the target scope. |
@@ -149,8 +155,11 @@ one commit.
    Compilation-unit, package, module, directive, and command-line
    timeunit/precision interactions execute across the full legal scale range;
    `--timing=min|typ|max` selects constant and dynamic min/typ/max expressions.
-3. **L3 — Net-type closure (6.6-6.7).** Add real/realtime nets, `interconnect`,
-   user-defined nettypes and resolution functions.
+3. **L3 — Net-type closure (6.6-6.7, 10.3.3), completed.** Real/realtime nets,
+   atomic user-defined nettypes and pure resolution functions, time-zero and
+   Active/Reactive resolution, single inertial UDNT delays, alias chains, and
+   typed or heterogeneous fixed-array `interconnect` execute in native and
+   bytecode tiers. The exact Doulos 6.6.8 example also lowers successfully.
 4. **L4 — Trireg charge semantics (6.6.7).** Implement small/medium/large
    charge, retention, decay, charge sharing, and strength propagation.
 5. **L5 — Operator/type matrix closure (6, 7, 8, 11).** Finish legal string,

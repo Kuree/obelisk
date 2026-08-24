@@ -441,12 +441,50 @@ materializeDesignDescriptors(ModuleOp module,
       descriptors[path].rootType = type;
       return;
     }
+    uint64_t scopeId = scopes.lookup(op);
+    if (!storage) {
+      if (auto leafDefinitions =
+              op->getAttrOfType<ArrayAttr>(interconnectLeavesAttrName)) {
+        for (Attribute attribute : leafDefinitions) {
+          auto definition = dyn_cast<DictionaryAttr>(attribute);
+          auto leafPath = definition
+                              ? definition.getAs<StringAttr>("path")
+                              : StringAttr{};
+          auto semanticType = definition
+                                  ? definition.getAs<TypeAttr>("type")
+                                  : TypeAttr{};
+          if (!leafPath || !semanticType) {
+            emitError(getSemanticLocation(op))
+                << "interconnect has malformed typed-leaf metadata";
+            invalid = true;
+            continue;
+          }
+          FailureOr<Type> type = normalizeSemanticType(
+              semanticType.getValue(), getSemanticLocation(op));
+          if (failed(type)) {
+            invalid = true;
+            continue;
+          }
+          uint64_t id = nextNetId++;
+          descriptors[leafPath.getValue()] = {
+              DescriptorInfo::Kind::Net, id, scopeId, *type,
+              sim::NetResolutionKind::Wire};
+          descriptors[leafPath.getValue()].rootType = *type;
+          sim::SimNetDeclOp::create(
+              builder, getSemanticLocation(op), id, scopeId, *type,
+              sim::Lifetime::Design, leafPath,
+              builder.getStringAttr((Twine(getDebugName(op)) + ".leaf").str()),
+              sim::ComputeObservabilityKindAttr{},
+              sim::NetResolutionKind::Wire, DenseI64ArrayAttr{}, UnitAttr{});
+        }
+        return;
+      }
+    }
     FailureOr<Type> type = getNormalizedSemanticType(op);
     if (failed(type)) {
       invalid = true;
       return;
     }
-    uint64_t scopeId = scopes.lookup(op);
     StringAttr hierarchy = builder.getStringAttr(path);
     StringAttr debug = builder.getStringAttr(getDebugName(op));
     if (storage && isa<sim::EventType>(*type) &&
@@ -489,12 +527,6 @@ materializeDesignDescriptors(ModuleOp module,
       return;
     }
 
-    if ((*type).isF64()) {
-      emitError(getSemanticLocation(op))
-          << "real and realtime nets are not supported";
-      invalid = true;
-      return;
-    }
     auto net = cast<semantic::SVNetSymbolOp>(op);
     if (net.getChargeStrength()) {
       emitError(getSemanticLocation(op))
@@ -536,6 +568,20 @@ materializeDesignDescriptors(ModuleOp module,
       break;
     case semantic::SVNetKind::TriReg:
       resolution = sim::NetResolutionKind::TriReg;
+      break;
+    case semantic::SVNetKind::Interconnect:
+      // A typed interconnect is structural and inherits the resolution of its
+      // connected net ports. The ordinary wire value is a temporary default;
+      // port dominance freezes the effective component resolution below.
+      resolution = sim::NetResolutionKind::Wire;
+      break;
+    case semantic::SVNetKind::UserDefined:
+      // User-defined nets are atomic. Their generated resolver process reads
+      // raw driver contributions, and every such drive is explicitly marked
+      // deferred, so the bitwise runtime resolver is never entered for these
+      // declarations. Use wire as the storage-layout fallback: uwire would
+      // reject the multiple drivers before the user resolution process runs.
+      resolution = sim::NetResolutionKind::Wire;
       break;
     default:
       emitError(getSemanticLocation(op))
@@ -598,6 +644,17 @@ materializeDesignDescriptors(ModuleOp module,
                                   *type, sim::Lifetime::Design, hierarchy,
                                   debug, sim::ComputeObservabilityKindAttr{},
                                   resolution, propagationDelays, UnitAttr{});
+    if (net.getNetKind() == semantic::SVNetKind::UserDefined ||
+        net->hasAttr("obelisk_sim.inferred_user_net")) {
+      declaration->setAttr("obelisk_sim.user_defined_net",
+                           builder.getUnitAttr());
+      if (auto path = net.getResolutionFunctionPath())
+        declaration->setAttr("obelisk_sim.resolution_function_path",
+                             builder.getStringAttr(*path));
+      if (auto symbol = net.getResolutionFunctionSymbol())
+        declaration->setAttr("obelisk_sim.resolution_function_symbol",
+                             *symbol);
+    }
     if (auto body =
             dyn_cast<semantic::SVInstanceBodySymbolOp>(op->getParentOp());
         body && body->hasAttr("virtual_interface_identity") &&
@@ -788,6 +845,13 @@ materializeDesignDescriptors(ModuleOp module,
   }
   uint64_t nextPortId = 0;
   llvm::StringSet<> emittedPorts;
+  auto hasInterconnectLeaves = [&](StringRef root) {
+    std::string prefix = (root + Twine("[")).str();
+    return llvm::any_of(descriptors, [&](const auto &entry) {
+      return entry.getKey().starts_with(prefix) &&
+             entry.second.kind == DescriptorInfo::Kind::Net;
+    });
+  };
   for (semantic::SVPortConnectionOp connection : portAliases.connections) {
     StringRef path = connection.getInternalPath().value_or(StringRef{});
     if (path.empty())
@@ -797,7 +861,8 @@ materializeDesignDescriptors(ModuleOp module,
       // Interface-instance and untyped ports intentionally have no packed
       // canonical state descriptor and therefore cannot appear in EVCD.
       if (connection.getInterfaceInstanceSymbol() ||
-          isa<semantic::UntypedType>(connection.getFormalType()))
+          isa<semantic::UntypedType>(connection.getFormalType()) ||
+          hasInterconnectLeaves(path))
         continue;
       emitError(getSemanticLocation(connection))
           << "module port has no flattened source descriptor: " << path;

@@ -2798,6 +2798,9 @@ obelisk_rt_status obelisk_rt_v1_scheduler_driver_nba(
     uint64_t delay, const uint8_t *value, const uint8_t *unknown);
 #define OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY UINT32_C(1)
 #define OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION UINT32_C(2)
+#define OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW UINT32_C(4)
+#define OBELISK_RT_INERTIAL_DRIVER_REAL32 UINT32_C(8)
+#define OBELISK_RT_INERTIAL_DRIVER_REAL64 UINT32_C(16)
 // Schedule an IEEE inertial gate or continuous-assignment driver update.
 // Re-evaluating the same site cancels a distinct pending target; an identical
 // target retains its original deadline. UINT64_MAX denotes a suppressed

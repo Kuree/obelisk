@@ -17,7 +17,9 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include "slang/ast/ASTVisitor.h"
+#include "slang/ast/ASTContext.h"
 #include "slang/ast/EvalContext.h"
+#include "slang/ast/Lookup.h"
 #include "slang/ast/expressions/Operator.h"
 #include "slang/ast/symbols/VariableSymbols.h"
 #include "slang/ast/types/TypePrinter.h"
@@ -99,6 +101,37 @@ const slang::ast::Type &unwrapTypeAliases(const slang::ast::Type &type) {
   while (current->kind == slang::ast::SymbolKind::TypeAlias)
     current = &current->as<slang::ast::TypeAliasType>().targetType.getType();
   return *current;
+}
+
+/// Slang exposes the resolver written directly on a nettype declaration but
+/// currently returns null for the LRM alias form `nettype original alias;`.
+/// Resolve that named base explicitly so imported net symbols retain the
+/// original resolution function through arbitrarily long alias chains.
+const slang::ast::SubroutineSymbol *
+getEffectiveResolutionFunction(const slang::ast::NetType &netType) {
+  if (const auto *function = netType.getResolutionFunction())
+    return function;
+  const auto *syntax = netType.getSyntax();
+  const auto *scope = netType.getParentScope();
+  if (!syntax || !scope || syntax->kind != slang::syntax::SyntaxKind::NetTypeDeclaration)
+    return nullptr;
+  const auto &declaration =
+      syntax->as<slang::syntax::NetTypeDeclarationSyntax>();
+  if (declaration.withFunction ||
+      declaration.type->kind != slang::syntax::SyntaxKind::NamedType)
+    return nullptr;
+  const auto &named = declaration.type->as<slang::syntax::NamedTypeSyntax>();
+  slang::ast::ASTContext context(
+      *scope, slang::ast::LookupLocation::after(netType),
+      slang::ast::ASTFlags::AllowNetType);
+  slang::ast::LookupResult result;
+  slang::ast::Lookup::name(*named.name, context,
+                           slang::ast::LookupFlags::Type, result);
+  if (!result.found || result.found == &netType ||
+      result.found->kind != slang::ast::SymbolKind::NetType)
+    return nullptr;
+  return getEffectiveResolutionFunction(
+      result.found->as<slang::ast::NetType>());
 }
 
 // Slang's canonical PackedArrayType inherits signedness from its element type.
@@ -2288,6 +2321,12 @@ private:
                   slangir::NetKindAttr::get(builder.getContext(),
                                             convertEnum(node.netType.netKind)));
       SET_OP_ATTR(IsImplicit, builder.getBoolAttr(node.isImplicit));
+      if (const auto *resolutionFunction =
+              getEffectiveResolutionFunction(node.netType))
+        setSymbolReference(
+            attrs, *resolutionFunction,
+            Op::getResolutionFunctionSymbolAttrName(operationName),
+            Op::getResolutionFunctionPathAttrName(operationName));
       auto [strength0, strength1] = node.getDriveStrength();
       if (std::optional<slang::ast::ChargeStrength> charge =
               node.getChargeStrength()) {
@@ -2763,7 +2802,8 @@ private:
       SET_OP_ATTR(DataType,
                   TypeAttr::get(typeConverter.convert(node.getDataType())));
       SET_OP_ATTR(IsBuiltin, builder.getBoolAttr(node.isBuiltIn()));
-      if (const auto *resolutionFunction = node.getResolutionFunction())
+      if (const auto *resolutionFunction =
+              getEffectiveResolutionFunction(node))
         setSymbolReference(
             attrs, *resolutionFunction,
             Op::getResolutionFunctionSymbolAttrName(operationName),

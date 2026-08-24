@@ -77,8 +77,15 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     if (adaptor.getDriver().size() != 1 || adaptor.getValue().empty())
       return failure();
+    Type sourceType = op.getValue().getType();
     Value driveValue = adaptor.getValue().front();
-    IntegerType driveType = cast<IntegerType>(driveValue.getType());
+    std::optional<unsigned> sourceWidth = nativeStateWidth(sourceType);
+    if (!sourceWidth)
+      return failure();
+    IntegerType driveType = rewriter.getIntegerType(*sourceWidth);
+    if (isa<FloatType>(sourceType))
+      driveValue = arith::BitcastOp::create(rewriter, op.getLoc(), driveType,
+                                            driveValue);
     auto integerConstant = [&](const APInt &value) {
       return arith::ConstantOp::create(
           rewriter, op.getLoc(), driveType,
@@ -95,6 +102,17 @@ public:
     const NativeStateLayout *storeLayout = &layout;
     if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveDelayedNetOp>)
       storeLayout = nullptr;
+    bool userRaw = op->hasAttr("obelisk_sim.user_net_raw_drive");
+    Value oldRawValue;
+    Value oldRawUnknown;
+    if (userRaw) {
+      oldRawValue = loadStatePlane(
+          rewriter, op.getLoc(), adaptor.getDriver().front(), driveType,
+          "__obelisk_state_value", false, layout.bitCount, storeLayout);
+      oldRawUnknown = loadStatePlane(
+          rewriter, op.getLoc(), adaptor.getDriver().front(), driveType,
+          "__obelisk_state_unknown", true, layout.bitCount, storeLayout);
+    }
     storeStatePlane(rewriter, op.getLoc(), adaptor.getDriver().front(),
                     driveValue, "__obelisk_state_value", layout.bitCount,
                     storeLayout);
@@ -114,6 +132,34 @@ public:
     if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveDelayedNetOp>)
       deferResolution = op.getDeferResolution();
     if (deferResolution) {
+      if (userRaw) {
+        if (isa<FloatType>(sourceType)) {
+          Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+          auto save = [&](Value value) {
+            Value storage =
+                entryAlloca(rewriter, op.getLoc(), value.getType(), 1, 1);
+            LLVM::StoreOp::create(rewriter, op.getLoc(), value, storage, 1);
+            return storage;
+          };
+          Value contextAddress = LLVM::AddressOfOp::create(
+              rewriter, op.getLoc(), pointer, "__obelisk_current_context");
+          Value runtimeContext = LLVM::LoadOp::create(
+              rewriter, op.getLoc(), pointer, contextAddress, 8);
+          LLVM::CallOp::create(
+              rewriter, op.getLoc(), TypeRange{},
+              SymbolRefAttr::get(
+                  rewriter.getContext(),
+                  "obelisk_rt_v1_scheduler_real_transition"),
+              ValueRange{runtimeContext, adaptor.getDriver().front(),
+                         llvmConstant(rewriter, op.getLoc(),
+                                      rewriter.getI32Type(), *sourceWidth),
+                         save(oldRawValue), save(driveValue)});
+        } else {
+          notifySignal(rewriter, op.getLoc(), adaptor.getDriver().front(),
+                       *sourceWidth, oldRawValue, oldRawUnknown, driveValue,
+                       driveUnknown, std::nullopt);
+        }
+      }
       if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveChangedOp>)
         rewriter.replaceOp(op, changed);
       else

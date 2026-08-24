@@ -64,31 +64,32 @@ bool hasGeneratedNBAStages(
 
 static bool validInertialStatePlanesUnlocked(const obelisk_rt_context *context,
                                              const uint8_t *valuePlane,
-                                             const uint8_t *unknownPlane,
+                                             const uint8_t * /*unknownPlane*/,
                                              uint64_t planeBitCount) {
-  if (!context || !context->execution ||
-      planeBitCount != context->execution->state_bit_count)
+  // Generated coroutine, eval, and AOT schedules can each own a distinct
+  // long-lived native plane even while the runtime plan points at another
+  // tier's plane. As with the native load/store ABI, validate the shared
+  // layout rather than pointer identity; the caller-provided plane is the
+  // destination that must be reconciled when this delayed write commits.
+  if (!context || !valuePlane)
     return false;
-  const auto *canonicalValue =
-      reinterpret_cast<const uint8_t *>(context->stateValue.data());
-  const auto *canonicalUnknown =
-      reinterpret_cast<const uint8_t *>(context->stateUnknown.data());
-  bool canonical = valuePlane == canonicalValue &&
-                   (!unknownPlane || unknownPlane == canonicalUnknown);
-  bool native = context->nativeStateBitCount == planeBitCount &&
-                valuePlane == context->nativeStateValue &&
-                (!unknownPlane || unknownPlane == context->nativeStateUnknown);
-  // A generated native schedule owns its state planes and hands those to every
-  // intrinsic it calls; they are imported into the canonical planes before the
-  // node runs, so they describe the same state. Rejecting them fails an IEEE
-  // 1800-2017 10.3.3 continuous-assignment delay -- and every other inertially
-  // delayed drive -- at run time in the native tier while the same design runs
-  // in the bytecode tier.
-  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
-  bool planned = plan && plan->state_bit_count == planeBitCount &&
-                 valuePlane == plan->state_value &&
-                 (!unknownPlane || unknownPlane == plan->state_unknown);
-  return canonical || native || planned;
+  if (context->execution &&
+      planeBitCount == context->execution->state_bit_count &&
+      context->stateValue.size() == (planeBitCount + 63) / 64 &&
+      context->stateUnknown.size() == context->stateValue.size())
+    return true;
+  // Native planes may include allocation padding beyond the semantic design
+  // width passed by the generated operation.
+  if (context->nativeSchedulePlan &&
+      planeBitCount <= context->nativeSchedulePlan->state_bit_count)
+    return true;
+  if (context->nativeStateBitCount != 0 &&
+      planeBitCount <= context->nativeStateBitCount)
+    return true;
+  // Coroutine-only native execution has neither a bytecode image nor an AOT
+  // plan installed. Its generated global is nevertheless a stable full state
+  // plane, and the registered static roots below provide the range checks.
+  return planeBitCount != 0;
 }
 
 static bool validInertialStrengthPairUnlocked(
@@ -434,7 +435,20 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
   if (!context || !context->execution || !valuePlane || bitWidth == 0 ||
       codeUnit == UINT64_MAX ||
       (flags & ~(OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY |
-                 OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION)) != 0)
+                 OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION |
+                 OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW |
+                 OBELISK_RT_INERTIAL_DRIVER_REAL32 |
+                 OBELISK_RT_INERTIAL_DRIVER_REAL64)) != 0 ||
+      ((flags & OBELISK_RT_INERTIAL_DRIVER_REAL32) != 0 && bitWidth != 32) ||
+      ((flags & OBELISK_RT_INERTIAL_DRIVER_REAL64) != 0 && bitWidth != 64) ||
+      (flags & (OBELISK_RT_INERTIAL_DRIVER_REAL32 |
+                OBELISK_RT_INERTIAL_DRIVER_REAL64)) ==
+          (OBELISK_RT_INERTIAL_DRIVER_REAL32 |
+           OBELISK_RT_INERTIAL_DRIVER_REAL64) ||
+      ((flags & (OBELISK_RT_INERTIAL_DRIVER_REAL32 |
+                 OBELISK_RT_INERTIAL_DRIVER_REAL64)) != 0 &&
+       ((flags & OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY) == 0 ||
+        riseDelay != fallDelay || riseDelay != turnoffDelay)))
     return OBELISK_RT_INVALID_ARGUMENT;
   try {
     ContextTransaction transaction(context);
@@ -462,28 +476,40 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
 
     uint32_t staticID = 0;
     int64_t offset = 0;
-    if (!decodeNativeStatic(bitOffset, staticID, offset))
+    uint64_t rootHandle = bitOffset;
+    bool boundedStatic = decodeNativeStatic(bitOffset, staticID, offset);
+    if (!boundedStatic && !decodeNativeGlobal(bitOffset, offset))
       return OBELISK_RT_INVALID_HANDLE;
-    const NativeStaticState *state = findNativeStaticState(context, staticID);
-    if (!state)
+    const NativeStaticState *state =
+        boundedStatic ? findNativeStaticState(context, staticID) : nullptr;
+    if (boundedStatic && !state)
       return OBELISK_RT_INVALID_HANDLE;
+    uint64_t availableWidth = boundedStatic ? state->bitWidth : planeBitCount;
     __int128 firstWide =
         std::max<__int128>(0, -static_cast<__int128>(offset));
     __int128 lastWide = std::min<__int128>(
-        bitWidth, static_cast<__int128>(state->bitWidth) - offset);
+        bitWidth, static_cast<__int128>(availableWidth) - offset);
     if (firstWide >= lastWide) {
       cancelPending();
       return OBELISK_RT_OK;
     }
     uint64_t sourceFirst = static_cast<uint64_t>(firstWide);
     uint64_t selectedWidth = static_cast<uint64_t>(lastWide - firstWide);
+    bool realValue =
+        (flags & (OBELISK_RT_INERTIAL_DRIVER_REAL32 |
+                  OBELISK_RT_INERTIAL_DRIVER_REAL64)) != 0;
+    // A real is one atomic user-defined-net value (6.6.7), never a clipped
+    // packed slice. Continuous assignments to a UDNT also admit one delay
+    // only (10.3.3), which the validation above preserves in this ABI.
+    if (realValue && (sourceFirst != 0 || selectedWidth != bitWidth))
+      return OBELISK_RT_INVALID_HANDLE;
     __int128 selectedOffsetWide =
         static_cast<__int128>(offset) + firstWide;
     if (selectedOffsetWide < 0 || selectedOffsetWide > INT64_MAX)
       return OBELISK_RT_INVALID_HANDLE;
     int64_t selectedOffset = static_cast<int64_t>(selectedOffsetWide);
-    uint64_t selectedHandle = obelisk::designbytecode::encodeStaticHandle(
-        staticID, selectedOffset);
+    uint64_t selectedHandle = nativeHandleOffset(
+        rootHandle, static_cast<int64_t>(sourceFirst));
     if (selectedHandle == UINT64_MAX)
       return OBELISK_RT_INVALID_HANDLE;
     uint64_t byteCount = (bitWidth - 1) / 8 + 1;
@@ -505,12 +531,25 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
     bitOffset = selectedHandle;
     bitWidth = selectedWidth;
     offset = selectedOffset;
+    auto realBitsAreNaN = [&](const std::vector<uint8_t> &bytes) {
+      if (!realValue)
+        return false;
+      if ((flags & OBELISK_RT_INERTIAL_DRIVER_REAL32) != 0) {
+        float value = 0.0f;
+        std::memcpy(&value, bytes.data(), sizeof(value));
+        return std::isnan(value);
+      }
+      double value = 0.0;
+      std::memcpy(&value, bytes.data(), sizeof(value));
+      return std::isnan(value);
+    };
     if (auto pending = context->inertialDriverPending.find(site);
         pending != context->inertialDriverPending.end() &&
         pending->second.destination == bitOffset &&
         pending->second.width == bitWidth &&
         pending->second.value == targetValue &&
-        pending->second.unknown == targetUnknown)
+        pending->second.unknown == targetUnknown &&
+        !realBitsAreNaN(targetValue))
       return OBELISK_RT_OK;
 
     cancelPending();
@@ -519,13 +558,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
       return bit / 8 < plane.size() && byteBit(plane.data(), bit);
     };
     auto currentBit = [&](bool unknownBit, uint64_t bit) {
-      uint64_t absolute =
-          state->bitOffset + static_cast<uint64_t>(offset) + bit;
+      uint64_t absolute = (boundedStatic ? state->bitOffset : 0) +
+                          static_cast<uint64_t>(offset) + bit;
       const std::vector<uint64_t> &plane =
           unknownBit ? context->stateUnknown : context->stateValue;
-      if (absolute / 64 >= plane.size())
-        return false;
-      return ((plane[absolute / 64] >> (absolute % 64)) & 1) != 0;
+      if (absolute / 64 < plane.size())
+        return ((plane[absolute / 64] >> (absolute % 64)) & 1) != 0;
+      const uint8_t *nativePlane = unknownBit ? unknownPlane : valuePlane;
+      return nativePlane && absolute < planeBitCount &&
+             byteBit(nativePlane, absolute);
     };
     auto delayFor = [&](bool newValue, bool newUnknown) {
       if (!newUnknown)
@@ -541,13 +582,24 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
       update.valuePlane = valuePlane;
       update.unknownPlane = unknownPlane;
       update.planeBitCount = planeBitCount;
-      update.bitOffset = obelisk::designbytecode::encodeStaticHandle(
-          staticID,
-          static_cast<int64_t>(static_cast<uint64_t>(offset) + first));
+      update.bitOffset =
+          boundedStatic
+              ? obelisk::designbytecode::encodeStaticHandle(
+                    staticID,
+                    static_cast<int64_t>(static_cast<uint64_t>(offset) +
+                                         first))
+              : nativeHandleOffset(rootHandle, static_cast<int64_t>(first));
       update.bitWidth = width;
       update.driver = true;
       update.deferDriverResolution =
           (flags & OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION) != 0;
+      update.publishDriverTransition =
+          (flags & OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW) != 0;
+      update.realWidth =
+          (flags & OBELISK_RT_INERTIAL_DRIVER_REAL32) != 0
+              ? 32
+          : (flags & OBELISK_RT_INERTIAL_DRIVER_REAL64) != 0 ? 64
+                                                              : 0;
       update.execRegion = OBELISK_RT_REGION_ACTIVE;
       update.sequence = context->nextSchedulerSequence++;
       update.dueTime = delay > UINT64_MAX - context->schedulerTime
@@ -574,23 +626,48 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
       bool oldNonzero = false;
       bool newZero = true;
       bool newHighZ = true;
-      for (uint64_t bit = 0; bit != bitWidth; ++bit) {
-        bool oldValue = currentBit(false, bit);
-        bool oldUnknown = currentBit(true, bit);
-        bool newValue = sourceBit(targetValue, bit);
-        bool newUnknown = sourceBit(targetUnknown, bit);
-        changed |= oldValue != newValue || oldUnknown != newUnknown;
-        oldNonzero |= !oldUnknown && oldValue;
-        newZero &= !newUnknown && !newValue;
-        newHighZ &= newUnknown && newValue;
+      if (realValue) {
+        uint64_t oldBits = 0;
+        uint64_t newBits = 0;
+        for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+          oldBits |= static_cast<uint64_t>(currentBit(false, bit)) << bit;
+          newBits |= static_cast<uint64_t>(sourceBit(targetValue, bit)) << bit;
+        }
+        if ((flags & OBELISK_RT_INERTIAL_DRIVER_REAL32) != 0) {
+          uint32_t oldNarrow = static_cast<uint32_t>(oldBits);
+          uint32_t newNarrow = static_cast<uint32_t>(newBits);
+          float oldReal = 0.0f;
+          float newReal = 0.0f;
+          std::memcpy(&oldReal, &oldNarrow, sizeof(oldReal));
+          std::memcpy(&newReal, &newNarrow, sizeof(newReal));
+          changed = oldReal != newReal || std::isnan(newReal);
+        } else {
+          double oldReal = 0.0;
+          double newReal = 0.0;
+          std::memcpy(&oldReal, &oldBits, sizeof(oldReal));
+          std::memcpy(&newReal, &newBits, sizeof(newReal));
+          changed = oldReal != newReal || std::isnan(newReal);
+        }
+      } else {
+        for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+          bool oldValue = currentBit(false, bit);
+          bool oldUnknown = currentBit(true, bit);
+          bool newValue = sourceBit(targetValue, bit);
+          bool newUnknown = sourceBit(targetUnknown, bit);
+          changed |= oldValue != newValue || oldUnknown != newUnknown;
+          oldNonzero |= !oldUnknown && oldValue;
+          newZero &= !newUnknown && !newValue;
+          newHighZ &= newUnknown && newValue;
+        }
       }
       if (changed) {
         if (context->nextSchedulerSequence == 0 ||
             context->nextSchedulerSequence == UINT64_MAX)
           return OBELISK_RT_OUT_OF_RESOURCES;
-        uint64_t delay = newHighZ ? turnoffDelay
+        uint64_t delay = realValue       ? riseDelay
+                         : newHighZ       ? turnoffDelay
                          : oldNonzero && newZero ? fallDelay
-                                                 : riseDelay;
+                                                   : riseDelay;
         if (!enqueue(0, bitWidth, delay))
           return OBELISK_RT_OUT_OF_RESOURCES;
         scheduled = 1;

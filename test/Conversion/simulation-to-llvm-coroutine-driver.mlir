@@ -19,6 +19,7 @@ module attributes {
     obelisk_sim.code_unit.decl 10 in 0 function hierarchy "driver_lowering.drive_trireg"
     obelisk_sim.code_unit.decl 11 in 0 function hierarchy "driver_lowering.drive_delayed_trireg"
     obelisk_sim.code_unit.decl 12 in 0 function hierarchy "driver_lowering.drive_inertial_strength_pair"
+    obelisk_sim.code_unit.decl 13 in 0 function hierarchy "driver_lowering.drive_inertial_real"
     obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<2> design
     obelisk_sim.driver.decl 0 in 0 drives 0 :
         !obelisk_sim.logic<2> design
@@ -66,6 +67,10 @@ module attributes {
     }
     obelisk_sim.driver.decl 9 in 0 drives 7 :
         !obelisk_sim.logic<1> design {resolution_kind = 9 : i32}
+    obelisk_sim.net.decl 8 in 0 : f64 design {
+      obelisk_sim.user_defined_net
+    }
+    obelisk_sim.driver.decl 10 in 0 drives 8 : f64 design
 
     obelisk_sim.func @drive(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
@@ -252,6 +257,22 @@ module attributes {
           !obelisk_sim.logic<1>
       obelisk_sim.return
     }
+
+    // IEEE 1800-2017 6.6.7 and 10.3.3: one delay applies to the atomic real
+    // UDNT contribution, whose publication wakes the generated resolver.
+    obelisk_sim.func @drive_inertial_real(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %value: f64 {obelisk_sim.capture_kind = 2 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 13 : i64} {
+      %driver = obelisk_sim.context.driver %ctx[10] :
+          !obelisk_sim.driver<f64>
+      %delay = obelisk_sim.time.constant 7
+      obelisk_sim.driver.drive_inertial %driver = %value
+          after[%delay, %delay, %delay] site 13 : 0 vector = true
+          {defer_resolution = true, obelisk_sim.user_net_raw_drive} :
+          !obelisk_sim.driver<f64>, f64
+      obelisk_sim.return
+    }
   }
 }
 
@@ -347,6 +368,14 @@ module attributes {
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_resolve_drivers
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
 // CHECK-NOT: obelisk_sim.driver.drive_delayed_net
+
+// Raw delayed real contributions use vector-delay, deferred-resolution,
+// raw-publication, and f64 flags: 1 | 2 | 4 | 16 = 23.
+// CHECK-LABEL: llvm.func @drive_inertial_real
+// CHECK: %[[REAL_FLAGS:.*]] = llvm.mlir.constant(23 : i32) : i32
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_inertial_driver
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
+// CHECK-NOT: obelisk_sim.driver.drive_inertial
 
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x00010236 inputs=8 outputs=0 flags=0
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x00010237 inputs=10 outputs=0 flags=0

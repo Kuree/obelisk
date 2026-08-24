@@ -272,10 +272,14 @@ public:
     if (!width || adaptor.getNet().size() != 1)
       return failure();
     IntegerType plane = rewriter.getIntegerType(*width);
-    SmallVector<Value> converted{
+    Value value =
         loadStatePlane(rewriter, op.getLoc(), adaptor.getNet().front(), plane,
                        "__obelisk_state_value", false, stateBitCount,
-                       directLayout)};
+                       directLayout);
+    if (isa<FloatType>(resultType))
+      value = arith::BitcastOp::create(rewriter, op.getLoc(), resultType,
+                                       value);
+    SmallVector<Value> converted{value};
     if (containsLogic(resultType)) {
       Value unknown = twoState
                           ? llvmConstant(rewriter, op.getLoc(), plane, 0)
@@ -296,6 +300,134 @@ private:
   bool experimentalTwoState;
 };
 
+class DriverReadConversion final
+    : public OpConversionPattern<sim::SimDriverReadOp> {
+public:
+  DriverReadConversion(const TypeConverter &converter, MLIRContext *context,
+                       uint64_t stateBitCount,
+                       const NativeStateLayout *directLayout,
+                       bool experimentalTwoState)
+      : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
+        directLayout(directLayout), experimentalTwoState(experimentalTwoState) {}
+
+  LogicalResult
+  matchAndRewrite(sim::SimDriverReadOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Type resultType = op.getResult().getType();
+    bool twoState = useTwoStateSpecialization(op, experimentalTwoState);
+    std::optional<unsigned> width = nativeStateWidth(resultType);
+    if (!width || adaptor.getDriver().size() != 1)
+      return failure();
+    IntegerType plane = rewriter.getIntegerType(*width);
+    Value value = loadStatePlane(
+        rewriter, op.getLoc(), adaptor.getDriver().front(), plane,
+        "__obelisk_state_value", false, stateBitCount, directLayout);
+    if (isa<FloatType>(resultType))
+      value = arith::BitcastOp::create(rewriter, op.getLoc(), resultType,
+                                       value);
+    SmallVector<Value> converted{value};
+    if (containsLogic(resultType)) {
+      Value unknown = twoState
+                          ? llvmConstant(rewriter, op.getLoc(), plane, 0)
+                          : loadStatePlane(
+                                rewriter, op.getLoc(),
+                                adaptor.getDriver().front(), plane,
+                                "__obelisk_state_unknown", true,
+                                stateBitCount, directLayout);
+      converted.push_back(unknown);
+    }
+    SmallVector<ValueRange> replacements{ValueRange(converted)};
+    rewriter.replaceOpWithMultiple(op, replacements);
+    return success();
+  }
+
+private:
+  uint64_t stateBitCount;
+  const NativeStateLayout *directLayout;
+  bool experimentalTwoState;
+};
+
+class NetWriteConversion final
+    : public OpConversionPattern<sim::SimNetWriteOp> {
+public:
+  NetWriteConversion(const TypeConverter &converter, MLIRContext *context,
+                     uint64_t stateBitCount,
+                     const NativeStateLayout *directLayout,
+                     bool experimentalTwoState)
+      : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
+        directLayout(directLayout), experimentalTwoState(experimentalTwoState) {}
+
+  LogicalResult
+  matchAndRewrite(sim::SimNetWriteOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Type valueType = op.getValue().getType();
+    bool twoState = useTwoStateSpecialization(op, experimentalTwoState);
+    std::optional<unsigned> width = nativeStateWidth(valueType);
+    if (!width || adaptor.getNet().size() != 1 || adaptor.getValue().empty())
+      return failure();
+    IntegerType plane = rewriter.getIntegerType(*width);
+    Value handle = adaptor.getNet().front();
+    Value oldValue = loadStatePlane(rewriter, op.getLoc(), handle, plane,
+                                    "__obelisk_state_value", false,
+                                    stateBitCount, directLayout);
+    Value oldUnknown;
+    if (containsLogic(valueType))
+      oldUnknown = twoState
+                       ? llvmConstant(rewriter, op.getLoc(), plane, 0)
+                       : loadStatePlane(rewriter, op.getLoc(), handle, plane,
+                                        "__obelisk_state_unknown", true,
+                                        stateBitCount, directLayout);
+    Value newValue = adaptor.getValue().front();
+    if (isa<FloatType>(valueType))
+      newValue = arith::BitcastOp::create(rewriter, op.getLoc(), plane,
+                                          newValue);
+    Value newUnknown = adaptor.getValue().size() == 2 && !twoState
+                           ? adaptor.getValue()[1]
+                           : Value{};
+    (void)storeStatePlane(rewriter, op.getLoc(), handle, newValue,
+                          "__obelisk_state_value", stateBitCount,
+                          directLayout);
+    if (containsLogic(valueType) && !twoState)
+      (void)storeStatePlane(rewriter, op.getLoc(), handle, newUnknown,
+                            "__obelisk_state_unknown", stateBitCount,
+                            directLayout);
+
+    if (isa<FloatType>(valueType)) {
+      Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+      auto save = [&](Value value) {
+        Value storage = entryAlloca(rewriter, op.getLoc(), value.getType(), 1,
+                                    1);
+        LLVM::StoreOp::create(rewriter, op.getLoc(), value, storage, 1);
+        return storage;
+      };
+      Value contextAddress = LLVM::AddressOfOp::create(
+          rewriter, op.getLoc(), pointer, "__obelisk_current_context");
+      Value runtimeContext = LLVM::LoadOp::create(
+          rewriter, op.getLoc(), pointer, contextAddress, 8);
+      LLVM::CallOp::create(
+          rewriter, op.getLoc(), TypeRange{},
+          SymbolRefAttr::get(rewriter.getContext(),
+                             "obelisk_rt_v1_scheduler_real_transition"),
+          ValueRange{runtimeContext, handle,
+                     llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
+                                  *width),
+                     save(oldValue), save(newValue)});
+    } else {
+      notifySignal(rewriter, op.getLoc(), handle, *width, oldValue, oldUnknown,
+                   newValue, containsLogic(valueType) ? newUnknown : Value{},
+                   resolveDirectStaticStateRange(handle, *width,
+                                                 directLayout));
+    }
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  uint64_t stateBitCount;
+  const NativeStateLayout *directLayout;
+  bool experimentalTwoState;
+};
+
 } // namespace
 
 void populateStateReadWriteToLLVMConversionPatterns(
@@ -305,9 +437,9 @@ void populateStateReadWriteToLLVMConversionPatterns(
   patterns.add<RefLoadConversion, RefStoreConversion>(
       converter, patterns.getContext(), stateBitCount, directLayout,
       experimentalTwoState);
-  patterns.add<NetReadConversion>(converter, patterns.getContext(),
-                                  stateBitCount, directLayout,
-                                  experimentalTwoState);
+  patterns.add<NetReadConversion, DriverReadConversion, NetWriteConversion>(
+      converter, patterns.getContext(), stateBitCount, directLayout,
+      experimentalTwoState);
 }
 
 } // namespace obelisk::detail

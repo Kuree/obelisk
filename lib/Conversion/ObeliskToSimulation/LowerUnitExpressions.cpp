@@ -4140,6 +4140,9 @@ FailureOr<SmallVector<Value>> UnitLowering::unpackedSliceIndices(
 
 FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   Location location = getSemanticLocation(op);
+  if (auto leafPath =
+          op->getAttrOfType<StringAttr>(interconnectLeafPathAttrName))
+    return lowerReferencedValue(op, leafPath.getValue(), lvalue);
   SmallVector<Operation *> children = getChildren(op);
   bool element = isa<semantic::SVElementSelectExpressionOp>(op);
   if (children.size() != (element ? 2u : 3u)) {

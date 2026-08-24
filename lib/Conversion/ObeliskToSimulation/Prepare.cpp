@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Detail.h"
+#include "LowerUnit.h"
 #include "PrepareCaptures.h"
 #include "PrepareDeclarations.h"
 #include "PrepareNetTopology.h"
@@ -18,6 +19,7 @@
 #include "PrepareValidation.h"
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
+#include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -70,6 +72,83 @@ static semantic::SVClassTypeOp getOwningClass(Operation *member) {
     if (auto classType = dyn_cast<semantic::SVClassTypeOp>(parent))
       return classType;
   return {};
+}
+
+static bool containsResolutionOperation(Operation *root, Operation *nested) {
+  for (Operation *current = nested; current; current = current->getParentOp())
+    if (current == root)
+      return true;
+  return false;
+}
+
+static bool isResolutionStorageBase(Operation *lvalue,
+                                    Operation *reference) {
+  if (lvalue == reference)
+    return isa<semantic::SVNamedValueExpressionOp,
+               semantic::SVHierarchicalValueExpressionOp>(lvalue);
+  SmallVector<Operation *> children = getChildren(lvalue);
+  if (isa<semantic::SVMemberAccessExpressionOp,
+          semantic::SVElementSelectExpressionOp,
+          semantic::SVRangeSelectExpressionOp>(lvalue))
+    return !children.empty() &&
+           containsResolutionOperation(children.front(), reference) &&
+           isResolutionStorageBase(children.front(), reference);
+  if (isa<semantic::SVConcatenationExpressionOp>(lvalue))
+    return llvm::any_of(children, [&](Operation *child) {
+      return containsResolutionOperation(child, reference) &&
+             isResolutionStorageBase(child, reference);
+    });
+  return false;
+}
+
+static bool isWrittenResolutionReference(Operation *reference) {
+  for (Operation *ancestor = reference->getParentOp(); ancestor;
+       ancestor = ancestor->getParentOp()) {
+    if (auto assignment =
+            dyn_cast<semantic::SVAssignmentExpressionOp>(ancestor)) {
+      SmallVector<Operation *> children = getChildren(assignment);
+      size_t destinationIndex = assignment.getHasTimingControl() ? 1u : 0u;
+      return destinationIndex < children.size() &&
+             containsResolutionOperation(children[destinationIndex],
+                                         reference) &&
+             isResolutionStorageBase(children[destinationIndex], reference);
+    }
+    if (auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(ancestor)) {
+      using Unary = semantic::SVUnaryOperator;
+      Unary kind = unary.getOperatorKind();
+      if (kind != Unary::Preincrement && kind != Unary::Predecrement &&
+          kind != Unary::Postincrement && kind != Unary::Postdecrement)
+        continue;
+      SmallVector<Operation *> children = getChildren(unary);
+      return children.size() == 1 &&
+             containsResolutionOperation(children.front(), reference) &&
+             isResolutionStorageBase(children.front(), reference);
+    }
+  }
+  return false;
+}
+
+static bool isStatefulResolutionSystemCall(StringRef name) {
+  return llvm::StringSwitch<bool>(name)
+      // Random-number functions update the process RNG state.
+      .Cases({"$random", "$urandom", "$urandom_range", "$srandom"}, true)
+      .Cases({"$dist_uniform", "$dist_normal", "$dist_exponential"}, true)
+      .Cases({"$dist_poisson", "$dist_chi_square", "$dist_t"}, true)
+      .Case("$dist_erlang", true)
+      // File operations either mutate a stream or produce external effects.
+      .Cases({"$fopen", "$fclose", "$fflush", "$fgetc", "$fgets"}, true)
+      .Cases({"$fread", "$fseek", "$rewind", "$ungetc", "$fscanf"}, true)
+      .Cases({"$fwrite", "$fdisplay", "$fmonitor", "$fstrobe"}, true)
+      .Case("$ferror", true)
+      // These calls mutate simulator or design state independently of their
+      // apparent expression result.
+      .Cases({"$readmemb", "$readmemh", "$writememb", "$writememh"}, true)
+      .Cases({"$timeformat", "$system", "$stop", "$finish"}, true)
+      .Cases({"$dumpfile", "$dumpvars", "$dumpon", "$dumpoff"}, true)
+      .Cases({"$dumpall", "$dumplimit", "$dumpflush"}, true)
+      .Cases({"$display", "$write", "$monitor", "$strobe"}, true)
+      .Cases({"$info", "$warning", "$error", "$fatal"}, true)
+      .Default(false);
 }
 
 /// Constraint branches are evaluated eagerly while building the candidate
@@ -1064,6 +1143,325 @@ void ObeliskSimPreparePass::runOnOperation() {
     return;
   }
   auto &portConnections = portAliases->connections;
+
+  // IEEE 1800-2017 6.6.8: an untyped interconnect acquires its executable
+  // data/net type exclusively from the net ports it connects, and distinct
+  // elements of an unpacked interconnect array may acquire distinct types.
+  // Solve those structural type constraints before descriptor allocation.
+  // Scalar interconnects become ordinary typed nets; fixed heterogeneous
+  // aggregates become one typed descriptor per leaf and never exist as a
+  // typeless runtime object.
+  {
+    struct InterconnectLeaf {
+      semantic::SVNetSymbolOp owner;
+      SmallVector<int64_t> indices;
+      std::string path;
+      Type candidate;
+      std::optional<Location> candidateLocation;
+    };
+    SmallVector<InterconnectLeaf> leaves;
+    llvm::StringMap<SmallVector<unsigned>> leavesByRoot;
+    llvm::StringMap<semantic::SVNetSymbolOp> interconnects;
+
+    auto containsUntyped = [&](Type type) {
+      while (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(type))
+        type = array.getElementType();
+      return isa<semantic::UntypedType>(type);
+    };
+    auto leafPath = [](StringRef root, ArrayRef<int64_t> indices) {
+      std::string result = root.str();
+      for (int64_t index : indices)
+        result += (Twine("[") + Twine(index) + "]").str();
+      return result;
+    };
+    std::function<LogicalResult(semantic::SVNetSymbolOp, Type,
+                                SmallVector<int64_t> &)>
+        enumerateLeaves;
+    enumerateLeaves = [&](semantic::SVNetSymbolOp net, Type type,
+                          SmallVector<int64_t> &indices) -> LogicalResult {
+      if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(type)) {
+        int64_t index = array.getLeft();
+        while (true) {
+          indices.push_back(index);
+          if (failed(enumerateLeaves(net, array.getElementType(), indices)))
+            return failure();
+          indices.pop_back();
+          if (index == array.getRight())
+            break;
+          if (array.getLeft() < array.getRight()) {
+            if (index == std::numeric_limits<int64_t>::max())
+              return failure();
+            ++index;
+          } else {
+            if (index == std::numeric_limits<int64_t>::min())
+              return failure();
+            --index;
+          }
+        }
+        return success();
+      }
+      if (!isa<semantic::UntypedType>(type))
+        return failure();
+      StringRef root = getHierarchyName(net);
+      unsigned id = leaves.size();
+      InterconnectLeaf leaf;
+      leaf.owner = net;
+      leaf.indices = indices;
+      leaf.path = leafPath(root, indices);
+      leaves.push_back(std::move(leaf));
+      leavesByRoot[root].push_back(id);
+      return success();
+    };
+
+    semanticRoot->walk([&](semantic::SVNetSymbolOp net) {
+      std::optional<Type> semanticType = net.getSemanticType();
+      if (net.getNetKind() == semantic::SVNetKind::Interconnect &&
+          semanticType && containsUntyped(*semanticType)) {
+        StringRef path = getHierarchyName(net);
+        interconnects[path] = net;
+        SmallVector<int64_t> indices;
+        if (failed(enumerateLeaves(net, *semanticType, indices))) {
+          emitError(getSemanticLocation(net))
+              << "interconnect has a non-fixed or malformed typeless shape";
+          invalid = true;
+        }
+      }
+    });
+
+    SmallVector<unsigned> parents;
+    parents.reserve(leaves.size());
+    for (unsigned id = 0; id != leaves.size(); ++id)
+      parents.push_back(id);
+    std::function<unsigned(unsigned)> find = [&](unsigned id) -> unsigned {
+      if (parents[id] == id)
+        return id;
+      return parents[id] = find(parents[id]);
+    };
+    auto join = [&](unsigned lhs, unsigned rhs) {
+      lhs = find(lhs);
+      rhs = find(rhs);
+      if (lhs != rhs)
+        parents[std::max(lhs, rhs)] = std::min(lhs, rhs);
+    };
+    auto parseKnownIndex = [&](Operation *expression)
+        -> std::optional<int64_t> {
+      std::optional<StringRef> spelling = getConstantSpelling(expression);
+      if (!spelling)
+        return std::nullopt;
+      FailureOr<ParsedConstant> parsed = parseSVInteger(
+          *spelling, 64, getSemanticLocation(expression));
+      if (failed(parsed) || !parsed->unknown.isZero() ||
+          !parsed->value.isSignedIntN(64))
+        return std::nullopt;
+      return parsed->value.getSExtValue();
+    };
+    struct InterconnectReference {
+      std::string root;
+      SmallVector<int64_t> indices;
+    };
+    std::function<std::optional<InterconnectReference>(Operation *)>
+        getInterconnectReference;
+    getInterconnectReference = [&](Operation *expression)
+        -> std::optional<InterconnectReference> {
+      if (!expression)
+        return std::nullopt;
+      StringRef path;
+      if (auto named =
+              dyn_cast<semantic::SVNamedValueExpressionOp>(expression))
+        path = named.getReferencedPath();
+      else if (auto hierarchical =
+                   dyn_cast<semantic::SVHierarchicalValueExpressionOp>(
+                       expression))
+        path = hierarchical.getReferencedPath();
+      if (!path.empty() && leavesByRoot.contains(path))
+        return InterconnectReference{path.str(), {}};
+      SmallVector<Operation *> children = getChildren(expression);
+      if (isa<semantic::SVConversionExpressionOp>(expression) &&
+          children.size() == 1)
+        return getInterconnectReference(children.front());
+      if (!isa<semantic::SVElementSelectExpressionOp>(expression) ||
+          children.size() != 2)
+        return std::nullopt;
+      std::optional<InterconnectReference> base =
+          getInterconnectReference(children.front());
+      std::optional<int64_t> index = parseKnownIndex(children[1]);
+      if (!base || !index)
+        return std::nullopt;
+      base->indices.push_back(*index);
+      return base;
+    };
+    auto referencedLeaves = [&](Operation *expression) {
+      SmallVector<unsigned> result;
+      std::optional<InterconnectReference> reference =
+          getInterconnectReference(expression);
+      if (!reference)
+        return result;
+      auto found = leavesByRoot.find(reference->root);
+      if (found == leavesByRoot.end())
+        return result;
+      for (unsigned id : found->second)
+        if (leaves[id].indices.size() >= reference->indices.size() &&
+            llvm::equal(reference->indices,
+                        ArrayRef(leaves[id].indices)
+                            .take_front(reference->indices.size())))
+          result.push_back(id);
+      return result;
+    };
+    std::function<void(Type, SmallVectorImpl<Type> &)> flattenFormalType;
+    flattenFormalType = [&](Type type, SmallVectorImpl<Type> &result) {
+      if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(type)) {
+        uint64_t count = array.getLeft() >= array.getRight()
+                             ? uint64_t(array.getLeft()) -
+                                   uint64_t(array.getRight()) + 1
+                             : uint64_t(array.getRight()) -
+                                   uint64_t(array.getLeft()) + 1;
+        for (uint64_t index = 0; index != count; ++index)
+          flattenFormalType(array.getElementType(), result);
+        return;
+      }
+      result.push_back(type);
+    };
+    auto assignCandidate = [&](unsigned id, Type candidate, Location location) {
+      if (containsUntyped(candidate))
+        return;
+      if (!leaves[id].candidate) {
+        leaves[id].candidate = candidate;
+        leaves[id].candidateLocation = location;
+        return;
+      }
+      FailureOr<Type> previous = normalizeSemanticType(
+          leaves[id].candidate, *leaves[id].candidateLocation);
+      FailureOr<Type> next = normalizeSemanticType(candidate, location);
+      if (failed(previous) || failed(next) || *previous != *next) {
+        emitError(location) << "interconnect leaf '" << leaves[id].path
+                            << "' has incompatible connected net-port types";
+        invalid = true;
+      }
+    };
+
+    for (semantic::SVPortConnectionOp connection : portConnections) {
+      Operation *actual = getPortActualLValue(connection);
+      SmallVector<unsigned> actualLeaves = referencedLeaves(actual);
+      StringRef internalPath =
+          connection.getInternalPath().value_or(StringRef{});
+      SmallVector<unsigned> internalLeaves;
+      if (Operation *internal = getSingleRegionRoot(connection.getInternal()))
+        internalLeaves = referencedLeaves(internal);
+      else if (auto found = leavesByRoot.find(internalPath);
+               found != leavesByRoot.end())
+        internalLeaves = found->second;
+
+      if (!actualLeaves.empty() && !internalLeaves.empty()) {
+        if (actualLeaves.size() != internalLeaves.size()) {
+          emitError(getSemanticLocation(connection))
+              << "interconnect port association has incompatible fixed "
+                 "leaf counts";
+          invalid = true;
+        } else {
+          for (auto [actualLeaf, internalLeaf] :
+               llvm::zip(actualLeaves, internalLeaves))
+            join(actualLeaf, internalLeaf);
+        }
+      }
+
+      if (!actualLeaves.empty()) {
+        SmallVector<Type> formalLeaves;
+        flattenFormalType(connection.getFormalType(), formalLeaves);
+        if (!llvm::any_of(formalLeaves, containsUntyped)) {
+          if (formalLeaves.size() != actualLeaves.size()) {
+            emitError(getSemanticLocation(connection))
+                << "interconnect port association has incompatible typed "
+                   "leaf counts";
+            invalid = true;
+          } else {
+            for (auto [actualLeaf, type] :
+                 llvm::zip(actualLeaves, formalLeaves))
+              assignCandidate(actualLeaf, type,
+                              getSemanticLocation(connection));
+          }
+        }
+      }
+    }
+
+    // Move every candidate to its connected-component root and reject
+    // conflicting types before publishing the result back to individual
+    // leaves.
+    for (unsigned id = 0; id != leaves.size(); ++id) {
+      unsigned root = find(id);
+      if (id == root || !leaves[id].candidate)
+        continue;
+      assignCandidate(root, leaves[id].candidate,
+                      *leaves[id].candidateLocation);
+    }
+    for (unsigned id = 0; id != leaves.size(); ++id) {
+      unsigned root = find(id);
+      if (!leaves[root].candidate) {
+        emitError(getSemanticLocation(leaves[id].owner))
+            << "interconnect leaf '" << leaves[id].path
+            << "' has no typed net-port connection";
+        invalid = true;
+        continue;
+      }
+      leaves[id].candidate = leaves[root].candidate;
+      leaves[id].candidateLocation = leaves[root].candidateLocation;
+    }
+
+    // Scalar interconnects use the ordinary descriptor path. Aggregate
+    // interconnects retain their typeless declaration shape and carry a
+    // compact, declaration-ordered leaf inventory for topology lowering.
+    for (auto &entry : interconnects) {
+      semantic::SVNetSymbolOp net = entry.second;
+      auto foundLeaves = leavesByRoot.find(entry.getKey());
+      if (foundLeaves == leavesByRoot.end())
+        continue;
+      ArrayRef<unsigned> ids = foundLeaves->second;
+      if (ids.size() == 1 && leaves[ids.front()].indices.empty()) {
+        net->setAttr("semantic_type", TypeAttr::get(leaves[ids.front()].candidate));
+        continue;
+      }
+      SmallVector<Attribute> definitions;
+      definitions.reserve(ids.size());
+      for (unsigned id : ids)
+        definitions.push_back(builder.getDictionaryAttr(
+            {builder.getNamedAttr("path",
+                                  builder.getStringAttr(leaves[id].path)),
+             builder.getNamedAttr("indices", builder.getDenseI64ArrayAttr(
+                                                 leaves[id].indices)),
+             builder.getNamedAttr("type",
+                                  TypeAttr::get(leaves[id].candidate))}));
+      net->setAttr(interconnectLeavesAttrName,
+                   builder.getArrayAttr(definitions));
+    }
+
+    // Freeze a direct descriptor identity and executable type on every fully
+    // selected leaf expression. Unit capture and lowering can then bypass the
+    // deliberately typeless aggregate root.
+    semanticRoot->walk([&](semantic::SVElementSelectExpressionOp select) {
+      SmallVector<unsigned> ids = referencedLeaves(select);
+      if (ids.size() != 1 ||
+          leaves[ids.front()].indices.size() !=
+              getInterconnectReference(select)->indices.size())
+        return;
+      InterconnectLeaf &leaf = leaves[ids.front()];
+      select->setAttr(interconnectLeafPathAttrName,
+                      builder.getStringAttr(leaf.path));
+      select->setAttr("semantic_type", TypeAttr::get(leaf.candidate));
+    });
+    for (semantic::SVPortConnectionOp connection : portConnections) {
+      Operation *actual = getPortActualLValue(connection);
+      SmallVector<unsigned> ids = referencedLeaves(actual);
+      if (ids.size() != 1)
+        continue;
+      Type type = leaves[ids.front()].candidate;
+      connection.getActual().walk([&](semantic::SVAssignmentExpressionOp op) {
+        auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
+        if (semanticType && isa<semantic::UntypedType>(semanticType.getValue()))
+          op->setAttr("semantic_type", TypeAttr::get(type));
+      });
+    }
+  }
+  if (invalid)
+    return abort();
 
   FailureOr<llvm::StringMap<DescriptorInfo>> preparedDescriptors =
       materializeDesignDescriptors(module, semanticRoot, *portAliases, *scopes,
@@ -7589,6 +7987,555 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder.getBoolAttr(method.getIsFinal().value_or(false)),
           builder.getStringAttr(getDebugName(method)));
     }
+  }
+  if (invalid)
+    return abort();
+
+  // IEEE 1800-2017 6.6.7: a user-defined net is atomic, and a change to any
+  // raw driver schedules evaluation of its optional resolution function in
+  // Active (or Reactive for program-originated updates). Materialize one
+  // compact continuous process per net. Ordinary packed nets never enter this
+  // path, preserving their vectorized and bitwise resolver fast paths.
+  {
+    DenseMap<uint64_t, sim::SimNetDeclOp> netDeclarations;
+    DenseMap<uint64_t, SmallVector<sim::SimDriverDeclOp>> netDrivers;
+    for (sim::SimNetDeclOp net :
+         design.getBody().front().getOps<sim::SimNetDeclOp>())
+      netDeclarations[net.getId()] = net;
+    for (sim::SimDriverDeclOp driver :
+         design.getBody().front().getOps<sim::SimDriverDeclOp>())
+      netDrivers[driver.getNetId()].push_back(driver);
+    for (auto &[id, drivers] : netDrivers)
+      llvm::sort(drivers, [](sim::SimDriverDeclOp lhs,
+                             sim::SimDriverDeclOp rhs) {
+        return lhs.getId() < rhs.getId();
+      });
+
+    // Port elaboration represents one physical net as several declarations
+    // joined by bitwise connectivity runs. Resolution, however, belongs to
+    // the complete user-net component. Collapse declarations here only for
+    // generated user resolution; the ordinary packed-net topology remains
+    // unchanged and keeps its optimized bitwise representation.
+    DenseMap<uint64_t, uint64_t> componentParent;
+    for (auto [id, declaration] : netDeclarations)
+      componentParent[id] = id;
+    std::function<uint64_t(uint64_t)> findComponent =
+        [&](uint64_t id) -> uint64_t {
+      uint64_t parent = componentParent.lookup(id);
+      if (parent == id)
+        return id;
+      return componentParent[id] = findComponent(parent);
+    };
+    auto joinComponent = [&](uint64_t lhs, uint64_t rhs) {
+      if (!netDeclarations.contains(lhs) || !netDeclarations.contains(rhs))
+        return;
+      uint64_t lhsRoot = findComponent(lhs);
+      uint64_t rhsRoot = findComponent(rhs);
+      if (lhsRoot != rhsRoot)
+        componentParent[std::max(lhsRoot, rhsRoot)] =
+            std::min(lhsRoot, rhsRoot);
+    };
+    for (sim::SimNetConnectDeclOp connection :
+         design.getBody().front().getOps<sim::SimNetConnectDeclOp>())
+      joinComponent(connection.getLhsNetId(), connection.getRhsNetId());
+    DenseMap<uint64_t, SmallVector<uint64_t>> componentMembers;
+    for (auto [id, declaration] : netDeclarations)
+      componentMembers[findComponent(id)].push_back(id);
+    for (auto &[root, members] : componentMembers)
+      llvm::sort(members);
+
+    llvm::DenseSet<uint64_t> reactiveDriverIDs;
+    for (PreparedUnit &unit : units) {
+      if (!unit.function ||
+          unit.function.getHomeRegion() != sim::EventRegion::Reactive)
+        continue;
+      for (unsigned index = 1;
+           index < unit.function.getNumArguments(); ++index) {
+        if (!isa<sim::DriverType>(unit.function.getArgumentTypes()[index]))
+          continue;
+        auto descriptor = unit.function.getArgAttrOfType<IntegerAttr>(
+            index, sim::metadata::descriptorId);
+        if (descriptor)
+          reactiveDriverIDs.insert(descriptor.getValue().getZExtValue());
+      }
+    }
+
+    uint64_t generatedOrdinal = 0;
+    SmallVector<PreparedUnit> generatedUnits;
+    for (auto &[componentRoot, members] : componentMembers) {
+      sim::SimNetDeclOp net;
+      for (uint64_t member : members) {
+        sim::SimNetDeclOp candidate = netDeclarations.lookup(member);
+        if (candidate->hasAttr("obelisk_sim.user_defined_net")) {
+          net = candidate;
+          break;
+        }
+      }
+      if (!net)
+        continue;
+      SmallVector<sim::SimDriverDeclOp> componentDrivers;
+      for (uint64_t member : members)
+        llvm::append_range(componentDrivers, netDrivers[member]);
+      llvm::sort(componentDrivers, [](sim::SimDriverDeclOp lhs,
+                                      sim::SimDriverDeclOp rhs) {
+        return lhs.getId() < rhs.getId();
+      });
+      ArrayRef<sim::SimDriverDeclOp> drivers = componentDrivers;
+      bool hasReactiveDriver = llvm::any_of(drivers, [&](auto driver) {
+        return reactiveDriverIDs.contains(driver.getId());
+      });
+      bool hasActiveDriver = llvm::any_of(drivers, [&](auto driver) {
+        return !reactiveDriverIDs.contains(driver.getId());
+      });
+      bool mixedDriverRegions = hasActiveDriver && hasReactiveDriver;
+      sim::EventRegion primaryRegion = hasActiveDriver
+                                           ? sim::EventRegion::Active
+                                           : sim::EventRegion::Reactive;
+      auto resolutionPath = net->getAttrOfType<StringAttr>(
+          "obelisk_sim.resolution_function_path");
+      auto resolutionSymbol = net->getAttrOfType<SymbolRefAttr>(
+          "obelisk_sim.resolution_function_symbol");
+      sim::SimFuncOp resolutionFunction;
+      Operation *resolutionSource = nullptr;
+      if (resolutionPath) {
+        auto semantic = resolutionSymbol
+                            ? semanticSymbols.find(
+                                  resolutionSymbol.getLeafReference())
+                            : semanticSymbols.end();
+        resolutionSource = semantic == semanticSymbols.end()
+                               ? nullptr
+                               : semantic->second;
+        auto resolutionSubroutine =
+            dyn_cast_or_null<semantic::SVSubroutineSymbolOp>(resolutionSource);
+        if (resolutionSubroutine &&
+            resolutionSubroutine.getDefaultLifetime() !=
+                semantic::SVVariableLifetime::Automatic) {
+          emitError(getSemanticLocation(resolutionSource))
+              << "user-defined net resolution function '"
+              << resolutionPath.getValue() << "' must be automatic";
+          invalid = true;
+          continue;
+        }
+        resolutionFunction =
+            resolutionSource ? unitFunctions.lookup(resolutionSource)
+                             : sim::SimFuncOp{};
+        if (!resolutionFunction) {
+          net.emitError() << "user-defined net resolution function '"
+                          << resolutionPath.getValue()
+                          << "' has no executable code unit";
+          invalid = true;
+          continue;
+        }
+        semantic::SVFormalArgumentSymbolOp driverArgument;
+        for (Operation *child : getChildren(resolutionSource))
+          if (auto formal =
+                  dyn_cast<semantic::SVFormalArgumentSymbolOp>(child)) {
+            driverArgument = formal;
+            break;
+          }
+        bool mutatesDriverArray = false;
+        if (driverArgument) {
+          StringAttr argumentSymbol = driverArgument.getSymNameAttr();
+          resolutionFunction.walk([&](Operation *nested) {
+            SymbolRefAttr reference;
+            if (auto named =
+                    dyn_cast<semantic::SVNamedValueExpressionOp>(nested))
+              reference = named.getReferencedSymbol();
+            else if (auto hierarchical =
+                         dyn_cast<semantic::SVHierarchicalValueExpressionOp>(
+                             nested))
+              reference = hierarchical.getReferencedSymbol();
+            if (!reference ||
+                reference.getLeafReference() != argumentSymbol.getValue())
+              return;
+            if (isWrittenResolutionReference(nested)) {
+              mutatesDriverArray = true;
+              return;
+            }
+            auto call = nested->getParentOfType<semantic::SVCallExpressionOp>();
+            if (call && call.getIsSystemCall() &&
+                call.getCalleeName() == "delete")
+              mutatesDriverArray = true;
+          });
+        }
+        if (mutatesDriverArray) {
+          emitError(getSemanticLocation(resolutionSource))
+              << "user-defined net resolution function '"
+              << resolutionPath.getValue()
+              << "' writes or resizes its driver-value input array";
+          invalid = true;
+          continue;
+        }
+        auto written = unitWrittenCaptures.find(resolutionSource);
+        if (written != unitWrittenCaptures.end() && !written->second.empty()) {
+          emitError(getSemanticLocation(resolutionSource))
+              << "user-defined net resolution function '"
+              << resolutionPath.getValue()
+              << "' preserves state or has side effects through design "
+                 "storage";
+          invalid = true;
+          continue;
+        }
+        llvm::DenseSet<Operation *> visitedFunctions;
+        std::function<bool(Operation *)> hasSemanticSideEffect =
+            [&](Operation *source) {
+          if (!source || !visitedFunctions.insert(source).second)
+            return false;
+          Operation *body = source;
+          if (sim::SimFuncOp lowered = unitFunctions.lookup(source))
+            body = lowered;
+          bool sideEffect = false;
+          body->walk([&](semantic::SVCallExpressionOp call) {
+            if (sideEffect)
+              return;
+            if (call.getIsSystemCall()) {
+              sideEffect = isStatefulResolutionSystemCall(
+                  call.getCalleeName());
+              return;
+            }
+            Operation *target = resolveDirectCallee(call);
+            auto subroutine =
+                dyn_cast_or_null<semantic::SVSubroutineSymbolOp>(target);
+            if (!subroutine) {
+              // An unresolved user call cannot be proven side-effect-free.
+              sideEffect = true;
+              return;
+            }
+            if (subroutine.getIsDpiImport().value_or(false)) {
+              sideEffect = !subroutine.getIsPure().value_or(false);
+              return;
+            }
+            if (subroutine.getSubroutineKind() ==
+                semantic::SVSubroutineKind::Task) {
+              sideEffect = true;
+              return;
+            }
+            sideEffect = hasSemanticSideEffect(target);
+          });
+          return sideEffect;
+        };
+        if (hasSemanticSideEffect(resolutionSource)) {
+          emitError(getSemanticLocation(resolutionSource))
+              << "user-defined net resolution function '"
+              << resolutionPath.getValue()
+              << "' has a stateful or externally visible side effect";
+          invalid = true;
+          continue;
+        }
+      } else if (drivers.size() > 1) {
+        net.emitError()
+            << "unresolved user-defined net has multiple drivers";
+        invalid = true;
+        continue;
+      }
+      if (!resolutionFunction && drivers.empty())
+        continue;
+      for (uint64_t member : members)
+        netDeclarations.lookup(member)->removeAttr(
+            "obelisk_sim.resolution_function_symbol");
+
+      llvm::DenseSet<uint64_t> rawDriverIDs;
+      for (sim::SimDriverDeclOp driver : drivers)
+        rawDriverIDs.insert(driver.getId());
+      for (PreparedUnit &unit : units)
+        for (unsigned index = 1;
+             index < unit.function.getNumArguments(); ++index) {
+          auto descriptor = unit.function.getArgAttrOfType<IntegerAttr>(
+              index, sim::metadata::descriptorId);
+          if (isa<sim::DriverType>(unit.function.getArgumentTypes()[index]) &&
+              descriptor &&
+              rawDriverIDs.contains(descriptor.getValue().getZExtValue()))
+            unit.function.setArgAttr(index, "obelisk_sim.user_net_driver",
+                                     builder.getUnitAttr());
+        }
+
+      std::string hierarchy =
+          (net.getHierarchicalName().value_or(StringRef{"$user_net"}) +
+           (mixedDriverRegions ? ".$resolution.active" : ".$resolution"))
+              .str();
+      uint64_t codeUnitID = stableCodeUnitID(hierarchy);
+      if (llvm::any_of(units, [&](const PreparedUnit &unit) {
+            return unit.id == codeUnitID;
+          }) || codeUnitID == rootCodeUnitID) {
+        net.emitError() << "stable code-unit ID collision for '" << hierarchy
+                        << "'";
+        invalid = true;
+        continue;
+      }
+      std::string symbol =
+          (Twine("__obelisk_user_net_resolver_") +
+           Twine(generatedOrdinal++))
+              .str();
+      sim::SimCodeUnitDeclOp::create(
+          builder, net.getLoc(), codeUnitID, net.getScopeId(),
+          sim::EntryKind::Continuous, builder.getStringAttr(hierarchy),
+          builder.getStringAttr("user-defined net resolution"), UnitAttr{});
+
+      SmallVector<Type> inputTypes{sim::ContextType::get(context)};
+      SmallVector<DictionaryAttr> argumentAttrs{
+          captureMetadata(builder, sim::CaptureKind::Context)};
+      for (uint64_t member : members) {
+        sim::SimNetDeclOp memberNet = netDeclarations.lookup(member);
+        if (memberNet.getType() != net.getType()) {
+          memberNet.emitError()
+              << "connected user-defined net component has incompatible "
+                 "member type "
+              << memberNet.getType() << "; expected " << net.getType();
+          invalid = true;
+          break;
+        }
+        inputTypes.push_back(sim::NetType::get(context, net.getType()));
+        argumentAttrs.push_back(
+            captureMetadata(builder, sim::CaptureKind::Net, member));
+      }
+      if (invalid)
+        continue;
+      for (sim::SimDriverDeclOp driver : drivers) {
+        inputTypes.push_back(sim::DriverType::get(context, net.getType()));
+        NamedAttrList attrs(
+            captureMetadata(builder, sim::CaptureKind::Driver,
+                            driver.getId()));
+        attrs.set("obelisk_sim.user_net_driver", builder.getUnitAttr());
+        argumentAttrs.push_back(attrs.getDictionary(context));
+      }
+      SmallVector<NamedAttribute> functionAttrs{
+          builder.getNamedAttr("code_unit_id",
+                               builder.getI64IntegerAttr(codeUnitID)),
+          builder.getNamedAttr(
+              "home_region",
+              sim::EventRegionAttr::get(context, primaryRegion)),
+          builder.getNamedAttr(
+              "domain", sim::ExecutionDomainAttr::get(
+                            context, sim::ExecutionDomain::Design)),
+          builder.getNamedAttr(sim::metadata::hierarchicalName,
+                               builder.getStringAttr(hierarchy)),
+          builder.getNamedAttr(sim::metadata::lowered,
+                               builder.getUnitAttr())};
+      auto resolver = sim::SimFuncOp::create(
+          builder, net.getLoc(), symbol,
+          FunctionType::get(context, inputTypes, TypeRange{}),
+          sim::EntryKind::Continuous, functionAttrs, argumentAttrs);
+      Block *entry = &resolver.getBody().front();
+      Block *loop = new Block;
+      resolver.getBody().push_back(loop);
+      OpBuilder entryBuilder = OpBuilder::atBlockEnd(entry);
+      Value contributionArray;
+      if (resolutionFunction) {
+        Type arrayType = sim::DynamicArrayType::get(context, net.getType());
+        FailureOr<ContainerElementDescriptor> descriptor =
+            describeContainerElement(net.getType(), net.getLoc());
+        if (failed(descriptor)) {
+          invalid = true;
+          resolver.erase();
+          continue;
+        }
+        Value size = arith::ConstantOp::create(
+            entryBuilder, net.getLoc(), entryBuilder.getI64Type(),
+            entryBuilder.getI64IntegerAttr(drivers.size()));
+        contributionArray = sim::SimContainerCreateOp::create(
+            entryBuilder, net.getLoc(), arrayType, size,
+            descriptor->typeID, descriptor->kind, descriptor->flags,
+            descriptor->valueSize, descriptor->alignment,
+            descriptor->bitWidth,
+            entryBuilder.getDenseI64ArrayAttr(descriptor->traceOffsets),
+            entryBuilder.getDenseI32ArrayAttr(descriptor->traceKinds),
+            OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, uint64_t{0});
+      }
+      cf::BranchOp::create(entryBuilder, net.getLoc(), loop);
+      OpBuilder resolverBuilder = OpBuilder::atBlockBegin(loop);
+      Value runtimeContext = entry->getArgument(0);
+      SmallVector<Value> netHandles;
+      for (unsigned index = 0; index != members.size(); ++index)
+        netHandles.push_back(entry->getArgument(index + 1));
+      SmallVector<Value> driverHandles;
+      SmallVector<Value> contributions;
+      for (unsigned index = 0; index != drivers.size(); ++index) {
+        Value handle = entry->getArgument(index + 1 + members.size());
+        bool reactive =
+            reactiveDriverIDs.contains(componentDrivers[index].getId());
+        if ((primaryRegion == sim::EventRegion::Reactive) == reactive)
+          driverHandles.push_back(handle);
+        contributions.push_back(sim::SimDriverReadOp::create(
+            resolverBuilder, net.getLoc(), net.getType(), handle));
+      }
+
+      Value resolved;
+      if (!resolutionFunction) {
+        resolved = contributions.front();
+      } else {
+        for (auto [index, contribution] : llvm::enumerate(contributions)) {
+          Value ordinal = arith::ConstantOp::create(
+              resolverBuilder, net.getLoc(), resolverBuilder.getI64Type(),
+              resolverBuilder.getI64IntegerAttr(index));
+          sim::SimContainerWriteOp::create(resolverBuilder, net.getLoc(),
+                                           contributionArray, ordinal,
+                                           contribution);
+        }
+        SmallVector<Value> operands{runtimeContext, contributionArray};
+        // Resolution functions are required to be automatic and side-effect
+        // free. Constant-free functions therefore need no additional state;
+        // accept direct descriptor captures as well so legal package reads do
+        // not force a runtime callback ABI.
+        for (unsigned index = 2;
+             index < resolutionFunction.getNumArguments(); ++index) {
+          DictionaryAttr attrs = resolutionFunction.getArgAttrDict(index);
+          auto kind = dyn_cast_or_null<sim::CaptureKindAttr>(
+              attrs ? attrs.get(sim::metadata::captureKind) : Attribute{});
+          auto descriptorID =
+              attrs ? attrs.getAs<IntegerAttr>(sim::metadata::descriptorId)
+                    : IntegerAttr{};
+          if (!kind || !descriptorID) {
+            resolutionFunction.emitError()
+                << "resolution-function capture #" << index
+                << " is not a materializable descriptor";
+            invalid = true;
+            break;
+          }
+          uint64_t capturedID = descriptorID.getValue().getZExtValue();
+          Type capturedType = resolutionFunction.getArgumentTypes()[index];
+          Value capture;
+          switch (kind.getValue()) {
+          case sim::CaptureKind::Storage:
+            capture = sim::SimContextStorageOp::create(
+                resolverBuilder, net.getLoc(), capturedType, runtimeContext,
+                resolverBuilder.getI64IntegerAttr(capturedID));
+            break;
+          case sim::CaptureKind::Net:
+            capture = sim::SimContextNetOp::create(
+                resolverBuilder, net.getLoc(), capturedType, runtimeContext,
+                resolverBuilder.getI64IntegerAttr(capturedID));
+            break;
+          case sim::CaptureKind::Driver:
+            capture = sim::SimContextDriverOp::create(
+                resolverBuilder, net.getLoc(), capturedType, runtimeContext,
+                resolverBuilder.getI64IntegerAttr(capturedID));
+            break;
+          case sim::CaptureKind::Event:
+            capture = sim::SimContextEventOp::create(
+                resolverBuilder, net.getLoc(), capturedType, runtimeContext,
+                resolverBuilder.getI64IntegerAttr(capturedID));
+            break;
+          case sim::CaptureKind::Context:
+          case sim::CaptureKind::Formal:
+          case sim::CaptureKind::Value:
+            resolutionFunction.emitError()
+                << "resolution-function capture #" << index
+                << " has an unsupported binding kind";
+            invalid = true;
+            break;
+          }
+          if (capture)
+            operands.push_back(capture);
+        }
+        if (invalid) {
+          resolver.erase();
+          continue;
+        }
+        auto call = sim::SimCallOp::create(
+            resolverBuilder, net.getLoc(), TypeRange{net.getType()},
+            FlatSymbolRefAttr::get(context,
+                                   resolutionFunction.getSymName()),
+            operands, ArrayAttr{}, ArrayAttr{});
+        resolved = call.getResult(0);
+      }
+      for (Value netHandle : netHandles)
+        sim::SimNetWriteOp::create(resolverBuilder, net.getLoc(), netHandle,
+                                   resolved);
+      if (driverHandles.empty()) {
+        sim::SimReturnOp::create(resolverBuilder, net.getLoc(), ValueRange{});
+      } else if (driverHandles.size() == 1) {
+        sim::SimSuspendChangeOp::create(
+            resolverBuilder, net.getLoc(), driverHandles.front(),
+            ValueRange{}, sim::ContinuationSiteAttr{}, sim::EventRegionAttr{},
+            loop);
+      } else {
+        SmallVector<int32_t> edges(driverHandles.size(),
+                                   static_cast<int32_t>(sim::EdgeKind::Change));
+        sim::SimSuspendAnyOp::create(
+            resolverBuilder, net.getLoc(), driverHandles,
+            resolverBuilder.getDenseI32ArrayAttr(edges),
+            sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, loop);
+      }
+      generatedUnits.push_back(
+          {semanticRoot, codeUnitID, sim::EntryKind::Continuous, symbol,
+           hierarchy, resolver, ObserverResult::None});
+
+      if (mixedDriverRegions) {
+        std::string reactiveHierarchy =
+            (net.getHierarchicalName().value_or(StringRef{"$user_net"}) +
+             ".$resolution.reactive")
+                .str();
+        uint64_t reactiveCodeUnitID = stableCodeUnitID(reactiveHierarchy);
+        if (reactiveCodeUnitID == rootCodeUnitID ||
+            llvm::any_of(units, [&](const PreparedUnit &unit) {
+              return unit.id == reactiveCodeUnitID;
+            }) ||
+            llvm::any_of(generatedUnits, [&](const PreparedUnit &unit) {
+              return unit.id == reactiveCodeUnitID;
+            })) {
+          net.emitError() << "stable code-unit ID collision for '"
+                          << reactiveHierarchy << "'";
+          invalid = true;
+          continue;
+        }
+
+        auto reactiveResolver =
+            cast<sim::SimFuncOp>(builder.clone(*resolver));
+        std::string reactiveSymbol =
+            (Twine("__obelisk_user_net_resolver_") +
+             Twine(generatedOrdinal++))
+                .str();
+        reactiveResolver.setSymName(reactiveSymbol);
+        reactiveResolver->setAttr(
+            "code_unit_id", builder.getI64IntegerAttr(reactiveCodeUnitID));
+        reactiveResolver->setAttr(
+            "home_region",
+            sim::EventRegionAttr::get(context, sim::EventRegion::Reactive));
+        reactiveResolver->setAttr(sim::metadata::hierarchicalName,
+                                  builder.getStringAttr(reactiveHierarchy));
+        sim::SimCodeUnitDeclOp::create(
+            builder, net.getLoc(), reactiveCodeUnitID, net.getScopeId(),
+            sim::EntryKind::Continuous,
+            builder.getStringAttr(reactiveHierarchy),
+            builder.getStringAttr("user-defined net resolution"), UnitAttr{});
+
+        Block *reactiveLoop = &reactiveResolver.getBody().back();
+        if (reactiveLoop->empty()) {
+          reactiveResolver.emitError()
+              << "cloned reactive resolver has no suspension";
+          invalid = true;
+          continue;
+        }
+        reactiveLoop->back().erase();
+        SmallVector<Value> reactiveHandles;
+        Block &reactiveEntry = reactiveResolver.getBody().front();
+        for (unsigned index = 0; index != drivers.size(); ++index)
+          if (reactiveDriverIDs.contains(componentDrivers[index].getId()))
+            reactiveHandles.push_back(
+                reactiveEntry.getArgument(index + 1 + members.size()));
+        OpBuilder reactiveBuilder = OpBuilder::atBlockEnd(reactiveLoop);
+        if (reactiveHandles.size() == 1) {
+          sim::SimSuspendChangeOp::create(
+              reactiveBuilder, net.getLoc(), reactiveHandles.front(),
+              ValueRange{}, sim::ContinuationSiteAttr{},
+              sim::EventRegionAttr{}, reactiveLoop);
+        } else {
+          SmallVector<int32_t> edges(
+              reactiveHandles.size(),
+              static_cast<int32_t>(sim::EdgeKind::Change));
+          sim::SimSuspendAnyOp::create(
+              reactiveBuilder, net.getLoc(), reactiveHandles,
+              reactiveBuilder.getDenseI32ArrayAttr(edges),
+              sim::ContinuationSiteAttr{}, sim::EventRegionAttr{},
+              reactiveLoop);
+        }
+        generatedUnits.push_back(
+            {semanticRoot, reactiveCodeUnitID, sim::EntryKind::Continuous,
+             reactiveSymbol, reactiveHierarchy, reactiveResolver,
+             ObserverResult::None});
+      }
+    }
+    llvm::append_range(units, generatedUnits);
   }
   if (invalid)
     return abort();

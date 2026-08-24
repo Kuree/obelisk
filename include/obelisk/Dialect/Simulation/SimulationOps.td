@@ -2691,6 +2691,25 @@ def SimNetReadOp : SimOp<"net.read", [
   let assemblyFormat = "$net attr-dict `:` qualified(type($net)) `->` type($result)";
 }
 
+def SimNetWriteOp : SimOp<"net.write", [
+    MemoryEffects<[MemWrite<SimNetResource>]>,
+    SimNetElementMatches<"net", "value">
+  ]> {
+  let summary = "atomically publish a user-defined resolved-net value";
+  let arguments = (ins SimNetType:$net, AnyType:$value);
+  let assemblyFormat = "$net `=` $value attr-dict `:` qualified(type($net)) `,` type($value)";
+}
+
+def SimDriverReadOp : SimOp<"driver.read", [
+    MemoryEffects<[MemRead<SimNetResource>]>,
+    SimDriverElementMatches<"driver", "result">
+  ]> {
+  let summary = "read one raw user-defined net driver contribution";
+  let arguments = (ins SimDriverType:$driver);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$driver attr-dict `:` qualified(type($driver)) `->` type($result)";
+}
+
 def SimDriverDriveOp : SimOp<"driver.drive", [
     MemoryEffects<[MemWrite<SimNetResource>]>,
     SimDriverElementMatches<"driver", "value">

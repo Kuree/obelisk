@@ -255,6 +255,26 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       return localPath;
     };
     std::function<void(Operation *)> collectBinding = [&](Operation *nested) {
+      if (auto path = nested->getAttrOfType<StringAttr>(
+              interconnectLeafPathAttrName)) {
+        auto descriptor = descriptors.find(path.getValue());
+        if (descriptor == descriptors.end() ||
+            descriptor->second.kind != DescriptorInfo::Kind::Net) {
+          emitError(getSemanticLocation(nested))
+              << "interconnect leaf has no typed net descriptor: "
+              << path.getValue();
+          invalid = true;
+          return;
+        }
+        if (seenPaths.insert(path.getValue()).second)
+          result.descriptors[unit.source].push_back(
+              {path.getValue().str(), descriptor->second});
+        if (isWrittenReferenceUse(nested))
+          writtenDescriptors[unit.source].insert(path.getValue());
+        if (!isWriteOnlyReferenceUse(nested))
+          result.readDescriptors[unit.source].insert(path.getValue());
+        return;
+      }
       if (isa<semantic::SVCycleDelayControlOp>(nested)) {
         auto path =
             nested->getAttrOfType<StringAttr>(clockingEventPathAttrName);
