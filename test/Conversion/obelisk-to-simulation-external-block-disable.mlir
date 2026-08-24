@@ -1,9 +1,17 @@
-// RUN: not obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s
 
-// A named block reached from another process cannot be approximated by killing
-// its complete logical process. Lowering must reject it until the runtime can
-// resume at the target block's exit continuation.
-// CHECK: error: disable of a nonlocal statement block is not executable yet
+// A named block reached from another process registers its exact exit
+// continuation. The disable process targets every live activation while the
+// repeating owner resumes at the block exit and starts its next iteration.
+// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK: %[[ACTIVATION:.*]] = obelisk_sim.control.enter [[ID:[0-9]+]]
+// CHECK-NEXT: obelisk_sim.control.boundary %[[ACTIVATION]] resume ^[[EXIT:.*]] body ^[[BODY:.*]]
+// CHECK: ^[[EXIT]]:
+// CHECK: cf.br
+// CHECK: ^[[BODY]]:
+// CHECK: obelisk_sim.control.leave %[[ACTIVATION]]
+// CHECK-LABEL: obelisk_sim.func private @unit_1
+// CHECK: obelisk_sim.control.disable [[ID]] {hierarchical = true}
 
 module {
   obelisk.sv.symbol.definition attributes {

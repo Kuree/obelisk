@@ -1336,6 +1336,16 @@ LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
   Value activation = sim::SimControlEnterOp::create(
       builder, location, builder.getI64IntegerAttr(targetID));
   Block *exit = addBlock();
+  bool resumable = op->hasAttr("obelisk_sim.resumable_control_target") &&
+                   function.getEntryKind() != sim::EntryKind::Function &&
+                   function.getEntryKind() != sim::EntryKind::Observer;
+  if (resumable) {
+    Block *body = addBlock();
+    sim::SimControlBoundaryOp::create(builder, location, activation,
+                                      ValueRange{}, sim::ContinuationSiteAttr{},
+                                      exit, body);
+    setCurrent(body);
+  }
   controlScopes.push_back({path.getValue().str(), targetID, activation, exit});
   LogicalResult result = lowerContents();
   controlScopes.pop_back();
@@ -1383,18 +1393,6 @@ LogicalResult UnitLowering::lowerDisable(semantic::SVDisableStatementOp op) {
     }
   }
 
-  // A statement block in another repeating procedural activation needs a
-  // resumable exit continuation in that activation. Cancelling the complete
-  // logical process would suppress its next iteration. Initial/final targets
-  // can be cancelled outright, and inherited fork controls use the return
-  // path below, so reject only this genuinely unsafe boundary.
-  if (op->hasAttr(
-          "obelisk_sim.nonlocal_repeating_statement_block_target")) {
-    emitError(location)
-        << "disable of a nonlocal statement block is not executable yet";
-    return failure();
-  }
-
   if (inheritedControlIDs.contains(path.getValue())) {
     sim::SimControlDisableOp::create(
         builder, location, builder.getI64IntegerAttr(targetID), Value{},
@@ -1409,6 +1407,30 @@ LogicalResult UnitLowering::lowerDisable(semantic::SVDisableStatementOp op) {
   sim::SimControlDisableOp::create(builder, location,
                                    builder.getI64IntegerAttr(targetID), Value{},
                                    builder.getBoolAttr(true));
+  if (function.getEntryKind() == sim::EntryKind::Task ||
+      function.getEntryKind() == sim::EntryKind::Function) {
+    Value escape = sim::SimControlEscapePendingOp::create(builder, location);
+    Block *abandon = addBlock();
+    Block *continuation = addBlock();
+    cf::CondBranchOp::create(builder, location, escape, abandon, ValueRange{},
+                             continuation, ValueRange{});
+    setCurrent(abandon);
+    if (function.getEntryKind() == sim::EntryKind::Function) {
+      if (failed(emitFunctionReturn(location, std::nullopt, false)))
+        return failure();
+      builder.setInsertionPoint(current->getTerminator());
+      sim::SimControlNonlocalExitOp::create(
+          builder, location, builder.getI64IntegerAttr(targetID));
+    } else {
+      // A nonlocal exit discards this task activation. In particular it must
+      // neither copy output/inout formals nor leave controls that the runtime
+      // has already unwound through the target boundary.
+      sim::SimControlNonlocalExitOp::create(
+          builder, location, builder.getI64IntegerAttr(targetID));
+      sim::SimReturnOp::create(builder, location, ValueRange{});
+    }
+    setCurrent(continuation);
+  }
   return success();
 }
 

@@ -225,6 +225,30 @@ public:
   }
 };
 
+class SimControlBoundaryTypeConversion final
+    : public OpConversionPattern<sim::SimControlBoundaryOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimControlBoundaryOp operation, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    SmallVector<Value> activation = flatten(adaptor.getActivation());
+    SmallVector<Value> resume = flatten(adaptor.getResumeOperands());
+    if (activation.size() != 1)
+      return operation.emitOpError(
+          "control activation must lower to one value");
+    OperationState state(operation.getLoc(), operation->getName());
+    state.addOperands(activation);
+    state.addOperands(resume);
+    state.addSuccessors(operation->getSuccessors());
+    for (NamedAttribute attribute : operation->getAttrs())
+      state.addAttribute(attribute.getName(), attribute.getValue());
+    rewriter.replaceOp(operation, rewriter.create(state));
+    return success();
+  }
+};
+
 template <typename Op>
 class SimSuspendTypeConversion final : public OpConversionPattern<Op> {
 public:
@@ -252,6 +276,7 @@ public:
 void populateSuspensionTypeConversionPatterns(RewritePatternSet &patterns,
                                               TypeConverter &converter) {
   patterns.add<SimObserverBindTypeConversion, SimSuspendObserveTypeConversion,
+               SimControlBoundaryTypeConversion,
                SimSuspendTypeConversion<sim::SimSuspendDelayOp>,
                SimSuspendTypeConversion<sim::SimSuspendChangeOp>,
                SimSuspendTypeConversion<sim::SimSuspendEdgeOp>,

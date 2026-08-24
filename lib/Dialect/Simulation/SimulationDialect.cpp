@@ -50,8 +50,8 @@ bool isSuspensionOp(Operation *operation) {
              SimSuspendEventOp, SimSuspendEventOrderOp, SimSuspendMailboxOp,
              SimSuspendSemaphoreOp, SimSuspendForeverOp, SimSuspendAwaitOp,
              SimSuspendJoinOp, SimSuspendChildrenOp, SimSuspendObserveOp,
-             SimTaskCallOp, SimClassVirtualTaskCallOp, SimProcessControlOp>(
-      operation);
+             SimTaskCallOp, SimClassVirtualTaskCallOp, SimProcessControlOp,
+             SimControlBoundaryOp>(operation);
 }
 
 bool isStartupEntryKind(EntryKind kind) {

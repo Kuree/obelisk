@@ -913,6 +913,8 @@ enum {
   OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER = UINT32_C(0x00010236),
   OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER_STRENGTH_PAIR = UINT32_C(0x00010237),
   OBELISK_RT_INTRINSIC_V1_WAIT_ORDER_FAILED = UINT32_C(0x00010238),
+  OBELISK_RT_INTRINSIC_V1_CONTROL_BOUNDARY = UINT32_C(0x00010239),
+  OBELISK_RT_INTRINSIC_V1_CONTROL_ESCAPE_PENDING = UINT32_C(0x0001023a),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -2806,12 +2808,21 @@ uint32_t obelisk_rt_v1_monitor_current(obelisk_rt_context *context);
 obelisk_rt_status obelisk_rt_v1_control_enter(obelisk_rt_context *context,
                                               uint64_t target_id,
                                               uint64_t *out_activation);
+// Attach the current activation's canonical-frame continuation used when a
+// different logical process disables the block. Registration does not yield.
+obelisk_rt_status obelisk_rt_v1_control_boundary(obelisk_rt_context *context,
+                                                 uint64_t activation,
+                                                 uint32_t continuation);
 obelisk_rt_status obelisk_rt_v1_control_leave(obelisk_rt_context *context,
                                               uint64_t activation);
 obelisk_rt_status obelisk_rt_v1_control_disable(obelisk_rt_context *context,
                                                 uint64_t target_id,
                                                 uint64_t activation,
                                                 uint32_t all_activations);
+// Consume the escape request produced when a disable in a task selected a
+// named block owned by an older task activation in the same logical process.
+uint32_t
+obelisk_rt_v1_control_escape_pending(obelisk_rt_context *context);
 // Return one exactly once for each nonzero site ID in a context and zero on
 // later claims. This guards descriptor-backed static local initialization.
 uint32_t obelisk_rt_v1_static_once(obelisk_rt_context *context,

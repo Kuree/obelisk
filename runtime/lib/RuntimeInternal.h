@@ -735,6 +735,8 @@ struct ImportBinding {
 struct ControlActivation {
   uint64_t target = 0;
   uint64_t memberships = 0;
+  uint64_t owner = 0;
+  uint32_t continuation = 0;
 };
 
 struct DpiScopeHandle {
@@ -973,11 +975,13 @@ struct obelisk_rt_context {
   uint64_t nextProcessInsertionSequence = 1;
   uint64_t nextWaitSequence = 1;
   uint64_t activeDesignTaskID = 0;
+  ScheduledDesignTask *activeDesignTask = nullptr;
   uint32_t activeDesignTaskPhase = 0;
   bool activeWaitOrderFailed = false;
   uint32_t activeHomeRegion = UINT32_MAX;
   uint32_t activeExecRegion = UINT32_MAX;
   uint64_t activeLogicalProcessToken = 0;
+  bool controlEscapePending = false;
   // Bytecode tasks are removed from the scheduler vector while executing.
   // Preserve their logical parent so ancestor-directed process control can
   // still identify that the active activation belongs to the target tree.

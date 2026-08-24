@@ -9,6 +9,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/PassManager.h"
@@ -263,6 +264,7 @@ void ObeliskSimInlinePass::runOnOperation() {
       if (auto control = dyn_cast<sim::SimProcessControlOp>(operation))
         containsControl |=
             control.getKind() == sim::ProcessControlKind::Suspend;
+      containsControl |= isa<sim::SimControlNonlocalExitOp>(operation);
       FlatSymbolRefAttr calleeAttr;
       if (auto call = dyn_cast<sim::SimCallOp>(operation))
         calleeAttr = call.getCalleeAttr();
@@ -337,6 +339,11 @@ void ObeliskSimInlinePass::runOnOperation() {
     sim::SimFuncOp function = entry.getValue();
     if (function.isExternal())
       continue;
+    // This marker is consumed entirely during semantic lowering. It normally
+    // remains unknown to optional inlining so existing optimization choices
+    // stay stable, but it must not block the mandatory nonlocal-exit closure.
+    if (controlFunctions.contains(function))
+      function->removeAttr("obelisk_sim.void_function");
     sim::InlineLegality legality = sim::getInlineCalleeLegality(
         function, recursiveFunctions.contains(function), designHasLateMetadata);
     calleeLegalities[function] = legality;
@@ -591,6 +598,51 @@ void ObeliskSimInlinePass::runOnOperation() {
   for (uint64_t selection : selectedInlineIDs)
     if (!remainingSelections.contains(selection))
       ++inlined;
+
+  // A function that performs a nonlocal named-block disable is inlined
+  // mandatorily through its complete zero-time call chain. Resolve the
+  // exceptional return only after that inlining: a dominating boundary is a
+  // block owned by this activation, while a marker left in a task exits the
+  // task without copyout so the runtime can restore an older caller frame.
+  SmallVector<sim::SimControlNonlocalExitOp> nonlocalExits;
+  design.walk([&](sim::SimControlNonlocalExitOp exit) {
+    nonlocalExits.push_back(exit);
+  });
+  DominanceInfo dominance(design);
+  for (sim::SimControlNonlocalExitOp exit : nonlocalExits) {
+    sim::SimFuncOp function = exit->getParentOfType<sim::SimFuncOp>();
+    if (!function)
+      continue;
+    sim::SimControlBoundaryOp target;
+    function.walk([&](sim::SimControlBoundaryOp boundary) {
+      auto enter =
+          boundary.getActivation().getDefiningOp<sim::SimControlEnterOp>();
+      if (!target && enter && enter.getTargetId() == exit.getTargetId() &&
+          dominance.dominates(boundary.getBody(), exit->getBlock()))
+        target = boundary;
+    });
+    if (target) {
+      Operation *terminator = exit->getBlock()->getTerminator();
+      OpBuilder builder(terminator);
+      cf::BranchOp::create(builder, exit.getLoc(), target.getResume(),
+                           target.getResumeOperands());
+      terminator->erase();
+      exit.erase();
+      continue;
+    }
+    if (function.getEntryKind() != sim::EntryKind::Function) {
+      // With no locally dominating target, the escape edge is reachable only
+      // in a task whose runtime has prepared an older caller boundary. For a
+      // process entry the condition stays false (the target is inactive or
+      // belongs to another logical process), so its inlined return edge is
+      // simply the ordinary call continuation.
+      exit.erase();
+      continue;
+    }
+    result = failure();
+    exit.emitOpError("nonlocal named-block exit did not inline into its owning "
+                     "process or task activation");
+  }
   bool residualControl = false;
   design.walk([&](sim::SimCallOp call) {
     if (!controlFunctionNames.contains(call.getCallee()))

@@ -667,7 +667,9 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimNBAEnqueueOp, sim::SimEventCreateOp, sim::SimEventTriggerOp,
         sim::SimEventTriggeredOp, sim::SimWaitOrderFailedOp,
         sim::SimEventEqualOp, sim::SimDisableChildrenOp, sim::SimControlEnterOp,
-        sim::SimControlLeaveOp, sim::SimControlDisableOp, sim::SimStaticOnceOp,
+        sim::SimControlLeaveOp, sim::SimControlDisableOp,
+        sim::SimControlEscapePendingOp, sim::SimControlNonlocalExitOp,
+        sim::SimStaticOnceOp,
         sim::SimDeferredOnceOp, sim::SimDeferredEnqueueOp,
         sim::SimDeferredMatureOp, sim::SimAssertionControlOp,
         sim::SimAssertionEnabledOp, sim::SimAssertionActionStateOp,
@@ -740,7 +742,7 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimSuspendMailboxOp, sim::SimSuspendSemaphoreOp,
         sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
         sim::SimSuspendChildrenOp, sim::SimSuspendObserveOp,
-        sim::SimProcessControlOp>(
+        sim::SimProcessControlOp, sim::SimControlBoundaryOp>(
         [&](Operation *operation) { return c.isLegal(operation); });
     target.addDynamicallyLegalDialect<
         sim::ObeliskSimulationDialect, arith::ArithDialect,

@@ -1499,6 +1499,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_enter(
   context->activeExecRegion = scheduled.queuedRegion;
   context->activeLogicalProcessToken =
       kNativeLogicalProcessTag | scheduled.token;
+  context->controlEscapePending = false;
   context->activeLogicalProcessParent = scheduled.parent;
   context->activeWaitOrderFailed = false;
   obelisk_rt_flush_deferred_immediate_reports_unlocked(
@@ -1530,6 +1531,7 @@ obelisk_rt_v1_scheduler_direct_fragment_leave(obelisk_rt_context *context,
   context->activeHomeRegion = UINT32_MAX;
   context->activeExecRegion = UINT32_MAX;
   context->activeLogicalProcessToken = 0;
+  context->controlEscapePending = false;
   context->activeLogicalProcessParent = 0;
   context->activeWaitOrderFailed = false;
   if (context->schedulerSlotProgress == UINT64_MAX) {
@@ -3699,6 +3701,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       context->activeLogicalProcessToken =
           kNativeLogicalProcessTag |
           context->scheduledProcesses[selectedIndex].token;
+      context->controlEscapePending = false;
       context->activeLogicalProcessParent =
           context->scheduledProcesses[selectedIndex].parent;
       context->activeWaitOrderFailed =
@@ -3756,6 +3759,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       context->activeHomeRegion = UINT32_MAX;
       context->activeExecRegion = UINT32_MAX;
       context->activeLogicalProcessToken = 0;
+      context->controlEscapePending = false;
       context->activeLogicalProcessParent = 0;
       context->activeWaitOrderFailed = false;
       terminationRequested = context->schedulerFinishRequested;
@@ -3939,11 +3943,13 @@ obelisk_rt_v1_scheduler_prime(obelisk_rt_context *context,
     uint64_t logical = context->activeLogicalProcessToken;
     uint64_t logicalParent = context->activeLogicalProcessParent;
     uint64_t design = context->activeDesignTaskID;
+    ScheduledDesignTask *designTask = context->activeDesignTask;
     uint32_t phase = context->activeDesignTaskPhase;
     uint32_t home = context->activeHomeRegion;
     uint32_t region = context->activeExecRegion;
     bool waitOrderFailed = context->activeWaitOrderFailed;
     bool designExecuting = context->designTaskExecuting;
+    bool escapePending = context->controlEscapePending;
     obelisk_rt_random_state_v1 *random = context->activeRandom;
     bool designFilter = context->nativeScheduleDesignTaskFilterActive;
     uint64_t forcedDesignTask = context->nativeScheduleForcedDesignTask;
@@ -3955,11 +3961,13 @@ obelisk_rt_v1_scheduler_prime(obelisk_rt_context *context,
       context->activeLogicalProcessToken = logical;
       context->activeLogicalProcessParent = logicalParent;
       context->activeDesignTaskID = design;
+      context->activeDesignTask = designTask;
       context->activeDesignTaskPhase = phase;
       context->activeHomeRegion = home;
       context->activeExecRegion = region;
       context->activeWaitOrderFailed = waitOrderFailed;
       context->designTaskExecuting = designExecuting;
+      context->controlEscapePending = escapePending;
       context->activeRandom = random;
       context->nativeScheduleDesignTaskFilterActive = designFilter;
       context->nativeScheduleForcedDesignTask = forcedDesignTask;
@@ -4003,6 +4011,7 @@ obelisk_rt_v1_scheduler_prime(obelisk_rt_context *context,
           return OBELISK_RT_INVALID_LIFECYCLE;
         context->activeNativeProcess = nullptr;
         context->activeLogicalProcessToken = kNativeLogicalProcessTag | token;
+        context->controlEscapePending = false;
         context->activeLogicalProcessParent = scheduled.parent;
         context->activeHomeRegion = scheduled.homeRegion;
         context->activeExecRegion = scheduled.queuedRegion;

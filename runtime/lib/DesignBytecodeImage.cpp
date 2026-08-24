@@ -372,6 +372,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       signature.id != OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER &&
       signature.id != OBELISK_RT_INTRINSIC_V1_IMPORT &&
       signature.id != OBELISK_RT_INTRINSIC_V1_CONTROL_ENTER &&
+      signature.id != OBELISK_RT_INTRINSIC_V1_CONTROL_BOUNDARY &&
       signature.id != OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE &&
       signature.id != OBELISK_RT_INTRINSIC_V1_STATIC_ONCE &&
       signature.id != OBELISK_RT_INTRINSIC_V1_ASSERTION_CONTROL &&
@@ -540,6 +541,9 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_CONTROL_ENTER:
     return signature.flags != 0 && site.inputCount == 0 &&
            site.outputCount == 1 && bits(output(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_CONTROL_BOUNDARY:
+    return signature.flags != 0 && site.inputCount == 1 &&
+           site.outputCount == 0 && bits(input(0), 64);
   case OBELISK_RT_INTRINSIC_V1_CONTROL_LEAVE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && bits(input(0), 64);
@@ -548,6 +552,9 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.inputCount <= 1 && site.outputCount == 0 &&
            (site.inputCount == 0 || bits(input(0), 64)) &&
            ((signature.flags >> 31) == 0 || site.inputCount == 0);
+  case OBELISK_RT_INTRINSIC_V1_CONTROL_ESCAPE_PENDING:
+    return signature.flags == 0 && site.inputCount == 0 &&
+           site.outputCount == 1 && bits(output(0), 1);
   case OBELISK_RT_INTRINSIC_V1_STATIC_ONCE:
     return signature.flags != 0 && site.inputCount == 0 &&
            site.outputCount == 1 && bits(output(0), 1);

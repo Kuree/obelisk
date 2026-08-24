@@ -16,6 +16,37 @@ std::optional<LogicalResult>
 Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
   if (isa<sim::SimObserverBindOp>(operation))
     return success();
+  if (auto boundary = dyn_cast<sim::SimControlBoundaryOp>(operation)) {
+    if (!plan.frame)
+      return boundary.emitOpError("control boundary has no canonical frame");
+    const ProcessSuspension *suspension = plan.frame->getSuspension(boundary);
+    if (!suspension)
+      return boundary.emitOpError("control boundary is missing frame analysis");
+    ArrayRef<ProcessFrameValue> slots =
+        plan.frame->getContinuationLayout(suspension->continuationID);
+    if (slots.size() != boundary.getResumeOperands().size())
+      return boundary.emitOpError("resume continuation frame arity mismatch");
+    for (auto [value, slot] :
+         llvm::zip_equal(boundary.getResumeOperands(), slots)) {
+      uint64_t transferSize =
+          slot.storageSize * (slot.hasSecondaryStorage() ? 2 : 1);
+      if (transferSize > UINT32_MAX)
+        return boundary.emitOpError(
+            "canonical frame transfer exceeds the bytecode ABI limit");
+      emitFrameTransfer(plan, StoreFrame, value, slot.valueOffset,
+                        static_cast<uint32_t>(transferSize));
+    }
+    if (failed(emitIntrinsic(plan, kIntrinsicControlBoundary,
+                             {boundary.getActivation()}, {},
+                             suspension->continuationID)))
+      return failure();
+    auto mapping = addMap(plan, boundary.getBody()->getArguments(), plan,
+                          ValueRange{});
+    uint64_t jump = emit({Jump, 0, 0, static_cast<uint32_t>(mapping.first),
+                          static_cast<uint32_t>(mapping.second)});
+    plan.branches.push_back({jump, boundary.getBody()});
+    return success();
+  }
   if (auto control = dyn_cast<sim::SimProcessControlOp>(operation)) {
     if (!plan.frame) {
       if (control.getKind() == sim::ProcessControlKind::Suspend)

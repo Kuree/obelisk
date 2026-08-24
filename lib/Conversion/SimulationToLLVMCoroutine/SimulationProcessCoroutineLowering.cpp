@@ -260,6 +260,27 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
     return success();
   }
 
+  if (auto boundary = dyn_cast<sim::SimControlBoundaryOp>(operation)) {
+    auto [context, lane] = managedContextAndLane(builder, location);
+    (void)lane;
+    Value status =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{builder.getI32Type()},
+            SymbolRefAttr::get(builder.getContext(),
+                               "obelisk_rt_v1_control_boundary"),
+            ValueRange{context, boundary.getActivation(),
+                       llvmConstant(builder, location, builder.getI32Type(),
+                                    continuationID)})
+            .getResult();
+    LLVM::CallOp::create(builder, location, TypeRange{},
+                         SymbolRefAttr::get(builder.getContext(),
+                                            "obelisk_rt_v1_scheduler_fail"),
+                         ValueRange{context, status});
+    cf::BranchOp::create(builder, location, boundary.getBody());
+    builder.eraseOp(operation);
+    return success();
+  }
+
   if (auto task = dyn_cast<sim::SimClassVirtualTaskCallOp>(operation)) {
     Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
     Type i32 = builder.getI32Type();

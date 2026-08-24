@@ -2245,6 +2245,28 @@ def SimControlEnterOp : SimOp<"control.enter", [
   let hasVerifier = 1;
 }
 
+def SimControlBoundaryOp : SimOp<"control.boundary", [
+    Terminator, DeclareOpInterfaceMethods<BranchOpInterface>,
+    MemoryEffects<[MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "register the resumable exit of a named block activation";
+  let description = [{
+    The resume successor is the block exit used when another logical process
+    disables this activation. Its operands are checkpointed in the canonical
+    process frame. Ordinary execution registers that continuation and follows
+    the body successor without yielding to the scheduler.
+  }];
+  let arguments = (ins SimControlType:$activation,
+                       Variadic<AnyType>:$resume_operands,
+                       OptionalAttr<SimContinuationSiteAttr>:$site);
+  let successors = (successor AnySuccessor:$resume,
+                               AnySuccessor:$body);
+  let assemblyFormat = [{$activation `resume` $resume
+    (`(` $resume_operands^ `:` type($resume_operands) `)`)?
+    `body` $body attr-dict}];
+  let hasVerifier = 1;
+}
+
 def SimControlLeaveOp : SimOp<"control.leave", [
     MemoryEffects<[MemWrite<SimProcessResource>]>
   ]> {
@@ -2270,6 +2292,33 @@ def SimControlDisableOp : SimOp<"control.disable", [
   let assemblyFormat = [{$target_id (`activation` $activation^)?
     attr-dict}];
   let hasVerifier = 1;
+}
+
+def SimControlEscapePendingOp : SimOp<"control.escape_pending", [
+    MemoryEffects<[MemRead<SimProcessResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "consume a same-process nonlocal disable escape request";
+  let description = [{
+    Returns true exactly when the preceding resolved disable selected a named
+    block in an older task activation of the current logical process. The
+    current task must then return without copyout; the scheduler resumes the
+    owning activation at the registered control boundary.
+  }];
+  let results = (outs I1:$pending);
+  let assemblyFormat = "attr-dict";
+}
+
+def SimControlNonlocalExitOp : SimOp<"control.nonlocal_exit"> {
+  let summary = "mark the exceptional path of a nonlocal named-block exit";
+  let description = [{
+    This marker precedes a callable return selected by control.escape_pending.
+    Mandatory inlining resolves it either to a locally dominating named-block
+    boundary or to an abnormal task return whose caller boundary was prepared
+    by the runtime.
+  }];
+  let arguments = (ins I64Attr:$target_id);
+  let assemblyFormat = "$target_id attr-dict";
 }
 
 def SimStaticOnceOp : SimOp<"static.once", [

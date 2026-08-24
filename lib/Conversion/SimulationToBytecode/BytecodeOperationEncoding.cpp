@@ -705,6 +705,9 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
       flags |= UINT32_C(1) << 31;
     return emitIntrinsic(plan, kIntrinsicControlDisable, inputs, {}, flags);
   }
+  if (auto op = dyn_cast<sim::SimControlEscapePendingOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicControlEscapePending, {},
+                         {op.getPending()});
   if (auto op = dyn_cast<sim::SimStaticOnceOp>(operation)) {
     if (op.getId() == 0 || op.getId() > UINT32_MAX)
       return op.emitOpError("static initialization ID does not fit bytecode");

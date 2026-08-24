@@ -385,12 +385,33 @@ obelisk_rt_v1_control_enter(obelisk_rt_context *context, uint64_t targetID,
     uint64_t token = context->nextControlActivation;
     context->activeControls.reserve(context->activeControls.size() + 1);
     auto [_, inserted] = context->controlActivations.emplace(
-        token, ControlActivation{targetID, 1});
+        token,
+        ControlActivation{targetID, 1, context->activeLogicalProcessToken, 0});
     if (!inserted)
       return OBELISK_RT_INVALID_LIFECYCLE;
     context->activeControls.push_back(token);
     ++context->nextControlActivation;
     *outActivation = token;
+    return OBELISK_RT_OK;
+  });
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_control_boundary(obelisk_rt_context *context, uint64_t activation,
+                               uint32_t continuation) {
+  if (!context || activation == 0 || continuation == 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return guarded(context, [&] {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    if (context->activeLogicalProcessToken == 0)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    auto found = context->controlActivations.find(activation);
+    if (found == context->controlActivations.end() ||
+        found->second.owner != context->activeLogicalProcessToken ||
+        found->second.continuation != 0 || context->activeControls.empty() ||
+        context->activeControls.back() != activation)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    found->second.continuation = continuation;
     return OBELISK_RT_OK;
   });
 }
@@ -409,6 +430,22 @@ obelisk_rt_v1_control_leave(obelisk_rt_context *context, uint64_t activation) {
     obelisk_rt_release_control_unlocked(context, activation);
     return OBELISK_RT_OK;
   });
+}
+
+extern "C" uint32_t
+obelisk_rt_v1_control_escape_pending(obelisk_rt_context *context) {
+  if (!context)
+    return 0;
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    if (context->activeLogicalProcessToken == 0)
+      return 0;
+    bool pending = context->controlEscapePending;
+    context->controlEscapePending = false;
+    return pending ? 1u : 0u;
+  } catch (...) {
+    return 0;
+  }
 }
 
 extern "C" uint32_t obelisk_rt_v1_static_once(obelisk_rt_context *context,

@@ -154,6 +154,13 @@ and ordinary container mutation pays only one relaxed flag load until a design
 actually executes an override. The full regression suite passes 1272/1272
 tests.
 
+L11's final UVM smoke ran in 34.114 seconds compile / 0.177 seconds simulate
+for bytecode and 71.635 seconds compile / 0.019 seconds simulate for native,
+with zero UVM errors or fatals. Named-block continuations are emitted only for
+blocks that are actual `disable` targets, and the runtime scans control
+activations only when a `disable` executes, leaving ordinary process execution
+unchanged. The full regression suite passes 1274/1274 tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -164,7 +171,7 @@ tests.
 | 6 Data types | Partial | Packed 2/4-state values, real/realtime variables and nets, strings, chandles, events, enums, typedefs, parameters, casts, strengths, common net kinds, user-defined nettypes/resolution functions, typed/heterogeneous fixed-array `interconnect`, and trireg charge strength/retention/decay/sharing execute. Remaining gaps are tracked by the operator, aggregate, and container chunks below. |
 | 7 Aggregate data types | Partial | Fixed arrays/structs/unions, tagged managed unions, and untagged managed unions using validated candidate roots execute, including four-state overlapping arms. Dynamic arrays, queues, associative arrays, queries, traversal, ordering, registered manipulation methods, queue/unpacked slice lvalues, and persistent element references execute. Whole-container replacement and structural mutation preserve the LRM's reference lifetime rules. String character selection and NBA execute; strings are not sliceable, and a string character select is not a legal `ref` actual under 13.5.2. Continue differential closure for residual aggregate corner cases. |
 | 8 Classes | Partial | Construction, inheritance, polymorphism, virtual/interface methods, parameterized classes, copying, managed properties, garbage collection, and the UVM-used surface execute. Complete the residual class/type/operator/constructor long tail exposed by focused probes and the aggregate/reference gaps shared with Clauses 6, 7, and 11. |
-| 9 Processes | Partial | Structured procedures, all fork/join forms, `wait fork`, `disable fork`, timed and recursive tasks, `process` handles and control, automatic capture, and cancellation execute. Disabling a named block owned by another live process is still rejected instead of canceling only the target scope. |
+| 9 Processes | Partial | Structured procedures, all fork/join forms, `wait fork`, `disable fork`, timed and recursive tasks, `process` handles and control, automatic capture, and cancellation execute. Named-block disable exits the exact live target activation across process and task boundaries, cancels only its descendants, preserves outer task copy-out, suppresses abandoned inner copy-out, and supports concurrent and repeated activations in native and bytecode tiers. Nonrecursive function-call exits also execute; recursive zero-time function-call corner cases remain in the core long tail. |
 | 10 Assignment statements | Partial | Blocking/NBA assignment, intra-assignment timing, assignment patterns, queue/unpacked slice lvalues, net aliasing, static continuous-assignment delays, strengths, and procedural force/assign execute for every legal target category: whole variables including fixed unpacked aggregates, dynamic arrays, queues, associative arrays, strings, class handles, and class properties; whole built-in nets and constant built-in-net selects; and legal concatenations. Signal-dependent RHS expressions reevaluate from exact scalar and managed-container dependencies; overlapping packed statements retain per-bit ownership through alias roots, managed values remain precisely rooted, and release/deassign retires detached evaluators. Clause 10.6 excludes automatic variables, variable selects, nonconstant net selects, and user-defined nettypes from these targets; those are tested diagnostics rather than implementation gaps. Continue differential closure for residual assignment corner cases. |
 | 11 Operators and expressions | Partial | Legal equality, ordering, logical operations, concatenation, replication, and packed selection execute for strings, containers, unpacked aggregates, handles, and arbitrary-width packed values. This includes handle wildcard identity equality, two-state XNOR, compact integral power, constant ordinary part-selects, dynamic indexed part-selects with partial out-of-range behavior, dynamic string replication, and fixed/dynamic unpacked concatenation with per-element conversion. Ordinary part-select bounds must be constant and strings are not sliceable, so those former diagnostic branches are not missing language features. Public `--timing=min|typ|max` selects constant and dynamic expressions. Remaining expression work is tracked by references, randomization, assertions, and the differential long tail. |
 | 12 Procedural statements | Partial | Conditional, ordinary/pattern case, loops, jumps, `randcase`, and most `randsequence` forms execute. Recursive randsequence productions and value-returning productions still require activation frames and expression-valued production calls. |
@@ -283,9 +290,13 @@ one commit.
     remain precise GC roots across priority changes. The audit proved that
     automatic variables, variable selects, nonconstant net selects, and
     user-defined nettypes are excluded by 10.6 rather than missing targets.
-11. **L11 — Cross-process scoped disable (9.6.2).** Cancel only the named
-    target block and descendants when another process disables it, preserving
-    task copy-out and deferred-report rules.
+11. **L11 — Cross-process scoped disable (9.6.2), completed.** Named-block
+    disable exits the exact live target activation across process, task, and
+    nonrecursive function-call boundaries in native and bytecode tiers. It
+    cancels only the target's descendants, resumes at the block continuation,
+    preserves outer task copy-out and deferred-report state, suppresses
+    abandoned inner copy-out, and supports concurrent, nested, and repeating
+    activations without adding runtime work to untargeted blocks.
 12. **L12 — Core frontend/lowering long-tail closure (5-13).** Reduce every
     remaining non-extension ivtest/Verilator core failure to a minimal clause
     test, then close declaration, conversion, lvalue, call, and pattern cases

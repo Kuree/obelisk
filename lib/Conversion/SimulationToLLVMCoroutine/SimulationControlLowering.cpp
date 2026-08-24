@@ -390,6 +390,29 @@ public:
   }
 };
 
+class ControlEscapePendingConversion final
+    : public OpConversionPattern<sim::SimControlEscapePendingOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimControlEscapePendingOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location location = operation.getLoc();
+    Value context = loadCurrentRuntimeContext(rewriter, location);
+    Value pending =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_control_escape_pending"),
+            ValueRange{context})
+            .getResult();
+    rewriter.replaceOpWithNewOp<arith::TruncIOp>(operation,
+                                                 rewriter.getI1Type(), pending);
+    return success();
+  }
+};
+
 template <typename Op>
 class OnceConversion final : public OpConversionPattern<Op> {
 public:
@@ -649,12 +672,11 @@ void populateControlToLLVMConversionPatterns(RewritePatternSet &patterns,
   MLIRContext *context = patterns.getContext();
   patterns.add<DisableChildrenConversion, ControlEnterConversion,
                ControlLeaveConversion, ControlDisableConversion,
-               VirtualInterfaceNullConversion, ChandleNullConversion,
-               ChandleEqualConversion,
+               ControlEscapePendingConversion, VirtualInterfaceNullConversion,
+               ChandleNullConversion, ChandleEqualConversion,
                VirtualInterfaceBindConversion, VirtualInterfaceCastConversion,
-               VirtualInterfaceScopeConversion,
-               VirtualInterfaceEqualConversion, ProcessNullConversion,
-               ProcessCurrentConversion,
+               VirtualInterfaceScopeConversion, VirtualInterfaceEqualConversion,
+               ProcessNullConversion, ProcessCurrentConversion,
                ProcessEqualConversion, ProcessStatusConversion,
                ProcessRandomStateConversion, ProcessSetRandomStateConversion,
                MonitorRegisterConversion, MonitorControlConversion,

@@ -173,6 +173,12 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
     for (Block &block : function.getBody()) {
       if (&block == entry)
         continue;
+      bool controlBoundaryBody = llvm::any_of(
+          block.getPredecessors(), [&](Block *predecessor) {
+            auto boundary = dyn_cast<sim::SimControlBoundaryOp>(
+                predecessor->getTerminator());
+            return boundary && boundary.getBody() == &block;
+          });
       llvm::SetVector<Value> externalRoots;
       for (Operation &operation : block)
         for (Value value : operation.getOperands()) {
@@ -184,6 +190,12 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
           externalRoots.insert(rootOf(value));
         }
       for (Value root : externalRoots) {
+        // A control boundary's body edge executes synchronously and preserves
+        // ordinary SSA dominance. Only its resume edge is reconstructed from
+        // the canonical frame after a cross-process disable.
+        if (controlBoundaryBody &&
+            dominance.dominates(root, &block.front()))
+          continue;
         auto &threaded = threadedValues[&block];
         auto replaceExternalUses = [&](Value replacement) {
           for (Operation &operation : block)

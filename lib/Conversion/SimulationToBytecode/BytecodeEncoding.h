@@ -100,10 +100,14 @@ constexpr uint32_t kIntrinsicDisableChildren =
     OBELISK_RT_INTRINSIC_V1_DISABLE_CHILDREN;
 constexpr uint32_t kIntrinsicControlEnter =
     OBELISK_RT_INTRINSIC_V1_CONTROL_ENTER;
+constexpr uint32_t kIntrinsicControlBoundary =
+    OBELISK_RT_INTRINSIC_V1_CONTROL_BOUNDARY;
 constexpr uint32_t kIntrinsicControlLeave =
     OBELISK_RT_INTRINSIC_V1_CONTROL_LEAVE;
 constexpr uint32_t kIntrinsicControlDisable =
     OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE;
+constexpr uint32_t kIntrinsicControlEscapePending =
+    OBELISK_RT_INTRINSIC_V1_CONTROL_ESCAPE_PENDING;
 constexpr uint32_t kIntrinsicStaticOnce = OBELISK_RT_INTRINSIC_V1_STATIC_ONCE;
 constexpr uint32_t kIntrinsicDeferredOnce =
     OBELISK_RT_INTRINSIC_V1_DEFERRED_ONCE;

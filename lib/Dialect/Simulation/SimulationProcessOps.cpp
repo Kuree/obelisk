@@ -828,6 +828,37 @@ LogicalResult SimControlEnterOp::verify() {
   return verifyPositive(*this, getTargetIdAttr(), "control target ID");
 }
 
+SuccessorOperands
+SimControlBoundaryOp::getSuccessorOperands(unsigned index) {
+  assert(index < 2 && "control boundary has two successors");
+  return index == 0 ? SuccessorOperands(getResumeOperandsMutable())
+                    : SuccessorOperands(MutableOperandRange(
+                          getOperation(), getNumOperands(), 0));
+}
+
+LogicalResult SimControlBoundaryOp::verify() {
+  auto function = getOperation()->getParentOfType<SimFuncOp>();
+  if (!function)
+    return emitOpError("must be nested in obelisk_sim.func");
+  if (function.getEntryKind() == EntryKind::Function ||
+      function.getEntryKind() == EntryKind::Observer)
+    return emitOpError("requires a suspendable process entry");
+  if (getResume() == getBody())
+    return emitOpError("resume and body successors must be distinct");
+  if (getResume()->getParent() != &function.getBody() ||
+      getBody()->getParent() != &function.getBody())
+    return emitOpError("successors must be blocks in the same function");
+  if (getResume() == &function.getBody().front() ||
+      getBody() == &function.getBody().front())
+    return emitOpError("successors must not target the entry block");
+  if (getResumeOperands().getTypes() != getResume()->getArgumentTypes())
+    return emitOpError(
+        "resume operand types must match resume block arguments");
+  if (!getBody()->getArguments().empty())
+    return emitOpError("body successor must not have block arguments");
+  return success();
+}
+
 LogicalResult SimControlDisableOp::verify() {
   if (failed(verifyPositive(*this, getTargetIdAttr(), "control target ID")))
     return failure();

@@ -49,6 +49,43 @@ TEST(RuntimeControl, NestedActivationsRequireStackOrderAndRetainMemberships) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(RuntimeControl, BoundaryRequiresTheCurrentTopOwnedActivation) {
+  EXPECT_EQ(obelisk_rt_v1_control_escape_pending(nullptr), 0u);
+  EXPECT_EQ(obelisk_rt_v1_control_boundary(nullptr, 1, 1),
+            OBELISK_RT_INVALID_ARGUMENT);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  context->activeLogicalProcessToken = 7;
+  context->controlEscapePending = true;
+  EXPECT_EQ(obelisk_rt_v1_control_escape_pending(context), 1u);
+  EXPECT_EQ(obelisk_rt_v1_control_escape_pending(context), 0u);
+  uint64_t outer = 0;
+  uint64_t inner = 0;
+  ASSERT_EQ(obelisk_rt_v1_control_enter(context, 11, &outer), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_control_enter(context, 12, &inner), OBELISK_RT_OK);
+
+  EXPECT_EQ(obelisk_rt_v1_control_boundary(context, inner, 0),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(obelisk_rt_v1_control_boundary(context, outer, 3),
+            OBELISK_RT_INVALID_LIFECYCLE);
+  context->activeLogicalProcessToken = 8;
+  EXPECT_EQ(obelisk_rt_v1_control_boundary(context, inner, 3),
+            OBELISK_RT_INVALID_LIFECYCLE);
+  context->activeLogicalProcessToken = 7;
+  ASSERT_EQ(obelisk_rt_v1_control_boundary(context, inner, 3), OBELISK_RT_OK);
+  EXPECT_EQ(context->controlActivations.at(inner).owner, 7u);
+  EXPECT_EQ(context->controlActivations.at(inner).continuation, 3u);
+  EXPECT_EQ(obelisk_rt_v1_control_boundary(context, inner, 4),
+            OBELISK_RT_INVALID_LIFECYCLE);
+
+  ASSERT_EQ(obelisk_rt_v1_control_leave(context, inner), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_control_boundary(context, outer, 5), OBELISK_RT_OK);
+  EXPECT_EQ(context->controlActivations.at(outer).continuation, 5u);
+  ASSERT_EQ(obelisk_rt_v1_control_leave(context, outer), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(RuntimeOnce, StaticAndDeferredClaimsUseTheirDocumentedScope) {
   EXPECT_EQ(obelisk_rt_v1_static_once(nullptr, 1), 0u);
   EXPECT_EQ(obelisk_rt_v1_deferred_once(nullptr, 1), 0u);

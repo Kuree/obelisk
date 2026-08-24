@@ -29,6 +29,7 @@ add_llvm_executable(obelisk-sim-standard-api-test EXCLUDE_FROM_ALL
 llvm_update_compile_flags(obelisk-sim-standard-api-test)
 target_link_libraries(obelisk-sim-standard-api-test PRIVATE
   ObeliskSimulationIR
+  ObeliskSimulationAnalysis
   ObeliskSimulationToStandard
   MLIRArithDialect
   MLIRFuncDialect
