@@ -378,7 +378,267 @@ if(patched_at EQUAL -1)
   string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
 endif()
 
+# Slang v11 initially binds an untyped assignment pattern used as a default
+# setter against its error type because it ordinarily lacks assignment
+# context. Array patterns do have one unambiguous element type, so binding the
+# nested pattern to that type avoids retaining an InvalidExpression in an
+# otherwise valid elaborated AST and implements recursive array defaults.
+set(old_code [[
+static void bindDefaultSetter(const ASTContext& context, const AssignmentPatternItemSyntax& item,
+                              const Expression*& defaultSetter, bool& bad) {
+]])
+set(new_code [[
+static void bindDefaultSetter(const ASTContext& context, const AssignmentPatternItemSyntax& item,
+                              const Expression*& defaultSetter, bool& bad,
+                              const Type* nestedTargetType = nullptr) {
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's default assignment-pattern setter signature no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+
+set(old_code [[
+    if (expr->kind == SyntaxKind::AssignmentPatternExpression &&
+        !expr->as<AssignmentPatternExpressionSyntax>().type) {
+        defaultSetter = &Expression::bindRValue(context.getCompilation().getErrorType(), *item.expr,
+                                                {}, context);
+    }
+]])
+set(new_code [[
+    if (expr->kind == SyntaxKind::AssignmentPatternExpression &&
+        !expr->as<AssignmentPatternExpressionSyntax>().type) {
+        if (nestedTargetType) {
+            defaultSetter = &Expression::bindRValue(*nestedTargetType, *item.expr, {}, context);
+            bad |= defaultSetter->bad();
+        }
+        else {
+            defaultSetter = &Expression::bindRValue(context.getCompilation().getErrorType(),
+                                                    *item.expr, {}, context);
+        }
+    }
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's nested default assignment-pattern binding no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+
+set(old_code [[
+    SmallVector<TypeSetter, 4> typeSetters;
+
+    for (auto item : syntax.items) {
+        if (item->key->kind == SyntaxKind::DefaultPatternKeyExpression) {
+            bindDefaultSetter(context, *item, defaultSetter, bad);
+            continue;
+]])
+set(new_code [[
+    SmallVector<TypeSetter, 4> typeSetters;
+
+    for (auto item : syntax.items) {
+        if (item->key->kind == SyntaxKind::DefaultPatternKeyExpression) {
+            bindDefaultSetter(context, *item, defaultSetter, bad, &elementType);
+            continue;
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's fixed-array default setter call no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+
+set(old_code [[
+    size_t maxIndex = 0;
+
+    for (auto item : syntax.items) {
+        if (item->key->kind == SyntaxKind::DefaultPatternKeyExpression) {
+            bindDefaultSetter(context, *item, defaultSetter, bad);
+            continue;
+]])
+set(new_code [[
+    size_t maxIndex = 0;
+
+    for (auto item : syntax.items) {
+        if (item->key->kind == SyntaxKind::DefaultPatternKeyExpression) {
+            bindDefaultSetter(context, *item, defaultSetter, bad, &elementType);
+            continue;
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's dynamic-array default setter call no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+
+set(old_code [[
+    const Type* indexType = type.getAssociativeIndexType();
+
+    for (auto item : syntax.items) {
+        if (item->key->kind == SyntaxKind::DefaultPatternKeyExpression) {
+            bindDefaultSetter(context, *item, defaultSetter, bad);
+]])
+set(new_code [[
+    const Type* indexType = type.getAssociativeIndexType();
+
+    for (auto item : syntax.items) {
+        if (item->key->kind == SyntaxKind::DefaultPatternKeyExpression) {
+            bindDefaultSetter(context, *item, defaultSetter, bad, &elementType);
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's associative-array default setter call no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+
 file(WRITE "${assignment_expressions_source}" "${contents}")
+
+# Equality operands provide assignment context to each other under the usual
+# aggregate comparison rules. Slang v11 binds both operands independently,
+# so an untyped assignment pattern is rejected before the other operand can
+# supply its type. Bind the ordinary side first and pass that type to the
+# pattern binder, symmetrically for patterns on either side.
+set(operator_expressions_source
+  "${SOURCE_DIR}/source/ast/expressions/OperatorExpressions.cpp")
+file(READ "${operator_expressions_source}" contents)
+
+set(old_code [[
+        flags |= ASTFlags::AllowTypeReferences;
+
+        // Special case to handle comparing a virtual interface with an
+        // actual instance. We can't normally bind to an instance from
+        // an expression so we need to explicitly try that separately here.
+        lhs = tryBindInterfaceRef(context, syntaxLeft, /* isInterfacePort */ false);
+        if (!lhs)
+            lhs = &create(compilation, syntaxLeft, context, flags);
+
+        // If we found a virtual interface on the lhs we can also try for an instance
+        // on the rhs. Otherwise we know we're doing normal expression binding.
+        if (lhs->type->isVirtualInterface()) {
+            rhs = tryBindInterfaceRef(context, syntaxRight, /* isInterfacePort */ false);
+            if (!rhs) {
+                rhs = &create(compilation, syntaxRight, context, flags);
+            }
+            else if (lhs->kind == ExpressionKind::ArbitrarySymbol &&
+                     rhs->kind == ExpressionKind::ArbitrarySymbol) {
+                // Having an instance on both sides is not allowed. One side must be
+                // an actual virtual interface.
+                context.addDiag(diag::CannotCompareTwoInstances, syntax.operatorToken.location())
+                    << lhs->sourceRange << rhs->sourceRange;
+                return badExpr(compilation, nullptr);
+            }
+        }
+        else {
+            rhs = &create(compilation, syntaxRight, context, flags);
+        }
+]])
+set(new_code [[
+        flags |= ASTFlags::AllowTypeReferences;
+
+        auto isUntypedAssignmentPattern = [](const ExpressionSyntax& expr) {
+            if (expr.kind != SyntaxKind::AssignmentPatternExpression)
+                return false;
+            return !expr.as<AssignmentPatternExpressionSyntax>().type;
+        };
+        bool lhsPattern = isUntypedAssignmentPattern(syntaxLeft);
+        bool rhsPattern = isUntypedAssignmentPattern(syntaxRight);
+
+        // An untyped assignment pattern takes its comparison operand's type
+        // as assignment context. Bind the ordinary operand first so the
+        // pattern can be elaborated without a spurious no-context diagnostic.
+        if (lhsPattern != rhsPattern) {
+            if (lhsPattern) {
+                rhs = &create(compilation, syntaxRight, context, flags);
+                lhs = &create(compilation, syntaxLeft, context, flags, rhs->type);
+            }
+            else {
+                lhs = &create(compilation, syntaxLeft, context, flags);
+                rhs = &create(compilation, syntaxRight, context, flags, lhs->type);
+            }
+        }
+
+        // Special case to handle comparing a virtual interface with an
+        // actual instance. We can't normally bind to an instance from
+        // an expression so we need to explicitly try that separately here.
+        else {
+            lhs = tryBindInterfaceRef(context, syntaxLeft, /* isInterfacePort */ false);
+            if (!lhs)
+                lhs = &create(compilation, syntaxLeft, context, flags);
+
+            // If we found a virtual interface on the lhs we can also try for an instance
+            // on the rhs. Otherwise we know we're doing normal expression binding.
+            if (lhs->type->isVirtualInterface()) {
+                rhs = tryBindInterfaceRef(context, syntaxRight, /* isInterfacePort */ false);
+                if (!rhs) {
+                    rhs = &create(compilation, syntaxRight, context, flags);
+                }
+                else if (lhs->kind == ExpressionKind::ArbitrarySymbol &&
+                         rhs->kind == ExpressionKind::ArbitrarySymbol) {
+                    // Having an instance on both sides is not allowed. One side must be
+                    // an actual virtual interface.
+                    context.addDiag(diag::CannotCompareTwoInstances,
+                                    syntax.operatorToken.location())
+                        << lhs->sourceRange << rhs->sourceRange;
+                    return badExpr(compilation, nullptr);
+                }
+            }
+            else {
+                rhs = &create(compilation, syntaxRight, context, flags);
+            }
+        }
+]])
+string(FIND "${contents}" "isUntypedAssignmentPattern" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's equality operand binding no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+  file(WRITE "${operator_expressions_source}" "${contents}")
+endif()
+
+# A conditional whose two arms are null still receives its surrounding
+# assignment target. Keep that handle type on the conditional itself so
+# lowering can materialize a typed null instead of an unusable bare NullType.
+set(old_code [[
+        if (lt->isNull() && rt->isNull()) {
+            result->type = &comp.getNullType();
+]])
+set(new_code [[
+        if (lt->isNull() && rt->isNull()) {
+            result->type = assignmentTarget && assignmentTarget->isHandleType() &&
+                                   !assignmentTarget->isNull()
+                               ? assignmentTarget
+                               : &comp.getNullType();
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's null conditional result typing no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+  file(WRITE "${operator_expressions_source}" "${contents}")
+endif()
 
 # Slang v11 lets a queue lvalue select name the append slot one past its
 # current end, but accidentally applies that allowance to rvalue selects too.

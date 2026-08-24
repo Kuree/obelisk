@@ -189,6 +189,17 @@ seconds compile / 0.179 seconds simulate for bytecode and 71.801 seconds
 compile / 0.019 seconds simulate for native, with zero UVM errors or fatals.
 The full regression suite passes 1277/1277 tests and all 426 runtime tests.
 
+L12's third closure tranche binds recursive array `default` assignment
+patterns with their known element type, gives an untyped assignment pattern
+the aggregate type of its opposite equality operand, and preserves the
+surrounding handle type for conditional expressions whose two arms are
+`null`. The similarly named Verilator array-pattern flattening case is a
+non-standard extension rather than IEEE 1800-2017 work and remains excluded.
+The UVM smoke ran in 34.608 seconds compile / 0.181 seconds simulate for
+bytecode and 71.710 seconds compile / 0.020 seconds simulate for native, with
+zero UVM errors or fatals. The full regression suite passes 1280/1280 tests
+and all 426 runtime tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
