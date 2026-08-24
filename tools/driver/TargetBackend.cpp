@@ -488,6 +488,7 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
   bool hasDelayedNet = false;
   module.walk([&](mlir::Operation *operation) {
     if (mlir::isa<obelisk::sim::SimOverrideOp,
+                  obelisk::sim::SimDynamicOverrideOp,
                   obelisk::sim::SimReleaseOverrideOp>(operation))
       hasLanguageOverride = true;
     if (auto enqueue = mlir::dyn_cast<obelisk::sim::SimNBAEnqueueOp>(operation))

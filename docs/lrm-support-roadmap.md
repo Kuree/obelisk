@@ -248,6 +248,19 @@ compile / 0.181 seconds simulate for bytecode and 75.108 seconds compile /
 times remain within 2% of the preceding concurrent baseline. The full
 regression suite passes 1287/1287 tests and all 427 runtime tests.
 
+L12's seventh closure tranche includes continuously reevaluated force and
+procedural-assign operations in the driver's language-override classification.
+A native design whose only overrides have nonconstant right-hand sides now
+encodes and synchronizes its static state even when no release or deassign
+statement appears. Conditional replacement retires the previous evaluator and
+the surviving force remains live after its creating process exits. This adds no
+event-time polling or state-plane work to designs without overrides. The
+upstream `t_force_cond` case now passes. The UVM smoke ran in 36.678 seconds
+compile / 0.184 seconds simulate for bytecode and 73.926 seconds compile /
+0.019 seconds simulate for native, with zero UVM errors or fatals; both compile
+times remain within 2% of the preceding concurrent baseline. The full
+regression suite passes 1288/1288 tests and all 427 runtime tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
