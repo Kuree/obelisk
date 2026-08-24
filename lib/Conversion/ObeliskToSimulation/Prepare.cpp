@@ -81,8 +81,7 @@ static bool containsResolutionOperation(Operation *root, Operation *nested) {
   return false;
 }
 
-static bool isResolutionStorageBase(Operation *lvalue,
-                                    Operation *reference) {
+static bool isResolutionStorageBase(Operation *lvalue, Operation *reference) {
   if (lvalue == reference)
     return isa<semantic::SVNamedValueExpressionOp,
                semantic::SVHierarchicalValueExpressionOp>(lvalue);
@@ -1243,13 +1242,13 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (lhs != rhs)
         parents[std::max(lhs, rhs)] = std::min(lhs, rhs);
     };
-    auto parseKnownIndex = [&](Operation *expression)
-        -> std::optional<int64_t> {
+    auto parseKnownIndex =
+        [&](Operation *expression) -> std::optional<int64_t> {
       std::optional<StringRef> spelling = getConstantSpelling(expression);
       if (!spelling)
         return std::nullopt;
-      FailureOr<ParsedConstant> parsed = parseSVInteger(
-          *spelling, 64, getSemanticLocation(expression));
+      FailureOr<ParsedConstant> parsed =
+          parseSVInteger(*spelling, 64, getSemanticLocation(expression));
       if (failed(parsed) || !parsed->unknown.isZero() ||
           !parsed->value.isSignedIntN(64))
         return std::nullopt;
@@ -1261,13 +1260,12 @@ void ObeliskSimPreparePass::runOnOperation() {
     };
     std::function<std::optional<InterconnectReference>(Operation *)>
         getInterconnectReference;
-    getInterconnectReference = [&](Operation *expression)
-        -> std::optional<InterconnectReference> {
+    getInterconnectReference =
+        [&](Operation *expression) -> std::optional<InterconnectReference> {
       if (!expression)
         return std::nullopt;
       StringRef path;
-      if (auto named =
-              dyn_cast<semantic::SVNamedValueExpressionOp>(expression))
+      if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(expression))
         path = named.getReferencedPath();
       else if (auto hierarchical =
                    dyn_cast<semantic::SVHierarchicalValueExpressionOp>(
@@ -1310,11 +1308,10 @@ void ObeliskSimPreparePass::runOnOperation() {
     std::function<void(Type, SmallVectorImpl<Type> &)> flattenFormalType;
     flattenFormalType = [&](Type type, SmallVectorImpl<Type> &result) {
       if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(type)) {
-        uint64_t count = array.getLeft() >= array.getRight()
-                             ? uint64_t(array.getLeft()) -
-                                   uint64_t(array.getRight()) + 1
-                             : uint64_t(array.getRight()) -
-                                   uint64_t(array.getLeft()) + 1;
+        uint64_t count =
+            array.getLeft() >= array.getRight()
+                ? uint64_t(array.getLeft()) - uint64_t(array.getRight()) + 1
+                : uint64_t(array.getRight()) - uint64_t(array.getLeft()) + 1;
         for (uint64_t index = 0; index != count; ++index)
           flattenFormalType(array.getElementType(), result);
         return;
@@ -1416,7 +1413,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         continue;
       ArrayRef<unsigned> ids = foundLeaves->second;
       if (ids.size() == 1 && leaves[ids.front()].indices.empty()) {
-        net->setAttr("semantic_type", TypeAttr::get(leaves[ids.front()].candidate));
+        net->setAttr("semantic_type",
+                     TypeAttr::get(leaves[ids.front()].candidate));
         continue;
       }
       SmallVector<Attribute> definitions;
@@ -1425,8 +1423,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         definitions.push_back(builder.getDictionaryAttr(
             {builder.getNamedAttr("path",
                                   builder.getStringAttr(leaves[id].path)),
-             builder.getNamedAttr("indices", builder.getDenseI64ArrayAttr(
-                                                 leaves[id].indices)),
+             builder.getNamedAttr(
+                 "indices", builder.getDenseI64ArrayAttr(leaves[id].indices)),
              builder.getNamedAttr("type",
                                   TypeAttr::get(leaves[id].candidate))}));
       net->setAttr(interconnectLeavesAttrName,
@@ -2118,11 +2116,13 @@ void ObeliskSimPreparePass::runOnOperation() {
             ++softConstraintCount;
           return;
         }
-        if (auto solve = dyn_cast<semantic::SVSolveBeforeConstraintOp>(nested)) {
+        if (auto solve =
+                dyn_cast<semantic::SVSolveBeforeConstraintOp>(nested)) {
           auto solveCount = solve->getAttrOfType<IntegerAttr>("solve_count");
           auto afterCount = solve->getAttrOfType<IntegerAttr>("after_count");
           SmallVector<Operation *> operands = getChildren(solve);
-          if (!solveCount || !afterCount || solveCount.getValue().isNegative() ||
+          if (!solveCount || !afterCount ||
+              solveCount.getValue().isNegative() ||
               afterCount.getValue().isNegative() ||
               solveCount.getValue().getActiveBits() > 64 ||
               afterCount.getValue().getActiveBits() > 64 ||
@@ -2186,8 +2186,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
         if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
                 semantic::SVSpecparamSymbolOp>(symbol->second))
-          if (auto constant = symbol->second->getAttrOfType<StringAttr>(
-                  "constant_value"))
+          if (auto constant =
+                  symbol->second->getAttrOfType<StringAttr>("constant_value"))
             nested->setAttr("obelisk_sim.constant_value", constant);
       });
     }
@@ -2215,10 +2215,10 @@ void ObeliskSimPreparePass::runOnOperation() {
             patterns.push_back(builder.getDictionaryAttr({
                 builder.getNamedAttr(
                     "mask", builder.getIntegerAttr(builder.getI64Type(),
-                                                    APInt(64, pattern.mask))),
+                                                   APInt(64, pattern.mask))),
                 builder.getNamedAttr(
                     "value", builder.getIntegerAttr(builder.getI64Type(),
-                                                     APInt(64, pattern.value))),
+                                                    APInt(64, pattern.value))),
             }));
           domains.push_back(builder.getDictionaryAttr({
               builder.getNamedAttr("offset",
@@ -2241,17 +2241,14 @@ void ObeliskSimPreparePass::runOnOperation() {
       call->setAttr(randomizeCheckerOnlyAttrName, builder.getUnitAttr());
     call->setAttr(randomPropertiesAttrName,
                   builder.getArrayAttr(propertyAttrs));
-    call->setAttr(randomContainerPropertiesAttrName,
-                  builder.getArrayAttr({}));
+    call->setAttr(randomContainerPropertiesAttrName, builder.getArrayAttr({}));
     call->setAttr(randomNestedConstraintModesAttrName,
                   builder.getArrayAttr({}));
     call->setAttr(randomNestedHooksAttrName, builder.getArrayAttr({}));
-    call->setAttr(randomRecursiveAliasGuardsAttrName,
-                  builder.getArrayAttr({}));
+    call->setAttr(randomRecursiveAliasGuardsAttrName, builder.getArrayAttr({}));
     call->setAttr(randomTotalWidthAttrName,
                   builder.getI64IntegerAttr(totalWidth));
-    call->setAttr(randomConstraintCountAttrName,
-                  builder.getI32IntegerAttr(0));
+    call->setAttr(randomConstraintCountAttrName, builder.getI32IntegerAttr(0));
     call->setAttr(constraintModeStaticStoragesAttrName,
                   builder.getDenseI64ArrayAttr({}));
 
@@ -2288,8 +2285,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     // with the synthesized class-handle receiver. Check the syntax shape
     // before the semantic type so std::randomize(class_handle_variable) is
     // never mistaken for class_handle_variable.randomize().
-    if (isa<semantic::SVAssignmentExpressionOp>(
-            callChildren[receiverIndex]))
+    if (isa<semantic::SVAssignmentExpressionOp>(callChildren[receiverIndex]))
       return freezeScopeRandomizeContract(call, std::move(callChildren));
     bool frozenChecker = call->hasAttr(randomizeCheckerOnlyAttrName);
     bool checkerOnly =
@@ -5455,10 +5451,9 @@ void ObeliskSimPreparePass::runOnOperation() {
         dyn_cast<semantic::SVArbitrarySymbolExpressionOp>(callChildren.front());
     auto reference =
         member ? member->getAttrOfType<SymbolRefAttr>("referenced_symbol")
-        : implicitReceiver
-            ? implicitReceiver->getAttrOfType<SymbolRefAttr>(
-                  "referenced_symbol")
-            : SymbolRefAttr{};
+        : implicitReceiver ? implicitReceiver->getAttrOfType<SymbolRefAttr>(
+                                 "referenced_symbol")
+                           : SymbolRefAttr{};
     auto symbol = reference ? semanticSymbols.find(reference.getLeafReference())
                             : semanticSymbols.end();
     auto constraint =
@@ -6272,8 +6267,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             builder.getI32IntegerAttr(*plannedDriver->strengthBank)));
       if (capture.second.kind == DescriptorInfo::Kind::Driver &&
           capture.second.delayedNet)
-        metadataAttrs.push_back(builder.getNamedAttr(
-            "obelisk_sim.delayed_net", builder.getUnitAttr()));
+        metadataAttrs.push_back(builder.getNamedAttr("obelisk_sim.delayed_net",
+                                                     builder.getUnitAttr()));
       if (capture.second.rootType &&
           (capture.second.viewOffset != 0 ||
            capture.second.rootType != capture.second.type)) {
@@ -6322,8 +6317,9 @@ void ObeliskSimPreparePass::runOnOperation() {
 
     for (const PreparedLocal &local : observerLocals) {
       unsigned argument = inputs.size();
-      inputs.push_back(local.net ? Type(sim::NetType::get(context, local.type))
-                                 : Type(sim::RefType::get(context, local.type)));
+      inputs.push_back(local.net
+                           ? Type(sim::NetType::get(context, local.type))
+                           : Type(sim::RefType::get(context, local.type)));
       argAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Value));
       bindings.push_back(sim::ArgumentBindingAttr::get(
           context, builder.getStringAttr(local.path), argument,
@@ -6647,9 +6643,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       if (delayInvalid)
         continue;
-      functionAttrs.push_back(builder.getNamedAttr(
-          "obelisk_sim.propagation_delays",
-          builder.getDenseI64ArrayAttr(ticks)));
+      functionAttrs.push_back(
+          builder.getNamedAttr("obelisk_sim.propagation_delays",
+                               builder.getDenseI64ArrayAttr(ticks)));
     }
     if (instanceClassMethod)
       functionAttrs.push_back(builder.getNamedAttr(
@@ -6679,13 +6675,14 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder.getNamedAttr(observerResultAttrName,
                                builder.getI32IntegerAttr(static_cast<uint32_t>(
                                    unit.observerResult))));
+    if (unit.source->hasAttr("obelisk_sim.override_evaluator"))
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.override_evaluator", builder.getUnitAttr()));
     if (unit.entryKind == sim::EntryKind::Observer) {
       std::optional<unsigned> width =
-          results.empty() ? std::nullopt
-          : isa<FloatType>(results.front())
-              ? std::optional<unsigned>(
-                    cast<FloatType>(results.front()).getWidth())
-              : sim::getPackedWidth(results.front());
+          results.empty()
+              ? std::nullopt
+              : analysis::getSimulationStorageBitWidth(results.front());
       if (!width) {
         emitError(getSemanticLocation(unit.source))
             << "observer result width is not fixed";
@@ -6822,8 +6819,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         (unit.source->hasAttr(clockingEventMonitorRequiredAttrName) ||
          unit.source->hasAttr(clockingEventListAttrName));
     if (clockingEventMonitor) {
-      functionAttrs.push_back(builder.getNamedAttr(
-          clockingEventMonitorAttrName, builder.getUnitAttr()));
+      functionAttrs.push_back(builder.getNamedAttr(clockingEventMonitorAttrName,
+                                                   builder.getUnitAttr()));
       functionAttrs.push_back(builder.getNamedAttr(
           clockingEventMonitorPathAttrName,
           builder.getStringAttr(getHierarchyName(unit.source))));
@@ -7699,8 +7696,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                                                 metadata.end());
       if (capture.second.kind == DescriptorInfo::Kind::Driver &&
           capture.second.delayedNet)
-        metadataAttrs.push_back(builder.getNamedAttr(
-            "obelisk_sim.delayed_net", builder.getUnitAttr()));
+        metadataAttrs.push_back(builder.getNamedAttr("obelisk_sim.delayed_net",
+                                                     builder.getUnitAttr()));
       if (capture.second.rootType &&
           (capture.second.viewOffset != 0 ||
            capture.second.rootType != capture.second.type)) {
@@ -8009,10 +8006,10 @@ void ObeliskSimPreparePass::runOnOperation() {
          design.getBody().front().getOps<sim::SimDriverDeclOp>())
       netDrivers[driver.getNetId()].push_back(driver);
     for (auto &[id, drivers] : netDrivers)
-      llvm::sort(drivers, [](sim::SimDriverDeclOp lhs,
-                             sim::SimDriverDeclOp rhs) {
-        return lhs.getId() < rhs.getId();
-      });
+      llvm::sort(drivers,
+                 [](sim::SimDriverDeclOp lhs, sim::SimDriverDeclOp rhs) {
+                   return lhs.getId() < rhs.getId();
+                 });
 
     // Port elaboration represents one physical net as several declarations
     // joined by bitwise connectivity runs. Resolution, however, belongs to
@@ -8052,8 +8049,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (!unit.function ||
           unit.function.getHomeRegion() != sim::EventRegion::Reactive)
         continue;
-      for (unsigned index = 1;
-           index < unit.function.getNumArguments(); ++index) {
+      for (unsigned index = 1; index < unit.function.getNumArguments();
+           ++index) {
         if (!isa<sim::DriverType>(unit.function.getArgumentTypes()[index]))
           continue;
         auto descriptor = unit.function.getArgAttrOfType<IntegerAttr>(
@@ -8079,10 +8076,10 @@ void ObeliskSimPreparePass::runOnOperation() {
       SmallVector<sim::SimDriverDeclOp> componentDrivers;
       for (uint64_t member : members)
         llvm::append_range(componentDrivers, netDrivers[member]);
-      llvm::sort(componentDrivers, [](sim::SimDriverDeclOp lhs,
-                                      sim::SimDriverDeclOp rhs) {
-        return lhs.getId() < rhs.getId();
-      });
+      llvm::sort(componentDrivers,
+                 [](sim::SimDriverDeclOp lhs, sim::SimDriverDeclOp rhs) {
+                   return lhs.getId() < rhs.getId();
+                 });
       ArrayRef<sim::SimDriverDeclOp> drivers = componentDrivers;
       bool hasReactiveDriver = llvm::any_of(drivers, [&](auto driver) {
         return reactiveDriverIDs.contains(driver.getId());
@@ -8101,13 +8098,12 @@ void ObeliskSimPreparePass::runOnOperation() {
       sim::SimFuncOp resolutionFunction;
       Operation *resolutionSource = nullptr;
       if (resolutionPath) {
-        auto semantic = resolutionSymbol
-                            ? semanticSymbols.find(
-                                  resolutionSymbol.getLeafReference())
-                            : semanticSymbols.end();
-        resolutionSource = semantic == semanticSymbols.end()
-                               ? nullptr
-                               : semantic->second;
+        auto semantic =
+            resolutionSymbol
+                ? semanticSymbols.find(resolutionSymbol.getLeafReference())
+                : semanticSymbols.end();
+        resolutionSource =
+            semantic == semanticSymbols.end() ? nullptr : semantic->second;
         auto resolutionSubroutine =
             dyn_cast_or_null<semantic::SVSubroutineSymbolOp>(resolutionSource);
         if (resolutionSubroutine &&
@@ -8119,9 +8115,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           invalid = true;
           continue;
         }
-        resolutionFunction =
-            resolutionSource ? unitFunctions.lookup(resolutionSource)
-                             : sim::SimFuncOp{};
+        resolutionFunction = resolutionSource
+                                 ? unitFunctions.lookup(resolutionSource)
+                                 : sim::SimFuncOp{};
         if (!resolutionFunction) {
           net.emitError() << "user-defined net resolution function '"
                           << resolutionPath.getValue()
@@ -8182,41 +8178,41 @@ void ObeliskSimPreparePass::runOnOperation() {
         llvm::DenseSet<Operation *> visitedFunctions;
         std::function<bool(Operation *)> hasSemanticSideEffect =
             [&](Operation *source) {
-          if (!source || !visitedFunctions.insert(source).second)
-            return false;
-          Operation *body = source;
-          if (sim::SimFuncOp lowered = unitFunctions.lookup(source))
-            body = lowered;
-          bool sideEffect = false;
-          body->walk([&](semantic::SVCallExpressionOp call) {
-            if (sideEffect)
-              return;
-            if (call.getIsSystemCall()) {
-              sideEffect = isStatefulResolutionSystemCall(
-                  call.getCalleeName());
-              return;
-            }
-            Operation *target = resolveDirectCallee(call);
-            auto subroutine =
-                dyn_cast_or_null<semantic::SVSubroutineSymbolOp>(target);
-            if (!subroutine) {
-              // An unresolved user call cannot be proven side-effect-free.
-              sideEffect = true;
-              return;
-            }
-            if (subroutine.getIsDpiImport().value_or(false)) {
-              sideEffect = !subroutine.getIsPure().value_or(false);
-              return;
-            }
-            if (subroutine.getSubroutineKind() ==
-                semantic::SVSubroutineKind::Task) {
-              sideEffect = true;
-              return;
-            }
-            sideEffect = hasSemanticSideEffect(target);
-          });
-          return sideEffect;
-        };
+              if (!source || !visitedFunctions.insert(source).second)
+                return false;
+              Operation *body = source;
+              if (sim::SimFuncOp lowered = unitFunctions.lookup(source))
+                body = lowered;
+              bool sideEffect = false;
+              body->walk([&](semantic::SVCallExpressionOp call) {
+                if (sideEffect)
+                  return;
+                if (call.getIsSystemCall()) {
+                  sideEffect =
+                      isStatefulResolutionSystemCall(call.getCalleeName());
+                  return;
+                }
+                Operation *target = resolveDirectCallee(call);
+                auto subroutine =
+                    dyn_cast_or_null<semantic::SVSubroutineSymbolOp>(target);
+                if (!subroutine) {
+                  // An unresolved user call cannot be proven side-effect-free.
+                  sideEffect = true;
+                  return;
+                }
+                if (subroutine.getIsDpiImport().value_or(false)) {
+                  sideEffect = !subroutine.getIsPure().value_or(false);
+                  return;
+                }
+                if (subroutine.getSubroutineKind() ==
+                    semantic::SVSubroutineKind::Task) {
+                  sideEffect = true;
+                  return;
+                }
+                sideEffect = hasSemanticSideEffect(target);
+              });
+              return sideEffect;
+            };
         if (hasSemanticSideEffect(resolutionSource)) {
           emitError(getSemanticLocation(resolutionSource))
               << "user-defined net resolution function '"
@@ -8226,8 +8222,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           continue;
         }
       } else if (drivers.size() > 1) {
-        net.emitError()
-            << "unresolved user-defined net has multiple drivers";
+        net.emitError() << "unresolved user-defined net has multiple drivers";
         invalid = true;
         continue;
       }
@@ -8241,8 +8236,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       for (sim::SimDriverDeclOp driver : drivers)
         rawDriverIDs.insert(driver.getId());
       for (PreparedUnit &unit : units)
-        for (unsigned index = 1;
-             index < unit.function.getNumArguments(); ++index) {
+        for (unsigned index = 1; index < unit.function.getNumArguments();
+             ++index) {
           auto descriptor = unit.function.getArgAttrOfType<IntegerAttr>(
               index, sim::metadata::descriptorId);
           if (isa<sim::DriverType>(unit.function.getArgumentTypes()[index]) &&
@@ -8257,17 +8252,18 @@ void ObeliskSimPreparePass::runOnOperation() {
            (mixedDriverRegions ? ".$resolution.active" : ".$resolution"))
               .str();
       uint64_t codeUnitID = stableCodeUnitID(hierarchy);
-      if (llvm::any_of(units, [&](const PreparedUnit &unit) {
-            return unit.id == codeUnitID;
-          }) || codeUnitID == rootCodeUnitID) {
+      if (llvm::any_of(units,
+                       [&](const PreparedUnit &unit) {
+                         return unit.id == codeUnitID;
+                       }) ||
+          codeUnitID == rootCodeUnitID) {
         net.emitError() << "stable code-unit ID collision for '" << hierarchy
                         << "'";
         invalid = true;
         continue;
       }
       std::string symbol =
-          (Twine("__obelisk_user_net_resolver_") +
-           Twine(generatedOrdinal++))
+          (Twine("__obelisk_user_net_resolver_") + Twine(generatedOrdinal++))
               .str();
       sim::SimCodeUnitDeclOp::create(
           builder, net.getLoc(), codeUnitID, net.getScopeId(),
@@ -8296,8 +8292,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       for (sim::SimDriverDeclOp driver : drivers) {
         inputTypes.push_back(sim::DriverType::get(context, net.getType()));
         NamedAttrList attrs(
-            captureMetadata(builder, sim::CaptureKind::Driver,
-                            driver.getId()));
+            captureMetadata(builder, sim::CaptureKind::Driver, driver.getId()));
         attrs.set("obelisk_sim.user_net_driver", builder.getUnitAttr());
         argumentAttrs.push_back(attrs.getDictionary(context));
       }
@@ -8305,15 +8300,13 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder.getNamedAttr("code_unit_id",
                                builder.getI64IntegerAttr(codeUnitID)),
           builder.getNamedAttr(
-              "home_region",
-              sim::EventRegionAttr::get(context, primaryRegion)),
-          builder.getNamedAttr(
-              "domain", sim::ExecutionDomainAttr::get(
-                            context, sim::ExecutionDomain::Design)),
+              "home_region", sim::EventRegionAttr::get(context, primaryRegion)),
+          builder.getNamedAttr("domain",
+                               sim::ExecutionDomainAttr::get(
+                                   context, sim::ExecutionDomain::Design)),
           builder.getNamedAttr(sim::metadata::hierarchicalName,
                                builder.getStringAttr(hierarchy)),
-          builder.getNamedAttr(sim::metadata::lowered,
-                               builder.getUnitAttr())};
+          builder.getNamedAttr(sim::metadata::lowered, builder.getUnitAttr())};
       auto resolver = sim::SimFuncOp::create(
           builder, net.getLoc(), symbol,
           FunctionType::get(context, inputTypes, TypeRange{}),
@@ -8336,10 +8329,9 @@ void ObeliskSimPreparePass::runOnOperation() {
             entryBuilder, net.getLoc(), entryBuilder.getI64Type(),
             entryBuilder.getI64IntegerAttr(drivers.size()));
         contributionArray = sim::SimContainerCreateOp::create(
-            entryBuilder, net.getLoc(), arrayType, size,
-            descriptor->typeID, descriptor->kind, descriptor->flags,
-            descriptor->valueSize, descriptor->alignment,
-            descriptor->bitWidth,
+            entryBuilder, net.getLoc(), arrayType, size, descriptor->typeID,
+            descriptor->kind, descriptor->flags, descriptor->valueSize,
+            descriptor->alignment, descriptor->bitWidth,
             entryBuilder.getDenseI64ArrayAttr(descriptor->traceOffsets),
             entryBuilder.getDenseI32ArrayAttr(descriptor->traceKinds),
             OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, uint64_t{0});
@@ -8379,8 +8371,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         // free. Constant-free functions therefore need no additional state;
         // accept direct descriptor captures as well so legal package reads do
         // not force a runtime callback ABI.
-        for (unsigned index = 2;
-             index < resolutionFunction.getNumArguments(); ++index) {
+        for (unsigned index = 2; index < resolutionFunction.getNumArguments();
+             ++index) {
           DictionaryAttr attrs = resolutionFunction.getArgAttrDict(index);
           auto kind = dyn_cast_or_null<sim::CaptureKindAttr>(
               attrs ? attrs.get(sim::metadata::captureKind) : Attribute{});
@@ -8436,8 +8428,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
         auto call = sim::SimCallOp::create(
             resolverBuilder, net.getLoc(), TypeRange{net.getType()},
-            FlatSymbolRefAttr::get(context,
-                                   resolutionFunction.getSymName()),
+            FlatSymbolRefAttr::get(context, resolutionFunction.getSymName()),
             operands, ArrayAttr{}, ArrayAttr{});
         resolved = call.getResult(0);
       }
@@ -8448,9 +8439,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         sim::SimReturnOp::create(resolverBuilder, net.getLoc(), ValueRange{});
       } else if (driverHandles.size() == 1) {
         sim::SimSuspendChangeOp::create(
-            resolverBuilder, net.getLoc(), driverHandles.front(),
-            ValueRange{}, sim::ContinuationSiteAttr{}, sim::EventRegionAttr{},
-            loop);
+            resolverBuilder, net.getLoc(), driverHandles.front(), ValueRange{},
+            sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, loop);
       } else {
         SmallVector<int32_t> edges(driverHandles.size(),
                                    static_cast<int32_t>(sim::EdgeKind::Change));
@@ -8459,9 +8449,9 @@ void ObeliskSimPreparePass::runOnOperation() {
             resolverBuilder.getDenseI32ArrayAttr(edges),
             sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, loop);
       }
-      generatedUnits.push_back(
-          {semanticRoot, codeUnitID, sim::EntryKind::Continuous, symbol,
-           hierarchy, resolver, ObserverResult::None});
+      generatedUnits.push_back({semanticRoot, codeUnitID,
+                                sim::EntryKind::Continuous, symbol, hierarchy,
+                                resolver, ObserverResult::None});
 
       if (mixedDriverRegions) {
         std::string reactiveHierarchy =
@@ -8470,9 +8460,10 @@ void ObeliskSimPreparePass::runOnOperation() {
                 .str();
         uint64_t reactiveCodeUnitID = stableCodeUnitID(reactiveHierarchy);
         if (reactiveCodeUnitID == rootCodeUnitID ||
-            llvm::any_of(units, [&](const PreparedUnit &unit) {
-              return unit.id == reactiveCodeUnitID;
-            }) ||
+            llvm::any_of(units,
+                         [&](const PreparedUnit &unit) {
+                           return unit.id == reactiveCodeUnitID;
+                         }) ||
             llvm::any_of(generatedUnits, [&](const PreparedUnit &unit) {
               return unit.id == reactiveCodeUnitID;
             })) {
@@ -8482,11 +8473,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           continue;
         }
 
-        auto reactiveResolver =
-            cast<sim::SimFuncOp>(builder.clone(*resolver));
+        auto reactiveResolver = cast<sim::SimFuncOp>(builder.clone(*resolver));
         std::string reactiveSymbol =
-            (Twine("__obelisk_user_net_resolver_") +
-             Twine(generatedOrdinal++))
+            (Twine("__obelisk_user_net_resolver_") + Twine(generatedOrdinal++))
                 .str();
         reactiveResolver.setSymName(reactiveSymbol);
         reactiveResolver->setAttr(
@@ -8518,10 +8507,10 @@ void ObeliskSimPreparePass::runOnOperation() {
                 reactiveEntry.getArgument(index + 1 + members.size()));
         OpBuilder reactiveBuilder = OpBuilder::atBlockEnd(reactiveLoop);
         if (reactiveHandles.size() == 1) {
-          sim::SimSuspendChangeOp::create(
-              reactiveBuilder, net.getLoc(), reactiveHandles.front(),
-              ValueRange{}, sim::ContinuationSiteAttr{},
-              sim::EventRegionAttr{}, reactiveLoop);
+          sim::SimSuspendChangeOp::create(reactiveBuilder, net.getLoc(),
+                                          reactiveHandles.front(), ValueRange{},
+                                          sim::ContinuationSiteAttr{},
+                                          sim::EventRegionAttr{}, reactiveLoop);
         } else {
           SmallVector<int32_t> edges(
               reactiveHandles.size(),
@@ -8532,10 +8521,10 @@ void ObeliskSimPreparePass::runOnOperation() {
               sim::ContinuationSiteAttr{}, sim::EventRegionAttr{},
               reactiveLoop);
         }
-        generatedUnits.push_back(
-            {semanticRoot, reactiveCodeUnitID, sim::EntryKind::Continuous,
-             reactiveSymbol, reactiveHierarchy, reactiveResolver,
-             ObserverResult::None});
+        generatedUnits.push_back({semanticRoot, reactiveCodeUnitID,
+                                  sim::EntryKind::Continuous, reactiveSymbol,
+                                  reactiveHierarchy, reactiveResolver,
+                                  ObserverResult::None});
       }
     }
     llvm::append_range(units, generatedUnits);
@@ -8757,8 +8746,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (unit.entryKind != sim::EntryKind::Always &&
         unit.entryKind != sim::EntryKind::AlwaysFF)
       return false;
-    auto procedure =
-        dyn_cast<semantic::SVProceduralBlockSymbolOp>(unit.source);
+    auto procedure = dyn_cast<semantic::SVProceduralBlockSymbolOp>(unit.source);
     if (!procedure)
       return true;
     SmallVector<Operation *> body = getChildren(procedure);

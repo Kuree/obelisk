@@ -1353,6 +1353,13 @@ ABI_FUNCTION(obelisk_rt_v1_object_field_load,
 ABI_FUNCTION(obelisk_rt_v1_object_field_store,
              obelisk_rt_status (*)(obelisk_rt_object_v1 *, uint64_t,
                                    obelisk_rt_object_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_object_override,
+             obelisk_rt_status (*)(obelisk_rt_object_v1 *, uint64_t, uint64_t,
+                                   uint32_t, uint32_t, uint32_t, uint64_t,
+                                   uint32_t, const void *, const void *));
+ABI_FUNCTION(obelisk_rt_v1_object_release_override,
+             obelisk_rt_status (*)(obelisk_rt_object_v1 *, uint64_t, uint64_t,
+                                   uint32_t, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_object_is_instance,
              uint32_t (*)(const obelisk_rt_object_v1 *,
                           const obelisk_rt_class_descriptor_v1 *));

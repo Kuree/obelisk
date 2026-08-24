@@ -627,7 +627,8 @@ LogicalResult lowerPackedSimulationOperations(
     populateStateReadWriteToLLVMConversionPatterns(
         patterns, c, stateLayout.bitCount,
         enableDirectStaticState ? &stateLayout : nullptr, experimentalTwoState);
-    populateOverrideToLLVMConversionPatterns(patterns, c, stateLayout.bitCount);
+    populateOverrideToLLVMConversionPatterns(patterns, c, stateLayout.bitCount,
+                                             dataLayout);
     populateManagedToLLVMConversionPatterns(patterns, c, dataLayout,
                                             stateLayout.bitCount);
     populateDriverToLLVMConversionPatterns(patterns, c, stateLayout);
@@ -718,11 +719,10 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimGCSafepointOp>();
     target
         .addIllegalOp<sim::SimAggregateDefaultOp, sim::SimAggregateConstructOp,
-                      sim::SimAggregateSplatOp,
-                      sim::SimAggregateExtractOp, sim::SimAggregateInsertOp,
-                      sim::SimArrayDynExtractOp, sim::SimArrayDynInsertOp,
-                      sim::SimUnionConstructOp, sim::SimUnionExtractOp,
-                      sim::SimUnionIsActiveOp>();
+                      sim::SimAggregateSplatOp, sim::SimAggregateExtractOp,
+                      sim::SimAggregateInsertOp, sim::SimArrayDynExtractOp,
+                      sim::SimArrayDynInsertOp, sim::SimUnionConstructOp,
+                      sim::SimUnionExtractOp, sim::SimUnionIsActiveOp>();
     target.addLegalDialect<runtime::ObeliskRuntimeDialect>();
     target.addLegalOp<sim::SimContextRuntimeOp, sim::SimStatusCheckOp>();
     target.addDynamicallyLegalOp<sim::SimFuncOp>([&](sim::SimFuncOp function) {

@@ -1087,6 +1087,33 @@ struct obelisk_rt_context {
   // evaluator exactly when its final bit is superseded or released.
   std::unordered_map<uint64_t, uint64_t> dynamicForceOwners;
   std::unordered_map<uint64_t, uint64_t> dynamicAssignOwners;
+  struct ManagedOverrideState {
+    uint64_t planeSize = 0;
+    bool fourState = false;
+    bool forceActive = false;
+    bool assignActive = false;
+    uint64_t forceOwner = 0;
+    uint64_t assignOwner = 0;
+    std::vector<uint8_t> forceValue;
+    std::vector<uint8_t> forceUnknown;
+    std::vector<uint8_t> assignValue;
+    std::vector<uint8_t> assignUnknown;
+    // Shadow storage is outside the managed heap. Keep every validated
+    // referent precise and live while its layer remains active, including a
+    // lower-priority procedural assign hidden beneath force.
+    std::vector<obelisk_rt_object_v1 *> forceRoots;
+    std::vector<obelisk_rt_object_v1 *> assignRoots;
+  };
+  // Class-property overrides are keyed by monotonic object identity and byte
+  // offset. Variable selects are not legal force targets, so one exact field
+  // slot is sufficient and avoids per-bit maps on the managed heap hot path.
+  std::unordered_map<uint64_t,
+                     std::unordered_map<uint64_t, ManagedOverrideState>>
+      managedOverrides;
+  // Keeps ordinary managed-container mutation to one relaxed load until a
+  // design actually executes force or procedural assign. This is sticky:
+  // those statements are rare, and clearing it is not needed for correctness.
+  std::atomic<bool> managedValueOverridePossible{false};
   // Latest values published by continuous assignments to variable storage.
   // Unlike procedural writes, these remain active beneath force / assign and
   // are republished as soon as the higher-priority override is released.
@@ -1364,6 +1391,11 @@ void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
                                              uint8_t *object, uint64_t extent,
                                              ManagedTraceVisit visit,
                                              void *environment) noexcept;
+// A whole dynamic aggregate selected by force / procedural assign is a value,
+// not a mutable reference. Suppress mutations through that selected value
+// while its owning override layer is active.
+bool obelisk_rt_managed_value_mutation_masked(
+    obelisk_rt_object_v1 *object) noexcept;
 obelisk_rt_status obelisk_rt_reference_path_shape(obelisk_rt_object_v1 *path,
                                                   uint64_t valueSize,
                                                   uint64_t bitWidth,
@@ -1628,8 +1660,8 @@ bool obelisk_rt_notify_observer_event_unlocked(obelisk_rt_context *context,
 bool obelisk_rt_initialize_event_order_wait_unlocked(
     obelisk_rt_context *context, const obelisk_rt_wait_record_v1 *wait,
     uint32_t &index, bool &ready, bool &failed);
-bool obelisk_rt_notify_event_order_waiters_unlocked(
-    obelisk_rt_context *context, uint64_t stableID);
+bool obelisk_rt_notify_event_order_waiters_unlocked(obelisk_rt_context *context,
+                                                    uint64_t stableID);
 bool obelisk_rt_notify_observer_signal_unlocked(obelisk_rt_context *context,
                                                 uint64_t stableID,
                                                 uint64_t width);

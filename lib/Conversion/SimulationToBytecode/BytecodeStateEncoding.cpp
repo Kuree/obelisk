@@ -37,8 +37,8 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
     return encodeHandle(plan, op.getResult(), op.getId(), state.drivers,
                         OBELISK_RT_DESCRIPTOR_DRIVER);
   if (auto op = dyn_cast<sim::SimContextEventOp>(operation)) {
-    emit({MakeHandle, 0, reg(plan, op.getResult()),
-          OBELISK_RT_DESCRIPTOR_EVENT, 0, 0, 0, op.getId()});
+    emit({MakeHandle, 0, reg(plan, op.getResult()), OBELISK_RT_DESCRIPTOR_EVENT,
+          0, 0, 0, op.getId()});
     return success();
   }
   if (auto op = dyn_cast<sim::SimRefExtractOp>(operation))
@@ -88,11 +88,9 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
                       entryKind == sim::EntryKind::PortInput ||
                       entryKind == sim::EntryKind::PortOutput;
     emit({StoreState,
-          static_cast<uint16_t>(continuous
-                                    ? OBELISK_RT_DB_STORE_STATE_CONTINUOUS
-                                    : 0),
-          0, reg(plan, op.getReference()),
-          reg(plan, op.getValue())});
+          static_cast<uint16_t>(
+              continuous ? OBELISK_RT_DB_STORE_STATE_CONTINUOUS : 0),
+          0, reg(plan, op.getReference()), reg(plan, op.getValue())});
     return success();
   }
   if (auto op = dyn_cast<sim::SimNetWriteOp>(operation)) {
@@ -100,6 +98,20 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
     return success();
   }
   if (auto op = dyn_cast<sim::SimOverrideOp>(operation)) {
+    if (isa<sim::ManagedRefType>(op.getTarget().getType())) {
+      FailureOr<ManagedValueStorage> storage =
+          getManagedValueStorage(op.getValue().getType(), dataLayout);
+      if (failed(storage))
+        return op.emitOpError("managed override value has no field layout");
+      uint64_t flags =
+          (op.getIsAssign() ? 1u : 0u) | (storage->fourState ? 8u : 0u);
+      return emitIntrinsicRegisters(
+          plan, kIntrinsicManagedOverride,
+          {reg(plan, op.getTarget()), reg(plan, op.getValue()),
+           emitU64Constant(plan, storage->planeSize),
+           emitU64Constant(plan, flags), emitU64Constant(plan, 0)},
+          {});
+    }
     emit(
         {OverrideState,
          static_cast<uint16_t>(op.getIsAssign() ? OBELISK_RT_DB_OVERRIDE_ASSIGN
@@ -108,6 +120,21 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
     return success();
   }
   if (auto op = dyn_cast<sim::SimDynamicOverrideOp>(operation)) {
+    if (isa<sim::ManagedRefType>(op.getTarget().getType())) {
+      FailureOr<ManagedValueStorage> storage =
+          getManagedValueStorage(op.getValue().getType(), dataLayout);
+      if (failed(storage))
+        return op.emitOpError("managed override value has no field layout");
+      uint64_t flags = (op.getIsAssign() ? 1u : 0u) | 2u |
+                       (op.getClaim() ? 4u : 0u) |
+                       (storage->fourState ? 8u : 0u);
+      return emitIntrinsicRegisters(
+          plan, kIntrinsicManagedOverride,
+          {reg(plan, op.getTarget()), reg(plan, op.getValue()),
+           emitU64Constant(plan, storage->planeSize),
+           emitU64Constant(plan, flags), reg(plan, op.getOwner())},
+          {});
+    }
     uint16_t flags = op.getIsAssign() ? OBELISK_RT_DB_OVERRIDE_ASSIGN
                                       : OBELISK_RT_DB_OVERRIDE_FORCE;
     flags |= OBELISK_RT_DB_OVERRIDE_DYNAMIC;
@@ -118,6 +145,20 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
     return success();
   }
   if (auto op = dyn_cast<sim::SimReleaseOverrideOp>(operation)) {
+    if (auto reference =
+            dyn_cast<sim::ManagedRefType>(op.getTarget().getType())) {
+      FailureOr<ManagedValueStorage> storage =
+          getManagedValueStorage(reference.getElementType(), dataLayout);
+      if (failed(storage))
+        return op.emitOpError("managed override target has no field layout");
+      uint64_t flags =
+          (op.getIsAssign() ? 1u : 0u) | (storage->fourState ? 8u : 0u);
+      return emitIntrinsicRegisters(plan, kIntrinsicManagedReleaseOverride,
+                                    {reg(plan, op.getTarget()),
+                                     emitU64Constant(plan, storage->planeSize),
+                                     emitU64Constant(plan, flags)},
+                                    {});
+    }
     emit(
         {ReleaseState,
          static_cast<uint16_t>(op.getIsAssign() ? OBELISK_RT_DB_OVERRIDE_ASSIGN
@@ -145,9 +186,8 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
     uint16_t flags = OBELISK_RT_DB_STORE_STATE_CHANGED;
     if (op->hasAttr("obelisk_sim.defer_net_resolution"))
       flags |= OBELISK_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION;
-    emit({StoreState, flags,
-          reg(plan, op.getChanged()), reg(plan, op.getDriver()),
-          reg(plan, op.getValue())});
+    emit({StoreState, flags, reg(plan, op.getChanged()),
+          reg(plan, op.getDriver()), reg(plan, op.getValue())});
     return success();
   }
   return std::nullopt;

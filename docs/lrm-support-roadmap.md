@@ -141,6 +141,19 @@ observers rather than scheduler polling, and release or overlapping
 replacement kills an evaluator as soon as its final owned bit is gone. The
 full regression suite passes 1267/1267 tests.
 
+L10's final UVM smoke ran in 33.529 seconds compile / 0.180 seconds simulate
+for bytecode and 71.681 seconds compile / 0.019 seconds simulate for native,
+with zero UVM errors or fatals. A 4096-element fixed-aggregate dynamic-force
+stress compiles at `-O0 -fno-lto` in 0.13 seconds / 74 MB RSS for bytecode and
+2.89 seconds / 120 MB RSS for native, then simulates in 0.01 seconds native.
+An additional 131072-bit two-target concatenation compiles in 7.49 seconds /
+179 MB RSS and simulates in 0.02 seconds native; the combined bytecode stress
+simulates in 0.04 seconds. Fixed aggregates without nested mutable containers
+remain single SSA values instead of expanding into per-element clone chains,
+and ordinary container mutation pays only one relaxed flag load until a design
+actually executes an override. The full regression suite passes 1272/1272
+tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -152,7 +165,7 @@ full regression suite passes 1267/1267 tests.
 | 7 Aggregate data types | Partial | Fixed arrays/structs/unions, tagged managed unions, and untagged managed unions using validated candidate roots execute, including four-state overlapping arms. Dynamic arrays, queues, associative arrays, queries, traversal, ordering, registered manipulation methods, queue/unpacked slice lvalues, and persistent element references execute. Whole-container replacement and structural mutation preserve the LRM's reference lifetime rules. String character selection and NBA execute; strings are not sliceable, and a string character select is not a legal `ref` actual under 13.5.2. Continue differential closure for residual aggregate corner cases. |
 | 8 Classes | Partial | Construction, inheritance, polymorphism, virtual/interface methods, parameterized classes, copying, managed properties, garbage collection, and the UVM-used surface execute. Complete the residual class/type/operator/constructor long tail exposed by focused probes and the aggregate/reference gaps shared with Clauses 6, 7, and 11. |
 | 9 Processes | Partial | Structured procedures, all fork/join forms, `wait fork`, `disable fork`, timed and recursive tasks, `process` handles and control, automatic capture, and cancellation execute. Disabling a named block owned by another live process is still rejected instead of canceling only the target scope. |
-| 10 Assignment statements | Partial | Blocking/NBA assignment, intra-assignment timing, assignment patterns, queue/unpacked slice lvalues, net aliasing, static continuous-assignment delays, strengths, and procedural force/assign execute for whole statically allocated packed variables/nets and constant net selects. Signal-dependent integral, real, and function-call RHS expressions reevaluate from exact dependencies; overlapping statements retain per-bit ownership through alias roots, and release/deassign retires detached evaluators. Complete automatic/class/unpacked/managed targets, concatenations, dynamic selects, and user-defined nets. |
+| 10 Assignment statements | Partial | Blocking/NBA assignment, intra-assignment timing, assignment patterns, queue/unpacked slice lvalues, net aliasing, static continuous-assignment delays, strengths, and procedural force/assign execute for every legal target category: whole variables including fixed unpacked aggregates, dynamic arrays, queues, associative arrays, strings, class handles, and class properties; whole built-in nets and constant built-in-net selects; and legal concatenations. Signal-dependent RHS expressions reevaluate from exact scalar and managed-container dependencies; overlapping packed statements retain per-bit ownership through alias roots, managed values remain precisely rooted, and release/deassign retires detached evaluators. Clause 10.6 excludes automatic variables, variable selects, nonconstant net selects, and user-defined nettypes from these targets; those are tested diagnostics rather than implementation gaps. Continue differential closure for residual assignment corner cases. |
 | 11 Operators and expressions | Partial | Legal equality, ordering, logical operations, concatenation, replication, and packed selection execute for strings, containers, unpacked aggregates, handles, and arbitrary-width packed values. This includes handle wildcard identity equality, two-state XNOR, compact integral power, constant ordinary part-selects, dynamic indexed part-selects with partial out-of-range behavior, dynamic string replication, and fixed/dynamic unpacked concatenation with per-element conversion. Ordinary part-select bounds must be constant and strings are not sliceable, so those former diagnostic branches are not missing language features. Public `--timing=min|typ|max` selects constant and dynamic expressions. Remaining expression work is tracked by references, randomization, assertions, and the differential long tail. |
 | 12 Procedural statements | Partial | Conditional, ordinary/pattern case, loops, jumps, `randcase`, and most `randsequence` forms execute. Recursive randsequence productions and value-returning productions still require activation frames and expression-valued production calls. |
 | 13 Tasks and functions | Executable for the audited non-DPI surface | Static/automatic, recursive, virtual, class/interface, timed task, value/output/inout/ref, default argument, and cancellation behavior execute. Continue differential closure for unusual aggregate and hierarchical formal cases; DPI is tracked separately in Clause 35. |
@@ -260,9 +273,16 @@ one commit.
    cannot resurrect superseded values; detached evaluators are killed when
    their last bit is released or replaced. Dependency-free expressions retain
    the direct static fast path.
-10. **L10 — General force/assign targets (10.6).** Add automatic and class
-    variables, unpacked/managed values, concatenations, dynamic selects, and
-    user-defined nets.
+10. **L10 — General force/assign targets (10.6), completed.** Whole fixed
+    unpacked aggregates, dynamic arrays, queues, associative arrays, strings,
+    class-handle variables, class properties, whole built-in nets, constant
+    built-in-net selects, and legal variable/net concatenations execute in
+    native and bytecode tiers. Managed RHS mutation is watched directly,
+    evaluator publication clones value-semantic containers, ordinary mutation
+    through an overridden container is masked, and force/assign shadow values
+    remain precise GC roots across priority changes. The audit proved that
+    automatic variables, variable selects, nonconstant net selects, and
+    user-defined nettypes are excluded by 10.6 rather than missing targets.
 11. **L11 — Cross-process scoped disable (9.6.2).** Cancel only the named
     target block and descendants when another process disables it, preserving
     task copy-out and deferred-report rules.

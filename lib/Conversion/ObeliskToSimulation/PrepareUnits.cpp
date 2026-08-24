@@ -226,8 +226,7 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
           // function itself returns without blocking. Its branches become
           // independent fork code units below, so their timing controls do
           // not make the enclosing function a suspending code unit.
-          if (block.getBlockKind() ==
-              semantic::SVStatementBlockKind::JoinNone)
+          if (block.getBlockKind() == semantic::SVStatementBlockKind::JoinNone)
             return WalkResult::skip();
 
           // fork...join and fork...join_any block the caller and therefore
@@ -295,8 +294,8 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
     }
     if (!isa<semantic::SVPortConnectionOp, semantic::SVVariableSymbolOp,
              semantic::SVNetSymbolOp, semantic::SVClassPropertySymbolOp,
-             semantic::SVSequenceSymbolOp,
-             semantic::SVClockingBlockSymbolOp>(source)) {
+             semantic::SVSequenceSymbolOp, semantic::SVClockingBlockSymbolOp>(
+            source)) {
       result.directCalleeSources[hierarchy] = source;
       result.directCalleeNames[source] = symbol;
     }
@@ -385,12 +384,10 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
           invalid = true;
           return;
         }
-        Type observerType = isa<FloatType>(*targetType)
-                                ? *targetType
-                                : sim::getPackedScalarType(*targetType);
-        if (!observerType) {
+        Type observerType = *targetType;
+        if (!analysis::getSimulationStorageBitWidth(observerType)) {
           emitError(getSemanticLocation(override))
-              << "procedural override target has no packed scalar value";
+              << "procedural override target has no fixed executable value";
           invalid = true;
           return;
         }
@@ -492,12 +489,11 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
           invalid = true;
           return;
         }
-        observerCandidates.push_back(
-            {children[1], ObserverResult::Value, "clocking_primary", unit.id,
-             unit.hierarchy});
-        observerCandidates.push_back(
-            {children[2], ObserverResult::Truth, "clocking_iff", unit.id,
-             unit.hierarchy});
+        observerCandidates.push_back({children[1], ObserverResult::Value,
+                                      "clocking_primary", unit.id,
+                                      unit.hierarchy});
+        observerCandidates.push_back({children[2], ObserverResult::Truth,
+                                      "clocking_iff", unit.id, unit.hierarchy});
         return;
       }
       auto event = dyn_cast<semantic::SVSignalEventControlOp>(nested);
@@ -508,8 +504,7 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
         return;
       if (auto instance = dyn_cast<semantic::SVAssertionInstanceExpressionOp>(
               children.front()))
-        if (auto type =
-                instance->getAttrOfType<TypeAttr>("semantic_type");
+        if (auto type = instance->getAttrOfType<TypeAttr>("semantic_type");
             type && isa<semantic::SequenceType>(type.getValue()))
           return;
       // A clocking-block event is lowered directly to its selected clock
@@ -609,6 +604,9 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
     candidate.expression->setAttr(
         observerResultAttrName,
         builder.getI32IntegerAttr(static_cast<uint32_t>(candidate.result)));
+    if (candidate.label == "override_rhs")
+      candidate.expression->setAttr("obelisk_sim.override_evaluator",
+                                    builder.getUnitAttr());
     if (candidate.label == "abort" || candidate.sampled)
       candidate.expression->setAttr(sampledObserverAttrName,
                                     builder.getUnitAttr());

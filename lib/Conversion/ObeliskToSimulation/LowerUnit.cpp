@@ -55,11 +55,21 @@ constexpr bool sameEventRegionEncoding(ir::EventRegion source,
 }
 
 static std::optional<unsigned> getOverrideBitWidth(Type type) {
-  if (std::optional<unsigned> packed = sim::getPackedWidth(type))
-    return packed;
-  if (auto real = dyn_cast<FloatType>(type))
-    return real.getWidth();
-  return std::nullopt;
+  return analysis::getSimulationStorageBitWidth(type);
+}
+
+static bool containsSequentialContainer(Type type) {
+  if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(type))
+    return true;
+  if (auto array = dyn_cast<sim::UnpackedArrayType>(type))
+    return containsSequentialContainer(array.getElementType());
+  if (isa<sim::UnpackedStructType>(type))
+    for (unsigned index = 0, count = sim::getAggregateNumElements(type);
+         index != count; ++index)
+      if (containsSequentialContainer(
+              sim::getAggregateElementType(type, index)))
+        return true;
+  return false;
 }
 
 static_assert(
@@ -635,7 +645,7 @@ Value UnitLowering::cloneSequentialValue(Value value, Location location) {
   Type type = value.getType();
   if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(type))
     return sim::SimContainerCloneOp::create(builder, location, type, value);
-  if (!isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type))
+  if (!containsSequentialContainer(type))
     return value;
 
   SmallVector<Value> elements;
@@ -2217,8 +2227,8 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
         builder, location, logicType, builder.getIntegerAttr(planeType, bits),
         builder.getIntegerAttr(planeType,
                                APInt::getZero(logicType.getWidth())));
-  } else if (name == "and" || name == "nand" || name == "or" ||
-             name == "nor" || name == "xor" || name == "xnor") {
+  } else if (name == "and" || name == "nand" || name == "or" || name == "nor" ||
+             name == "xor" || name == "xnor") {
     if (inputs.empty())
       return emitError(location)
              << "primitive '" << name << "' requires at least one input";
@@ -2615,57 +2625,164 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     }
 
     Operation *lhs = assignmentChildren[0];
-    bool selected = isa<semantic::SVElementSelectExpressionOp,
-                        semantic::SVRangeSelectExpressionOp>(lhs);
-    if (!isa<semantic::SVNamedValueExpressionOp,
-             semantic::SVHierarchicalValueExpressionOp>(lhs) &&
-        !selected) {
-      emitError(getSemanticLocation(lhs))
-          << "force and procedural assign currently require a whole "
-             "statically allocated packed variable or whole built-in net";
-      return failure();
-    }
-    FailureOr<Value> target = lowerExpression(lhs, true);
-    if (failed(target))
-      return failure();
-    auto referenceType = dyn_cast<sim::RefType>((*target).getType());
-    auto netType = dyn_cast<sim::NetType>((*target).getType());
-    if ((!referenceType && !netType) ||
-        !isStaticallyAllocatedOverrideTarget(*target)) {
-      emitError(getSemanticLocation(lhs))
-          << "force and procedural assign require statically allocated "
-             "packed storage";
-      return failure();
-    }
     bool isAssign = !override.getIsForce();
-    if (selected && (!netType || isAssign)) {
-      emitError(getSemanticLocation(lhs))
-          << "only constant built-in net bit and part selects are supported "
-             "for force";
+    struct OverrideTarget {
+      Value handle;
+      Type elementType;
+      unsigned width;
+    };
+    SmallVector<OverrideTarget> targets;
+    bool concatenated = isa<semantic::SVConcatenationExpressionOp>(lhs);
+    std::function<LogicalResult(Operation *)> collectTarget =
+        [&](Operation *node) -> LogicalResult {
+      if (isa<semantic::SVConcatenationExpressionOp>(node)) {
+        for (Operation *child : getChildren(node))
+          if (failed(collectTarget(child)))
+            return failure();
+        return success();
+      }
+      bool selected = isa<semantic::SVElementSelectExpressionOp,
+                          semantic::SVRangeSelectExpressionOp>(node);
+      if (!isa<semantic::SVNamedValueExpressionOp,
+               semantic::SVHierarchicalValueExpressionOp>(node) &&
+          !selected) {
+        emitError(getSemanticLocation(node))
+            << "force and procedural assign require whole variables, whole "
+               "built-in nets, constant built-in net selects, or a "
+               "concatenation of those targets";
+        return failure();
+      }
+      FailureOr<Value> lowered = lowerExpression(node, true);
+      if (failed(lowered))
+        return failure();
+      auto referenceType = dyn_cast<sim::RefType>((*lowered).getType());
+      auto managedType = dyn_cast<sim::ManagedRefType>((*lowered).getType());
+      auto netType = dyn_cast<sim::NetType>((*lowered).getType());
+      if ((!referenceType && !managedType && !netType) ||
+          ((referenceType || netType) &&
+           !isStaticallyAllocatedOverrideTarget(*lowered))) {
+        emitError(getSemanticLocation(node))
+            << "force and procedural assign require statically allocated "
+               "storage; object properties use managed storage";
+        return failure();
+      }
+      if (selected && (!netType || isAssign)) {
+        emitError(getSemanticLocation(node))
+            << "only constant built-in net bit and part selects are supported "
+               "for force";
+        return failure();
+      }
+      if (isAssign && netType) {
+        emitError(getSemanticLocation(node))
+            << "procedural assign requires variable targets";
+        return failure();
+      }
+      Type elementType = referenceType ? referenceType.getElementType()
+                         : managedType ? managedType.getElementType()
+                                       : netType.getElementType();
+      std::optional<unsigned> width = getOverrideBitWidth(elementType);
+      if (!width) {
+        emitError(getSemanticLocation(node))
+            << "force and procedural assign require fixed executable storage";
+        return failure();
+      }
+      targets.push_back({*lowered, elementType, *width});
+      return success();
+    };
+    if (failed(collectTarget(lhs)) || targets.empty())
       return failure();
-    }
-    if (isAssign && netType) {
-      emitError(getSemanticLocation(lhs))
-          << "procedural assign requires a packed variable";
+    FailureOr<Type> overrideValueType = getNormalizedSemanticType(lhs);
+    if (failed(overrideValueType))
       return failure();
-    }
+    if (!concatenated)
+      overrideValueType = targets.front().elementType;
 
     Operation *rhs = assignmentChildren[1];
+    llvm::SetVector<Value> evaluatedDependencies;
+    llvm::SetVector<Value> *savedDependencies = observedDependencies;
+    observedDependencies = &evaluatedDependencies;
     FailureOr<Value> value = lowerExpression(rhs);
+    observedDependencies = savedDependencies;
     if (failed(value))
       return failure();
-    Type elementType = referenceType ? referenceType.getElementType()
-                                     : netType.getElementType();
-    if (!getOverrideBitWidth(elementType)) {
-      emitError(getSemanticLocation(lhs))
-          << "force and procedural assign require scalar integral or real "
-             "storage";
-      return failure();
-    }
     FailureOr<Value> converted =
-        convert(*value, elementType, isSignedNode(rhs), location);
+        convert(*value, *overrideValueType, isSignedNode(rhs), location);
     if (failed(converted))
       return failure();
+    bool watchOverrideResultContainer =
+        isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
+            *overrideValueType);
+    auto splitOverrideValue =
+        [&](OpBuilder &splitBuilder,
+            Value composite) -> FailureOr<SmallVector<Value>> {
+      if (!concatenated)
+        return SmallVector<Value>{composite};
+      Type compositeScalarType = sim::getPackedScalarType(composite.getType());
+      if (!compositeScalarType)
+        return emitError(location)
+                   << "procedural override concatenation is not packed",
+               failure();
+      Value scalar = composite;
+      if (scalar.getType() != compositeScalarType)
+        scalar = sim::SimPackedFlattenOp::create(splitBuilder, location,
+                                                 compositeScalarType, scalar);
+      std::optional<unsigned> totalWidth =
+          sim::getPackedWidth(scalar.getType());
+      if (!totalWidth)
+        return emitError(location)
+                   << "procedural override concatenation is not packed",
+               failure();
+      uint64_t trailing = *totalWidth;
+      SmallVector<Value> parts;
+      parts.reserve(targets.size());
+      for (const OverrideTarget &target : targets) {
+        if (target.width > trailing)
+          return emitError(location)
+                     << "procedural override concatenation width is "
+                        "inconsistent",
+                 failure();
+        trailing -= target.width;
+        Type scalarType = sim::getPackedScalarType(target.elementType);
+        if (!scalarType)
+          return emitError(location)
+                     << "procedural override concatenation target is not "
+                        "packed",
+                 failure();
+        Value part;
+        if (isa<sim::LogicType>(scalar.getType())) {
+          part = sim::SimLogicExtractOp::create(
+              splitBuilder, location, scalarType, scalar,
+              splitBuilder.getI64IntegerAttr(trailing));
+        } else {
+          auto integer = dyn_cast<IntegerType>(scalar.getType());
+          auto selected = dyn_cast<IntegerType>(scalarType);
+          if (!integer || !selected)
+            return failure();
+          Value shifted = scalar;
+          if (trailing != 0) {
+            Value amount = arith::ConstantOp::create(
+                splitBuilder, location, integer,
+                splitBuilder.getIntegerAttr(integer, trailing));
+            shifted =
+                arith::ShRUIOp::create(splitBuilder, location, scalar, amount);
+          }
+          part = selected == integer
+                     ? shifted
+                     : Value(arith::TruncIOp::create(splitBuilder, location,
+                                                     selected, shifted));
+        }
+        if (part.getType() != target.elementType)
+          part = sim::SimPackedUnflattenOp::create(splitBuilder, location,
+                                                   target.elementType, part);
+        parts.push_back(part);
+      }
+      if (trailing != 0)
+        return emitError(location)
+                   << "procedural override concatenation does not consume its "
+                      "value",
+               failure();
+      return parts;
+    };
 
     // IEEE 1800-2017 10.6 requires a nonconstant RHS to remain continuously
     // active until release/deassign. Reuse the computed-event observer plan so
@@ -2673,11 +2790,20 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     // scheduler polling. A dependency-free expression needs only the immediate
     // publication below.
     if (!rhs->hasAttr("obelisk_sim.observer")) {
-      sim::SimOverrideOp::create(builder, location, *target, *converted,
-                                 builder.getBoolAttr(isAssign));
+      FailureOr<SmallVector<Value>> parts =
+          splitOverrideValue(builder, *converted);
+      if (failed(parts))
+        return failure();
+      for (auto [target, part] : llvm::zip_equal(targets, *parts))
+        sim::SimOverrideOp::create(builder, location, target.handle, part,
+                                   builder.getBoolAttr(isAssign));
       return success();
     }
-    FailureOr<Value> observed = bindObserver(rhs);
+    SmallVector<Value> dynamicDependencies;
+    for (Value dependency : evaluatedDependencies)
+      if (isa<sim::EventType, sim::ManagedWatchType>(dependency.getType()))
+        dynamicDependencies.push_back(dependency);
+    FailureOr<Value> observed = bindObserver(rhs, dynamicDependencies);
     if (failed(observed))
       return failure();
     auto binding = observed->getDefiningOp<sim::SimObserverBindOp>();
@@ -2718,11 +2844,14 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
           declarationBuilder.getUnitAttr());
       OpBuilder outlineBuilder(function);
       outlineBuilder.setInsertionPointAfter(function);
-      SmallVector<Type> inputs{sim::ContextType::get(context),
-                               (*target).getType()};
+      SmallVector<Type> inputs{sim::ContextType::get(context)};
       SmallVector<DictionaryAttr> argumentAttrs{
-          captureMetadata(outlineBuilder, sim::CaptureKind::Context),
-          captureMetadata(outlineBuilder, sim::CaptureKind::Formal)};
+          captureMetadata(outlineBuilder, sim::CaptureKind::Context)};
+      for (const OverrideTarget &target : targets) {
+        inputs.push_back(target.handle.getType());
+        argumentAttrs.push_back(
+            captureMetadata(outlineBuilder, sim::CaptureKind::Formal));
+      }
       for (Value operand : binding.getValues()) {
         inputs.push_back(operand.getType());
         argumentAttrs.push_back(
@@ -2751,16 +2880,9 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
       cf::BranchOp::create(entryBuilder, location, update);
 
       OpBuilder updateBuilder = OpBuilder::atBlockEnd(update);
-      SmallVector<Value> localObserverOperands;
-      for (unsigned index = 0; index != binding.getValues().size(); ++index)
-        localObserverOperands.push_back(entry.getArgument(index + 2));
-      Value localObserver = sim::SimObserverBindOp::create(
-          updateBuilder, location, binding.getResult().getType(),
-          binding.getEvaluatorAttr(), localObserverOperands,
-          binding.getCaptureCountAttr());
       SmallVector<Value> callOperands{entry.getArgument(0)};
       for (unsigned index = 0; index != binding.getCaptureCount(); ++index)
-        callOperands.push_back(entry.getArgument(index + 2));
+        callOperands.push_back(entry.getArgument(index + 1 + targets.size()));
       Type observedType = cast<sim::ObserverType>(binding.getResult().getType())
                               .getResultType();
       Value observedCurrent =
@@ -2770,38 +2892,97 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
                                  ArrayAttr{}, ArrayAttr{})
               .getResult(0);
       Value current = observedCurrent;
-      if (current.getType() != elementType)
-        current = sim::SimPackedUnflattenOp::create(updateBuilder, location,
-                                                    elementType, current);
+      if (current.getType() != *overrideValueType)
+        return emitError(location)
+                   << "dynamic override evaluator result type changed from "
+                   << *overrideValueType << " to " << current.getType(),
+               failure();
+      std::function<Value(Value)> cloneEvaluatorValue =
+          [&](Value value) -> Value {
+        Type type = value.getType();
+        if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
+                type))
+          return sim::SimContainerCloneOp::create(updateBuilder, location, type,
+                                                  value);
+        if (!containsSequentialContainer(type))
+          return value;
+        SmallVector<Value> elements;
+        unsigned count = sim::getAggregateNumElements(type);
+        elements.reserve(count);
+        for (unsigned index = 0; index != count; ++index) {
+          Type childType = sim::getAggregateElementType(type, index);
+          Value child = sim::SimAggregateExtractOp::create(
+              updateBuilder, location, childType, value, index);
+          elements.push_back(cloneEvaluatorValue(child));
+        }
+        return sim::SimAggregateConstructOp::create(updateBuilder, location,
+                                                    type, elements);
+      };
+      current = cloneEvaluatorValue(current);
+      FailureOr<SmallVector<Value>> currentParts =
+          splitOverrideValue(updateBuilder, current);
+      if (failed(currentParts))
+        return failure();
       Value owner =
           sim::SimProcessCurrentOp::create(updateBuilder, location).getResult();
-      sim::SimDynamicOverrideOp::create(updateBuilder, location,
-                                        entry.getArgument(1), current, owner,
-                                        updateBuilder.getBoolAttr(isAssign),
-                                        updateBuilder.getBoolAttr(false));
-      sim::SimSuspendObserveOp::create(
-          updateBuilder, location, ValueRange{localObserver, observedCurrent},
-          0, ArrayRef<int32_t>{static_cast<int32_t>(sim::EdgeKind::Change)},
-          ArrayRef<int32_t>{-1}, sim::ContinuationSiteAttr{},
-          sim::EventRegionAttr{}, update);
+      for (auto [index, part] : llvm::enumerate(*currentParts))
+        sim::SimDynamicOverrideOp::create(
+            updateBuilder, location, entry.getArgument(index + 1), part, owner,
+            updateBuilder.getBoolAttr(isAssign),
+            updateBuilder.getBoolAttr(false));
+      SmallVector<Value> localDependencies;
+      for (unsigned index = binding.getCaptureCount();
+           index != binding.getValues().size(); ++index)
+        localDependencies.push_back(
+            entry.getArgument(index + 1 + targets.size()));
+      if (watchOverrideResultContainer)
+        localDependencies.push_back(sim::SimManagedWatchOp::create(
+            updateBuilder, location,
+            sim::ManagedWatchType::get(function.getContext()), observedCurrent,
+            sim::ManagedWatchKind::ContainerSize));
+      SmallVector<int32_t> dependencyEdges(
+          localDependencies.size(),
+          static_cast<int32_t>(sim::EdgeKind::Change));
+      if (localDependencies.size() == 1)
+        sim::SimSuspendChangeOp::create(
+            updateBuilder, location, localDependencies.front(), ValueRange{},
+            sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, update);
+      else
+        sim::SimSuspendAnyOp::create(
+            updateBuilder, location, localDependencies,
+            updateBuilder.getDenseI32ArrayAttr(dependencyEdges),
+            sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, update);
       evaluator->setAttr(sim::metadata::lowered, builder.getUnitAttr());
 
       SmallVector<Value> spawnOperands{
-          function.getBody().front().getArgument(0), *target};
+          function.getBody().front().getArgument(0)};
+      for (const OverrideTarget &target : targets)
+        spawnOperands.push_back(target.handle);
       llvm::append_range(spawnOperands, binding.getValues());
       Value ownerProcess =
           sim::SimSpawnOp::create(builder, location, evaluator.getSymNameAttr(),
                                   spawnOperands, ArrayAttr{}, ArrayAttr{})
               .getProcess();
-      sim::SimDynamicOverrideOp::create(
-          builder, location, *target, *converted, ownerProcess,
-          builder.getBoolAttr(isAssign), builder.getBoolAttr(true));
+      Value initial = cloneSequentialValue(*converted, location);
+      FailureOr<SmallVector<Value>> initialParts =
+          splitOverrideValue(builder, initial);
+      if (failed(initialParts))
+        return failure();
+      for (auto [target, part] : llvm::zip_equal(targets, *initialParts))
+        sim::SimDynamicOverrideOp::create(
+            builder, location, target.handle, part, ownerProcess,
+            builder.getBoolAttr(isAssign), builder.getBoolAttr(true));
       binding.erase();
       return success();
     }
     binding.erase();
-    sim::SimOverrideOp::create(builder, location, *target, *converted,
-                               builder.getBoolAttr(isAssign));
+    FailureOr<SmallVector<Value>> parts =
+        splitOverrideValue(builder, *converted);
+    if (failed(parts))
+      return failure();
+    for (auto [target, part] : llvm::zip_equal(targets, *parts))
+      sim::SimOverrideOp::create(builder, location, target.handle, part,
+                                 builder.getBoolAttr(isAssign));
     return success();
   }
   if (auto release = dyn_cast<semantic::SVProceduralDeassignStatementOp>(op)) {
@@ -2810,49 +2991,68 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
       return failure();
     }
     Operation *lhs = children.front();
-    bool selected = isa<semantic::SVElementSelectExpressionOp,
-                        semantic::SVRangeSelectExpressionOp>(lhs);
-    if (!isa<semantic::SVNamedValueExpressionOp,
-             semantic::SVHierarchicalValueExpressionOp>(lhs) &&
-        !selected) {
-      emitError(getSemanticLocation(lhs))
-          << "release and deassign currently require a whole statically "
-             "allocated packed variable or whole built-in net";
-      return failure();
-    }
-    FailureOr<Value> target = lowerExpression(lhs, true);
-    if (failed(target))
-      return failure();
-    auto referenceType = dyn_cast<sim::RefType>((*target).getType());
-    auto netType = dyn_cast<sim::NetType>((*target).getType());
-    if ((!referenceType && !netType) ||
-        !isStaticallyAllocatedOverrideTarget(*target)) {
-      emitError(getSemanticLocation(lhs))
-          << "release and deassign require statically allocated packed "
-             "storage";
-      return failure();
-    }
     bool isAssign = !release.getIsRelease();
-    if (selected && (!netType || isAssign)) {
-      emitError(getSemanticLocation(lhs))
-          << "only constant built-in net bit and part selects are supported "
-             "for release";
+    SmallVector<Value> targets;
+    std::function<LogicalResult(Operation *)> collectTarget =
+        [&](Operation *node) -> LogicalResult {
+      if (isa<semantic::SVConcatenationExpressionOp>(node)) {
+        for (Operation *child : getChildren(node))
+          if (failed(collectTarget(child)))
+            return failure();
+        return success();
+      }
+      bool selected = isa<semantic::SVElementSelectExpressionOp,
+                          semantic::SVRangeSelectExpressionOp>(node);
+      if (!isa<semantic::SVNamedValueExpressionOp,
+               semantic::SVHierarchicalValueExpressionOp>(node) &&
+          !selected) {
+        emitError(getSemanticLocation(node))
+            << "release and deassign require whole variables, whole built-in "
+               "nets, constant built-in net selects, or a concatenation of "
+               "those targets";
+        return failure();
+      }
+      FailureOr<Value> target = lowerExpression(node, true);
+      if (failed(target))
+        return failure();
+      auto referenceType = dyn_cast<sim::RefType>((*target).getType());
+      auto managedType = dyn_cast<sim::ManagedRefType>((*target).getType());
+      auto netType = dyn_cast<sim::NetType>((*target).getType());
+      if ((!referenceType && !managedType && !netType) ||
+          ((referenceType || netType) &&
+           !isStaticallyAllocatedOverrideTarget(*target))) {
+        emitError(getSemanticLocation(node))
+            << "release and deassign require statically allocated storage; "
+               "object properties use managed storage";
+        return failure();
+      }
+      if (selected && (!netType || isAssign)) {
+        emitError(getSemanticLocation(node))
+            << "only constant built-in net bit and part selects are supported "
+               "for release";
+        return failure();
+      }
+      if (isAssign && netType) {
+        emitError(getSemanticLocation(node))
+            << "deassign requires variable targets";
+        return failure();
+      }
+      Type elementType = referenceType ? referenceType.getElementType()
+                         : managedType ? managedType.getElementType()
+                                       : netType.getElementType();
+      if (!getOverrideBitWidth(elementType)) {
+        emitError(getSemanticLocation(node))
+            << "release and deassign require fixed executable storage";
+        return failure();
+      }
+      targets.push_back(*target);
+      return success();
+    };
+    if (failed(collectTarget(lhs)) || targets.empty())
       return failure();
-    }
-    if (isAssign && netType) {
-      emitError(getSemanticLocation(lhs))
-          << "deassign requires a packed variable";
-      return failure();
-    }
-    Type elementType = referenceType ? referenceType.getElementType()
-                                     : netType.getElementType();
-    if (!getOverrideBitWidth(elementType)) {
-      emitError(getSemanticLocation(lhs))
-          << "release and deassign require scalar integral or real storage";
-      return failure();
-    }
-    sim::SimReleaseOverrideOp::create(builder, location, *target,
-                                      builder.getBoolAttr(isAssign));
+    for (Value target : targets)
+      sim::SimReleaseOverrideOp::create(builder, location, target,
+                                        builder.getBoolAttr(isAssign));
     return success();
   }
   if (auto block = dyn_cast<semantic::SVBlockStatementOp>(op)) {

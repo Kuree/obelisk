@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SimulationVerifiers.h"
+#include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/StableHash.h"
@@ -39,11 +40,7 @@
 using namespace mlir;
 
 static std::optional<unsigned> getOverrideBitWidth(Type type) {
-  if (std::optional<unsigned> packed = obelisk::sim::getPackedWidth(type))
-    return packed;
-  if (auto real = dyn_cast<FloatType>(type))
-    return real.getWidth();
-  return std::nullopt;
+  return obelisk::analysis::getSimulationStorageBitWidth(type);
 }
 
 namespace obelisk::sim {
@@ -312,8 +309,8 @@ LogicalResult SimFuncOp::verify() {
   for (Type input : type.getInputs()) {
     if (!isa<ContextType, RefType, ArgumentRefType, NetType, DriverType,
              EventType, ProcessType, ManagedRefType, IntegerType, LogicType,
-             TimeType, CovergroupHandleType, VirtualInterfaceType, ChandleType>(
-            input) &&
+             TimeType, ManagedWatchType, CovergroupHandleType,
+             VirtualInterfaceType, ChandleType>(input) &&
         !isManagedHandleType(input) && !isa<FloatType>(input) &&
         !isAggregateType(input))
       return emitOpError() << "contains non-normalized argument type " << input;
@@ -342,9 +339,16 @@ LogicalResult SimFuncOp::verify() {
   if (getEntryKind() == EntryKind::RootInitializer && type.getNumInputs() != 1)
     return emitOpError("root initializer accepts only the context argument");
   if (getEntryKind() == EntryKind::Observer) {
-    if (type.getNumResults() != 1 ||
-        !isa<IntegerType, LogicType, FloatType>(type.getResult(0)))
+    if (type.getNumResults() != 1)
       return emitOpError("observer entry must return one scalar result");
+    Type result = type.getResult(0);
+    if (getOperation()->hasAttr("obelisk_sim.override_evaluator")) {
+      if (!analysis::getSimulationStorageBitWidth(result))
+        return emitOpError(
+            "override evaluator must return one fixed executable result");
+    } else if (!isa<IntegerType, LogicType, FloatType>(result)) {
+      return emitOpError("observer entry must return one scalar result");
+    }
   }
   if (getEntryKind() == EntryKind::Function ||
       getEntryKind() == EntryKind::Observer) {
@@ -1566,16 +1570,18 @@ LogicalResult SimOverrideOp::verify() {
   Type elementType;
   if (auto reference = dyn_cast<RefType>(getTarget().getType()))
     elementType = reference.getElementType();
+  else if (auto reference = dyn_cast<ManagedRefType>(getTarget().getType()))
+    elementType = reference.getElementType();
   else if (auto net = dyn_cast<NetType>(getTarget().getType()))
     elementType = net.getElementType();
   else
     return emitOpError("target must be a static reference or built-in net");
-  if (getIsAssign() && !isa<RefType>(getTarget().getType()))
+  if (getIsAssign() && !isa<RefType, ManagedRefType>(getTarget().getType()))
     return emitOpError("procedural assign requires a variable reference");
   if (elementType != getValue().getType())
     return emitOpError("target element type must match the override value");
   if (!getOverrideBitWidth(elementType))
-    return emitOpError("requires a fixed-width scalar integral or real value");
+    return emitOpError("requires a fixed-width executable value");
   return success();
 }
 
@@ -1583,16 +1589,18 @@ LogicalResult SimDynamicOverrideOp::verify() {
   Type elementType;
   if (auto reference = dyn_cast<RefType>(getTarget().getType()))
     elementType = reference.getElementType();
+  else if (auto reference = dyn_cast<ManagedRefType>(getTarget().getType()))
+    elementType = reference.getElementType();
   else if (auto net = dyn_cast<NetType>(getTarget().getType()))
     elementType = net.getElementType();
   else
     return emitOpError("target must be a static reference or built-in net");
-  if (getIsAssign() && !isa<RefType>(getTarget().getType()))
+  if (getIsAssign() && !isa<RefType, ManagedRefType>(getTarget().getType()))
     return emitOpError("procedural assign requires a variable reference");
   if (elementType != getValue().getType())
     return emitOpError("target element type must match the override value");
   if (!getOverrideBitWidth(elementType))
-    return emitOpError("requires a fixed-width scalar integral or real value");
+    return emitOpError("requires a fixed-width executable value");
   return success();
 }
 
@@ -1626,14 +1634,16 @@ LogicalResult SimReleaseOverrideOp::verify() {
   Type elementType;
   if (auto reference = dyn_cast<RefType>(getTarget().getType()))
     elementType = reference.getElementType();
+  else if (auto reference = dyn_cast<ManagedRefType>(getTarget().getType()))
+    elementType = reference.getElementType();
   else if (auto net = dyn_cast<NetType>(getTarget().getType()))
     elementType = net.getElementType();
   else
     return emitOpError("target must be a static reference or built-in net");
-  if (getIsAssign() && !isa<RefType>(getTarget().getType()))
+  if (getIsAssign() && !isa<RefType, ManagedRefType>(getTarget().getType()))
     return emitOpError("procedural deassign requires a variable reference");
   if (!getOverrideBitWidth(elementType))
-    return emitOpError("requires a fixed-width scalar integral or real value");
+    return emitOpError("requires a fixed-width executable value");
   return success();
 }
 

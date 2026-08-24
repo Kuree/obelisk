@@ -279,9 +279,9 @@ void populateNativeHandleConversionPatterns(
     const llvm::DenseMap<uint64_t, uint64_t> &storageHandles,
     const llvm::DenseMap<uint64_t, uint64_t> &netHandles,
     const llvm::DenseMap<uint64_t, uint64_t> &driverHandles);
-void populateOverrideToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
-                                              mlir::TypeConverter &converter,
-                                              uint64_t stateBitCount);
+void populateOverrideToLLVMConversionPatterns(
+    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
+    uint64_t stateBitCount, const llvm::DataLayout &dataLayout);
 void populateReferenceLifetimeToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 void populateSchedulerToLLVMConversionPatterns(

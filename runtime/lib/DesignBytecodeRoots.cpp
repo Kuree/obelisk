@@ -121,14 +121,26 @@ void obelisk_rt_enumerate_design_managed_roots(
           continue;
         obelisk_rt_managed_word_v1 word = 0;
         std::memcpy(&word, state.value.data() + root.byteOffset, sizeof(word));
-        word = obelisk_rt_v1_gc_candidate_root(context, word,
-                                               root.allowedKinds);
+        word =
+            obelisk_rt_v1_gc_candidate_root(context, word, root.allowedKinds);
         if (word != 0 && (word & UINT64_C(3)) == 0) {
           obelisk_rt_object_v1 *object =
               reinterpret_cast<obelisk_rt_object_v1 *>(
                   static_cast<uintptr_t>(word));
           visit(visitorEnvironment, &object);
         }
+      }
+    }
+    for (auto &[identity, fields] : context->managedOverrides) {
+      (void)identity;
+      for (auto &[offset, state] : fields) {
+        (void)offset;
+        if (state.forceActive)
+          for (obelisk_rt_object_v1 *&root : state.forceRoots)
+            visit(visitorEnvironment, &root);
+        if (state.assignActive)
+          for (obelisk_rt_object_v1 *&root : state.assignRoots)
+            visit(visitorEnvironment, &root);
       }
     }
     for (obelisk_rt_process_instance_v1 *instance :
@@ -151,11 +163,11 @@ void obelisk_rt_enumerate_design_managed_roots(
         } else {
           obelisk_rt_managed_word_v1 word = 0;
           std::memcpy(&word, address, sizeof(word));
-          word = obelisk_rt_v1_gc_candidate_root(context, word,
-                                                 field.reserved);
+          word = obelisk_rt_v1_gc_candidate_root(context, word, field.reserved);
           if (word != 0 && (word & UINT64_C(3)) == 0) {
-            obelisk_rt_object_v1 *object = reinterpret_cast<obelisk_rt_object_v1 *>(
-                static_cast<uintptr_t>(word));
+            obelisk_rt_object_v1 *object =
+                reinterpret_cast<obelisk_rt_object_v1 *>(
+                    static_cast<uintptr_t>(word));
             visit(visitorEnvironment, &object);
           }
         }
@@ -168,8 +180,8 @@ void obelisk_rt_enumerate_design_managed_roots(
         return;
       const auto *entries = reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(
           reinterpret_cast<const uint8_t *>(wait) + sizeof(*wait));
-      auto *semaphore = reinterpret_cast<obelisk_rt_object_v1 *>(
-          entries[0].stable_id);
+      auto *semaphore =
+          reinterpret_cast<obelisk_rt_object_v1 *>(entries[0].stable_id);
       visit(visitorEnvironment, &semaphore);
     };
     auto visitComputedWait = [&](uint32_t suspendKind,
@@ -191,17 +203,17 @@ void obelisk_rt_enumerate_design_managed_roots(
               wait, wait->captures_offset, wait->capture_count);
       if (!observers || !captures)
         return;
-      for (uint32_t observerIndex = 0;
-           observerIndex != wait->observer_count; ++observerIndex) {
+      for (uint32_t observerIndex = 0; observerIndex != wait->observer_count;
+           ++observerIndex) {
         const obelisk_rt_computed_observer_v1 &observer =
             observers[observerIndex];
         const obelisk_rt_observer_descriptor_v1 *descriptor =
-            obelisk::process::findObserverDescriptor(
-                context->execution, observer.code_unit_id);
+            obelisk::process::findObserverDescriptor(context->execution,
+                                                     observer.code_unit_id);
         if (!descriptor)
           continue;
-        for (uint32_t captureIndex = 0;
-             captureIndex != observer.capture_count; ++captureIndex) {
+        for (uint32_t captureIndex = 0; captureIndex != observer.capture_count;
+             ++captureIndex) {
           if (descriptor->capture_abi[captureIndex].kind !=
               OBELISK_RT_OBSERVER_CAPTURE_MANAGED)
             continue;
@@ -292,8 +304,8 @@ void obelisk_rt_enumerate_design_managed_roots(
               } else {
                 obelisk_rt_managed_word_v1 word = 0;
                 std::memcpy(&word, address, sizeof(word));
-                word = obelisk_rt_v1_gc_candidate_root(
-                    context, word, instruction.destination);
+                word = obelisk_rt_v1_gc_candidate_root(context, word,
+                                                       instruction.destination);
                 if (word != 0 && (word & UINT64_C(3)) == 0) {
                   obelisk_rt_object_v1 *object =
                       reinterpret_cast<obelisk_rt_object_v1 *>(

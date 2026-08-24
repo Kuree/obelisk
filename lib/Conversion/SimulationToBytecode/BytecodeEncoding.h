@@ -152,6 +152,10 @@ constexpr uint32_t kIntrinsicManagedWatch =
 constexpr uint32_t kIntrinsicManagedLoad = OBELISK_RT_INTRINSIC_V1_MANAGED_LOAD;
 constexpr uint32_t kIntrinsicManagedStore =
     OBELISK_RT_INTRINSIC_V1_MANAGED_STORE;
+constexpr uint32_t kIntrinsicManagedOverride =
+    OBELISK_RT_INTRINSIC_V1_MANAGED_OVERRIDE;
+constexpr uint32_t kIntrinsicManagedReleaseOverride =
+    OBELISK_RT_INTRINSIC_V1_MANAGED_RELEASE_OVERRIDE;
 constexpr uint32_t kIntrinsicManagedNBA = OBELISK_RT_INTRINSIC_V1_MANAGED_NBA;
 constexpr uint32_t kIntrinsicWeakCreate = OBELISK_RT_INTRINSIC_V1_WEAK_CREATE;
 constexpr uint32_t kIntrinsicWeakGet = OBELISK_RT_INTRINSIC_V1_WEAK_GET;

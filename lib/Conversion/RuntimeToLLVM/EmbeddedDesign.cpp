@@ -238,7 +238,8 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
   SmallVector<ObserverInfo> observers;
   bool invalidObserver = false;
   module.walk([&](sim::SimFuncOp function) {
-    if (function.getEntryKind() != sim::EntryKind::Observer)
+    if (function.getEntryKind() != sim::EntryKind::Observer ||
+        function->hasAttr("obelisk_sim.override_evaluator"))
       return;
     std::optional<int64_t> codeUnitID = function.getCodeUnitId();
     if (!codeUnitID || *codeUnitID <= 0 ||

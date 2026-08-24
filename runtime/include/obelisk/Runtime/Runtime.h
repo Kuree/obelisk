@@ -937,6 +937,8 @@ enum {
   OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_PATH = UINT32_C(0x00010413),
   OBELISK_RT_INTRINSIC_V1_MANAGED_CANDIDATE_ROOT = UINT32_C(0x00010414),
   OBELISK_RT_INTRINSIC_V1_MANAGED_WATCH = UINT32_C(0x00010415),
+  OBELISK_RT_INTRINSIC_V1_MANAGED_OVERRIDE = UINT32_C(0x00010461),
+  OBELISK_RT_INTRINSIC_V1_MANAGED_RELEASE_OVERRIDE = UINT32_C(0x00010462),
   OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_STRING_CHARACTER =
       UINT32_C(0x00010416),
   OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_AGGREGATE_ELEMENT =
@@ -1023,11 +1025,11 @@ enum {
 // register metadata; it never contains a host function or data pointer.
 // Generation one imports accept arbitrary-width bits/logic, status values,
 // opaque four-word stable/reference handles, managed string words, and IEEE
-// binary32/binary64 values. A callback may copy a handle but must not synthesize
-// its representation. Floating values occupy exactly four or eight bytes at
-// the eight-byte-aligned `value`; `limb_count` remains one so descriptor counts
-// stay uniform. The callback may inspect inputs and fill the zero-initialized
-// output storage.
+// binary32/binary64 values. A callback may copy a handle but must not
+// synthesize its representation. Floating values occupy exactly four or eight
+// bytes at the eight-byte-aligned `value`; `limb_count` remains one so
+// descriptor counts stay uniform. The callback may inspect inputs and fill the
+// zero-initialized output storage.
 typedef struct obelisk_rt_import_input_v1 {
   obelisk_rt_design_register_kind kind;
   uint8_t flags;
@@ -1892,6 +1894,19 @@ obelisk_rt_v1_object_field_load(obelisk_rt_object_v1 *object, uint64_t offset,
 obelisk_rt_status obelisk_rt_v1_object_field_store(obelisk_rt_object_v1 *object,
                                                    uint64_t offset,
                                                    obelisk_rt_object_v1 *value);
+// IEEE 1800-2017 10.6 whole class-property force / procedural assign. The
+// object identity and field offset form the persistent target; ordinary field
+// stores are masked until the corresponding release operation.
+obelisk_rt_status
+obelisk_rt_v1_object_override(obelisk_rt_object_v1 *object, uint64_t offset,
+                              uint64_t plane_size, uint32_t four_state,
+                              uint32_t assign, uint32_t dynamic,
+                              uint64_t owner_process, uint32_t claim,
+                              const void *value, const void *unknown);
+obelisk_rt_status
+obelisk_rt_v1_object_release_override(obelisk_rt_object_v1 *object,
+                                      uint64_t offset, uint64_t plane_size,
+                                      uint32_t four_state, uint32_t assign);
 
 uint32_t
 obelisk_rt_v1_object_is_instance(const obelisk_rt_object_v1 *object,
@@ -3005,8 +3020,7 @@ void obelisk_rt_v1_scheduler_event_after(obelisk_rt_context *context,
                                          uint32_t nonblocking, uint64_t delay);
 uint32_t obelisk_rt_v1_scheduler_event_triggered(obelisk_rt_context *context,
                                                  uint64_t stable_id);
-uint32_t obelisk_rt_v1_scheduler_wait_order_failed(
-    obelisk_rt_context *context);
+uint32_t obelisk_rt_v1_scheduler_wait_order_failed(obelisk_rt_context *context);
 void obelisk_rt_v1_scheduler_fail(obelisk_rt_context *context,
                                   obelisk_rt_status status);
 // Register one compiler-assigned static-state object. Static handles retain

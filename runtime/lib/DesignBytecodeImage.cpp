@@ -486,10 +486,10 @@ bool validIntrinsic(const Image &image, const Function &function,
            handle(input(1)) && bits(input(2), 64);
   case OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER:
     return signature.flags == 0 && site.inputCount == 8 &&
-           site.outputCount == 0 &&
-           (numeric(input(0)) || floating(input(0))) && handle(input(1)) &&
-           bits(input(2), 64) && bits(input(3), 64) && bits(input(4), 64) &&
-           bits(input(5), 64) && bits(input(6), 64) && bits(input(7), 64);
+           site.outputCount == 0 && (numeric(input(0)) || floating(input(0))) &&
+           handle(input(1)) && bits(input(2), 64) && bits(input(3), 64) &&
+           bits(input(4), 64) && bits(input(5), 64) && bits(input(6), 64) &&
+           bits(input(7), 64);
   case OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER_STRENGTH_PAIR: {
     auto low = input(0);
     auto high = input(2);
@@ -718,6 +718,15 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 0 && managedRef(input(0)) &&
            managedValue(input(1)) && twoStateBits(input(2), 64);
+  case OBELISK_RT_INTRINSIC_V1_MANAGED_OVERRIDE:
+    return signature.flags == 0 && site.inputCount == 5 &&
+           site.outputCount == 0 && managedRef(input(0)) &&
+           managedValue(input(1)) && twoStateBits(input(2), 64) &&
+           twoStateBits(input(3), 64) && twoStateBits(input(4), 64);
+  case OBELISK_RT_INTRINSIC_V1_MANAGED_RELEASE_OVERRIDE:
+    return signature.flags == 0 && site.inputCount == 3 &&
+           site.outputCount == 0 && managedRef(input(0)) &&
+           twoStateBits(input(1), 64) && twoStateBits(input(2), 64);
   case OBELISK_RT_INTRINSIC_V1_MANAGED_NBA:
     return signature.flags == 0 &&
            (site.inputCount == 3 || site.inputCount == 4) &&
@@ -2266,17 +2275,14 @@ bool validateImage(const Image &image) {
       case OBELISK_RT_DB_REPLICATE: {
         if (instruction.flags || instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate == 0 ||
-            !numeric(instruction.destination) ||
-            !numeric(instruction.source0))
+            !numeric(instruction.destination) || !numeric(instruction.source0))
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
-        Layout destination =
-            layoutAt(image, function, instruction.destination);
+        Layout destination = layoutAt(image, function, instruction.destination);
         Layout source = layoutAt(image, function, instruction.source0);
         if (destination.kind != source.kind || source.width == 0 ||
             instruction.immediate > UINT32_MAX / source.width ||
-            uint64_t{source.width} * instruction.immediate !=
-                destination.width)
+            uint64_t{source.width} * instruction.immediate != destination.width)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
@@ -2666,7 +2672,11 @@ bool validateImage(const Image &image) {
              (instruction.flags & OBELISK_RT_DB_OVERRIDE_DYNAMIC) == 0) ||
             instruction.destination || instruction.auxiliary ||
             instruction.immediate || !reg(instruction.source0) ||
-            (!numeric(instruction.source1) && !floating(instruction.source1)) ||
+            (!numeric(instruction.source1) && !floating(instruction.source1) &&
+             layoutAt(image, function, instruction.source1).kind !=
+                 OBELISK_RT_DBREG_MANAGED &&
+             layoutAt(image, function, instruction.source1).kind !=
+                 OBELISK_RT_DBREG_STRING) ||
             ((instruction.flags & OBELISK_RT_DB_OVERRIDE_DYNAMIC) != 0
                  ? (!reg(instruction.source2) ||
                     layoutAt(image, function, instruction.source2).kind !=

@@ -1458,11 +1458,37 @@ private:
                               &providerVisitor);
     {
       std::lock_guard<std::mutex> rootLock(rootMutex);
-      for (obelisk_rt_object_v1 **slot : staticRoots)
+      auto designWordIndex = [&](const void *slot) -> std::optional<size_t> {
+        if (!slot || !context || context->stateValue.empty())
+          return std::nullopt;
+        uintptr_t begin =
+            reinterpret_cast<uintptr_t>(context->stateValue.data());
+        uintptr_t address = reinterpret_cast<uintptr_t>(slot);
+        uint64_t bytes = context->stateValue.size() * sizeof(uint64_t);
+        if (address < begin || address - begin >= bytes ||
+            (address - begin) % sizeof(uint64_t) != 0)
+          return std::nullopt;
+        return static_cast<size_t>((address - begin) / sizeof(uint64_t));
+      };
+      auto hiddenAssignActive = [&](size_t word) {
+        return word < context->assignMask.size() &&
+               context->assignMask[word] == UINT64_MAX &&
+               word < context->assignValue.size();
+      };
+      for (obelisk_rt_object_v1 **slot : staticRoots) {
         markObject(slot ? *slot : nullptr, pending);
+        std::optional<size_t> word = designWordIndex(slot);
+        if (word && hiddenAssignActive(*word))
+          markObject(managedWordObject(context->assignValue[*word]), pending);
+      }
       for (const CandidateStaticRoot &root : candidateStaticRoots) {
         obelisk_rt_managed_word_v1 word = root.slot ? *root.slot : 0;
         mark(candidateRootMetadata(this, word, root.allowedKinds), pending);
+        std::optional<size_t> index = designWordIndex(root.slot);
+        if (index && hiddenAssignActive(*index))
+          mark(candidateRootMetadata(this, context->assignValue[*index],
+                                     root.allowedKinds),
+               pending);
       }
     }
     obelisk_rt_enumerate_design_managed_roots(context, visitProviderRoot,
@@ -1506,6 +1532,12 @@ private:
     uint64_t currentLiveObjects = 0;
     uint64_t currentLiveBytes = 0;
     uint64_t reclaimed = 0;
+    auto eraseManagedOverrides = [&](const ObjectMetadata &metadata) {
+      if (!context || metadata.identity == 0)
+        return;
+      std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      context->managedOverrides.erase(metadata.identity);
+    };
     for (auto &pool : availableSpans)
       pool.clear();
 
@@ -1524,6 +1556,7 @@ private:
             continue;
           }
           metadata.allocated.store(false, std::memory_order_release);
+          eraseManagedOverrides(metadata);
           unregisterMetadata(&metadata);
           auto *prefix = reinterpret_cast<SlotPrefix *>(
               static_cast<uint8_t *>(metadata.object) - sizeof(SlotPrefix));
@@ -1550,6 +1583,7 @@ private:
         continue;
       }
       metadata.allocated.store(false, std::memory_order_release);
+      eraseManagedOverrides(metadata);
       unregisterMetadata(&metadata);
       ++reclaimed;
       it = largeAllocations.erase(it);
@@ -2688,6 +2722,92 @@ extern "C" obelisk_rt_status obelisk_rt_v1_object_shallow_copy(
   return lane->heap->popRoot(lane, &sourceRoot);
 }
 
+namespace {
+
+thread_local bool publishingManagedOverride = false;
+
+bool managedOverrideActive(ObjectMetadata *metadata, uint64_t offset,
+                           uint64_t size) {
+  if (publishingManagedOverride || !metadata || !metadata->heap ||
+      metadata->identity == 0)
+    return false;
+  obelisk_rt_context *context = metadata->heap->ownerContext();
+  if (!context ||
+      !context->managedValueOverridePossible.load(std::memory_order_relaxed))
+    return false;
+  std::lock_guard<std::recursive_mutex> lock(context->mutex);
+  auto object = context->managedOverrides.find(metadata->identity);
+  if (object == context->managedOverrides.end() || size == 0 ||
+      offset > UINT64_MAX - size)
+    return false;
+  uint64_t end = offset + size;
+  for (const auto &[fieldOffset, state] : object->second) {
+    uint64_t fieldSize =
+        state.planeSize * static_cast<uint64_t>(state.fourState ? 2 : 1);
+    if ((state.forceActive || state.assignActive) && fieldSize != 0 &&
+        fieldOffset <= UINT64_MAX - fieldSize &&
+        offset < fieldOffset + fieldSize && fieldOffset < end)
+      return true;
+  }
+  return false;
+}
+
+struct ManagedOverridePublication {
+  ManagedOverridePublication() : previous(publishingManagedOverride) {
+    publishingManagedOverride = true;
+  }
+  ~ManagedOverridePublication() { publishingManagedOverride = previous; }
+
+private:
+  bool previous;
+};
+
+} // namespace
+
+bool obelisk_rt_managed_value_mutation_masked(
+    obelisk_rt_object_v1 *object) noexcept {
+  ObjectMetadata *metadata = metadataFor(object);
+  if (!metadata || metadata->kind != OBELISK_RT_MANAGED_CONTAINER ||
+      !metadata->heap)
+    return false;
+  obelisk_rt_context *context = metadata->heap->ownerContext();
+  if (!context ||
+      !context->managedValueOverridePossible.load(std::memory_order_relaxed))
+    return false;
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    for (const auto &[identity, fields] : context->managedOverrides) {
+      (void)identity;
+      for (const auto &[offset, state] : fields) {
+        (void)offset;
+        auto contains = [&](const std::vector<obelisk_rt_object_v1 *> &roots) {
+          return std::find(roots.begin(), roots.end(), object) != roots.end();
+        };
+        if ((state.forceActive && contains(state.forceRoots)) ||
+            (state.assignActive && contains(state.assignRoots)))
+          return true;
+      }
+    }
+    obelisk_rt_managed_word_v1 word =
+        static_cast<uint64_t>(reinterpret_cast<uintptr_t>(object));
+    size_t limbs = std::min(
+        context->stateValue.size(),
+        std::max(context->forceMask.size(), context->assignMask.size()));
+    for (size_t limb = 0; limb != limbs; ++limb) {
+      uint64_t force =
+          limb < context->forceMask.size() ? context->forceMask[limb] : 0;
+      uint64_t assign =
+          limb < context->assignMask.size() ? context->assignMask[limb] : 0;
+      if ((force == UINT64_MAX || assign == UINT64_MAX) &&
+          context->stateValue[limb] == word)
+        return true;
+    }
+  } catch (...) {
+    // Runtime mutation entry points are noexcept across this internal query.
+  }
+  return false;
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_object_read(obelisk_rt_object_v1 *object, uint64_t offset,
                           void *data, uint64_t size) {
@@ -2712,6 +2832,8 @@ obelisk_rt_v1_object_write(obelisk_rt_object_v1 *object, uint64_t offset,
                                  static_cast<const uint8_t *>(data),
                                  metadata->heap))
     return OBELISK_RT_INVALID_ARGUMENT;
+  if (managedOverrideActive(metadata, offset, size))
+    return OBELISK_RT_OK;
   bool changed = false;
   {
     ObjectLock lock(metadata);
@@ -2741,6 +2863,8 @@ obelisk_rt_v1_object_bits_insert(obelisk_rt_object_v1 *object, uint64_t offset,
                            (fieldBitWidth + 7) / 8))
     return OBELISK_RT_INVALID_ARGUMENT;
   if (!valid)
+    return OBELISK_RT_OK;
+  if (managedOverrideActive(metadata, offset, (fieldBitWidth + 7) / 8))
     return OBELISK_RT_OK;
   if (lowBit < -static_cast<int64_t>(replacementWidth - 1) ||
       lowBit >= static_cast<int64_t>(fieldBitWidth))
@@ -2800,6 +2924,8 @@ obelisk_rt_v1_object_write_planes(obelisk_rt_object_v1 *object, uint64_t offset,
           metadata->descriptor->layout, 0, offset + planeSize, planeSize,
           static_cast<const uint8_t *>(unknown), metadata->heap))
     return OBELISK_RT_INVALID_ARGUMENT;
+  if (managedOverrideActive(metadata, offset, planeSize * 2))
+    return OBELISK_RT_OK;
   bool changed = false;
   {
     ObjectLock lock(metadata);
@@ -2847,6 +2973,8 @@ obelisk_rt_v1_object_field_store(obelisk_rt_object_v1 *object, uint64_t offset,
     if (!valueMetadata || valueMetadata->heap != metadata->heap)
       return OBELISK_RT_INVALID_HANDLE;
   }
+  if (managedOverrideActive(metadata, offset, sizeof(value)))
+    return OBELISK_RT_OK;
   bool changed = false;
   {
     ObjectLock lock(metadata);
@@ -2858,6 +2986,164 @@ obelisk_rt_v1_object_field_store(obelisk_rt_object_v1 *object, uint64_t offset,
     obelisk_rt_notify_managed_watch(object, OBELISK_RT_MANAGED_WATCH_FIELD,
                                     offset);
   return OBELISK_RT_OK;
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_object_override(obelisk_rt_object_v1 *object, uint64_t offset,
+                              uint64_t planeSize, uint32_t fourState,
+                              uint32_t assign, uint32_t dynamic,
+                              uint64_t ownerProcess, uint32_t claim,
+                              const void *value, const void *unknown) {
+  ObjectMetadata *metadata = metadataFor(object);
+  std::vector<obelisk_rt_object_v1 *> referents;
+  if (!metadata || metadata->kind != OBELISK_RT_MANAGED_CLASS ||
+      !metadata->heap || metadata->identity == 0 || !value || planeSize == 0 ||
+      fourState > 1 || assign > 1 || dynamic > 1 || claim > 1 ||
+      (fourState && !unknown) || (dynamic && ownerProcess == 0) ||
+      (fourState && planeSize > UINT64_MAX / 2) ||
+      !checkedRange(offset, planeSize * (fourState ? 2 : 1),
+                    metadata->descriptor->instance_size) ||
+      !validateLayoutHandleWrite(metadata->descriptor->layout, 0, offset,
+                                 planeSize, static_cast<const uint8_t *>(value),
+                                 metadata->heap, &referents) ||
+      (fourState &&
+       !validateLayoutHandleWrite(
+           metadata->descriptor->layout, 0, offset + planeSize, planeSize,
+           static_cast<const uint8_t *>(unknown), metadata->heap)))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  obelisk_rt_context *context = metadata->heap->ownerContext();
+  if (!context)
+    return OBELISK_RT_INVALID_HANDLE;
+  context->managedValueOverridePossible.store(true, std::memory_order_relaxed);
+  ContextTransaction transaction(context);
+  try {
+    std::vector<uint64_t> retiredOwners;
+    std::vector<uint8_t> publishedValue;
+    std::vector<uint8_t> publishedUnknown;
+    bool publish = false;
+    {
+      std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      auto &state = context->managedOverrides[metadata->identity][offset];
+      if (state.planeSize != 0 &&
+          (state.planeSize != planeSize || state.fourState != (fourState != 0)))
+        return OBELISK_RT_INVALID_ARGUMENT;
+      state.planeSize = planeSize;
+      state.fourState = fourState != 0;
+      bool &active = assign ? state.assignActive : state.forceActive;
+      uint64_t &owner = assign ? state.assignOwner : state.forceOwner;
+      std::vector<uint8_t> &storedValue =
+          assign ? state.assignValue : state.forceValue;
+      std::vector<uint8_t> &storedUnknown =
+          assign ? state.assignUnknown : state.forceUnknown;
+      std::vector<obelisk_rt_object_v1 *> &storedRoots =
+          assign ? state.assignRoots : state.forceRoots;
+      if (dynamic && !claim && (!active || owner != ownerProcess))
+        return OBELISK_RT_OK;
+      if ((!dynamic || claim) && active && owner != 0 && owner != ownerProcess)
+        retiredOwners.push_back(owner);
+      if (!dynamic || claim) {
+        active = true;
+        owner = dynamic ? ownerProcess : 0;
+      }
+      storedValue.assign(static_cast<const uint8_t *>(value),
+                         static_cast<const uint8_t *>(value) + planeSize);
+      if (fourState)
+        storedUnknown.assign(static_cast<const uint8_t *>(unknown),
+                             static_cast<const uint8_t *>(unknown) + planeSize);
+      else
+        storedUnknown.clear();
+      storedRoots = referents;
+      publish = !assign || !state.forceActive;
+      if (publish) {
+        publishedValue = storedValue;
+        publishedUnknown = storedUnknown;
+      }
+    }
+    if (publish) {
+      ManagedOverridePublication publication;
+      obelisk_rt_status status =
+          fourState ? obelisk_rt_v1_object_write_planes(
+                          object, offset, publishedValue.data(),
+                          publishedUnknown.data(), planeSize)
+                    : obelisk_rt_v1_object_write(
+                          object, offset, publishedValue.data(), planeSize);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
+    return obelisk_rt_retire_override_owners(context, std::move(retiredOwners));
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_DESIGN;
+  }
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_object_release_override(obelisk_rt_object_v1 *object,
+                                      uint64_t offset, uint64_t planeSize,
+                                      uint32_t fourState, uint32_t assign) {
+  ObjectMetadata *metadata = metadataFor(object);
+  if (!metadata || metadata->kind != OBELISK_RT_MANAGED_CLASS ||
+      !metadata->heap || metadata->identity == 0 || planeSize == 0 ||
+      fourState > 1 || assign > 1)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  obelisk_rt_context *context = metadata->heap->ownerContext();
+  if (!context)
+    return OBELISK_RT_INVALID_HANDLE;
+  ContextTransaction transaction(context);
+  try {
+    std::vector<uint64_t> retiredOwners;
+    std::vector<uint8_t> publishedValue;
+    std::vector<uint8_t> publishedUnknown;
+    bool publish = false;
+    bool erase = false;
+    {
+      std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      auto objectState = context->managedOverrides.find(metadata->identity);
+      if (objectState == context->managedOverrides.end())
+        return OBELISK_RT_OK;
+      auto field = objectState->second.find(offset);
+      if (field == objectState->second.end())
+        return OBELISK_RT_OK;
+      auto &state = field->second;
+      if (state.planeSize != planeSize || state.fourState != (fourState != 0))
+        return OBELISK_RT_INVALID_ARGUMENT;
+      bool &active = assign ? state.assignActive : state.forceActive;
+      uint64_t &owner = assign ? state.assignOwner : state.forceOwner;
+      if (active && owner != 0)
+        retiredOwners.push_back(owner);
+      active = false;
+      owner = 0;
+      (assign ? state.assignRoots : state.forceRoots).clear();
+      if (!assign && state.assignActive) {
+        publishedValue = state.assignValue;
+        publishedUnknown = state.assignUnknown;
+        publish = true;
+      }
+      erase = !state.forceActive && !state.assignActive;
+      if (erase) {
+        objectState->second.erase(field);
+        if (objectState->second.empty())
+          context->managedOverrides.erase(objectState);
+      }
+    }
+    if (publish) {
+      ManagedOverridePublication publication;
+      obelisk_rt_status status =
+          fourState ? obelisk_rt_v1_object_write_planes(
+                          object, offset, publishedValue.data(),
+                          publishedUnknown.data(), planeSize)
+                    : obelisk_rt_v1_object_write(
+                          object, offset, publishedValue.data(), planeSize);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
+    return obelisk_rt_retire_override_owners(context, std::move(retiredOwners));
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_DESIGN;
+  }
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(

@@ -33,7 +33,8 @@ LogicalResult lowerCallableProcessControls(func::FuncOp function) {
   if (controls.empty())
     return success();
   if (function.getResultTypes().empty() ||
-      function.getResultTypes().back() != IntegerType::get(function.getContext(), 32))
+      function.getResultTypes().back() !=
+          IntegerType::get(function.getContext(), 32))
     return function.emitError(
         "callable process control is missing its threaded status result");
 
@@ -75,22 +76,20 @@ LogicalResult lowerCallableProcessControls(func::FuncOp function) {
 
     rewriter.setInsertionPoint(control);
     Value disposition = entryAlloca(rewriter, location, i32, 1, 4);
-    LLVM::StoreOp::create(
-        rewriter, location,
-        llvmConstant(rewriter, location, i32,
-                     OBELISK_RT_PROCESS_CONTROL_CONTINUE),
-        disposition, 4);
+    LLVM::StoreOp::create(rewriter, location,
+                          llvmConstant(rewriter, location, i32,
+                                       OBELISK_RT_PROCESS_CONTROL_CONTINUE),
+                          disposition, 4);
     Value context = managedContextAndLane(rewriter, location).first;
-    Value current =
-        LLVM::CallOp::create(
-            rewriter, location, TypeRange{rewriter.getI64Type()},
-            SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_process_current"),
-            ValueRange{context})
-            .getResult();
-    Value targetsCurrent = arith::CmpIOp::create(
-        rewriter, location, arith::CmpIPredicate::eq, current,
-        controlledProcess);
+    Value current = LLVM::CallOp::create(
+                        rewriter, location, TypeRange{rewriter.getI64Type()},
+                        SymbolRefAttr::get(rewriter.getContext(),
+                                           "obelisk_rt_v1_process_current"),
+                        ValueRange{context})
+                        .getResult();
+    Value targetsCurrent =
+        arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::eq,
+                              current, controlledProcess);
     cf::CondBranchOp::create(rewriter, location, targetsCurrent,
                              unsupportedAction, ValueRange{}, invokeControl,
                              ValueRange{});
@@ -128,10 +127,9 @@ LogicalResult lowerCallableProcessControls(func::FuncOp function) {
                          continuationOperands);
 
     rewriter.setInsertionPointToStart(unsupportedAction);
-    if (failed(makeReturn(
-            location,
-            llvmConstant(rewriter, location, i32,
-                         OBELISK_RT_INVALID_LIFECYCLE))))
+    if (failed(
+            makeReturn(location, llvmConstant(rewriter, location, i32,
+                                              OBELISK_RT_INVALID_LIFECYCLE))))
       return failure();
 
     rewriter.setInsertionPointToStart(failureBlock);
@@ -175,8 +173,8 @@ preparePlainNativeProcess(sim::SimFuncOp function,
   for (Block &block : body.getBody())
     for (BlockArgument argument : block.getArguments())
       argument.setType(convertProcessType(argument.getType(), context));
-  return PreparedPlainNativeProcess{module, body, location, std::move(baseName),
-                                    stableID, &analysis};
+  return PreparedPlainNativeProcess{
+      module, body, location, std::move(baseName), stableID, &analysis};
 }
 
 LogicalResult
@@ -187,9 +185,8 @@ lowerPreparedPlainNativeProcess(PreparedPlainNativeProcess &process) {
     return failure();
 
   IRRewriter rewriter(context);
-  if (failed(lowerNativeFunctionBody(
-          body, NativeReturnLowering::SuccessStatus,
-          NativeCallResultLowering::Preserve)))
+  if (failed(lowerNativeFunctionBody(body, NativeReturnLowering::SuccessStatus,
+                                     NativeCallResultLowering::Preserve)))
     return failure();
 
   SmallVector<sim::SimStatusCheckOp> checks;
@@ -242,9 +239,8 @@ FailureOr<PreparedOrdinaryNativeFunction>
 prepareOrdinaryFunction(sim::SimFuncOp function) {
   if (failed(lowerSimulationTimeOperations(function)))
     return failure();
-  bool privateSymbol =
-      SymbolTable::getSymbolVisibility(function) ==
-      SymbolTable::Visibility::Private;
+  bool privateSymbol = SymbolTable::getSymbolVisibility(function) ==
+                       SymbolTable::Visibility::Private;
   Location location = function.getLoc();
   std::string symbolName = function.getSymName().str();
   FunctionType functionType = function.getFunctionType();
@@ -255,7 +251,8 @@ prepareOrdinaryFunction(sim::SimFuncOp function) {
   for (Type type : functionType.getResults())
     resultTypes.push_back(convertProcessType(type, function.getContext()));
   uint32_t entryKind = static_cast<uint32_t>(function.getEntryKind());
-  bool observer = function.getEntryKind() == sim::EntryKind::Observer;
+  bool observer = function.getEntryKind() == sim::EntryKind::Observer &&
+                  !function->hasAttr("obelisk_sim.override_evaluator");
   auto observerWidth =
       function->getAttrOfType<IntegerAttr>("obelisk_sim.observer_width");
   auto observerFourState =
@@ -286,8 +283,7 @@ prepareOrdinaryFunction(sim::SimFuncOp function) {
                        builder.getI64IntegerAttr(0));
   copyNativePartition(function, replacement);
   if (evalFourStateSource)
-    replacement->setAttr("obelisk.eval.four_state_source",
-                         evalFourStateSource);
+    replacement->setAttr("obelisk.eval.four_state_source", evalFourStateSource);
   if (evalPromotionRanges)
     replacement->setAttr("obelisk.eval.local_promotion_ranges",
                          evalPromotionRanges);
@@ -295,8 +291,7 @@ prepareOrdinaryFunction(sim::SimFuncOp function) {
     replacement->setAttr("obelisk.eval.conditionally_two_state",
                          evalConditionallyTwoState);
   if (evalPathKnownProbe)
-    replacement->setAttr("obelisk.eval.path_known_probe",
-                         evalPathKnownProbe);
+    replacement->setAttr("obelisk.eval.path_known_probe", evalPathKnownProbe);
   if (evalPathKnownPredicate)
     replacement->setAttr("obelisk.eval.path_known_predicate",
                          evalPathKnownPredicate);
@@ -310,8 +305,8 @@ prepareOrdinaryFunction(sim::SimFuncOp function) {
                                         observerFourState};
 }
 
-LogicalResult lowerPreparedOrdinaryFunction(
-    PreparedOrdinaryNativeFunction &function) {
+LogicalResult
+lowerPreparedOrdinaryFunction(PreparedOrdinaryNativeFunction &function) {
   func::FuncOp replacement = function.body;
   if (failed(lowerNativeDPICalls(replacement)))
     return failure();
@@ -326,13 +321,12 @@ LogicalResult lowerPreparedOrdinaryFunction(
       return replacement.emitError(
           "observer entry is missing native descriptor metadata");
     OpBuilder builder(replacement.getContext());
+    replacement->setAttr("obelisk.observer_width",
+                         builder.getI32IntegerAttr(
+                             function.observerWidth.getValue().getZExtValue()));
     replacement->setAttr(
-        "obelisk.observer_width",
-        builder.getI32IntegerAttr(
-            function.observerWidth.getValue().getZExtValue()));
-    replacement->setAttr("obelisk.observer_four_state",
-                         builder.getBoolAttr(
-                             function.observerFourState.getValue()));
+        "obelisk.observer_four_state",
+        builder.getBoolAttr(function.observerFourState.getValue()));
   }
   return success();
 }

@@ -5,8 +5,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "SimulationVerifiers.h"
+#include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -14,12 +15,12 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/InliningUtils.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -310,7 +311,7 @@ LogicalResult verifyNormalizedIndex(Operation *op, Type type) {
 }
 
 LogicalResult verifyMatchingStateDomain(Operation *op, Type input,
-                                               Type result) {
+                                        Type result) {
   Type inputScalar = getPackedScalarType(input);
   Type resultScalar = getPackedScalarType(result);
   if (!inputScalar || !resultScalar ||
@@ -490,8 +491,7 @@ UnpackedUnionType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
   return verifyRecordType(emitError, fields, false, true, isTagged, tagBits);
 }
 
-IntegerAttr getSubelementIndexAttr(MLIRContext *context,
-                                          unsigned index) {
+IntegerAttr getSubelementIndexAttr(MLIRContext *context, unsigned index) {
   return IntegerAttr::get(IntegerType::get(context, 32), index);
 }
 
@@ -586,9 +586,9 @@ CovergroupHandleType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
   return success();
 }
 
-LogicalResult VirtualInterfaceType::verify(
-    llvm::function_ref<InFlightDiagnostic()> emitError,
-    StringAttr interfaceName, StringAttr modport) {
+LogicalResult
+VirtualInterfaceType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                             StringAttr interfaceName, StringAttr modport) {
   if (!interfaceName || interfaceName.empty())
     return emitError() << "virtual interface requires an interface identity";
   if (!modport)
@@ -616,8 +616,8 @@ ArgumentRefType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 LogicalResult
 ObserverType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                      Type resultType) {
-  if (!isa<IntegerType, LogicType, FloatType>(resultType))
-    return emitError() << "observer result must be a scalar value";
+  if (!analysis::getSimulationStorageBitWidth(resultType))
+    return emitError() << "observer result must have fixed executable storage";
   if (auto integer = dyn_cast<IntegerType>(resultType);
       integer && (!integer.isSignless() || integer.getWidth() == 0))
     return emitError()
@@ -626,14 +626,13 @@ ObserverType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 }
 
 LogicalResult verifyNonnegative(Operation *op, IntegerAttr attr,
-                                       StringRef name) {
+                                StringRef name) {
   if (attr.getValue().isNegative())
     return op->emitOpError() << name << " must be nonnegative";
   return success();
 }
 
-LogicalResult verifyPositive(Operation *op, IntegerAttr attr,
-                                    StringRef name) {
+LogicalResult verifyPositive(Operation *op, IntegerAttr attr, StringRef name) {
   if (!attr.getValue().isStrictlyPositive())
     return op->emitOpError() << name << " must be positive";
   return success();

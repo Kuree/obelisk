@@ -1414,10 +1414,9 @@ TEST_F(RuntimeTest, FormatsPackedStringsAndScalarPatterns) {
   LogicValue whollyUnknown("xxxx", true);
   LogicValue negative("1101", true);
   LogicValue positive("0101");
-  auto [status, output] =
-      format("%s %p %p %p %p",
-             {packed.arg(), partlyUnknown.arg(), whollyUnknown.arg(),
-              negative.arg(), positive.arg()});
+  auto [status, output] = format(
+      "%s %p %p %p %p", {packed.arg(), partlyUnknown.arg(), whollyUnknown.arg(),
+                         negative.arg(), positive.arg()});
   EXPECT_EQ(status, OBELISK_RT_OK);
   EXPECT_EQ(output, "A B X x -3 5");
 }
@@ -1481,8 +1480,8 @@ TEST_F(RuntimeTest, FormatsPaddedWidthsAndRealIntegerDefaults) {
   // pad with spaces; hexadecimal, octal, and binary fields pad with zeros.
   LogicValue value("0000000001100101");
   auto [padStatus, padOutput] =
-      format("%04d|%08h|%0d|%6d", {value.arg(), value.arg(), value.arg(),
-                                   value.arg()});
+      format("%04d|%08h|%0d|%6d",
+             {value.arg(), value.arg(), value.arg(), value.arg()});
   EXPECT_EQ(padStatus, OBELISK_RT_OK);
   EXPECT_EQ(padOutput, " 101|00000065|101|   101");
 
@@ -1667,14 +1666,15 @@ TEST_F(RuntimeTest, ReadMemTokenizerPreservesFourStateWordsAndAddresses) {
 TEST_F(RuntimeTest, ReadMemTokenizerRejectsMalformedInput) {
   TempDirectory temporary;
   std::filesystem::path path = temporary.file("bad.hex");
-  { std::ofstream(path) << "@"; }
+  {
+    std::ofstream(path) << "@";
+  }
   uint32_t descriptor = open(path, "r");
   uint8_t value = 0, unknown = 0;
   uint32_t kind = 0;
   uint64_t address = 0;
-  EXPECT_EQ(obelisk_rt_v1_file_readmem_token(
-                context, descriptor, 16, 8, &value, 1, &unknown, 1, &kind,
-                &address),
+  EXPECT_EQ(obelisk_rt_v1_file_readmem_token(context, descriptor, 16, 8, &value,
+                                             1, &unknown, 1, &kind, &address),
             OBELISK_RT_FORMAT_ERROR);
   EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
 }
@@ -1727,16 +1727,15 @@ TEST_F(RuntimeTest, ReadsWithoutReadAccessReportEndOfFileInsteadOfIOError) {
             OBELISK_RT_EOF);
   char bytes[4] = {};
   uint64_t read = 1;
-  ASSERT_EQ(obelisk_rt_v1_file_read(context, descriptor, bytes, sizeof(bytes),
-                                    &read),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_file_read(context, descriptor, bytes, sizeof(bytes), &read),
+      OBELISK_RT_OK);
   EXPECT_EQ(read, 0u);
   RuntimeBuffer line;
   EXPECT_EQ(obelisk_rt_v1_file_getline(context, descriptor, 64, line.out()),
             OBELISK_RT_EOF);
   uint32_t isEOF = 0;
-  ASSERT_EQ(obelisk_rt_v1_file_eof(context, descriptor, &isEOF),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_file_eof(context, descriptor, &isEOF), OBELISK_RT_OK);
   EXPECT_EQ(isEOF, 1u);
 
   obelisk_rt_gc_lane_v1 *lane = nullptr;
@@ -1804,23 +1803,19 @@ TEST_F(RuntimeTest, HoldsOnePushedBackByteWithoutReadAccess) {
 
   // The runtime holds the byte itself: glibc accepts ungetc() on a write-only
   // stream and then crashes on the next write through it.
-  ASSERT_EQ(obelisk_rt_v1_file_ungetc(context, descriptor, 'z'),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_file_ungetc(context, descriptor, 'z'), OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_file_ungetc(context, descriptor, 'y'),
             OBELISK_RT_EOF);
   uint32_t isEOF = 1;
-  ASSERT_EQ(obelisk_rt_v1_file_eof(context, descriptor, &isEOF),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_file_eof(context, descriptor, &isEOF), OBELISK_RT_OK);
   EXPECT_EQ(isEOF, 0u);
 
   uint8_t byte = 0;
-  ASSERT_EQ(obelisk_rt_v1_file_getc(context, descriptor, &byte),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_file_getc(context, descriptor, &byte), OBELISK_RT_OK);
   EXPECT_EQ(byte, 'z');
   EXPECT_EQ(obelisk_rt_v1_file_getc(context, descriptor, &byte),
             OBELISK_RT_EOF);
-  ASSERT_EQ(obelisk_rt_v1_file_eof(context, descriptor, &isEOF),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_file_eof(context, descriptor, &isEOF), OBELISK_RT_OK);
   EXPECT_EQ(isEOF, 1u);
 
   uint64_t written = 0;
@@ -3306,9 +3301,12 @@ constexpr uint64_t kNodeLinkOffset = sizeof(void *);
 constexpr uint64_t kNodeValueOffset = sizeof(void *) * 2;
 constexpr uint64_t kDerivedExtraOffset = sizeof(void *) * 3;
 
-const obelisk_rt_trace_entry_v1 nodeTraceEntry{
-    kNodeLinkOffset, 0, 1, OBELISK_RT_TRACE_STRONG,
-    OBELISK_RT_MANAGED_SLOT_CLASS, nullptr};
+const obelisk_rt_trace_entry_v1 nodeTraceEntry{kNodeLinkOffset,
+                                               0,
+                                               1,
+                                               OBELISK_RT_TRACE_STRONG,
+                                               OBELISK_RT_MANAGED_SLOT_CLASS,
+                                               nullptr};
 const obelisk_rt_trace_layout_v1 nodeTraceLayout{
     OBELISK_RT_VERSION, 0, sizeof(void *) * 3, alignof(void *),
     &nodeTraceEntry,    1};
@@ -3346,9 +3344,11 @@ obelisk_rt_status derivedValueMethod(obelisk_rt_context *context,
   return OBELISK_RT_OK;
 }
 
-obelisk_rt_status throwingValueMethod(
-    obelisk_rt_context *, obelisk_rt_gc_lane_v1 *, obelisk_rt_object_v1 *,
-    const obelisk_rt_method_argument_v1 *, uint32_t, void *, uint64_t) {
+obelisk_rt_status throwingValueMethod(obelisk_rt_context *,
+                                      obelisk_rt_gc_lane_v1 *,
+                                      obelisk_rt_object_v1 *,
+                                      const obelisk_rt_method_argument_v1 *,
+                                      uint32_t, void *, uint64_t) {
   throw std::bad_alloc();
 }
 
@@ -3386,9 +3386,8 @@ const obelisk_rt_random_variable_v1 randomNodeVariable{
     UINT64_MAX,
     64,
     OBELISK_RT_RANDOM_VARIABLE_SIGNED};
-const obelisk_rt_random_layout_v1 randomNodeLayout{OBELISK_RT_VERSION, 0,
-                                                   &randomNodeEdge, 1,
-                                                   &randomNodeVariable, 1};
+const obelisk_rt_random_layout_v1 randomNodeLayout{
+    OBELISK_RT_VERSION, 0, &randomNodeEdge, 1, &randomNodeVariable, 1};
 const obelisk_rt_trace_layout_v1 randomNodeTraceLayout{
     OBELISK_RT_VERSION, 0, sizeof(void *) * 4, alignof(void *),
     &nodeTraceEntry,    1};
@@ -3418,18 +3417,15 @@ const obelisk_rt_trace_layout_v1 randomDerivedTraceLayout{
     randomDerivedTraceEntries, std::size(randomDerivedTraceEntries)};
 const obelisk_rt_random_edge_v1 randomDerivedEdge{
     sizeof(void *) * 4, kNodeValueOffset, UINT64_C(4)};
-const obelisk_rt_random_variable_v1 randomDerivedVariable{
-    sizeof(void *) * 5,
-    kNodeValueOffset,
-    UINT64_C(8),
-    UINT64_MAX,
-    UINT64_MAX,
-    32,
-    0};
-const obelisk_rt_random_layout_v1 randomDerivedLayout{OBELISK_RT_VERSION, 0,
-                                                      &randomDerivedEdge, 1,
-                                                      &randomDerivedVariable,
-                                                      1};
+const obelisk_rt_random_variable_v1 randomDerivedVariable{sizeof(void *) * 5,
+                                                          kNodeValueOffset,
+                                                          UINT64_C(8),
+                                                          UINT64_MAX,
+                                                          UINT64_MAX,
+                                                          32,
+                                                          0};
+const obelisk_rt_random_layout_v1 randomDerivedLayout{
+    OBELISK_RT_VERSION, 0, &randomDerivedEdge, 1, &randomDerivedVariable, 1};
 const char randomDerivedName[] = "random_derived_node";
 const obelisk_rt_class_descriptor_v1 randomDerivedDescriptor{
     OBELISK_RT_VERSION,
@@ -3494,8 +3490,8 @@ const obelisk_rt_class_descriptor_v1 planeDescriptor{OBELISK_RT_VERSION,
                                                      sizeof(planeName) - 1,
                                                      nullptr};
 const obelisk_rt_trace_entry_v1 weakTraceEntry{
-    sizeof(void *), 0, 1, OBELISK_RT_TRACE_WEAK,
-    OBELISK_RT_MANAGED_SLOT_CLASS, nullptr};
+    sizeof(void *), 0, 1, OBELISK_RT_TRACE_WEAK, OBELISK_RT_MANAGED_SLOT_CLASS,
+    nullptr};
 const obelisk_rt_trace_layout_v1 weakTraceLayout{
     OBELISK_RT_VERSION, 0, sizeof(void *) * 2, alignof(void *),
     &weakTraceEntry,    1};
@@ -3543,8 +3539,8 @@ TEST_F(ManagedHeapTest, NarrowBitInsertPreservesPackedStorageAndHandles) {
             OBELISK_RT_OK);
 
   std::array<uint8_t, 16> bytes{};
-  ASSERT_EQ(obelisk_rt_v1_object_bits_insert(
-                object, sizeof(void *), 128, 4, 1, UINT64_C(0xa5), 8),
+  ASSERT_EQ(obelisk_rt_v1_object_bits_insert(object, sizeof(void *), 128, 4, 1,
+                                             UINT64_C(0xa5), 8),
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_object_read(object, sizeof(void *), bytes.data(),
                                       bytes.size()),
@@ -3556,8 +3552,8 @@ TEST_F(ManagedHeapTest, NarrowBitInsertPreservesPackedStorageAndHandles) {
   ASSERT_EQ(obelisk_rt_v1_object_write(object, sizeof(void *), bytes.data(),
                                        bytes.size()),
             OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_object_bits_insert(
-                object, sizeof(void *), 128, -3, 1, UINT64_MAX, 8),
+  ASSERT_EQ(obelisk_rt_v1_object_bits_insert(object, sizeof(void *), 128, -3, 1,
+                                             UINT64_MAX, 8),
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_object_read(object, sizeof(void *), bytes.data(),
                                       bytes.size()),
@@ -3565,8 +3561,8 @@ TEST_F(ManagedHeapTest, NarrowBitInsertPreservesPackedStorageAndHandles) {
   EXPECT_EQ(bytes[0], 0x1f);
 
   std::array<uint8_t, 16> before = bytes;
-  EXPECT_EQ(obelisk_rt_v1_object_bits_insert(
-                object, sizeof(void *), 128, INT64_MAX, 0, 0, 8),
+  EXPECT_EQ(obelisk_rt_v1_object_bits_insert(object, sizeof(void *), 128,
+                                             INT64_MAX, 0, 0, 8),
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_object_read(object, sizeof(void *), bytes.data(),
                                       bytes.size()),
@@ -3576,9 +3572,113 @@ TEST_F(ManagedHeapTest, NarrowBitInsertPreservesPackedStorageAndHandles) {
   obelisk_rt_object_v1 *node = nullptr;
   ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &node),
             OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_object_bits_insert(
-                node, kNodeLinkOffset, 64, 0, 1, UINT64_C(1), 1),
+  EXPECT_EQ(obelisk_rt_v1_object_bits_insert(node, kNodeLinkOffset, 64, 0, 1,
+                                             UINT64_C(1), 1),
             OBELISK_RT_INVALID_ARGUMENT);
+}
+
+// IEEE 1800-2017 10.6: force has priority over procedural assign, and release
+// exposes the still-active assign value. Managed shadow storage must therefore
+// remain a precise GC root while it is hidden beneath force.
+TEST_F(ManagedHeapTest, PropertyOverrideKeepsHiddenManagedValueRooted) {
+  obelisk_rt_object_v1 *holder = nullptr;
+  obelisk_rt_object_v1 *assigned = nullptr;
+  obelisk_rt_object_v1 *forced = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &holder),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &assigned),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &forced),
+            OBELISK_RT_OK);
+
+  obelisk_rt_gc_root_v1 holderRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &holderRoot, &holder),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_override(holder, kNodeLinkOffset,
+                                          sizeof(assigned), 0, 1, 0, 0, 0,
+                                          &assigned, nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_override(holder, kNodeLinkOffset,
+                                          sizeof(forced), 0, 0, 0, 0, 0,
+                                          &forced, nullptr),
+            OBELISK_RT_OK);
+
+  // Ordinary writes are masked while either layer is active.
+  ASSERT_EQ(obelisk_rt_v1_object_field_store(holder, kNodeLinkOffset, nullptr),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *visible = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_field_load(holder, kNodeLinkOffset, &visible),
+            OBELISK_RT_OK);
+  EXPECT_EQ(visible, forced);
+
+  assigned = nullptr;
+  forced = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_release_override(holder, kNodeLinkOffset,
+                                                  sizeof(visible), 0, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_field_load(holder, kNodeLinkOffset, &visible),
+            OBELISK_RT_OK);
+  EXPECT_TRUE(obelisk_rt_v1_object_is_instance(visible, &nodeDescriptor));
+
+  ASSERT_EQ(obelisk_rt_v1_object_release_override(holder, kNodeLinkOffset,
+                                                  sizeof(visible), 0, 1),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &holderRoot), OBELISK_RT_OK);
+}
+
+TEST(ManagedHeap, StaticOverrideKeepsHiddenManagedValueRooted) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 64;
+  obelisk_rt_context *context = nullptr;
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 64),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_design_root_register(context, 0), OBELISK_RT_OK);
+  uint64_t target = obelisk_rt_v1_native_state_static_handle(1);
+  ASSERT_NE(target, UINT64_MAX);
+
+  obelisk_rt_object_v1 *assigned = nullptr;
+  obelisk_rt_object_v1 *forced = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &assigned),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &forced),
+            OBELISK_RT_OK);
+  uint64_t globalValue = 0;
+  uint64_t globalUnknown = 0;
+  ASSERT_EQ(obelisk_rt_v1_native_override(
+                context, reinterpret_cast<uint8_t *>(&globalValue),
+                reinterpret_cast<uint8_t *>(&globalUnknown), 64, target, 64,
+                OBELISK_RT_DESCRIPTOR_STORAGE, 1,
+                reinterpret_cast<const uint8_t *>(&assigned), nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_override(
+                context, reinterpret_cast<uint8_t *>(&globalValue),
+                reinterpret_cast<uint8_t *>(&globalUnknown), 64, target, 64,
+                OBELISK_RT_DESCRIPTOR_STORAGE, 0,
+                reinterpret_cast<const uint8_t *>(&forced), nullptr),
+            OBELISK_RT_OK);
+
+  assigned = nullptr;
+  forced = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_release_override(
+                context, reinterpret_cast<uint8_t *>(&globalValue),
+                reinterpret_cast<uint8_t *>(&globalUnknown), 64, target, 64,
+                OBELISK_RT_DESCRIPTOR_STORAGE, 0),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *visible = nullptr;
+  std::memcpy(&visible, &globalValue, sizeof(visible));
+  EXPECT_TRUE(obelisk_rt_v1_object_is_instance(visible, &nodeDescriptor));
+
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
 }
 
 TEST_F(RuntimeTest, SchedulerStatusReportNamesTheFailure) {
@@ -3668,21 +3768,20 @@ TEST_F(ManagedHeapTest, FormatsClassHandlesAsSingularPatterns) {
                                  std::size(arguments), &environment,
                                  output.out()),
             OBELISK_RT_OK);
-  EXPECT_EQ(output.str(),
-            "class@" + std::to_string(obelisk_rt_v1_object_id(object)) +
-                "|null");
+  EXPECT_EQ(output.str(), "class@" +
+                              std::to_string(obelisk_rt_v1_object_id(object)) +
+                              "|null");
 
   obelisk_rt_string_v1 string = 0;
   ASSERT_EQ(obelisk_rt_v1_string_create(lane, "not-a-class", 11, &string),
             OBELISK_RT_OK);
   ASSERT_EQ(string & UINT64_C(3), UINT64_C(0));
-  auto *notClass = reinterpret_cast<obelisk_rt_object_v1 *>(
-      static_cast<uintptr_t>(string));
+  auto *notClass =
+      reinterpret_cast<obelisk_rt_object_v1 *>(static_cast<uintptr_t>(string));
   const obelisk_rt_arg_v1 invalid[] = {
       {OBELISK_RT_ARG_MANAGED_OBJECT, 0, 0, &notClass, nullptr}};
-  EXPECT_EQ(obelisk_rt_v1_format(context, "%p", 2, invalid,
-                                 std::size(invalid), &environment,
-                                 output.out()),
+  EXPECT_EQ(obelisk_rt_v1_format(context, "%p", 2, invalid, std::size(invalid),
+                                 &environment, output.out()),
             OBELISK_RT_INVALID_HANDLE);
 }
 
@@ -3766,29 +3865,29 @@ TEST_F(ManagedHeapTest, DiscoversActiveRandomObjectGraphByIdentity) {
   EXPECT_EQ(obelisk_rt_v1_random_graph_variable_count(graph), 4u);
   obelisk_rt_object_v1 *variableObject = nullptr;
   const obelisk_rt_random_variable_v1 *variable = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_random_graph_variable(
-                graph, 0, &variableObject, &variable),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_random_graph_variable(graph, 0, &variableObject, &variable),
+      OBELISK_RT_OK);
   EXPECT_EQ(variableObject, root);
   EXPECT_EQ(variable, &randomNodeVariable);
-  ASSERT_EQ(obelisk_rt_v1_random_graph_variable(
-                graph, 1, &variableObject, &variable),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_random_graph_variable(graph, 1, &variableObject, &variable),
+      OBELISK_RT_OK);
   EXPECT_EQ(variableObject, root);
   EXPECT_EQ(variable, &randomDerivedVariable);
-  ASSERT_EQ(obelisk_rt_v1_random_graph_variable(
-                graph, 2, &variableObject, &variable),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_random_graph_variable(graph, 2, &variableObject, &variable),
+      OBELISK_RT_OK);
   EXPECT_EQ(variableObject, child);
   EXPECT_EQ(variable, &randomNodeVariable);
-  ASSERT_EQ(obelisk_rt_v1_random_graph_variable(
-                graph, 3, &variableObject, &variable),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_random_graph_variable(graph, 3, &variableObject, &variable),
+      OBELISK_RT_OK);
   EXPECT_EQ(variableObject, derivedChild);
   EXPECT_EQ(variable, &randomNodeVariable);
-  EXPECT_EQ(obelisk_rt_v1_random_graph_variable(
-                graph, 4, &variableObject, &variable),
-            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(
+      obelisk_rt_v1_random_graph_variable(graph, 4, &variableObject, &variable),
+      OBELISK_RT_INVALID_ARGUMENT);
   EXPECT_EQ(variableObject, nullptr);
   EXPECT_EQ(variable, nullptr);
 
@@ -3796,10 +3895,7 @@ TEST_F(ManagedHeapTest, DiscoversActiveRandomObjectGraphByIdentity) {
   const obelisk_rt_random_variable_v1 *referencedVariable = nullptr;
   uint64_t graphVariableIndex = UINT64_MAX;
   const obelisk_rt_random_variable_reference_v1 rootValueReference{
-      nullptr,
-      0,
-      kRandomNodeValueOffset,
-      64,
+      nullptr, 0, kRandomNodeValueOffset, 64,
       OBELISK_RT_RANDOM_VARIABLE_SIGNED};
   ASSERT_EQ(obelisk_rt_v1_random_graph_resolve_variable(
                 graph, 0, &rootValueReference, &referencedObject,
@@ -3811,10 +3907,7 @@ TEST_F(ManagedHeapTest, DiscoversActiveRandomObjectGraphByIdentity) {
 
   const uint64_t childPath[]{kNodeLinkOffset};
   const obelisk_rt_random_variable_reference_v1 childValueReference{
-      childPath,
-      std::size(childPath),
-      kRandomNodeValueOffset,
-      64,
+      childPath, std::size(childPath), kRandomNodeValueOffset, 64,
       OBELISK_RT_RANDOM_VARIABLE_SIGNED};
   ASSERT_EQ(obelisk_rt_v1_random_graph_resolve_variable(
                 graph, 0, &childValueReference, &referencedObject,
@@ -3833,10 +3926,7 @@ TEST_F(ManagedHeapTest, DiscoversActiveRandomObjectGraphByIdentity) {
 
   const uint64_t aliasPath[]{kNodeLinkOffset, kNodeLinkOffset};
   const obelisk_rt_random_variable_reference_v1 aliasValueReference{
-      aliasPath,
-      std::size(aliasPath),
-      kRandomNodeValueOffset,
-      64,
+      aliasPath, std::size(aliasPath), kRandomNodeValueOffset, 64,
       OBELISK_RT_RANDOM_VARIABLE_SIGNED};
   ASSERT_EQ(obelisk_rt_v1_random_graph_resolve_variable(
                 graph, 0, &aliasValueReference, &referencedObject,
@@ -3848,10 +3938,7 @@ TEST_F(ManagedHeapTest, DiscoversActiveRandomObjectGraphByIdentity) {
 
   const uint64_t invalidPath[]{kRandomNodeValueOffset};
   const obelisk_rt_random_variable_reference_v1 invalidReference{
-      invalidPath,
-      std::size(invalidPath),
-      kRandomNodeValueOffset,
-      64,
+      invalidPath, std::size(invalidPath), kRandomNodeValueOffset, 64,
       OBELISK_RT_RANDOM_VARIABLE_SIGNED};
   EXPECT_EQ(obelisk_rt_v1_random_graph_resolve_variable(
                 graph, 0, &invalidReference, &referencedObject,
@@ -3881,9 +3968,9 @@ TEST_F(ManagedHeapTest, DiscoversActiveRandomObjectGraphByIdentity) {
   EXPECT_EQ(obelisk_rt_v1_random_graph_object_descriptor(graph, 0),
             &randomDerivedDescriptor);
   EXPECT_EQ(obelisk_rt_v1_random_graph_variable_count(graph), 1u);
-  ASSERT_EQ(obelisk_rt_v1_random_graph_variable(
-                graph, 0, &variableObject, &variable),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_random_graph_variable(graph, 0, &variableObject, &variable),
+      OBELISK_RT_OK);
   EXPECT_EQ(variableObject, root);
   EXPECT_EQ(variable, &randomDerivedVariable);
   ASSERT_EQ(obelisk_rt_v1_random_graph_resolve_variable(
@@ -3935,8 +4022,7 @@ TEST_F(ManagedHeapTest,
               OBELISK_RT_OK);
   }
 
-  ASSERT_EQ(obelisk_rt_v1_gc_root_range_pop(lane, &objectRoots),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_range_pop(lane, &objectRoots), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
   for (uint64_t index = 0; index != std::size(expectedKeys); ++index) {
     obelisk_rt_assoc_key_v1 key{OBELISK_RT_ASSOC_KEY_CLASS, 0, 0};
@@ -3960,9 +4046,9 @@ TEST_F(ManagedHeapTest,
   absentCursor.object = cursorOnly;
   ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &cursorRoot), OBELISK_RT_OK);
   uint32_t cursorSuccess = 1;
-  ASSERT_EQ(obelisk_rt_v1_assoc_next(lane, array, &absentCursor,
-                                     &cursorSuccess),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_assoc_next(lane, array, &absentCursor, &cursorSuccess),
+      OBELISK_RT_OK);
   EXPECT_EQ(cursorSuccess, 0u);
 
   obelisk_rt_object_v1 *copy = nullptr;
@@ -4113,8 +4199,8 @@ TEST_F(ManagedHeapTest, AutomaticStringStatePreservesSSOAndHeapRoots) {
   const uint64_t rootOffset = 0;
   uint64_t smallHandle = UINT64_MAX;
   ASSERT_EQ(obelisk_rt_v1_native_state_alloc_with_roots(
-                context, 64, reinterpret_cast<const uint8_t *>(&small),
-                nullptr, &rootOffset, 1, &smallHandle),
+                context, 64, reinterpret_cast<const uint8_t *>(&small), nullptr,
+                &rootOffset, 1, &smallHandle),
             OBELISK_RT_OK);
   obelisk_rt_string_v1 loaded = 0;
   uint8_t dummy[8]{};
@@ -4132,8 +4218,8 @@ TEST_F(ManagedHeapTest, AutomaticStringStatePreservesSSOAndHeapRoots) {
   ASSERT_EQ(heap & UINT64_C(3), UINT64_C(0));
   uint64_t heapHandle = UINT64_MAX;
   ASSERT_EQ(obelisk_rt_v1_native_state_alloc_with_roots(
-                context, 64, reinterpret_cast<const uint8_t *>(&heap),
-                nullptr, &rootOffset, 1, &heapHandle),
+                context, 64, reinterpret_cast<const uint8_t *>(&heap), nullptr,
+                &rootOffset, 1, &heapHandle),
             OBELISK_RT_OK);
   heap = 0;
   ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
@@ -4262,9 +4348,8 @@ TEST_F(ManagedHeapTest, DispatchesOverridesAndShallowCopiesDynamicType) {
 
 TEST_F(ManagedHeapTest, ContainsExceptionsFromNativeMethodCallbacks) {
   obelisk_rt_object_v1 *object = nullptr;
-  ASSERT_EQ(
-      obelisk_rt_v1_object_allocate(lane, &throwingDescriptor, &object),
-      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &throwingDescriptor, &object),
+            OBELISK_RT_OK);
   uint64_t result = 0;
   EXPECT_EQ(obelisk_rt_v1_method_invoke(lane, object, 0, 42, nullptr, 0,
                                         &result, sizeof(result)),
@@ -4549,8 +4634,7 @@ TEST(ManagedHeap, RejectsMalformedClassLayouts) {
   EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed),
             OBELISK_RT_INVALID_DESIGN);
   obelisk_rt_trace_entry_v1 ambiguousWeakEntries[] = {
-      {8, 1, 8, OBELISK_RT_TRACE_WEAK, OBELISK_RT_MANAGED_SLOT_CLASS,
-       nullptr},
+      {8, 1, 8, OBELISK_RT_TRACE_WEAK, OBELISK_RT_MANAGED_SLOT_CLASS, nullptr},
       {8, 1, 8, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_CLASS,
        nullptr}};
   obelisk_rt_trace_layout_v1 ambiguousWeakLayout{OBELISK_RT_VERSION,   0, 16, 8,

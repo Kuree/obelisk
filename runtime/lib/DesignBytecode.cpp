@@ -1525,6 +1525,9 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
     case OBELISK_RT_DB_OVERRIDE_STATE: {
       bool isLoad = instruction.opcode == OBELISK_RT_DB_LOAD_STATE;
       bool isOverride = instruction.opcode == OBELISK_RT_DB_OVERRIDE_STATE;
+      if (isOverride)
+        context->managedValueOverridePossible.store(true,
+                                                    std::memory_order_relaxed);
       bool isAssignOverride =
           isOverride &&
           (instruction.flags & OBELISK_RT_DB_OVERRIDE_KIND_MASK) ==
@@ -1571,12 +1574,11 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           value.value[0] = stable;
         }
       } else {
-        value = !isLoad
-                    ? read(valueRegister)
-                    : Logic{valueLayout.width,
-                            valueLayout.kind == OBELISK_RT_DBREG_LOGIC,
-                            LimbVector(limbCount(valueLayout.width)),
-                            LimbVector(limbCount(valueLayout.width))};
+        value = !isLoad ? read(valueRegister)
+                        : Logic{valueLayout.width,
+                                valueLayout.kind == OBELISK_RT_DBREG_LOGIC,
+                                LimbVector(limbCount(valueLayout.width)),
+                                LimbVector(limbCount(valueLayout.width))};
       }
       Layout handleLayout = layout(instruction.source0);
       if (handleLayout.kind != OBELISK_RT_DBREG_HANDLE)
@@ -1612,9 +1614,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           (automatic && descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE) ||
           begin > end)
         return OBELISK_RT_INVALID_HANDLE;
-      if (eventValue &&
-          (descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE || isContinuous ||
-           instruction.flags != 0))
+      if (eventValue && (descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE ||
+                         isContinuous || instruction.flags != 0))
         return OBELISK_RT_INVALID_HANDLE;
       if (isOverride && (local || automatic ||
                          (descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE &&
@@ -1702,9 +1703,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           return status;
         break;
       }
-      if (valueLayout.kind == OBELISK_RT_DBREG_MANAGED) {
-        if (isOverride)
-          return OBELISK_RT_INVALID_HANDLE;
+      if (valueLayout.kind == OBELISK_RT_DBREG_MANAGED && !isOverride) {
         if (descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE ||
             valueLayout.width != 64 || local)
           return OBELISK_RT_INVALID_HANDLE;
@@ -1784,10 +1783,19 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             std::memcpy(&managed, &slot, sizeof(managed));
           else {
             std::memcpy(&previous, &slot, sizeof(previous));
-            std::memcpy(&slot, frame.data + valueLayout.offset,
-                        sizeof(managed));
-            std::memcpy(&managed, frame.data + valueLayout.offset,
-                        sizeof(managed));
+            uint64_t mask = uint64_t{1} << (absolute % 64);
+            bool forced = absolute / 64 < context->forceMask.size() &&
+                          (context->forceMask[absolute / 64] & mask) != 0;
+            bool assigned = absolute / 64 < context->assignMask.size() &&
+                            (context->assignMask[absolute / 64] & mask) != 0;
+            if (forced || assigned) {
+              managed = previous;
+            } else {
+              std::memcpy(&slot, frame.data + valueLayout.offset,
+                          sizeof(managed));
+              std::memcpy(&managed, frame.data + valueLayout.offset,
+                          sizeof(managed));
+            }
           }
         }
         if (instruction.opcode == OBELISK_RT_DB_LOAD_STATE)
@@ -1795,8 +1803,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                       sizeof(managed));
         else if (previous != managed) {
           uint64_t changedHandle =
-              automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                              static_cast<uint32_t>(start)
+              automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                                    static_cast<uint32_t>(start)
               : boundedStatic ? encodeStaticHandle(staticID, start)
                               : static_cast<uint64_t>(start);
           if (changedHandle == UINT64_MAX)
@@ -1924,8 +1932,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         }
         bool equalStringContents = false;
         if (valueLayout.kind == OBELISK_RT_DBREG_STRING && !isLoad) {
-          if (isOverride || local ||
-              descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE ||
+          if (local || descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE ||
               valueLayout.width != 64 || start < 0 || start % 64 != 0 ||
               end - start < 64)
             return OBELISK_RT_INVALID_HANDLE;
@@ -2074,8 +2081,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             if (!local && !realValue && !equalStringContents)
               transitions.push_back(
                   {bitIndex,
-                   automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                                   static_cast<uint32_t>(absolute)
+                   automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                                         static_cast<uint32_t>(absolute)
                    : boundedStatic ? encodeStaticHandle(staticID, coordinate)
                                    : absolute,
                    oldValue, oldUnknown, newValue, newUnknown});
@@ -2098,8 +2105,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           }
           if (changed) {
             uint64_t realHandle =
-                automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                                static_cast<uint32_t>(start)
+                automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                                      static_cast<uint32_t>(start)
                 : boundedStatic ? encodeStaticHandle(staticID, start)
                                 : static_cast<uint64_t>(start);
             if (!obelisk_rt_publish_signal_occurrence_unlocked(

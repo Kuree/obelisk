@@ -391,10 +391,10 @@ void declareNativeRuntimeABI(ModuleOp module) {
       {managedI64, managedI64, managedI32, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_next", managedI32,
                            {managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_get_state",
-                           managedI32, {managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_set_state",
-                           managedI32, {managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_get_state", managedI32,
+                           {managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_set_state", managedI32,
+                           {managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_seed", managedI32,
                            {managedPointer, managedI64});
   getOrDeclareLLVMFunction(
@@ -509,6 +509,13 @@ void declareNativeRuntimeABI(ModuleOp module) {
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_field_store",
                            managedI32,
                            {managedPointer, managedI64, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_override", managedI32,
+                           {managedPointer, managedI64, managedI64, managedI32,
+                            managedI32, managedI32, managedI64, managedI32,
+                            managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_object_release_override", managedI32,
+      {managedPointer, managedI64, managedI64, managedI32, managedI32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_is_instance",
                            managedI32, {managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_id", managedI64,

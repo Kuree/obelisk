@@ -934,8 +934,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
   }
   case OBELISK_RT_INTRINSIC_V1_RANDOM_GET_STATE: {
     obelisk_rt_random_state_v1 state{};
-    obelisk_rt_status status =
-        obelisk_rt_v1_random_get_state(context, &state);
+    obelisk_rt_status status = obelisk_rt_v1_random_get_state(context, &state);
     if (status != OBELISK_RT_OK)
       return status;
     status = sentinel(0, state.state);
@@ -1884,6 +1883,44 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           frame.data + input.offset + scratchPlaneSize, *planeSize);
     return obelisk_rt_v1_object_write(object, offset, frame.data + input.offset,
                                       *planeSize);
+  }
+  case OBELISK_RT_INTRINSIC_V1_MANAGED_OVERRIDE: {
+    obelisk_rt_object_v1 *object = nullptr;
+    uint64_t offset = 0;
+    auto planeSize = scalar(2);
+    auto flags = scalar(3);
+    auto owner = scalar(4);
+    if (!readManagedRef(inputRegister(0), object, offset) || !planeSize ||
+        !flags || !owner || *planeSize == 0 || (*flags & ~uint64_t{15}) != 0)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Layout input = layoutAt(image, frame.function, inputRegister(1));
+    bool fourState = (*flags & 8) != 0;
+    if (fourState != (input.kind == OBELISK_RT_DBREG_LOGIC))
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t scratchPlaneSize = ((uint64_t{input.width} + 63) / 64) * 8;
+    if (fourState &&
+        (*planeSize > scratchPlaneSize || input.size != scratchPlaneSize * 2))
+      return OBELISK_RT_INVALID_BYTECODE;
+    if (!fourState && *planeSize > input.size)
+      return OBELISK_RT_INVALID_BYTECODE;
+    const uint8_t *value = frame.data + input.offset;
+    const uint8_t *unknown = fourState ? value + scratchPlaneSize : nullptr;
+    return obelisk_rt_v1_object_override(
+        object, offset, *planeSize, fourState ? 1 : 0,
+        (*flags & 1) != 0 ? 1 : 0, (*flags & 2) != 0 ? 1 : 0, *owner,
+        (*flags & 4) != 0 ? 1 : 0, value, unknown);
+  }
+  case OBELISK_RT_INTRINSIC_V1_MANAGED_RELEASE_OVERRIDE: {
+    obelisk_rt_object_v1 *object = nullptr;
+    uint64_t offset = 0;
+    auto planeSize = scalar(1);
+    auto flags = scalar(2);
+    if (!readManagedRef(inputRegister(0), object, offset) || !planeSize ||
+        !flags || *planeSize == 0 || (*flags & ~uint64_t{9}) != 0)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return obelisk_rt_v1_object_release_override(object, offset, *planeSize,
+                                                 (*flags & 8) != 0 ? 1 : 0,
+                                                 (*flags & 1) != 0 ? 1 : 0);
   }
   case OBELISK_RT_INTRINSIC_V1_MANAGED_NBA: {
     obelisk_rt_object_v1 *object = nullptr;
