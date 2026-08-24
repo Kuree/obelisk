@@ -4402,6 +4402,93 @@ FailureOr<SmallVector<Value>> UnitLowering::unpackedSliceIndices(
   return indices;
 }
 
+FailureOr<UnitLowering::QueueSliceAddress>
+UnitLowering::lowerQueueSliceAddress(semantic::SVRangeSelectExpressionOp range,
+                                     ArrayRef<Operation *> bounds, Value queue,
+                                     Location location) {
+  if (bounds.size() != 2 ||
+      range.getSelectionKind() != semantic::SVRangeSelectionKind::Simple)
+    return failure();
+  auto i64 = builder.getI64Type();
+  auto constant = [&](int64_t value) -> Value {
+    return arith::ConstantOp::create(builder, location, i64,
+                                     builder.getI64IntegerAttr(value));
+  };
+  Value zero = constant(0);
+  Value one = constant(1);
+  Value size = sim::SimContainerSizeOp::create(builder, location, i64, queue);
+  Value last = arith::SubIOp::create(builder, location, size, one);
+
+  struct Bound {
+    Value value;
+    Value known;
+  };
+  auto lowerBound = [&](Operation *bound) -> FailureOr<Bound> {
+    if (isUnboundedEndpoint(bound))
+      return Bound{last, arith::ConstantOp::create(builder, location,
+                                                   builder.getI1Type(),
+                                                   builder.getBoolAttr(true))};
+    Value previousPlaceholder = unboundedPlaceholder;
+    unboundedPlaceholder = last;
+    FailureOr<Value> value = lowerExpression(bound);
+    unboundedPlaceholder = previousPlaceholder;
+    if (failed(value))
+      return failure();
+    FailureOr<Value> scalar =
+        toPackedScalar(*value, getSemanticLocation(bound));
+    if (failed(scalar))
+      return failure();
+    Value normalized = *scalar;
+    Value known = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    if (auto logic = dyn_cast<sim::LogicType>(normalized.getType())) {
+      auto bitsType = builder.getIntegerType(logic.getWidth());
+      Value bits = sim::SimLogicToBitsOp::create(builder, location, bitsType,
+                                                 normalized);
+      Value roundTrip =
+          sim::SimLogicFromBitsOp::create(builder, location, logic, bits);
+      known = sim::SimLogicCompareOp::create(
+          builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
+          normalized, roundTrip);
+      normalized = bits;
+    }
+    FailureOr<Value> converted = convert(normalized, i64, isSignedNode(bound),
+                                         getSemanticLocation(bound));
+    if (failed(converted))
+      return failure();
+    return Bound{*converted, known};
+  };
+
+  FailureOr<Bound> first = lowerBound(bounds.front());
+  FailureOr<Bound> second = lowerBound(bounds.back());
+  if (failed(first) || failed(second))
+    return failure();
+  Value firstNegative = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::slt, first->value, zero);
+  Value start = arith::SelectOp::create(builder, location, firstNegative, zero,
+                                        first->value);
+  Value secondAbove = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::sgt, second->value, last);
+  Value finish = arith::SelectOp::create(builder, location, secondAbove, last,
+                                         second->value);
+  Value valid =
+      arith::AndIOp::create(builder, location, first->known, second->known);
+  Value nonempty = arith::CmpIOp::create(builder, location,
+                                         arith::CmpIPredicate::ne, size, zero);
+  valid = arith::AndIOp::create(builder, location, valid, nonempty);
+  Value startInRange = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::slt, start, size);
+  valid = arith::AndIOp::create(builder, location, valid, startInRange);
+  Value ordered = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::sle, start, finish);
+  valid = arith::AndIOp::create(builder, location, valid, ordered);
+  Value span = arith::AddIOp::create(
+      builder, location,
+      arith::SubIOp::create(builder, location, finish, start), one);
+  Value count = arith::SelectOp::create(builder, location, valid, span, zero);
+  return QueueSliceAddress{start, count, valid};
+}
+
 FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   Location location = getSemanticLocation(op);
   if (auto leafPath =
@@ -4454,52 +4541,15 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
         return failure();
       container = *loaded;
     }
-    auto i64Constant = [&](int64_t value) -> Value {
-      return arith::ConstantOp::create(builder, location, builder.getI64Type(),
-                                       builder.getI64IntegerAttr(value));
-    };
-    Value zero = i64Constant(0);
-    Value one = i64Constant(1);
-    Value size = sim::SimContainerSizeOp::create(
-        builder, location, builder.getI64Type(), container);
-    Value last = arith::SubIOp::create(builder, location, size, one);
-    auto lowerBound = [&](Operation *bound) -> FailureOr<Value> {
-      if (isUnboundedEndpoint(bound))
-        return last;
-      Value previousPlaceholder = unboundedPlaceholder;
-      unboundedPlaceholder = last;
-      FailureOr<Value> value = lowerExpression(bound);
-      unboundedPlaceholder = previousPlaceholder;
-      if (failed(value))
-        return failure();
-      FailureOr<Value> scalar =
-          toPackedScalar(*value, getSemanticLocation(bound));
-      if (failed(scalar))
-        return failure();
-      return convert(*scalar, builder.getI64Type(), isSignedNode(bound),
-                     getSemanticLocation(bound));
-    };
-    FailureOr<Value> first = lowerBound(children[1]);
-    FailureOr<Value> second = lowerBound(children[2]);
-    if (failed(first) || failed(second))
+    recordContainerSizeRead(container, location);
+    FailureOr<QueueSliceAddress> address = lowerQueueSliceAddress(
+        range, ArrayRef(children).drop_front(), container, location);
+    if (failed(address))
       return failure();
-    Value firstNegative = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::slt, *first, zero);
-    Value start =
-        arith::SelectOp::create(builder, location, firstNegative, zero, *first);
-    Value secondAbove = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::sgt, *second, last);
-    Value finish =
-        arith::SelectOp::create(builder, location, secondAbove, last, *second);
-    Value nonempty = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ne, size, zero);
-    Value startInRange = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::slt, start, size);
-    Value ordered = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::sle, start, finish);
-    Value valid =
-        arith::AndIOp::create(builder, location, nonempty, startInRange);
-    valid = arith::AndIOp::create(builder, location, valid, ordered);
+    Value zero = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(), builder.getI64IntegerAttr(0));
+    Value one = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(), builder.getI64IntegerAttr(1));
 
     auto resultQueue = cast<sim::QueueType>(*resultType);
     FailureOr<ContainerElementDescriptor> descriptor =
@@ -4520,15 +4570,16 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
     header->addArgument(builder.getI64Type(), location);
     Block *body = addBlock();
     Block *exit = addBlock();
-    cf::CondBranchOp::create(builder, location, valid, header,
-                             ValueRange{start}, exit, ValueRange{});
+    cf::BranchOp::create(builder, location, header, ValueRange{zero});
     setCurrent(header);
-    Value index = header->getArgument(0);
+    Value ordinal = header->getArgument(0);
     Value inRange = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::sle, index, finish);
+        builder, location, arith::CmpIPredicate::ult, ordinal, address->count);
     cf::CondBranchOp::create(builder, location, inRange, body, ValueRange{},
                              exit, ValueRange{});
     setCurrent(body);
+    Value index =
+        arith::AddIOp::create(builder, location, address->start, ordinal);
     Type sourceElement = cast<sim::QueueType>(sourceValueType).getElementType();
     Value value = sim::SimContainerReadOp::create(
         builder, location, sourceElement, container, index);
@@ -4536,10 +4587,9 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
         convert(value, resultQueue.getElementType(), false, location);
     if (failed(converted))
       return failure();
-    Value outputIndex = arith::SubIOp::create(builder, location, index, start);
-    sim::SimContainerWriteOp::create(builder, location, result, outputIndex,
+    sim::SimContainerWriteOp::create(builder, location, result, ordinal,
                                      *converted);
-    Value next = arith::AddIOp::create(builder, location, index, one);
+    Value next = arith::AddIOp::create(builder, location, ordinal, one);
     cf::BranchOp::create(builder, location, header, ValueRange{next});
     setCurrent(exit);
     return result;
@@ -4606,27 +4656,44 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
                                   : FailureOr<Value>(failure());
       if (failed(convertedKey) || failed(materialized))
         return failure();
-      container = *materialized;
       if (lvalue) {
         if (!isReference)
           return emitError(location)
                      << "associative element lvalue has no owning storage",
                  failure();
-        if (failed(storeReference(*input, container, location)))
+        Value wasNull = sim::SimManagedIsNullOp::create(
+            builder, location, builder.getI1Type(), container);
+        Block *publish = addBlock();
+        Block *existing = addBlock();
+        Block *ready = addBlock();
+        ready->addArgument(sourceValueType, location);
+        cf::CondBranchOp::create(builder, location, wasNull, publish,
+                                 ValueRange{}, existing, ValueRange{});
+        setCurrent(publish);
+        if (failed(storeReference(*input, *materialized, location)))
           return failure();
         FailureOr<Value> published = loadReference(*input, location);
+        if (failed(published))
+          return failure();
+        cf::BranchOp::create(builder, location, ready, ValueRange{*published});
+        setCurrent(existing);
+        cf::BranchOp::create(builder, location, ready, ValueRange{container});
+        setCurrent(ready);
+        container = ready->getArgument(0);
         FailureOr<Value> owner =
             toArgumentReference(*input, sourceValueType, location);
-        if (failed(published) || failed(owner))
+        if (failed(owner))
           return failure();
         Type pathType =
             sim::ReferencePathType::get(function.getContext(), *resultType);
         return sim::SimReferencePathAssocOp::create(
                    builder, location, pathType,
-                   function.getBody().front().getArgument(0), *published,
+                   function.getBody().front().getArgument(0), container,
                    *convertedKey, *owner)
             .getResult();
       }
+      container = *materialized;
+      recordContainerSizeRead(container, location);
       return sim::SimAssocReadOp::create(builder, location, *resultType,
                                          container, *convertedKey)
           .getResult();
@@ -4681,22 +4748,40 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
                failure();
       FailureOr<Value> materialized =
           ensureSequentialContainer(container, location);
-      if (failed(materialized) ||
-          failed(storeReference(*input, *materialized, location)))
+      if (failed(materialized))
+        return failure();
+      Value wasNull = sim::SimManagedIsNullOp::create(
+          builder, location, builder.getI1Type(), container);
+      Block *publish = addBlock();
+      Block *existing = addBlock();
+      Block *ready = addBlock();
+      ready->addArgument(sourceValueType, location);
+      cf::CondBranchOp::create(builder, location, wasNull, publish,
+                               ValueRange{}, existing, ValueRange{});
+      setCurrent(publish);
+      if (failed(storeReference(*input, *materialized, location)))
         return failure();
       FailureOr<Value> published = loadReference(*input, location);
+      if (failed(published))
+        return failure();
+      cf::BranchOp::create(builder, location, ready, ValueRange{*published});
+      setCurrent(existing);
+      cf::BranchOp::create(builder, location, ready, ValueRange{container});
+      setCurrent(ready);
+      Value owner = ready->getArgument(0);
       Type pathType =
           sim::ReferencePathType::get(function.getContext(), *resultType);
       FailureOr<Value> ownerReference =
           toArgumentReference(*input, sourceValueType, location);
-      if (failed(published) || failed(ownerReference))
+      if (failed(ownerReference))
         return failure();
       return sim::SimReferencePathIndexOp::create(
                  builder, location, pathType,
-                 function.getBody().front().getArgument(0), *published,
+                 function.getBody().front().getArgument(0), owner,
                  resolvedIndex, *ownerReference)
           .getResult();
     }
+    recordContainerSizeRead(container, location);
     return sim::SimContainerReadOp::create(builder, location, *resultType,
                                            container, resolvedIndex)
         .getResult();
@@ -4705,7 +4790,8 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   if (isa<sim::StringType>(sourceValueType)) {
     if (lvalue) {
       unsupported(op)
-          << " (escaping string-character lvalues are not yet materialized)";
+          << " (a string character select is not a legal ref actual under "
+             "IEEE 1800-2017 13.5.2)";
       return failure();
     }
     if (!element) {

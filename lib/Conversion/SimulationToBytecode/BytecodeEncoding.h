@@ -186,6 +186,15 @@ constexpr uint32_t kIntrinsicManagedCandidateRoot =
     OBELISK_RT_INTRINSIC_V1_MANAGED_CANDIDATE_ROOT;
 constexpr uint32_t kIntrinsicReferencePathIndex =
     OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_INDEX;
+constexpr uint32_t kIntrinsicReferencePathStringCharacter =
+    OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_STRING_CHARACTER;
+constexpr uint32_t kIntrinsicReferencePathAggregateElement =
+    OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_AGGREGATE_ELEMENT;
+constexpr uint32_t kIntrinsicContainerImportFixed =
+    OBELISK_RT_INTRINSIC_V1_CONTAINER_IMPORT_FIXED;
+constexpr uint32_t kIntrinsicContainerExportFixed =
+    OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_FIXED;
+constexpr uint32_t kIntrinsicBoxIsType = OBELISK_RT_INTRINSIC_V1_BOX_IS_TYPE;
 constexpr uint32_t kIntrinsicArgumentRefFromPath =
     OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_PATH;
 constexpr uint32_t kIntrinsicStringLiteral =
@@ -232,6 +241,8 @@ constexpr uint32_t kIntrinsicContainerCreate =
     OBELISK_RT_INTRINSIC_V1_CONTAINER_CREATE;
 constexpr uint32_t kIntrinsicContainerClone =
     OBELISK_RT_INTRINSIC_V1_CONTAINER_CLONE;
+constexpr uint32_t kIntrinsicContainerSwap =
+    OBELISK_RT_INTRINSIC_V1_CONTAINER_SWAP;
 constexpr uint32_t kIntrinsicContainerDelete =
     OBELISK_RT_INTRINSIC_V1_CONTAINER_DELETE;
 constexpr uint32_t kIntrinsicRandomBounded =

@@ -543,6 +543,29 @@ def SimManagedIsNullOp : SimOp<"managed.is_null", [Pure]> {
   let hasVerifier = 1;
 }
 
+def SimBoxPackOp : SimOp<"box.pack", [Pure]> {
+  let summary = "erase a one-element typed dynamic array as a boxed value";
+  let arguments = (ins SimDynamicArrayType:$input);
+  let results = (outs SimBoxType:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+}
+
+def SimBoxCastOp : SimOp<"box.cast", [Pure]> {
+  let summary = "recover a checked boxed dynamic-array representation";
+  let arguments = (ins SimBoxType:$input);
+  let results = (outs SimDynamicArrayType:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+}
+
+def SimBoxIsTypeOp : SimOp<"box.is_type", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "test the stable element type stored in a boxed value";
+  let arguments = (ins SimBoxType:$input, I64Attr:$type_id);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$input `type_id` $type_id attr-dict `:` type($input)";
+}
+
 def SimEventNullOp : SimOp<"event.null", [Pure, ConstantLike]> {
   let summary = "null event handle";
   let results = (outs SimEventType:$result);
@@ -606,6 +629,34 @@ def SimContainerCloneOp : SimOp<"container.clone", [
   let summary = "deep-clone a dynamic array or queue value";
   let arguments = (ins AnyType:$input);
   let results = (outs AnyType:$result);
+  let hasVerifier = 1;
+}
+
+def SimContainerImportFixedOp : SimOp<"container.import_fixed", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "bulk-copy one fixed unpacked array into a dynamic container";
+  let arguments = (ins AnyType:$container, SimUnpackedArrayType:$input,
+                        I64Attr:$element_span);
+  let hasVerifier = 1;
+}
+
+def SimContainerExportFixedOp : SimOp<"container.export_fixed", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "bulk-copy a dynamic container into one fixed unpacked array";
+  let arguments = (ins AnyType:$container, I64Attr:$element_span);
+  let results = (outs SimUnpackedArrayType:$result);
+  let hasVerifier = 1;
+}
+
+def SimContainerSwapOp : SimOp<"container.swap", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "swap two sequential-container elements and their identities";
+  let arguments = (ins AnyType:$container, I64:$left, I64:$right);
+  let assemblyFormat = "$container `[` $left `,` $right `]` attr-dict `:` "
+                       "type($container)";
   let hasVerifier = 1;
 }
 
@@ -1220,9 +1271,9 @@ def SimManagedWatchOp : SimOp<"managed.watch", [
   let summary = "materialize a precise managed mutation dependency";
   let description = [{
     A field watch is formed from a managed reference and changes only when the
-    selected field value changes. A container-size watch is formed from a
-    dynamic array, queue, or associative array and changes only when its size
-    changes. The stable token is scheduler-owned and contains no managed
+    selected field value changes. A container watch is formed from a dynamic
+    array, queue, or associative array and changes whenever the container is
+    mutated. The stable token is scheduler-owned and contains no managed
     pointer.
   }];
   let arguments = (ins AnyType:$input, SimManagedWatchKind:$kind);
@@ -1308,6 +1359,46 @@ def SimReferencePathAssocOp : SimOp<"reference_path.assoc", [
   let results = (outs SimReferencePathType:$result);
   let assemblyFormat =
       "$context `,` $array `[` $key `]` `watching` $owner_reference attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def SimReferencePathStringCharacterOp
+    : SimOp<"reference_path.string_character", [
+        MemoryEffects<[MemRead<SimStorageResource>,
+                       MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+      ]> {
+  let summary = "capture a string-character lvalue for deferred update";
+  let arguments = (ins SimContextType:$context, SimStringType:$string,
+                       I64:$index, SimArgumentRefType:$owner_reference);
+  let results = (outs SimReferencePathType:$result);
+  let assemblyFormat =
+      "$context `,` $string `[` $index `]` `watching` $owner_reference attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def SimReferencePathAggregateElementOp
+    : SimOp<"reference_path.aggregate_element", [
+        MemoryEffects<[MemRead<SimStorageResource>,
+                       MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+      ]> {
+  let summary = "capture a fixed-aggregate element lvalue for deferred update";
+  let arguments = (ins
+    SimContextType:$context,
+    SimArgumentRefType:$owner_reference,
+    I64:$index,
+    I64Attr:$left,
+    I64Attr:$right,
+    I64Attr:$element_span,
+    I64Attr:$type_id,
+    I32Attr:$element_kind,
+    I32Attr:$element_flags,
+    I64Attr:$value_size,
+    I64Attr:$alignment,
+    I64Attr:$bit_width,
+    DenseI64ArrayAttr:$trace_offsets,
+    DenseI32ArrayAttr:$trace_kinds
+  );
+  let results = (outs SimReferencePathType:$result);
   let hasVerifier = 1;
 }
 

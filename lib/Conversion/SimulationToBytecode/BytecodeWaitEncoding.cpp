@@ -304,6 +304,13 @@ LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
     write32(bytes, 32 + index * 16 + 8, edge);
     if (signalWait) {
       Type type = watched[index].getType();
+      if (isa<sim::ManagedWatchType>(type)) {
+        if (edge != static_cast<uint32_t>(sim::EdgeKind::Change))
+          return operation->emitOpError(
+              "managed waits only support change events");
+        write32(bytes, 32 + index * 16 + 12, OBELISK_RT_WAIT_WIDTH_MANAGED);
+        continue;
+      }
       Type element;
       if (auto reference = dyn_cast<sim::RefType>(type))
         element = reference.getElementType();
@@ -328,8 +335,8 @@ LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
   for (auto [index, handle] : llvm::enumerate(watched)) {
     // Process and mailbox waits carry runtime handles directly. Other wait
     // operands are design handles and must be converted to stable IDs.
-    if (isa<sim::ProcessType, sim::MailboxType, sim::SemaphoreType>(
-            handle.getType())) {
+    if (isa<sim::ProcessType, sim::MailboxType, sim::SemaphoreType,
+            sim::ManagedWatchType>(handle.getType())) {
       emit({StoreFrame, 0, 0, reg(plan, handle), 0, 0, 0,
             suspension->waitOffset + sizeof(obelisk_rt_wait_record_v1) +
                 index * sizeof(obelisk_rt_wait_entry_v1)});

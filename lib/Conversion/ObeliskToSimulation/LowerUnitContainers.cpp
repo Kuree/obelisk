@@ -136,14 +136,92 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
   bool elementSigned =
       sourceElementType && isSignedSemanticType(sourceElementType);
   bool fixedReceiver = isa<sim::UnpackedArrayType>(*semanticReceiverType);
-  if (fixedReceiver && mutatesReceiver) {
-    emitError(location) << "fixed-array ordering methods are not executable "
-                           "yet: "
-                        << methodName;
-    return failure();
+  if (fixedReceiver && mutatesReceiver && !receiverOverride) {
+    auto fixed = cast<sim::UnpackedArrayType>(*semanticReceiverType);
+    FailureOr<CapturedLValue> captured = captureLValue(receiverNode, location);
+    FailureOr<Value> aggregate = succeeded(captured)
+                                     ? loadCapturedLValue(*captured, location)
+                                     : FailureOr<Value>(failure());
+    FailureOr<ContainerElementDescriptor> descriptor =
+        describeContainerElement(fixed.getElementType(), location);
+    if (failed(captured) || failed(aggregate) || failed(descriptor))
+      return failure();
+    uint64_t count = sim::getAggregateNumElements(fixed);
+    Value size =
+        arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                  builder.getI64IntegerAttr(count));
+    Type temporaryType = sim::DynamicArrayType::get(function.getContext(),
+                                                    fixed.getElementType());
+    Value temporary = sim::SimContainerCreateOp::create(
+        builder, location, temporaryType, size, descriptor->typeID,
+        descriptor->kind, descriptor->flags, descriptor->valueSize,
+        descriptor->alignment, descriptor->bitWidth,
+        builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
+        builder.getDenseI32ArrayAttr(descriptor->traceKinds),
+        OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 0);
+    std::optional<uint64_t> elementSpan =
+        sim::getProvenanceSpan(fixed.getElementType());
+    if (!elementSpan || *elementSpan == 0)
+      return failure();
+    sim::SimContainerImportFixedOp::create(builder, location, temporary,
+                                           *aggregate, *elementSpan);
+    Type keyType =
+        sim::QueueType::get(function.getContext(), builder.getI64Type(), 0);
+    FailureOr<ContainerElementDescriptor> keyDescriptor =
+        describeContainerElement(builder.getI64Type(), location);
+    if (failed(keyDescriptor))
+      return failure();
+    Value keys = sim::SimContainerCreateOp::create(
+        builder, location, keyType, size, keyDescriptor->typeID,
+        keyDescriptor->kind, keyDescriptor->flags, keyDescriptor->valueSize,
+        keyDescriptor->alignment, keyDescriptor->bitWidth,
+        builder.getDenseI64ArrayAttr(keyDescriptor->traceOffsets),
+        builder.getDenseI32ArrayAttr(keyDescriptor->traceKinds),
+        OBELISK_RT_CONTAINER_QUEUE, UINT64_MAX);
+    Value zero = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(), builder.getI64IntegerAttr(0));
+    Value one = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(), builder.getI64IntegerAttr(1));
+    Value left =
+        arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                  builder.getI64IntegerAttr(fixed.getLeft()));
+    auto sourceIndex = [&](Value ordinal) -> Value {
+      return fixed.getLeft() <= fixed.getRight()
+                 ? Value(
+                       arith::AddIOp::create(builder, location, left, ordinal))
+                 : Value(
+                       arith::SubIOp::create(builder, location, left, ordinal));
+    };
+    Block *populateHeader = addBlock();
+    populateHeader->addArgument(builder.getI64Type(), location);
+    Block *populateBody = addBlock();
+    Block *populated = addBlock();
+    cf::BranchOp::create(builder, location, populateHeader, ValueRange{zero});
+    setCurrent(populateHeader);
+    Value ordinal = populateHeader->getArgument(0);
+    Value more = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ult, ordinal, size);
+    cf::CondBranchOp::create(builder, location, more, populateBody,
+                             ValueRange{}, populated, ValueRange{});
+    setCurrent(populateBody);
+    Value fixedIndex = sourceIndex(ordinal);
+    sim::SimContainerWriteOp::create(builder, location, keys, ordinal,
+                                     fixedIndex);
+    Value next = arith::AddIOp::create(builder, location, ordinal, one);
+    cf::BranchOp::create(builder, location, populateHeader, ValueRange{next});
+    setCurrent(populated);
+    FailureOr<Value> result = lowerArrayMethod(op, temporary, keys);
+    if (failed(result))
+      return failure();
+    Value updated = sim::SimContainerExportFixedOp::create(
+        builder, location, fixed, temporary, *elementSpan);
+    if (failed(writeCapturedLValue(*captured, updated, false, false, location)))
+      return failure();
+    return *result;
   }
   FailureOr<Value> receiver;
   std::optional<CapturedLValue> capturedReceiver;
+  Value commitCondition;
   if (receiverOverride) {
     receiver = receiverOverride;
   } else if (mutatesReceiver) {
@@ -153,7 +231,22 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
                                   : FailureOr<Value>(failure());
     if (failed(captured) || failed(loaded))
       return failure();
-    Value updated = cloneSequentialValue(*loaded, location);
+    // Assignments already establish container value semantics by cloning at
+    // the publication boundary.  A method invoked on direct variable storage
+    // must therefore mutate that variable's existing container identity in
+    // place: IEEE 1800-2017 7.10.3 requires references to surviving queue
+    // elements to remain current across queue-method updates.  Selected
+    // container values still need copy/rebuild publication through their
+    // parent lvalue.
+    bool directStorage =
+        captured->kind == CapturedLValue::Kind::Reference &&
+        isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType>(
+            captured->reference.getType());
+    Value updated =
+        directStorage ? *loaded : cloneSequentialValue(*loaded, location);
+    if (directStorage)
+      commitCondition = sim::SimManagedIsNullOp::create(
+          builder, location, builder.getI1Type(), *loaded);
     FailureOr<Value> allocated = ensureSequentialContainer(updated, location);
     if (failed(allocated))
       return failure();
@@ -184,8 +277,20 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
   auto commitMutation = [&]() -> LogicalResult {
     if (!capturedReceiver)
       return success();
-    return writeCapturedLValue(*capturedReceiver, *receiver, false, false,
-                               location);
+    if (!commitCondition)
+      return writeCapturedLValue(*capturedReceiver, *receiver, false, false,
+                                 location);
+    Block *publish = addBlock();
+    Block *done = addBlock();
+    cf::CondBranchOp::create(builder, location, commitCondition, publish,
+                             ValueRange{}, done, ValueRange{});
+    setCurrent(publish);
+    if (failed(writeCapturedLValue(*capturedReceiver, *receiver, false, false,
+                                   location)))
+      return failure();
+    cf::BranchOp::create(builder, location, done);
+    setCurrent(done);
+    return success();
   };
   auto mutatedResult = [&](Value result) -> FailureOr<Value> {
     if (failed(commitMutation()))
@@ -652,18 +757,17 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         arith::SubIOp::create(builder, location, size, indexConstant(1));
     Value rightIndex =
         arith::SubIOp::create(builder, location, last, leftIndex);
-    Value left = sim::SimContainerReadOp::create(builder, location, elementType,
-                                                 *receiver, leftIndex);
-    Value right = sim::SimContainerReadOp::create(
-        builder, location, elementType, *receiver, rightIndex);
-    sim::SimContainerWriteOp::create(builder, location, *receiver, leftIndex,
-                                     right);
-    sim::SimContainerWriteOp::create(builder, location, *receiver, rightIndex,
-                                     left);
+    sim::SimContainerSwapOp::create(builder, location, *receiver, leftIndex,
+                                    rightIndex);
     Value next =
         arith::AddIOp::create(builder, location, leftIndex, indexConstant(1));
     cf::BranchOp::create(builder, location, header, ValueRange{next});
     setCurrent(exit);
+    // A method invocation is a container mutation even when an extent of zero
+    // or one requires no value swap. A self-swap publishes the container watch
+    // without changing element identity.
+    sim::SimContainerSwapOp::create(builder, location, *receiver,
+                                    indexConstant(0), indexConstant(0));
     return mutatedResult(arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(false)));
   }
@@ -691,15 +795,11 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     Value context = function.getBody().front().getArgument(0);
     Value random = sim::SimRandomBoundedOp::create(
         builder, location, builder.getI64Type(), context, count);
-    Value left = sim::SimContainerReadOp::create(builder, location, elementType,
-                                                 *receiver, last);
-    Value right = sim::SimContainerReadOp::create(
-        builder, location, elementType, *receiver, random);
-    sim::SimContainerWriteOp::create(builder, location, *receiver, last, right);
-    sim::SimContainerWriteOp::create(builder, location, *receiver, random,
-                                     left);
+    sim::SimContainerSwapOp::create(builder, location, *receiver, last, random);
     cf::BranchOp::create(builder, location, header, ValueRange{last});
     setCurrent(exit);
+    sim::SimContainerSwapOp::create(builder, location, *receiver,
+                                    indexConstant(0), indexConstant(0));
     return mutatedResult(arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(false)));
   }
@@ -972,14 +1072,10 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     Value swapIndex = swap->getArgument(4);
     Value swapRightIndex =
         arith::AddIOp::create(builder, location, swapIndex, indexConstant(1));
-    sim::SimContainerWriteOp::create(builder, location, *receiver, swapIndex,
-                                     swap->getArgument(1));
-    sim::SimContainerWriteOp::create(builder, location, *receiver,
-                                     swapRightIndex, swap->getArgument(0));
-    sim::SimContainerWriteOp::create(builder, location, keys, swapIndex,
-                                     swap->getArgument(3));
-    sim::SimContainerWriteOp::create(builder, location, keys, swapRightIndex,
-                                     swap->getArgument(2));
+    sim::SimContainerSwapOp::create(builder, location, *receiver, swapIndex,
+                                    swapRightIndex);
+    sim::SimContainerSwapOp::create(builder, location, keys, swapIndex,
+                                    swapRightIndex);
     cf::BranchOp::create(builder, location, innerStep,
                          ValueRange{swapIndex, innerLimit});
     setCurrent(innerStep);
@@ -992,6 +1088,8 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         builder, location, outerStep->getArgument(0), indexConstant(1));
     cf::BranchOp::create(builder, location, outerHeader, ValueRange{nextPass});
     setCurrent(exit);
+    sim::SimContainerSwapOp::create(builder, location, *receiver,
+                                    indexConstant(0), indexConstant(0));
     return mutatedResult(arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(false)));
   }
@@ -1388,6 +1486,7 @@ UnitLowering::lowerAssociativeArrayMethod(semantic::SVCallExpressionOp op) {
     FailureOr<Value> key = lowerKey(children[1]);
     if (failed(receiver) || failed(key))
       return failure();
+    recordContainerSizeRead(*receiver, location);
     Value exists = sim::SimAssocExistsOp::create(
         builder, location, builder.getI1Type(), *receiver, *key);
     return result(exists);
@@ -1396,13 +1495,23 @@ UnitLowering::lowerAssociativeArrayMethod(semantic::SVCallExpressionOp op) {
     if (children.size() > 2)
       return emitError(location) << "delete takes at most one key argument",
              failure();
-    FailureOr<Value> reference = lowerExpression(children.front(), true);
-    FailureOr<Value> loaded = succeeded(reference)
-                                  ? loadReference(*reference, location)
+    FailureOr<CapturedLValue> captured =
+        captureLValue(children.front(), location);
+    FailureOr<Value> loaded = succeeded(captured)
+                                  ? loadCapturedLValue(*captured, location)
                                   : FailureOr<Value>(failure());
-    if (failed(reference) || failed(loaded))
+    if (failed(captured) || failed(loaded))
       return failure();
-    Value updated = cloneSequentialValue(*loaded, location);
+    bool directStorage =
+        captured->kind == CapturedLValue::Kind::Reference &&
+        isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType>(
+            captured->reference.getType());
+    Value wasNull;
+    if (directStorage)
+      wasNull = sim::SimManagedIsNullOp::create(builder, location,
+                                                builder.getI1Type(), *loaded);
+    Value updated =
+        directStorage ? *loaded : cloneSequentialValue(*loaded, location);
     FailureOr<Value> allocated = ensureAssocArray(updated, location);
     if (failed(allocated))
       return failure();
@@ -1415,8 +1524,22 @@ UnitLowering::lowerAssociativeArrayMethod(semantic::SVCallExpressionOp op) {
         return failure();
       sim::SimAssocDeleteOp::create(builder, location, updated, *key);
     }
-    if (failed(storeReference(*reference, updated, location)))
-      return failure();
+    if (!directStorage) {
+      if (failed(
+              writeCapturedLValue(*captured, updated, false, false, location)))
+        return failure();
+    } else {
+      Block *publish = addBlock();
+      Block *done = addBlock();
+      cf::CondBranchOp::create(builder, location, wasNull, publish,
+                               ValueRange{}, done, ValueRange{});
+      setCurrent(publish);
+      if (failed(
+              writeCapturedLValue(*captured, updated, false, false, location)))
+        return failure();
+      cf::BranchOp::create(builder, location, done);
+      setCurrent(done);
+    }
     return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                      builder.getBoolAttr(false))
         .getResult();

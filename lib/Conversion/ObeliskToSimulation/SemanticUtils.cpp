@@ -822,14 +822,16 @@ static FailureOr<Type> normalizeType(Type type, Location location,
   }
   if (isa<semantic::StringType>(type))
     return sim::StringType::get(context);
+  if (isa<semantic::UntypedType>(type))
+    return sim::BoxType::get(context);
   if (type.isF64() || type.isF32())
     return type;
   if (isa<sim::LogicType, sim::TimeType, sim::ContextType, sim::RefType,
           sim::NetType, sim::DriverType, sim::EventType, sim::ProcessType,
           sim::ClassHandleType, sim::VirtualInterfaceType, sim::ChandleType,
           sim::StringType, sim::DynamicArrayType, sim::QueueType,
-          sim::MailboxType, sim::SemaphoreType, sim::AssocArrayType,
-          sim::ManagedRefType>(type) ||
+          sim::MailboxType, sim::BoxType, sim::SemaphoreType,
+          sim::AssocArrayType, sim::ManagedRefType>(type) ||
       sim::isAggregateType(type))
     return type;
 

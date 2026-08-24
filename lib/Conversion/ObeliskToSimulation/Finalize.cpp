@@ -67,9 +67,10 @@ static bool isExecutableType(Type type) {
              sim::ProcessType, sim::ClassHandleType, sim::CovergroupHandleType,
              sim::VirtualInterfaceType, sim::ChandleType, sim::StringType,
              sim::DynamicArrayType, sim::QueueType, sim::MailboxType,
-             sim::SemaphoreType, sim::AssocArrayType, sim::ReferencePathType,
-             sim::ManagedRefType, sim::ArgumentRefType, sim::ControlType,
-             sim::ObserverType, sim::ManagedWatchType>(type) ||
+             sim::BoxType, sim::SemaphoreType, sim::AssocArrayType,
+             sim::ReferencePathType, sim::ManagedRefType, sim::ArgumentRefType,
+             sim::ControlType, sim::ObserverType, sim::ManagedWatchType>(
+             type) ||
          sim::isAggregateType(type);
 }
 

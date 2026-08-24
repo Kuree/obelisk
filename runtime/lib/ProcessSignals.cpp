@@ -1,6 +1,7 @@
 //===- ProcessSignals.cpp - Signal subscription indexing ----------------===//
 
 #include "ProcessSignals.h"
+#include "ProcessShared.h"
 #include "ProcessValidation.h"
 #include "RuntimeInternal.h"
 #include "SignalSemantics.h"
@@ -85,6 +86,50 @@ bool appendSignalSubscriptionUnlocked(
   return true;
 }
 
+bool appendManagedSubscriptionUnlocked(
+    obelisk_rt_context *context, uint64_t token,
+    SignalSubscription::Target target, uint64_t waiterToken,
+    bool suppressActiveSelf, SignalWaitLatch *latch,
+    std::vector<std::unique_ptr<SignalSubscription>> &subscriptions) {
+  if (target != SignalSubscription::NativeManagedWait &&
+      target != SignalSubscription::DesignManagedWait) {
+    context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+    return false;
+  }
+  // A null managed object has no mutation identity. Its owning storage or
+  // outer managed-field dependency remains in the same wait and will rebuild
+  // this token after the object becomes non-null.
+  if (token == 0)
+    return true;
+  auto subscription = std::make_unique<SignalSubscription>();
+  subscription->stableID = token;
+  subscription->bitWidth = OBELISK_RT_WAIT_WIDTH_MANAGED;
+  subscription->edge = OBELISK_RT_WAIT_EDGE_CHANGE;
+  subscription->target = target;
+  subscription->waiterToken = waiterToken;
+  subscription->suppressActiveSelf = suppressActiveSelf;
+  subscription->latch = latch;
+  subscriptions.push_back(std::move(subscription));
+  SignalSubscription *stored = subscriptions.back().get();
+  try {
+    context->managedWatchWaiters[token].insert(stored);
+  } catch (...) {
+    subscriptions.pop_back();
+    throw;
+  }
+  if (context->nativeSchedulePlan &&
+      context->nativeSchedulePlan->specialization_fast)
+    *context->nativeSchedulePlan->specialization_fast = 0;
+  context->nativeScheduleGuardedFanoutActive = false;
+  if (context->signalDiagnosticsEnabled) {
+    ++context->signalDiagnostics.subscriptionsCurrent;
+    context->signalDiagnostics.subscriptionsHighWater =
+        std::max(context->signalDiagnostics.subscriptionsHighWater,
+                 context->signalDiagnostics.subscriptionsCurrent);
+  }
+  return true;
+}
+
 } // namespace
 
 bool signalSubscriptionBucketRange(uint64_t stableID, uint64_t bitWidth,
@@ -131,6 +176,15 @@ void obelisk_rt_unregister_signal_wait_unlocked(
     if (!owned)
       continue;
     SignalSubscription &subscription = *owned;
+    if (subscription.target == SignalSubscription::NativeManagedWait ||
+        subscription.target == SignalSubscription::DesignManagedWait) {
+      auto waiters = context->managedWatchWaiters.find(subscription.stableID);
+      if (waiters != context->managedWatchWaiters.end()) {
+        waiters->second.erase(&subscription);
+        if (waiters->second.empty())
+          context->managedWatchWaiters.erase(waiters);
+      }
+    }
     if (subscription.target == SignalSubscription::NativeComputedWait &&
         context->nativeComputedSignalSubscriptions != 0)
       --context->nativeComputedSignalSubscriptions;
@@ -207,6 +261,19 @@ bool obelisk_rt_register_signal_wait_unlocked(
   try {
     subscriptions.reserve(wait->count);
     for (uint32_t index = 0; index != wait->count; ++index) {
+      if (entries[index].reserved == OBELISK_RT_WAIT_WIDTH_MANAGED) {
+        if (entries[index].edge != OBELISK_RT_WAIT_EDGE_CHANGE ||
+            !appendManagedSubscriptionUnlocked(
+                context, entries[index].stable_id,
+                designWaiter ? SignalSubscription::DesignManagedWait
+                             : SignalSubscription::NativeManagedWait,
+                waiterToken, suppressActiveSelf, latch.get(), subscriptions)) {
+          obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions,
+                                                     waiterToken, designWaiter);
+          return false;
+        }
+        continue;
+      }
       if (!appendSignalSubscriptionUnlocked(
               context, entries[index].stable_id, entries[index].reserved,
               entries[index].edge,
@@ -227,6 +294,41 @@ bool obelisk_rt_register_signal_wait_unlocked(
   obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions,
                                              waiterToken, designWaiter);
   return false;
+}
+
+bool obelisk_rt_notify_managed_waiters_unlocked(obelisk_rt_context *context,
+                                                uint64_t token) {
+  if (!context || token == 0)
+    return context != nullptr;
+  auto found = context->managedWatchWaiters.find(token);
+  if (found == context->managedWatchWaiters.end())
+    return true;
+  for (SignalSubscription *subscription : found->second) {
+    if (!subscription || !subscription->latch || subscription->latch->triggered)
+      continue;
+    if (subscription->suppressActiveSelf && subscription->waiterToken != 0) {
+      uint64_t logicalToken =
+          subscription->target == SignalSubscription::NativeManagedWait
+              ? kNativeLogicalProcessTag | subscription->waiterToken
+              : subscription->waiterToken;
+      if (context->activeLogicalProcessToken == logicalToken)
+        continue;
+    }
+    subscription->latch->triggered = true;
+    try {
+      auto &candidates =
+          subscription->target == SignalSubscription::NativeManagedWait
+              ? context->nativePollCandidates
+              : context->designPollCandidates;
+      candidates.insert(subscription->waiterToken);
+    } catch (const std::bad_alloc &) {
+      context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+      return false;
+    }
+    if (++context->schedulerSelectionGeneration == 0)
+      context->schedulerSelectionGeneration = 1;
+  }
+  return true;
 }
 
 bool obelisk_rt_register_computed_signal_wait_unlocked(

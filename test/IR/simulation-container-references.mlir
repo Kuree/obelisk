@@ -15,7 +15,12 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %queue: !obelisk_sim.queue<i64, 0> {obelisk_sim.capture_kind = 1 : i32},
         %index: i64 {obelisk_sim.capture_kind = 1 : i32},
-        %owner: !obelisk_sim.argument_ref<!obelisk_sim.queue<i64, 0>> {obelisk_sim.capture_kind = 1 : i32})
+        %owner: !obelisk_sim.argument_ref<!obelisk_sim.queue<i64, 0>> {obelisk_sim.capture_kind = 1 : i32},
+        %text: !obelisk_sim.string {obelisk_sim.capture_kind = 1 : i32},
+        %text_owner: !obelisk_sim.argument_ref<!obelisk_sim.string> {obelisk_sim.capture_kind = 1 : i32},
+        %dynamic: !obelisk_sim.dynamic_array<i32> {obelisk_sim.capture_kind = 1 : i32},
+        %fixed: !obelisk_sim.unpacked_array<1 : 4 x i32> {obelisk_sim.capture_kind = 1 : i32},
+        %fixed_owner: !obelisk_sim.argument_ref<!obelisk_sim.unpacked_array<1 : 4 x i32>> {obelisk_sim.capture_kind = 1 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {
       %path = obelisk_sim.reference_path.index %ctx, %queue[%index] watching %owner :
         (!obelisk_sim.context, !obelisk_sim.queue<i64, 0>, i64,
@@ -24,6 +29,37 @@ module attributes {
       %reference = obelisk_sim.argument_ref.from_path %path :
         !obelisk_sim.reference_path<i64> ->
         !obelisk_sim.argument_ref<i64>
+      obelisk_sim.container.swap %queue[%index, %index] :
+        !obelisk_sim.queue<i64, 0>
+      %character_path = obelisk_sim.reference_path.string_character
+        %ctx, %text[%index] watching %text_owner :
+        (!obelisk_sim.context, !obelisk_sim.string, i64,
+         !obelisk_sim.argument_ref<!obelisk_sim.string>) ->
+        !obelisk_sim.reference_path<i8>
+      %aggregate_path = "obelisk_sim.reference_path.aggregate_element"(
+          %ctx, %fixed_owner, %index) {
+            alignment = 1 : i64,
+            bit_width = 32 : i64,
+            element_flags = 0 : i32,
+            element_kind = 1 : i32,
+            element_span = 32 : i64,
+            left = 1 : i64,
+            right = 4 : i64,
+            trace_kinds = array<i32>,
+            trace_offsets = array<i64>,
+            type_id = 1 : i64,
+            value_size = 4 : i64
+          } : (!obelisk_sim.context,
+               !obelisk_sim.argument_ref<!obelisk_sim.unpacked_array<1 : 4 x i32>>,
+               i64) -> !obelisk_sim.reference_path<i32>
+      "obelisk_sim.container.import_fixed"(%dynamic, %fixed) {
+        element_span = 32 : i64
+      } : (!obelisk_sim.dynamic_array<i32>,
+           !obelisk_sim.unpacked_array<1 : 4 x i32>) -> ()
+      %updated = "obelisk_sim.container.export_fixed"(%dynamic) {
+        element_span = 32 : i64
+      } : (!obelisk_sim.dynamic_array<i32>) ->
+          !obelisk_sim.unpacked_array<1 : 4 x i32>
       obelisk_sim.return
     }
 
@@ -46,9 +82,19 @@ module attributes {
 // CHECK: obelisk_sim.reference_path.index
 // CHECK: !obelisk_sim.reference_path<i64>
 // CHECK: obelisk_sim.argument_ref.from_path
+// CHECK: obelisk_sim.container.swap
+// CHECK: obelisk_sim.reference_path.string_character
+// CHECK: obelisk_sim.reference_path.aggregate_element
+// CHECK: obelisk_sim.container.import_fixed
+// CHECK: obelisk_sim.container.export_fixed
 // CHECK: obelisk_sim.argument_ref.load
 // CHECK: obelisk_sim.argument_ref.store
 // NATIVE: llvm.call @obelisk_rt_v1_reference_path_index_create
+// NATIVE: llvm.call @obelisk_rt_v1_container_swap
+// NATIVE: llvm.call @obelisk_rt_v1_reference_path_string_character_create
+// NATIVE: llvm.call @obelisk_rt_v1_reference_path_aggregate_element_create
+// NATIVE: llvm.call @obelisk_rt_v1_container_import_fixed
+// NATIVE: llvm.call @obelisk_rt_v1_container_export_fixed
 // NATIVE: %[[LOAD_KIND:.*]] = llvm.mlir.constant(1 : i32) : i32
 // NATIVE-NEXT: llvm.call @obelisk_rt_v1_argument_ref_load
 // NATIVE-SAME: %[[LOAD_KIND]]

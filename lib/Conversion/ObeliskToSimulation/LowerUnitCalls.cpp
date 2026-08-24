@@ -115,6 +115,53 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                        : sim::MailboxType{};
     if (failed(receiver) || !mailbox)
       return failure();
+    bool untyped = isa<sim::BoxType>(mailbox.getElementType());
+    auto boxValue = [&](Value value, Operation *source) -> FailureOr<Value> {
+      FailureOr<ContainerElementDescriptor> descriptor =
+          describeContainerElement(value.getType(), location);
+      if (failed(descriptor))
+        return failure();
+      if (auto semanticType = source->getAttrOfType<TypeAttr>("semantic_type"))
+        descriptor->typeID = getStableTypeID(semanticType.getValue());
+      Type arrayType =
+          sim::DynamicArrayType::get(function.getContext(), value.getType());
+      Value one = arith::ConstantIntOp::create(builder, location, 1, 64);
+      Value zero = arith::ConstantIntOp::create(builder, location, 0, 64);
+      Value array = sim::SimContainerCreateOp::create(
+          builder, location, arrayType, one, descriptor->typeID,
+          descriptor->kind, descriptor->flags, descriptor->valueSize,
+          descriptor->alignment, descriptor->bitWidth,
+          builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
+          builder.getDenseI32ArrayAttr(descriptor->traceKinds),
+          OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 0);
+      sim::SimContainerWriteOp::create(builder, location, array, zero,
+                                       cloneSequentialValue(value, location));
+      return sim::SimBoxPackOp::create(builder, location,
+                                       sim::BoxType::get(function.getContext()),
+                                       array)
+          .getResult();
+    };
+    auto boxMatches = [&](Value box, Type type,
+                          Operation *destination) -> FailureOr<Value> {
+      FailureOr<ContainerElementDescriptor> descriptor =
+          describeContainerElement(type, location);
+      if (failed(descriptor))
+        return failure();
+      if (auto semanticType =
+              destination->getAttrOfType<TypeAttr>("semantic_type"))
+        descriptor->typeID = getStableTypeID(semanticType.getValue());
+      return sim::SimBoxIsTypeOp::create(builder, location, builder.getI1Type(),
+                                         box, descriptor->typeID)
+          .getResult();
+    };
+    auto unboxValue = [&](Value box, Type type) -> Value {
+      Type arrayType = sim::DynamicArrayType::get(function.getContext(), type);
+      Value array =
+          sim::SimBoxCastOp::create(builder, location, arrayType, box);
+      Value zero = arith::ConstantIntOp::create(builder, location, 0, 64);
+      return sim::SimContainerReadOp::create(builder, location, type, array,
+                                             zero);
+    };
     if (method == "num") {
       if (children.size() != 1) {
         emitError(location) << "mailbox::num accepts no arguments";
@@ -132,9 +179,11 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return failure();
       }
       FailureOr<Value> value = lowerExpression(children[1]);
-      value = succeeded(value) ? convert(*value, mailbox.getElementType(),
-                                         isSignedNode(children[1]), location)
-                               : FailureOr<Value>(failure());
+      value = succeeded(value)
+                  ? (untyped ? boxValue(*value, children[1])
+                             : convert(*value, mailbox.getElementType(),
+                                       isSignedNode(children[1]), location))
+                  : FailureOr<Value>(failure());
       if (failed(value))
         return failure();
       Value success = sim::SimMailboxTryPutOp::create(
@@ -150,9 +199,11 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return failure();
       }
       FailureOr<Value> value = lowerExpression(children[1]);
-      value = succeeded(value) ? convert(*value, mailbox.getElementType(),
-                                         isSignedNode(children[1]), location)
-                               : FailureOr<Value>(failure());
+      value = succeeded(value)
+                  ? (untyped ? boxValue(*value, children[1])
+                             : convert(*value, mailbox.getElementType(),
+                                       isSignedNode(children[1]), location))
+                  : FailureOr<Value>(failure());
       if (failed(value))
         return failure();
       Value held = cloneSequentialValue(*value, location);
@@ -194,6 +245,49 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         emitError(location)
             << "mailbox::" << method << " output is not assignable";
         return failure();
+      }
+      if (untyped) {
+        auto peek = sim::SimMailboxTryPeekOp::create(
+            builder, location,
+            TypeRange{builder.getI1Type(), mailbox.getElementType()},
+            *receiver);
+        FailureOr<Value> matches =
+            boxMatches(peek.getValue(), destinationType, children[1]);
+        if (failed(matches))
+          return failure();
+        Value accepted = arith::AndIOp::create(builder, location,
+                                               peek.getSuccess(), *matches);
+        Value zero = arith::ConstantIntOp::create(builder, location, 0, 32);
+        Value one = arith::ConstantIntOp::create(builder, location, 1, 32);
+        Value mismatch =
+            arith::ConstantIntOp::create(builder, location, -1, 32);
+        Value presentStatus =
+            arith::SelectOp::create(builder, location, *matches, one, mismatch);
+        Value status = arith::SelectOp::create(
+            builder, location, peek.getSuccess(), presentStatus, zero);
+        Block *store = addBlock();
+        Block *resume = addBlock();
+        cf::CondBranchOp::create(builder, location, accepted, store,
+                                 ValueRange{}, resume, ValueRange{});
+        setCurrent(store);
+        Value box = peek.getValue();
+        if (method == "try_get") {
+          auto get = sim::SimMailboxTryGetOp::create(
+              builder, location,
+              TypeRange{builder.getI1Type(), mailbox.getElementType()},
+              *receiver);
+          box = get.getValue();
+        }
+        Value value = unboxValue(box, destinationType);
+        if (failed(storeReference(
+                *destination, cloneSequentialValue(value, location), location)))
+          return failure();
+        cf::BranchOp::create(builder, location, resume);
+        setCurrent(resume);
+        FailureOr<Type> resultType = getNormalizedSemanticType(op);
+        return failed(resultType)
+                   ? FailureOr<Value>(failure())
+                   : convert(status, *resultType, true, location, true);
       }
       Value success;
       Value value;
@@ -244,6 +338,71 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         emitError(location)
             << "mailbox::" << method << " output is not assignable";
         return failure();
+      }
+      if (untyped) {
+        Block *retry = addBlock();
+        retry->addArgument(mailbox, location);
+        retry->addArgument((*destination).getType(), location);
+        Block *wait = addBlock();
+        wait->addArgument(mailbox, location);
+        wait->addArgument((*destination).getType(), location);
+        Block *check = addBlock();
+        check->addArgument(mailbox.getElementType(), location);
+        check->addArgument(mailbox, location);
+        check->addArgument((*destination).getType(), location);
+        Block *store = addBlock();
+        store->addArgument(mailbox.getElementType(), location);
+        store->addArgument(mailbox, location);
+        store->addArgument((*destination).getType(), location);
+        Block *mismatch = addBlock();
+        Block *done = addBlock();
+        cf::BranchOp::create(builder, location, retry,
+                             ValueRange{*receiver, *destination});
+        setCurrent(retry);
+        auto peek = sim::SimMailboxTryPeekOp::create(
+            builder, location,
+            TypeRange{builder.getI1Type(), mailbox.getElementType()},
+            retry->getArgument(0));
+        cf::CondBranchOp::create(builder, location, peek.getSuccess(), check,
+                                 ValueRange{peek.getValue(),
+                                            retry->getArgument(0),
+                                            retry->getArgument(1)},
+                                 wait, retry->getArguments());
+        setCurrent(wait);
+        sim::SimSuspendMailboxOp::create(
+            builder, location, wait->getArgument(0),
+            sim::MailboxWaitKind::NotEmpty, wait->getArguments(),
+            sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, retry);
+        setCurrent(check);
+        FailureOr<Value> matches =
+            boxMatches(check->getArgument(0), destinationType, children[1]);
+        if (failed(matches))
+          return failure();
+        cf::CondBranchOp::create(builder, location, *matches, store,
+                                 check->getArguments(), mismatch, ValueRange{});
+        setCurrent(mismatch);
+        sim::SimErrorOp::create(builder, location,
+                                function.getBody().front().getArgument(0));
+        cf::BranchOp::create(builder, location, done);
+        setCurrent(store);
+        Value box = store->getArgument(0);
+        if (method == "get") {
+          auto get = sim::SimMailboxTryGetOp::create(
+              builder, location,
+              TypeRange{builder.getI1Type(), mailbox.getElementType()},
+              store->getArgument(1));
+          box = get.getValue();
+        }
+        Value value = unboxValue(box, destinationType);
+        if (failed(storeReference(store->getArgument(2),
+                                  cloneSequentialValue(value, location),
+                                  location)))
+          return failure();
+        cf::BranchOp::create(builder, location, done);
+        setCurrent(done);
+        return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                         builder.getBoolAttr(false))
+            .getResult();
       }
       Block *retry = addBlock();
       retry->addArgument(mailbox, location);

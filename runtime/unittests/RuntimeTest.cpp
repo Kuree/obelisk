@@ -3981,8 +3981,9 @@ TEST_F(ManagedHeapTest,
   EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &copyRoot), OBELISK_RT_OK);
 
   obelisk_rt_object_v1 *path = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_reference_path_assoc_create(
-                lane, array, &derivedKey, nullptr, 0, 0, &path),
+  ASSERT_EQ(obelisk_rt_v1_reference_path_assoc_create(lane, array, &derivedKey,
+                                                      nullptr, 0, 0, nullptr,
+                                                      nullptr, 0, &path),
             OBELISK_RT_OK);
   obelisk_rt_gc_root_v1 pathRoot{};
   ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &pathRoot, &path), OBELISK_RT_OK);
@@ -3998,11 +3999,18 @@ TEST_F(ManagedHeapTest,
             OBELISK_RT_OK);
   EXPECT_EQ(present, 1u);
   EXPECT_EQ(value, replacement);
+  value = 0;
+  present = 1;
+  ASSERT_EQ(
+      obelisk_rt_v1_assoc_read(array, &derivedKey, &value, nullptr, &present),
+      OBELISK_RT_OK);
+  EXPECT_EQ(present, 0u);
   EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &pathRoot), OBELISK_RT_OK);
 
   obelisk_rt_assoc_key_v1 cursor{};
   uint32_t success = 0;
-  for (obelisk_rt_object_v1 *expected : expectedKeys) {
+  for (size_t index = 0; index + 1 < std::size(expectedKeys); ++index) {
+    obelisk_rt_object_v1 *expected = expectedKeys[index];
     ASSERT_EQ(obelisk_rt_v1_assoc_first(lane, array, &cursor, &success),
               OBELISK_RT_OK);
     ASSERT_EQ(success, 1u);

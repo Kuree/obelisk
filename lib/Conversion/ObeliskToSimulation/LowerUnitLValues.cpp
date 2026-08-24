@@ -185,17 +185,45 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
                            ? dyn_cast<sim::UnpackedArrayType>(*baseType)
                            : sim::UnpackedArrayType{};
     auto resultArray = dyn_cast<sim::UnpackedArrayType>(*destinationType);
+    auto sourceQueue = succeeded(baseType) ? dyn_cast<sim::QueueType>(*baseType)
+                                           : sim::QueueType{};
+    auto resultQueue = dyn_cast<sim::QueueType>(*destinationType);
+    if (selection.size() == 3 && sourceQueue && resultQueue) {
+      if (range.getSelectionKind() != semantic::SVRangeSelectionKind::Simple) {
+        emitError(location) << "queue slices require a simple range";
+        return failure();
+      }
+      FailureOr<Value> base = lowerExpression(selection.front(), true);
+      if (failed(base) || getReferenceElementType(*base) != sourceQueue) {
+        emitError(location)
+            << "queue slice destination has no owning reference";
+        return failure();
+      }
+      FailureOr<Value> queue = loadReference(*base, location);
+      FailureOr<QueueSliceAddress> address =
+          succeeded(queue)
+              ? lowerQueueSliceAddress(range, ArrayRef(selection).drop_front(),
+                                       *queue, location)
+              : FailureOr<QueueSliceAddress>(failure());
+      if (failed(address))
+        return failure();
+      CapturedLValue baseCapture;
+      baseCapture.semanticNode = selection.front();
+      baseCapture.type = sourceQueue;
+      baseCapture.reference = *base;
+      captured.kind = CapturedLValue::Kind::ContainerSlice;
+      captured.container = *queue;
+      captured.index = address->start;
+      captured.limit = address->count;
+      captured.children.push_back(std::move(baseCapture));
+      return captured;
+    }
     if (selection.size() == 3 && sourceArray && resultArray) {
       FailureOr<Value> base = lowerExpression(selection.front(), true);
       if (failed(base))
         return failure();
       bool reference = isa<sim::RefType>((*base).getType());
       bool driver = isa<sim::DriverType>((*base).getType());
-      if (!reference && !driver) {
-        emitError(location)
-            << "unpacked array slice destination is not a reference or driver";
-        return failure();
-      }
       unsigned count = sim::getAggregateNumElements(resultArray);
       FailureOr<SmallVector<Value>> indices =
           unpackedSliceIndices(range, ArrayRef(selection).drop_front(),
@@ -204,6 +232,20 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
         return failure();
 
       captured.kind = CapturedLValue::Kind::AggregateSlice;
+      if (!reference && !driver) {
+        if (getReferenceElementType(*base) != sourceArray) {
+          emitError(location)
+              << "unpacked array slice destination has no owning reference";
+          return failure();
+        }
+        CapturedLValue baseCapture;
+        baseCapture.semanticNode = selection.front();
+        baseCapture.type = sourceArray;
+        baseCapture.reference = *base;
+        captured.indices = std::move(*indices);
+        captured.children.push_back(std::move(baseCapture));
+        return captured;
+      }
       captured.children.reserve(count);
       for (unsigned ordinal = 0; ordinal < count; ++ordinal) {
         Value index = (*indices)[ordinal];
@@ -273,18 +315,18 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
         return captured;
       }
       if (isa<sim::StringType>(*baseType)) {
-        FailureOr<CapturedLValue> base =
-            captureLValue(selection.front(), location);
+        FailureOr<Value> base = lowerExpression(selection.front(), true);
         FailureOr<Value> index = lowerExpression(selection[1]);
-        if (failed(base) || failed(index))
+        if (failed(base) || failed(index) ||
+            !isa<sim::StringType>(getReferenceElementType(*base)))
           return failure();
         FailureOr<Value> index64 = convert(
             *index, builder.getI64Type(), isSignedNode(selection[1]), location);
         if (failed(index64))
           return failure();
         captured.kind = CapturedLValue::Kind::StringCharacter;
+        captured.reference = *base;
         captured.index = *index64;
-        captured.children.push_back(std::move(*base));
         return captured;
       }
 
@@ -543,6 +585,55 @@ UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
                                            *container, destination.index)
         .getResult();
   }
+  case CapturedLValue::Kind::ContainerSlice: {
+    if (destination.children.size() != 1)
+      return failure();
+    FailureOr<Value> queue =
+        loadCapturedLValue(destination.children.front(), location);
+    auto resultQueue = dyn_cast<sim::QueueType>(destination.type);
+    if (failed(queue) || !resultQueue)
+      return failure();
+    FailureOr<ContainerElementDescriptor> descriptor =
+        describeContainerElement(resultQueue.getElementType(), location);
+    if (failed(descriptor))
+      return failure();
+    Value zero = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(), builder.getI64IntegerAttr(0));
+    Value one = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(), builder.getI64IntegerAttr(1));
+    uint64_t bound =
+        resultQueue.getBound() ? resultQueue.getBound() : UINT64_MAX;
+    Value result = sim::SimContainerCreateOp::create(
+        builder, location, destination.type, zero, descriptor->typeID,
+        descriptor->kind, descriptor->flags, descriptor->valueSize,
+        descriptor->alignment, descriptor->bitWidth,
+        builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
+        builder.getDenseI32ArrayAttr(descriptor->traceKinds),
+        OBELISK_RT_CONTAINER_QUEUE, bound);
+    Block *header = addBlock();
+    header->addArgument(builder.getI64Type(), location);
+    Block *body = addBlock();
+    Block *done = addBlock();
+    cf::BranchOp::create(builder, location, header, ValueRange{zero});
+    setCurrent(header);
+    Value ordinal = header->getArgument(0);
+    Value more =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ult,
+                              ordinal, destination.limit);
+    cf::CondBranchOp::create(builder, location, more, body, ValueRange{}, done,
+                             ValueRange{});
+    setCurrent(body);
+    Value index =
+        arith::AddIOp::create(builder, location, destination.index, ordinal);
+    Value element = sim::SimContainerReadOp::create(
+        builder, location, resultQueue.getElementType(), *queue, index);
+    sim::SimContainerWriteOp::create(builder, location, result, ordinal,
+                                     element);
+    Value next = arith::AddIOp::create(builder, location, ordinal, one);
+    cf::BranchOp::create(builder, location, header, ValueRange{next});
+    setCurrent(done);
+    return result;
+  }
   case CapturedLValue::Kind::AssociativeElement: {
     if (destination.children.size() != 1)
       return failure();
@@ -608,6 +699,35 @@ UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
         .getResult();
   }
   case CapturedLValue::Kind::AggregateSlice: {
+    if (!destination.indices.empty()) {
+      if (destination.children.size() != 1 ||
+          destination.indices.size() !=
+              sim::getAggregateNumElements(destination.type))
+        return failure();
+      FailureOr<Value> aggregate =
+          loadCapturedLValue(destination.children.front(), location);
+      auto source =
+          succeeded(aggregate)
+              ? dyn_cast<sim::UnpackedArrayType>((*aggregate).getType())
+              : sim::UnpackedArrayType{};
+      if (!source)
+        return failure();
+      SmallVector<Value> elements;
+      elements.reserve(destination.indices.size());
+      for (auto [ordinal, index] : llvm::enumerate(destination.indices)) {
+        Value element = sim::SimArrayDynExtractOp::create(
+            builder, location, source.getElementType(), *aggregate, index);
+        FailureOr<Value> converted = convert(
+            element, sim::getAggregateElementType(destination.type, ordinal),
+            false, location);
+        if (failed(converted))
+          return failure();
+        elements.push_back(*converted);
+      }
+      return sim::SimAggregateConstructOp::create(builder, location,
+                                                  destination.type, elements)
+          .getResult();
+    }
     SmallVector<Value> elements;
     elements.reserve(destination.children.size());
     for (const CapturedLValue &child : destination.children) {
@@ -621,10 +741,9 @@ UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
         .getResult();
   }
   case CapturedLValue::Kind::StringCharacter: {
-    if (destination.children.size() != 1)
+    if (!destination.reference)
       return failure();
-    FailureOr<Value> string =
-        loadCapturedLValue(destination.children.front(), location);
+    FailureOr<Value> string = loadReference(destination.reference, location);
     if (failed(string))
       return failure();
     Value character = sim::SimStringGetcOp::create(
@@ -728,6 +847,7 @@ bool UnitLowering::haveSameCapturedStorage(const CapturedLValue &lhs,
   }
   case CapturedLValue::Kind::StringCharacter:
   case CapturedLValue::Kind::AggregateSlice:
+  case CapturedLValue::Kind::ContainerSlice:
   case CapturedLValue::Kind::Concatenation:
     return false;
   }
@@ -1142,8 +1262,23 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     FailureOr<Value> currentContainer = loadCapturedLValue(base, location);
     if (failed(currentContainer))
       return failure();
+    bool directStorage =
+        base.kind == CapturedLValue::Kind::Reference &&
+        isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType>(
+            base.reference.getType());
+    Value wasNull;
+    Value mutableContainer = *currentContainer;
+    if (directStorage) {
+      wasNull = sim::SimManagedIsNullOp::create(
+          builder, location, builder.getI1Type(), *currentContainer);
+      FailureOr<Value> allocated =
+          ensureSequentialContainer(*currentContainer, location);
+      if (failed(allocated))
+        return failure();
+      mutableContainer = *allocated;
+    }
     Value size = sim::SimContainerSizeOp::create(
-        builder, location, builder.getI64Type(), *currentContainer);
+        builder, location, builder.getI64Type(), mutableContainer);
     Value zero = arith::ConstantOp::create(
         builder, location, builder.getI64Type(), builder.getI64IntegerAttr(0));
     Value nonnegative = arith::CmpIOp::create(
@@ -1160,19 +1295,103 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         arith::AndIOp::create(builder, location, nonnegative, inRange);
     Block *write = addBlock();
     Block *resume = addBlock();
-    resume->addArgument((*currentContainer).getType(), location);
+    resume->addArgument(mutableContainer.getType(), location);
     cf::CondBranchOp::create(builder, location, valid, write, ValueRange{},
-                             resume, ValueRange{*currentContainer});
+                             resume, ValueRange{mutableContainer});
     setCurrent(write);
-    Value updated = cloneSequentialValue(*currentContainer, location);
+    Value updated = directStorage
+                        ? mutableContainer
+                        : cloneSequentialValue(mutableContainer, location);
     sim::SimContainerWriteOp::create(builder, location, updated,
                                      destination.index, *converted);
-    if (failed(writeCapturedLValue(base, updated, false, false, location)))
-      return failure();
+    if (!directStorage) {
+      if (failed(writeCapturedLValue(base, updated, false, false, location)))
+        return failure();
+    } else {
+      Block *publish = addBlock();
+      Block *published = addBlock();
+      cf::CondBranchOp::create(builder, location, wasNull, publish,
+                               ValueRange{}, published, ValueRange{});
+      setCurrent(publish);
+      if (failed(writeCapturedLValue(base, updated, false, false, location)))
+        return failure();
+      cf::BranchOp::create(builder, location, published);
+      setCurrent(published);
+    }
     if (current->empty() || !current->back().hasTrait<OpTrait::IsTerminator>())
       cf::BranchOp::create(builder, location, resume, ValueRange{updated});
     setCurrent(resume);
     destination.container = resume->getArgument(0);
+    return success();
+  }
+  case CapturedLValue::Kind::ContainerSlice: {
+    if (destination.children.size() != 1)
+      return failure();
+    FailureOr<Value> converted =
+        convert(value, destination.type, sourceSigned, location,
+                isSignedNode(destination.semanticNode));
+    if (failed(converted))
+      return failure();
+    Value source = cloneSequentialValue(*converted, location);
+    CapturedLValue &base = destination.children.front();
+    FailureOr<Value> queue = loadCapturedLValue(base, location);
+    if (failed(queue) || !isa<sim::QueueType>((*queue).getType()))
+      return failure();
+    Value sourceSize = sim::SimContainerSizeOp::create(
+        builder, location, builder.getI64Type(), source);
+    Value sameSize =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                              sourceSize, destination.limit);
+    Block *writeHeader = addBlock();
+    writeHeader->addArgument(builder.getI64Type(), location);
+    Block *writeBody = addBlock();
+    Block *mismatch = addBlock();
+    Block *done = addBlock();
+    Value zero = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(), builder.getI64IntegerAttr(0));
+    Value one = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(), builder.getI64IntegerAttr(1));
+    cf::CondBranchOp::create(builder, location, sameSize, writeHeader,
+                             ValueRange{zero}, mismatch, ValueRange{});
+    setCurrent(mismatch);
+    // IEEE 1800-2017 7.6 requires a queue source assigned to a slice to have
+    // exactly the slice's run-time element count. A mismatch reports an error
+    // and performs no operation.
+    sim::SimErrorOp::create(builder, location,
+                            function.getBody().front().getArgument(0));
+    cf::BranchOp::create(builder, location, done);
+    setCurrent(writeHeader);
+    Value ordinal = writeHeader->getArgument(0);
+    Value more =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ult,
+                              ordinal, destination.limit);
+    cf::CondBranchOp::create(builder, location, more, writeBody, ValueRange{},
+                             done, ValueRange{});
+    setCurrent(writeBody);
+    Value index =
+        arith::AddIOp::create(builder, location, destination.index, ordinal);
+    Type elementType = cast<sim::QueueType>(destination.type).getElementType();
+    Value element = sim::SimContainerReadOp::create(
+        builder, location, elementType, source, ordinal);
+    if (nonblocking) {
+      FailureOr<Value> owner =
+          toArgumentReference(base.reference, (*queue).getType(), location);
+      if (failed(owner))
+        return failure();
+      Type pathType =
+          sim::ReferencePathType::get(function.getContext(), elementType);
+      Value path = sim::SimReferencePathIndexOp::create(
+          builder, location, pathType,
+          function.getBody().front().getArgument(0), *queue, index, *owner);
+      sim::SimReferencePathNBAEnqueueOp::create(builder, location, element,
+                                                path, delay);
+    } else {
+      sim::SimContainerWriteOp::create(builder, location, *queue, index,
+                                       element);
+    }
+    Value next = arith::AddIOp::create(builder, location, ordinal, one);
+    cf::BranchOp::create(builder, location, writeHeader, ValueRange{next});
+    setCurrent(done);
     return success();
   }
   case CapturedLValue::Kind::AssociativeElement: {
@@ -1215,12 +1434,19 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     cf::BranchOp::create(builder, location, resume, ValueRange{*allocated});
 
     setCurrent(existing);
-    Value updated = sim::SimContainerCloneOp::create(
-        builder, location, (*currentContainer).getType(), *currentContainer);
+    bool directStorage =
+        base.kind == CapturedLValue::Kind::Reference &&
+        isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType>(
+            base.reference.getType());
+    Value updated = directStorage
+                        ? *currentContainer
+                        : Value(sim::SimContainerCloneOp::create(
+                              builder, location, (*currentContainer).getType(),
+                              *currentContainer));
     sim::SimAssocWriteOp::create(builder, location, updated, destination.index,
                                  *converted);
-    if (failed(
-            writeCapturedLValue(existingBase, updated, false, false, location)))
+    if (!directStorage && failed(writeCapturedLValue(existingBase, updated,
+                                                     false, false, location)))
       return failure();
     cf::BranchOp::create(builder, location, resume, ValueRange{updated});
     setCurrent(resume);
@@ -1231,6 +1457,23 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     if (destination.children.size() != 1)
       return failure();
     CapturedLValue &base = destination.children.front();
+    if (nonblocking && base.kind == CapturedLValue::Kind::Reference) {
+      if (auto array = dyn_cast<sim::UnpackedArrayType>(base.type)) {
+        int64_t sourceIndex = array.getLeft() <= array.getRight()
+                                  ? array.getLeft() + destination.ordinal
+                                  : array.getLeft() - destination.ordinal;
+        CapturedLValue selected;
+        selected.kind = CapturedLValue::Kind::AggregateDynamicElement;
+        selected.semanticNode = destination.semanticNode;
+        selected.type = destination.type;
+        selected.index =
+            arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                      builder.getI64IntegerAttr(sourceIndex));
+        selected.children.push_back(base);
+        return writeCapturedLValue(selected, value, sourceSigned, true,
+                                   location, delay);
+      }
+    }
     FailureOr<Value> aggregate = loadCapturedLValue(base, location);
     FailureOr<Value> replacement =
         convert(value, destination.type, sourceSigned, location,
@@ -1249,10 +1492,45 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     if (destination.children.size() != 1)
       return failure();
     CapturedLValue &base = destination.children.front();
-    FailureOr<Value> aggregate = loadCapturedLValue(base, location);
     FailureOr<Value> replacement =
         convert(value, destination.type, sourceSigned, location,
                 isSignedNode(destination.semanticNode));
+    if (failed(replacement))
+      return failure();
+    if (nonblocking && base.kind == CapturedLValue::Kind::Reference) {
+      auto array = dyn_cast<sim::UnpackedArrayType>(base.type);
+      if (!array)
+        return failure();
+      FailureOr<Value> owner =
+          toArgumentReference(base.reference, base.type, location);
+      FailureOr<ContainerElementDescriptor> descriptor =
+          describeContainerElement(array.getElementType(), location);
+      std::optional<uint64_t> span =
+          sim::getProvenanceSpan(array.getElementType());
+      if (failed(owner) || failed(descriptor) || !span)
+        return failure();
+      uint64_t elementSpan = *span;
+      if (elementSpan == 0)
+        return failure();
+      FailureOr<Value> index = convert(destination.index, builder.getI64Type(),
+                                       true, location, true);
+      if (failed(index))
+        return failure();
+      Type pathType =
+          sim::ReferencePathType::get(function.getContext(), destination.type);
+      Value path = sim::SimReferencePathAggregateElementOp::create(
+          builder, location, pathType,
+          function.getBody().front().getArgument(0), *owner, *index,
+          array.getLeft(), array.getRight(), elementSpan, descriptor->typeID,
+          descriptor->kind, descriptor->flags, descriptor->valueSize,
+          descriptor->alignment, descriptor->bitWidth,
+          builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
+          builder.getDenseI32ArrayAttr(descriptor->traceKinds));
+      sim::SimReferencePathNBAEnqueueOp::create(builder, location, *replacement,
+                                                path, delay);
+      return success();
+    }
+    FailureOr<Value> aggregate = loadCapturedLValue(base, location);
     if (failed(aggregate) || failed(replacement) ||
         sim::getAggregateElementType((*aggregate).getType(), 0) !=
             destination.type)
@@ -1267,8 +1545,57 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     FailureOr<Value> converted =
         convert(value, destination.type, sourceSigned, location,
                 isSignedNode(destination.semanticNode));
-    if (failed(converted) || destination.children.size() !=
-                                 sim::getAggregateNumElements(destination.type))
+    if (failed(converted))
+      return failure();
+    if (!destination.indices.empty()) {
+      if (destination.children.size() != 1 ||
+          destination.indices.size() !=
+              sim::getAggregateNumElements(destination.type))
+        return failure();
+      CapturedLValue &base = destination.children.front();
+      FailureOr<Value> aggregate = loadCapturedLValue(base, location);
+      auto source =
+          succeeded(aggregate)
+              ? dyn_cast<sim::UnpackedArrayType>((*aggregate).getType())
+              : sim::UnpackedArrayType{};
+      if (!source)
+        return failure();
+      if (nonblocking && base.kind == CapturedLValue::Kind::Reference) {
+        for (auto [ordinal, index] : llvm::enumerate(destination.indices)) {
+          Type elementType =
+              sim::getAggregateElementType(destination.type, ordinal);
+          Value element = sim::SimAggregateExtractOp::create(
+              builder, location, elementType, *converted, ordinal);
+          CapturedLValue selected;
+          selected.kind = CapturedLValue::Kind::AggregateDynamicElement;
+          selected.semanticNode = destination.semanticNode;
+          selected.type = source.getElementType();
+          selected.index = index;
+          selected.children.push_back(base);
+          if (failed(writeCapturedLValue(selected, element, false, true,
+                                         location, delay)))
+            return failure();
+        }
+        return success();
+      }
+      Value updated = *aggregate;
+      for (auto [ordinal, index] : llvm::enumerate(destination.indices)) {
+        Type elementType =
+            sim::getAggregateElementType(destination.type, ordinal);
+        Value element = sim::SimAggregateExtractOp::create(
+            builder, location, elementType, *converted, ordinal);
+        FailureOr<Value> replacement =
+            convert(element, source.getElementType(), false, location);
+        if (failed(replacement))
+          return failure();
+        updated = sim::SimArrayDynInsertOp::create(
+            builder, location, source, updated, *replacement, index);
+      }
+      return writeCapturedLValue(base, updated, false, nonblocking, location,
+                                 delay);
+    }
+    if (destination.children.size() !=
+        sim::getAggregateNumElements(destination.type))
       return failure();
     for (auto [ordinal, child] : llvm::enumerate(destination.children)) {
       Type elementType =
@@ -1282,25 +1609,34 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     return success();
   }
   case CapturedLValue::Kind::StringCharacter: {
-    if (destination.children.size() != 1) {
+    if (!destination.reference) {
       return failure();
     }
-    if (nonblocking) {
-      emitError(location)
-          << "nonblocking string-character assignment requires a captured "
-             "element path";
-      return failure();
-    }
-    CapturedLValue &base = destination.children.front();
-    FailureOr<Value> string = loadCapturedLValue(base, location);
+    FailureOr<Value> string = loadReference(destination.reference, location);
     FailureOr<Value> character =
         convert(value, builder.getI8Type(), sourceSigned, location);
     if (failed(string) || failed(character))
       return failure();
+    if (nonblocking) {
+      FailureOr<Value> owner = toArgumentReference(
+          destination.reference, sim::StringType::get(function.getContext()),
+          location);
+      if (failed(owner))
+        return failure();
+      Type pathType = sim::ReferencePathType::get(function.getContext(),
+                                                  builder.getI8Type());
+      Value path = sim::SimReferencePathStringCharacterOp::create(
+          builder, location, pathType,
+          function.getBody().front().getArgument(0), *string, destination.index,
+          *owner);
+      sim::SimReferencePathNBAEnqueueOp::create(builder, location, *character,
+                                                path, delay);
+      return success();
+    }
     Value updated = sim::SimStringPutcOp::create(
         builder, location, sim::StringType::get(function.getContext()), *string,
         destination.index, *character);
-    return writeCapturedLValue(base, updated, false, false, location);
+    return storeReference(destination.reference, updated, location);
   }
   case CapturedLValue::Kind::Concatenation: {
     FailureOr<Value> converted =
@@ -1363,7 +1699,8 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
 void UnitLowering::appendCapturedValues(const CapturedLValue &destination,
                                         SmallVectorImpl<Value> &values) {
   if (destination.kind == CapturedLValue::Kind::Reference ||
-      destination.kind == CapturedLValue::Kind::PackedDynamicSlice)
+      destination.kind == CapturedLValue::Kind::PackedDynamicSlice ||
+      destination.kind == CapturedLValue::Kind::StringCharacter)
     values.push_back(destination.reference);
   for (const CapturedLValue &child : destination.children)
     appendCapturedValues(child, values);
@@ -1379,13 +1716,21 @@ void UnitLowering::appendCapturedValues(const CapturedLValue &destination,
              destination.index) {
     values.push_back(destination.index);
   }
+  if (destination.kind == CapturedLValue::Kind::ContainerSlice) {
+    values.push_back(destination.container);
+    values.push_back(destination.index);
+    values.push_back(destination.limit);
+  }
+  if (destination.kind == CapturedLValue::Kind::AggregateSlice)
+    llvm::append_range(values, destination.indices);
 }
 
 LogicalResult UnitLowering::replaceCapturedValues(CapturedLValue &destination,
                                                   ValueRange values,
                                                   unsigned &next) {
   if (destination.kind == CapturedLValue::Kind::Reference ||
-      destination.kind == CapturedLValue::Kind::PackedDynamicSlice) {
+      destination.kind == CapturedLValue::Kind::PackedDynamicSlice ||
+      destination.kind == CapturedLValue::Kind::StringCharacter) {
     if (next >= values.size())
       return failure();
     destination.reference = values[next++];
@@ -1411,6 +1756,20 @@ LogicalResult UnitLowering::replaceCapturedValues(CapturedLValue &destination,
     if (next >= values.size())
       return failure();
     destination.index = values[next++];
+  }
+  if (destination.kind == CapturedLValue::Kind::AggregateSlice) {
+    if (next > values.size() ||
+        destination.indices.size() > values.size() - next)
+      return failure();
+    for (Value &index : destination.indices)
+      index = values[next++];
+  }
+  if (destination.kind == CapturedLValue::Kind::ContainerSlice) {
+    if (next > values.size() || values.size() - next < 3)
+      return failure();
+    destination.container = values[next++];
+    destination.index = values[next++];
+    destination.limit = values[next++];
   }
   return success();
 }

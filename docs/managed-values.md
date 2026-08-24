@@ -104,11 +104,12 @@ than comparing allocation handles.
 DPI-C input, output, inout, and function-result strings use the standard
 `const char *`/`const char **` ABI and copy C results into simulator-owned
 managed storage. VPI string visibility remains intentionally excluded and
-diagnoses its unsupported boundary. String scanning (`$sscanf` and `$fscanf`),
-escaping string-character `ref` aliases, and nonblocking character-path
-updates also retain explicit diagnostics. These require scanner target records
-or reference paths that preserve partial assignment and exact alias semantics
-across both execution tiers.
+diagnoses its unsupported boundary. String scanning (`$sscanf` and `$fscanf`)
+uses captured copy-out targets, and nonblocking character-path updates retain
+the selected string and index until commit in both execution tiers. IEEE
+1800-2017 13.5.2 does not permit a string character select as a `ref` actual,
+so that case is rejected as illegal source rather than tracked as a missing
+escaping alias.
 
 Source dynamic arrays execute allocation and resize, value-copy assignment,
 indexing and reference formals, equality, `foreach`, assignment patterns,
@@ -123,7 +124,12 @@ Queues have a validated managed ring-buffer representation and execute
 value-copy assignment, indexing, equality, `foreach`, assignment patterns,
 array methods, bounded and unbounded `push_front`/`push_back`,
 `pop_front`/`pop_back`, `insert`, and indexed or whole-queue `delete`.
-Remaining legal queue slice and reference-write forms receive diagnostics
-rather than being silently discarded. DPI-C marshalling of managed containers
-also remains outside the current boundary; VPI marshalling is excluded from
-the project target.
+Queue and unpacked-array slice lvalues execute. Element reference paths remain
+bound to the referenced element across insert/delete/order operations; when a
+mutation removes that element or whole-value assignment replaces its owner,
+the path detaches onto private storage with the last referenced value. Fixed
+arrays use bulk import/export for ordering methods so large arrays do not
+become wide per-element IR chains. Default untyped mailboxes store an exact
+type descriptor per message and can safely interleave heterogeneous payloads.
+DPI-C marshalling of managed containers remains outside the current boundary;
+VPI marshalling is excluded from the project target.

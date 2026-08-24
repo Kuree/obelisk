@@ -120,6 +120,18 @@ Simulation IR, one bytecode replication instruction, and a logarithmic native
 construction instead of 4096 operands and shifts. Large dynamic patterns use
 counted loops. The full regression suite passes 1262/1262 tests.
 
+L8's final UVM smoke ran in 33.889 seconds compile / 0.180 seconds simulate for
+bytecode and 71.285 seconds compile / 0.019 seconds simulate for native, with
+zero UVM errors or fatals. A 4096-element fixed-array ordering stress uses
+bulk fixed/container transfers rather than emitting one wide aggregate
+extract/insert chain per loop iteration; native and bytecode `-O0`/`-O3`
+runs complete while keeping the compiled representation proportional to the
+source operation. Managed-container change waits are token-indexed, so an
+in-place mutation visits only interested processes rather than scanning all
+scheduled work. Implicit sensitivity rebuilds container watches from current
+direct and class-property handles after each activation. The full regression
+suite passes 1266/1266 tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -128,21 +140,21 @@ counted loops. The full regression suite passes 1262/1262 tests.
 | 4 Scheduling semantics | Partial | Active, Inactive, NBA, Observed, Reactive, Re-Inactive, Re-NBA, Postponed, and the Preponed snapshot hook execute through one native/bytecode scheduler. Remaining language gaps are attached to the timed constructs below. PLI callback regions are excluded with VPI. |
 | 5 Lexical conventions | Executable for the audited surface | Slang supplies the lexer, preprocessor-facing tokens, literals, attributes, keywords, and identifiers. Keep this clause under differential testing, especially revision switches and literal corner cases. |
 | 6 Data types | Partial | Packed 2/4-state values, real/realtime variables and nets, strings, chandles, events, enums, typedefs, parameters, casts, strengths, common net kinds, user-defined nettypes/resolution functions, typed/heterogeneous fixed-array `interconnect`, and trireg charge strength/retention/decay/sharing execute. Remaining gaps are tracked by the operator, aggregate, and container chunks below. |
-| 7 Aggregate data types | Partial | Fixed arrays/structs/unions, tagged managed unions, and untagged managed unions using validated candidate roots execute, including four-state overlapping arms. Dynamic arrays, queues, associative arrays, queries, traversal, and the registered manipulation methods execute. Remaining work includes all legal slice/reference lvalues and escaping string-character reference/NBA paths. Strings permit character selection but are not sliceable. |
+| 7 Aggregate data types | Partial | Fixed arrays/structs/unions, tagged managed unions, and untagged managed unions using validated candidate roots execute, including four-state overlapping arms. Dynamic arrays, queues, associative arrays, queries, traversal, ordering, registered manipulation methods, queue/unpacked slice lvalues, and persistent element references execute. Whole-container replacement and structural mutation preserve the LRM's reference lifetime rules. String character selection and NBA execute; strings are not sliceable, and a string character select is not a legal `ref` actual under 13.5.2. Continue differential closure for residual aggregate corner cases. |
 | 8 Classes | Partial | Construction, inheritance, polymorphism, virtual/interface methods, parameterized classes, copying, managed properties, garbage collection, and the UVM-used surface execute. Complete the residual class/type/operator/constructor long tail exposed by focused probes and the aggregate/reference gaps shared with Clauses 6, 7, and 11. |
 | 9 Processes | Partial | Structured procedures, all fork/join forms, `wait fork`, `disable fork`, timed and recursive tasks, `process` handles and control, automatic capture, and cancellation execute. Disabling a named block owned by another live process is still rejected instead of canceling only the target scope. |
-| 10 Assignment statements | Partial | Blocking/NBA assignment, intra-assignment timing, assignment patterns, net aliasing, static continuous-assignment delays, strengths, and a restricted procedural force/assign surface execute. Complete signal-dependent force/assign reevaluation, automatic/class/unpacked/managed targets, concatenations and dynamic selects, plus the remaining queue/unpacked slice lvalues. |
+| 10 Assignment statements | Partial | Blocking/NBA assignment, intra-assignment timing, assignment patterns, queue/unpacked slice lvalues, net aliasing, static continuous-assignment delays, strengths, and a restricted procedural force/assign surface execute. Complete signal-dependent force/assign reevaluation, automatic/class/unpacked/managed targets, concatenations, and dynamic selects. |
 | 11 Operators and expressions | Partial | Legal equality, ordering, logical operations, concatenation, replication, and packed selection execute for strings, containers, unpacked aggregates, handles, and arbitrary-width packed values. This includes handle wildcard identity equality, two-state XNOR, compact integral power, constant ordinary part-selects, dynamic indexed part-selects with partial out-of-range behavior, dynamic string replication, and fixed/dynamic unpacked concatenation with per-element conversion. Ordinary part-select bounds must be constant and strings are not sliceable, so those former diagnostic branches are not missing language features. Public `--timing=min|typ|max` selects constant and dynamic expressions. Remaining expression work is tracked by references, randomization, assertions, and the differential long tail. |
 | 12 Procedural statements | Partial | Conditional, ordinary/pattern case, loops, jumps, `randcase`, and most `randsequence` forms execute. Recursive randsequence productions and value-returning productions still require activation frames and expression-valued production calls. |
 | 13 Tasks and functions | Executable for the audited non-DPI surface | Static/automatic, recursive, virtual, class/interface, timed task, value/output/inout/ref, default argument, and cancellation behavior execute. Continue differential closure for unusual aggregate and hierarchical formal cases; DPI is tracked separately in Clause 35. |
 | 14 Clocking blocks | Partial | Input/output skews, `#1step`, synchronous drives, event lists and `iff`, cycle delays, defaults, and virtual-interface clocking handles execute. Global clocking and the remaining assertion clock-inference, clock-formal, and multi-clock composition cases remain. |
-| 15 Interprocess synchronization | Partial | Semaphores, typed mailboxes, named-event creation/alias/null, blocking and nonblocking trigger, `.triggered`, and `wait_order` execute in both tiers. The default untyped mailbox is rejected because the runtime currently requires one fixed element descriptor. |
+| 15 Interprocess synchronization | Executable for the audited surface | Semaphores; typed and default untyped mailboxes; heterogeneous untyped payloads with exact per-message type checks; named-event creation/alias/null, blocking and nonblocking trigger, `.triggered`, and `wait_order` execute in both tiers. Typed-mismatch `get`/`try_get`/`peek` behavior follows 15.4.3-15.4.9. Continue differential testing of scheduling corner cases. |
 | 16 Assertions | Partial | Immediate/deferred assertions and a substantial compiled concurrent subset execute. The authoritative fine-grained boundary is `docs/sva-lrm-support.md`; the implementation plan below covers accounting, full temporal composition, clocks, locals/match items, sampled values, controls, and `expect`. |
 | 17 Checkers | Semantic only | Declarations, ports, resolved instances, identities, cloned bodies, clocks/disables, properties, procedures, and expressions are retained. Executable instances now receive a targeted Clause 17 diagnostic instead of being silently erased; A9 implements checker procedures, free variables, inferred clocks, assertions, hierarchy, and runtime behavior. Covergroups in checkers are excluded with coverage. |
 | 18 Constrained random generation | Partial | Object streams, broad packed constraints, modes, finite domains, soft constraints, direct solve ordering, distributions, bounded `randc`, lifecycle hooks, and much of randsequence execute. The authoritative boundary is `docs/randomization-support.md`; R1-R7 below close the remaining standard surface without treating a solver resource cap as language semantics. |
 | 19 Functional coverage | Excluded | Explicitly outside this project goal. |
 | 20 Utility system tasks/functions | Partial | Simulation/time control, conversions, data/array queries, real math, bit-vector functions, severity, random distributions, most assertion control, and the implemented sampled functions execute. Missing normative families include `$system`, `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam`, the synchronous/asynchronous PLA tasks, the global-clock sampled functions, and complete assertion statistics/control behavior. |
-| 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning, read-memory, plusargs, and VCD/dumpports execute. `$writememb`/`$writememh`, the remaining scan target/reference forms, and formatting/file corner cases remain. |
+| 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning—including captured dynamic, associative, and nested aggregate copy-out targets—read-memory, plusargs, and VCD/dumpports execute. `$writememb`/`$writememh` and formatting/file corner cases remain. |
 | 22 Compiler directives | Executable for the audited surface | The Slang preprocessor implements the normative directive family. Directive persistence, separate-compilation-unit reset, and command-line default-timescale precedence have native/bytecode tests. Protected envelopes are a separate Clause 34 feature, not ordinary pragma acceptance. |
 | 23 Modules and hierarchy | Partial | ANSI/non-ANSI modules, parameters, ports, arrays, hierarchy, bind, and common upward references elaborate. External runs retain module-library lookup, port mismatch, hierarchical path, generate-scope, and parameter-binding failures that need clause-minimal reproducers and fixes. |
 | 24 Programs | Partial | Program instances and their Reactive/Re-Inactive/Re-NBA process home execute. The normative `$exit` program-control task is missing. |
@@ -223,9 +235,14 @@ one commit.
    and bytecode storage; four-state arms contribute only their value plane,
    while invalid and stale words are never dereferenced.
 8. **L8 — Container/reference and untyped-mailbox closure (7.5-7.12, 13.5,
-   15.4).** Complete queue and unpacked slice lvalues, escaped string-character
-   references, character NBA, scan copy-out targets, heterogeneous untyped
-   mailbox payloads, and differential method tests.
+   15.4, 21.3.4), completed.** Queue and unpacked slice lvalues, persistent
+   element references across structural mutation and whole-container
+   replacement, character NBA, captured scan copy-out targets, heterogeneous
+   untyped mailbox payloads, fixed-array ordering, and differential method
+   tests execute in native and bytecode tiers. The audit proved that a string
+   character select is not a legal `ref` actual under 13.5.2 rather than an
+   implementation gap. Bulk fixed/container transfers keep large ordering
+   operations compact, and managed mutation waits use indexed tokens.
 9. **L9 — Procedural force/assign reevaluation (10.6).** Make signal-dependent
    right-hand sides continuously reevaluate with exact dependency and release
    semantics.

@@ -29,23 +29,25 @@ namespace {
 constexpr size_t bulkRootRefreshThreshold = 64;
 
 bool managedOperationMayCollect(Operation *operation) {
-  return isa<sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimWeakCreateOp,
-             sim::SimReferencePathIndexOp, sim::SimReferencePathAssocOp,
-             sim::SimContainerCreateLikeOp, sim::SimContainerCreateOp,
-             sim::SimContainerCloneOp, sim::SimContainerWriteOp,
-             sim::SimQueueInsertOp, sim::SimAssocCreateOp, sim::SimAssocWriteOp,
-             sim::SimAssocSetDefaultOp, sim::SimAssocTraverseOp,
-             sim::SimArgumentRefStoreOp, sim::SimReferencePathNBAEnqueueOp,
-             sim::SimGCSafepointOp, sim::SimStringLiteralOp,
-             sim::SimStringFromPackedOp, sim::SimStringConcatOp,
-             sim::SimStringRepeatOp, sim::SimStringPutcOp,
-             sim::SimStringSubstrOp, sim::SimStringCaseConvertOp,
-             sim::SimStringFormatIntegerOp, sim::SimStringFormatRealOp,
-             sim::SimStringOutputFormatOp, sim::SimStringScanFieldOp,
-             sim::SimFileGetlineStringOp, sim::SimFileErrorStringOp,
-             sim::SimPlusargValueOp, sim::SimCallOp, sim::SimClassDirectCallOp,
-             sim::SimClassVirtualCallOp, sim::SimClassVirtualTaskCallOp,
-             sim::SimDPICallOp>(operation);
+  return isa<
+      sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimWeakCreateOp,
+      sim::SimReferencePathIndexOp, sim::SimReferencePathAssocOp,
+      sim::SimReferencePathStringCharacterOp,
+      sim::SimReferencePathAggregateElementOp, sim::SimContainerCreateLikeOp,
+      sim::SimContainerCreateOp, sim::SimContainerCloneOp,
+      sim::SimContainerImportFixedOp, sim::SimContainerWriteOp,
+      sim::SimQueueInsertOp, sim::SimAssocCreateOp, sim::SimAssocWriteOp,
+      sim::SimAssocSetDefaultOp, sim::SimAssocTraverseOp,
+      sim::SimArgumentRefStoreOp, sim::SimReferencePathNBAEnqueueOp,
+      sim::SimGCSafepointOp, sim::SimStringLiteralOp,
+      sim::SimStringFromPackedOp, sim::SimStringConcatOp,
+      sim::SimStringRepeatOp, sim::SimStringPutcOp, sim::SimStringSubstrOp,
+      sim::SimStringCaseConvertOp, sim::SimStringFormatIntegerOp,
+      sim::SimStringFormatRealOp, sim::SimStringOutputFormatOp,
+      sim::SimStringScanFieldOp, sim::SimFileGetlineStringOp,
+      sim::SimFileErrorStringOp, sim::SimPlusargValueOp, sim::SimCallOp,
+      sim::SimClassDirectCallOp, sim::SimClassVirtualCallOp,
+      sim::SimClassVirtualTaskCallOp, sim::SimDPICallOp>(operation);
 }
 
 } // namespace

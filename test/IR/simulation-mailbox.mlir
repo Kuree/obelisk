@@ -27,6 +27,26 @@ module attributes {
         value_size = 8 : i64
       } :
         (i64) -> !obelisk_sim.mailbox<!obelisk_sim.string>
+      %array = "obelisk_sim.container.create"(%bound) {
+        alignment = 4 : i64,
+        bit_width = 32 : i64,
+        bound = 0 : i64,
+        container_kind = 1 : i32,
+        element_flags = 0 : i32,
+        element_kind = 1 : i32,
+        trace_kinds = array<i32>,
+        trace_offsets = array<i64>,
+        type_id = 42 : i64,
+        value_size = 4 : i64
+      } : (i64) -> !obelisk_sim.dynamic_array<i32>
+      // CHECK: obelisk_sim.box.pack
+      %box = obelisk_sim.box.pack %array :
+        (!obelisk_sim.dynamic_array<i32>) -> !obelisk_sim.box
+      // CHECK: obelisk_sim.box.is_type
+      %matches = obelisk_sim.box.is_type %box type_id 42 : !obelisk_sim.box
+      // CHECK: obelisk_sim.box.cast
+      %unboxed = obelisk_sim.box.cast %box :
+        (!obelisk_sim.box) -> !obelisk_sim.dynamic_array<i32>
       // CHECK: obelisk_sim.mailbox.try_put
       %put = "obelisk_sim.mailbox.try_put"(%mailbox, %message) :
         (!obelisk_sim.mailbox<!obelisk_sim.string>, !obelisk_sim.string) -> i1
@@ -57,6 +77,7 @@ module attributes {
 }
 
 // NATIVE: llvm.call @obelisk_rt_v1_mailbox_create_typed
+// NATIVE: llvm.call @obelisk_rt_v1_box_is_type
 // NATIVE: llvm.call @obelisk_rt_v1_mailbox_try_put
 // NATIVE: llvm.call @obelisk_rt_v1_mailbox_try_peek
 // NATIVE: llvm.call @obelisk_rt_v1_mailbox_num

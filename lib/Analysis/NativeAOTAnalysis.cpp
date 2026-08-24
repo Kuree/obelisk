@@ -23,8 +23,9 @@ namespace {
 
 bool isManagedType(Type type) {
   if (isa<sim::StringType, sim::ClassHandleType, sim::DynamicArrayType,
-          sim::QueueType, sim::AssocArrayType, sim::ReferencePathType,
-          sim::ManagedRefType, sim::ArgumentRefType>(type))
+          sim::QueueType, sim::BoxType, sim::AssocArrayType,
+          sim::ReferencePathType, sim::ManagedRefType, sim::ArgumentRefType>(
+          type))
     return true;
   if (auto ref = dyn_cast<sim::RefType>(type))
     return isManagedType(ref.getElementType());

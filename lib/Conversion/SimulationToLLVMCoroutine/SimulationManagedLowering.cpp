@@ -895,7 +895,8 @@ void populateManagedToLLVMConversionPatterns(RewritePatternSet &patterns,
       ManagedObjectOutputConversion<sim::SimWeakCreateOp>,
       ManagedObjectOutputConversion<sim::SimWeakGetOp>, WeakClearConversion,
       GCSafepointConversion>(converter, context);
-  populateManagedContainerToLLVMConversionPatterns(patterns, converter);
+  populateManagedContainerToLLVMConversionPatterns(patterns, converter,
+                                                   dataLayout);
   populateManagedCoverageToLLVMConversionPatterns(patterns, converter);
   populateManagedReferenceToLLVMConversionPatterns(
       patterns, converter, dataLayout, stateBitCount);

@@ -158,9 +158,10 @@ module {
 // CHECK: %[[MATERIALIZED:.*]]: !obelisk_sim.queue<i32, 0>
 // CHECK: %[[OWNED:.*]] = obelisk_sim.container.clone %[[MATERIALIZED]]
 // CHECK: obelisk_sim.ref.store %[[OWNED]]
-// CHECK: %[[PUBLISHED:.*]] = obelisk_sim.ref.load
+// CHECK: obelisk_sim.ref.load
+// CHECK: ^{{bb[0-9]+}}(%[[READY:.*]]: !obelisk_sim.queue<i32, 0>):
 // CHECK: %[[OWNER_REF:.*]] = obelisk_sim.argument_ref.from_ref
-// CHECK: %[[PATH:.*]] = obelisk_sim.reference_path.index {{.*}}, %[[PUBLISHED]]{{.*}} watching %[[OWNER_REF]]
+// CHECK: %[[PATH:.*]] = obelisk_sim.reference_path.index {{.*}}, %[[READY]]{{.*}} watching %[[OWNER_REF]]
 // CHECK: %[[REF:.*]] = obelisk_sim.argument_ref.from_path %[[PATH]]
 // CHECK: obelisk_sim.task.call @unit_0({{.*}}, %[[REF]])
 // CHECK-SAME: !obelisk_sim.argument_ref<i32>

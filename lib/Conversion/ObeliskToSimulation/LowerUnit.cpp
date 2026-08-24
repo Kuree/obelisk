@@ -20,6 +20,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/Matchers.h"
 
 #include "llvm/ADT/APInt.h"
@@ -164,7 +165,7 @@ describeContainerElementImpl(Type type, Location location) {
     result.bitWidth = sizeof(void *) * 8;
     return result;
   }
-  if (isa<sim::DynamicArrayType, sim::QueueType, sim::MailboxType,
+  if (isa<sim::DynamicArrayType, sim::QueueType, sim::MailboxType, sim::BoxType,
           sim::SemaphoreType, sim::AssocArrayType>(type)) {
     result.kind = OBELISK_RT_ELEMENT_CONTAINER_HANDLE;
     result.valueSize = sizeof(void *);
@@ -225,6 +226,8 @@ describeContainerElementImpl(Type type, Location location) {
 } // namespace
 
 namespace simlowering {
+
+uint64_t getStableTypeID(Type type) { return stableTypeID(type); }
 
 FailureOr<ContainerElementDescriptor>
 describeContainerElement(Type type, Location location) {
@@ -687,7 +690,9 @@ FailureOr<Value> UnitLowering::ensureSequentialContainer(Value value,
       bound);
   cf::BranchOp::create(builder, location, resume, ValueRange{allocated});
   setCurrent(resume);
-  return resume->getArgument(0);
+  Value result = resume->getArgument(0);
+  materializedContainerSources.try_emplace(result, value);
+  return result;
 }
 
 FailureOr<Value> UnitLowering::createAssocArray(sim::AssocArrayType type,
@@ -741,7 +746,9 @@ FailureOr<Value> UnitLowering::ensureAssocArray(Value value,
     return failure();
   cf::BranchOp::create(builder, location, resume, ValueRange{*allocated});
   setCurrent(resume);
-  return resume->getArgument(0);
+  Value result = resume->getArgument(0);
+  materializedContainerSources.try_emplace(result, value);
+  return result;
 }
 
 FailureOr<std::pair<Value, Value>>
@@ -902,6 +909,12 @@ void UnitLowering::recordContainerSizeRead(Value container, Location location) {
       !isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
           container.getType()))
     return;
+  // ensureSequentialContainer/ensureAssocArray introduce a branch-local merge
+  // value for the empty-container fallback. That value is right for the read,
+  // but an implicit sensitivity wait must watch the current source handle on
+  // every activation and therefore needs the stable pre-normalization path.
+  while (auto source = materializedContainerSources.lookup(container))
+    container = source;
   Value watch = sim::SimManagedWatchOp::create(
       builder, location, sim::ManagedWatchType::get(function.getContext()),
       container, sim::ManagedWatchKind::ContainerSize);
@@ -3025,12 +3038,20 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       function->getAttrOfType<StringAttr>("obelisk_sim.primitive_name");
   llvm::SetVector<Value> implicitProcessWrites;
   llvm::SetVector<Value> *savedWrites = observedWrites;
+  llvm::SetVector<Value> implicitProcessDependencies;
+  llvm::SetVector<Value> *savedDependencies = observedDependencies;
   bool excludesWrittenSensitivity = entryKind == sim::EntryKind::AlwaysComb ||
                                     entryKind == sim::EntryKind::AlwaysLatch;
+  bool hasImplicitSensitivity = excludesWrittenSensitivity ||
+                                entryKind == sim::EntryKind::Continuous ||
+                                entryKind == sim::EntryKind::PortInput ||
+                                entryKind == sim::EntryKind::PortOutput;
   if (excludesWrittenSensitivity) {
     observedWrites = &implicitProcessWrites;
     observeNonblockingWrites = true;
   }
+  if (hasImplicitSensitivity)
+    observedDependencies = &implicitProcessDependencies;
   LogicalResult lowered = success();
   if (primitive) {
     lowered = lowerPrimitive(primitive.getValue(), roots);
@@ -3038,6 +3059,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     lowered = lowerSequence(roots);
   }
   observedWrites = savedWrites;
+  observedDependencies = savedDependencies;
   if (failed(lowered))
     return failure();
   if (!current->empty() && current->back().hasTrait<OpTrait::IsTerminator>())
@@ -3130,6 +3152,103 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     implicitProcessWrites.insert(written);
   for (Value written : implicitProcessWrites)
     sensitivity.remove(written);
+
+  // Managed fields and dynamic containers have mutation identities distinct
+  // from the declaration-level reference that owns their current handle.
+  // Rebuild every syntactically observed managed path immediately before the
+  // implicit wait: this both gives the watch SSA dominance and selects the
+  // current object after any whole-value replacement in this activation.
+  auto dominatesCurrent = [&](Value value) {
+    Block *definition = value.getParentBlock();
+    DominanceInfo dominance(function);
+    return definition == current || dominance.dominates(definition, current);
+  };
+  std::function<FailureOr<Value>(Value)> rematerializeManagedInput =
+      [&](Value value) -> FailureOr<Value> {
+    if (auto field = value.getDefiningOp<sim::SimClassFieldRefOp>()) {
+      FailureOr<Value> object = rematerializeManagedInput(field.getObject());
+      if (failed(object))
+        return failure();
+      return sim::SimClassFieldRefOp::create(builder, field.getLoc(),
+                                             field.getResult().getType(),
+                                             *object, field.getFieldAttr())
+          .getResult();
+    }
+    if (auto load = value.getDefiningOp<sim::SimManagedLoadOp>()) {
+      FailureOr<Value> reference =
+          rematerializeManagedInput(load.getReference());
+      if (failed(reference))
+        return failure();
+      // A syntactic read may have occurred only on one short-circuit path.
+      // Rebuilding it at the common wait point must not turn a skipped null
+      // property dereference into a runtime error. A null managed result
+      // contributes token zero and remains dormant until the enclosing field
+      // or declaration dependency changes.
+      if (sim::isManagedHandleType(load.getResult().getType())) {
+        if (auto field =
+                (*reference).getDefiningOp<sim::SimClassFieldRefOp>()) {
+          Value isNull = sim::SimManagedIsNullOp::create(
+              builder, load.getLoc(), builder.getI1Type(), field.getObject());
+          Block *missing = addBlock();
+          Block *present = addBlock();
+          Block *ready = addBlock();
+          ready->addArgument(load.getResult().getType(), load.getLoc());
+          cf::CondBranchOp::create(builder, load.getLoc(), isNull, missing,
+                                   ValueRange{}, present, ValueRange{});
+          setCurrent(missing);
+          Value null = createDefaultValue(builder, load.getLoc(),
+                                          load.getResult().getType());
+          if (!null)
+            return failure();
+          cf::BranchOp::create(builder, load.getLoc(), ready, ValueRange{null});
+          setCurrent(present);
+          Value loaded = sim::SimManagedLoadOp::create(
+              builder, load.getLoc(), load.getResult().getType(), *reference);
+          cf::BranchOp::create(builder, load.getLoc(), ready,
+                               ValueRange{loaded});
+          setCurrent(ready);
+          return ready->getArgument(0);
+        }
+      }
+      return sim::SimManagedLoadOp::create(
+                 builder, load.getLoc(), load.getResult().getType(), *reference)
+          .getResult();
+    }
+    if (auto load = value.getDefiningOp<sim::SimRefLoadOp>()) {
+      FailureOr<Value> input = rematerializeManagedInput(load.getReference());
+      if (failed(input))
+        return failure();
+      return sim::SimRefLoadOp::create(builder, load.getLoc(),
+                                       load.getResult().getType(), *input)
+          .getResult();
+    }
+    if (auto cast = value.getDefiningOp<sim::SimClassCastOp>()) {
+      FailureOr<Value> object = rematerializeManagedInput(cast.getObject());
+      if (failed(object))
+        return failure();
+      return sim::SimClassCastOp::create(builder, cast.getLoc(),
+                                         cast.getResult().getType(), *object)
+          .getResult();
+    }
+    if (dominatesCurrent(value))
+      return value;
+    return failure();
+  };
+  for (Value dependency : implicitProcessDependencies) {
+    auto watch = dependency.getDefiningOp<sim::SimManagedWatchOp>();
+    if (!watch)
+      continue;
+    FailureOr<Value> input = rematerializeManagedInput(watch.getInput());
+    if (failed(input)) {
+      function.emitError()
+          << "implicit managed dependency cannot be rematerialized at its "
+             "stable wait point";
+      return failure();
+    }
+    sensitivity.insert(sim::SimManagedWatchOp::create(
+        builder, watch.getLoc(), watch.getResult().getType(), *input,
+        watch.getKind()));
+  }
   if (sensitivity.empty()) {
     if (entryKind == sim::EntryKind::Continuous ||
         entryKind == sim::EntryKind::AlwaysComb ||

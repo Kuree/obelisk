@@ -455,6 +455,55 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                ? OBELISK_RT_INVALID_BYTECODE
                : status;
   }
+  case OBELISK_RT_INTRINSIC_V1_CONTAINER_IMPORT_FIXED: {
+    std::array<std::optional<uint64_t>, 5> inputs;
+    for (uint32_t index = 2; index != 7; ++index)
+      inputs[index - 2] = scalar(index);
+    if (std::any_of(inputs.begin(), inputs.end(),
+                    [](const auto &value) { return !value; }))
+      return OBELISK_RT_INVALID_BYTECODE;
+    Layout input = layoutAt(image, frame.function, inputRegister(1));
+    bool fourState = input.kind == OBELISK_RT_DBREG_LOGIC;
+    uint64_t framePlaneSize = fourState ? input.size / 2 : input.size;
+    if (*inputs[0] > framePlaneSize || *inputs[2] != fourState)
+      return OBELISK_RT_INVALID_BYTECODE;
+    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    if (!lane)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    const void *unknown =
+        fourState ? frame.data + input.offset + framePlaneSize : nullptr;
+    return obelisk_rt_v1_container_import_fixed(
+        lane, readManaged(inputRegister(0)), frame.data + input.offset, unknown,
+        *inputs[0], *inputs[1], fourState, *inputs[3], *inputs[4]);
+  }
+  case OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_FIXED: {
+    std::array<std::optional<uint64_t>, 5> inputs;
+    for (uint32_t index = 1; index != 6; ++index)
+      inputs[index - 1] = scalar(index);
+    if (std::any_of(inputs.begin(), inputs.end(),
+                    [](const auto &value) { return !value; }))
+      return OBELISK_RT_INVALID_BYTECODE;
+    Layout output = layoutAt(image, frame.function, outputRegister(0));
+    bool fourState = output.kind == OBELISK_RT_DBREG_LOGIC;
+    uint64_t framePlaneSize = fourState ? output.size / 2 : output.size;
+    if (*inputs[0] > framePlaneSize || *inputs[2] != fourState)
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::memset(frame.data + output.offset, 0, output.size);
+    void *unknown =
+        fourState ? frame.data + output.offset + framePlaneSize : nullptr;
+    return obelisk_rt_v1_container_export_fixed(
+        readManaged(inputRegister(0)), frame.data + output.offset, unknown,
+        *inputs[0], *inputs[1], fourState, *inputs[3], *inputs[4]);
+  }
+  case OBELISK_RT_INTRINSIC_V1_CONTAINER_SWAP: {
+    auto left = scalar(1);
+    auto right = scalar(2);
+    return left && right
+               ? obelisk_rt_v1_container_swap(readManaged(inputRegister(0)),
+                                              static_cast<int64_t>(*left),
+                                              static_cast<int64_t>(*right))
+               : OBELISK_RT_INVALID_BYTECODE;
+  }
   case OBELISK_RT_INTRINSIC_V1_CONTAINER_DELETE:
     return obelisk_rt_v1_container_delete(readManaged(inputRegister(0)));
   case OBELISK_RT_INTRINSIC_V1_QUEUE_DELETE: {
@@ -522,6 +571,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     obelisk_rt_status status =
         obelisk_rt_v1_mailbox_num(readManaged(inputRegister(0)), &count);
     return status == OBELISK_RT_OK ? sentinel(0, count) : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_BOX_IS_TYPE: {
+    auto typeID = scalar(1);
+    return typeID ? sentinel(0, obelisk_rt_v1_box_is_type(
+                                    readManaged(inputRegister(0)), *typeID))
+                  : OBELISK_RT_INVALID_BYTECODE;
   }
   case OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_PUT: {
     obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
@@ -809,8 +864,17 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!lane)
       return OBELISK_RT_INVALID_LIFECYCLE;
     obelisk_rt_object_v1 *path = nullptr;
+    uint8_t *stateValue =
+        context->stateValue.empty()
+            ? nullptr
+            : reinterpret_cast<uint8_t *>(context->stateValue.data());
+    uint8_t *stateUnknown =
+        context->stateUnknown.empty()
+            ? nullptr
+            : reinterpret_cast<uint8_t *>(context->stateUnknown.data());
     obelisk_rt_status status = obelisk_rt_v1_reference_path_assoc_create(
-        lane, array, &key, watchOwner, ownerPayload, ownerManaged, &path);
+        lane, array, &key, watchOwner, ownerPayload, ownerManaged, stateValue,
+        stateUnknown, image.stateBitCount, &path);
     return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), path)
                ? OBELISK_RT_INVALID_BYTECODE
                : status;
@@ -1460,9 +1524,100 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!lane)
       return OBELISK_RT_INVALID_LIFECYCLE;
     obelisk_rt_object_v1 *path = nullptr;
+    uint8_t *stateValue =
+        context->stateValue.empty()
+            ? nullptr
+            : reinterpret_cast<uint8_t *>(context->stateValue.data());
+    uint8_t *stateUnknown =
+        context->stateUnknown.empty()
+            ? nullptr
+            : reinterpret_cast<uint8_t *>(context->stateUnknown.data());
     obelisk_rt_status status = obelisk_rt_v1_reference_path_index_create(
         lane, readManaged(inputRegister(0)), static_cast<int64_t>(*index),
-        watchOwner, ownerPayload, ownerManaged, &path);
+        watchOwner, ownerPayload, ownerManaged, stateValue, stateUnknown,
+        image.stateBitCount, &path);
+    if (status != OBELISK_RT_OK)
+      return status;
+    return writeManaged(outputRegister(0), path) ? OBELISK_RT_OK
+                                                 : OBELISK_RT_INVALID_BYTECODE;
+  }
+  case OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_STRING_CHARACTER: {
+    auto index = scalar(1);
+    obelisk_rt_object_v1 *watchOwner = nullptr;
+    uint64_t ownerPayload = 0;
+    uint32_t ownerManaged = 0;
+    if (!index || !readArgumentRef(inputRegister(2), watchOwner, ownerPayload,
+                                   ownerManaged))
+      return OBELISK_RT_INVALID_BYTECODE;
+    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    if (!lane)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    obelisk_rt_object_v1 *path = nullptr;
+    obelisk_rt_string_v1 string = 0;
+    if (!readString(inputRegister(0), string))
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint8_t *stateValue =
+        context->stateValue.empty()
+            ? nullptr
+            : reinterpret_cast<uint8_t *>(context->stateValue.data());
+    uint8_t *stateUnknown =
+        context->stateUnknown.empty()
+            ? nullptr
+            : reinterpret_cast<uint8_t *>(context->stateUnknown.data());
+    obelisk_rt_status status =
+        obelisk_rt_v1_reference_path_string_character_create(
+            lane, string, static_cast<int64_t>(*index), watchOwner,
+            ownerPayload, ownerManaged, stateValue, stateUnknown,
+            image.stateBitCount, &path);
+    if (status != OBELISK_RT_OK)
+      return status;
+    return writeManaged(outputRegister(0), path) ? OBELISK_RT_OK
+                                                 : OBELISK_RT_INVALID_BYTECODE;
+  }
+  case OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_AGGREGATE_ELEMENT: {
+    std::array<std::optional<uint64_t>, 13> inputs;
+    inputs[0] = scalar(1);
+    for (uint32_t index = 2; index != 14; ++index)
+      inputs[index - 1] = scalar(index);
+    if (std::any_of(inputs.begin(), inputs.end(),
+                    [](const auto &value) { return !value; }))
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::optional<ByteSpan> trace =
+        readByteSpan(image, frame, inputRegister(14));
+    if (!trace || trace->size % sizeof(obelisk_rt_element_trace_slot_v1) != 0)
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::vector<obelisk_rt_element_trace_slot_v1> traceSlots(
+        trace->size / sizeof(obelisk_rt_element_trace_slot_v1));
+    if (!traceSlots.empty())
+      std::memcpy(traceSlots.data(), trace->data, trace->size);
+    obelisk_rt_object_v1 *watchOwner = nullptr;
+    uint64_t ownerPayload = 0;
+    uint32_t ownerManaged = 0;
+    if (!readArgumentRef(inputRegister(0), watchOwner, ownerPayload,
+                         ownerManaged))
+      return OBELISK_RT_INVALID_BYTECODE;
+    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    if (!lane)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    uint8_t *stateValue =
+        context->stateValue.empty()
+            ? nullptr
+            : reinterpret_cast<uint8_t *>(context->stateValue.data());
+    uint8_t *stateUnknown =
+        context->stateUnknown.empty()
+            ? nullptr
+            : reinterpret_cast<uint8_t *>(context->stateUnknown.data());
+    obelisk_rt_object_v1 *path = nullptr;
+    obelisk_rt_status status =
+        obelisk_rt_v1_reference_path_aggregate_element_create(
+            lane, watchOwner, ownerPayload, ownerManaged, stateValue,
+            stateUnknown, image.stateBitCount, static_cast<int64_t>(*inputs[0]),
+            static_cast<int64_t>(*inputs[1]), static_cast<int64_t>(*inputs[2]),
+            *inputs[3], *inputs[4], *inputs[5],
+            static_cast<uint32_t>(*inputs[6]), *inputs[7],
+            static_cast<uint32_t>(*inputs[8]),
+            static_cast<uint32_t>(*inputs[9]), *inputs[10], *inputs[11],
+            *inputs[12], traceSlots.data(), traceSlots.size(), &path);
     if (status != OBELISK_RT_OK)
       return status;
     return writeManaged(outputRegister(0), path) ? OBELISK_RT_OK

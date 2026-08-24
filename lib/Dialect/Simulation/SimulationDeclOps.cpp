@@ -1103,6 +1103,35 @@ LogicalResult SimReferencePathAssocOp::verify() {
   return success();
 }
 
+LogicalResult SimReferencePathStringCharacterOp::verify() {
+  if (!getResult().getType().getElementType().isInteger(8))
+    return emitOpError("result must refer to one eight-bit character");
+  if (!isa<StringType>(getOwnerReference().getType().getElementType()))
+    return emitOpError("owner reference must refer to a string");
+  return success();
+}
+
+LogicalResult SimReferencePathAggregateElementOp::verify() {
+  auto array = dyn_cast<UnpackedArrayType>(
+      getOwnerReference().getType().getElementType());
+  if (!array)
+    return emitOpError("owner reference must refer to a fixed unpacked array");
+  if (array.getElementType() != getResult().getType().getElementType())
+    return emitOpError("result element must match the array element");
+  if (static_cast<int64_t>(getLeft()) != array.getLeft() ||
+      static_cast<int64_t>(getRight()) != array.getRight())
+    return emitOpError("declared bounds do not match the owner array");
+  std::optional<uint64_t> span = getProvenanceSpan(array.getElementType());
+  if (!span || getElementSpan() != *span || getElementSpan() == 0)
+    return emitOpError("element span does not match the owner array layout");
+  if (getTypeId() == 0 || getValueSize() == 0 || getAlignment() == 0 ||
+      getValueSize() % getAlignment() != 0)
+    return emitOpError("element metadata is invalid");
+  if (getTraceOffsets().size() != getTraceKinds().size())
+    return emitOpError("trace offset and kind inventories must match");
+  return success();
+}
+
 LogicalResult SimArgumentRefFromPathOp::verify() {
   if (getInput().getType().getElementType() !=
       getResult().getType().getElementType())

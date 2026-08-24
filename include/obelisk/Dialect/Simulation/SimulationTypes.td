@@ -226,6 +226,11 @@ def SimMailboxType : SimType<"Mailbox"> {
   let genVerifyDecl = 1;
 }
 
+def SimBoxType : SimType<"Box"> {
+  let mnemonic = "box";
+  let summary = "type-erased singular value stored by an untyped mailbox";
+}
+
 def SimSemaphoreType : SimType<"Semaphore"> {
   let mnemonic = "semaphore";
   let summary = "managed SystemVerilog semaphore handle";

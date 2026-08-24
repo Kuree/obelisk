@@ -254,7 +254,8 @@ void populateManagedToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
 void populateManagedStringToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 void populateManagedContainerToLLVMConversionPatterns(
-    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
+    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
+    const llvm::DataLayout &dataLayout);
 void populateManagedAssociativeToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 void populateManagedCoverageToLLVMConversionPatterns(

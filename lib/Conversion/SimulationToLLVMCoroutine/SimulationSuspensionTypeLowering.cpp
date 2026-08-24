@@ -77,6 +77,10 @@ SmallVector<int32_t> suspensionWaitWidths(Operation *operation) {
       continue;
     }
     Type type = value.getType();
+    if (isa<sim::ManagedWatchType>(type)) {
+      widths.push_back(static_cast<int32_t>(OBELISK_RT_WAIT_WIDTH_MANAGED));
+      continue;
+    }
     if (auto reference = dyn_cast<sim::RefType>(type))
       type = reference.getElementType();
     else if (auto net = dyn_cast<sim::NetType>(type))

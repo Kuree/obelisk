@@ -337,7 +337,7 @@ bool getManagedHandleSlots(Type type,
       return static_cast<uint32_t>(ManagedHandleKind::Class);
     if (isa<StringType>(leaf))
       return static_cast<uint32_t>(ManagedHandleKind::String);
-    if (isa<DynamicArrayType, QueueType, MailboxType, SemaphoreType,
+    if (isa<DynamicArrayType, QueueType, MailboxType, BoxType, SemaphoreType,
             AssocArrayType>(leaf))
       return static_cast<uint32_t>(ManagedHandleKind::Container);
     if (isa<ReferencePathType>(leaf))
@@ -470,8 +470,8 @@ bool getManagedHandleOffsets(Type type,
 
 bool isManagedHandleType(Type type) {
   return isa<ClassHandleType, StringType, DynamicArrayType, QueueType,
-             MailboxType, SemaphoreType, AssocArrayType, ReferencePathType>(
-      type);
+             MailboxType, BoxType, SemaphoreType, AssocArrayType,
+             ReferencePathType>(type);
 }
 
 bool isSimulationHandleType(Type type) {
@@ -609,8 +609,8 @@ LogicalResult SimContainerCreateOp::verify() {
   } else if (isa<StringType>(element)) {
     expectedKind = 5;
     expectedSize = sizeof(void *);
-  } else if (isa<DynamicArrayType, QueueType, MailboxType, SemaphoreType,
-                 AssocArrayType>(element)) {
+  } else if (isa<DynamicArrayType, QueueType, MailboxType, BoxType,
+                 SemaphoreType, AssocArrayType>(element)) {
     expectedKind = 6;
     expectedSize = sizeof(void *);
   } else if (isa<EventType>(element)) {
@@ -657,6 +657,37 @@ LogicalResult SimContainerCloneOp::verify() {
   if (!getContainerElement(getInput().getType()) ||
       getInput().getType() != getResult().getType())
     return emitOpError("input and result must be the same container type");
+  return success();
+}
+
+static LogicalResult verifyFixedContainerTransfer(Operation *operation,
+                                                  Type containerType,
+                                                  UnpackedArrayType array,
+                                                  uint64_t elementSpan) {
+  Type element = getContainerElement(containerType);
+  std::optional<uint64_t> expected = getProvenanceSpan(array.getElementType());
+  if (!element || element != array.getElementType())
+    return operation->emitOpError(
+        "container and fixed array element types must match");
+  if (!expected || *expected == 0 || elementSpan != *expected)
+    return operation->emitOpError(
+        "element span does not match the fixed array layout");
+  return success();
+}
+
+LogicalResult SimContainerImportFixedOp::verify() {
+  return verifyFixedContainerTransfer(getOperation(), getContainer().getType(),
+                                      getInput().getType(), getElementSpan());
+}
+
+LogicalResult SimContainerExportFixedOp::verify() {
+  return verifyFixedContainerTransfer(getOperation(), getContainer().getType(),
+                                      getResult().getType(), getElementSpan());
+}
+
+LogicalResult SimContainerSwapOp::verify() {
+  if (!isa<DynamicArrayType, QueueType>(getContainer().getType()))
+    return emitOpError("operand must be a dynamic array or queue");
   return success();
 }
 
@@ -744,8 +775,8 @@ LogicalResult SimMailboxCreateOp::verify() {
   } else if (isa<StringType>(element)) {
     expectedKind = 5;
     expectedSize = sizeof(void *);
-  } else if (isa<DynamicArrayType, QueueType, MailboxType, SemaphoreType,
-                 AssocArrayType>(element)) {
+  } else if (isa<DynamicArrayType, QueueType, MailboxType, BoxType,
+                 SemaphoreType, AssocArrayType>(element)) {
     expectedKind = 6;
     expectedSize = sizeof(void *);
   } else if (isa<EventType>(element)) {
@@ -882,8 +913,8 @@ LogicalResult SimAssocCreateOp::verify() {
   } else if (isa<StringType>(element)) {
     expectedKind = 5;
     expectedSize = sizeof(void *);
-  } else if (isa<DynamicArrayType, QueueType, MailboxType, SemaphoreType,
-                 AssocArrayType>(element)) {
+  } else if (isa<DynamicArrayType, QueueType, MailboxType, BoxType,
+                 SemaphoreType, AssocArrayType>(element)) {
     expectedKind = 6;
     expectedSize = sizeof(void *);
   } else if (isa<EventType>(element)) {

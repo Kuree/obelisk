@@ -9,6 +9,19 @@ namespace obelisk::bytecode {
 
 std::optional<LogicalResult>
 Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
+  if (auto op = dyn_cast<sim::SimBoxPackOp>(operation)) {
+    emit({Move, 0, reg(plan, op.getResult()), reg(plan, op.getInput())});
+    return success();
+  }
+  if (auto op = dyn_cast<sim::SimBoxCastOp>(operation)) {
+    emit({Move, 0, reg(plan, op.getResult()), reg(plan, op.getInput())});
+    return success();
+  }
+  if (auto op = dyn_cast<sim::SimBoxIsTypeOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicBoxIsType,
+        {reg(plan, op.getInput()), emitU64Constant(plan, op.getTypeId())},
+        {reg(plan, op.getResult())});
   if (auto op = dyn_cast<sim::SimContainerSizeOp>(operation))
     return emitIntrinsic(plan, kIntrinsicContainerSize, {op.getContainer()},
                          {op.getResult()});
@@ -40,6 +53,43 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
   if (auto op = dyn_cast<sim::SimContainerCloneOp>(operation))
     return emitIntrinsic(plan, kIntrinsicContainerClone, {op.getInput()},
                          {op.getResult()});
+  if (auto op = dyn_cast<sim::SimContainerImportFixedOp>(operation)) {
+    FailureOr<ManagedValueStorage> storage =
+        getManagedValueStorage(op.getInput().getType(), dataLayout);
+    std::optional<uint32_t> width = simulationWidth(op.getInput().getType());
+    if (failed(storage) || !width)
+      return op.emitOpError("fixed array has no bytecode layout");
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicContainerImportFixed,
+        {reg(plan, op.getContainer()), reg(plan, op.getInput()),
+         emitU64Constant(plan, storage->planeSize),
+         emitU64Constant(plan, *width),
+         emitU64Constant(plan, storage->fourState),
+         emitU64Constant(plan, op.getElementSpan()),
+         emitU64Constant(
+             plan, sim::getAggregateNumElements(op.getInput().getType()))},
+        {});
+  }
+  if (auto op = dyn_cast<sim::SimContainerExportFixedOp>(operation)) {
+    FailureOr<ManagedValueStorage> storage =
+        getManagedValueStorage(op.getResult().getType(), dataLayout);
+    std::optional<uint32_t> width = simulationWidth(op.getResult().getType());
+    if (failed(storage) || !width)
+      return op.emitOpError("fixed array has no bytecode layout");
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicContainerExportFixed,
+        {reg(plan, op.getContainer()),
+         emitU64Constant(plan, storage->planeSize),
+         emitU64Constant(plan, *width),
+         emitU64Constant(plan, storage->fourState),
+         emitU64Constant(plan, op.getElementSpan()),
+         emitU64Constant(
+             plan, sim::getAggregateNumElements(op.getResult().getType()))},
+        {reg(plan, op.getResult())});
+  }
+  if (auto op = dyn_cast<sim::SimContainerSwapOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicContainerSwap,
+                         {op.getContainer(), op.getLeft(), op.getRight()}, {});
   if (auto op = dyn_cast<sim::SimContainerDeleteOp>(operation))
     return emitIntrinsic(plan, kIntrinsicContainerDelete, {op.getContainer()},
                          {});

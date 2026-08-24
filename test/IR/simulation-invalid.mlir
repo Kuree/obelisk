@@ -1308,7 +1308,7 @@ module {
     obelisk_sim.scope.decl 0
     obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %value = arith.constant 0 : i8
-      // expected-error @+1 {{watched value must be a ref, net, or driver handle}}
+      // expected-error @+1 {{watched value must be a ref, net, driver, or managed-watch handle}}
       obelisk_sim.suspend.change %value to ^next : i8
     ^next:
       obelisk_sim.return

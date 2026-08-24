@@ -198,8 +198,10 @@ LogicalResult SimSuspendDelayOp::verify() {
                             getContinuation());
 }
 LogicalResult SimSuspendChangeOp::verify() {
-  if (!isa<RefType, NetType, DriverType>(getWatched().getType()))
-    return emitOpError("watched value must be a ref, net, or driver handle");
+  if (!isa<RefType, NetType, DriverType, ManagedWatchType>(
+          getWatched().getType()))
+    return emitOpError(
+        "watched value must be a ref, net, driver, or managed-watch handle");
   return verifyContinuation(*this, getContinuationOperands(),
                             getContinuation());
 }
@@ -231,9 +233,12 @@ LogicalResult SimSuspendAnyOp::verify() {
   if (getEdges().size() != getWatched().size())
     return emitOpError("requires one edge kind per watched handle");
   for (auto [watched, edge] : llvm::zip(getWatched(), getEdges())) {
-    if (!isa<RefType, NetType, DriverType>(watched.getType()))
+    if (!isa<RefType, NetType, DriverType, ManagedWatchType>(watched.getType()))
       return emitOpError(
-          "watched values must be ref, net, or driver handles");
+          "watched values must be ref, net, driver, or managed-watch handles");
+    if (isa<ManagedWatchType>(watched.getType()) &&
+        edge != static_cast<int32_t>(EdgeKind::Change))
+      return emitOpError("managed watches only support change events");
     if (edge < static_cast<int32_t>(EdgeKind::Change) ||
         edge > static_cast<int32_t>(EdgeKind::Both))
       return emitOpError("contains an invalid edge kind");

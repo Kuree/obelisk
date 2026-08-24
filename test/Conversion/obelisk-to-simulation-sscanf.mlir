@@ -3,21 +3,21 @@
 // The format is split at compile time: each conversion becomes one scan-field
 // op carrying the literal text before it, and the field it returns is parsed
 // with the same primitives the string conversion methods use. The running
-// success flag guards each store and gates the cursor, so a failed conversion
-// ends the scan without a branch.
+// success flag branches around each store and gates the cursor, so a failed
+// conversion leaves every later destination untouched.
 
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
 // CHECK: %[[FIELD0:.*]], %[[CURSOR0:.*]], %[[OK0:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = "", specifier = 100 : i32}
 // CHECK: obelisk_sim.string.parse_logic %[[FIELD0]] radix = 10 : <64>
 // CHECK: arith.cmpi ne, %[[OK0]]
-// CHECK: arith.select
+// CHECK: cf.cond_br
 // CHECK: %[[FIELD1:.*]], %[[CURSOR1:.*]], %[[OK1:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = " ", specifier = 102 : i32}
 // CHECK: obelisk_sim.string.parse_real %[[FIELD1]]
 // CHECK: %[[FIELD2:.*]], %[[CURSOR2:.*]], %[[OK2:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = " ", specifier = 115 : i32}
 // CHECK: %[[MATCHED2:.*]] = arith.cmpi ne, %[[OK2]]
 // CHECK: %[[LIVE2:.*]] = arith.andi {{.*}}, %[[MATCHED2]]
-// CHECK: %[[TEXT:.*]] = arith.select %[[LIVE2]], %[[FIELD2]]
-// CHECK: obelisk_sim.ref.store %[[TEXT]]
+// CHECK: cf.cond_br %[[LIVE2]]
+// CHECK: obelisk_sim.ref.store %[[FIELD2]]
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

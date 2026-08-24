@@ -37,6 +37,8 @@ struct ContainerElementDescriptor {
 ::mlir::FailureOr<ContainerElementDescriptor>
 describeContainerElement(::mlir::Type type, ::mlir::Location location);
 
+uint64_t getStableTypeID(::mlir::Type type);
+
 ::mlir::FailureOr<::mlir::Value>
 lowerStringLiteralValue(::mlir::OpBuilder &builder,
                         ::mlir::Operation *operation, ::mlir::Type type,
@@ -60,6 +62,7 @@ private:
       PackedDynamicSlice,
       PackedValueSlice,
       ContainerElement,
+      ContainerSlice,
       AssociativeElement,
       AggregateElement,
       AggregateDynamicElement,
@@ -74,6 +77,11 @@ private:
     ::mlir::Value reference;
     ::mlir::Value container;
     ::mlir::Value index;
+    ::mlir::Value limit;
+    /// Dynamic source indices of an unpacked aggregate slice. They are
+    /// captured once with the rest of the lvalue address and replayed in
+    /// left-to-right result order.
+    ::mlir::SmallVector<::mlir::Value> indices;
     uint64_t lowBit = 0;
     /// Out-of-range bits added on either side of a packed slice's base so that
     /// a select wider than the base still names one contiguous window.
@@ -89,6 +97,12 @@ private:
     ::mlir::Value dynamicLow;
     /// See CapturedLValue::padding. `dynamicLow` already counts it.
     uint64_t padding = 0;
+  };
+
+  struct QueueSliceAddress {
+    ::mlir::Value start;
+    ::mlir::Value count;
+    ::mlir::Value valid;
   };
 
   ::mlir::FailureOr<::mlir::Value> lowerExpression(::mlir::Operation *op,
@@ -116,6 +130,13 @@ private:
                        ::mlir::ArrayRef<::mlir::Operation *> bounds,
                        sim::UnpackedArrayType source, unsigned count,
                        ::mlir::Location location);
+  /// Resolve and clamp the two bounds of a queue slice. Unknown bounds and an
+  /// empty or reversed interval produce a zero count, as required by IEEE
+  /// 1800-2017 7.10.1.
+  ::mlir::FailureOr<QueueSliceAddress>
+  lowerQueueSliceAddress(semantic::SVRangeSelectExpressionOp range,
+                         ::mlir::ArrayRef<::mlir::Operation *> bounds,
+                         ::mlir::Value queue, ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   lowerContextDeterminedExpression(::mlir::Operation *op);
   ::mlir::FailureOr<::mlir::Value>
@@ -603,6 +624,11 @@ private:
   ::mlir::Value enclosingThisObject;
   ::mlir::Value taskControlActivation;
   ::llvm::SetVector<::mlir::Value> sensitivity;
+  /// A null container read is normalized to a temporary empty container by a
+  /// merge block. Keep the pre-normalization handle so an implicit process can
+  /// rebuild its mutation watch at the stable wait point instead of retaining
+  /// a branch-local merge argument.
+  ::llvm::DenseMap<::mlir::Value, ::mlir::Value> materializedContainerSources;
   ::llvm::SetVector<::mlir::Value> *observedDependencies = nullptr;
   ::llvm::SetVector<::mlir::Value> *observedWrites = nullptr;
   ::mlir::Operation *topLevelWildcardControl = nullptr;

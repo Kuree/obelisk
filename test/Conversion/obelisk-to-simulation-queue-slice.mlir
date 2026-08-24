@@ -173,7 +173,6 @@ module {
 // CHECK: %[[BOUND:.*]] = arith.extsi %[[BOUND32]]
 // CHECK: %[[RESULT:.*]] = obelisk_sim.container.create
 // CHECK: cf.cond_br
-// CHECK: cf.cond_br
 // CHECK: %[[VALUE:.*]] = obelisk_sim.container.read %[[SOURCE]]
 // CHECK: obelisk_sim.container.write %[[RESULT]]
 // CHECK: cf.br

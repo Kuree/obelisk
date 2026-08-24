@@ -15,6 +15,7 @@
 #include "LowerUnit.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
 using namespace mlir;
 
@@ -193,13 +194,14 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
           isa<semantic::SVEmptyArgumentExpressionOp>(outputChildren[1]))
         actual = outputChildren.front();
     }
-    FailureOr<Value> destination = lowerExpression(actual, true);
+    FailureOr<CapturedLValue> destination =
+        captureLValue(actual, getSemanticLocation(actual));
     if (failed(destination)) {
       emitError(getSemanticLocation(actual))
           << name << " destination must be a writable variable";
       return failure();
     }
-    Type destinationType = getReferenceElementType(*destination);
+    Type destinationType = destination->type;
 
     Value field;
     Value scanOk;
@@ -247,13 +249,20 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
     Value matched = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::ne, scanOk, constant(0));
     live = arith::AndIOp::create(builder, location, live, matched);
-    FailureOr<Value> current = loadReference(*destination, location);
-    if (failed(current))
+    // IEEE 1800-2017 21.3.4 updates only successfully matched conversion
+    // destinations. Captured lvalues cover container elements, aggregate
+    // slices, class properties, and string characters without manufacturing
+    // an unstable interior pointer.
+    Block *store = addBlock();
+    Block *resume = addBlock();
+    cf::CondBranchOp::create(builder, location, live, store, ValueRange{},
+                             resume, ValueRange{});
+    setCurrent(store);
+    if (failed(
+            writeCapturedLValue(*destination, *value, false, false, location)))
       return failure();
-    Value updated =
-        arith::SelectOp::create(builder, location, live, *value, *current);
-    if (failed(storeReference(*destination, updated, location)))
-      return failure();
+    cf::BranchOp::create(builder, location, resume);
+    setCurrent(resume);
 
     if (name == "$sscanf")
       cursor =

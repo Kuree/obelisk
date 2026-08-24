@@ -2,6 +2,7 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Analysis/SimulationStorageAnalysis.h"
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -13,6 +14,8 @@
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/LLVMContext.h"
 
 #include <cstdint>
 
@@ -169,6 +172,176 @@ public:
     Value result =
         LLVM::LoadOp::create(rewriter, op.getLoc(), pointer, output, 8);
     rewriter.replaceOp(op, managedObjectHandle(rewriter, op.getLoc(), result));
+    return success();
+  }
+};
+
+class ContainerImportFixedConversion final
+    : public OpConversionPattern<sim::SimContainerImportFixedOp> {
+public:
+  ContainerImportFixedConversion(const TypeConverter &converter,
+                                 MLIRContext *context,
+                                 const llvm::DataLayout &dataLayout)
+      : OpConversionPattern(converter, context), dataLayout(dataLayout) {}
+
+  LogicalResult
+  matchAndRewrite(sim::SimContainerImportFixedOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getContainer().size() != 1 || adaptor.getInput().empty() ||
+        adaptor.getInput().size() > 2)
+      return failure();
+    llvm::DataLayout local(dataLayout.getStringRepresentation());
+    llvm::LLVMContext llvmContext;
+    FailureOr<analysis::SimulationStorageProperties> storage =
+        analysis::getSimulationStorageProperties(op.getInput().getType(), local,
+                                                 llvmContext);
+    std::optional<unsigned> width = nativeStateWidth(op.getInput().getType());
+    if (failed(storage) || !width ||
+        adaptor.getInput().size() !=
+            analysis::getSimulationPhysicalStorageCount(*storage))
+      return failure();
+
+    Location location = op.getLoc();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i32 = rewriter.getI32Type();
+    Type i64 = rewriter.getI64Type();
+    SmallVector<Value> planes;
+    for (Value value : adaptor.getInput()) {
+      Value slot = entryAlloca(rewriter, location, value.getType(), 1,
+                               storage->alignment);
+      LLVM::StoreOp::create(rewriter, location, value, slot,
+                            storage->alignment);
+      planes.push_back(slot);
+    }
+    Value unknown =
+        planes.size() == 2
+            ? planes[1]
+            : Value(LLVM::ZeroOp::create(rewriter, location, pointer));
+    auto [context, lane] = managedContextAndLane(rewriter, location);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_container_import_fixed"),
+            ValueRange{
+                lane,
+                managedObjectPointer(rewriter, location,
+                                     adaptor.getContainer().front()),
+                planes.front(), unknown,
+                llvmConstant(rewriter, location, i64, storage->size),
+                llvmConstant(rewriter, location, i64, *width),
+                llvmConstant(rewriter, location, i32, storage->fourState),
+                llvmConstant(rewriter, location, i64, op.getElementSpan()),
+                llvmConstant(
+                    rewriter, location, i64,
+                    sim::getAggregateNumElements(op.getInput().getType()))})
+            .getResult();
+    reportManagedStatus(rewriter, location, context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  const llvm::DataLayout &dataLayout;
+};
+
+class ContainerExportFixedConversion final
+    : public OpConversionPattern<sim::SimContainerExportFixedOp> {
+public:
+  ContainerExportFixedConversion(const TypeConverter &converter,
+                                 MLIRContext *context,
+                                 const llvm::DataLayout &dataLayout)
+      : OpConversionPattern(converter, context), dataLayout(dataLayout) {}
+
+  LogicalResult
+  matchAndRewrite(sim::SimContainerExportFixedOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getContainer().size() != 1)
+      return failure();
+    SmallVector<Type> convertedTypes;
+    if (failed(getTypeConverter()->convertType(op.getResult().getType(),
+                                               convertedTypes)) ||
+        convertedTypes.empty() || convertedTypes.size() > 2)
+      return failure();
+    llvm::DataLayout local(dataLayout.getStringRepresentation());
+    llvm::LLVMContext llvmContext;
+    FailureOr<analysis::SimulationStorageProperties> storage =
+        analysis::getSimulationStorageProperties(op.getResult().getType(),
+                                                 local, llvmContext);
+    std::optional<unsigned> width = nativeStateWidth(op.getResult().getType());
+    if (failed(storage) || !width ||
+        convertedTypes.size() !=
+            analysis::getSimulationPhysicalStorageCount(*storage))
+      return failure();
+
+    Location location = op.getLoc();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i32 = rewriter.getI32Type();
+    Type i64 = rewriter.getI64Type();
+    SmallVector<Value> planes;
+    for (Type type : convertedTypes)
+      planes.push_back(
+          entryAlloca(rewriter, location, type, 1, storage->alignment));
+    Value unknown =
+        planes.size() == 2
+            ? planes[1]
+            : Value(LLVM::ZeroOp::create(rewriter, location, pointer));
+    auto [context, lane] = managedContextAndLane(rewriter, location);
+    (void)lane;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_container_export_fixed"),
+            ValueRange{
+                managedObjectPointer(rewriter, location,
+                                     adaptor.getContainer().front()),
+                planes.front(), unknown,
+                llvmConstant(rewriter, location, i64, storage->size),
+                llvmConstant(rewriter, location, i64, *width),
+                llvmConstant(rewriter, location, i32, storage->fourState),
+                llvmConstant(rewriter, location, i64, op.getElementSpan()),
+                llvmConstant(
+                    rewriter, location, i64,
+                    sim::getAggregateNumElements(op.getResult().getType()))})
+            .getResult();
+    reportManagedStatus(rewriter, location, context, status);
+    SmallVector<Value> results;
+    for (auto [type, plane] : llvm::zip_equal(convertedTypes, planes))
+      results.push_back(LLVM::LoadOp::create(rewriter, location, type, plane,
+                                             storage->alignment));
+    SmallVector<ValueRange> replacements{ValueRange(results)};
+    rewriter.replaceOpWithMultiple(op, replacements);
+    return success();
+  }
+
+private:
+  const llvm::DataLayout &dataLayout;
+};
+
+class ContainerSwapConversion final
+    : public OpConversionPattern<sim::SimContainerSwapOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimContainerSwapOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getContainer().size() != 1 || adaptor.getLeft().size() != 1 ||
+        adaptor.getRight().size() != 1)
+      return failure();
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_container_swap"),
+            ValueRange{managedObjectPointer(rewriter, op.getLoc(),
+                                            adaptor.getContainer().front()),
+                       adaptor.getLeft().front(), adaptor.getRight().front()})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.eraseOp(op);
     return success();
   }
 };
@@ -1275,27 +1448,67 @@ public:
   }
 };
 
+template <typename Op>
+class BoxCastConversion final : public OpConversionPattern<Op> {
+public:
+  using OpConversionPattern<Op>::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(Op op, typename Op::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    rewriter.replaceOp(op, adaptor.getInput());
+    return success();
+  }
+};
+
+class BoxIsTypeConversion final
+    : public OpConversionPattern<sim::SimBoxIsTypeOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimBoxIsTypeOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getInput().size() != 1)
+      return failure();
+    Value result =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_box_is_type"),
+            ValueRange{managedObjectPointer(rewriter, op.getLoc(),
+                                            adaptor.getInput().front()),
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI64Type(), op.getTypeId())})
+            .getResult();
+    rewriter.replaceOp(op,
+                       arith::TruncIOp::create(rewriter, op.getLoc(),
+                                               rewriter.getI1Type(), result));
+    return success();
+  }
+};
+
 } // namespace
 
-
 void populateManagedContainerToLLVMConversionPatterns(
-    RewritePatternSet &patterns, TypeConverter &converter) {
+    RewritePatternSet &patterns, TypeConverter &converter,
+    const llvm::DataLayout &dataLayout) {
   MLIRContext *context = patterns.getContext();
-  patterns
-      .add<ContainerSizeConversion, ContainerCreateLikeConversion,
-           ContainerCreateConversion, ContainerCloneConversion,
-           ContainerDeleteConversion, QueueDeleteConversion,
-           QueueInsertConversion, MailboxCreateConversion, MailboxNumConversion,
-           MailboxTryPutConversion, SemaphoreCreateConversion,
-           SemaphorePutConversion, SemaphoreTryGetConversion,
-           MailboxTryReadConversion<sim::SimMailboxTryPeekOp, false>,
-           MailboxTryReadConversion<sim::SimMailboxTryGetOp, true>,
-           ContainerReadConversion, ContainerWriteConversion,
-           RandomNextConversion, RandomStateConversion,
-           RandomSetStateConversion, RandomSeedConversion,
-           RandomBoundedConversion,
-           RandomDistributionConversion, RandomCycleNextConversion,
-           RandomSolveConversion>(converter, context);
+  patterns.add<
+      ContainerSizeConversion, ContainerCreateLikeConversion,
+      ContainerCreateConversion, ContainerCloneConversion,
+      ContainerSwapConversion, ContainerDeleteConversion, QueueDeleteConversion,
+      QueueInsertConversion, MailboxCreateConversion, MailboxNumConversion,
+      MailboxTryPutConversion, SemaphoreCreateConversion,
+      SemaphorePutConversion, SemaphoreTryGetConversion,
+      MailboxTryReadConversion<sim::SimMailboxTryPeekOp, false>,
+      MailboxTryReadConversion<sim::SimMailboxTryGetOp, true>,
+      BoxCastConversion<sim::SimBoxPackOp>,
+      BoxCastConversion<sim::SimBoxCastOp>, BoxIsTypeConversion,
+      ContainerReadConversion, ContainerWriteConversion, RandomNextConversion,
+      RandomStateConversion, RandomSetStateConversion, RandomSeedConversion,
+      RandomBoundedConversion, RandomDistributionConversion,
+      RandomCycleNextConversion, RandomSolveConversion>(converter, context);
+  patterns.add<ContainerImportFixedConversion, ContainerExportFixedConversion>(
+      converter, context, dataLayout);
   patterns.add<RandomSolveWideConversion, SampledReadConversion,
                SampledHistoryConversion, ClockedSampleUpdateConversion,
                ClockedSampleReadConversion>(converter, context);

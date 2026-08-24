@@ -2884,15 +2884,24 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
     if (shape != OBELISK_RT_OK)
       return shape;
   }
+  const obelisk_rt_element_type_v1 *referenceElement = nullptr;
+  if (referencePath) {
+    obelisk_rt_status elementStatus =
+        obelisk_rt_reference_path_element(destination, &referenceElement);
+    if (elementStatus != OBELISK_RT_OK)
+      return elementStatus;
+  }
   const obelisk_rt_trace_layout_v1 *layout =
-      referencePath ? nullptr : destinationMetadata->descriptor->layout;
+      referencePath ? referenceElement->trace
+                    : destinationMetadata->descriptor->layout;
   bool managedSlot = planeSize == sizeof(obelisk_rt_object_v1 *) &&
                      !referencePath && layoutHasHandleAt(layout, 0, offset);
   std::vector<obelisk_rt_object_v1 *> referents;
   if (managedSlot) {
     if (unknown || planeSize != sizeof(obelisk_rt_object_v1 *) ||
-        !checkedRange(offset, planeSize,
-                      destinationMetadata->descriptor->instance_size))
+        (!referencePath &&
+         !checkedRange(offset, planeSize,
+                       destinationMetadata->descriptor->instance_size)))
       return OBELISK_RT_INVALID_ARGUMENT;
     obelisk_rt_object_v1 *referent = nullptr;
     std::memcpy(&referent, value, sizeof(referent));
@@ -2902,7 +2911,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
         return OBELISK_RT_INVALID_HANDLE;
       referents.push_back(referent);
     }
-  } else if (!referencePath) {
+  } else if (referencePath) {
+    if (referenceElement->value_size != planeSize ||
+        !validateLayoutHandleWrite(layout, 0, 0, planeSize,
+                                   static_cast<const uint8_t *>(value), heap,
+                                   &referents))
+      return OBELISK_RT_INVALID_ARGUMENT;
+  } else {
     if (!checkedRange(offset, planeSize,
                       destinationMetadata->descriptor->instance_size) ||
         !validateLayoutHandleWrite(layout, 0, offset, planeSize,
@@ -2998,6 +3013,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
 obelisk_rt_status
 obelisk_rt_apply_managed_nba(obelisk_rt_context *context,
                              const ScheduledManagedNBA &update) {
+  ManagedExecutionScope managedExecution(context);
+  if (managedExecution.getStatus() != OBELISK_RT_OK)
+    return managedExecution.getStatus();
   ManagedHeap *heap = heapFor(context);
   if (!heap)
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -3011,7 +3029,7 @@ obelisk_rt_apply_managed_nba(obelisk_rt_context *context,
       (!update.unknown.empty() && update.unknown.size() != update.planeSize)) {
     status = OBELISK_RT_INVALID_HANDLE;
   } else if (update.referencePath) {
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    obelisk_rt_gc_lane_v1 *lane = managedExecution.getLane();
     status = lane
                  ? obelisk_rt_v1_reference_path_store(
                        lane, update.destination, update.value.data(),
@@ -3148,7 +3166,9 @@ void obelisk_rt_notify_managed_watch(obelisk_rt_object_v1 *object,
   auto watched = objectWatch->second.find(*key);
   if (watched == objectWatch->second.end() || watched->second == 0)
     return;
-  if (!obelisk_rt_notify_observer_managed_unlocked(context, watched->second) &&
+  if ((!obelisk_rt_notify_managed_waiters_unlocked(context, watched->second) ||
+       !obelisk_rt_notify_observer_managed_unlocked(context,
+                                                    watched->second)) &&
       context->schedulerStatus == OBELISK_RT_OK)
     context->schedulerStatus = OBELISK_RT_INVALID_ARGUMENT;
 }

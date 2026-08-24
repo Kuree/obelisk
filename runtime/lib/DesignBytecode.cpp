@@ -4246,15 +4246,23 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
               waitEntries[index].edge <= OBELISK_RT_WAIT_EDGE_BOTH;
           bool iffCondition =
               behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF && index == 1;
+          bool managed =
+              signalWait && !iffCondition &&
+              waitEntries[index].reserved == OBELISK_RT_WAIT_WIDTH_MANAGED;
           obelisk_rt_stable_handle_v1 decodedSignal;
           bool validSignalHandle =
-              !signalWait || obelisk_rt_stable_handle_decode(
-                                 waitEntries[index].stable_id, &decodedSignal);
+              !signalWait ||
+              (managed ? true
+                       : obelisk_rt_stable_handle_decode(
+                             waitEntries[index].stable_id, &decodedSignal));
           if (signalWait
-                  ? (!validSignalHandle || (!validEdge && !iffCondition) ||
+                  ? (!validSignalHandle ||
+                     (managed &&
+                      waitEntries[index].edge != OBELISK_RT_WAIT_EDGE_CHANGE) ||
+                     (!validEdge && !iffCondition) ||
                      (iffCondition &&
                       waitEntries[index].edge != OBELISK_RT_WAIT_EDGE_NONE) ||
-                     waitEntries[index].reserved == 0)
+                     (!managed && waitEntries[index].reserved == 0))
                   : (waitEntries[index].edge != OBELISK_RT_WAIT_EDGE_NONE ||
                      waitEntries[index].reserved != 0)) {
             finalizeStatus = OBELISK_RT_INVALID_FRAME;

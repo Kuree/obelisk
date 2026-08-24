@@ -108,7 +108,9 @@ public:
 class ReferencePathIndexConversion final
     : public OpConversionPattern<sim::SimReferencePathIndexOp> {
 public:
-  using OpConversionPattern::OpConversionPattern;
+  ReferencePathIndexConversion(const TypeConverter &converter,
+                               MLIRContext *context, uint64_t stateBitCount)
+      : OpConversionPattern(converter, context), stateBitCount(stateBitCount) {}
   LogicalResult
   matchAndRewrite(sim::SimReferencePathIndexOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
@@ -123,6 +125,10 @@ public:
                           output, 8);
     UnpackedArgumentReference ownerReference = unpackArgumentReference(
         rewriter, op.getLoc(), adaptor.getOwnerReference().front());
+    Value valueState = LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
+                                                 "__obelisk_state_value");
+    Value unknownState = LLVM::AddressOfOp::create(
+        rewriter, op.getLoc(), pointer, "__obelisk_state_unknown");
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
@@ -134,7 +140,11 @@ public:
                        adaptor.getIndex().front(),
                        managedObjectPointer(rewriter, op.getLoc(),
                                             ownerReference.owner),
-                       ownerReference.payload, ownerReference.managed, output})
+                       ownerReference.payload, ownerReference.managed,
+                       valueState, unknownState,
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI64Type(), stateBitCount),
+                       output})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     Value path =
@@ -142,12 +152,163 @@ public:
     rewriter.replaceOp(op, managedObjectHandle(rewriter, op.getLoc(), path));
     return success();
   }
+
+private:
+  uint64_t stateBitCount;
+};
+
+class ReferencePathStringCharacterConversion final
+    : public OpConversionPattern<sim::SimReferencePathStringCharacterOp> {
+public:
+  ReferencePathStringCharacterConversion(const TypeConverter &converter,
+                                         MLIRContext *context,
+                                         uint64_t stateBitCount)
+      : OpConversionPattern(converter, context), stateBitCount(stateBitCount) {}
+
+  LogicalResult
+  matchAndRewrite(sim::SimReferencePathStringCharacterOp op,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getString().size() != 1 || adaptor.getIndex().size() != 1 ||
+        adaptor.getOwnerReference().size() != 1)
+      return failure();
+    Location location = op.getLoc();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i64 = rewriter.getI64Type();
+    auto [context, lane] = managedContextAndLane(rewriter, location);
+    Value output = entryAlloca(rewriter, location, pointer, 1, 8);
+    LLVM::StoreOp::create(rewriter, location,
+                          LLVM::ZeroOp::create(rewriter, location, pointer),
+                          output, 8);
+    UnpackedArgumentReference ownerReference = unpackArgumentReference(
+        rewriter, location, adaptor.getOwnerReference().front());
+    Value valueState = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                                 "__obelisk_state_value");
+    Value unknownState = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                                   "__obelisk_state_unknown");
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(
+                rewriter.getContext(),
+                "obelisk_rt_v1_reference_path_string_character_create"),
+            ValueRange{
+                lane, adaptor.getString().front(), adaptor.getIndex().front(),
+                managedObjectPointer(rewriter, location, ownerReference.owner),
+                ownerReference.payload, ownerReference.managed, valueState,
+                unknownState,
+                llvmConstant(rewriter, location, i64, stateBitCount), output})
+            .getResult();
+    reportManagedStatus(rewriter, location, context, status);
+    Value path = LLVM::LoadOp::create(rewriter, location, pointer, output, 8);
+    rewriter.replaceOp(op, managedObjectHandle(rewriter, location, path));
+    return success();
+  }
+
+private:
+  uint64_t stateBitCount;
+};
+
+class ReferencePathAggregateElementConversion final
+    : public OpConversionPattern<sim::SimReferencePathAggregateElementOp> {
+public:
+  ReferencePathAggregateElementConversion(const TypeConverter &converter,
+                                          MLIRContext *context,
+                                          const llvm::DataLayout &dataLayout,
+                                          uint64_t stateBitCount)
+      : OpConversionPattern(converter, context), dataLayout(dataLayout),
+        stateBitCount(stateBitCount) {}
+
+  LogicalResult
+  matchAndRewrite(sim::SimReferencePathAggregateElementOp op,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getOwnerReference().size() != 1 ||
+        adaptor.getIndex().size() != 1)
+      return failure();
+    Type ownerType = op.getOwnerReference().getType().getElementType();
+    llvm::DataLayout local(dataLayout.getStringRepresentation());
+    llvm::LLVMContext llvmContext;
+    FailureOr<analysis::SimulationStorageProperties> ownerStorage =
+        analysis::getSimulationStorageProperties(ownerType, local, llvmContext);
+    std::optional<unsigned> ownerWidth = nativeStateWidth(ownerType);
+    if (failed(ownerStorage) || !ownerWidth)
+      return failure();
+
+    Location location = op.getLoc();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i32 = rewriter.getI32Type();
+    Type i64 = rewriter.getI64Type();
+    auto [context, lane] = managedContextAndLane(rewriter, location);
+    Value output = entryAlloca(rewriter, location, pointer, 1, 8);
+    LLVM::StoreOp::create(rewriter, location,
+                          LLVM::ZeroOp::create(rewriter, location, pointer),
+                          output, 8);
+    UnpackedArgumentReference ownerReference = unpackArgumentReference(
+        rewriter, location, adaptor.getOwnerReference().front());
+    Value valueState = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                                 "__obelisk_state_value");
+    Value unknownState = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                                   "__obelisk_state_unknown");
+    Value traceSlots = LLVM::ZeroOp::create(rewriter, location, pointer);
+    if (!op.getTraceOffsets().empty())
+      traceSlots = LLVM::AddressOfOp::create(
+          rewriter, location, pointer,
+          "__obelisk_element_trace_" + std::to_string(op.getTypeId()));
+    auto c32 = [&](uint32_t value) {
+      return llvmConstant(rewriter, location, i32, value);
+    };
+    auto c64 = [&](uint64_t value) {
+      return llvmConstant(rewriter, location, i64, value);
+    };
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(
+                rewriter.getContext(),
+                "obelisk_rt_v1_reference_path_aggregate_element_create"),
+            ValueRange{
+                lane,
+                managedObjectPointer(rewriter, location, ownerReference.owner),
+                ownerReference.payload,
+                ownerReference.managed,
+                valueState,
+                unknownState,
+                c64(stateBitCount),
+                adaptor.getIndex().front(),
+                c64(op.getLeft()),
+                c64(op.getRight()),
+                c64(op.getElementSpan()),
+                c64(*ownerWidth),
+                c64(ownerStorage->size),
+                c32(ownerStorage->fourState),
+                c64(op.getTypeId()),
+                c32(op.getElementKind()),
+                c32(op.getElementFlags()),
+                c64(op.getValueSize()),
+                c64(op.getAlignment()),
+                c64(op.getBitWidth()),
+                traceSlots,
+                c64(op.getTraceOffsets().size()),
+                output})
+            .getResult();
+    reportManagedStatus(rewriter, location, context, status);
+    Value path = LLVM::LoadOp::create(rewriter, location, pointer, output, 8);
+    rewriter.replaceOp(op, managedObjectHandle(rewriter, location, path));
+    return success();
+  }
+
+private:
+  const llvm::DataLayout &dataLayout;
+  uint64_t stateBitCount;
 };
 
 class ReferencePathAssocConversion final
     : public OpConversionPattern<sim::SimReferencePathAssocOp> {
 public:
-  using OpConversionPattern::OpConversionPattern;
+  ReferencePathAssocConversion(const TypeConverter &converter,
+                               MLIRContext *context, uint64_t stateBitCount)
+      : OpConversionPattern(converter, context), stateBitCount(stateBitCount) {}
   LogicalResult
   matchAndRewrite(sim::SimReferencePathAssocOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
@@ -164,6 +325,10 @@ public:
                                    op.getArray().getType(), adaptor.getKey());
     UnpackedArgumentReference ownerReference = unpackArgumentReference(
         rewriter, op.getLoc(), adaptor.getOwnerReference().front());
+    Value valueState = LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
+                                                 "__obelisk_state_value");
+    Value unknownState = LLVM::AddressOfOp::create(
+        rewriter, op.getLoc(), pointer, "__obelisk_state_unknown");
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
@@ -175,7 +340,11 @@ public:
                        key,
                        managedObjectPointer(rewriter, op.getLoc(),
                                             ownerReference.owner),
-                       ownerReference.payload, ownerReference.managed, output})
+                       ownerReference.payload, ownerReference.managed,
+                       valueState, unknownState,
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI64Type(), stateBitCount),
+                       output})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     Value path =
@@ -183,6 +352,9 @@ public:
     rewriter.replaceOp(op, managedObjectHandle(rewriter, op.getLoc(), path));
     return success();
   }
+
+private:
+  uint64_t stateBitCount;
 };
 
 class ArgumentRefFromPathConversion final
@@ -785,8 +957,13 @@ void populateManagedReferenceToLLVMConversionPatterns(
     const llvm::DataLayout &dataLayout, uint64_t stateBitCount) {
   MLIRContext *context = patterns.getContext();
   patterns.add<ArgumentRefFromRefConversion, ArgumentRefFromManagedConversion,
-               ReferencePathIndexConversion, ReferencePathAssocConversion,
                ArgumentRefFromPathConversion>(converter, context);
+  patterns.add<ReferencePathIndexConversion, ReferencePathAssocConversion>(
+      converter, context, stateBitCount);
+  patterns.add<ReferencePathStringCharacterConversion>(converter, context,
+                                                       stateBitCount);
+  patterns.add<ReferencePathAggregateElementConversion>(
+      converter, context, dataLayout, stateBitCount);
   patterns.add<ArgumentRefLoadConversion, ArgumentRefStoreConversion>(
       converter, context, dataLayout, stateBitCount);
   patterns.add<ManagedBitsDynStoreConversion>(converter, context);

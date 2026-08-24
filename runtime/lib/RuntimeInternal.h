@@ -649,6 +649,8 @@ struct SignalSubscription {
     DesignDirectWait,
     NativeComputedWait,
     DesignComputedWait,
+    NativeManagedWait,
+    DesignManagedWait,
   };
 
   uint64_t stableID = 0;
@@ -1108,6 +1110,11 @@ struct obelisk_rt_context {
   // token without retaining the object itself.
   std::unordered_map<uint64_t, std::unordered_map<uint64_t, uint64_t>>
       managedWatchTokens;
+  // Direct change waits index managed-watch tokens separately from packed
+  // signal ranges. This keeps mutation wakeup O(number of interested waiters)
+  // without inventing a colliding stable-signal handle namespace.
+  std::unordered_map<uint64_t, std::unordered_set<SignalSubscription *>>
+      managedWatchWaiters;
   uint64_t nextManagedWatchToken = 1;
   uint64_t nextCoverageInstance = 1;
   std::unordered_map<uint64_t, CoverageTypeState> coverageTypes;
@@ -1356,6 +1363,8 @@ obelisk_rt_status obelisk_rt_reference_path_shape(obelisk_rt_object_v1 *path,
                                                   uint64_t bitWidth,
                                                   uint32_t fourState,
                                                   uint32_t managedValue);
+obelisk_rt_status obelisk_rt_reference_path_element(
+    obelisk_rt_object_v1 *path, const obelisk_rt_element_type_v1 **outElement);
 void obelisk_rt_enumerate_design_managed_roots(
     obelisk_rt_context *context, ManagedRootVisit visit,
     void *visitorEnvironment) noexcept;
@@ -1606,6 +1615,8 @@ void obelisk_rt_unregister_signal_wait_unlocked(
     obelisk_rt_context *context,
     std::vector<std::unique_ptr<SignalSubscription>> &subscriptions,
     uint64_t waiterToken = 0, bool designWaiter = false);
+bool obelisk_rt_notify_managed_waiters_unlocked(obelisk_rt_context *context,
+                                                uint64_t token);
 bool obelisk_rt_notify_observer_event_unlocked(obelisk_rt_context *context,
                                                uint64_t stableID);
 bool obelisk_rt_initialize_event_order_wait_unlocked(

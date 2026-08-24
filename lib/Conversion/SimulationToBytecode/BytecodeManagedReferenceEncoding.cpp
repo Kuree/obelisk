@@ -32,6 +32,43 @@ Encoder::encodeManagedReferenceOperation(FunctionPlan &plan,
         plan, kIntrinsicReferencePathIndex,
         {op.getContainer(), op.getIndex(), op.getOwnerReference()},
         {op.getResult()});
+  if (auto op = dyn_cast<sim::SimReferencePathStringCharacterOp>(operation))
+    return emitIntrinsic(
+        plan, kIntrinsicReferencePathStringCharacter,
+        {op.getString(), op.getIndex(), op.getOwnerReference()},
+        {op.getResult()});
+  if (auto op = dyn_cast<sim::SimReferencePathAggregateElementOp>(operation)) {
+    Type ownerType = op.getOwnerReference().getType().getElementType();
+    FailureOr<ManagedValueStorage> ownerStorage =
+        getManagedValueStorage(ownerType, dataLayout);
+    std::optional<uint32_t> ownerWidth = simulationWidth(ownerType);
+    if (failed(ownerStorage) || !ownerWidth)
+      return op.emitOpError("aggregate owner has no bytecode layout");
+    SmallVector<uint8_t> traceSlots;
+    for (auto [offset, kind] :
+         llvm::zip_equal(op.getTraceOffsets(), op.getTraceKinds())) {
+      append64(traceSlots, static_cast<uint64_t>(offset));
+      append32(traceSlots, static_cast<uint32_t>(kind));
+      append32(traceSlots, 0);
+    }
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicReferencePathAggregateElement,
+        {reg(plan, op.getOwnerReference()), reg(plan, op.getIndex()),
+         emitU64Constant(plan, op.getLeft()),
+         emitU64Constant(plan, op.getRight()),
+         emitU64Constant(plan, op.getElementSpan()),
+         emitU64Constant(plan, *ownerWidth),
+         emitU64Constant(plan, ownerStorage->planeSize),
+         emitU64Constant(plan, ownerStorage->fourState),
+         emitU64Constant(plan, op.getTypeId()),
+         emitU64Constant(plan, op.getElementKind()),
+         emitU64Constant(plan, op.getElementFlags()),
+         emitU64Constant(plan, op.getValueSize()),
+         emitU64Constant(plan, op.getAlignment()),
+         emitU64Constant(plan, op.getBitWidth()),
+         emitBytesConstant(plan, traceSlots)},
+        {reg(plan, op.getResult())});
+  }
   if (auto op = dyn_cast<sim::SimReferencePathAssocOp>(operation))
     return emitIntrinsic(plan, kIntrinsicReferencePathAssoc,
                          {op.getArray(), op.getKey(), op.getOwnerReference()},

@@ -737,6 +737,20 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 1 && managed(input(0)) &&
            twoStateBits(input(1), 64) && argumentRef(input(2)) &&
            managed(output(0));
+  case OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_STRING_CHARACTER:
+    return signature.flags == 0 && site.inputCount == 3 &&
+           site.outputCount == 1 && string(input(0)) &&
+           twoStateBits(input(1), 64) && argumentRef(input(2)) &&
+           managed(output(0));
+  case OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_AGGREGATE_ELEMENT:
+    if (signature.flags != 0 || site.inputCount != 15 ||
+        site.outputCount != 1 || !argumentRef(input(0)) ||
+        !twoStateBits(input(1), 64) || !managed(output(0)))
+      return false;
+    for (uint32_t index = 2; index != 14; ++index)
+      if (!twoStateBits(input(index), 64))
+        return false;
+    return input(14) && input(14)->kind == OBELISK_RT_DBREG_BYTES;
   case OBELISK_RT_INTRINSIC_V1_CONTAINER_SIZE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && managed(input(0)) &&
@@ -765,6 +779,26 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_CONTAINER_CLONE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && managed(input(0)) && managed(output(0));
+  case OBELISK_RT_INTRINSIC_V1_CONTAINER_IMPORT_FIXED:
+    if (signature.flags != 0 || site.inputCount != 7 || site.outputCount != 0 ||
+        !managed(input(0)) || !managedValue(input(1)))
+      return false;
+    for (uint32_t index = 2; index != 7; ++index)
+      if (!twoStateBits(input(index), 64))
+        return false;
+    return true;
+  case OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_FIXED:
+    if (signature.flags != 0 || site.inputCount != 6 || site.outputCount != 1 ||
+        !managed(input(0)) || !managedValue(output(0)))
+      return false;
+    for (uint32_t index = 1; index != 6; ++index)
+      if (!twoStateBits(input(index), 64))
+        return false;
+    return true;
+  case OBELISK_RT_INTRINSIC_V1_CONTAINER_SWAP:
+    return signature.flags == 0 && site.inputCount == 3 &&
+           site.outputCount == 0 && managed(input(0)) &&
+           twoStateBits(input(1), 64) && twoStateBits(input(2), 64);
   case OBELISK_RT_INTRINSIC_V1_CONTAINER_DELETE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && managed(input(0));
@@ -788,6 +822,10 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && managed(input(0)) &&
            twoStateBits(output(0), 32);
+  case OBELISK_RT_INTRINSIC_V1_BOX_IS_TYPE:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 1 && managed(input(0)) &&
+           twoStateBits(input(1), 64) && twoStateBits(output(0), 1);
   case OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_PUT:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && managed(input(0)) &&
