@@ -6,6 +6,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
@@ -3337,40 +3338,6 @@ FailureOr<int64_t> UnitLowering::declaredIndexOrdinal(Type aggregate,
   return static_cast<int64_t>(ordinal.getZExtValue());
 }
 
-FailureOr<Value> UnitLowering::materializeDefaultElement(Value value,
-                                                         Type elementType,
-                                                         Operation *source,
-                                                         Location location) {
-  // IEEE 1800-2017 10.9.2: the value is assigned directly when the member is a
-  // simple bit vector type, already has the value's type, or is not an array or
-  // structure at all. Only what is left over -- a structure, or an array whose
-  // elements are not plain bits -- takes the default recursively.
-  bool assignable = isSimpleBitVectorType(elementType) ||
-                    value.getType() == elementType ||
-                    !sim::isAggregateType(elementType);
-  if (!assignable &&
-      !isa<sim::PackedUnionType, sim::UnpackedUnionType>(elementType)) {
-    unsigned count = sim::getAggregateNumElements(elementType);
-    SmallVector<Value> nested;
-    nested.reserve(count);
-    for (unsigned index = 0; index != count; ++index) {
-      FailureOr<Value> element = materializeDefaultElement(
-          value, sim::getAggregateElementType(elementType, index), source,
-          location);
-      if (failed(element))
-        return failure();
-      nested.push_back(*element);
-    }
-    return sim::SimAggregateConstructOp::create(builder, location, elementType,
-                                                nested)
-        .getResult();
-  }
-  return convert(value, elementType,
-                 isSignedNode(source) ||
-                     isa<semantic::SVUnbasedUnsizedIntegerLiteralOp>(source),
-                 location);
-}
-
 FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
   Location location = getSemanticLocation(op);
   FailureOr<Type> resultType = getNormalizedSemanticType(op);
@@ -3442,13 +3409,162 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
             ? cast<sim::DynamicArrayType>(*resultType).getElementType()
             : cast<sim::QueueType>(*resultType).getElementType();
     SmallVector<Operation *> children = getChildren(op);
+    SmallVector<Value> elementValues;
+    uint64_t compactRepetitions = 0;
+    SmallVector<Value> compactItems;
+    Value compactDefault;
+    SmallVector<std::pair<uint64_t, Value>> compactIndexed;
+    uint64_t resultElementCount = 0;
+    auto lowerElement = [&](Operation *child) -> FailureOr<Value> {
+      FailureOr<Value> value = lowerExpression(child);
+      if (failed(value))
+        return failure();
+      return convert(*value, elementType, isSignedNode(child),
+                     getSemanticLocation(child));
+    };
+    if (structured) {
+      if (structured.getMemberSetterCount() != 0 ||
+          structured.getTypeSetterCount() != 0) {
+        emitError(location)
+            << "dynamic array or queue assignment pattern contains an "
+               "illegal member or type setter";
+        return failure();
+      }
+      uint64_t indexCount = structured.getIndexSetterCount();
+      bool hasDefault = structured.getHasDefaultSetter();
+      if (children.size() != indexCount * 2 + (hasDefault ? 1 : 0)) {
+        emitError(location)
+            << "malformed dynamic assignment-pattern setter inventory";
+        return failure();
+      }
+
+      SmallVector<std::pair<uint64_t, Operation *>> indexed;
+      llvm::SmallDenseSet<uint64_t, 8> seenIndices;
+      indexed.reserve(indexCount);
+      uint64_t size = 0;
+      for (uint64_t setter = 0; setter != indexCount; ++setter) {
+        Operation *key = children[setter * 2];
+        Operation *value = children[setter * 2 + 1];
+        std::optional<StringRef> spelling = getConstantSpelling(key);
+        FailureOr<Type> keyType = getNormalizedSemanticType(key);
+        std::optional<unsigned> width =
+            succeeded(keyType) ? sim::getPackedWidth(*keyType) : std::nullopt;
+        FailureOr<ParsedConstant> parsed =
+            spelling && width
+                ? parseSVInteger(*spelling, *width, getSemanticLocation(key))
+                : FailureOr<ParsedConstant>(failure());
+        if (failed(parsed) || !parsed->unknown.isZero() ||
+            (isSignedNode(key) && parsed->value.isNegative()) ||
+            parsed->value.getActiveBits() > 63) {
+          emitError(getSemanticLocation(key))
+              << "dynamic assignment-pattern index is not a known "
+                 "nonnegative value";
+          return failure();
+        }
+        uint64_t index = parsed->value.getZExtValue();
+        if (index == std::numeric_limits<uint64_t>::max()) {
+          emitError(getSemanticLocation(key))
+              << "dynamic assignment-pattern size overflows";
+          return failure();
+        }
+        if (!seenIndices.insert(index).second) {
+          emitError(getSemanticLocation(key))
+              << "assignment-pattern key sets the same element twice";
+          return failure();
+        }
+        indexed.emplace_back(index, value);
+        size = std::max(size, index + 1);
+      }
+      if (hasDefault) {
+        compactIndexed.reserve(indexed.size());
+        for (auto [index, child] : indexed) {
+          FailureOr<Value> value = lowerElement(child);
+          if (failed(value))
+            return failure();
+          compactIndexed.emplace_back(index, *value);
+        }
+        Operation *defaultNode = children.back();
+        if (size != 0) {
+          FailureOr<Value> value = lowerElement(defaultNode);
+          if (failed(value))
+            return failure();
+          compactDefault = *value;
+        }
+        resultElementCount = size;
+      } else {
+        elementValues.resize(size);
+        for (auto [index, child] : indexed) {
+          if (elementValues[index]) {
+            emitError(getSemanticLocation(child))
+                << "assignment-pattern key sets the same element twice";
+            return failure();
+          }
+          FailureOr<Value> value = lowerElement(child);
+          if (failed(value))
+            return failure();
+          elementValues[index] = *value;
+        }
+        for (uint64_t index = 0; index != size; ++index)
+          if (!elementValues[index]) {
+            emitError(location)
+                << "dynamic assignment pattern leaves element " << index
+                << " unset";
+            return failure();
+          }
+      }
+    } else if (isa<semantic::SVReplicatedAssignmentPatternExpressionOp>(op)) {
+      if (children.size() < 2 || !getConstantSpelling(children.front())) {
+        emitError(location)
+            << "replicated assignment pattern requires a constant count";
+        return failure();
+      }
+      FailureOr<Type> countType = getNormalizedSemanticType(children.front());
+      std::optional<unsigned> countWidth =
+          succeeded(countType) ? sim::getPackedWidth(*countType) : std::nullopt;
+      FailureOr<ParsedConstant> count =
+          countWidth ? parseSVInteger(*getConstantSpelling(children.front()),
+                                      *countWidth, location)
+                     : FailureOr<ParsedConstant>(failure());
+      if (failed(count) || !count->unknown.isZero() ||
+          count->value.getActiveBits() > 64) {
+        emitError(location) << "invalid replicated assignment-pattern count";
+        return failure();
+      }
+      uint64_t repetitions = count->value.getZExtValue();
+      ArrayRef<Operation *> items = ArrayRef(children).drop_front();
+      if (repetitions != 0 &&
+          items.size() >
+              std::numeric_limits<uint64_t>::max() / repetitions) {
+        emitError(location) << "replicated assignment-pattern size overflows";
+        return failure();
+      }
+      compactItems.reserve(items.size());
+      for (Operation *item : items) {
+        FailureOr<Value> value = lowerElement(item);
+        if (failed(value))
+          return failure();
+        compactItems.push_back(*value);
+      }
+      compactRepetitions = repetitions;
+      resultElementCount = repetitions * items.size();
+    } else {
+      elementValues.reserve(children.size());
+      for (Operation *child : children) {
+        FailureOr<Value> value = lowerElement(child);
+        if (failed(value))
+          return failure();
+        elementValues.push_back(*value);
+      }
+    }
+    if (resultElementCount == 0)
+      resultElementCount = elementValues.size();
     FailureOr<ContainerElementDescriptor> descriptor =
         describeContainerElement(elementType, location);
     if (failed(descriptor))
       return failure();
-    Value size =
-        arith::ConstantOp::create(builder, location, builder.getI64Type(),
-                                  builder.getI64IntegerAttr(children.size()));
+    Value size = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(),
+        builder.getI64IntegerAttr(resultElementCount));
     bool dynamicArray = isa<sim::DynamicArrayType>(*resultType);
     Value allocationSize =
         dynamicArray
@@ -3467,19 +3583,82 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
         dynamicArray ? OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
                      : OBELISK_RT_CONTAINER_QUEUE,
         bound);
-    for (auto [index, child] : llvm::enumerate(children)) {
-      FailureOr<Value> value = lowerExpression(child);
-      if (failed(value))
-        return failure();
-      FailureOr<Value> converted = convert(
-          *value, elementType, isSignedNode(child), getSemanticLocation(child));
-      if (failed(converted))
-        return failure();
+    if (compactDefault) {
+      Type i64 = builder.getI64Type();
+      Value zero = arith::ConstantOp::create(builder, location, i64,
+                                             builder.getI64IntegerAttr(0));
+      Value one = arith::ConstantOp::create(builder, location, i64,
+                                            builder.getI64IntegerAttr(1));
+      Value limit = arith::ConstantOp::create(
+          builder, location, i64,
+          builder.getI64IntegerAttr(resultElementCount));
+      Block *header = addBlock();
+      Value ordinal = header->addArgument(i64, location);
+      Block *body = addBlock();
+      Block *done = addBlock();
+      cf::BranchOp::create(builder, location, header, ValueRange{zero});
+      setCurrent(header);
+      Value more = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ult, ordinal, limit);
+      cf::CondBranchOp::create(builder, location, more, body, ValueRange{},
+                               done, ValueRange{});
+      setCurrent(body);
+      sim::SimContainerWriteOp::create(builder, location, result, ordinal,
+                                       compactDefault);
+      Value next = arith::AddIOp::create(builder, location, ordinal, one);
+      cf::BranchOp::create(builder, location, header, ValueRange{next});
+      setCurrent(done);
+      for (auto [index, value] : compactIndexed) {
+        Value selected = arith::ConstantOp::create(
+            builder, location, i64, builder.getI64IntegerAttr(index));
+        sim::SimContainerWriteOp::create(builder, location, result, selected,
+                                         value);
+      }
+      return result;
+    }
+    if (!compactItems.empty() && compactRepetitions != 0) {
+      Type i64 = builder.getI64Type();
+      Value zero = arith::ConstantOp::create(builder, location, i64,
+                                             builder.getI64IntegerAttr(0));
+      Value one = arith::ConstantOp::create(builder, location, i64,
+                                            builder.getI64IntegerAttr(1));
+      Value limit = arith::ConstantOp::create(
+          builder, location, i64,
+          builder.getI64IntegerAttr(compactRepetitions));
+      Value stride = arith::ConstantOp::create(
+          builder, location, i64,
+          builder.getI64IntegerAttr(compactItems.size()));
+      Block *header = addBlock();
+      Value repetition = header->addArgument(i64, location);
+      Block *body = addBlock();
+      Block *done = addBlock();
+      cf::BranchOp::create(builder, location, header, ValueRange{zero});
+      setCurrent(header);
+      Value more = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ult, repetition, limit);
+      cf::CondBranchOp::create(builder, location, more, body, ValueRange{},
+                               done, ValueRange{});
+      setCurrent(body);
+      Value base =
+          arith::MulIOp::create(builder, location, repetition, stride);
+      for (auto [index, value] : llvm::enumerate(compactItems)) {
+        Value offset = arith::ConstantOp::create(
+            builder, location, i64, builder.getI64IntegerAttr(index));
+        Value ordinal = arith::AddIOp::create(builder, location, base, offset);
+        sim::SimContainerWriteOp::create(builder, location, result, ordinal,
+                                         value);
+      }
+      Value next = arith::AddIOp::create(builder, location, repetition, one);
+      cf::BranchOp::create(builder, location, header, ValueRange{next});
+      setCurrent(done);
+      return result;
+    }
+    for (auto [index, value] : llvm::enumerate(elementValues)) {
       Value ordinal =
           arith::ConstantOp::create(builder, location, builder.getI64Type(),
                                     builder.getI64IntegerAttr(index));
       sim::SimContainerWriteOp::create(builder, location, result, ordinal,
-                                       *converted);
+                                       value);
     }
     return result;
   }
@@ -3525,6 +3704,27 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
         .getResult();
   }
   uint64_t elementCount = sim::getAggregateNumElements(*resultType);
+  auto constructElements = [&](ArrayRef<Value> elements) -> FailureOr<Value> {
+    // Preserve a homogeneous fixed-array pattern as one operation instead of
+    // building a width-linear operand list and native OR chain. Managed and
+    // direct floating-point elements retain aggregate.construct so ownership
+    // and value representation remain explicit.
+    if (!elements.empty() &&
+        isa<sim::PackedArrayType, sim::UnpackedArrayType>(*resultType) &&
+        llvm::all_equal(elements)) {
+      SmallVector<sim::ManagedHandleSlot> managedSlots;
+      Type elementType = elements.front().getType();
+      if (!isa<FloatType>(elementType) &&
+          sim::getManagedHandleSlots(elementType, managedSlots) &&
+          managedSlots.empty())
+        return sim::SimAggregateSplatOp::create(
+                   builder, location, *resultType, elements.front())
+            .getResult();
+    }
+    return sim::SimAggregateConstructOp::create(builder, location, *resultType,
+                                                elements)
+        .getResult();
+  };
   if (structured) {
     // IEEE 1800-2017 10.9.1 and 10.9.2 match a pattern's setters in a fixed
     // order: a member or index key claims its own element, a type key claims
@@ -3535,14 +3735,15 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
     uint64_t typeSetters = structured.getTypeSetterCount();
     uint64_t indexSetters = structured.getIndexSetterCount();
     bool hasDefault = structured.getHasDefaultSetter();
-    if (typeSetters != 0) {
-      // A type key names the type whose members it claims, which the imported
-      // node records only as a count.
-      unsupported(op) << " (assignment-pattern type setters)";
+    auto typeSetterTypes = structured.getTypeSetterTypes();
+    if (typeSetters != 0 &&
+        (!typeSetterTypes || typeSetterTypes->size() != typeSetters)) {
+      emitError(location)
+          << "assignment-pattern type setters have no elaborated types";
       return failure();
     }
     if (children.size() !=
-        memberSetters + 2 * indexSetters + (hasDefault ? 1 : 0)) {
+        memberSetters + typeSetters + 2 * indexSetters + (hasDefault ? 1 : 0)) {
       emitError(location)
           << "assignment-pattern setters do not account for its operands";
       return failure();
@@ -3585,6 +3786,28 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
     for (uint64_t setter = 0; setter != memberSetters; ++setter)
       if (failed(claim((*ordinals)[setter], children[cursor++])))
         return failure();
+
+    struct LoweredTypeSetter {
+      Type type;
+      Value value;
+      Operation *source;
+    };
+    SmallVector<LoweredTypeSetter> loweredTypeSetters;
+    loweredTypeSetters.reserve(typeSetters);
+    for (uint64_t setter = 0; setter != typeSetters; ++setter) {
+      auto typeAttr = dyn_cast<TypeAttr>((*typeSetterTypes)[setter]);
+      if (!typeAttr) {
+        emitError(location) << "assignment-pattern type key is not a type";
+        return failure();
+      }
+      FailureOr<Type> type =
+          normalizeSemanticType(typeAttr.getValue(), location);
+      Operation *source = children[cursor++];
+      FailureOr<Value> value = lowerExpression(source);
+      if (failed(type) || failed(value))
+        return failure();
+      loweredTypeSetters.push_back({*type, *value, source});
+    }
     for (uint64_t setter = 0; setter != indexSetters; ++setter) {
       Operation *key = children[cursor++];
       Operation *value = children[cursor++];
@@ -3592,21 +3815,72 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
       if (failed(ordinal) || failed(claim(*ordinal, value)))
         return failure();
     }
-    if (hasDefault) {
-      Operation *defaultNode = children[cursor++];
-      FailureOr<Value> value = lowerExpression(defaultNode);
-      if (failed(value))
-        return failure();
-      for (uint64_t index = 0; index != elementCount; ++index) {
-        if (elements[index])
+    Operation *defaultNode = hasDefault ? children[cursor++] : nullptr;
+    FailureOr<Value> defaultValue = defaultNode ? lowerExpression(defaultNode)
+                                                : FailureOr<Value>(failure());
+    if (defaultNode && failed(defaultValue))
+      return failure();
+
+    // IEEE 1800-2017 10.9.1 and 10.9.2: the last matching type key wins.
+    // If neither a type key nor a directly applicable default matches, descend
+    // through fixed arrays and structures and repeat the same selection. All
+    // of this is resolved while lowering, so simulation sees only ordinary
+    // aggregate construction.
+    std::function<FailureOr<Value>(Type)> materializeSetterElement;
+    materializeSetterElement = [&](Type elementType) -> FailureOr<Value> {
+      for (const LoweredTypeSetter &setter :
+           llvm::reverse(loweredTypeSetters)) {
+        if (setter.type != elementType)
           continue;
-        FailureOr<Value> element = materializeDefaultElement(
-            *value, sim::getAggregateElementType(*resultType, index),
-            defaultNode, getSemanticLocation(defaultNode));
-        if (failed(element))
-          return failure();
-        elements[index] = *element;
+        return convert(setter.value, elementType, isSignedNode(setter.source),
+                       getSemanticLocation(setter.source));
       }
+
+      bool directDefault =
+          defaultNode && (isSimpleBitVectorType(elementType) ||
+                          defaultValue->getType() == elementType ||
+                          !sim::isAggregateType(elementType));
+      if (directDefault ||
+          (defaultNode &&
+           isa<sim::PackedUnionType, sim::UnpackedUnionType>(elementType)))
+        return convert(
+            *defaultValue, elementType,
+            isSignedNode(defaultNode) ||
+                isa<semantic::SVUnbasedUnsizedIntegerLiteralOp>(defaultNode),
+            getSemanticLocation(defaultNode));
+
+      if (sim::isAggregateType(elementType)) {
+        unsigned count = sim::getAggregateNumElements(elementType);
+        SmallVector<Value> nested;
+        nested.reserve(count);
+        for (unsigned index = 0; index != count; ++index) {
+          FailureOr<Value> value = materializeSetterElement(
+              sim::getAggregateElementType(elementType, index));
+          if (failed(value))
+            return failure();
+          nested.push_back(*value);
+        }
+        return sim::SimAggregateConstructOp::create(builder, location,
+                                                    elementType, nested)
+            .getResult();
+      }
+
+      if (defaultNode)
+        return convert(*defaultValue, elementType, isSignedNode(defaultNode),
+                       getSemanticLocation(defaultNode));
+      emitError(location) << "assignment pattern leaves nested element of type "
+                          << elementType << " unset";
+      return failure();
+    };
+
+    for (uint64_t index = 0; index != elementCount; ++index) {
+      if (elements[index])
+        continue;
+      FailureOr<Value> element = materializeSetterElement(
+          sim::getAggregateElementType(*resultType, index));
+      if (failed(element))
+        return failure();
+      elements[index] = *element;
     }
     for (uint64_t index = 0; index != elementCount; ++index)
       if (!elements[index]) {
@@ -3615,9 +3889,7 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
             << "assignment pattern leaves element " << index << " unset";
         return failure();
       }
-    return sim::SimAggregateConstructOp::create(builder, location, *resultType,
-                                                elements)
-        .getResult();
+    return constructElements(elements);
   }
   if (isa<semantic::SVReplicatedAssignmentPatternExpressionOp>(op)) {
     if (children.size() < 2 || !getConstantSpelling(children.front())) {
@@ -3667,9 +3939,7 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
           return failure();
         elements.push_back(*converted);
       }
-    return sim::SimAggregateConstructOp::create(builder, location, *resultType,
-                                                elements)
-        .getResult();
+    return constructElements(elements);
   }
   if (children.size() != elementCount) {
     unsupported(op) << " (assignment pattern element inventory)";
@@ -3687,9 +3957,7 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
       return failure();
     elements.push_back(*converted);
   }
-  return sim::SimAggregateConstructOp::create(builder, location, *resultType,
-                                              elements)
-      .getResult();
+  return constructElements(elements);
 }
 
 FailureOr<Value> UnitLowering::lowerNewArray(Operation *op) {

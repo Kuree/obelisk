@@ -375,17 +375,14 @@ bool getManagedHandleSlots(Type type,
     slots.resize(originalSize);
     return false;
   }
-  // Four-state overlapping unions need value/unknown-plane pairing before a
-  // managed arm can be classified precisely. Keep this first chunk strictly
-  // two-state instead of silently treating X/Z bits as an object word.
-  if (containsFourStateLeaf(type) &&
-      llvm::any_of(llvm::ArrayRef(slots).drop_front(originalSize),
-                   [](const ManagedHandleSlot &slot) {
-                     return slot.conditional;
-                   })) {
-    slots.resize(originalSize);
-    return false;
-  }
+  // An overlapping union has no active-arm discriminator, so every managed
+  // slot is a candidate root. For a four-state arm the candidate word is its
+  // value plane; the unknown plane is deliberately irrelevant. Runtime
+  // candidate tracing accepts only canonical inline strings or live managed
+  // objects of one of the declared kinds, so arbitrary value/X/Z plane pairs
+  // cannot be dereferenced as handles. A coincidental live-object identity is
+  // retained conservatively, which is the same safe policy used for an
+  // ordinary two-state arm whose bits happen to equal a live identity.
   llvm::sort(slots.begin() + originalSize, slots.end(),
              [](const ManagedHandleSlot &lhs, const ManagedHandleSlot &rhs) {
                return std::tie(lhs.bitOffset, lhs.kindMask, lhs.conditional) <

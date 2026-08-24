@@ -143,6 +143,12 @@ private:
                                    sim::SimLogicConcatOp op);
   mlir::LogicalResult encodeReplicate(FunctionPlan &plan,
                                       sim::SimLogicReplicateOp op);
+  mlir::LogicalResult encodeAggregateSplat(FunctionPlan &plan,
+                                           sim::SimAggregateSplatOp op);
+  uint32_t aggregateInputRegister(FunctionPlan &plan, mlir::Value value);
+  mlir::LogicalResult encodeAggregateExtractTo(
+      FunctionPlan &plan, mlir::Value result, mlir::Value input,
+      uint32_t dynamicOffset, uint64_t staticOffset, mlir::Operation *anchor);
   mlir::FailureOr<uint32_t> encodeArrayOffset(FunctionPlan &plan,
                                               mlir::Type array,
                                               mlir::Value indexValue,

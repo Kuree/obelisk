@@ -2453,6 +2453,20 @@ def SimAggregateConstructOp : SimOp<"aggregate.construct", [Pure]> {
   let hasCanonicalizer = 1;
 }
 
+def SimAggregateSplatOp : SimOp<"aggregate.splat", [Pure]> {
+  let summary = "fill every element of a fixed array with one value";
+  let description = [{
+    This is the compact form of a fixed-array assignment pattern whose
+    elements are all the same SSA value. It avoids making compiler memory and
+    instruction count proportional to the declared array length.
+  }];
+  let arguments = (ins AnyType:$input);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
 def SimAggregateExtractOp : SimOp<"aggregate.extract", [Pure]> {
   let summary = "extract one static struct or array subelement";
   let arguments = (ins AnyType:$input, I64Attr:$index);

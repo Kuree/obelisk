@@ -1877,6 +1877,11 @@ private:
                   builder.getDenseI64ArrayAttr(memberOrdinals));
       SET_OP_ATTR(TypeSetterCount,
                   builder.getI64IntegerAttr(node.typeSetters.size()));
+      SmallVector<Type> typeSetterTypes;
+      typeSetterTypes.reserve(node.typeSetters.size());
+      for (const auto &setter : node.typeSetters)
+        typeSetterTypes.push_back(typeConverter.convert(*setter.type));
+      SET_OP_ATTR(TypeSetterTypes, builder.getTypeArrayAttr(typeSetterTypes));
       SET_OP_ATTR(IndexSetterCount,
                   builder.getI64IntegerAttr(node.indexSetters.size()));
       SET_OP_ATTR(HasDefaultSetter,

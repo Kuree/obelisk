@@ -586,6 +586,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return encodeConcat(plan, op);
   if (auto op = dyn_cast<sim::SimLogicReplicateOp>(operation))
     return encodeReplicate(plan, op);
+  if (auto op = dyn_cast<sim::SimAggregateSplatOp>(operation))
+    return encodeAggregateSplat(plan, op);
   if (auto op = dyn_cast<sim::SimAggregateDefaultOp>(operation)) {
     uint32_t destination = reg(plan, op.getResult());
     Layout layout = plan.layouts[destination];
@@ -604,7 +606,10 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
           op.getResult().getType(), index);
       if (!subelement)
         return op.emitOpError("aggregate element has no packed provenance");
-      uint32_t elementRegister = reg(plan, element);
+      uint32_t elementRegister = aggregateInputRegister(plan, element);
+      if (elementRegister == kInvalidRegister)
+        return op.emitOpError(
+            "aggregate element has no bytecode word representation");
       uint16_t flags =
           isManagedAggregateWord(plan.layouts[elementRegister].kind)
               ? OBELISK_RT_DB_AGGREGATE_MANAGED
@@ -619,20 +624,19 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         op.getInput().getType(), static_cast<unsigned>(op.getIndex()));
     if (!subelement)
       return op.emitOpError("aggregate element has no packed provenance");
-    uint32_t destination = reg(plan, op.getResult());
-    uint16_t flags = isManagedAggregateWord(plan.layouts[destination].kind)
-                         ? OBELISK_RT_DB_AGGREGATE_MANAGED
-                         : 0;
-    emit({Extract, flags, destination, reg(plan, op.getInput()),
-          kInvalidRegister, 0, 0, subelement->first});
-    return success();
+    return encodeAggregateExtractTo(plan, op.getResult(), op.getInput(),
+                                    kInvalidRegister, subelement->first,
+                                    op.getOperation());
   }
   if (auto op = dyn_cast<sim::SimAggregateInsertOp>(operation)) {
     auto subelement = sim::getAggregateProvenanceSubelement(
         op.getInput().getType(), static_cast<unsigned>(op.getIndex()));
     if (!subelement)
       return op.emitOpError("aggregate element has no packed provenance");
-    uint32_t replacement = reg(plan, op.getReplacement());
+    uint32_t replacement = aggregateInputRegister(plan, op.getReplacement());
+    if (replacement == kInvalidRegister)
+      return op.emitOpError(
+          "aggregate replacement has no bytecode word representation");
     uint16_t flags = isManagedAggregateWord(plan.layouts[replacement].kind)
                          ? OBELISK_RT_DB_AGGREGATE_MANAGED
                          : 0;
@@ -651,13 +655,9 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         op.getInput().getType(), static_cast<unsigned>(op.getIndex()));
     if (!subelement)
       return op.emitOpError("union member has no packed provenance");
-    uint32_t destination = reg(plan, op.getResult());
-    uint16_t flags = isManagedAggregateWord(plan.layouts[destination].kind)
-                         ? OBELISK_RT_DB_AGGREGATE_MANAGED
-                         : 0;
-    emit({Extract, flags, destination, reg(plan, op.getInput()),
-          kInvalidRegister, 0, 0, subelement->first});
-    return success();
+    return encodeAggregateExtractTo(plan, op.getResult(), op.getInput(),
+                                    kInvalidRegister, subelement->first,
+                                    op.getOperation());
   }
   if (auto op = dyn_cast<sim::SimUnionIsActiveOp>(operation))
     return encodeUnionIsActive(plan, op);

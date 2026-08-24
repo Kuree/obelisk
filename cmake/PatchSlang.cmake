@@ -277,3 +277,105 @@ if(patched_at EQUAL -1)
 endif()
 
 file(WRITE "${port_symbols_source}" "${contents}")
+
+# IEEE 1800-2017 10.9 defines an assignment-pattern type key as a
+# simple_type. A ps_type_identifier is syntactically a simple_type even when
+# its canonical target is an enum, struct, or another non-simple Type object.
+# Slang v11 instead asks Type::isSimpleType(), rejecting legal typedef and
+# package-qualified keys before Obelisk can import them.
+set(assignment_expressions_source
+  "${SOURCE_DIR}/source/ast/expressions/AssignmentExpressions.cpp")
+file(READ "${assignment_expressions_source}" contents)
+
+set(old_code [[
+static void bindDefaultSetter(const ASTContext& context, const AssignmentPatternItemSyntax& item,
+]])
+set(new_code [[
+static bool isAssignmentPatternTypeKey(const Type& type,
+                                       const ExpressionSyntax& syntax) {
+    // A ps_type_identifier is syntactically a simple_type regardless of the
+    // canonical type it names. In particular, an enum or aggregate typedef
+    // remains a legal assignment-pattern type key.
+    return type.isSimpleType() || NameSyntax::isKind(syntax.kind);
+}
+
+static void bindDefaultSetter(const ASTContext& context, const AssignmentPatternItemSyntax& item,
+]])
+string(FIND "${contents}" "static bool isAssignmentPatternTypeKey" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's assignment-pattern helper location no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+
+set(old_code [[
+        else if (DataTypeSyntax::isKind(item->key->kind)) {
+            const Type& typeKey = comp.getType(item->key->as<DataTypeSyntax>(), context);
+            if (typeKey.isSimpleType()) {
+                auto& expr = bindRValue(typeKey, *item->expr, {}, context);
+                typeSetters.emplace_back(TypeSetter{&typeKey, &expr});
+                bad |= expr.bad();
+            }
+            else {
+                context.addDiag(diag::AssignmentPatternKeyExpr, item->key->sourceRange());
+                bad = true;
+            }
+        }
+        else {
+            context.addDiag(diag::AssignmentPatternKeyExpr, item->key->sourceRange());
+            bad = true;
+        }
+]])
+set(new_code [[
+        else {
+            auto& keyExpr = Expression::bind(*item->key, context, ASTFlags::AllowDataType);
+            if (!keyExpr.bad() && keyExpr.kind == ExpressionKind::DataType &&
+                isAssignmentPatternTypeKey(*keyExpr.type, *item->key)) {
+                const Type& typeKey = *keyExpr.type;
+                auto& expr = bindRValue(typeKey, *item->expr, {}, context);
+                typeSetters.emplace_back(TypeSetter{&typeKey, &expr});
+                bad |= expr.bad();
+            }
+            else if (!keyExpr.bad()) {
+                context.addDiag(diag::AssignmentPatternKeyExpr, item->key->sourceRange());
+                bad = true;
+            }
+            else {
+                bad = true;
+            }
+        }
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's struct assignment-pattern type-key binding no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+
+set(old_code [[
+            if (typeKey.isSimpleType()) {
+                auto& expr = bindRValue(typeKey, *item->expr, {}, context);
+                typeSetters.emplace_back(TypeSetter{&typeKey, &expr});
+]])
+set(new_code [[
+            if (isAssignmentPatternTypeKey(typeKey, *item->key)) {
+                auto& expr = bindRValue(typeKey, *item->expr, {}, context);
+                typeSetters.emplace_back(TypeSetter{&typeKey, &expr});
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's array assignment-pattern type-key binding no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+
+file(WRITE "${assignment_expressions_source}" "${contents}")

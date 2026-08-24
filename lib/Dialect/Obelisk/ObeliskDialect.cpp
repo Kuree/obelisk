@@ -433,6 +433,7 @@ LogicalResult SVStructuredAssignmentPatternExpressionOp::verify() {
   uint64_t typeCount = getTypeSetterCount();
   uint64_t indexCount = getIndexSetterCount();
   auto memberOrdinals = getMemberSetterOrdinals();
+  auto typeSetterTypes = getTypeSetterTypes();
   if (memberCount != 0 && !memberOrdinals)
     return emitOpError("member setters require ordinal metadata");
   if (memberOrdinals && memberOrdinals->size() != memberCount)
@@ -446,6 +447,10 @@ LogicalResult SVStructuredAssignmentPatternExpressionOp::verify() {
           return emitOpError("member setter ordinals must be unique");
     }
   }
+  if (typeCount != 0 && !typeSetterTypes)
+    return emitOpError("type setters require type metadata");
+  if (typeSetterTypes && typeSetterTypes->size() != typeCount)
+    return emitOpError("type setter type inventory does not match count");
   uint64_t childCount = getBody().front().getOperations().size();
   uint64_t expected = memberCount + typeCount;
   if (indexCount > (std::numeric_limits<uint64_t>::max() - expected) / 2)

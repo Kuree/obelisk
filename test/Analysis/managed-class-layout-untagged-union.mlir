@@ -1,4 +1,4 @@
-// RUN: not obelisk-opt %s --test-obelisk-managed-class-layout-analysis 2>&1 | FileCheck %s
+// RUN: obelisk-opt %s --test-obelisk-managed-class-layout-analysis 2>&1 | FileCheck %s
 
 !untagged = !obelisk_sim.unpacked_union<fields = [
   #obelisk_sim.field<name = "object", type = !obelisk_sim.class_handle<@Node>, ordinal = 0, packedOffset = 0>,
@@ -22,4 +22,8 @@ module attributes {
   }
 }
 
-// CHECK: class property has no fixed managed layout
+// IEEE 1800-2017 7.3: an untagged union retains overlapping storage. Its
+// managed arm is represented as a validated candidate root, including when
+// another arm contributes a four-state unknown plane.
+// CHECK: managed-class Holder id=2 size=24 alignment=8
+// CHECK-NEXT: field Holder_value offset=8 size=8 alignment=8 planes=2 roots=[0] candidate-roots=[0:1]

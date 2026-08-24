@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "LowerUnit.h"
+#include "obelisk/Runtime/OutputItemFlags.h"
 #include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -1466,11 +1467,6 @@ FailureOr<Value> UnitLowering::formatTaggedUnionPattern(Value value,
       !sourceType.getIsUnion() || !sourceType.getIsTagged() ||
       sourceType.getFields().size() != unionType.getFields().size())
     return failure();
-  if (sourceType.getIsFourState()) {
-    emitError(location)
-        << "four-state tagged-union pattern formatting is unsupported";
-    return failure();
-  }
 
   Type stringType = sim::StringType::get(function.getContext());
   auto literal = [&](StringRef text) {
@@ -1490,26 +1486,67 @@ FailureOr<Value> UnitLowering::formatTaggedUnionPattern(Value value,
     } else {
       Value member = sim::SimUnionExtractOp::create(builder, location,
                                                     fieldType, value, index);
-      FailureOr<Value> scalar = toPackedScalar(member, location);
-      if (failed(scalar))
-        return failure();
-      std::optional<unsigned> width = sim::getPackedWidth((*scalar).getType());
-      if (!width || *width > 64) {
-        emitError(location)
-            << "tagged-union pattern member is not a scalar of at most 64 bits";
-        return failure();
+      FailureOr<Value> formatted = failure();
+      if (auto nested = dyn_cast<sim::UnpackedUnionType>(fieldType);
+          nested && nested.getIsTagged())
+        formatted = formatTaggedUnionPattern(member, sourceFieldType, location);
+      else if (isa<sim::UnpackedArrayType, sim::UnpackedStructType,
+                   sim::UnpackedUnionType>(fieldType))
+        formatted = formatUnpackedAggregatePattern(member, location);
+      else {
+        auto timeMultiplier =
+            function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+        StringAttr lexicalScope = function->getAttrOfType<StringAttr>(
+            sim::metadata::hierarchicalName);
+        if (!timeMultiplier || !lexicalScope)
+          return failure();
+        Value item = member;
+        uint32_t flags = 0;
+        StringRef format = "%p";
+        if (isa<sim::StringType>(fieldType)) {
+          flags = OBELISK_RT_OUTPUT_ITEM_STRING;
+          format = "\"%p\"";
+        } else if (isa<FloatType>(fieldType)) {
+          formatted = convert(member, builder.getF64Type(), false, location);
+          if (failed(formatted))
+            return failure();
+          item = *formatted;
+          flags = OBELISK_RT_OUTPUT_ITEM_REAL;
+        } else if (isa<sim::ClassHandleType>(fieldType)) {
+          flags = OBELISK_RT_OUTPUT_ITEM_CLASS;
+        } else if (isa<sim::ProcessType>(fieldType)) {
+          flags = OBELISK_RT_OUTPUT_ITEM_PROCESS;
+        } else if (isa<sim::VirtualInterfaceType>(fieldType)) {
+          flags = OBELISK_RT_OUTPUT_ITEM_VIRTUAL_INTERFACE;
+        } else if (isa<sim::DynamicArrayType, sim::QueueType,
+                       sim::AssocArrayType>(fieldType)) {
+          flags = OBELISK_RT_OUTPUT_ITEM_CONTAINER;
+        } else {
+          FailureOr<Value> scalar = toPackedScalar(member, location);
+          if (failed(scalar))
+            return failure();
+          item = *scalar;
+          if (isSignedSemanticType(sourceFieldType))
+            flags = OBELISK_RT_OUTPUT_ITEM_SIGNED;
+        }
+        Value formatValue =
+            sim::SimBytesConstantOp::create(builder, location, format);
+        formatted = sim::SimStringOutputFormatOp::create(
+                        builder, location, stringType,
+                        function.getBody().front().getArgument(0),
+                        ValueRange{formatValue, item}, 10,
+                        builder.getDenseI32ArrayAttr(
+                            {OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT,
+                             static_cast<int32_t>(flags)}),
+                        lexicalScope, StringAttr{}, timeMultiplier,
+                        designTimePrecisionExponent())
+                        .getResult();
       }
-      bool isSigned = isSignedSemanticType(sourceFieldType);
-      FailureOr<Value> integer =
-          convert(*scalar, builder.getI64Type(), isSigned, location);
-      if (failed(integer))
+      if (failed(formatted))
         return failure();
-      Value formatted = sim::SimStringFormatIntegerOp::create(
-          builder, location, stringType, *integer,
-          builder.getI32IntegerAttr(10), builder.getBoolAttr(isSigned));
       SmallVector<Value> parts{
           literal((Twine("'{") + field.getName().getValue() + ":").str()),
-          formatted, literal("}")};
+          *formatted, literal("}")};
       candidate =
           sim::SimStringConcatOp::create(builder, location, stringType, parts);
     }

@@ -107,6 +107,11 @@ planTwoStateRegisters(sim::SimDesignOp design) {
           constrainResultTo(op.getResult(), op.getInputs());
         } else if (auto op = dyn_cast<sim::SimLogicReplicateOp>(operation)) {
           constrain(op.getResult(), op.getInput());
+        } else if (auto op = dyn_cast<sim::SimAggregateSplatOp>(operation)) {
+          // Aggregate layouts are not locally specialized to one plane, so a
+          // known scalar logic input must retain its four-state register kind
+          // to match the aggregate result consumed by Replicate.
+          force(op.getInput());
         } else if (auto op = dyn_cast<sim::SimLogicInsertOp>(operation)) {
           constrain(op.getResult(), op.getInput());
         } else if (auto op =

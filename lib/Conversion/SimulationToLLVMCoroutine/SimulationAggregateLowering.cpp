@@ -12,6 +12,7 @@
 #include "llvm/Support/MathExtras.h"
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 
 using namespace mlir;
@@ -226,6 +227,85 @@ public:
     SmallVector<Value> results{value};
     if (containsLogic(op.getResult().getType()))
       results.push_back(unknown);
+    SmallVector<ValueRange> replacements{ValueRange(results)};
+    rewriter.replaceOpWithMultiple(op, replacements);
+    return success();
+  }
+};
+
+class PackedAggregateSplatConversion final
+    : public OpConversionPattern<sim::SimAggregateSplatOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimAggregateSplatOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    std::optional<unsigned> resultWidth =
+        nativeStateWidth(op.getResult().getType());
+    std::optional<unsigned> elementWidth =
+        nativeStateWidth(op.getInput().getType());
+    uint64_t count = sim::getAggregateNumElements(op.getResult().getType());
+    if (!resultWidth || !elementWidth || count == 0 || *elementWidth == 0 ||
+        count > std::numeric_limits<uint64_t>::max() / *elementWidth ||
+        uint64_t{*elementWidth} * count != *resultWidth ||
+        adaptor.getInput().empty())
+      return failure();
+
+    IntegerType outputType = rewriter.getIntegerType(*resultWidth);
+    auto constant = [&](uint64_t value) {
+      return arith::ConstantOp::create(
+          rewriter, op.getLoc(), outputType,
+          rewriter.getIntegerAttr(outputType, APInt(*resultWidth, value)));
+    };
+    auto repeatPlane = [&](Value input) -> FailureOr<Value> {
+      input = toStoragePlane(rewriter, op.getLoc(), input);
+      auto inputType = dyn_cast<IntegerType>(input.getType());
+      if (!inputType || inputType.getWidth() != *elementWidth)
+        return failure();
+      Value block = inputType == outputType
+                        ? input
+                        : arith::ExtUIOp::create(rewriter, op.getLoc(),
+                                                 outputType, input)
+                              .getResult();
+      Value result = constant(0);
+      uint64_t remaining = count;
+      uint64_t blockElements = 1;
+      uint64_t resultElements = 0;
+      while (remaining != 0) {
+        if (remaining & 1) {
+          Value placed = block;
+          if (resultElements != 0)
+            placed = arith::ShLIOp::create(
+                rewriter, op.getLoc(), block,
+                constant(resultElements * uint64_t{*elementWidth}));
+          result = arith::OrIOp::create(rewriter, op.getLoc(), result, placed);
+          resultElements += blockElements;
+        }
+        remaining >>= 1;
+        if (remaining == 0)
+          break;
+        Value shifted = arith::ShLIOp::create(
+            rewriter, op.getLoc(), block,
+            constant(blockElements * uint64_t{*elementWidth}));
+        block = arith::OrIOp::create(rewriter, op.getLoc(), block, shifted);
+        blockElements *= 2;
+      }
+      return result;
+    };
+
+    SmallVector<Value> results;
+    for (Value plane : adaptor.getInput()) {
+      FailureOr<Value> repeated = repeatPlane(plane);
+      if (failed(repeated))
+        return failure();
+      results.push_back(*repeated);
+    }
+    if (containsLogic(op.getResult().getType())) {
+      if (results.size() != 2)
+        return failure();
+    } else if (results.size() > 1) {
+      results.resize(1);
+    }
     SmallVector<ValueRange> replacements{ValueRange(results)};
     rewriter.replaceOpWithMultiple(op, replacements);
     return success();
@@ -677,7 +757,8 @@ void populateAggregateToLLVMConversionPatterns(RewritePatternSet &patterns,
   MLIRContext *context = patterns.getContext();
   patterns.add<
       PackedAggregateExtractConversion, PackedAggregateInsertConversion,
-      PackedAggregateConstructConversion, AggregateDynamicExtractConversion,
+      PackedAggregateConstructConversion, PackedAggregateSplatConversion,
+      AggregateDynamicExtractConversion,
       AggregateDynamicInsertConversion, AggregateDefaultConversion,
       UnionConstructConversion, UnionExtractConversion, UnionIsActiveConversion>(
       converter, context);

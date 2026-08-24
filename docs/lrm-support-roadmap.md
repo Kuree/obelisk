@@ -110,6 +110,16 @@ MB RSS for native, then simulates in 0.01 seconds or less. Bytecode represents
 each packed replication with one instruction instead of one concatenation and
 temporary register per copy. The full regression suite passes 1258/1258 tests.
 
+L7's final UVM smoke ran in 34.071 seconds compile / 0.202 seconds simulate for
+bytecode and 76.350 seconds compile / 0.041 seconds simulate for native, with
+zero UVM errors or fatals. A fixed-array assignment-pattern stress with 4096
+32-bit elements compiles at `-O0 -fno-lto` in 0.03 seconds / 72 MB RSS for
+bytecode and 0.52 seconds / 93 MB RSS for native, then simulates in 0.03
+seconds or less. The homogeneous fixed array remains one aggregate splat in
+Simulation IR, one bytecode replication instruction, and a logarithmic native
+construction instead of 4096 operands and shifts. Large dynamic patterns use
+counted loops. The full regression suite passes 1262/1262 tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -118,11 +128,11 @@ temporary register per copy. The full regression suite passes 1258/1258 tests.
 | 4 Scheduling semantics | Partial | Active, Inactive, NBA, Observed, Reactive, Re-Inactive, Re-NBA, Postponed, and the Preponed snapshot hook execute through one native/bytecode scheduler. Remaining language gaps are attached to the timed constructs below. PLI callback regions are excluded with VPI. |
 | 5 Lexical conventions | Executable for the audited surface | Slang supplies the lexer, preprocessor-facing tokens, literals, attributes, keywords, and identifiers. Keep this clause under differential testing, especially revision switches and literal corner cases. |
 | 6 Data types | Partial | Packed 2/4-state values, real/realtime variables and nets, strings, chandles, events, enums, typedefs, parameters, casts, strengths, common net kinds, user-defined nettypes/resolution functions, typed/heterogeneous fixed-array `interconnect`, and trireg charge strength/retention/decay/sharing execute. Remaining gaps are tracked by the operator, aggregate, and container chunks below. |
-| 7 Aggregate data types | Partial | Fixed arrays/structs/unions, tagged managed unions, dynamic arrays, queues, associative arrays, queries, traversal, and the registered manipulation methods execute. Remaining work includes all legal slice/reference lvalues, escaping string-character reference/NBA paths, and safe semantics for an untagged union containing a managed handle. Strings permit character selection but are not sliceable. |
+| 7 Aggregate data types | Partial | Fixed arrays/structs/unions, tagged managed unions, and untagged managed unions using validated candidate roots execute, including four-state overlapping arms. Dynamic arrays, queues, associative arrays, queries, traversal, and the registered manipulation methods execute. Remaining work includes all legal slice/reference lvalues and escaping string-character reference/NBA paths. Strings permit character selection but are not sliceable. |
 | 8 Classes | Partial | Construction, inheritance, polymorphism, virtual/interface methods, parameterized classes, copying, managed properties, garbage collection, and the UVM-used surface execute. Complete the residual class/type/operator/constructor long tail exposed by focused probes and the aggregate/reference gaps shared with Clauses 6, 7, and 11. |
 | 9 Processes | Partial | Structured procedures, all fork/join forms, `wait fork`, `disable fork`, timed and recursive tasks, `process` handles and control, automatic capture, and cancellation execute. Disabling a named block owned by another live process is still rejected instead of canceling only the target scope. |
-| 10 Assignment statements | Partial | Blocking/NBA assignment, intra-assignment timing, common aggregate patterns, net aliasing, static continuous-assignment delays, strengths, and a restricted procedural force/assign surface execute. Complete signal-dependent force/assign reevaluation, automatic/class/unpacked/managed targets, concatenations and dynamic selects, plus the remaining queue/unpacked slice lvalues. |
-| 11 Operators and expressions | Partial | Legal equality, ordering, logical operations, concatenation, replication, and packed selection execute for strings, containers, unpacked aggregates, handles, and arbitrary-width packed values. This includes handle wildcard identity equality, two-state XNOR, compact integral power, constant ordinary part-selects, dynamic indexed part-selects with partial out-of-range behavior, dynamic string replication, and fixed/dynamic unpacked concatenation with per-element conversion. Ordinary part-select bounds must be constant and strings are not sliceable, so those former diagnostic branches are not missing language features. Public `--timing=min|typ|max` selects constant and dynamic expressions. Remaining expression work is tracked by aggregate patterns, references, randomization, assertions, and the differential long tail. |
+| 10 Assignment statements | Partial | Blocking/NBA assignment, intra-assignment timing, assignment patterns, net aliasing, static continuous-assignment delays, strengths, and a restricted procedural force/assign surface execute. Complete signal-dependent force/assign reevaluation, automatic/class/unpacked/managed targets, concatenations and dynamic selects, plus the remaining queue/unpacked slice lvalues. |
+| 11 Operators and expressions | Partial | Legal equality, ordering, logical operations, concatenation, replication, and packed selection execute for strings, containers, unpacked aggregates, handles, and arbitrary-width packed values. This includes handle wildcard identity equality, two-state XNOR, compact integral power, constant ordinary part-selects, dynamic indexed part-selects with partial out-of-range behavior, dynamic string replication, and fixed/dynamic unpacked concatenation with per-element conversion. Ordinary part-select bounds must be constant and strings are not sliceable, so those former diagnostic branches are not missing language features. Public `--timing=min|typ|max` selects constant and dynamic expressions. Remaining expression work is tracked by references, randomization, assertions, and the differential long tail. |
 | 12 Procedural statements | Partial | Conditional, ordinary/pattern case, loops, jumps, `randcase`, and most `randsequence` forms execute. Recursive randsequence productions and value-returning productions still require activation frames and expression-valued production calls. |
 | 13 Tasks and functions | Executable for the audited non-DPI surface | Static/automatic, recursive, virtual, class/interface, timed task, value/output/inout/ref, default argument, and cancellation behavior execute. Continue differential closure for unusual aggregate and hierarchical formal cases; DPI is tracked separately in Clause 35. |
 | 14 Clocking blocks | Partial | Input/output skews, `#1step`, synchronous drives, event lists and `iff`, cycle delays, defaults, and virtual-interface clocking handles execute. Global clocking and the remaining assertion clock-inference, clock-formal, and multi-clock composition cases remain. |
@@ -199,9 +209,19 @@ one commit.
    stays compact for both state domains and is one limb-aware bytecode
    instruction. The audit also proved that dynamic ordinary part-select bounds
    and string ranges are illegal rather than implementation gaps.
-7. **L7 — Aggregate and pattern closure (7, 10.9, 11.9).** Finish legal
-   assignment-pattern setters, tagged-union four-state formatting, and a safe
-   policy/representation for untagged unions containing managed handles.
+7. **L7 — Aggregate and pattern closure (7, 10.9, 11.9, 21.2.1.7),
+   completed.** Member, index, type, and default assignment-pattern setters
+   execute with explicit-key precedence, last-matching-type precedence, and
+   recursive fixed-array/structure matching resolved entirely during
+   lowering. This includes package-qualified typedef and enum keys. Large
+   homogeneous fixed patterns remain compact splats, and replicated or
+   default-filled dynamic array/queue patterns remain counted loops, keeping
+   compiler work proportional to source pattern size. Bytecode explicitly
+   bitcasts real members at aggregate storage boundaries. Tagged-union `%p`
+   formatting preserves four-state and arbitrary-width payloads. Untagged
+   unions containing managed handles use validated candidate roots in native
+   and bytecode storage; four-state arms contribute only their value plane,
+   while invalid and stale words are never dereferenced.
 8. **L8 — Container/reference and untyped-mailbox closure (7.5-7.12, 13.5,
    15.4).** Complete queue and unpacked slice lvalues, escaped string-character
    references, character NBA, scan copy-out targets, heterogeneous untyped

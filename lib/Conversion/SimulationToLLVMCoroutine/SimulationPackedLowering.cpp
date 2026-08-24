@@ -706,6 +706,7 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimWeakClearOp, sim::SimGCSafepointOp>();
     target
         .addIllegalOp<sim::SimAggregateDefaultOp, sim::SimAggregateConstructOp,
+                      sim::SimAggregateSplatOp,
                       sim::SimAggregateExtractOp, sim::SimAggregateInsertOp,
                       sim::SimArrayDynExtractOp, sim::SimArrayDynInsertOp,
                       sim::SimUnionConstructOp, sim::SimUnionExtractOp,

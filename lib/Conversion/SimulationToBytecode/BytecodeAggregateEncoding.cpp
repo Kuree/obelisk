@@ -141,6 +141,64 @@ LogicalResult Encoder::encodeReplicate(FunctionPlan &plan,
   return success();
 }
 
+LogicalResult Encoder::encodeAggregateSplat(FunctionPlan &plan,
+                                            sim::SimAggregateSplatOp op) {
+  uint64_t count = sim::getAggregateNumElements(op.getResult().getType());
+  if (count == 0)
+    return op.emitOpError("zero aggregate splat count");
+  uint32_t destination = reg(plan, op.getResult());
+  uint32_t source = reg(plan, op.getInput());
+  if (destination == kInvalidRegister || source == kInvalidRegister)
+    return op.emitOpError("aggregate splat has no bytecode register");
+  Layout destinationLayout = plan.layouts[destination];
+  Layout sourceLayout = plan.layouts[source];
+  if ((sourceLayout.kind != Bits && sourceLayout.kind != Logic) ||
+      destinationLayout.kind != sourceLayout.kind || sourceLayout.width == 0 ||
+      count > UINT32_MAX / sourceLayout.width ||
+      uint64_t{sourceLayout.width} * count != destinationLayout.width)
+    return op.emitOpError("aggregate splat has incompatible bytecode layouts");
+  emit({Replicate, 0, destination, source, 0, 0, 0, count});
+  return success();
+}
+
+uint32_t Encoder::aggregateInputRegister(FunctionPlan &plan, Value value) {
+  uint32_t source = reg(plan, value);
+  if (source == kInvalidRegister)
+    return source;
+  Layout layout = plan.layouts[source];
+  if (layout.kind != Real32 && layout.kind != Real64)
+    return source;
+  uint32_t bits = temporary(
+      plan, IntegerType::get(value.getContext(), layout.width));
+  if (bits != kInvalidRegister)
+    emit({Bitcast, 0, bits, source});
+  return bits;
+}
+
+LogicalResult Encoder::encodeAggregateExtractTo(
+    FunctionPlan &plan, Value result, Value input, uint32_t dynamicOffset,
+    uint64_t staticOffset, Operation *anchor) {
+  uint32_t destination = reg(plan, result);
+  uint32_t source = reg(plan, input);
+  if (destination == kInvalidRegister || source == kInvalidRegister)
+    return anchor->emitOpError("aggregate result has no bytecode register");
+  Layout layout = plan.layouts[destination];
+  uint32_t extracted = destination;
+  if (layout.kind == Real32 || layout.kind == Real64) {
+    extracted = temporary(plan,
+                          IntegerType::get(result.getContext(), layout.width));
+    if (extracted == kInvalidRegister)
+      return anchor->emitOpError("cannot allocate aggregate bitcast register");
+  }
+  uint16_t flags = isManagedAggregateWord(layout.kind)
+                       ? OBELISK_RT_DB_AGGREGATE_MANAGED
+                       : 0;
+  emit({Extract, flags, extracted, source, dynamicOffset, 0, 0, staticOffset});
+  if (extracted != destination)
+    emit({Bitcast, 0, destination, extracted});
+  return success();
+}
+
 FailureOr<uint32_t> Encoder::encodeArrayOffset(FunctionPlan &plan, Type array,
                                                Value indexValue,
                                                Operation *anchor) {
@@ -250,12 +308,8 @@ LogicalResult Encoder::encodeArrayExtract(FunctionPlan &plan,
       plan, op.getInput().getType(), op.getIndex(), op.getOperation());
   if (failed(offset))
     return failure();
-  uint32_t destination = reg(plan, op.getResult());
-  uint16_t flags = isManagedAggregateWord(plan.layouts[destination].kind)
-                       ? OBELISK_RT_DB_AGGREGATE_MANAGED
-                       : 0;
-  emit({Extract, flags, destination, reg(plan, op.getInput()), *offset});
-  return success();
+  return encodeAggregateExtractTo(plan, op.getResult(), op.getInput(), *offset,
+                                  0, op.getOperation());
 }
 
 LogicalResult Encoder::encodeArrayInsert(FunctionPlan &plan,
@@ -264,7 +318,9 @@ LogicalResult Encoder::encodeArrayInsert(FunctionPlan &plan,
       plan, op.getInput().getType(), op.getIndex(), op.getOperation());
   if (failed(offset))
     return failure();
-  uint32_t replacement = reg(plan, op.getReplacement());
+  uint32_t replacement = aggregateInputRegister(plan, op.getReplacement());
+  if (replacement == kInvalidRegister)
+    return op.emitOpError("array element has no bytecode word representation");
   uint8_t kind = plan.layouts[replacement].kind;
   uint16_t flags = OBELISK_RT_DB_INSERT_DYNAMIC;
   if (isManagedAggregateWord(kind))
@@ -292,7 +348,9 @@ LogicalResult Encoder::encodeUnionConstruct(FunctionPlan &plan,
       selected->second > *payloadSpan - selected->first)
     return op.emitOpError("union has no fixed packed representation");
   uint32_t destination = reg(plan, op.getResult());
-  uint32_t value = reg(plan, op.getValue());
+  uint32_t value = aggregateInputRegister(plan, op.getValue());
+  if (value == kInvalidRegister)
+    return op.emitOpError("union member has no bytecode word representation");
   uint16_t flags = isManagedAggregateWord(plan.layouts[value].kind)
                        ? OBELISK_RT_DB_AGGREGATE_MANAGED
                        : 0;

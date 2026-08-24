@@ -6,7 +6,7 @@
 !choice = !obelisk_sim.unpacked_union<fields = [
   #obelisk_sim.field<name = "object", type = !obelisk_sim.class_handle<@Node>, ordinal = 0, packedOffset = 0>,
   #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 1, packedOffset = 0>,
-  #obelisk_sim.field<name = "bits", type = i64, ordinal = 2, packedOffset = 0>
+  #obelisk_sim.field<name = "bits", type = !obelisk_sim.logic<64>, ordinal = 2, packedOffset = 0>
 ], isTagged = false>
 
 module attributes {
@@ -68,9 +68,12 @@ module attributes {
 
       // Untagged member assignment is a preserving read-modify-write. It must
       // not clear the bytes outside the selected arm as union.construct does.
-      %bits = arith.constant 17 : i64
+      // A four-state member shares its value plane with the candidate handle
+      // word. Its unknown plane never participates in candidate validation.
+      %bits = obelisk_sim.logic.constant 17 : i64, -1 : i64 :
+          !obelisk_sim.logic<64>
       %updated = obelisk_sim.aggregate.insert %bits into %loaded[2] :
-          (!choice, i64) -> !choice
+          (!choice, !obelisk_sim.logic<64>) -> !choice
       obelisk_sim.ref.store %updated to %local :
           !choice, !obelisk_sim.ref<!choice>
       obelisk_sim.return

@@ -1,18 +1,19 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s
 
-!bits4 = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>
+!logic4 = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>
 !tagged = !obelisk.source_aggregate<"top", false, true, true, false, false,
     false, 0, 4, 4, 0, [
       {name = "invalid", ordinal = 0 : i32, packed_offset = 0 : i64,
        type = !obelisk.void},
       {name = "valid", ordinal = 1 : i32, packed_offset = 0 : i64,
-       type = !bits4}
+       type = !logic4}
     ]>
 !sim_tagged = !obelisk_sim.unpacked_union<fields = [
     #obelisk_sim.field<name = "invalid", type = i1, ordinal = 0,
         packedOffset = 0>,
     #obelisk_sim.field<name = "valid",
-        type = !obelisk_sim.packed_array<3 : 0 x i1>, ordinal = 1,
+        type = !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>,
+        ordinal = 1,
         packedOffset = 0>
   ], isTagged = true>
 
@@ -27,7 +28,10 @@ module {
     // CHECK: %[[VALUE:.*]] = obelisk_sim.ref.load %arg1
     // CHECK: %[[VALID:.*]] = obelisk_sim.union.extract %[[VALUE]][1]
     // CHECK: %[[FLAT:.*]] = obelisk_sim.packed.flatten %[[VALID]]
-    // CHECK: %[[TEXT:.*]] = obelisk_sim.string.format_integer
+    // CHECK-SAME: !obelisk_sim.logic<4>
+    // CHECK: %[[TEXT:.*]] = obelisk_sim.string.output_format
+    // CHECK-SAME: %[[FLAT]]
+    // CHECK-SAME: flags = [32, 0]
     // CHECK: %[[PREFIX:.*]] = obelisk_sim.string.literal "'{valid:"
     // CHECK: %[[PATTERN:.*]] = obelisk_sim.string.concat %[[PREFIX]], %[[TEXT]]
     // CHECK: %[[ACTIVE:.*]] = obelisk_sim.union.is_active %[[VALUE]][1]

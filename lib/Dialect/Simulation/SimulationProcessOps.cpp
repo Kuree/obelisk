@@ -1009,6 +1009,25 @@ LogicalResult SimAggregateConstructOp::verify() {
   return success();
 }
 
+LogicalResult SimAggregateSplatOp::verify() {
+  Type type = getResult().getType();
+  if (!isa<PackedArrayType, UnpackedArrayType>(type))
+    return emitOpError("result must be a fixed array");
+  if (getAggregateNumElements(type) == 0)
+    return emitOpError("result array must not be empty");
+  Type element = getAggregateElementType(type, 0);
+  if (getInput().getType() != element)
+    return emitOpError("input must match the array element type");
+  SmallVector<ManagedHandleSlot> managedSlots;
+  if (!getManagedHandleSlots(element, managedSlots))
+    return emitOpError("array element has no fixed storage layout");
+  if (!managedSlots.empty())
+    return emitOpError("managed array elements cannot be splatted");
+  if (isa<FloatType>(element))
+    return emitOpError("floating-point array elements cannot be splatted");
+  return success();
+}
+
 LogicalResult SimAggregateExtractOp::verify() {
   return verifyAggregateIndex(*this, getInput().getType(), getIndexAttr(),
                               getResult().getType(), false);

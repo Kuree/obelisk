@@ -1,4 +1,4 @@
-// RUN: not obelisk-opt %s -o /dev/null \
+// RUN: obelisk-opt %s -o /dev/null \
 // RUN:   --pass-pipeline='builtin.module(test-obelisk-simulation-process-frame-analysis)' \
 // RUN:   2>&1 | FileCheck %s
 
@@ -12,11 +12,11 @@ module attributes {
 } {
   obelisk_sim.design @frame_analysis {
     obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "invalid_frame"
+    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "untagged_frame"
     obelisk_sim.class.decl @Node id 1 {
       is_abstract = false, is_final = false, is_interface = false
     }
-    obelisk_sim.func @invalid_frame(
+    obelisk_sim.func @untagged_frame(
         %ctx: !obelisk_sim.context
             {obelisk_sim.capture_kind = 0 : i32},
         %value: !untagged
@@ -27,4 +27,9 @@ module attributes {
   }
 }
 
-// CHECK: cannot place type '{{.*}}isTagged = false>' in the canonical process frame
+// IEEE 1800-2017 7.3: process frames preserve the overlapping union value and
+// unknown planes while tracing the managed word only as a validated candidate.
+// CHECK: frame @untagged_frame size=16 align=8 checksum=
+// CHECK: capture1 value=0 unknown=8 size=8 align=8 roots=0 candidate-roots=0:1
+// CHECK: field capture candidate-root offset=0 size=8 align=8 kinds=1
+// CHECK: field capture four-state-unknown offset=8 size=8 align=8

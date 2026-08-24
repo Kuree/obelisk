@@ -79,11 +79,16 @@ Unpacked tagged unions do as well: their internal payload gives each arm a
 separate aligned slot, keeps inactive managed slots at the canonical null
 value, and stores the tag after that disjoint payload. This representation is
 shared by native and bytecode execution and is intentionally independent of
-the source union's overlapping syntax. An untagged union containing a managed
-handle remains unsupported because it has no discriminator with which precise
-tracing can distinguish pointer bits from an inactive ordinary member; that
-case is diagnosed during class and process-storage layout instead of being
-traced conservatively.
+the source union's overlapping syntax. Untagged unions retain overlapping
+source representation and use candidate roots for every managed slot because
+they have no active-arm discriminator. Candidate validation accepts only a
+canonical inline string or a live object of a declared managed kind. For a
+four-state overlapping arm only its value plane is a candidate; its unknown
+plane cannot turn arbitrary bits into a dereferenceable handle. A bit pattern
+that coincidentally equals a live identity may retain that object
+conservatively, but invalid or stale words are never dereferenced. This policy
+is shared by class fields, design/static storage, process frames, native shadow
+roots, and bytecode state.
 
 Source `string` values use this representation throughout semantic constants,
 design and procedural storage, fixed aggregates, ports, parameters, captures,

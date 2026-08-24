@@ -1554,6 +1554,20 @@ struct SimplifyAggregateConstruct final
   }
 };
 
+struct SimplifyAggregateSplat final : OpRewritePattern<SimAggregateSplatOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimAggregateSplatOp op,
+                                PatternRewriter &rewriter) const override {
+    if (getAggregateNumElements(op.getResult().getType()) != 1)
+      return failure();
+    rewriter.replaceOp(op, SimAggregateConstructOp::create(
+                               rewriter, op.getLoc(), op.getResult().getType(),
+                               ValueRange{op.getInput()}));
+    return success();
+  }
+};
+
 struct SimplifyAggregateInsert final : OpRewritePattern<SimAggregateInsertOp> {
   using OpRewritePattern::OpRewritePattern;
 
@@ -1792,6 +1806,11 @@ void SimPackedUnflattenOp::getCanonicalizationPatterns(
 void SimAggregateConstructOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
   results.add<SimplifyAggregateConstruct>(context);
+}
+
+void SimAggregateSplatOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results.add<SimplifyAggregateSplat>(context);
 }
 
 void SimAggregateExtractOp::getCanonicalizationPatterns(
