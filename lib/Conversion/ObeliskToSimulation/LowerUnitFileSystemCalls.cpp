@@ -64,6 +64,31 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     return constant(builder.getI1Type(), 0);
   };
 
+  if (name == "$system") {
+    if (children.size() > 1) {
+      emitError(location) << "$system accepts at most one command argument";
+      return failure();
+    }
+    Type stringType = sim::StringType::get(function.getContext());
+    Value command;
+    if (children.empty()) {
+      command =
+          sim::SimStringLiteralOp::create(builder, location, stringType, "");
+    } else {
+      FailureOr<Value> lowered = lowerExpression(children.front());
+      if (failed(lowered))
+        return failure();
+      FailureOr<Value> converted = convert(
+          *lowered, stringType, isSignedNode(children.front()), location);
+      if (failed(converted))
+        return failure();
+      command = *converted;
+    }
+    Value result =
+        sim::SimSystemOp::create(builder, location, i32, context, command);
+    return convertResult(result);
+  }
+
   if (name == "$writememb" || name == "$writememh") {
     if (children.size() < 2 || children.size() > 4) {
       emitError(location) << name << " requires two to four arguments";

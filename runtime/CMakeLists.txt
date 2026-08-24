@@ -33,6 +33,7 @@ add_library(obelisk_rt STATIC
   lib/RandSolveWide.cpp
   lib/Runtime.cpp
   lib/Sampled.cpp
+  lib/System.cpp
   lib/VCD.cpp
   lib/VPI.cpp
 )

@@ -851,6 +851,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_FILE_SCAN_FIELD = UINT32_C(0x00010112),
   OBELISK_RT_INTRINSIC_V1_FILE_READMEM_TOKEN = UINT32_C(0x00010113),
   OBELISK_RT_INTRINSIC_V1_PLUSARG_SCAN = UINT32_C(0x00010114),
+  OBELISK_RT_INTRINSIC_V1_SYSTEM = UINT32_C(0x00010115),
   OBELISK_RT_INTRINSIC_V1_SPAWN = UINT32_C(0x00010200),
   OBELISK_RT_INTRINSIC_V1_NBA = UINT32_C(0x00010201),
   // Statically planned NBA. The final i64 input is the NBASiteAttr identity;
@@ -3735,6 +3736,12 @@ obelisk_rt_status obelisk_rt_v1_plusarg_scan(
     obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
     obelisk_rt_string_v1 format, obelisk_rt_string_v1 *out_tail,
     uint32_t *out_conversion, uint32_t *out_found);
+
+// Execute a host command and return its normalized exit status. A process
+// terminated by a signal reports 128 plus the signal number.
+obelisk_rt_status obelisk_rt_v1_system(obelisk_rt_context *context,
+                                       obelisk_rt_string_v1 command,
+                                       int32_t *out_status);
 
 obelisk_rt_status obelisk_rt_v1_file_seek(obelisk_rt_context *context,
                                           uint32_t descriptor, int64_t offset,

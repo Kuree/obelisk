@@ -561,6 +561,36 @@ public:
   }
 };
 
+class SystemConversion final : public OpConversionPattern<sim::SimSystemOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimSystemOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    Type i32 = rewriter.getI32Type();
+    Value output = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          llvmConstant(rewriter, op.getLoc(), i32, -1), output,
+                          4);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(), "obelisk_rt_v1_system"),
+            ValueRange{context, adaptor.getCommand().front(), output})
+            .getResult();
+    Value result = LLVM::LoadOp::create(rewriter, op.getLoc(), i32, output, 4);
+    Value ok = arith::CmpIOp::create(
+        rewriter, op.getLoc(), arith::CmpIPredicate::eq, status,
+        llvmConstant(rewriter, op.getLoc(), i32, 0));
+    rewriter.replaceOp(op, arith::SelectOp::create(
+                               rewriter, op.getLoc(), ok, result,
+                               llvmConstant(rewriter, op.getLoc(), i32, -1)));
+    return success();
+  }
+};
+
 class PlusargValueConversion final
     : public OpConversionPattern<sim::SimPlusargValueOp> {
 public:
@@ -796,7 +826,7 @@ void populateManagedStringToLLVMConversionPatterns(
                StringCompareConversion, StringScanFieldConversion,
                FileScanFieldConversion, StringParseLogicConversion,
                PlusargTestConversion, PlusargValueConversion,
-               PlusargScanConversion,
+               PlusargScanConversion, SystemConversion,
                StringDumpOpenConversion, StringDumpPortsConversion,
                StringDumpPortsControlConversion>(converter, context);
   patterns.add<StringFileOpenConversion<sim::SimFileOpenStringMCDOp>,

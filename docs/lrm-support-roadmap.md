@@ -398,6 +398,20 @@ compile / 0.019 seconds simulate for native, with zero UVM errors or fatals
 and both compile times within the 10% gate. The full regression suite passes
 1298/1298 tests and all 427 runtime tests.
 
+L12's eighteenth closure tranche implements the `$system` task/function from
+20.18 for omitted, literal, and runtime string commands. Native and bytecode
+execution share one cold-path runtime call; the simulator holds no scheduler
+or context lock while the blocking host command runs. POSIX wait statuses are
+decoded to the command's exit value, with signal termination reported as 128
+plus the signal number, while launch failures return -1. The exact upstream
+`t_sys_system` scenario now passes. The focused test compiles in 0.03 seconds
+bytecode / 0.05 seconds native at 72/76 MB RSS and simulates below 0.01 seconds
+in either tier. The UVM smoke ran in 33.801 seconds compile / 0.181 seconds
+simulate for bytecode and 71.684 seconds compile / 0.019 seconds simulate for
+native, with zero UVM errors or fatals and both compile times within the 10%
+gate. The full regression suite passes 1299/1299 tests and all 427 runtime
+tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -419,7 +433,7 @@ and both compile times within the 10% gate. The full regression suite passes
 | 17 Checkers | Semantic only | Declarations, ports, resolved instances, identities, cloned bodies, clocks/disables, properties, procedures, and expressions are retained. Executable instances now receive a targeted Clause 17 diagnostic instead of being silently erased; A9 implements checker procedures, free variables, inferred clocks, assertions, hierarchy, and runtime behavior. Covergroups in checkers are excluded with coverage. |
 | 18 Constrained random generation | Partial | Object streams, broad packed constraints, modes, finite domains, soft constraints, direct solve ordering, distributions, bounded `randc`, lifecycle hooks, and much of randsequence execute. The authoritative boundary is `docs/randomization-support.md`; R1-R7 below close the remaining standard surface without treating a solver resource cap as language semantics. |
 | 19 Functional coverage | Excluded | Explicitly outside this project goal. |
-| 20 Utility system tasks/functions | Partial | Simulation/time control—including compile-time `$timeunit` and `$timeprecision` scope queries plus every omitted and explicitly empty `$timeformat` argument—conversions, data/array queries, real math, bit-vector functions, severity, random distributions, most assertion control, and the implemented sampled functions execute. Missing normative families include `$system`, `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam`, the synchronous/asynchronous PLA tasks, the global-clock sampled functions, and complete assertion statistics/control behavior. |
+| 20 Utility system tasks/functions | Partial | Simulation/time control—including compile-time `$timeunit` and `$timeprecision` scope queries plus every omitted and explicitly empty `$timeformat` argument—conversions, data/array queries, real math, bit-vector functions, severity, random distributions, `$system`, most assertion control, and the implemented sampled functions execute. Missing normative families include `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam`, the synchronous/asynchronous PLA tasks, the global-clock sampled functions, and complete assertion statistics/control behavior. |
 | 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning—including formatted-input field widths and assignment suppression plus `$fread` into fixed unpacked memories and captured dynamic, associative, and nested aggregate copy-out targets—read/write-memory across fixed, dynamic, queue, multidimensional, and integral associative forms, plusargs including runtime `$value$plusargs` formats, and VCD/dumpports execute. Formatting and file corner cases remain. |
 | 22 Compiler directives | Executable for the audited surface | The Slang preprocessor implements the normative directive family. Directive persistence, separate-compilation-unit reset, and command-line default-timescale precedence have native/bytecode tests. Protected envelopes are a separate Clause 34 feature, not ordinary pragma acceptance. |
 | 23 Modules and hierarchy | Partial | ANSI/non-ANSI modules, parameters, ports, arrays, hierarchy, bind, and common upward references elaborate. External runs retain module-library lookup, port mismatch, hierarchical path, generate-scope, and parameter-binding failures that need clause-minimal reproducers and fixes. |
@@ -549,9 +563,10 @@ one commit.
 16. **L16 — Global and residual clocking (14).** Implement global clocking,
     remaining virtual-interface clock events, clock arguments, and inferred
     clock contexts shared with SVA.
-17. **L17 — Normative utility calls (20.16-20.18).** Implement the `$q_*`
-    stochastic queue, synchronous/asynchronous PLA, and `$system` task/function
-    families with exact argument and status behavior.
+17. **L17 — Normative utility calls (20.16-20.18).** `$system` is complete;
+    implement the remaining `$q_*` stochastic queue and
+    synchronous/asynchronous PLA families with exact argument and status
+    behavior.
 18. **L18 — Global sampled functions (20.13).** Implement the complete
     `$past_gclk`, `$future_gclk`, `$rising_gclk`, `$falling_gclk`,
     `$stable_gclk`, `$changed_gclk`, `$steady_gclk`, and `$changing_gclk`

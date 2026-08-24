@@ -2079,6 +2079,14 @@ def SimPlusargScanOp : SimFileOp<"plusarg.scan",
   }];
 }
 
+def SimSystemOp : SimFileOp<"system",
+    (ins SimContextType:$context, SimStringType:$command),
+    (outs I32:$result),
+    [MemRead<SimIOResource>, MemWrite<SimIOResource>,
+     MemRead<SimHeapResource>]> {
+  let summary = "execute a host command and return its exit status";
+}
+
 def SimFileErrorStringOp : SimFileOp<"file.error_string",
     (ins SimContextType:$context, I32:$descriptor),
     (outs SimStringType:$message, I32:$code),
