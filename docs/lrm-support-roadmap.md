@@ -161,6 +161,22 @@ blocks that are actual `disable` targets, and the runtime scans control
 activations only when a `disable` executes, leaving ordinary process execution
 unchanged. The full regression suite passes 1274/1274 tests.
 
+L12's opening external audit covered 2,675 ivtest cases and 1,708 Verilator
+regressions. Before fixes, ivtest reported 1,831 ordinary passes, 371 expected
+diagnostic passes, 236 compile failures, 231 run failures, and 6 skips;
+Verilator reported 1,204 ordinary passes, 15 expected diagnostic passes, 331
+compile failures, 46 run failures, and 112 standards-cited skips. The first
+closure tranche removes a Slang v11 compiler crash on empty-queue rvalue
+selection during speculative constant evaluation and restores loop-carried
+values across the implicit coroutine resume edge of nested named blocks. The
+same fix closes the independent `pr2913927` unsized-parameter selection loop.
+Its UVM smoke ran in 34.362 seconds compile / 0.176 seconds simulate for
+bytecode and 72.318 seconds compile / 0.019 seconds simulate for native, with
+zero UVM errors or fatals. Resume reachability is analyzed only for actual
+control boundaries, frame lanes are created only when the hidden edge can
+reach a use before redefinition, and merge arguments are inserted lazily.
+The full regression suite passes 1276/1276 tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |

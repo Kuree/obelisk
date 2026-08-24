@@ -379,3 +379,100 @@ if(patched_at EQUAL -1)
 endif()
 
 file(WRITE "${assignment_expressions_source}" "${contents}")
+
+# Slang v11 lets a queue lvalue select name the append slot one past its
+# current end, but accidentally applies that allowance to rvalue selects too.
+# Reading q[0] from an empty queue during speculative constant evaluation then
+# reaches deque::at(0) and terminates the compiler. This is the upstream fix:
+# make the append allowance explicit and enable it only for lvalue evaluation.
+set(select_expressions_header
+  "${SOURCE_DIR}/include/slang/ast/expressions/SelectExpressions.h")
+file(READ "${select_expressions_header}" contents)
+
+set(old_code [[
+    std::optional<ConstantRange> evalIndex(EvalContext& context, const ConstantValue& val,
+                                           ConstantValue& associativeIndex, bool& softFail) const;
+]])
+set(new_code [[
+    std::optional<ConstantRange> evalIndex(EvalContext& context, const ConstantValue& val,
+                                           ConstantValue& associativeIndex, bool& softFail,
+                                           bool allowQueueAppend = false) const;
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's element-select index declaration no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+  file(WRITE "${select_expressions_header}" "${contents}")
+endif()
+
+set(select_expressions_source
+  "${SOURCE_DIR}/source/ast/expressions/SelectExpressions.cpp")
+file(READ "${select_expressions_source}" contents)
+
+set(old_code [[
+    auto range = evalIndex(context, loadedVal, associativeIndex, softFail);
+]])
+set(new_code [[
+    auto range = evalIndex(context, loadedVal, associativeIndex, softFail,
+                           /*allowQueueAppend=*/true);
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's lvalue element-select evaluation no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+
+set(old_code [[
+std::optional<ConstantRange> ElementSelectExpression::evalIndex(EvalContext& context,
+                                                                const ConstantValue& val,
+                                                                ConstantValue& associativeIndex,
+                                                                bool& softFail) const {
+]])
+set(new_code [[
+std::optional<ConstantRange> ElementSelectExpression::evalIndex(EvalContext& context,
+                                                                const ConstantValue& val,
+                                                                ConstantValue& associativeIndex,
+                                                                bool& softFail,
+                                                                bool allowQueueAppend) const {
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's element-select index definition no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+
+set(old_code [[
+        size_t maxIndex = val.size();
+        if (val.isQueue())
+            maxIndex++;
+]])
+set(new_code [[
+        // A write may target the append slot one past the end of a queue; a
+        // read at that index is out of bounds and returns the element default.
+        size_t maxIndex = val.size();
+        if (val.isQueue() && allowQueueAppend)
+            maxIndex++;
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's dynamic element-select bounds check no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+
+file(WRITE "${select_expressions_source}" "${contents}")
