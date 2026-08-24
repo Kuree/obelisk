@@ -380,6 +380,24 @@ smoke ran in 37.075 seconds compile / 0.182 seconds simulate for bytecode and
 errors or fatals and both compile times within the 10% gate. The full
 regression suite passes 1297/1297 tests and all 427 runtime tests.
 
+L12's seventeenth closure tranche implements `$writememb` and `$writememh`
+from 21.4 for fixed and multidimensional unpacked memories, dynamic arrays,
+queues, and integral-indexed associative arrays. Optional address bounds keep
+their ascending or descending direction, empty sequential containers produce
+empty files, four-state words use the selected radix, and sparse associative
+output carries hexadecimal address records that `$readmem` accepts. Fixed
+memories are read through dynamic element references and every container form
+uses a runtime loop, so the memory extent does not expand generated code. An
+8192-word probe compiles in 0.09 seconds bytecode / 0.10 seconds native at
+73/77 MB RSS and writes the file in 0.04/0.05 seconds. The round trip also
+closed the bytecode validator signature omitted for the already implemented
+read-memory token intrinsic. All four upstream `writememb1`, `writememb2`,
+`writememh1`, and `writememh2` cases now pass. The UVM smoke ran in 37.039
+seconds compile / 0.183 seconds simulate for bytecode and 74.666 seconds
+compile / 0.019 seconds simulate for native, with zero UVM errors or fatals
+and both compile times within the 10% gate. The full regression suite passes
+1298/1298 tests and all 427 runtime tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -402,7 +420,7 @@ regression suite passes 1297/1297 tests and all 427 runtime tests.
 | 18 Constrained random generation | Partial | Object streams, broad packed constraints, modes, finite domains, soft constraints, direct solve ordering, distributions, bounded `randc`, lifecycle hooks, and much of randsequence execute. The authoritative boundary is `docs/randomization-support.md`; R1-R7 below close the remaining standard surface without treating a solver resource cap as language semantics. |
 | 19 Functional coverage | Excluded | Explicitly outside this project goal. |
 | 20 Utility system tasks/functions | Partial | Simulation/time control—including compile-time `$timeunit` and `$timeprecision` scope queries plus every omitted and explicitly empty `$timeformat` argument—conversions, data/array queries, real math, bit-vector functions, severity, random distributions, most assertion control, and the implemented sampled functions execute. Missing normative families include `$system`, `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam`, the synchronous/asynchronous PLA tasks, the global-clock sampled functions, and complete assertion statistics/control behavior. |
-| 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning—including formatted-input field widths and assignment suppression plus `$fread` into fixed unpacked memories and captured dynamic, associative, and nested aggregate copy-out targets—read-memory, plusargs including runtime `$value$plusargs` formats, and VCD/dumpports execute. `$writememb`/`$writememh` and formatting/file corner cases remain. |
+| 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning—including formatted-input field widths and assignment suppression plus `$fread` into fixed unpacked memories and captured dynamic, associative, and nested aggregate copy-out targets—read/write-memory across fixed, dynamic, queue, multidimensional, and integral associative forms, plusargs including runtime `$value$plusargs` formats, and VCD/dumpports execute. Formatting and file corner cases remain. |
 | 22 Compiler directives | Executable for the audited surface | The Slang preprocessor implements the normative directive family. Directive persistence, separate-compilation-unit reset, and command-line default-timescale precedence have native/bytecode tests. Protected envelopes are a separate Clause 34 feature, not ordinary pragma acceptance. |
 | 23 Modules and hierarchy | Partial | ANSI/non-ANSI modules, parameters, ports, arrays, hierarchy, bind, and common upward references elaborate. External runs retain module-library lookup, port mismatch, hierarchical path, generate-scope, and parameter-binding failures that need clause-minimal reproducers and fixes. |
 | 24 Programs | Partial | Program instances and their Reactive/Re-Inactive/Re-NBA process home execute. The normative `$exit` program-control task is missing. |

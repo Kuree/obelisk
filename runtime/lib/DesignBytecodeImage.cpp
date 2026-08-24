@@ -1202,6 +1202,11 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 3 && bits(input(0), 32) && bits(input(1), 32) &&
            bytes(input(2)) && bits(input(3), 64) && bits(input(4), 64) &&
            string(output(0)) && bits(output(1), 32) && bits(output(2), 32);
+  case OBELISK_RT_INTRINSIC_V1_FILE_READMEM_TOKEN:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 3 && bits(input(0), 32) && bits(input(1), 64) &&
+           output(0) && output(0)->kind == OBELISK_RT_DBREG_LOGIC &&
+           output(0)->width != 0 && bits(output(1), 32) && bits(output(2), 64);
   case OBELISK_RT_INTRINSIC_V1_PLUSARG_TEST:
     return site.inputCount == 1 && site.outputCount == 1 && string(input(0)) &&
            bits(output(0), 32);

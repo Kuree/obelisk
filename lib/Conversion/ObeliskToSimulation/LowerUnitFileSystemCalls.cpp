@@ -64,6 +64,498 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     return constant(builder.getI1Type(), 0);
   };
 
+  if (name == "$writememb" || name == "$writememh") {
+    if (children.size() < 2 || children.size() > 4) {
+      emitError(location) << name << " requires two to four arguments";
+      return failure();
+    }
+
+    Operation *actual = children[1];
+    FailureOr<Type> memoryType = getNormalizedSemanticType(actual);
+    auto array = succeeded(memoryType)
+                     ? dyn_cast<sim::UnpackedArrayType>(*memoryType)
+                     : sim::UnpackedArrayType{};
+    auto dynamicArray = succeeded(memoryType)
+                            ? dyn_cast<sim::DynamicArrayType>(*memoryType)
+                            : sim::DynamicArrayType{};
+    auto queue = succeeded(memoryType) ? dyn_cast<sim::QueueType>(*memoryType)
+                                       : sim::QueueType{};
+    auto associative = succeeded(memoryType)
+                           ? dyn_cast<sim::AssocArrayType>(*memoryType)
+                           : sim::AssocArrayType{};
+    if (!array && !dynamicArray && !queue && !associative) {
+      emitError(getSemanticLocation(actual))
+          << name << " requires an unpacked array";
+      return failure();
+    }
+    if (associative &&
+        (!sim::getPackedWidth(associative.getKeyType()) ||
+         associative.getWildcardIndex())) {
+      emitError(getSemanticLocation(actual))
+          << name << " associative array indices must be integral";
+      return failure();
+    }
+
+    SmallVector<sim::UnpackedArrayType> dimensions;
+    Type elementType;
+    if (array) {
+      elementType = array;
+      while (auto dimension = dyn_cast<sim::UnpackedArrayType>(elementType)) {
+        dimensions.push_back(dimension);
+        elementType = dimension.getElementType();
+      }
+    } else {
+      elementType = dynamicArray   ? dynamicArray.getElementType()
+                    : queue        ? queue.getElementType()
+                                   : associative.getElementType();
+    }
+    std::optional<unsigned> elementWidth = sim::getPackedWidth(elementType);
+    if (!elementWidth || *elementWidth == 0) {
+      emitError(getSemanticLocation(actual))
+          << name << " memory elements must be packed values";
+      return failure();
+    }
+
+    auto timeMultiplier =
+        function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+    StringAttr lexicalScope = op.getSystemScopePathAttr();
+    if (!lexicalScope)
+      lexicalScope =
+          function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+    if (!timeMultiplier || !lexicalScope) {
+      op.emitError("memory write has no elaborated lexical timing scope");
+      return failure();
+    }
+    auto openForWrite = [&]() -> FailureOr<Value> {
+      if (getStringLiteral(children[0])) {
+        FailureOr<Value> path = lowerBytes(children[0]);
+        if (failed(path))
+          return failure();
+        Value mode = sim::SimBytesConstantOp::create(builder, location, "w");
+        return sim::SimFileOpenOp::create(builder, location, i32, context,
+                                          *path, mode)
+            .getDescriptor();
+      }
+      FailureOr<Value> pathValue = lowerExpression(children[0]);
+      Type stringType = sim::StringType::get(function.getContext());
+      FailureOr<Value> path = succeeded(pathValue)
+                                  ? convert(*pathValue, stringType,
+                                            isSignedNode(children[0]), location)
+                                  : FailureOr<Value>(failure());
+      if (failed(path))
+        return failure();
+      Value modeBits = arith::ConstantOp::create(
+          builder, location, builder.getI8Type(), builder.getI8IntegerAttr('w'));
+      Value mode = sim::SimStringFromPackedOp::create(builder, location,
+                                                      stringType, modeBits);
+      return sim::SimFileOpenStringOp::create(builder, location, i32, context,
+                                              *path, mode)
+          .getDescriptor();
+    };
+    auto emitMessage = [&](StringRef severity, StringRef detail) {
+      Value standardError = constant(i32, static_cast<int32_t>(0x80000002u));
+      Value item = sim::SimBytesConstantOp::create(
+          builder, location,
+          (Twine(severity) + ": " + name + ": " + detail).str());
+      sim::SimDisplayOp::create(
+          builder, location, context, standardError, ValueRange{item}, true,
+          10, builder.getDenseI32ArrayAttr({0}), lexicalScope, StringAttr{},
+          timeMultiplier, IntegerAttr{});
+    };
+    auto emitWord = [&](Value descriptor, Value word) {
+      sim::SimDisplayOp::create(
+          builder, location, context, descriptor, ValueRange{word}, true,
+          name == "$writememb" ? 2 : 16, ArrayRef<int32_t>{0}, lexicalScope,
+          op.getSystemLibraryCellAttr(), timeMultiplier,
+          designTimePrecisionExponent());
+    };
+
+    FailureOr<Value> memory = lowerExpression(actual, static_cast<bool>(array));
+    if (failed(memory))
+      return failure();
+    if (array) {
+      auto reference = dyn_cast<sim::RefType>((*memory).getType());
+      if (!reference || reference.getElementType() != *memoryType) {
+        emitError(getSemanticLocation(actual))
+            << name << " fixed memory must be a readable unpacked array";
+        return failure();
+      }
+    }
+
+    if (associative) {
+      Type keyType = associative.getKeyType();
+      auto compareKeys = [&](Value lhs, Value rhs,
+                             arith::CmpIPredicate integerPredicate,
+                             sim::CompareKind logicPredicate)
+          -> FailureOr<Value> {
+        if (!isa<sim::LogicType>(keyType))
+          return arith::CmpIOp::create(builder, location, integerPredicate,
+                                       lhs, rhs)
+              .getResult();
+        Value compared = sim::SimLogicCompareOp::create(
+            builder, location, sim::LogicType::get(function.getContext(), 1),
+            logicPredicate, lhs, rhs);
+        return truthValue(compared, location);
+      };
+      auto lowerKeyBound = [&](size_t index) -> FailureOr<Value> {
+        FailureOr<Value> value = lowerExpression(children[index]);
+        if (failed(value))
+          return failure();
+        return convert(*value, keyType, isSignedNode(children[index]),
+                       location, associative.getSignedKey());
+      };
+      FailureOr<Value> start;
+      FailureOr<Value> finish;
+      bool hasStart = children.size() >= 3 &&
+                      !isa<semantic::SVEmptyArgumentExpressionOp>(children[2]);
+      bool hasFinish = children.size() >= 4 &&
+                       !isa<semantic::SVEmptyArgumentExpressionOp>(children[3]);
+      if (hasStart)
+        start = lowerKeyBound(2);
+      if (hasFinish)
+        finish = lowerKeyBound(3);
+      if ((hasStart && failed(start)) || (hasFinish && failed(finish)))
+        return failure();
+      auto greaterPredicate = associative.getSignedKey()
+                                  ? arith::CmpIPredicate::sgt
+                                  : arith::CmpIPredicate::ugt;
+      auto greaterLogicPredicate = associative.getSignedKey()
+                                       ? sim::CompareKind::SGT
+                                       : sim::CompareKind::UGT;
+      Value descending = constant(builder.getI1Type(), 0);
+      if (hasStart && hasFinish) {
+        FailureOr<Value> compared = compareKeys(
+            *start, *finish, greaterPredicate, greaterLogicPredicate);
+        if (failed(compared))
+          return failure();
+        descending = *compared;
+      }
+
+      Block *opened = addBlock();
+      Block *header = addBlock();
+      header->addArgument(keyType, location);
+      header->addArgument(builder.getI1Type(), location);
+      Block *body = addBlock();
+      Block *write = addBlock();
+      Block *step = addBlock();
+      step->addArgument(keyType, location);
+      Block *closeFile = addBlock();
+      Block *openError = addBlock();
+      Block *done = addBlock();
+
+      FailureOr<Value> openedDescriptor = openForWrite();
+      if (failed(openedDescriptor))
+        return failure();
+      Value descriptor = *openedDescriptor;
+      Value isOpen = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, descriptor,
+          constant(i32, 0));
+      cf::CondBranchOp::create(builder, location, isOpen, opened, ValueRange{},
+                               openError, ValueRange{});
+
+      setCurrent(opened);
+      Value initialKey = createDefaultValue(builder, location, keyType);
+      if (!initialKey)
+        return failure();
+      FailureOr<std::pair<Value, Value>> first =
+          traverseAssoc(*memory, initialKey, 1, true, location);
+      FailureOr<std::pair<Value, Value>> last =
+          traverseAssoc(*memory, initialKey, -1, true, location);
+      if (failed(first) || failed(last))
+        return failure();
+      Value endpointKey = arith::SelectOp::create(
+          builder, location, descending, last->first, first->first);
+      Value endpointValid = arith::SelectOp::create(
+          builder, location, descending, last->second, first->second);
+      cf::BranchOp::create(builder, location, header,
+                           ValueRange{endpointKey, endpointValid});
+
+      setCurrent(header);
+      Value key = header->getArgument(0);
+      Value valid = header->getArgument(1);
+      cf::CondBranchOp::create(builder, location, valid, body, ValueRange{},
+                               closeFile, ValueRange{});
+
+      setCurrent(body);
+      auto lowerPredicate = associative.getSignedKey()
+                                ? arith::CmpIPredicate::sge
+                                : arith::CmpIPredicate::uge;
+      auto lowerLogicPredicate = associative.getSignedKey()
+                                     ? sim::CompareKind::SGE
+                                     : sim::CompareKind::UGE;
+      auto upperPredicate = associative.getSignedKey()
+                                ? arith::CmpIPredicate::sle
+                                : arith::CmpIPredicate::ule;
+      auto upperLogicPredicate = associative.getSignedKey()
+                                     ? sim::CompareKind::SLE
+                                     : sim::CompareKind::ULE;
+      Value selected = constant(builder.getI1Type(), 1);
+      if (hasStart) {
+        Value lower = hasFinish
+                          ? Value(arith::SelectOp::create(
+                                builder, location, descending, *finish, *start))
+                          : *start;
+        FailureOr<Value> compared = compareKeys(
+            key, lower, lowerPredicate, lowerLogicPredicate);
+        if (failed(compared))
+          return failure();
+        selected = arith::AndIOp::create(builder, location, selected,
+                                         *compared);
+      }
+      if (hasFinish) {
+        Value upper = hasStart
+                          ? Value(arith::SelectOp::create(
+                                builder, location, descending, *start, *finish))
+                          : *finish;
+        FailureOr<Value> compared = compareKeys(
+            key, upper, upperPredicate, upperLogicPredicate);
+        if (failed(compared))
+          return failure();
+        selected = arith::AndIOp::create(builder, location, selected,
+                                         *compared);
+      }
+      cf::CondBranchOp::create(builder, location, selected, write,
+                               ValueRange{}, step, ValueRange{key});
+
+      setCurrent(write);
+      FailureOr<Value> keyScalar = toPackedScalar(key, location);
+      Value element = sim::SimAssocReadOp::create(
+          builder, location, elementType, *memory, key);
+      FailureOr<Value> scalar = toPackedScalar(element, location);
+      if (failed(keyScalar) || failed(scalar))
+        return failure();
+      Value addressFormat =
+          sim::SimBytesConstantOp::create(builder, location, "@%h");
+      sim::SimDisplayOp::create(
+          builder, location, context, descriptor,
+          ValueRange{addressFormat, *keyScalar}, true, 16,
+          ArrayRef<int32_t>{0, 0}, lexicalScope,
+          op.getSystemLibraryCellAttr(), timeMultiplier,
+          designTimePrecisionExponent());
+      emitWord(descriptor, *scalar);
+      cf::BranchOp::create(builder, location, step, ValueRange{key});
+
+      setCurrent(step);
+      Value previousKey = step->getArgument(0);
+      FailureOr<std::pair<Value, Value>> next =
+          traverseAssoc(*memory, previousKey, 1, false, location);
+      FailureOr<std::pair<Value, Value>> previous =
+          traverseAssoc(*memory, previousKey, -1, false, location);
+      if (failed(next) || failed(previous))
+        return failure();
+      Value followingKey = arith::SelectOp::create(
+          builder, location, descending, previous->first, next->first);
+      Value followingValid = arith::SelectOp::create(
+          builder, location, descending, previous->second, next->second);
+      cf::BranchOp::create(builder, location, header,
+                           ValueRange{followingKey, followingValid});
+
+      setCurrent(closeFile);
+      sim::SimFileCloseOp::create(builder, location, context, descriptor);
+      cf::BranchOp::create(builder, location, done);
+
+      setCurrent(openError);
+      emitMessage("ERROR", "cannot open the memory file");
+      sim::SimErrorOp::create(builder, location, context);
+      cf::BranchOp::create(builder, location, done);
+
+      setCurrent(done);
+      return dummyTaskResult();
+    }
+
+    auto indexConstant = [&](int64_t value) -> Value {
+      return arith::ConstantOp::create(builder, location, i64,
+                                       builder.getI64IntegerAttr(value));
+    };
+    Value low = indexConstant(
+        array ? std::min(dimensions.front().getLeft(),
+                         dimensions.front().getRight())
+              : 0);
+    Value high;
+    Value emptyDefault = constant(builder.getI1Type(), 0);
+    if (array)
+      high = indexConstant(std::max(dimensions.front().getLeft(),
+                                    dimensions.front().getRight()));
+    else {
+      Value size = sim::SimContainerSizeOp::create(builder, location, i64,
+                                                   *memory);
+      high = arith::SubIOp::create(builder, location, size, indexConstant(1));
+      bool explicitStart = children.size() >= 3 &&
+                           !isa<semantic::SVEmptyArgumentExpressionOp>(
+                               children[2]);
+      bool explicitFinish = children.size() >= 4 &&
+                            !isa<semantic::SVEmptyArgumentExpressionOp>(
+                                children[3]);
+      if (!explicitStart && !explicitFinish)
+        emptyDefault = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq, size,
+            indexConstant(0));
+    }
+    auto addressArgument = [&](size_t index,
+                               Value fallback) -> FailureOr<Value> {
+      if (index >= children.size() ||
+          isa<semantic::SVEmptyArgumentExpressionOp>(children[index]))
+        return fallback;
+      return lowerInteger(children[index], i64);
+    };
+    FailureOr<Value> start = addressArgument(2, low);
+    FailureOr<Value> finish = addressArgument(3, high);
+    if (failed(start) || failed(finish))
+      return failure();
+
+    uint64_t rowSizeValue = 1;
+    for (sim::UnpackedArrayType dimension :
+         array ? ArrayRef<sim::UnpackedArrayType>(dimensions).drop_front()
+               : ArrayRef<sim::UnpackedArrayType>{}) {
+      uint64_t extent = static_cast<uint64_t>(
+          std::max(dimension.getLeft(), dimension.getRight()) -
+          std::min(dimension.getLeft(), dimension.getRight())) +
+                        1;
+      if (extent != 0 &&
+          rowSizeValue > static_cast<uint64_t>(INT64_MAX) / extent) {
+        emitError(getSemanticLocation(actual))
+            << name << " multidimensional row size exceeds 64 bits";
+        return failure();
+      }
+      rowSizeValue *= extent;
+    }
+    Value rowSize = indexConstant(static_cast<int64_t>(rowSizeValue));
+    Value descending = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::sgt, *start, *finish);
+    auto withinMemory = [&](Value value) -> Value {
+      Value withinLow = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::sge, value, low);
+      Value withinHigh = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::sle, value, high);
+      return arith::AndIOp::create(builder, location, withinLow, withinHigh);
+    };
+    Value validBounds = arith::AndIOp::create(
+        builder, location, withinMemory(*start), withinMemory(*finish));
+    validBounds = arith::OrIOp::create(builder, location, validBounds,
+                                       emptyDefault);
+
+    Block *openFile = addBlock();
+    Block *beginFile = addBlock();
+    Block *header = addBlock();
+    header->addArgument(i64, location);
+    header->addArgument(i64, location);
+    Block *body = addBlock();
+    Block *advance = addBlock();
+    Block *closeFile = addBlock();
+    Block *openError = addBlock();
+    Block *boundsError = addBlock();
+    Block *done = addBlock();
+    cf::CondBranchOp::create(builder, location, validBounds, openFile,
+                             ValueRange{}, boundsError, ValueRange{});
+
+    setCurrent(openFile);
+    FailureOr<Value> openedDescriptor = openForWrite();
+    if (failed(openedDescriptor))
+      return failure();
+    Value descriptor = *openedDescriptor;
+    Value opened = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne, descriptor,
+        constant(i32, 0));
+    cf::CondBranchOp::create(builder, location, opened, beginFile,
+                             ValueRange{}, openError, ValueRange{});
+
+    setCurrent(beginFile);
+    cf::CondBranchOp::create(builder, location, emptyDefault, closeFile,
+                             ValueRange{}, header,
+                             ValueRange{*start, indexConstant(0)});
+
+    setCurrent(header);
+    Value address = header->getArgument(0);
+    Value subword = header->getArgument(1);
+    cf::BranchOp::create(builder, location, body);
+
+    setCurrent(body);
+    Value element;
+    if (array) {
+      Value elementReference = *memory;
+      uint64_t stride = rowSizeValue;
+      for (auto [position, dimension] : llvm::enumerate(dimensions)) {
+        Value index = address;
+        if (position != 0) {
+          uint64_t extent = static_cast<uint64_t>(
+              std::max(dimension.getLeft(), dimension.getRight()) -
+              std::min(dimension.getLeft(), dimension.getRight())) +
+                            1;
+          stride /= extent;
+          Value ordinal = subword;
+          if (stride != 1)
+            ordinal = arith::DivUIOp::create(
+                builder, location, ordinal,
+                indexConstant(static_cast<int64_t>(stride)));
+          ordinal = arith::RemUIOp::create(
+              builder, location, ordinal,
+              indexConstant(static_cast<int64_t>(extent)));
+          index = arith::AddIOp::create(
+              builder, location,
+              indexConstant(
+                  std::min(dimension.getLeft(), dimension.getRight())),
+              ordinal);
+        }
+        elementReference = sim::SimRefArrayElementOp::create(
+            builder, location,
+            sim::RefType::get(function.getContext(),
+                              dimension.getElementType()),
+            elementReference, index);
+      }
+      FailureOr<Value> loaded = loadReference(elementReference, location);
+      if (failed(loaded))
+        return failure();
+      element = *loaded;
+    } else {
+      element = sim::SimContainerReadOp::create(
+          builder, location, elementType, *memory, address);
+    }
+    FailureOr<Value> scalar = toPackedScalar(element, location);
+    if (failed(scalar))
+      return failure();
+    emitWord(descriptor, *scalar);
+    cf::BranchOp::create(builder, location, advance);
+
+    setCurrent(advance);
+    Value incrementedSubword =
+        arith::AddIOp::create(builder, location, subword, indexConstant(1));
+    Value rowComplete = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, incrementedSubword,
+        rowSize);
+    Value atFinish = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, address, *finish);
+    Value complete = arith::AndIOp::create(builder, location, rowComplete,
+                                           atFinish);
+    Value step = arith::SelectOp::create(builder, location, descending,
+                                         indexConstant(-1), indexConstant(1));
+    Value steppedAddress =
+        arith::AddIOp::create(builder, location, address, step);
+    Value nextAddress = arith::SelectOp::create(
+        builder, location, rowComplete, steppedAddress, address);
+    Value nextSubword = arith::SelectOp::create(
+        builder, location, rowComplete, indexConstant(0), incrementedSubword);
+    cf::CondBranchOp::create(builder, location, complete, closeFile,
+                             ValueRange{}, header,
+                             ValueRange{nextAddress, nextSubword});
+
+    setCurrent(closeFile);
+    sim::SimFileCloseOp::create(builder, location, context, descriptor);
+    cf::BranchOp::create(builder, location, done);
+
+    setCurrent(openError);
+    emitMessage("ERROR", "cannot open the memory file");
+    sim::SimErrorOp::create(builder, location, context);
+    cf::BranchOp::create(builder, location, done);
+
+    setCurrent(boundsError);
+    emitMessage("ERROR", "address is outside the selected memory range");
+    sim::SimErrorOp::create(builder, location, context);
+    cf::BranchOp::create(builder, location, done);
+
+    setCurrent(done);
+    return dummyTaskResult();
+  }
+
   if (name == "$readmemb" || name == "$readmemh") {
     if (children.size() < 2 || children.size() > 4) {
       emitError(location) << name << " requires two to four arguments";
