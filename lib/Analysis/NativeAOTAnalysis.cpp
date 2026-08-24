@@ -342,6 +342,18 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       // Keep the scheduler fully runtime-owned until generated plans expose a
       // transactional actor-removal protocol.
       rejectPlan("dynamic override ownership requires generic ordering");
+    } else if (isa<sim::SimDriverDriveInertialOp,
+                   sim::SimDriverDriveInertialStrengthPairOp>(operation) &&
+               operation->getParentOfType<sim::SimFuncOp>().getEntryKind() ==
+                   sim::EntryKind::Continuous) {
+      // An explicit delayed continuous assignment evaluates once at time
+      // zero, before it becomes event-driven. The generated ready-node plan
+      // currently models only later sensitivity activations and can therefore
+      // omit that initial inertial publication when a source is initialized
+      // procedurally in the same slot. Keep this uncommon calendar-event shape
+      // in the compact generic scheduler until the AOT graph has an explicit
+      // bootstrap edge for the post-evaluation wait continuation.
+      rejectPlan("delayed continuous assignment requires generic ordering");
     } else if (isa<sim::SimOverrideOp, sim::SimReleaseOverrideOp>(operation)) {
       requireBytecodeFragment(operation, "force/release state is present");
       excludeBytecodeActor(operation);

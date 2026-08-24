@@ -460,6 +460,28 @@ runtime tests. The UVM smoke benchmark remains green in both tiers: 34.184
 seconds compile / 0.181 seconds simulate for bytecode and 71.801 seconds
 compile / 0.019 seconds simulate for native, with zero UVM errors or fatals.
 
+The 2026-08-24 external-audit refresh at `d9660dcf` ran all 2675 selected
+ivtest cases: 1856 positive and 371 expected-error passes, 209 compile failures,
+233 run failures, and 6 suite skips. The leading implementation clusters are
+49 gate primitives, 43 unclassified long-tail cases, 40 specify cases, 17
+frontend parse/name cases, 10 timescale cases, 8 delayed continuous-assignment
+cases, 7 port-connection cases, and 6 procedural assign/force/release cases.
+Harness-only missing inputs and excluded features are not implementation work.
+
+L12's nineteenth closure tranche fixes the standard time-zero evaluation of an
+explicit delayed continuous assignment in default native execution. Bytecode
+and generic native scheduling were already correct; the generated AOT graph
+modeled only later sensitivity activations and could omit the initial inertial
+publication. AOT eligibility now rejects exactly this unsupported ordering
+shape, leaving the compact generic scheduler to execute it rather than silently
+changing semantics. The upstream `assign_delay` case now passes. An 8192-bit
+delayed assignment compiles in 0.05 seconds at 72 MB RSS for bytecode and 0.14
+seconds at 75 MB RSS for native, then simulates in 0.02 seconds in either tier.
+The UVM smoke ran in 34.629 seconds compile / 0.176 seconds simulate for
+bytecode and 73.117 seconds compile / 0.019 seconds simulate for native, with
+zero UVM errors or fatals. The full regression suite passes 1304/1304 tests and
+all 427 runtime tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -619,9 +641,9 @@ one commit.
     `$past_gclk`, `$future_gclk`, `$rising_gclk`, `$falling_gclk`,
     `$stable_gclk`, `$changed_gclk`, `$steady_gclk`, and `$changing_gclk`
     family on global-clock samples.
-19. **L19 — I/O completion (21).** Implement `$writememb`/`$writememh` and
-    close remaining format, scan, file-position, memory-range, plusarg, and VCD
-    conformance cases.
+19. **L19 — I/O completion (21).** Close the remaining format, scan,
+    file-position, memory-range, plusarg, and VCD conformance cases;
+    `$writememb` and `$writememh` are complete.
 
 ### Randomization and `std`
 
