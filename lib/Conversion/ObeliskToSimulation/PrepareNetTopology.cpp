@@ -44,11 +44,19 @@ getDriverStrengths(Operation *unit) {
   sim::Strength defaultStrength = sim::Strength::Strong;
   bool pullup = false;
   bool pulldown = false;
+  bool resistiveMos = false;
   if (auto primitive = dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(unit)) {
     auto name = primitive->getAttrOfType<StringAttr>("primitive_name");
     pullup = name && name.getValue() == "pullup";
     pulldown = name && name.getValue() == "pulldown";
+    resistiveMos =
+        name && (name.getValue() == "rnmos" || name.getValue() == "rpmos" ||
+                 name.getValue() == "rcmos");
     if (pullup || pulldown)
+      defaultStrength = sim::Strength::Pull;
+    // A resistive MOS device reduces the ordinary strong source level to the
+    // pull level for its static output driver.
+    if (resistiveMos)
       defaultStrength = sim::Strength::Pull;
   }
   sim::Strength strength0 = defaultStrength;

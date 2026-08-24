@@ -2280,6 +2280,48 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
             ? Value(sim::SimLogicUnaryOp::create(
                   builder, location, logicType, sim::UnaryKind::BitNot, *input))
             : normalizeGateInput(*input);
+  } else if (name == "nmos" || name == "pmos" || name == "cmos" ||
+             name == "rnmos" || name == "rpmos" || name == "rcmos") {
+    bool complementary = name == "cmos" || name == "rcmos";
+    if (inputs.size() != (complementary ? 3u : 2u))
+      return emitError(location)
+             << "primitive '" << name << "' requires data and "
+             << (complementary ? "two control inputs" : "one control input");
+    FailureOr<Value> data = lowerInput(inputs[0]);
+    FailureOr<Value> control =
+        lowerInput(inputs[1], sim::LogicType::get(function.getContext(), 1));
+    if (failed(data) || failed(control))
+      return failure();
+    Value controlValue = *control;
+    if (complementary) {
+      FailureOr<Value> pControl =
+          lowerInput(inputs[2], sim::LogicType::get(function.getContext(), 1));
+      if (failed(pControl))
+        return failure();
+      Value invertedP =
+          sim::SimLogicUnaryOp::create(builder, location, pControl->getType(),
+                                       sim::UnaryKind::BitNot, *pControl);
+      controlValue = sim::SimLogicBinaryOp::create(
+          builder, location, controlValue.getType(), sim::BinaryKind::Or,
+          controlValue, invertedP);
+    }
+    Value driven = *data;
+    auto planeType =
+        IntegerType::get(function.getContext(), logicType.getWidth());
+    APInt highZ = APInt::getAllOnes(logicType.getWidth());
+    Value disabled = sim::SimLogicConstantOp::create(
+        builder, location, logicType, builder.getIntegerAttr(planeType, highZ),
+        builder.getIntegerAttr(planeType, highZ));
+    bool activeHigh = complementary || name == "nmos" || name == "rnmos";
+    // MOS source terminals preserve Z. For an uncertain gate, the ordinary
+    // four-state merge yields L/H as X and keeps Z exact; strength-aware net
+    // resolution then applies the device's static output strength.
+    result =
+        activeHigh
+            ? Value(sim::SimLogicMuxOp::create(builder, location, logicType,
+                                               controlValue, driven, disabled))
+            : Value(sim::SimLogicMuxOp::create(builder, location, logicType,
+                                               controlValue, disabled, driven));
   } else if (name == "bufif0" || name == "bufif1" || name == "notif0" ||
              name == "notif1") {
     if (inputs.size() != 2)
