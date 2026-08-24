@@ -657,6 +657,44 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
     FailureOr<Value> condition = lowerExpression(children[1], true);
     if (failed(condition))
       return failure();
+    if (isa<sim::ManagedRefType>((*handle).getType()) ||
+        isa<sim::ManagedRefType>((*condition).getType())) {
+      // Object fields are addressed by activation-safe managed references,
+      // which cannot be retained as the interior pointers required by the
+      // direct edge-iff wait.  Observe each field through its stable mutation
+      // token instead.  The suspension still resumes only when the primary
+      // expression has the requested edge and the iff observer is true;
+      // changing the condition alone merely updates what the next edge sees.
+      FailureOr<Value> initial = loadReference(*handle, location);
+      if (failed(initial))
+        return failure();
+      FailureOr<Value> scalar =
+          toPackedScalar(*initial, getSemanticLocation(children.front()));
+      if (failed(scalar))
+        return failure();
+      auto bindManaged = [&](Operation *expression,
+                             Value reference) -> FailureOr<Value> {
+        if (!isa<sim::ManagedRefType>(reference.getType()))
+          return bindObserver(expression);
+        Value watch = sim::SimManagedWatchOp::create(
+            builder, getSemanticLocation(expression),
+            sim::ManagedWatchType::get(function.getContext()), reference,
+            sim::ManagedWatchKind::Field);
+        return bindObserver(expression, watch);
+      };
+      FailureOr<Value> primary = bindManaged(children.front(), *handle);
+      FailureOr<Value> guard = bindManaged(children[1], *condition);
+      if (failed(primary) || failed(guard))
+        return failure();
+      SmallVector<Value> observerValues{*primary, *scalar, *guard};
+      llvm::append_range(observerValues, continuationOperands);
+      sim::SimSuspendObserveOp::create(
+          builder, location, observerValues, 1,
+          ArrayRef<int32_t>{static_cast<int32_t>(edge)},
+          ArrayRef<int32_t>{0}, sim::ContinuationSiteAttr{},
+          sim::EventRegionAttr{}, continuation);
+      return success();
+    }
     if (!isa<sim::RefType, sim::NetType>((*handle).getType()) ||
         !isa<sim::RefType, sim::NetType>((*condition).getType())) {
       unsupported(event) << " (iff requires signal handles)";
