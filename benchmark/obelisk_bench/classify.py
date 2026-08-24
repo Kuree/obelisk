@@ -61,12 +61,22 @@ RULES: list[tuple[str, str, str]] = [
     (r"obelisk\.sv\.(?:symbol\.interface|symbol\.modport)",
      "Interfaces and modports", "IEEE 1800 Ch. 25"),
     (r"obelisk\.sv\.symbol\.package", "Packages and imports", "IEEE 1800 Ch. 26"),
-    (r"obelisk\.sv\.(?:symbol\.primitive|symbol\.udp)", "User-defined primitives", "IEEE 1800 Ch. 30"),
+    (r"obelisk\.sv\.(?:symbol\.primitive|symbol\.udp)",
+     "User-defined primitives", "IEEE 1800 Ch. 29"),
     (r"unsupported built-in primitive|primitive (?:delays|strengths) are not supported"
      r"|primitive '[^']*' requires exactly one output"
      r"|only simple expressions are allowed for primitive port connections",
      "Gate-level primitives", "IEEE 1800 Ch. 28"),
-    (r"(?:specify block|timing check|parallel path connection)", "Specify blocks and timing checks", "IEEE 1800 Ch. 31"),
+    (r"Clause 17 checker instances .* not executable"
+     r"|obelisk\.sv\.statement\.procedural_checker",
+     "Executable checkers", "IEEE 1800 Ch. 17"),
+    (r"Clause 30 specify (?:timing paths|pulse controls) .* not executable",
+     "Specify paths and pulse controls", "IEEE 1800 Ch. 30"),
+    (r"Clause 31 system timing checks .* not executable",
+     "System timing checks", "IEEE 1800 Ch. 31"),
+    (r"(?:specify block|parallel path connection)",
+     "Specify paths and pulse controls", "IEEE 1800 Ch. 30"),
+    (r"timing check", "System timing checks", "IEEE 1800 Ch. 31"),
     (r"(?:does not have a time scale defined|DPI time scale must be|\$printtimescale target scope)",
      "Timescale handling", "IEEE 1800 Ch. 3"),
 

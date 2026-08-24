@@ -114,9 +114,11 @@ string keys, hidden defaults, indexing, deletion, equality, value-copy and
 reference semantics, deterministic traversal, mixed-container `foreach`, array
 queries, and every array method registered by the current Slang frontend.
 
-Queues have a validated managed ring-buffer representation and are used for
-array-method result values, but the complete source queue surface is not yet
-executable. Queue-specific insertion/removal methods and unsupported source
-forms receive diagnostics rather than being silently discarded. DPI-C and VPI
-marshalling of every managed container also remains outside the current
-boundary.
+Queues have a validated managed ring-buffer representation and execute
+value-copy assignment, indexing, equality, `foreach`, assignment patterns,
+array methods, bounded and unbounded `push_front`/`push_back`,
+`pop_front`/`pop_back`, `insert`, and indexed or whole-queue `delete`.
+Remaining legal queue slice and reference-write forms receive diagnostics
+rather than being silently discarded. DPI-C marshalling of managed containers
+also remains outside the current boundary; VPI marshalling is excluded from
+the project target.

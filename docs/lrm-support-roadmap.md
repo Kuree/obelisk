@@ -17,7 +17,8 @@ Excluded from the completion target:
 - Clause 41, whose 2017 text is only a notice that the data-read API is
   deprecated; and
 - implementation performance, including simulator worker parallelism, which
-  is important but is not a SystemVerilog language feature.
+  is an engineering acceptance gate below but is not a SystemVerilog language
+  feature.
 
 Clause 35 DPI and normative Annexes H, I, and J remain in scope.  Assertion
 attempt/success/failure/vacuity accounting remains in scope under Clause 16;
@@ -54,8 +55,34 @@ missing DPI forms.  The two broader implementation suites independently expose
 the live clusters named below.  The full Accellera UVM 2020.3.1 smoke also
 completed its run phase at 1 ns with zero errors or fatals in both native and
 whole-design bytecode execution (`-O3 -fno-lto`).  Test filenames containing
-`unsupported` are not evidence by themselves: several now test executable net
-delays, wired nets, dynamic `foreach`, sampled values, and virtual interfaces.
+`unsupported` are not evidence by themselves. L1 renamed stale files that now
+test executable net delays, wired nets, dynamic `foreach`, sampled values,
+forks, event `iff`, and computed events.
+
+## Performance gates
+
+Language closure must preserve fast compilation and simulation. Performance is
+therefore a cross-cutting acceptance gate for every implementation chunk even
+though it is not itself LRM conformance:
+
+- `benchmark/uvm/run.py` measures full Accellera UVM 2020.3.1 compilation and
+  short-run startup in native and whole-design bytecode execution with
+  `-O3 -fno-lto`. Its bytecode compile must remain below the existing 60-second
+  absolute gate; native measurements use a 120-second timeout.
+- `benchmark/scheduler/run_nba8.py` measures sustained scheduler throughput,
+  scaling with cycle count and dormant waiters, runtime subscription/AOT
+  counters, and native/bytecode result parity.
+- Compare the median of at least three runs before and after a change on the
+  same host, CPU affinity, build, flags, and compiler-thread budget whenever a
+  chunk changes a compiler or runtime hot path. A median regression above 10%
+  and outside the run-to-run range blocks landing until it is fixed or recorded
+  with a specific explanation. Chunks off the runtime hot path still run the
+  UVM smoke once in both tiers and must not change generated runtime behavior.
+
+The 2026-08-23 audit baselines on this workspace were 34.036 seconds compile /
+0.202 seconds simulate for bytecode and 76.725 seconds compile / 0.042 seconds
+simulate for native. Both completed the run phase at 1 ns with zero UVM errors
+or fatals. These are comparison baselines, not portable promises across hosts.
 
 ## Clause ledger
 
@@ -75,7 +102,7 @@ delays, wired nets, dynamic `foreach`, sampled values, and virtual interfaces.
 | 14 Clocking blocks | Partial | Input/output skews, `#1step`, synchronous drives, event lists and `iff`, cycle delays, defaults, and virtual-interface clocking handles execute. Global clocking and the remaining assertion clock-inference, clock-formal, and multi-clock composition cases remain. |
 | 15 Interprocess synchronization | Partial | Semaphores, typed mailboxes, named-event creation/alias/null, blocking and nonblocking trigger, `.triggered`, and `wait_order` execute in both tiers. The default untyped mailbox is rejected because the runtime currently requires one fixed element descriptor. |
 | 16 Assertions | Partial | Immediate/deferred assertions and a substantial compiled concurrent subset execute. The authoritative fine-grained boundary is `docs/sva-lrm-support.md`; the implementation plan below covers accounting, full temporal composition, clocks, locals/match items, sampled values, controls, and `expect`. |
-| 17 Checkers | Semantic only | Declarations, ports, resolved instances, identities, cloned bodies, clocks/disables, properties, procedures, and expressions are retained. Checker procedures, free variables, inferred clocks, assertions, hierarchy, and runtime instances are not executed. Covergroups in checkers are excluded with coverage. |
+| 17 Checkers | Semantic only | Declarations, ports, resolved instances, identities, cloned bodies, clocks/disables, properties, procedures, and expressions are retained. Executable instances now receive a targeted Clause 17 diagnostic instead of being silently erased; A9 implements checker procedures, free variables, inferred clocks, assertions, hierarchy, and runtime behavior. Covergroups in checkers are excluded with coverage. |
 | 18 Constrained random generation | Partial | Object streams, broad packed constraints, modes, finite domains, soft constraints, direct solve ordering, distributions, bounded `randc`, lifecycle hooks, and much of randsequence execute. The authoritative boundary is `docs/randomization-support.md`; R1-R7 below close the remaining standard surface without treating a solver resource cap as language semantics. |
 | 19 Functional coverage | Excluded | Explicitly outside this project goal. |
 | 20 Utility system tasks/functions | Partial | Simulation/time control, conversions, data/array queries, real math, bit-vector functions, severity, random distributions, most assertion control, and the implemented sampled functions execute. Missing normative families include `$system`, `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam`, the synchronous/asynchronous PLA tasks, the global-clock sampled functions, and complete assertion statistics/control behavior. |
@@ -88,8 +115,8 @@ delays, wired nets, dynamic `foreach`, sampled values, and virtual interfaces.
 | 27 Generate constructs | Partial | Loop/conditional generation and ordinary external names elaborate. External tests still expose generate-scope and parameter-binding corner cases. |
 | 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, and static one/two/three propagation delays execute. MOS, CMOS, resistive, bidirectional pass, and controlled pass devices remain missing. |
 | 29 User-defined primitives | Missing | UDP declarations and ports are imported, but table rows and sequential state semantics are not preserved, and an instance currently reaches the built-in-primitive diagnostic. |
-| 30 Specify blocks | Semantic only | Specparams, timing paths, and specify blocks are imported, but path behavior is silently absent from simulation. Implement simple/full/edge-sensitive/state-dependent paths, delay tuples, pulse controls, and `showcancelled`/`noshowcancelled`. |
-| 31 Timing checks | Semantic only | System timing-check nodes are imported but not executed. Implement all stability-window and clock/control checks, edge and condition forms, notifiers, vectors, negative checks, and violation scheduling. |
+| 30 Specify blocks | Semantic only | Specparams, timing paths, and specify blocks are imported. Executable timing paths and pulse controls now receive targeted Clause 30 diagnostics instead of being silently erased; G4 implements simple/full/edge-sensitive/state-dependent paths, delay tuples, and `showcancelled`/`noshowcancelled`. |
+| 31 Timing checks | Semantic only | System timing-check nodes are imported and now receive a targeted Clause 31 diagnostic instead of being silently erased. G5 implements all stability-window and clock/control checks, edge and condition forms, notifiers, vectors, negative checks, and violation scheduling. |
 | 32 SDF backannotation | Missing | `$sdf_annotate`, SDF parsing/mapping, multiple annotation, pulse limits, and delay replacement are absent. |
 | 33 Configuring a design | Partial | A focused probe proves basic `design`, `default liblist`, `instance ... use`, and selecting a config as a top affect elaboration. Complete library-map files, cell/config forms, nested rules, diagnostics, and binding-report behavior; also close driver module-library lookup compatibility. |
 | 34 Protected envelopes | Missing | Ordinary pragmas do not provide the standard encryption/decryption envelope flow. Implement required encodings, cipher/key/digest descriptors, key-provider integration, nested decrypted envelopes, diagnostics, and preprocessing order. |
@@ -115,9 +142,9 @@ one commit.
 
 ### Common language and runtime
 
-1. **L1 — Audit hygiene and silent-drop guards.** Turn every semantic-only
-   executable construct into either lowering or a targeted diagnostic; rename
-   stale negative tests and correct stale support docs.
+1. **L1 — Audit hygiene and silent-drop guards, completed.** Every currently
+   semantic-only executable construct now has a targeted diagnostic; stale
+   negative test names and support docs are corrected.
 2. **L2 — Time and min/typ/max closure (3.14, 11.11, 22.7).** Close compilation-unit,
    package, module, and command-line timeunit/precision interactions and
    constant min/typ/max delay selection.
@@ -137,8 +164,7 @@ one commit.
 8. **L8 — Container/reference and untyped-mailbox closure (7.5-7.12, 13.5,
    15.4).** Complete queue and unpacked slice lvalues, escaped string-character
    references, character NBA, scan copy-out targets, heterogeneous untyped
-   mailbox payloads, and differential method tests; update the stale queue
-   documentation after proving the already-lowered mutation methods.
+   mailbox payloads, and differential method tests.
 9. **L9 — Procedural force/assign reevaluation (10.6).** Make signal-dependent
    right-hand sides continuously reevaluate with exact dependency and release
    semantics.

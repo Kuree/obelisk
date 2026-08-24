@@ -44,6 +44,33 @@ class ClassifyLineTest(unittest.TestCase):
                 "slice: '!obelisk.frobnicator<@x>'")
         self.assertEqual(self.classify(line), "unnamed type frobnicator")
 
+    def test_semantic_only_guards_keep_distinct_lrm_areas(self):
+        diagnostics = {
+            ("error: IEEE 1800-2017 Clause 17 checker instances are retained "
+             "in semantic IR but are not executable yet"): "Executable checkers",
+            ("error: IEEE 1800-2017 Clause 30 specify pulse controls are retained "
+             "in semantic IR but are not executable yet"): "Specify paths and pulse controls",
+            ("error: IEEE 1800-2017 Clause 31 system timing checks are retained "
+             "in semantic IR but are not executable yet"): "System timing checks",
+            ("error: unsupported semantic construct in the first simulation "
+             "slice: obelisk.sv.statement.procedural_checker"): "Executable checkers",
+        }
+        for line, expected in diagnostics.items():
+            with self.subTest(line=line):
+                self.assertEqual(self.classify(line), expected)
+
+    def test_udp_and_legacy_timing_diagnostics_use_exact_lrm_chapters(self):
+        cases = {
+            "error: unsupported obelisk.sv.symbol.udp": "IEEE 1800 Ch. 29",
+            "error: unsupported parallel path connection": "IEEE 1800 Ch. 30",
+            "error: unsupported timing check condition": "IEEE 1800 Ch. 31",
+        }
+        for line, expected in cases.items():
+            with self.subTest(line=line):
+                hit = classify.classify_line(line)
+                self.assertIsNotNone(hit)
+                self.assertEqual(hit[1], expected)
+
 
 class AreaTest(unittest.TestCase):
     def test_templated_feature_keeps_its_rule_area(self):

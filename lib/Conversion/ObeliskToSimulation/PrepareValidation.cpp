@@ -177,6 +177,34 @@ FailureOr<ValidatedSemanticDesign> validateSemanticDesign(ModuleOp module) {
   module.walk([&](Operation *op) {
     if (!isSemanticOp(op))
       return;
+    if (isa<semantic::SVCheckerInstanceSymbolOp>(op)) {
+      emitError(getSemanticLocation(op))
+          << "IEEE 1800-2017 Clause 17 checker instances are retained in "
+             "semantic IR but are not executable yet";
+      invalid = true;
+      return;
+    }
+    if (isa<semantic::SVTimingPathSymbolOp>(op)) {
+      emitError(getSemanticLocation(op))
+          << "IEEE 1800-2017 Clause 30 specify timing paths are retained in "
+             "semantic IR but are not executable yet";
+      invalid = true;
+      return;
+    }
+    if (isa<semantic::SVPulseStyleSymbolOp>(op)) {
+      emitError(getSemanticLocation(op))
+          << "IEEE 1800-2017 Clause 30 specify pulse controls are retained "
+             "in semantic IR but are not executable yet";
+      invalid = true;
+      return;
+    }
+    if (isa<semantic::SVSystemTimingCheckSymbolOp>(op)) {
+      emitError(getSemanticLocation(op))
+          << "IEEE 1800-2017 Clause 31 system timing checks are retained in "
+             "semantic IR but are not executable yet";
+      invalid = true;
+      return;
+    }
     if ((op->hasTrait<OpTrait::SemanticDeclarativeNode>() &&
          !isSupportedClassDeclaration(op) && !isSupportedAssertionNode(op) &&
          !isSupportedConstraintNode(op) && !isCoverageNode(op) &&
