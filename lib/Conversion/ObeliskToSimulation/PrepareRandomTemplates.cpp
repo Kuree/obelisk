@@ -261,6 +261,15 @@ private:
       return reference(operation);
 
     SmallVector<Operation *> children = getChildren(operation);
+    if (isa<semantic::SVMinTypMaxExpressionOp>(operation)) {
+      auto selected = operation->getAttrOfType<IntegerAttr>("selected_index");
+      if (children.size() != 3 || !selected ||
+          selected.getValue().isNegative() ||
+          selected.getValue().getActiveBits() > 64 ||
+          selected.getValue().getZExtValue() >= children.size())
+        return failure();
+      return expression(children[selected.getValue().getZExtValue()]);
+    }
     if (isa<semantic::SVConversionExpressionOp>(operation)) {
       if (children.size() != 1)
         return failure();

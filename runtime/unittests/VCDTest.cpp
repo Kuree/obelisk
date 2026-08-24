@@ -446,6 +446,18 @@ TEST(VCD, TimescaleUsesAScaledUnitWhenThePrecisionIsNotAPowerOfAThousand) {
             std::string::npos);
 }
 
+TEST(VCD, TimescaleAcceptsThePositiveLegalExponentRange) {
+  Fixture fixture;
+  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
+  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dump_timescale(fixture.context, 2), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  fixture.advanceTo(10);
+  EXPECT_NE(fixture.read().find("$timescale\n\t100s\n$end\n"),
+            std::string::npos);
+}
+
 //===----------------------------------------------------------------------===//
 // Aliasing
 //

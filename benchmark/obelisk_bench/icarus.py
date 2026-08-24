@@ -15,7 +15,7 @@ def translate_args(icarus_args: list[str]) -> tuple[list[str], str]:
 
     Only the subset ivtest actually uses is handled; output paths and source
     files are supplied by the caller and never appear here. Flags with no Obelisk
-    analogue (`-Wall`, timing modes) are dropped.
+    analogue (`-Wall`, unsupported generation toggles) are dropped.
     """
     flags: list[str] = []
     std = "1800-2017"
@@ -63,7 +63,18 @@ def translate_args(icarus_args: list[str]) -> tuple[list[str], str]:
             std = "1800-2023"
             index += 1
             continue
+        if arg in ("-Tmin", "-Ttyp", "-Tmax"):
+            flags.append("--timing=" + arg[2:])
+            index += 1
+            continue
+        if arg == "-T" and index + 1 < len(icarus_args):
+            value = icarus_args[index + 1]
+            if value in ("min", "typ", "max"):
+                flags.append("--timing=" + value)
+            index += 2
+            continue
         # Everything else (other -g generations, -Wall, -gstrict-expr-width,
-        # timing modes) has no Obelisk analogue and is dropped.
+        # and similar Icarus-specific switches) has no Obelisk analogue and is
+        # dropped.
         index += 1
     return flags, std

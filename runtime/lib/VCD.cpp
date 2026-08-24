@@ -413,8 +413,12 @@ int32_t resolveTimescale(const obelisk_rt_context *context,
 }
 
 std::string timescaleText(int32_t exponent) {
-  if (exponent > 0 || exponent < -15)
+  if (exponent > 2 || exponent < -15)
     exponent = -9;
+  if (exponent == 1)
+    return "10s";
+  if (exponent == 2)
+    return "100s";
   static const char *const units[] = {"s", "ms", "us", "ns", "ps", "fs"};
   int32_t magnitude = -exponent;
   const char *unit = units[magnitude / 3];
@@ -1543,7 +1547,7 @@ obelisk_rt_v1_dump_open_string(obelisk_rt_context *context,
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_dump_timescale(obelisk_rt_context *context, int32_t exponent) {
-  if (!context || exponent > 0 || exponent < -15)
+  if (!context || exponent > 2 || exponent < -15)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
   try {
@@ -1736,7 +1740,7 @@ obelisk_rt_v1_dump_close(obelisk_rt_context *context) {
 extern "C" obelisk_rt_status obelisk_rt_v1_dump_ports(
     obelisk_rt_context *context, obelisk_rt_string_v1 pathValue,
     obelisk_rt_string_v1 scopeValue, int32_t timescaleExponent) {
-  if (!context || timescaleExponent > 0 || timescaleExponent < -15)
+  if (!context || timescaleExponent > 2 || timescaleExponent < -15)
     return OBELISK_RT_INVALID_ARGUMENT;
   char pathScratch[8] = {};
   char scopeScratch[8] = {};

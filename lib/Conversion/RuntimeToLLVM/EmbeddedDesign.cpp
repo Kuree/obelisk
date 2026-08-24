@@ -103,7 +103,7 @@ FailureOr<int32_t> timeExponent(ModuleOp module, uint64_t femtoseconds) {
     femtoseconds /= 10;
     ++exponent;
   }
-  if (femtoseconds != 1 || exponent > 0)
+  if (femtoseconds != 1)
     return module.emitError(
                "DPI time scale must be an integral decimal power in seconds"),
            failure();

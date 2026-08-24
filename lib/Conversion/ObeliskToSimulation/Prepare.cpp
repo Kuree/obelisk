@@ -142,7 +142,7 @@ static bool isSupportedRandomConstraintExpression(Operation *op) {
       semantic::SVHierarchicalValueExpressionOp, semantic::SVIntegerLiteralOp,
       semantic::SVUnbasedUnsizedIntegerLiteralOp,
       semantic::SVUnboundedLiteralOp, semantic::SVConversionExpressionOp,
-      semantic::SVConditionalExpressionOp,
+      semantic::SVConditionalExpressionOp, semantic::SVMinTypMaxExpressionOp,
       semantic::SVConcatenationExpressionOp,
       semantic::SVReplicationExpressionOp,
       semantic::SVElementSelectExpressionOp,

@@ -29,7 +29,7 @@ struct ActiveCallGuard {
   ActiveDpiCall &call;
 };
 
-bool validTimeExponent(int32_t value) { return value >= -15 && value <= 0; }
+bool validTimeExponent(int32_t value) { return value >= -15 && value <= 2; }
 
 uint64_t limbCount(uint32_t width) { return (uint64_t{width} + 63) / 64; }
 
@@ -122,11 +122,12 @@ DpiScopeHandle *scopeFromOpaque(ActiveDpiCall *call, const svScope scope) {
   return nullptr;
 }
 
-bool powerOfTen(int32_t exponent, uint64_t &value) {
-  if (!validTimeExponent(exponent))
+bool timeScaleRatio(int32_t unit, int32_t precision, uint64_t &value) {
+  if (!validTimeExponent(unit) || !validTimeExponent(precision) ||
+      unit < precision)
     return false;
   value = 1;
-  for (int32_t index = exponent; index < 0; ++index)
+  for (int32_t index = precision; index < unit; ++index)
     value *= 10;
   return true;
 }
@@ -358,17 +359,16 @@ extern "C" int svGetTime(const svScope scope, svTimeVal *time) {
       activeDpiCall->context->execution;
   if (!execution)
     return -1;
-  uint64_t unitScale = 0, precisionScale = 0;
-  if (!powerOfTen(unit, unitScale) ||
-      !powerOfTen(execution->dpi_time_precision, precisionScale) ||
-      precisionScale < unitScale)
+  uint64_t precisionTicksPerUnit = 0;
+  if (!timeScaleRatio(unit, execution->dpi_time_precision,
+                      precisionTicksPerUnit))
     return -1;
   uint64_t ticks = 0;
   {
     std::lock_guard<std::recursive_mutex> lock(activeDpiCall->context->mutex);
     ticks = activeDpiCall->context->schedulerTime;
   }
-  uint64_t scaled = ticks / (precisionScale / unitScale);
+  uint64_t scaled = ticks / precisionTicksPerUnit;
   time->type = sv_sim_time;
   time->high = static_cast<uint32_t>(scaled >> 32);
   time->low = static_cast<uint32_t>(scaled);

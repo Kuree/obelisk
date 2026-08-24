@@ -3679,6 +3679,20 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return success();
     }
     SmallVector<Operation *> nested = getChildren(expression);
+    if (isa<semantic::SVMinTypMaxExpressionOp>(expression)) {
+      auto selected =
+          expression->getAttrOfType<IntegerAttr>("selected_index");
+      if (nested.size() != 3 || !selected ||
+          selected.getValue().isNegative() ||
+          selected.getValue().getActiveBits() > 64 ||
+          selected.getValue().getZExtValue() >= nested.size()) {
+        emitError(getSemanticLocation(expression))
+            << "random min:typ:max expression has no valid selected branch";
+        return failure();
+      }
+      return emitProgramExpression(
+          nested[selected.getValue().getZExtValue()]);
+    }
     auto captureExpression = [&]() -> LogicalResult {
       FailureOr<Value> value = lowerExpression(expression);
       FailureOr<Value> scalar =

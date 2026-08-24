@@ -41,6 +41,19 @@
 // RUN: cd %t && obelisk -fno-lto integral-name.sv -o %t/integral-name.sim
 // RUN: cd %t && %t/integral-name.sim
 // RUN: FileCheck %s --check-prefix=INTEGRAL-NAME < %t/integral.vcd
+//
+// IEEE 1800-2017 3.14.2 permits timeprecision through 100s. Preserve the
+// positive decimal exponent in the compiler/runtime waveform boundary.
+// RUN: cd %t && obelisk -fno-lto positive-timescale.sv \
+// RUN:   -o %t/positive-timescale-native.sim
+// RUN: cd %t && %t/positive-timescale-native.sim
+// RUN: FileCheck %s --check-prefix=POSITIVE-TIMESCALE < %t/positive.vcd
+// RUN: FileCheck %s --check-prefix=POSITIVE-PORTS < %t/positive-ports.vcd
+// RUN: cd %t && obelisk -fno-lto --execution-tier=bytecode \
+// RUN:   positive-timescale.sv -o %t/positive-timescale-bytecode.sim
+// RUN: cd %t && %t/positive-timescale-bytecode.sim
+// RUN: FileCheck %s --check-prefix=POSITIVE-TIMESCALE < %t/positive.vcd
+// RUN: FileCheck %s --check-prefix=POSITIVE-PORTS < %t/positive-ports.vcd
 
 //--- design.sv
 module sub(input logic clk, output logic [3:0] tick);
@@ -93,6 +106,25 @@ endmodule
 // VCD-NEXT: $dumpoff
 // VCD: #32
 // VCD-NEXT: $dumpon
+
+//--- positive-timescale.sv
+module positive_timescale;
+  timeunit 100s/100s;
+  bit value = 0;
+  initial begin
+    $dumpfile("positive.vcd");
+    $dumpvars(0, positive_timescale);
+    $dumpports(positive_timescale, "positive-ports.vcd");
+    #1 value = 1;
+    #1 $finish;
+  end
+endmodule
+
+// POSITIVE-TIMESCALE: $timescale
+// POSITIVE-TIMESCALE-NEXT: 100s
+// POSITIVE-TIMESCALE: #1
+// POSITIVE-PORTS: $timescale
+// POSITIVE-PORTS-NEXT: 100s
 
 //--- multiple-tops.sv
 module first_top;

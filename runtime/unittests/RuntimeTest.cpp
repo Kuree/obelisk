@@ -1186,6 +1186,20 @@ TEST(RuntimeDPI, RejectsMalformedScopeMetadata) {
   EXPECT_EQ(context, nullptr);
 }
 
+TEST(RuntimeDPI, AcceptsPositiveLegalTimeUnitExponents) {
+  static constexpr char name[] = "top";
+  const obelisk_rt_dpi_scope_v1 scope{0, UINT64_MAX, name, sizeof(name) - 1,
+                                      2, -15,        0};
+  const obelisk_rt_execution_descriptor_v1 execution{
+      OBELISK_RT_VERSION, 0, 0, nullptr, 0, nullptr, 0, 0, 0, &scope, 1, -15, 0,
+  };
+  obelisk_rt_context *context = nullptr;
+  EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  EXPECT_NE(context, nullptr);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(RuntimeABI, RejectsNullPublicArguments) {
   EXPECT_EQ(obelisk_rt_v1_context_create(nullptr), OBELISK_RT_INVALID_ARGUMENT);
   EXPECT_EQ(obelisk_rt_v1_import_id(nullptr, 0), 0u);

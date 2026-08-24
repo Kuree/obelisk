@@ -12,6 +12,7 @@ nonblocking assignment before this lowering boundary.
 | --- | --- |
 | Integral `#delay` | Executable for constant and dynamic packed integral expressions up to 64 bits; X/Z and negative values normalize to zero. Static overflow is diagnosed and dynamic scaling is range-checked identically in native and bytecode. |
 | Real/realtime delay | Executable for literals and dynamic binary32/binary64 expressions, including unary sign; values round at lexical `timeprecision` before design-precision scaling. |
+| Min/typ/max expression (11.11) | Executable for constant and dynamic selected expressions. The public `--timing=min\|typ\|max` option selects one branch during frontend lowering (default `typ`), and only that branch reaches executable IR; this applies uniformly to delay expressions and ordinary expression contexts. |
 | `#0` | Executable in Inactive for design-domain processes and Re-Inactive for program-domain processes. Native and design-bytecode work share the same region/rank/insertion ordering key. |
 | `#1step` | Executable as one design-precision tick. |
 | Direct signal event | Executable for statically addressable signal/net expressions and change/posedge/negedge/both-edge. Real-valued change events use IEEE equality (`+0.0` and `-0.0` are equal; every NaN publication changes). Vector edges observe only the edge-defining bit. A directly addressable `iff` value is sampled and latched at the primary occurrence. |

@@ -141,6 +141,10 @@ def std_EQ : Joined<["--"], "std=">, Group<Compilation_Group>,
 def timescale_EQ : Joined<["--"], "timescale=">, Group<Compilation_Group>,
   MetaVarName<"<base/precision>">,
   HelpText<"Set the default time scale">;
+def timing_EQ : Joined<["--"], "timing=">, Group<Compilation_Group>,
+  MetaVarName<"<min|typ|max>">,
+  Values<"min,typ,max">,
+  HelpText<"Select min:typ:max expression values">;
 def allow_use_before_declare :
   Flag<["--"], "allow-use-before-declare">, Group<Compilation_Group>,
   HelpText<"Allow declarations to be referenced before they appear">;

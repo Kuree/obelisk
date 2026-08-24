@@ -1927,6 +1927,19 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
                                      builder.getFloatAttr(*type, value))
         .getResult();
   }
+  if (isa<semantic::SVMinTypMaxExpressionOp>(op)) {
+    SmallVector<Operation *> children = getChildren(op);
+    auto selected = op->getAttrOfType<IntegerAttr>("selected_index");
+    if (children.size() != 3 || !selected || selected.getValue().isNegative() ||
+        selected.getValue().getActiveBits() > 64 ||
+        selected.getValue().getZExtValue() >= children.size()) {
+      emitError(getSemanticLocation(op))
+          << "min:typ:max expression has no valid selected branch";
+      return failure();
+    }
+    return lowerExpression(children[selected.getValue().getZExtValue()],
+                           lvalue);
+  }
   if (isa<semantic::SVConversionExpressionOp>(op)) {
     SmallVector<Operation *> children = getChildren(op);
     if (children.size() != 1) {

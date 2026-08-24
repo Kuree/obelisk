@@ -1824,6 +1824,13 @@ private:
       if (node.isDeclaredUnsized)
         SET_OP_ATTR(IsDeclaredUnsized, builder.getBoolAttr(true));
 
+    if constexpr (std::same_as<T, slang::ast::MinTypMaxExpression>) {
+      unsigned selectedIndex = &node.selected() == &node.min()   ? 0
+                               : &node.selected() == &node.typ() ? 1
+                                                                 : 2;
+      attrs.set("selected_index", builder.getI64IntegerAttr(selectedIndex));
+    }
+
     if constexpr (std::same_as<
                       T, slang::ast::StructuredAssignmentPatternExpression>) {
       SET_OP_ATTR(MemberSetterCount,
@@ -3915,6 +3922,18 @@ buildSlangArguments(ArrayRef<std::string> inputs,
   if (options.timeScale) {
     result.emplace_back("--timescale");
     result.push_back(*options.timeScale);
+  }
+  result.emplace_back("--timing");
+  switch (options.minTypMax) {
+  case MinTypMax::Min:
+    result.emplace_back("min");
+    break;
+  case MinTypMax::Typ:
+    result.emplace_back("typ");
+    break;
+  case MinTypMax::Max:
+    result.emplace_back("max");
+    break;
   }
   if (options.numThreads) {
     result.emplace_back("-j");

@@ -88,7 +88,7 @@ or fatals. These are comparison baselines, not portable promises across hosts.
 
 | Clause | Level | Executable evidence and remaining work |
 | --- | --- | --- |
-| 3 Design and verification building blocks | Partial | Modules, programs, interfaces, packages, ordinary hierarchy, and basic configuration selection elaborate. Checker bodies are semantic only, UDP behavior is absent, and time-unit/precision corner cases still fail external tests. |
+| 3 Design and verification building blocks | Partial | Modules, programs, interfaces, packages, ordinary hierarchy, and basic configuration selection elaborate. Compilation-unit, package, module, directive, and command-line time-unit/precision precedence executes across the full legal 1 fs through 100 s scale range. Checker bodies are semantic only and UDP behavior is absent. |
 | 4 Scheduling semantics | Partial | Active, Inactive, NBA, Observed, Reactive, Re-Inactive, Re-NBA, Postponed, and the Preponed snapshot hook execute through one native/bytecode scheduler. Remaining language gaps are attached to the timed constructs below. PLI callback regions are excluded with VPI. |
 | 5 Lexical conventions | Executable for the audited surface | Slang supplies the lexer, preprocessor-facing tokens, literals, attributes, keywords, and identifiers. Keep this clause under differential testing, especially revision switches and literal corner cases. |
 | 6 Data types | Partial | Packed 2/4-state values, reals as variables, strings, chandles, events, enums, typedefs, parameters, casts, strengths, and the common net kinds execute. Real-valued nets, user-defined net types/resolution functions, remaining `interconnect` forms, and trireg charge strength/sharing remain live gaps. |
@@ -96,7 +96,7 @@ or fatals. These are comparison baselines, not portable promises across hosts.
 | 8 Classes | Partial | Construction, inheritance, polymorphism, virtual/interface methods, parameterized classes, copying, managed properties, garbage collection, and the UVM-used surface execute. Complete the residual class/type/operator/constructor long tail exposed by focused probes and the aggregate/reference gaps shared with Clauses 6, 7, and 11. |
 | 9 Processes | Partial | Structured procedures, all fork/join forms, `wait fork`, `disable fork`, timed and recursive tasks, `process` handles and control, automatic capture, and cancellation execute. Disabling a named block owned by another live process is still rejected instead of canceling only the target scope. |
 | 10 Assignment statements | Partial | Blocking/NBA assignment, intra-assignment timing, common aggregate patterns, net aliasing, static continuous-assignment delays, strengths, and a restricted procedural force/assign surface execute. Complete signal-dependent force/assign reevaluation, automatic/class/unpacked/managed targets, concatenations and dynamic selects, plus the remaining queue/unpacked slice lvalues. |
-| 11 Operators and expressions | Partial | The common packed, real, string, class, chandle, event, process, virtual-interface, aggregate, pattern, cast, and streaming surface is broad enough for the green sv-tests and UVM tests. Live diagnostics remain for several type-specific operators, dynamic/simple range selection, string ranges, unpacked concatenation/result forms, assignment-pattern setters, and dynamic string replication. |
+| 11 Operators and expressions | Partial | The common packed, real, string, class, chandle, event, process, virtual-interface, aggregate, pattern, cast, streaming, and min/typ/max surface is broad enough for the green sv-tests and UVM tests. Public `--timing=min|typ|max` selection applies to constant and dynamic selected expressions. Live diagnostics remain for several type-specific operators, dynamic/simple range selection, string ranges, unpacked concatenation/result forms, assignment-pattern setters, and dynamic string replication. |
 | 12 Procedural statements | Partial | Conditional, ordinary/pattern case, loops, jumps, `randcase`, and most `randsequence` forms execute. Recursive randsequence productions and value-returning productions still require activation frames and expression-valued production calls. |
 | 13 Tasks and functions | Executable for the audited non-DPI surface | Static/automatic, recursive, virtual, class/interface, timed task, value/output/inout/ref, default argument, and cancellation behavior execute. Continue differential closure for unusual aggregate and hierarchical formal cases; DPI is tracked separately in Clause 35. |
 | 14 Clocking blocks | Partial | Input/output skews, `#1step`, synchronous drives, event lists and `iff`, cycle delays, defaults, and virtual-interface clocking handles execute. Global clocking and the remaining assertion clock-inference, clock-formal, and multi-clock composition cases remain. |
@@ -107,7 +107,7 @@ or fatals. These are comparison baselines, not portable promises across hosts.
 | 19 Functional coverage | Excluded | Explicitly outside this project goal. |
 | 20 Utility system tasks/functions | Partial | Simulation/time control, conversions, data/array queries, real math, bit-vector functions, severity, random distributions, most assertion control, and the implemented sampled functions execute. Missing normative families include `$system`, `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam`, the synchronous/asynchronous PLA tasks, the global-clock sampled functions, and complete assertion statistics/control behavior. |
 | 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning, read-memory, plusargs, and VCD/dumpports execute. `$writememb`/`$writememh`, the remaining scan target/reference forms, and formatting/file corner cases remain. |
-| 22 Compiler directives | Executable for the audited surface | The Slang preprocessor implements the normative directive family. Revision and timescale interaction remains part of the Chapter 3/6 time work. Protected envelopes are a separate Clause 34 feature, not ordinary pragma acceptance. |
+| 22 Compiler directives | Executable for the audited surface | The Slang preprocessor implements the normative directive family. Directive persistence, separate-compilation-unit reset, and command-line default-timescale precedence have native/bytecode tests. Protected envelopes are a separate Clause 34 feature, not ordinary pragma acceptance. |
 | 23 Modules and hierarchy | Partial | ANSI/non-ANSI modules, parameters, ports, arrays, hierarchy, bind, and common upward references elaborate. External runs retain module-library lookup, port mismatch, hierarchical path, generate-scope, and parameter-binding failures that need clause-minimal reproducers and fixes. |
 | 24 Programs | Partial | Program instances and their Reactive/Re-Inactive/Re-NBA process home execute. The normative `$exit` program-control task is missing. |
 | 25 Interfaces | Partial | Interfaces, modports, parameterization, interface tasks/functions, interface arrays, virtual-interface handles, calls, containers, and clocking-block access execute. Complete the residual virtual-interface clock/event/formal cases and inherit specify support from Clause 30. |
@@ -145,9 +145,10 @@ one commit.
 1. **L1 — Audit hygiene and silent-drop guards, completed.** Every currently
    semantic-only executable construct now has a targeted diagnostic; stale
    negative test names and support docs are corrected.
-2. **L2 — Time and min/typ/max closure (3.14, 11.11, 22.7).** Close compilation-unit,
-   package, module, and command-line timeunit/precision interactions and
-   constant min/typ/max delay selection.
+2. **L2 — Time and min/typ/max closure (3.14, 11.11, 22.7), completed.**
+   Compilation-unit, package, module, directive, and command-line
+   timeunit/precision interactions execute across the full legal scale range;
+   `--timing=min|typ|max` selects constant and dynamic min/typ/max expressions.
 3. **L3 — Net-type closure (6.6-6.7).** Add real/realtime nets, `interconnect`,
    user-defined nettypes and resolution functions.
 4. **L4 — Trireg charge semantics (6.6.7).** Implement small/medium/large

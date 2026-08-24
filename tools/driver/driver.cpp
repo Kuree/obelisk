@@ -449,6 +449,15 @@ buildFrontendOptions(const InputArgList &args, bool &valid) {
   options.ignoreUnknownModules = args.hasArg(OPT_ignore_unknown_modules);
   if (const Arg *arg = args.getLastArg(OPT_timescale_EQ))
     options.timeScale = arg->getValue();
+  StringRef timing = args.getLastArgValue(OPT_timing_EQ, "typ");
+  if (timing != "min" && timing != "typ" && timing != "max") {
+    emitDriverError(Twine("unsupported min:typ:max selection '") + timing +
+                    "'; expected min, typ, or max");
+    valid = false;
+  }
+  options.minTypMax = timing == "min"   ? obelisk::frontend::MinTypMax::Min
+                      : timing == "max" ? obelisk::frontend::MinTypMax::Max
+                                        : obelisk::frontend::MinTypMax::Typ;
 
   valid &= parseUnsignedOption(args, OPT_max_include_depth_EQ,
                                "--max-include-depth", options.maxIncludeDepth);

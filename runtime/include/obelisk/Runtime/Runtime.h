@@ -3090,7 +3090,7 @@ obelisk_rt_status obelisk_rt_v1_dump_open(obelisk_rt_context *context,
 obelisk_rt_status obelisk_rt_v1_dump_open_string(obelisk_rt_context *context,
                                                  obelisk_rt_string_v1 path);
 // Declare the `$timescale` written into the header, as a decimal exponent in
-// seconds (-15..0). The compiler knows the elaborated design precision and
+// seconds (-15..2). The compiler knows the elaborated design precision and
 // emits this before the first dump call. Without it the dump falls back to the
 // DPI time precision, and then to the compiler's own default of 1ns.
 obelisk_rt_status obelisk_rt_v1_dump_timescale(obelisk_rt_context *context,

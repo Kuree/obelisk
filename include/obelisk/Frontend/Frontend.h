@@ -25,10 +25,17 @@ enum class LanguageVersion : uint8_t {
   IEEE1800_2023,
 };
 
+enum class MinTypMax : uint8_t {
+  Min,
+  Typ,
+  Max,
+};
+
 /// Obelisk-owned, typed configuration for the slang driver. This is the public
 /// frontend contract; no third-party driver option type crosses this boundary.
 struct FrontendOptions {
   LanguageVersion languageVersion = LanguageVersion::IEEE1800_2023;
+  MinTypMax minTypMax = MinTypMax::Typ;
 
   std::vector<std::string> includeDirs;
   std::vector<std::string> includeSystemDirs;
