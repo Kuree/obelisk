@@ -429,6 +429,23 @@ seconds simulate for native, with zero UVM errors or fatals and both compile
 times within the 10% gate. The full regression suite passes 1300/1300 tests
 and all 427 runtime tests.
 
+G1's performance follow-up narrows call-free primitive waits after packed-load
+canonicalization, so each generated scalar gate subscribes to the exact bit
+ranges it reads rather than every bit of its captured vectors. A large built-in
+primitive cohort makes the default native auto command select compact bytecode
+execution instead of creating one LLVM coroutine per instance; explicitly
+forced native execution tiers or scheduler modes retain their requested
+behavior. A 512-device design with 10,000 timed input transitions now compiles
+through the default native command in 0.64 seconds at 174 MB RSS and simulates
+in 0.05 seconds.
+Before the bounded tier choice, the same compile was stopped after 62 seconds
+and peaked at 24.2 GB RSS. Forced-native large-cohort code coalescing remains
+separate work rather than a cost paid by the normal build path. The UVM smoke
+ran in 34.297 seconds compile / 0.178 seconds simulate for bytecode and 71.687
+seconds compile / 0.019 seconds simulate for native, with zero UVM errors or
+fatals and both compile times within the 10% gate. The full regression suite
+passes 1302/1302 tests and all 427 runtime tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -458,7 +475,7 @@ and all 427 runtime tests.
 | 25 Interfaces | Partial | Interfaces, modports, parameterization, interface tasks/functions, interface arrays, virtual-interface handles, calls, containers, and clocking-block access execute. Complete the residual virtual-interface clock/event/formal cases and inherit specify support from Clause 30. |
 | 26 Packages | Partial | Packages, imports/exports, scope lookup, and the implemented `std` package surface, including R1 `std::randomize`, execute. Complete the remaining normative Annex G behavior through the randomization and system-task chunks. |
 | 27 Generate constructs | Partial | Loop/conditional generation and ordinary external names elaborate. External tests still expose generate-scope and parameter-binding corner cases. |
-| 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, static one/two/three propagation delays, and the four-state truth tables of MOS/CMOS plus resistive variants execute. Complete source-strength forwarding and reduction, strength-aware `%v`, parameter-expression delays, bidirectional pass devices, controlled pass devices, and large native gate-netlist coalescing. |
+| 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, static one/two/three propagation delays, and the four-state truth tables of MOS/CMOS plus resistive variants execute. Complete source-strength forwarding and reduction, strength-aware `%v`, parameter-expression delays, bidirectional pass devices, controlled pass devices, and forced-native large gate-netlist coalescing. |
 | 29 User-defined primitives | Missing | UDP declarations and ports are imported, but table rows and sequential state semantics are not preserved, and an instance currently reaches the built-in-primitive diagnostic. |
 | 30 Specify blocks | Semantic only | Specparams, timing paths, and specify blocks are imported. Executable timing paths and pulse controls now receive targeted Clause 30 diagnostics instead of being silently erased; G4 implements simple/full/edge-sensitive/state-dependent paths, delay tuples, and `showcancelled`/`noshowcancelled`. |
 | 31 Timing checks | Semantic only | System timing-check nodes are imported and now receive a targeted Clause 31 diagnostic instead of being silently erased. G5 implements all stability-window and clock/control checks, edge and condition forms, notifiers, vectors, negative checks, and violation scheduling. |
@@ -653,7 +670,8 @@ one commit.
     tables, arrays, and the first resistive reduction are complete. Implement
     exact source-strength forwarding and chained reduction, strength-aware
     `%v`, parameter-expression delays, tran/controlled-tran and resistive
-    variants, bidirectional propagation, and native gate-fragment coalescing.
+    variants, bidirectional propagation, and forced-native gate-fragment
+    coalescing.
 37. **G2 — Combinational UDPs (29.3-29.4, 29.8).** Preserve truth-table rows
     in semantic IR and compile exact four-state matching, instances, arrays,
     strengths, and delays.

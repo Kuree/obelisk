@@ -1907,6 +1907,28 @@ FailureOr<ComputeGraphResult> ComputeGraphBuilder::derive() {
   if (failed(buildSites(result)))
     return failure();
 
+  // Dozens of scalar built-in primitive actors are substantially more
+  // compact in the bytecode image than as independent LLVM coroutines. Keep
+  // small cohorts native, but demote a large cohort under the default auto
+  // policy so the backend can select a compact bytecode executable. This is a
+  // compile-space guard, not a semantic distinction: both tiers consume the
+  // same graph and exact descriptor-range subscriptions.
+  constexpr uint64_t primitiveBytecodeThreshold = 32;
+  uint64_t primitiveActors =
+      llvm::count_if(analysis.functions, [](const FunctionInfo &info) {
+        return info.getFunction().getEntryKind() ==
+                   sim::EntryKind::Continuous &&
+               info.getFunction()->hasAttr("obelisk_sim.primitive_name");
+      });
+  ModuleOp module = design->getParentOfType<ModuleOp>();
+  auto scheduler = module ? module->getAttrOfType<sim::NativeSchedulerModeAttr>(
+                                "obelisk.native_scheduler")
+                          : sim::NativeSchedulerModeAttr{};
+  bool demotePrimitiveActors =
+      primitiveActors >= primitiveBytecodeThreshold && scheduler &&
+      scheduler.getValue() == sim::NativeSchedulerMode::Eval && module &&
+      module->hasAttr("obelisk.native_scheduler.auto_requested");
+
   SmallVector<Attribute> nodes;
   DenseMap<Operation *, SmallVector<int64_t>> functionFragments;
   for (Fragment &fragment : fragments) {
@@ -1921,14 +1943,19 @@ FailureOr<ComputeGraphResult> ComputeGraphBuilder::derive() {
       region = sim::ComputeRegionKind::Observed;
     else if (fragment.function.getHomeRegion() == sim::EventRegion::Reactive)
       region = sim::ComputeRegionKind::Reactive;
+    sim::ComputeTierKind tier =
+        demotePrimitiveActors &&
+                fragment.function->hasAttr("obelisk_sim.primitive_name")
+            ? sim::ComputeTierKind::Bytecode
+            : sim::ComputeTierKind::Native;
     nodes.push_back(sim::ComputeFragmentAttr::get(
         design.getContext(), fragment.id,
         FlatSymbolRefAttr::get(design.getContext(),
                                fragment.function.getSymName()),
         fragment.ordinal, region,
-        getFragmentActionKind(fragment.block->getTerminator()),
-        sim::ComputeTierKind::Native, fragment.cost, fragment.lane,
-        fragment.twoState, getEffectArrayAttr(builder, fragment.effects)));
+        getFragmentActionKind(fragment.block->getTerminator()), tier,
+        fragment.cost, fragment.lane, fragment.twoState,
+        getEffectArrayAttr(builder, fragment.effects)));
     functionFragments[fragment.function.getOperation()].push_back(fragment.id);
   }
   for (auto [index, root] : llvm::enumerate(nbaRoots))

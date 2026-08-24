@@ -835,14 +835,27 @@ LogicalResult emitTargetOutput(ModuleOp module,
   }
 
   std::string targetError;
-  // A forced-bytecode executable uses native code only for scheduler glue,
-  // runtime entry points, and optional foreign-call thunks. The SystemVerilog
-  // bodies have already gone through the requested simulation optimization
-  // pipeline before being frozen into bytecode. Running LLVM's aggressive
-  // optimizer over their unreachable native fallback copies dominates large
-  // library builds without changing bytecode execution, so keep the host
-  // shell deliberately cheap.
-  uint32_t hostOptLevel = options.bytecode ? 0 : options.optLevel;
+  bool graphRequiresBytecode = false;
+  module.walk([&](obelisk::sim::SimDesignOp design) {
+    obelisk::sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
+    if (!graph)
+      return;
+    for (mlir::Attribute attribute : graph.getNodes())
+      if (auto fragment =
+              mlir::dyn_cast<obelisk::sim::ComputeFragmentAttr>(attribute))
+        graphRequiresBytecode |=
+            fragment.getTier() == obelisk::sim::ComputeTierKind::Bytecode;
+  });
+  bool useBytecode = options.bytecode || graphRequiresBytecode;
+
+  // A forced or graph-selected bytecode executable uses native code only for
+  // scheduler glue, runtime entry points, and optional foreign-call thunks.
+  // The SystemVerilog bodies have already gone through the requested
+  // simulation optimization pipeline before being frozen into bytecode.
+  // Running LLVM's aggressive optimizer over their unreachable native
+  // fallback copies dominates large library builds without changing bytecode
+  // execution, so keep the host shell deliberately cheap.
+  uint32_t hostOptLevel = useBytecode ? 0 : options.optLevel;
   std::unique_ptr<TargetMachine> targetMachine =
       backend->createTargetMachine(targetError, hostOptLevel);
   if (!targetMachine) {
@@ -864,7 +877,10 @@ LogicalResult emitTargetOutput(ModuleOp module,
   // Auto to Eval here would incorrectly make that later proof mandatory for
   // ordinary non-periodic designs.
   if (*nativeScheduler == obelisk::sim::NativeSchedulerMode::Auto &&
-      !options.bytecode) {
+      useBytecode) {
+    *nativeScheduler = obelisk::sim::NativeSchedulerMode::Generic;
+  } else if (*nativeScheduler == obelisk::sim::NativeSchedulerMode::Auto &&
+             !useBytecode) {
     obelisk::analysis::NativeAOTAnalysis aot =
         obelisk::analysis::NativeAOTAnalysis::compute(module);
     if (!aot.isEligible() || !aot.isAOTCostEffective())
@@ -874,11 +890,11 @@ LogicalResult emitTargetOutput(ModuleOp module,
     // fanout, and direct-fragment coverage can be proved together. A false
     // positive must remain eligible for the generic/AOT fallback.
   }
-  if (failed(lowerToLLVM(
-          module, *targetMachine, backend->getTriple(), options.bytecode,
-          options.vpi, *nativeScheduler, options.optLevel,
-          backend->supportsSemanticPartitions() && !options.bytecode,
-          options.timing, requiresStateSync)))
+  if (failed(lowerToLLVM(module, *targetMachine, backend->getTriple(),
+                         useBytecode, options.vpi, *nativeScheduler,
+                         options.optLevel,
+                         backend->supportsSemanticPartitions() && !useBytecode,
+                         options.timing, requiresStateSync)))
     return failure();
   auto lastBackendTiming = std::chrono::steady_clock::now();
   auto markBackendTiming = [&](StringRef name) {
@@ -892,7 +908,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
   };
 
   std::optional<NativePartitionPlan> nativePartitionPlan;
-  if (backend->supportsSemanticPartitions() && !options.bytecode &&
+  if (backend->supportsSemanticPartitions() && !useBytecode &&
       options.kind == NativeOutputKind::Executable) {
     FailureOr<std::optional<NativePartitionPlan>> plan =
         readNativePartitionPlan(module);
@@ -931,7 +947,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
     return failure();
 
   bool fullLTO = options.kind == NativeOutputKind::Executable &&
-                 !options.bytecode && !options.noLTO &&
+                 !useBytecode && !options.noLTO &&
                  backend->usesFullLTO(options.optLevel) && !thinLTO;
   if (fullLTO) {
     // LLD's explicit --lto=full mode selects LLVM's unified LTO pipeline.

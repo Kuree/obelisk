@@ -709,8 +709,9 @@ static int executeCompilation(const InputArgList &args) {
     obelisk::sim::NativeSchedulerMode pipelineScheduler =
         *obelisk::sim::symbolizeNativeSchedulerMode(nativeScheduler);
     if (pipelineScheduler == obelisk::sim::NativeSchedulerMode::Auto) {
-      (*module)->setAttr("obelisk.native_scheduler.auto_requested",
-                         UnitAttr::get(&context));
+      if (!args.hasArg(OPT_execution_tier_EQ))
+        (*module)->setAttr("obelisk.native_scheduler.auto_requested",
+                           UnitAttr::get(&context));
       pipelineScheduler = executionTier == "bytecode"
                               ? obelisk::sim::NativeSchedulerMode::Generic
                               : obelisk::sim::NativeSchedulerMode::Eval;

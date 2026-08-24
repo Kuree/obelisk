@@ -43,6 +43,81 @@ public:
     if (function.getBody().empty())
       return;
 
+    // Canonicalization can sink a packed load through a constant selection,
+    // leaving a primitive body with an exact scalar reference even though
+    // LowerUnit had to build its implicit wait from the original declaration
+    // capture. Narrow that wait here, after value optimization but before the
+    // compute graph is frozen. This keeps generated gate arrays from waking
+    // every instance for a change to one unrelated vector bit.
+    if (function->hasAttr("obelisk_sim.primitive_name")) {
+      Block &entry = function.getBody().front();
+      auto isStableDesignHandle = [&](Value handle) {
+        while (Operation *definition = handle.getDefiningOp()) {
+          if (auto extract = dyn_cast<sim::SimRefExtractOp>(definition))
+            handle = extract.getInput();
+          else if (auto extract = dyn_cast<sim::SimRefDynExtractOp>(definition))
+            handle = extract.getInput();
+          else if (auto extract = dyn_cast<sim::SimRefSubelementOp>(definition))
+            handle = extract.getInput();
+          else if (auto extract =
+                       dyn_cast<sim::SimRefArrayElementOp>(definition))
+            handle = extract.getInput();
+          else if (auto extract = dyn_cast<sim::SimNetExtractOp>(definition))
+            handle = extract.getInput();
+          else
+            return false;
+        }
+        auto argument = dyn_cast<BlockArgument>(handle);
+        return argument && argument.getOwner() == &entry;
+      };
+
+      for (Block &block : function.getBody()) {
+        Operation *terminator = block.getTerminator();
+        if (!isa_and_nonnull<sim::SimSuspendChangeOp, sim::SimSuspendAnyOp>(
+                terminator))
+          continue;
+        bool safe = true;
+        llvm::SetVector<Value> directSensitivity;
+        for (Operation &operation : block.without_terminator()) {
+          if (isa<sim::SimCallOp, sim::SimTaskCallOp, sim::SimArgumentRefLoadOp,
+                  sim::SimManagedLoadOp, sim::SimManagedWatchOp,
+                  sim::SimObserverBindOp>(operation)) {
+            safe = false;
+            break;
+          }
+          Value handle;
+          if (auto load = dyn_cast<sim::SimRefLoadOp>(operation))
+            handle = load.getReference();
+          else if (auto read = dyn_cast<sim::SimNetReadOp>(operation))
+            handle = read.getNet();
+          if (!handle)
+            continue;
+          if (!isStableDesignHandle(handle)) {
+            safe = false;
+            break;
+          }
+          directSensitivity.insert(handle);
+        }
+        if (!safe || directSensitivity.empty())
+          continue;
+        if (auto any = dyn_cast<sim::SimSuspendAnyOp>(terminator)) {
+          SmallVector<Value> values(directSensitivity.getArrayRef());
+          llvm::append_range(values, any.getContinuationOperands());
+          any.getValuesMutable().assign(values);
+          SmallVector<int32_t> edges(
+              directSensitivity.size(),
+              static_cast<int32_t>(sim::EdgeKind::Change));
+          any.setEdgesAttr(
+              DenseI32ArrayAttr::get(function.getContext(), edges));
+          continue;
+        }
+        if (directSensitivity.size() == 1)
+          cast<sim::SimSuspendChangeOp>(terminator)
+              .getWatchedMutable()
+              .set(directSensitivity.front());
+      }
+    }
+
     // Constants need not occupy canonical-frame slots. In particular, byte
     // strings cannot be persisted because their representation contains a
     // native pointer. Rematerializing every cross-block constant use also

@@ -27,6 +27,13 @@ scheduler. `generic` explicitly forces that correctness oracle for the whole
 design. `aot` requires every fragment to be statically schedulable and reports
 the exact unsupported metadata or language feature during compilation.
 
+The default command also bounds native code growth for generated gate
+netlists. When at least 32 continuous built-in primitive actors would become
+independent LLVM coroutines, auto selects compact bytecode execution for the
+executable. The actors retain exact descriptor-range subscriptions, so this
+does not broaden simulation wakeups. An explicit `--execution-tier=native` or
+an explicitly selected native scheduler preserves the requested native path.
+
 The generated plan is installed before the root initializer spawns any
 process. It owns fixed actor slots and is checksum-coupled to an embedded
 bytecode/design image when one exists. The runtime rejects duplicate slots,
