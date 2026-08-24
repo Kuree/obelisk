@@ -2067,6 +2067,18 @@ def SimPlusargValueOp : SimFileOp<"plusarg.value",
   let summary = "return the text following a matched command-line plusarg";
 }
 
+def SimPlusargScanOp : SimFileOp<"plusarg.scan",
+    (ins SimContextType:$context, SimStringType:$format),
+    (outs SimStringType:$tail, I32:$conversion, I32:$found),
+    [MemRead<SimIOResource>, MemRead<SimHeapResource>,
+     MemWrite<SimHeapResource>]> {
+  let summary = "parse a dynamic $value$plusargs format and return its field";
+  let description = [{
+    `conversion` is zero for `%s`, one for a real conversion, or the numeric
+    radix for an integral conversion. An invalid format returns `found` zero.
+  }];
+}
+
 def SimFileErrorStringOp : SimFileOp<"file.error_string",
     (ins SimContextType:$context, I32:$descriptor),
     (outs SimStringType:$message, I32:$code),

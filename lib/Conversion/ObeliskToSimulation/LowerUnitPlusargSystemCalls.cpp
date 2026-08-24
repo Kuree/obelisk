@@ -55,6 +55,40 @@ std::optional<unsigned> conversionRadix(char specifier) {
   }
 }
 
+struct LiteralPlusargFormat {
+  std::string prefix;
+  unsigned conversion = 0;
+};
+
+std::optional<LiteralPlusargFormat> splitLiteralPlusargFormat(StringRef format,
+                                                              StringRef &bad) {
+  size_t percent = format.rfind('%');
+  size_t specifier = percent == StringRef::npos ? percent : percent + 1;
+  while (specifier != StringRef::npos && specifier < format.size() &&
+         format[specifier] == '0')
+    ++specifier;
+  if (percent == StringRef::npos || specifier + 1 != format.size()) {
+    bad = format;
+    return std::nullopt;
+  }
+  std::optional<unsigned> conversion = conversionRadix(format[specifier]);
+  if (!conversion) {
+    bad = format.substr(percent, specifier + 1 - percent);
+    return std::nullopt;
+  }
+
+  LiteralPlusargFormat result;
+  result.conversion = *conversion;
+  result.prefix.reserve(percent);
+  for (size_t index = 0; index < percent; ++index) {
+    if (format[index] == '%' && index + 1 < percent &&
+        format[index + 1] == '%')
+      ++index;
+    result.prefix.push_back(format[index]);
+  }
+  return result;
+}
+
 } // namespace
 
 FailureOr<Value>
@@ -96,7 +130,9 @@ UnitLowering::lowerPlusargSystemCall(semantic::SVCallExpressionOp op) {
     return failure();
   }
 
-  // The specifier decides the conversion, so the format has to be known here.
+  // Keep literal formats on the compact static path. A string-like runtime
+  // expression uses plusarg.scan to split and validate its trailing
+  // conversion without recompiling or speculatively matching every prefix.
   Operation *spelling = children[0];
   while (isa<semantic::SVConversionExpressionOp>(spelling)) {
     SmallVector<Operation *> converted = getChildren(spelling);
@@ -105,30 +141,25 @@ UnitLowering::lowerPlusargSystemCall(semantic::SVCallExpressionOp op) {
     spelling = converted.front();
   }
   auto literal = dyn_cast<semantic::SVStringLiteralOp>(spelling);
-  if (!literal) {
-    emitError(getSemanticLocation(children[0]))
-        << "$value$plusargs requires a literal format string";
-    return failure();
-  }
-  StringRef format = literal.getConstantValue();
-  size_t percent = format.rfind('%');
-  // IEEE 1800-2017 21.6: uppercase, lowercase, and leading `0` forms of a
-  // conversion are all valid, so `%0d` asks for the same conversion `%d` does.
-  size_t specifier = percent == StringRef::npos ? percent : percent + 1;
-  while (specifier != StringRef::npos && specifier < format.size() &&
-         format[specifier] == '0')
-    ++specifier;
-  if (percent == StringRef::npos || specifier >= format.size()) {
-    emitError(getSemanticLocation(children[0]))
-        << "$value$plusargs format must end with a conversion specifier";
-    return failure();
-  }
-  std::optional<unsigned> radix = conversionRadix(format[specifier]);
-  if (!radix) {
-    emitError(getSemanticLocation(children[0]))
-        << "unsupported $value$plusargs conversion specifier '"
-        << format.substr(percent, specifier + 1 - percent) << "'";
-    return failure();
+  std::optional<LiteralPlusargFormat> literalFormat;
+  Value dynamicFormat;
+  if (literal) {
+    StringRef bad;
+    literalFormat = splitLiteralPlusargFormat(literal.getConstantValue(), bad);
+    if (!literalFormat) {
+      emitError(getSemanticLocation(children[0]))
+          << "invalid $value$plusargs format '" << bad << "'";
+      return failure();
+    }
+  } else {
+    FailureOr<Value> lowered = lowerExpression(children[0]);
+    if (failed(lowered))
+      return failure();
+    FailureOr<Value> converted =
+        convert(*lowered, stringType, isSignedNode(children[0]), location);
+    if (failed(converted))
+      return failure();
+    dynamicFormat = *converted;
   }
 
   Operation *actual = children[1];
@@ -146,22 +177,69 @@ UnitLowering::lowerPlusargSystemCall(semantic::SVCallExpressionOp op) {
   }
   Type destinationType = getReferenceElementType(*destination);
 
-  Value prefix = sim::SimStringLiteralOp::create(
-      builder, location, stringType, format.substr(0, percent));
-  auto query = sim::SimPlusargValueOp::create(
-      builder, location, TypeRange{stringType, i32}, context, prefix);
+  Value tail;
+  Value conversion;
+  Value queryFound;
+  if (literalFormat) {
+    Value prefix = sim::SimStringLiteralOp::create(
+        builder, location, stringType, literalFormat->prefix);
+    auto query = sim::SimPlusargValueOp::create(
+        builder, location, TypeRange{stringType, i32}, context, prefix);
+    tail = query.getTail();
+    queryFound = query.getFound();
+  } else {
+    auto query = sim::SimPlusargScanOp::create(
+        builder, location, TypeRange{stringType, i32, i32}, context,
+        dynamicFormat);
+    tail = query.getTail();
+    conversion = query.getConversion();
+    queryFound = query.getFound();
+  }
 
-  Value parsed;
-  if (*radix == kStringRadix)
-    parsed = query.getTail();
-  else if (*radix == kRealRadix)
-    parsed = sim::SimStringParseRealOp::create(
-        builder, location, builder.getF64Type(), query.getTail());
-  else
-    parsed = sim::SimStringParseIntegerOp::create(
-        builder, location, builder.getI64Type(), query.getTail(), *radix);
-  FailureOr<Value> converted =
-      convert(parsed, destinationType, *radix != kStringRadix, location);
+  auto parseAndConvert = [&](unsigned radix) -> FailureOr<Value> {
+    Value parsed;
+    if (radix == kStringRadix)
+      parsed = tail;
+    else if (radix == kRealRadix)
+      parsed = sim::SimStringParseRealOp::create(
+          builder, location, builder.getF64Type(), tail);
+    else
+      parsed = sim::SimStringParseLogicOp::create(
+          builder, location,
+          sim::LogicType::get(function.getContext(), 64), tail, radix);
+    return convert(parsed, destinationType, radix != kStringRadix, location);
+  };
+
+  FailureOr<Value> converted;
+  Value validConversion;
+  auto kindIs = [&](unsigned kind) -> Value {
+    Value expected = arith::ConstantOp::create(
+        builder, location, i32, builder.getI32IntegerAttr(kind));
+    return arith::CmpIOp::create(builder, location,
+                                 arith::CmpIPredicate::eq, conversion,
+                                 expected);
+  };
+  if (literalFormat) {
+    converted = parseAndConvert(literalFormat->conversion);
+  } else if (isa<FloatType>(destinationType)) {
+    converted = parseAndConvert(kRealRadix);
+    validConversion = kindIs(kRealRadix);
+  } else if (isa<sim::StringType>(destinationType)) {
+    converted = parseAndConvert(kStringRadix);
+    validConversion = kindIs(kStringRadix);
+  } else {
+    converted = parseAndConvert(kStringRadix);
+    if (failed(converted))
+      return failure();
+    for (unsigned radix : {2u, 8u, 10u, 16u, kRealRadix}) {
+      FailureOr<Value> candidate = parseAndConvert(radix);
+      if (failed(candidate))
+        return failure();
+      converted = arith::SelectOp::create(builder, location, kindIs(radix),
+                                          *candidate, *converted)
+                      .getResult();
+    }
+  }
   if (failed(converted))
     return failure();
 
@@ -173,13 +251,16 @@ UnitLowering::lowerPlusargSystemCall(semantic::SVCallExpressionOp op) {
   Value zero = arith::ConstantOp::create(builder, location, i32,
                                          builder.getIntegerAttr(i32, 0));
   Value found = arith::CmpIOp::create(builder, location,
-                                      arith::CmpIPredicate::ne,
-                                      query.getFound(), zero);
+                                      arith::CmpIPredicate::ne, queryFound,
+                                      zero);
+  if (validConversion)
+    found = arith::AndIOp::create(builder, location, found, validConversion);
   Value updated = arith::SelectOp::create(builder, location, found, *converted,
                                           *current);
   if (failed(storeReference(*destination, updated, location)))
     return failure();
-  return convertResult(query.getFound());
+  Value result = arith::ExtUIOp::create(builder, location, i32, found);
+  return convertResult(result);
 }
 
 } // namespace obelisk::simlowering

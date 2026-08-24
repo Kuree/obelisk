@@ -21,7 +21,9 @@ in expectations assume.
 
 from __future__ import annotations
 
+import ast
 import re
+import shlex
 import tempfile
 from pathlib import Path
 from typing import NamedTuple
@@ -695,6 +697,37 @@ def detect_executes(descriptor: Path) -> bool:
         descriptor.read_text(encoding="utf-8", errors="replace")))
 
 
+def detect_run_args(descriptor: Path) -> list[str]:
+    """Return literal command-line arguments requested by ``test.execute``.
+
+    Verilator's driver treats each string in ``all_run_flags`` as shell text,
+    so one element may contain several plusargs.  Only literal lists of literal
+    strings are interpreted here; expressions involving driver state are left
+    alone instead of guessing at their value.
+    """
+    if not descriptor.exists():
+        return []
+    text = descriptor.read_text(encoding="utf-8", errors="replace")
+    for arguments in descriptor_calls(text, "execute"):
+        try:
+            call = ast.parse(f"_execute({arguments})", mode="eval").body
+        except SyntaxError:
+            continue
+        for keyword in call.keywords:
+            if keyword.arg != "all_run_flags":
+                continue
+            try:
+                flags = ast.literal_eval(keyword.value)
+            except (ValueError, TypeError):
+                return []
+            if not isinstance(flags, (list, tuple)) or not all(
+                    isinstance(flag, str) for flag in flags):
+                return []
+            return [argument for flag in flags
+                    for argument in shlex.split(flag)]
+    return []
+
+
 def make_top_shell(inputs: list[str], sim_time: int = SIM_TIME,
                    timing_loop: bool = False,
                    module_name: str = "top") -> str:
@@ -827,7 +860,9 @@ def judge_one(obelisk: str, top: Path, timeout: float,
         # that directory into the per-test temporary directory resolves those
         # reads without letting a test that writes a file touch the checkout.
         (Path(tmp) / "t").symlink_to(top.parent, target_is_directory=True)
-        result = runner.execute(str(binary), timeout, cwd=tmp)
+        result = runner.execute(
+            str(binary), timeout,
+            args=detect_run_args(top.with_suffix(".py")), cwd=tmp)
         if expectation.run_error:
             # The design builds and the run is what has to fail. A timeout is
             # not that failure: it means the run never reached a verdict.

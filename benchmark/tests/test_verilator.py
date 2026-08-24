@@ -157,6 +157,30 @@ class ExecutesDescriptorTest(unittest.TestCase):
             self.assertTrue(verilator.detect_executes(Path(tmp) / "absent.py"))
 
 
+class RunArgsDescriptorTest(unittest.TestCase):
+    def args(self, text: str) -> list[str]:
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            path = Path(tmp) / "t_x.py"
+            path.write_text(text, encoding="utf-8")
+            return verilator.detect_run_args(path)
+
+    def test_literal_run_flags_are_split_like_shell_text(self):
+        self.assertEqual(
+            self.args("test.execute(all_run_flags="
+                      "['+PLUS +INT=1234', '+IP%P101'])\n"),
+            ["+PLUS", "+INT=1234", "+IP%P101"],
+        )
+
+    def test_dynamic_run_flags_are_not_guessed(self):
+        self.assertEqual(
+            self.args("test.execute(all_run_flags=['+OUT=' + output])\n"), [])
+
+    def test_a_missing_descriptor_has_no_run_flags(self):
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            self.assertEqual(
+                verilator.detect_run_args(Path(tmp) / "absent.py"), [])
+
+
 class TimingLoopDescriptorTest(unittest.TestCase):
     def descriptor(self, text: str) -> bool:
         with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:

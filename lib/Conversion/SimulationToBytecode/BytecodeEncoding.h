@@ -60,6 +60,8 @@ constexpr uint32_t kIntrinsicTimeFormat = OBELISK_RT_INTRINSIC_V1_TIME_FORMAT;
 constexpr uint32_t kIntrinsicPlusargTest = OBELISK_RT_INTRINSIC_V1_PLUSARG_TEST;
 constexpr uint32_t kIntrinsicPlusargValue =
     OBELISK_RT_INTRINSIC_V1_PLUSARG_VALUE;
+constexpr uint32_t kIntrinsicPlusargScan =
+    OBELISK_RT_INTRINSIC_V1_PLUSARG_SCAN;
 constexpr uint32_t kIntrinsicFileClose = OBELISK_RT_INTRINSIC_V1_FILE_CLOSE;
 constexpr uint32_t kIntrinsicFileFlush = OBELISK_RT_INTRINSIC_V1_FILE_FLUSH;
 constexpr uint32_t kIntrinsicFileGetc = OBELISK_RT_INTRINSIC_V1_FILE_GETC;

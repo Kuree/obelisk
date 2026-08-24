@@ -364,6 +364,22 @@ bytecode and 72.112 seconds compile / 0.019 seconds simulate for native, with
 zero UVM errors or fatals. The full regression suite passes 1296/1296 tests
 and all 427 runtime tests.
 
+L12's sixteenth closure tranche implements runtime string-like formats for
+`$value$plusargs` under 21.6, including packed and `string` expressions,
+uppercase and leading-zero conversion spellings, four-state integral input,
+real and string destinations, and doubled-percent literals in the match
+prefix. Literal formats retain their existing compile-time split; a dynamic
+format is parsed once per call and performs one command-line scan, without
+speculative multi-prefix matching or generated-code expansion. The Verilator
+audit harness now also carries literal `all_run_flags` into the simulator, so
+the exact upstream `t_sys_plusargs` scenario is run with its required inputs
+and passes. The focused mixed-format case compiles in 0.04 seconds bytecode /
+0.11 seconds native and simulates below 0.01 seconds in either tier. The UVM
+smoke ran in 37.075 seconds compile / 0.182 seconds simulate for bytecode and
+74.918 seconds compile / 0.019 seconds simulate for native, with zero UVM
+errors or fatals and both compile times within the 10% gate. The full
+regression suite passes 1297/1297 tests and all 427 runtime tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -386,7 +402,7 @@ and all 427 runtime tests.
 | 18 Constrained random generation | Partial | Object streams, broad packed constraints, modes, finite domains, soft constraints, direct solve ordering, distributions, bounded `randc`, lifecycle hooks, and much of randsequence execute. The authoritative boundary is `docs/randomization-support.md`; R1-R7 below close the remaining standard surface without treating a solver resource cap as language semantics. |
 | 19 Functional coverage | Excluded | Explicitly outside this project goal. |
 | 20 Utility system tasks/functions | Partial | Simulation/time control—including compile-time `$timeunit` and `$timeprecision` scope queries plus every omitted and explicitly empty `$timeformat` argument—conversions, data/array queries, real math, bit-vector functions, severity, random distributions, most assertion control, and the implemented sampled functions execute. Missing normative families include `$system`, `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam`, the synchronous/asynchronous PLA tasks, the global-clock sampled functions, and complete assertion statistics/control behavior. |
-| 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning—including formatted-input field widths and assignment suppression plus `$fread` into fixed unpacked memories and captured dynamic, associative, and nested aggregate copy-out targets—read-memory, plusargs, and VCD/dumpports execute. `$writememb`/`$writememh` and formatting/file corner cases remain. |
+| 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning—including formatted-input field widths and assignment suppression plus `$fread` into fixed unpacked memories and captured dynamic, associative, and nested aggregate copy-out targets—read-memory, plusargs including runtime `$value$plusargs` formats, and VCD/dumpports execute. `$writememb`/`$writememh` and formatting/file corner cases remain. |
 | 22 Compiler directives | Executable for the audited surface | The Slang preprocessor implements the normative directive family. Directive persistence, separate-compilation-unit reset, and command-line default-timescale precedence have native/bytecode tests. Protected envelopes are a separate Clause 34 feature, not ordinary pragma acceptance. |
 | 23 Modules and hierarchy | Partial | ANSI/non-ANSI modules, parameters, ports, arrays, hierarchy, bind, and common upward references elaborate. External runs retain module-library lookup, port mismatch, hierarchical path, generate-scope, and parameter-binding failures that need clause-minimal reproducers and fixes. |
 | 24 Programs | Partial | Program instances and their Reactive/Re-Inactive/Re-NBA process home execute. The normative `$exit` program-control task is missing. |

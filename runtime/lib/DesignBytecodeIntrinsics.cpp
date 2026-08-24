@@ -3673,6 +3673,25 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_BYTECODE;
     return sentinel(1, found);
   }
+  case OBELISK_RT_INTRINSIC_V1_PLUSARG_SCAN: {
+    obelisk_rt_string_v1 format = 0;
+    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    if (!readString(inputRegister(0), format))
+      return OBELISK_RT_INVALID_BYTECODE;
+    if (!lane)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    obelisk_rt_string_v1 tail = 0;
+    uint32_t conversion = 0;
+    uint32_t found = 0;
+    obelisk_rt_status status = obelisk_rt_v1_plusarg_scan(
+        context, lane, format, &tail, &conversion, &found);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (!writeString(outputRegister(0), tail))
+      return OBELISK_RT_INVALID_BYTECODE;
+    status = sentinel(1, conversion);
+    return status == OBELISK_RT_OK ? sentinel(2, found) : status;
+  }
   case OBELISK_RT_INTRINSIC_V1_FILE_ERROR_STRING: {
     auto descriptor = scalar(0);
     obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);

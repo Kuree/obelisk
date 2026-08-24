@@ -850,6 +850,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_PLUSARG_VALUE = UINT32_C(0x00010111),
   OBELISK_RT_INTRINSIC_V1_FILE_SCAN_FIELD = UINT32_C(0x00010112),
   OBELISK_RT_INTRINSIC_V1_FILE_READMEM_TOKEN = UINT32_C(0x00010113),
+  OBELISK_RT_INTRINSIC_V1_PLUSARG_SCAN = UINT32_C(0x00010114),
   OBELISK_RT_INTRINSIC_V1_SPAWN = UINT32_C(0x00010200),
   OBELISK_RT_INTRINSIC_V1_NBA = UINT32_C(0x00010201),
   // Statically planned NBA. The final i64 input is the NBASiteAttr identity;
@@ -3728,6 +3729,12 @@ obelisk_rt_status obelisk_rt_v1_plusarg_value(obelisk_rt_context *context,
                                               obelisk_rt_string_v1 prefix,
                                               obelisk_rt_string_v1 *out_tail,
                                               uint32_t *out_found);
+// Parse a runtime $value$plusargs format. `out_conversion` is zero for string,
+// one for real, or the integral radix. Invalid formats report no match.
+obelisk_rt_status obelisk_rt_v1_plusarg_scan(
+    obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
+    obelisk_rt_string_v1 format, obelisk_rt_string_v1 *out_tail,
+    uint32_t *out_conversion, uint32_t *out_found);
 
 obelisk_rt_status obelisk_rt_v1_file_seek(obelisk_rt_context *context,
                                           uint32_t descriptor, int64_t offset,

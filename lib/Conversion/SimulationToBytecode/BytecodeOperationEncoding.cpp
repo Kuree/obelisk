@@ -152,6 +152,9 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   if (auto op = dyn_cast<sim::SimPlusargValueOp>(operation))
     return emitIntrinsic(plan, kIntrinsicPlusargValue, {op.getPrefix()},
                          {op.getTail(), op.getFound()});
+  if (auto op = dyn_cast<sim::SimPlusargScanOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicPlusargScan, {op.getFormat()},
+                         {op.getTail(), op.getConversion(), op.getFound()});
   if (auto op = dyn_cast<sim::SimFileErrorStringOp>(operation))
     return emitIntrinsic(plan, kIntrinsicFileErrorString, {op.getDescriptor()},
                          {op.getMessage(), op.getCode()});

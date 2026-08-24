@@ -1208,6 +1208,9 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_PLUSARG_VALUE:
     return site.inputCount == 1 && site.outputCount == 2 && string(input(0)) &&
            string(output(0)) && bits(output(1), 32);
+  case OBELISK_RT_INTRINSIC_V1_PLUSARG_SCAN:
+    return site.inputCount == 1 && site.outputCount == 3 && string(input(0)) &&
+           string(output(0)) && bits(output(1), 32) && bits(output(2), 32);
   case OBELISK_RT_INTRINSIC_V1_FILE_GETLINE_STRING:
   case OBELISK_RT_INTRINSIC_V1_FILE_ERROR_STRING:
     return site.inputCount == 1 && site.outputCount == 2 &&

@@ -604,6 +604,58 @@ public:
   }
 };
 
+class PlusargScanConversion final
+    : public OpConversionPattern<sim::SimPlusargScanOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimPlusargScanOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    Type i64 = rewriter.getI64Type();
+    Type i32 = rewriter.getI32Type();
+    Value tailOutput = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+    Value conversionOutput = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+    Value foundOutput = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          LLVM::ZeroOp::create(rewriter, op.getLoc(), i64),
+                          tailOutput, 8);
+    for (Value output : {conversionOutput, foundOutput})
+      LLVM::StoreOp::create(rewriter, op.getLoc(),
+                            LLVM::ZeroOp::create(rewriter, op.getLoc(), i32),
+                            output, 4);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_plusarg_scan"),
+            ValueRange{context, lane, adaptor.getFormat().front(), tailOutput,
+                       conversionOutput, foundOutput})
+            .getResult();
+    Value ok = arith::CmpIOp::create(
+        rewriter, op.getLoc(), arith::CmpIPredicate::eq, status,
+        llvmConstant(rewriter, op.getLoc(), i32, 0));
+    Value tail = LLVM::LoadOp::create(rewriter, op.getLoc(), i64, tailOutput, 8);
+    Value conversion =
+        LLVM::LoadOp::create(rewriter, op.getLoc(), i32, conversionOutput, 4);
+    Value found =
+        LLVM::LoadOp::create(rewriter, op.getLoc(), i32, foundOutput, 4);
+    rewriter.replaceOp(
+        op,
+        ValueRange{
+            arith::SelectOp::create(
+                rewriter, op.getLoc(), ok, tail,
+                LLVM::ZeroOp::create(rewriter, op.getLoc(), i64)),
+            arith::SelectOp::create(
+                rewriter, op.getLoc(), ok, conversion,
+                LLVM::ZeroOp::create(rewriter, op.getLoc(), i32)),
+            arith::SelectOp::create(
+                rewriter, op.getLoc(), ok, found,
+                LLVM::ZeroOp::create(rewriter, op.getLoc(), i32))});
+    return success();
+  }
+};
+
 // File queries that yield a managed string plus an i32 companion: the runtime
 // entry point takes the descriptor and two output pointers, and both results
 // fall back to zero when the call reports failure.
@@ -743,8 +795,8 @@ void populateManagedStringToLLVMConversionPatterns(
                StringLengthConversion, StringGetcConversion,
                StringCompareConversion, StringScanFieldConversion,
                FileScanFieldConversion, StringParseLogicConversion,
-               PlusargTestConversion,
-               PlusargValueConversion,
+               PlusargTestConversion, PlusargValueConversion,
+               PlusargScanConversion,
                StringDumpOpenConversion, StringDumpPortsConversion,
                StringDumpPortsControlConversion>(converter, context);
   patterns.add<StringFileOpenConversion<sim::SimFileOpenStringMCDOp>,
