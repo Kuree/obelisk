@@ -835,7 +835,8 @@ FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>>
 UnitLowering::outlineForkBranch(
     Operation *branch, uint64_t forkNode, unsigned branchIndex,
     bool captureReferences,
-    ArrayRef<std::pair<Operation *, Value>> expressionCaptures) {
+    ArrayRef<std::pair<Operation *, Value>> expressionCaptures,
+    ArrayRef<std::pair<Operation *, Value>> globalFutureCurrentCaptures) {
   auto design = function->getParentOfType<sim::SimDesignOp>();
   if (!design)
     return function.emitError("fork outlining requires a simulation design"),
@@ -854,6 +855,7 @@ UnitLowering::outlineForkBranch(
   argumentAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Context));
 
   DenseMap<Operation *, unsigned> expressionCaptureArguments;
+  DenseMap<Operation *, unsigned> globalFutureCurrentCaptureArguments;
   DenseSet<Operation *> expressionCaptureTrees;
   for (auto [expression, capture] : expressionCaptures) {
     if (!expression || !capture ||
@@ -865,6 +867,15 @@ UnitLowering::outlineForkBranch(
     argumentAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Formal));
     expression->walk(
         [&](Operation *nested) { expressionCaptureTrees.insert(nested); });
+  }
+  for (auto [call, capture] : globalFutureCurrentCaptures) {
+    if (!call || !capture ||
+        !globalFutureCurrentCaptureArguments.try_emplace(call, inputs.size())
+             .second)
+      continue;
+    inputs.push_back(capture.getType());
+    captures.push_back(capture);
+    argumentAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Formal));
   }
 
   llvm::StringSet<> capturedPaths;
@@ -1108,6 +1119,13 @@ UnitLowering::outlineForkBranch(
                              FunctionType::get(context, inputs, TypeRange{}),
                              sim::EntryKind::Fork, attributes, argumentAttrs);
   SymbolTable::setSymbolVisibility(outlined, SymbolTable::Visibility::Private);
+  // Future sampled-value calls are only legal while lowering the detached
+  // resolver.  Make that context visible before lowering the cloned branch;
+  // the caller cannot attach the marker after outlineForkBranch returns
+  // because nested lowering is completed inside this routine.
+  if (branch->hasAttr("obelisk_sim.global_future_resolver"))
+    outlined->setAttr("obelisk_sim.global_future_resolver",
+                      outlineBuilder.getUnitAttr());
 
   OpBuilder bodyBuilder = OpBuilder::atBlockEnd(&outlined.getBody().front());
   IRMapping mapping;
@@ -1122,6 +1140,17 @@ UnitLowering::outlineForkBranch(
              failure();
     }
     nested.expressionCaptures[cloned] = outlined.getArgument(argument);
+  }
+  for (auto [call, argument] : globalFutureCurrentCaptureArguments) {
+    Operation *cloned = mapping.lookupOrNull(call);
+    if (!cloned) {
+      outlined.erase();
+      return emitError(location)
+                 << "outlined global-future call is outside the branch",
+             failure();
+    }
+    nested.globalFutureCurrentCaptures[cloned] =
+        outlined.getArgument(argument);
   }
   if (failed(nested.lower({root}))) {
     outlined.erase();

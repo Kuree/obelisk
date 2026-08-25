@@ -1283,10 +1283,25 @@ one commit.
     five `$q_*` stochastic-queue calls, and all sixteen synchronous/asynchronous
     PLA tasks execute with exact argument, ordering, four-state, scheduling,
     statistics, and Table 20-11 status behavior.
-18. **L18 — Global sampled functions (20.13).** Implement the complete
-    `$past_gclk`, `$future_gclk`, `$rising_gclk`, `$falling_gclk`,
-    `$stable_gclk`, `$changed_gclk`, `$steady_gclk`, and `$changing_gclk`
-    family on global-clock samples.
+18. **L18 — Global sampled functions (20.13), completed.** All ten functions,
+    `$past_gclk`, `$rose_gclk`, `$fell_gclk`, `$stable_gclk`,
+    `$changed_gclk`, `$future_gclk`, `$rising_gclk`, `$falling_gclk`,
+    `$steady_gclk`, and `$changing_gclk`, execute on the hierarchically frozen
+    global clock. Past-side reads use the strictly prior global occurrence and
+    preserve exact four-state value and transition semantics. Future-side
+    property/sequence calls detach a completed endpoint attempt, wait for the
+    nearest strictly later global occurrence, and dispatch its action in
+    Reactive even if assertion disable or Kill arrives after that endpoint.
+    The executable future boundary is a one-cycle Boolean property/sequence or
+    same-tick overlapped implication with direct global sampled operands;
+    nesting, match items and multicycle composition receive targeted
+    diagnostics rather than approximate scheduling. The feature-local
+    resolver leaves ordinary simulation IR and three-tier ownership unchanged
+    (ordinary assertion IR is byte-identical). On the Generic O0 scale case,
+    64/128/256 future attempts compile in 0.33/0.62/1.40 seconds at
+    148/204/289 MB peak RSS and simulate 10,000 cycles in median
+    1.26/2.89/6.27 seconds. The 64-to-256 work counters grow 3.22x for
+    candidate scans and 3.27x for readiness calls, with no fallback rescans.
 19. **L19 — I/O completion (21).** Close the remaining format, scan,
     file-position, memory-range, plusarg, and VCD conformance cases.
     `$writememb`, `$writememh`, and default formatting of surplus arguments

@@ -1943,7 +1943,10 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
     }
     return lowerLiteral(op);
   }
-  if (op->hasAttr(clockingBlockEventAttrName)) {
+  auto globalSampledCall = dyn_cast<semantic::SVCallExpressionOp>(op);
+  if (op->hasAttr(clockingBlockEventAttrName) &&
+      (!globalSampledCall ||
+       !isGlobalSampledFunction(globalSampledCall.getCalleeName()))) {
     auto path = op->getAttrOfType<StringAttr>(clockingEventPathAttrName);
     if (!path) {
       emitError(getSemanticLocation(op))

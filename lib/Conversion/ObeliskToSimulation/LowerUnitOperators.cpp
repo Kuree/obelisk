@@ -237,6 +237,17 @@ FailureOr<Value> UnitLowering::lowerUnary(semantic::SVUnaryExpressionOp op) {
     Type unaryResult = normalized == sim::UnaryKind::LogicalNot
                            ? sim::getPackedScalarType(*resultType)
                            : (*input).getType();
+    // Slang declares the two value-returning global sampled functions as
+    // `bit`, while their frozen argument type preserves the required X/Z
+    // plane. Keep only that imported mismatch on a four-state unary result;
+    // ordinary context-determined logical negation retains its old shape.
+    if (normalized == sim::UnaryKind::LogicalNot) {
+      if (auto sampledCall =
+              dyn_cast<semantic::SVCallExpressionOp>(children.front());
+          sampledCall && (sampledCall.getCalleeName() == "$past_gclk" ||
+                          sampledCall.getCalleeName() == "$future_gclk"))
+        unaryResult = sim::LogicType::get(function.getContext(), 1);
+    }
     if (!unaryResult)
       return failure();
     Value value = sim::SimLogicUnaryOp::create(builder, location, unaryResult,

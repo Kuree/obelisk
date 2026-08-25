@@ -2844,6 +2844,275 @@ UnitLowering::lowerSequenceEndpointMonitor(ArrayRef<Operation *> roots) {
   return success();
 }
 
+struct GlobalFuturePropertyPlan {
+  FixedSequenceAlternatives property;
+  FixedSequenceAlternatives antecedent;
+  FixedSequenceAlternatives consequent;
+  bool implication = false;
+};
+
+static bool isGlobalFutureOneCycleAlternative(const FixedSequence &sequence) {
+  return sequence.ages.size() == 1 && !sequence.emptyMatch &&
+         !sequence.vacuousSuccess && !sequence.hasIntrinsicEndStrength &&
+         sequence.firstMatchBoundaries.empty() &&
+         sequence.ages.front().matchItems.empty();
+}
+
+static FailureOr<GlobalFuturePropertyPlan>
+compileGlobalFutureProperty(Operation *property, Operation *clock) {
+  GlobalFuturePropertyPlan result;
+  if (auto binary = dyn_cast<semantic::SVBinaryAssertionExprOp>(property);
+      binary && binary.getOperatorKind() ==
+                    semantic::SVAssertionBinaryOperator::
+                        OverlappedImplication) {
+    SmallVector<Operation *> operands = getChildren(binary);
+    if (operands.size() != 2)
+      return failure();
+    FailureOr<FixedSequenceAlternatives> lhs =
+        compileFixedSequenceAlternatives(operands.front(), clock);
+    FailureOr<FixedSequenceAlternatives> rhs =
+        compileFixedSequenceAlternatives(operands.back(), clock);
+    if (failed(lhs) || failed(rhs) || lhs->empty() || rhs->empty() ||
+        !llvm::all_of(*lhs, isGlobalFutureOneCycleAlternative) ||
+        !llvm::all_of(*rhs, isGlobalFutureOneCycleAlternative))
+      return failure();
+    result.antecedent = std::move(*lhs);
+    result.consequent = std::move(*rhs);
+    result.implication = true;
+    return result;
+  }
+
+  FailureOr<FixedSequenceAlternatives> compiled =
+      compileFixedSequenceAlternatives(property, clock);
+  if (failed(compiled) || compiled->empty() ||
+      !llvm::all_of(*compiled, isGlobalFutureOneCycleAlternative))
+    return failure();
+  result.property = std::move(*compiled);
+  return result;
+}
+
+LogicalResult UnitLowering::lowerGlobalFutureAssertionResolver(
+    semantic::SVConcurrentAssertionStatementOp op) {
+  Location location = getSemanticLocation(op);
+  SmallVector<Operation *> children = getChildren(op);
+  size_t prefix = 0;
+  if (op.getHasDefaultDisable()) {
+    if (children.empty())
+      return op.emitError("missing resolved default disable expression"),
+             failure();
+    ++prefix;
+  }
+  Operation *defaultClock = nullptr;
+  if (op.getDefaultClockingSymbolAttr()) {
+    if (prefix >= children.size())
+      return op.emitError("missing resolved default clock event"), failure();
+    defaultClock = children[prefix++];
+  }
+  size_t actionCount = static_cast<size_t>(op.getHasPassAction()) +
+                       static_cast<size_t>(op.getHasFailAction());
+  if (children.size() != prefix + 1 + actionCount)
+    return op.emitError("malformed global-future assertion inventory"),
+           failure();
+
+  Operation *property = unwrapAssertionInstance(children[prefix]);
+  Operation *clock = defaultClock;
+  if (auto clocking = dyn_cast_or_null<semantic::SVClockingAssertionExprOp>(
+          property)) {
+    SmallVector<Operation *> clocked = getChildren(clocking);
+    if (clocked.size() != 2)
+      return clocking.emitError("malformed clocked assertion"), failure();
+    clock = clocked.front();
+    property = unwrapAssertionInstance(clocked.back());
+  }
+  if (auto disabled =
+          dyn_cast_or_null<semantic::SVDisableIffAssertionExprOp>(property)) {
+    SmallVector<Operation *> nested = getChildren(disabled);
+    if (nested.size() != 2)
+      return disabled.emitError("malformed disable iff assertion"), failure();
+    property = unwrapAssertionInstance(nested.back());
+  }
+  if (!property || !clock)
+    return op.emitError("global-future assertion has no resolved property "
+                        "and assertion clock"),
+           failure();
+
+  SmallVector<semantic::SVCallExpressionOp> calls;
+  property->walk([&](semantic::SVCallExpressionOp call) {
+    if (isGlobalFutureSampledFunction(call.getCalleeName()))
+      calls.push_back(call);
+  });
+  if (calls.empty())
+    return op.emitError("global-future resolver has no future function"),
+           failure();
+
+  auto firstPath = calls.front()->getAttrOfType<StringAttr>(
+      clockingEventPathAttrName);
+  auto firstSymbol = calls.front()->getAttrOfType<SymbolRefAttr>(
+      clockingEventSymbolAttrName);
+  auto firstEdge = calls.front()->getAttrOfType<semantic::EdgeKindAttr>(
+      clockingEventEdgeAttrName);
+  if (!calls.front()->hasAttr(clockingBlockEventAttrName) || !firstPath ||
+      !firstSymbol || !firstEdge ||
+      calls.front()->hasAttr(clockingEventHasIffAttrName) ||
+      calls.front()->hasAttr(clockingEventListAttrName) ||
+      calls.front()->hasAttr(clockingEventMonitorRequiredAttrName))
+    return emitError(getSemanticLocation(calls.front()))
+               << "global-future sampled values currently require one direct "
+                  "global clock signal without iff",
+           failure();
+  for (semantic::SVCallExpressionOp call : calls) {
+    SmallVector<Operation *> arguments = getChildren(call);
+    if (call.getArgumentCount() != 1 || arguments.size() != 1)
+      return call.emitError("requires exactly one argument"), failure();
+    for (Operation *ancestor = call->getParentOp(); ancestor != property;
+         ancestor = ancestor->getParentOp())
+      if (auto parent = dyn_cast<semantic::SVCallExpressionOp>(ancestor);
+          parent && isGlobalFutureSampledFunction(parent.getCalleeName()))
+        return call.emitError(
+                   "global-future sampled functions cannot be nested"),
+               failure();
+    auto path = call->getAttrOfType<StringAttr>(clockingEventPathAttrName);
+    auto symbol =
+        call->getAttrOfType<SymbolRefAttr>(clockingEventSymbolAttrName);
+    auto edge = call->getAttrOfType<semantic::EdgeKindAttr>(
+        clockingEventEdgeAttrName);
+    if (!path || !symbol || !edge || path != firstPath ||
+        symbol != firstSymbol || edge != firstEdge)
+      return call.emitError(
+                 "global-future calls in one assertion must resolve to the "
+                 "same global clock"),
+             failure();
+  }
+
+  FailureOr<GlobalFuturePropertyPlan> plan =
+      compileGlobalFutureProperty(property, clock);
+  if (failed(plan))
+    return emitError(getSemanticLocation(property))
+               << "global-future sampled values currently require a "
+                  "one-cycle Boolean property/sequence or same-tick "
+                  "overlapped implication without match items",
+           failure();
+
+  FailureOr<Value> watched = lowerReferencedValue(
+      calls.front(), firstPath.getValue(), /*lvalue=*/true);
+  if (failed(watched))
+    return failure();
+  Block *resolve = addBlock();
+  auto suspend = sim::SimSuspendEdgeOp::create(
+      builder, location, static_cast<sim::EdgeKind>(firstEdge.getValue()),
+      *watched, ValueRange{}, sim::ContinuationSiteAttr{},
+      sim::EventRegionAttr::get(function.getContext(),
+                                sim::EventRegion::Reactive),
+      resolve);
+  suspend->setAttr("obelisk_sim.global_future_wait", builder.getUnitAttr());
+  setCurrent(resolve);
+
+  Value trueValue = arith::ConstantOp::create(
+      builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+  Value falseValue = arith::ConstantOp::create(
+      builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+  auto evaluateAge = [&](const FixedSequenceAge &age) -> FailureOr<Value> {
+    Value result = trueValue;
+    auto applyPredicate = [&](Operation *predicate,
+                              bool negated) -> LogicalResult {
+      FailureOr<Value> value = lowerExpression(predicate);
+      if (failed(value))
+        return failure();
+      FailureOr<Value> truth =
+          truthValue(*value, getSemanticLocation(predicate));
+      if (failed(truth))
+        return failure();
+      Value selected = *truth;
+      if (negated)
+        selected =
+            arith::XOrIOp::create(builder, location, selected, trueValue);
+      result = arith::AndIOp::create(builder, location, result, selected);
+      return success();
+    };
+    for (Operation *predicate : age.predicates)
+      if (failed(applyPredicate(predicate, false)))
+        return failure();
+    for (Operation *predicate : age.negatedPredicates)
+      if (failed(applyPredicate(predicate, true)))
+        return failure();
+    for (const FixedSequenceAge::CaseGuard &guard : age.caseGuards) {
+      FailureOr<Value> selector = lowerExpression(guard.selector);
+      if (failed(selector))
+        return failure();
+      FailureOr<Value> matched = lowerCaseLabel(
+          *selector, selector->getType(), guard.selector, guard.label,
+          semantic::SVCaseCondition::Normal);
+      if (failed(matched))
+        return failure();
+      Value selected = *matched;
+      if (guard.negated)
+        selected =
+            arith::XOrIOp::create(builder, location, selected, trueValue);
+      result = arith::AndIOp::create(builder, location, result, selected);
+    }
+    return result;
+  };
+  auto evaluateAlternatives =
+      [&](ArrayRef<FixedSequence> alternatives) -> FailureOr<Value> {
+    Value result = falseValue;
+    for (const FixedSequence &alternative : alternatives) {
+      FailureOr<Value> matched = evaluateAge(alternative.ages.front());
+      if (failed(matched))
+        return failure();
+      result = arith::OrIOp::create(builder, location, result, *matched);
+    }
+    return result;
+  };
+
+  FailureOr<Value> passed = failure();
+  if (plan->implication) {
+    FailureOr<Value> antecedent = evaluateAlternatives(plan->antecedent);
+    FailureOr<Value> consequent = evaluateAlternatives(plan->consequent);
+    if (failed(antecedent) || failed(consequent))
+      return failure();
+    Value notAntecedent =
+        arith::XOrIOp::create(builder, location, *antecedent, trueValue);
+    passed = arith::OrIOp::create(builder, location, notAntecedent,
+                                  *consequent)
+                 .getResult();
+  } else {
+    passed = evaluateAlternatives(plan->property);
+  }
+  if (failed(passed))
+    return failure();
+
+  Block *pass = addBlock();
+  Block *fail = addBlock();
+  Block *done = addBlock();
+  cf::CondBranchOp::create(builder, location, *passed, pass, ValueRange{}, fail,
+                           ValueRange{});
+  size_t actionBase = prefix + 1;
+  setCurrent(pass);
+  if (op.getHasPassAction() &&
+      failed(lowerStatement(children[actionBase])))
+    return failure();
+  emitBranch(done);
+  setCurrent(fail);
+  if (op.getHasFailAction()) {
+    if (failed(lowerStatement(
+            children[actionBase + static_cast<size_t>(op.getHasPassAction())])))
+      return failure();
+  } else if (op.getAssertionKind() == semantic::SVAssertionKind::Assert ||
+             op.getAssertionKind() == semantic::SVAssertionKind::Assume) {
+    emitDefaultAssertionFailure(location, "concurrent assertion");
+  }
+  emitBranch(done);
+  setCurrent(done);
+  sim::SimReturnOp::create(builder, location, ValueRange{});
+  function->setAttr("obelisk_sim.global_future_resolver",
+                    builder.getUnitAttr());
+  function->setAttr("obelisk_sim.detached_controls", builder.getUnitAttr());
+  function->setAttr("home_region",
+                    sim::EventRegionAttr::get(function.getContext(),
+                                              sim::EventRegion::Observed));
+  return success();
+}
+
 LogicalResult UnitLowering::lowerConcurrentAssertion(
     semantic::SVConcurrentAssertionStatementOp op) {
   Location location = getSemanticLocation(op);
@@ -2851,6 +3120,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     emitDefaultAssertionFailure(location, "concurrent assertion");
     return success();
   }
+  if (op->hasAttr("obelisk_sim.global_future_resolver"))
+    return lowerGlobalFutureAssertionResolver(op);
   SmallVector<Operation *> children = getChildren(op);
 
   bool expect = op.getAssertionKind() == semantic::SVAssertionKind::Expect;
@@ -3160,6 +3431,213 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   if (!property)
     return op.emitError("disable iff wraps an unsupported assertion instance"),
            failure();
+
+  SmallVector<semantic::SVCallExpressionOp> globalFutureCalls;
+  property->walk([&](semantic::SVCallExpressionOp call) {
+    if (isGlobalFutureSampledFunction(call.getCalleeName()))
+      globalFutureCalls.push_back(call);
+  });
+  if (!globalFutureCalls.empty()) {
+    if (expect || cover)
+      return emitError(getSemanticLocation(property))
+                 << "global-future sampled values are not lowered through "
+                    "expect or coverage monitors",
+             failure();
+    if (localInstance || multipleLocalInstances)
+      return emitError(getSemanticLocation(property))
+                 << "global-future sampled values cannot be combined with "
+                    "assertion locals or match items",
+             failure();
+    if (actionControlled)
+      return emitError(location)
+                 << "global-future delayed actions do not yet support "
+                    "dynamic assertion action-control selection",
+             failure();
+
+    FailureOr<GlobalFuturePropertyPlan> futurePlan =
+        compileGlobalFutureProperty(property, clock);
+    if (failed(futurePlan))
+      return emitError(getSemanticLocation(property))
+                 << "global-future sampled values currently require a "
+                    "one-cycle Boolean property/sequence or same-tick "
+                    "overlapped implication without match items",
+             failure();
+
+    Block *wait = addBlock();
+    emitBranch(wait);
+    Block *sample = addBlock();
+    setCurrent(wait);
+    if (failed(emitEventSuspend(clock, sample)))
+      return failure();
+    wait->getTerminator()->setAttr(
+        "resume_region",
+        sim::EventRegionAttr::get(function.getContext(),
+                                  sim::EventRegion::Observed));
+    setCurrent(sample);
+
+    Block *spawn = sample;
+    if (disable) {
+      FailureOr<Value> disabledValue = lowerExpression(disable);
+      if (failed(disabledValue))
+        return failure();
+      FailureOr<Value> disabled =
+          truthValue(*disabledValue, getSemanticLocation(disable));
+      if (failed(disabled))
+        return failure();
+      spawn = addBlock();
+      cf::CondBranchOp::create(builder, getSemanticLocation(disable), *disabled,
+                               wait, ValueRange{}, spawn, ValueRange{});
+      setCurrent(spawn);
+    }
+    if (Value enabled = queryAttemptEnabled()) {
+      Block *enabledSpawn = addBlock();
+      cf::CondBranchOp::create(builder, location, enabled, enabledSpawn,
+                               ValueRange{}, wait, ValueRange{});
+      spawn = enabledSpawn;
+      setCurrent(spawn);
+    }
+
+    SmallVector<std::pair<Operation *, Value>> expressionCaptures;
+    SmallVector<std::pair<Operation *, Value>> futureCurrentCaptures;
+    {
+    // The endpoint itself resumes in Observed, but every property operand is
+    // sampled in Preponed at that assertion clock. Keep disable iff above on
+    // its required unsampled path, then use the ordinary assertion sampling
+    // context for both current-only fragments and the transition baseline.
+    bool savedSampleAssertionValues = sampleAssertionValues;
+    Operation *savedSampledClock = activeSampledClock;
+    sampleAssertionValues = true;
+    activeSampledClock = clock;
+    llvm::scope_exit restoreSampling([&] {
+      sampleAssertionValues = savedSampleAssertionValues;
+      activeSampledClock = savedSampledClock;
+    });
+
+    SmallVector<Operation *> predicateRoots;
+    auto appendAlternativeRoots = [&](ArrayRef<FixedSequence> alternatives) {
+      for (const FixedSequence &alternative : alternatives) {
+        const FixedSequenceAge &age = alternative.ages.front();
+        llvm::append_range(predicateRoots, age.predicates);
+        llvm::append_range(predicateRoots, age.negatedPredicates);
+        for (const FixedSequenceAge::CaseGuard &guard : age.caseGuards) {
+          predicateRoots.push_back(guard.selector);
+          predicateRoots.push_back(guard.label);
+        }
+      }
+    };
+    if (futurePlan->implication) {
+      appendAlternativeRoots(futurePlan->antecedent);
+      appendAlternativeRoots(futurePlan->consequent);
+    } else {
+      appendAlternativeRoots(futurePlan->property);
+    }
+
+    DenseMap<Operation *, bool> containsFutureCache;
+    std::function<bool(Operation *)> containsFuture = [&](Operation *node) {
+      if (auto found = containsFutureCache.find(node);
+          found != containsFutureCache.end())
+        return found->second;
+      if (auto call = dyn_cast<semantic::SVCallExpressionOp>(node);
+          call && isGlobalFutureSampledFunction(call.getCalleeName())) {
+        containsFutureCache[node] = true;
+        return true;
+      }
+      bool found = llvm::any_of(getChildren(node), containsFuture);
+      containsFutureCache[node] = found;
+      return found;
+    };
+    DenseSet<Operation *> capturedExpressions;
+    std::function<LogicalResult(Operation *)> captureCurrentFragments =
+        [&](Operation *node) -> LogicalResult {
+      if (auto call = dyn_cast<semantic::SVCallExpressionOp>(node);
+          call && isGlobalFutureSampledFunction(call.getCalleeName()))
+        return success();
+      if (!containsFuture(node)) {
+        if (!capturedExpressions.insert(node).second)
+          return success();
+        FailureOr<Value> value = lowerExpression(node);
+        if (failed(value))
+          return failure();
+        expressionCaptures.emplace_back(node, *value);
+        return success();
+      }
+      for (Operation *child : getChildren(node))
+        if (failed(captureCurrentFragments(child)))
+          return failure();
+      return success();
+    };
+    for (Operation *root : predicateRoots)
+      if (failed(captureCurrentFragments(root)))
+        return failure();
+
+    for (semantic::SVCallExpressionOp call : globalFutureCalls) {
+      if (call.getCalleeName() == "$future_gclk")
+        continue;
+      SmallVector<Operation *> arguments = getChildren(call);
+      if (call.getArgumentCount() != 1 || arguments.size() != 1)
+        return call.emitError("requires exactly one argument"), failure();
+      FailureOr<Value> currentValue =
+          lowerSampledValue(arguments.front(), getSemanticLocation(call));
+      if (failed(currentValue))
+        return failure();
+      futureCurrentCaptures.emplace_back(call.getOperation(), *currentValue);
+    }
+    }
+
+    auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
+    uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
+    std::string identity = (function.getSymName() +
+                            ".$global_future_resolver." + Twine(node))
+                               .str();
+    Attribute previousCodeUnit =
+        op->getAttr("obelisk_sim.fork_code_unit_id");
+    Attribute previousCaptures = op->getAttr(calleeCapturesAttrName);
+    SmallVector<Attribute> capturePaths;
+    if (auto captures = dyn_cast_or_null<ArrayAttr>(previousCaptures))
+      llvm::append_range(capturePaths, captures);
+    // The resolved global clock is carried by frozen call metadata rather
+    // than a named-value child, so make its descriptor binding explicit in
+    // the outlined resolver inventory.
+    if (auto path = globalFutureCalls.front()->getAttrOfType<StringAttr>(
+            clockingEventPathAttrName))
+      capturePaths.push_back(path);
+    op->setAttr(calleeCapturesAttrName, builder.getArrayAttr(capturePaths));
+    op->setAttr("obelisk_sim.fork_code_unit_id",
+                builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+    op->setAttr("obelisk_sim.global_future_resolver", builder.getUnitAttr());
+    FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> resolver =
+        outlineForkBranch(op, node, /*branchIndex=*/32,
+                          /*captureReferences=*/true, expressionCaptures,
+                          futureCurrentCaptures);
+    op->removeAttr("obelisk_sim.global_future_resolver");
+    if (previousCaptures)
+      op->setAttr(calleeCapturesAttrName, previousCaptures);
+    else
+      op->removeAttr(calleeCapturesAttrName);
+    if (previousCodeUnit)
+      op->setAttr("obelisk_sim.fork_code_unit_id", previousCodeUnit);
+    else
+      op->removeAttr("obelisk_sim.fork_code_unit_id");
+    if (failed(resolver))
+      return failure();
+    resolver->first->setAttr("obelisk_sim.global_future_resolver",
+                             builder.getUnitAttr());
+    resolver->first->setAttr("obelisk_sim.detached_controls",
+                             builder.getUnitAttr());
+    resolver->first->setAttr("obelisk_sim.prime_on_spawn",
+                             builder.getUnitAttr());
+    resolver->first->setAttr(
+        "home_region",
+        sim::EventRegionAttr::get(function.getContext(),
+                                  sim::EventRegion::Observed));
+    sim::SimSpawnOp::create(builder, location,
+                            resolver->first.getSymNameAttr(), resolver->second,
+                            ArrayAttr{}, ArrayAttr{});
+    cf::BranchOp::create(builder, location, wait);
+    function->setAttr("obelisk_sim.global_future_monitor",
+                      builder.getUnitAttr());
+    return success();
+  }
 
   semantic::SVAbortAssertionExprOp abort;
   Operation *abortCondition = nullptr;

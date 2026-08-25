@@ -306,9 +306,12 @@ private:
                  ::mlir::Value receiverOverride = {});
   ::mlir::FailureOr<::mlir::Value>
   lowerSystemCall(semantic::SVCallExpressionOp op);
+  ::mlir::FailureOr<::mlir::Value>
+  lowerSampledValue(::mlir::Operation *expression,
+                    ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value> lowerAlternateClockSample(
       ::mlir::Operation *expression, ::mlir::Operation *gateExpression,
-      semantic::SVSignalEventControlOp clock, uint64_t depth, uint64_t age,
+      ::mlir::Operation *clock, uint64_t depth, uint64_t age,
       ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value> lowerClockingInputSample(
       ::mlir::Value source, uint64_t sourceDescriptor, ::mlir::Value clock,
@@ -359,6 +362,8 @@ private:
   lowerImmediateAssertion(semantic::SVImmediateAssertionStatementOp op);
   ::mlir::LogicalResult
   lowerConcurrentAssertion(semantic::SVConcurrentAssertionStatementOp op);
+  ::mlir::LogicalResult lowerGlobalFutureAssertionResolver(
+      semantic::SVConcurrentAssertionStatementOp op);
   ::mlir::LogicalResult
   lowerSequenceEndpointMonitor(::mlir::ArrayRef<::mlir::Operation *> roots);
   void emitDefaultAssertionFailure(
@@ -407,7 +412,9 @@ private:
       ::mlir::Operation *branch, uint64_t forkNode, unsigned branchIndex,
       bool captureReferences = false,
       ::mlir::ArrayRef<std::pair<::mlir::Operation *, ::mlir::Value>>
-          expressionCaptures = {});
+          expressionCaptures = {},
+      ::mlir::ArrayRef<std::pair<::mlir::Operation *, ::mlir::Value>>
+          globalFutureCurrentCaptures = {});
   ::mlir::FailureOr<
       std::pair<sim::SimFuncOp, ::mlir::SmallVector<::mlir::Value>>>
   outlinePostponedDisplay(semantic::SVCallExpressionOp call,
@@ -592,6 +599,10 @@ private:
   /// cloned expression. This is used when an expression's source-region value
   /// must not be recomputed in the callback's later scheduling region.
   ::llvm::DenseMap<::mlir::Operation *, ::mlir::Value> expressionCaptures;
+  /// Current-endpoint values paired with cloned global-future calls. The
+  /// detached resolver compares these values with the next global tick.
+  ::llvm::DenseMap<::mlir::Operation *, ::mlir::Value>
+      globalFutureCurrentCaptures;
   /// Lvalue roots replaced while applying a clocking-output selection to its
   /// real source storage or persistent net driver.
   ::llvm::DenseMap<::mlir::Operation *, ::mlir::Value> lvalueExpressionCaptures;

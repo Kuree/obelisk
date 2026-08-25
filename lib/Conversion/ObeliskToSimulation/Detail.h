@@ -375,6 +375,23 @@ inline constexpr ::mlir::StringLiteral observerDependenciesAttrName =
 inline constexpr ::mlir::StringLiteral sampledObserverAttrName =
     "obelisk_sim.sampled_observer";
 
+inline bool isGlobalPastSampledFunction(::llvm::StringRef name) {
+  return name == "$past_gclk" || name == "$rose_gclk" ||
+         name == "$fell_gclk" || name == "$stable_gclk" ||
+         name == "$changed_gclk";
+}
+
+inline bool isGlobalFutureSampledFunction(::llvm::StringRef name) {
+  return name == "$future_gclk" || name == "$rising_gclk" ||
+         name == "$falling_gclk" || name == "$steady_gclk" ||
+         name == "$changing_gclk";
+}
+
+inline bool isGlobalSampledFunction(::llvm::StringRef name) {
+  return isGlobalPastSampledFunction(name) ||
+         isGlobalFutureSampledFunction(name);
+}
+
 /// Frozen descriptor for an ordinary (non-virtual) clocking-block event.
 /// The frontend retains the clocking-block symbol as the expression's normal
 /// reference and records the statically resolved event signal separately so

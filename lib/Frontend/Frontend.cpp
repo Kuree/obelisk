@@ -1144,6 +1144,20 @@ private:
   std::optional<Type> getSemanticType(const Node &node) {
     if constexpr (std::derived_from<Node, slang::ast::Type>) {
       return typeConverter.convert(node);
+    } else if constexpr (std::same_as<std::remove_cvref_t<Node>,
+                                      slang::ast::CallExpression>) {
+      // Slang currently exposes the two value-returning global sampled
+      // functions as `bit`, although 16.9.4 defines each as the sampled value
+      // of its expression. Freeze the LRM result type in semantic IR so X/Z
+      // and widths survive independently of their use context. The eight
+      // transition/stability predicates intentionally retain Slang's bit
+      // result type.
+      StringRef name = node.getSubroutineName();
+      if (node.isSystemCall() &&
+          (name == "$past_gclk" || name == "$future_gclk") &&
+          node.arguments().size() == 1 && node.arguments().front())
+        return typeConverter.convert(*node.arguments().front()->type);
+      return typeConverter.convert(*node.type);
     } else if constexpr (std::derived_from<Node, slang::ast::Expression>) {
       return typeConverter.convert(*node.type);
     } else if constexpr (requires { node.getType(); }) {
@@ -1341,7 +1355,15 @@ private:
 
   const slang::ast::ClockingBlockSymbol *
   getGlobalClocking(const slang::ast::CallExpression &call) {
-    if (!call.isSystemCall() || call.getSubroutineName() != "$global_clock")
+    StringRef name = call.getSubroutineName();
+    bool usesGlobalClock =
+        name == "$global_clock" || name == "$past_gclk" ||
+        name == "$rose_gclk" || name == "$fell_gclk" ||
+        name == "$stable_gclk" || name == "$changed_gclk" ||
+        name == "$future_gclk" || name == "$rising_gclk" ||
+        name == "$falling_gclk" || name == "$steady_gclk" ||
+        name == "$changing_gclk";
+    if (!call.isSystemCall() || !usesGlobalClock)
       return nullptr;
     const auto *system =
         std::get_if<slang::ast::CallExpression::SystemCallInfo>(
