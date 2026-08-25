@@ -1004,8 +1004,7 @@ execute identically in native and bytecode tiers at O0 and O3. Each packed
 conversion lowers to one typed operation and an O(words) runtime loop;
 aggregates use one operation per scalar leaf so every leaf retains its own
 32-bit word padding. A 4097-bit MLIR regression prevents width-unrolled
-lowering. Formatted reads after the runtime's synthetic `$ungetc` byte remain
-an explicit L19 follow-up item.
+lowering.
 
 L19's fifth closure tranche extends raw formatted output `%u` and `%z` to
 recursively integral unpacked structures and untagged unions for every shared
@@ -1026,6 +1025,16 @@ raw-format operation. A
 128-leaf, 1000-iteration ordinary `%p` benchmark is unchanged from the prior
 path at 0.27 versus 0.28 seconds compile and 0.03 seconds simulation at about
 7 MB RSS.
+
+L19's sixth closure tranche lets `$fscanf` consume the one synthetic byte held
+by `$ungetc` for a descriptor opened without read access. Ordinary and raw
+fields share the same scanner state machines: `%c`, `%s`, prefixes, and
+explicit-width suppressed raw transfers can consume the byte; mismatches put
+it back; and a typed raw field reports partial-input EOF after consuming it.
+`$feof` and `$ftell` retain their synthetic-stream behavior. The ABI chooses
+one compile-time-specialized reader at entry, so ordinary readable scans keep
+direct `fgetc`/`ungetc` calls in their loops with no virtual dispatch or added
+allocation. Native and bytecode execution match at O0 and O3.
 
 ## Clause ledger
 

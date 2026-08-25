@@ -1999,6 +1999,131 @@ TEST_F(RuntimeTest, HoldsOnePushedBackByteWithoutReadAccess) {
   EXPECT_EQ(readHostFile(path), "after");
 }
 
+TEST_F(RuntimeTest, FormattedScansConsumeSyntheticPushback) {
+  TempDirectory temporary;
+  uint32_t descriptor = open(temporary.file("pushback-scan.bin"), "w");
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+
+  auto expectField = [&](obelisk_rt_string_v1 field,
+                         std::string_view expected) {
+    char scratch[8]{};
+    const char *bytes = nullptr;
+    uint64_t size = 0;
+    ASSERT_EQ(obelisk_rt_v1_string_view(field, scratch, &bytes, &size),
+              OBELISK_RT_OK);
+    EXPECT_EQ(std::string_view(bytes, size), expected);
+  };
+  auto expectPosition = [&] {
+    int64_t offset = -1;
+    ASSERT_EQ(obelisk_rt_v1_file_tell(context, descriptor, &offset),
+              OBELISK_RT_OK);
+    EXPECT_EQ(offset, 0);
+  };
+  auto expectEOF = [&](uint32_t expected) {
+    uint32_t isEOF = 2;
+    ASSERT_EQ(obelisk_rt_v1_file_eof(context, descriptor, &isEOF),
+              OBELISK_RT_OK);
+    EXPECT_EQ(isEOF, expected);
+  };
+
+  obelisk_rt_string_v1 field = 0;
+  uint32_t ok = 0;
+  uint32_t scanEOF = 0;
+  ASSERT_EQ(obelisk_rt_v1_file_ungetc(context, descriptor, 'Q'),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_file_scan_field(context, lane, descriptor, 1,
+                                          nullptr, 0, 'c', 0, &field, &ok,
+                                          &scanEOF),
+            OBELISK_RT_OK);
+  EXPECT_EQ(ok, 1u);
+  EXPECT_EQ(scanEOF, 0u);
+  expectField(field, "Q");
+  expectEOF(1);
+  expectPosition();
+
+  ASSERT_EQ(obelisk_rt_v1_file_ungetc(context, descriptor, 'S'),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_file_scan_field(context, lane, descriptor, 1,
+                                          nullptr, 0, 's', 0, &field, &ok,
+                                          &scanEOF),
+            OBELISK_RT_OK);
+  EXPECT_EQ(ok, 1u);
+  EXPECT_EQ(scanEOF, 0u);
+  expectField(field, "S");
+  expectEOF(1);
+  expectPosition();
+
+  // A failed numeric conversion must restore the synthetic byte just as
+  // ungetc() restores a byte on an ordinary readable stream.
+  ASSERT_EQ(obelisk_rt_v1_file_ungetc(context, descriptor, 'Q'),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_file_scan_field(context, lane, descriptor, 1,
+                                          nullptr, 0, 'd', 0, &field, &ok,
+                                          &scanEOF),
+            OBELISK_RT_OK);
+  EXPECT_EQ(ok, 0u);
+  EXPECT_EQ(scanEOF, 0u);
+  expectEOF(0);
+  uint8_t byte = 0;
+  ASSERT_EQ(obelisk_rt_v1_file_getc(context, descriptor, &byte),
+            OBELISK_RT_OK);
+  EXPECT_EQ(byte, 'Q');
+  expectEOF(1);
+  expectPosition();
+
+  // Prefix mismatch also puts the byte back; a matching prefix followed by
+  // zero-byte %m consumes it and can still succeed at synthetic EOF.
+  ASSERT_EQ(obelisk_rt_v1_file_ungetc(context, descriptor, 'Q'),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_file_scan_field(context, lane, descriptor, 1, "X",
+                                          1, 'm', 0, &field, &ok, &scanEOF),
+            OBELISK_RT_OK);
+  EXPECT_EQ(ok, 0u);
+  expectEOF(0);
+  ASSERT_EQ(obelisk_rt_v1_file_scan_field(context, lane, descriptor, 1, "Q",
+                                          1, 'm', 0, &field, &ok, &scanEOF),
+            OBELISK_RT_OK);
+  EXPECT_EQ(ok, 1u);
+  EXPECT_EQ(scanEOF, 0u);
+  expectEOF(1);
+  expectPosition();
+
+  // A suppressed raw field supplies its explicit byte count. A typed raw
+  // conversion needs a full native word; consuming the one available byte
+  // and then reaching EOF is a partial conversion, not a mismatch.
+  ASSERT_EQ(obelisk_rt_v1_file_ungetc(context, descriptor, 'Q'),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_file_scan_raw(
+                context, descriptor, 1, nullptr, 0, 1, 0, 0, 1, nullptr, 0,
+                nullptr, 0, &ok, &scanEOF),
+            OBELISK_RT_OK);
+  EXPECT_EQ(ok, 1u);
+  EXPECT_EQ(scanEOF, 0u);
+  expectEOF(1);
+  expectPosition();
+
+  uint32_t value = UINT32_MAX;
+  uint32_t unknown = UINT32_MAX;
+  ASSERT_EQ(obelisk_rt_v1_file_ungetc(context, descriptor, 'Q'),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_file_scan_raw(
+                context, descriptor, 1, nullptr, 0, 4, 32, 0, 0, &value,
+                sizeof(value), &unknown, sizeof(unknown), &ok, &scanEOF),
+            OBELISK_RT_OK);
+  EXPECT_EQ(ok, 0u);
+  EXPECT_EQ(scanEOF, 1u);
+  EXPECT_EQ(value, 0u);
+  EXPECT_EQ(unknown, 0u);
+  expectEOF(1);
+  expectPosition();
+
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
+}
+
 TEST_F(RuntimeTest, BoundsPackedLineReadsWithoutDiscardingRemainingBytes) {
   TempDirectory temporary;
   uint32_t descriptor = open(temporary.file("bounded-line.txt"), "w+");

@@ -105,31 +105,64 @@ bool scanDigit(int character, uint32_t radix) {
 
 enum class ScanResult { Match, Mismatch, EndOfFile, Error };
 
-ScanResult putBack(FILE *stream, int character) {
-  return character == EOF || std::ungetc(character, stream) != EOF
-             ? ScanResult::Match
-             : ScanResult::Error;
-}
+// Keep ordinary formatted file input on a direct libc path while allowing the
+// one byte held by $ungetc for a non-readable descriptor to use the same scan
+// state machine. The template removes the synthetic checks from every hot
+// readable-stream get/putback operation.
+template <bool Synthetic> class ScanReader {
+public:
+  explicit ScanReader(FileEntry &entry) : entry(entry) {}
 
-ScanResult scanFileField(FILE *stream, const char *prefix, uint64_t prefixSize,
-                         uint32_t specifier, uint64_t width,
-                         std::string &field) {
+  int get() {
+    if constexpr (Synthetic)
+      return takePushback(entry);
+    return std::fgetc(entry.stream);
+  }
+
+  ScanResult putBack(int character) {
+    if (character == EOF)
+      return ScanResult::Match;
+    if constexpr (Synthetic) {
+      if (entry.pushback >= 0)
+        return ScanResult::Error;
+      entry.pushback = static_cast<unsigned char>(character);
+      return ScanResult::Match;
+    }
+    return std::ungetc(character, entry.stream) != EOF ? ScanResult::Match
+                                                       : ScanResult::Error;
+  }
+
+  bool error() const {
+    if constexpr (Synthetic)
+      return false;
+    return std::ferror(entry.stream) != 0;
+  }
+
+private:
+  FileEntry &entry;
+};
+
+template <bool Synthetic>
+ScanResult scanFileField(FileEntry &entry, const char *prefix,
+                         uint64_t prefixSize, uint32_t specifier,
+                         uint64_t width, std::string &field) {
+  ScanReader<Synthetic> reader(entry);
   for (uint64_t position = 0; position != prefixSize; ++position) {
     unsigned char expected = static_cast<unsigned char>(prefix[position]);
     if (scanSpace(expected)) {
       int character;
       do {
-        character = std::fgetc(stream);
+        character = reader.get();
       } while (character != EOF && scanSpace(character));
-      if (putBack(stream, character) == ScanResult::Error)
+      if (reader.putBack(character) == ScanResult::Error)
         return ScanResult::Error;
       continue;
     }
-    int character = std::fgetc(stream);
+    int character = reader.get();
     if (character == EOF)
-      return std::ferror(stream) ? ScanResult::Error : ScanResult::EndOfFile;
+      return reader.error() ? ScanResult::Error : ScanResult::EndOfFile;
     if (character != expected) {
-      if (putBack(stream, character) == ScanResult::Error)
+      if (reader.putBack(character) == ScanResult::Error)
         return ScanResult::Error;
       return ScanResult::Mismatch;
     }
@@ -146,7 +179,7 @@ ScanResult scanFileField(FILE *stream, const char *prefix, uint64_t prefixSize,
   auto readFieldCharacter = [&]() {
     if (remaining == 0)
       return EOF;
-    int character = std::fgetc(stream);
+    int character = reader.get();
     if (character != EOF)
       --remaining;
     return character;
@@ -154,7 +187,7 @@ ScanResult scanFileField(FILE *stream, const char *prefix, uint64_t prefixSize,
   if (letter == 'c') {
     int character = readFieldCharacter();
     if (character == EOF)
-      return std::ferror(stream) ? ScanResult::Error : ScanResult::EndOfFile;
+      return reader.error() ? ScanResult::Error : ScanResult::EndOfFile;
     uint64_t count = width == 0 ? 1 : width;
     do {
       field.push_back(static_cast<char>(character));
@@ -164,13 +197,13 @@ ScanResult scanFileField(FILE *stream, const char *prefix, uint64_t prefixSize,
     } while (character != EOF);
     return ScanResult::Match;
   }
-  int character = std::fgetc(stream);
+  int character = reader.get();
   // Whitespace skipped by a conversion does not count toward its field
   // width, so read that prefix without the bounded helper.
   while (character != EOF && scanSpace(character))
-    character = std::fgetc(stream);
+    character = reader.get();
   if (character == EOF)
-    return std::ferror(stream) ? ScanResult::Error : ScanResult::EndOfFile;
+    return reader.error() ? ScanResult::Error : ScanResult::EndOfFile;
 
   remaining = width == 0 ? UINT64_MAX : width;
   if (remaining != UINT64_MAX)
@@ -181,8 +214,8 @@ ScanResult scanFileField(FILE *stream, const char *prefix, uint64_t prefixSize,
       field.push_back(static_cast<char>(character));
       character = readFieldCharacter();
     } while (character != EOF && !scanSpace(character));
-    return putBack(stream, character) == ScanResult::Error ? ScanResult::Error
-                                                           : ScanResult::Match;
+    return reader.putBack(character) == ScanResult::Error ? ScanResult::Error
+                                                          : ScanResult::Match;
   }
 
   if (letter == 'v') {
@@ -199,7 +232,8 @@ ScanResult scanFileField(FILE *stream, const char *prefix, uint64_t prefixSize,
       return ScanResult::Match;
     }
     for (auto iterator = field.rbegin(); iterator != field.rend(); ++iterator)
-      if (std::ungetc(static_cast<unsigned char>(*iterator), stream) == EOF)
+      if (reader.putBack(static_cast<unsigned char>(*iterator)) ==
+          ScanResult::Error)
         return ScanResult::Error;
     field.clear();
     return ScanResult::Mismatch;
@@ -243,11 +277,12 @@ ScanResult scanFileField(FILE *stream, const char *prefix, uint64_t prefixSize,
       character = readFieldCharacter();
     }
   }
-  if (putBack(stream, character) == ScanResult::Error)
+  if (reader.putBack(character) == ScanResult::Error)
     return ScanResult::Error;
   if (!haveDigit) {
     for (auto iterator = field.rbegin(); iterator != field.rend(); ++iterator)
-      if (std::ungetc(static_cast<unsigned char>(*iterator), stream) == EOF)
+      if (reader.putBack(static_cast<unsigned char>(*iterator)) ==
+          ScanResult::Error)
         return ScanResult::Error;
     field.clear();
     return ScanResult::Mismatch;
@@ -255,24 +290,27 @@ ScanResult scanFileField(FILE *stream, const char *prefix, uint64_t prefixSize,
   return ScanResult::Match;
 }
 
-ScanResult scanFileRaw(FILE *stream, const char *prefix, uint64_t prefixSize,
-                       uint64_t rawSize, uint64_t maxWidth, std::string &raw) {
+template <bool Synthetic>
+ScanResult scanFileRaw(FileEntry &entry, const char *prefix,
+                       uint64_t prefixSize, uint64_t rawSize,
+                       uint64_t maxWidth, std::string &raw) {
+  ScanReader<Synthetic> reader(entry);
   for (uint64_t position = 0; position != prefixSize; ++position) {
     unsigned char expected = static_cast<unsigned char>(prefix[position]);
     if (scanSpace(expected)) {
       int character;
       do {
-        character = std::fgetc(stream);
+        character = reader.get();
       } while (character != EOF && scanSpace(character));
-      if (putBack(stream, character) == ScanResult::Error)
+      if (reader.putBack(character) == ScanResult::Error)
         return ScanResult::Error;
       continue;
     }
-    int character = std::fgetc(stream);
+    int character = reader.get();
     if (character == EOF)
-      return std::ferror(stream) ? ScanResult::Error : ScanResult::EndOfFile;
+      return reader.error() ? ScanResult::Error : ScanResult::EndOfFile;
     if (character != expected) {
-      if (putBack(stream, character) == ScanResult::Error)
+      if (reader.putBack(character) == ScanResult::Error)
         return ScanResult::Error;
       return ScanResult::Mismatch;
     }
@@ -280,9 +318,9 @@ ScanResult scanFileRaw(FILE *stream, const char *prefix, uint64_t prefixSize,
   if (maxWidth != 0 && rawSize > maxWidth)
     return ScanResult::Mismatch;
   for (uint64_t index = 0; index != rawSize; ++index) {
-    int character = std::fgetc(stream);
+    int character = reader.get();
     if (character == EOF)
-      return std::ferror(stream) ? ScanResult::Error : ScanResult::EndOfFile;
+      return reader.error() ? ScanResult::Error : ScanResult::EndOfFile;
     raw.push_back(static_cast<char>(character));
   }
   return ScanResult::Match;
@@ -907,16 +945,17 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_scan_field(
     }
     if (status != OBELISK_RT_OK)
       return status;
-    // A formatted read needs a stream to scan and put characters back on; a
-    // lone pushed-back byte is left for $fgetc/$fgets instead.
-    if (!entry->readable) {
-      *outEOF = 1;
-      return OBELISK_RT_OK;
-    }
     std::string field;
     errno = 0;
-    ScanResult result = scanFileField(entry->stream, prefix, prefixSize,
-                                      specifier, width, field);
+    // Dispatch once so ordinary readable streams retain direct stdio calls in
+    // their specialized scan loop. A non-readable stream can still supply the
+    // one byte held by $ungetc, after which its synthetic reader reports EOF.
+    ScanResult result =
+        entry->readable
+            ? scanFileField<false>(*entry, prefix, prefixSize, specifier,
+                                   width, field)
+            : scanFileField<true>(*entry, prefix, prefixSize, specifier, width,
+                                  field);
     if (result == ScanResult::Error) {
       recordIOError(context, *entry, "formatted file read failed");
       return OBELISK_RT_IO_ERROR;
@@ -974,15 +1013,14 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_scan_raw(
     }
     if (status != OBELISK_RT_OK)
       return status;
-    if (!entry->readable) {
-      *outEOF = 1;
-      return OBELISK_RT_OK;
-    }
     std::string raw;
     raw.reserve(static_cast<size_t>(rawSize));
     errno = 0;
-    ScanResult result =
-        scanFileRaw(entry->stream, prefix, prefixSize, rawSize, maxWidth, raw);
+    ScanResult result = entry->readable
+                            ? scanFileRaw<false>(*entry, prefix, prefixSize,
+                                                 rawSize, maxWidth, raw)
+                            : scanFileRaw<true>(*entry, prefix, prefixSize,
+                                                rawSize, maxWidth, raw);
     if (result == ScanResult::Error) {
       recordIOError(context, *entry, "formatted raw file read failed");
       return OBELISK_RT_IO_ERROR;
