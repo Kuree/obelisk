@@ -12,10 +12,7 @@ module primitive_slice_sensitivity;
   endgenerate
 endmodule
 
-// Native primitive cohort fusion combines the four actors into one union
-// wait, but every watched operand must still be the selected scalar reference
-// rather than either complete four-bit capture.
-// CHECK: obelisk_sim.suspend.any
-// CHECK-SAME: edges [0, 0, 0, 0, 0, 0, 0, 0]
-// CHECK-SAME: : !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
+// The coalesced primitive kernel must suspend on all eight selected scalar
+// references, not on either complete four-bit capture.
+// CHECK: obelisk_sim.suspend.any {{.*}} : [[SCALAR:!obelisk_sim.ref<!obelisk_sim.logic<1>>]], [[SCALAR]], [[SCALAR]], [[SCALAR]], [[SCALAR]], [[SCALAR]], [[SCALAR]], [[SCALAR]], i1
 // CHECK-NOT: obelisk_sim.suspend.any {{.*}}packed_array
