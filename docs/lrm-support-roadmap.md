@@ -515,10 +515,11 @@ topology between native and bytecode execution. The previously blocked
 its oracle and is blocked only by the separately missing `%v` strength-aware
 formatter. The focused O3 case compiles in 0.04 seconds at 74 MB RSS for
 bytecode and 0.13 seconds at 80 MB RSS for native, then simulates below 0.01
-seconds in either tier. The UVM smoke ran in 40.715 seconds compile / 0.205
-seconds simulate for bytecode and 78.756 seconds compile / 0.020 seconds
-simulate for native, with zero UVM errors or fatals. The full regression suite
-passes 1306/1306 tests, including all 427 runtime tests.
+seconds in either tier. The uncontended integrated UVM smoke ran in 35.423
+seconds compile / 0.188 seconds simulate for bytecode and 73.788 seconds
+compile / 0.020 seconds simulate for native, with zero UVM errors or fatals.
+The full regression suite passes 1306/1306 tests, including all 427 runtime
+tests.
 
 G4's first closure tranche executes unconditional scalar parallel specify
 paths with one, two, or three static delay values, including specparam and
@@ -532,6 +533,19 @@ and SDF-controlled forms remain targeted diagnostics. The focused O3 case
 compiles in 0.15 seconds at 81 MB RSS for native and 0.05 seconds at 74 MB RSS
 for bytecode, then simulates below 0.01 seconds in either tier; upstream
 `specify2` now passes.
+
+The lexical-time audit now preserves the enclosing compilation-unit, package,
+class, or module time scope when `$printtimescale`, `$timeunit`, or
+`$timeprecision` appears inside a subroutine. Four upstream `br1003` cases now
+pass. Five apparent failures remain mandatory 3.14.2.3 diagnostics for designs
+that mix explicit and missing time units, and the remaining `br_gh782b` case is
+an isolated frontend parse issue. The focused native/bytecode O0/O3 cases
+compile in 0.19--0.27 seconds and simulate below 0.01 seconds without adding a
+runtime lookup or metadata to unrelated calls.
+
+After integrating the pass-switch, procedural-boundary, lexical-time, and
+specify-path audits, the full regression gate passes 1308/1308 tests. The UVM
+smoke remains green with the integrated times above and zero errors or fatals.
 
 ## Clause ledger
 
