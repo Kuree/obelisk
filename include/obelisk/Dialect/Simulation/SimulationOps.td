@@ -2878,7 +2878,7 @@ def SimReleaseOverrideOp : SimOp<"release_override", [
 }
 
 def SimNetExtractOp : SimOp<"net.extract", [Pure, ViewLikeOpInterface]> {
-  let summary = "constant packed view into a built-in net";
+  let summary = "constant packed or exact aggregate-element view into a built-in net";
   let arguments = (ins SimNetType:$input, I64Attr:$low_bit);
   let results = (outs SimNetType:$result);
   let assemblyFormat = "$input `from` $low_bit attr-dict `:` qualified(type($input)) `->` qualified(type($result))";

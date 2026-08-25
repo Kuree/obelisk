@@ -1699,6 +1699,52 @@ LogicalResult SimReleaseOverrideOp::verify() {
 LogicalResult SimNetExtractOp::verify() {
   Type inputType = getInput().getType().getElementType();
   Type resultType = getResult().getType().getElementType();
+  if (auto array = dyn_cast<UnpackedArrayType>(inputType)) {
+    if (getLowBitAttr().getValue().isNegative())
+      return emitOpError(
+          "aggregate selection must identify one exact unpacked array element");
+    unsigned count = getAggregateNumElements(array);
+    if (count == 0 || getAggregateElementType(array, 0) != resultType)
+      return emitOpError(
+          "aggregate selection must identify one exact unpacked array element");
+    uint64_t lowBit = getLowBitAttr().getValue().getZExtValue();
+    auto first = getAggregateProvenanceSubelement(array, 0);
+    if (!first || lowBit < first->first)
+      return emitOpError(
+          "aggregate selection must identify one exact unpacked array element");
+    uint64_t ordinal = 0;
+    if (count == 1) {
+      if (lowBit != first->first)
+        return emitOpError(
+            "aggregate selection must identify one exact unpacked array "
+            "element");
+    } else {
+      auto second = getAggregateProvenanceSubelement(array, 1);
+      if (!second || second->first <= first->first)
+        return emitOpError(
+            "aggregate selection must identify one exact unpacked array "
+            "element");
+      uint64_t stride = second->first - first->first;
+      uint64_t relative = lowBit - first->first;
+      if (relative % stride != 0)
+        return emitOpError(
+            "aggregate selection must identify one exact unpacked array "
+            "element");
+      ordinal = relative / stride;
+      if (ordinal >= count)
+        return emitOpError(
+            "aggregate selection must identify one exact unpacked array "
+            "element");
+    }
+    auto selected =
+        getAggregateProvenanceSubelement(array, static_cast<unsigned>(ordinal));
+    if (!selected || selected->first != lowBit ||
+        getAggregateElementType(array, static_cast<unsigned>(ordinal)) !=
+            resultType)
+      return emitOpError(
+          "aggregate selection must identify one exact unpacked array element");
+    return success();
+  }
   if (failed(verifyMatchingStateDomain(*this, inputType, resultType)))
     return failure();
   auto input = getPackedWidth(inputType);

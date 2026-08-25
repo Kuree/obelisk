@@ -4854,12 +4854,11 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
     return convert(byte, *resultType, false, location);
   }
 
-  // A built-in net has no aggregate view operations; only the flat packed
-  // window operations below apply to one. IEEE 1800-2017 11.5.1 makes a
-  // bit-select of a packed net exactly such a window, so a select that has to
-  // stay addressable -- an event expression per 9.4.2, or a force target --
-  // takes that path. A select that only needs a value instead reads the whole
-  // net and selects from the aggregate it read.
+  // A built-in net is represented by one flat descriptor. IEEE 1800-2017
+  // 11.5.1 makes a bit-select of a packed net one window of that descriptor;
+  // the exact fixed unpacked-array element case below can likewise name its
+  // flattened window. A select that only needs a value instead reads the whole
+  // net and selects from the aggregate value it read.
   bool netAggregateSelect =
       element && isa<sim::NetType>((*input).getType()) &&
       isa<sim::PackedArrayType, sim::UnpackedArrayType>(sourceValueType);
@@ -4868,6 +4867,66 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
     if (failed(input))
       return failure();
     netAggregateSelect = false;
+  }
+
+  // IEEE 1800-2017 10.6.2 permits force/release of a built-in net, and an
+  // in-range constant selection of a fixed unpacked net array names one such
+  // net element. Keep that identity as a direct view into the flattened net
+  // descriptor. The executable handle must be static: an unknown,
+  // out-of-range, or nonconstant unpacked index does not identify one stable
+  // descriptor window.
+  if (netAggregateSelect && isa<sim::UnpackedArrayType>(sourceValueType)) {
+    std::optional<StringRef> spelling = getConstantSpelling(children[1]);
+    if (!spelling) {
+      emitError(location)
+          << "an addressable fixed net-array selection requires a constant "
+             "index";
+      return failure();
+    }
+    FailureOr<Type> indexType = getNormalizedSemanticType(children[1]);
+    std::optional<unsigned> indexWidth =
+        succeeded(indexType) ? sim::getPackedWidth(*indexType) : std::nullopt;
+    if (failed(indexType) || !indexWidth)
+      return failure();
+    FailureOr<ParsedConstant> parsed =
+        parseSVInteger(*spelling, *indexWidth, location);
+    if (failed(parsed))
+      return failure();
+    if (!parsed->unknown.isZero()) {
+      emitError(location)
+          << "an addressable fixed net-array selection requires a known "
+             "index";
+      return failure();
+    }
+    APInt index = isSignedNode(children[1])
+                      ? parsed->value.sextOrTrunc(65)
+                      : parsed->value.zextOrTrunc(65);
+    std::optional<unsigned> ordinal;
+    if (index.isSignedIntN(64))
+      ordinal = sim::getArrayElementOrdinal(sourceValueType,
+                                            index.getSExtValue());
+    if (!ordinal) {
+      emitError(location)
+          << "an addressable fixed net-array selection requires an in-range "
+             "index";
+      return failure();
+    }
+    auto subelement =
+        sim::getAggregateProvenanceSubelement(sourceValueType, *ordinal);
+    if (!subelement ||
+        sim::getAggregateElementType(sourceValueType, *ordinal) !=
+            *resultType ||
+        subelement->first >
+            static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+      emitError(location)
+          << "fixed net-array element has no executable storage view";
+      return failure();
+    }
+    Type selected = sim::NetType::get(function.getContext(), *resultType);
+    return sim::SimNetExtractOp::create(
+               builder, location, selected, *input,
+               builder.getI64IntegerAttr(subelement->first))
+        .getResult();
   }
 
   // Fixed packed and unpacked arrays remain first-class aggregates. Their
