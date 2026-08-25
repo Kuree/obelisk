@@ -1642,7 +1642,12 @@ private:
         unitFs % precisionFs != 0)
       return false;
 
-    slang::ast::EvalContext evalContext(contextSymbol);
+    // IEEE 1800-2017 6.20.5 permits specparams in timing and delay
+    // expressions. Slang deliberately excludes specparams from an ordinary
+    // constant-evaluation context, so opt into them for the static
+    // propagation-delay snapshot taken at elaboration.
+    slang::ast::EvalContext evalContext(
+        contextSymbol, slang::ast::EvalFlags::SpecparamsAllowed);
     SmallVector<int64_t, 3> delays;
     for (const slang::ast::Expression *expression : expressions) {
       slang::ConstantValue value = expression->eval(evalContext);
