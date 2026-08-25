@@ -11,6 +11,11 @@ namespace obelisk {
 /// actor-local state or admitting behavior outside the static digital subset.
 bool isComputeBodyFusionEligible(sim::SimFuncOp function);
 
+/// Primitive-only union kernels additionally admit the UDP driver-state read
+/// and inertial publication operations that their materializer preserves.
+/// General and eval body fusion deliberately retain the narrower contract.
+bool isPrimitiveComputeBodyFusionEligible(sim::SimFuncOp function);
+
 /// Return continuation targets that can coexist in the Active ready set when
 /// the given sensitivity awakens. A constant-delay continuation is excluded
 /// only when graph activation edges prove it is the unique producer currently

@@ -12,6 +12,7 @@
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
+#include <limits>
 #include <type_traits>
 
 using namespace mlir;
@@ -123,7 +124,7 @@ std::optional<uint64_t> getStaticDriverID(Value value) {
       return std::nullopt;
     auto function =
         dyn_cast<sim::SimFuncOp>(argument.getOwner()->getParentOp());
-    if (!function)
+    if (!function || argument.getOwner() != &function.getBody().front())
       return std::nullopt;
     auto descriptor = function.getArgAttrOfType<IntegerAttr>(
         argument.getArgNumber(), sim::metadata::descriptorId);
@@ -131,6 +132,120 @@ std::optional<uint64_t> getStaticDriverID(Value value) {
                       : std::nullopt;
   }
   return std::nullopt;
+}
+
+struct ExactStaticDriverTarget {
+  uint64_t id;
+  uint64_t lowBit;
+
+  bool operator==(const ExactStaticDriverTarget &other) const {
+    return id == other.id && lowBit == other.lowBit;
+  }
+};
+
+std::optional<ExactStaticDriverTarget>
+getExactStaticDriverTarget(Value value, DenseSet<Value> &active,
+                           bool &cycle) {
+  if (!active.insert(value).second) {
+    cycle = true;
+    return std::nullopt;
+  }
+  auto done = [&](std::optional<ExactStaticDriverTarget> result) {
+    active.erase(value);
+    return result;
+  };
+  if (auto context = value.getDefiningOp<sim::SimContextDriverOp>())
+    return done(ExactStaticDriverTarget{context.getId(), 0});
+
+  Operation *definition = value.getDefiningOp();
+  uint64_t addedLowBit = 0;
+  Value input;
+  if (auto extract = dyn_cast_or_null<sim::SimDriverExtractOp>(definition)) {
+    addedLowBit = extract.getLowBit();
+    input = extract.getInput();
+  } else if (auto subelement =
+                 dyn_cast_or_null<sim::SimDriverSubelementOp>(definition)) {
+    Type current = subelement.getInput().getType().getElementType();
+    for (int64_t rawIndex : subelement.getIndices()) {
+      if (rawIndex < 0 || static_cast<uint64_t>(rawIndex) >=
+                              sim::getAggregateNumElements(current))
+        return done(std::nullopt);
+      auto item = sim::getAggregateProvenanceSubelement(
+          current, static_cast<unsigned>(rawIndex));
+      if (!item ||
+          item->first > std::numeric_limits<uint64_t>::max() - addedLowBit)
+        return done(std::nullopt);
+      addedLowBit += item->first;
+      current = sim::getAggregateElementType(current,
+                                             static_cast<unsigned>(rawIndex));
+    }
+    input = subelement.getInput();
+  }
+  if (input) {
+    auto target = getExactStaticDriverTarget(input, active, cycle);
+    if (!target ||
+        target->lowBit > std::numeric_limits<uint64_t>::max() - addedLowBit)
+      return done(std::nullopt);
+    target->lowBit += addedLowBit;
+    return done(target);
+  }
+
+  auto argument = dyn_cast<BlockArgument>(value);
+  if (!argument)
+    return done(std::nullopt);
+  if (auto function =
+          dyn_cast<sim::SimFuncOp>(argument.getOwner()->getParentOp())) {
+    if (argument.getOwner() == &function.getBody().front()) {
+      auto descriptor = function.getArgAttrOfType<IntegerAttr>(
+          argument.getArgNumber(), sim::metadata::descriptorId);
+      if (descriptor)
+        return done(ExactStaticDriverTarget{
+            static_cast<uint64_t>(descriptor.getInt()), 0});
+    }
+  }
+
+  // CFG cleanup may forward a concrete driver through conditional block
+  // arguments after compute fusion. Preserve exactness only when every
+  // incoming edge names the same statically-derived driver slice.
+  std::optional<ExactStaticDriverTarget> resolved;
+  bool sawIncoming = false;
+  bool sawCycle = false;
+  Block *block = argument.getOwner();
+  for (Block *predecessor : block->getPredecessors()) {
+    Operation *terminator = predecessor->getTerminator();
+    auto branch = dyn_cast<BranchOpInterface>(terminator);
+    if (!branch)
+      return done(std::nullopt);
+    for (unsigned successor = 0; successor != terminator->getNumSuccessors();
+         ++successor) {
+      if (terminator->getSuccessor(successor) != block)
+        continue;
+      SuccessorOperands operands = branch.getSuccessorOperands(successor);
+      unsigned index = argument.getArgNumber();
+      if (index >= operands.size() || operands.isOperandProduced(index))
+        return done(std::nullopt);
+      bool incomingCycle = false;
+      auto incoming =
+          getExactStaticDriverTarget(operands[index], active, incomingCycle);
+      if (!incoming && incomingCycle) {
+        sawCycle = true;
+        continue;
+      }
+      if (!incoming || (resolved && !(*resolved == *incoming)))
+        return done(std::nullopt);
+      resolved = incoming;
+      sawIncoming = true;
+    }
+  }
+  if (!resolved && sawCycle)
+    cycle = true;
+  return done(sawIncoming ? resolved : std::nullopt);
+}
+
+std::optional<ExactStaticDriverTarget> getExactStaticDriverTarget(Value value) {
+  DenseSet<Value> active;
+  bool cycle = false;
+  return getExactStaticDriverTarget(value, active, cycle);
 }
 
 template <typename DriveOp>
@@ -220,9 +335,8 @@ public:
               rewriter, op.getLoc(), pointer, contextAddress, 8);
           LLVM::CallOp::create(
               rewriter, op.getLoc(), TypeRange{},
-              SymbolRefAttr::get(
-                  rewriter.getContext(),
-                  "obelisk_rt_v1_scheduler_real_transition"),
+              SymbolRefAttr::get(rewriter.getContext(),
+                                 "obelisk_rt_v1_scheduler_real_transition"),
               ValueRange{runtimeContext, adaptor.getDriver().front(),
                          llvmConstant(rewriter, op.getLoc(),
                                       rewriter.getI32Type(), *sourceWidth),
@@ -240,19 +354,17 @@ public:
       return success();
     }
 
-    if constexpr (!std::is_same_v<DriveOp,
-                                  sim::SimDriverDriveDelayedNetOp>) {
+    if constexpr (!std::is_same_v<DriveOp, sim::SimDriverDriveDelayedNetOp>) {
       if (layout.hasPassSwitch) {
         auto driverID =
             op->template getAttrOfType<IntegerAttr>("obelisk.native.driver_id");
-        auto driver =
-            driverID
-                ? llvm::find_if(layout.driverLayouts,
-                                [&](const auto &candidate) {
-                                  return candidate.id == static_cast<uint64_t>(
-                                                             driverID.getInt());
-                                })
-                : layout.driverLayouts.end();
+        auto driver = driverID ? llvm::find_if(layout.driverLayouts,
+                                               [&](const auto &candidate) {
+                                                 return candidate.id ==
+                                                        static_cast<uint64_t>(
+                                                            driverID.getInt());
+                                               })
+                               : layout.driverLayouts.end();
         if (driver == layout.driverLayouts.end())
           return failure();
         uint64_t begin = driver->offset + driver->drivenLow;
@@ -262,8 +374,8 @@ public:
         Type i64 = rewriter.getI64Type();
         Value contextAddress = LLVM::AddressOfOp::create(
             rewriter, op.getLoc(), pointer, "__obelisk_current_context");
-        Value runtimeContext = LLVM::LoadOp::create(
-            rewriter, op.getLoc(), pointer, contextAddress, 8);
+        Value runtimeContext = LLVM::LoadOp::create(rewriter, op.getLoc(),
+                                                    pointer, contextAddress, 8);
         Value status =
             LLVM::CallOp::create(
                 rewriter, op.getLoc(), TypeRange{i32},
@@ -273,13 +385,11 @@ public:
                            llvmConstant(rewriter, op.getLoc(), i64, begin),
                            llvmConstant(rewriter, op.getLoc(), i64, end)})
                 .getResult();
-        LLVM::CallOp::create(
-            rewriter, op.getLoc(), TypeRange{},
-            SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_scheduler_fail"),
-            ValueRange{runtimeContext, status});
-        if constexpr (std::is_same_v<DriveOp,
-                                     sim::SimDriverDriveChangedOp>)
+        LLVM::CallOp::create(rewriter, op.getLoc(), TypeRange{},
+                             SymbolRefAttr::get(rewriter.getContext(),
+                                                "obelisk_rt_v1_scheduler_fail"),
+                             ValueRange{runtimeContext, status});
+        if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveChangedOp>)
           rewriter.replaceOp(op, rawChanged);
         else
           rewriter.eraseOp(op);
@@ -329,6 +439,20 @@ public:
     if (auto netID =
             op->template getAttrOfType<IntegerAttr>("obelisk.native.net_id"))
       affectedNet = netID.getInt();
+    const NativeStateLayout::Driver *exactDriver = nullptr;
+    if (op->hasAttr("obelisk.native.exact_driver_range")) {
+      auto driverID =
+          op->template getAttrOfType<IntegerAttr>("obelisk.native.driver_id");
+      if (!driverID)
+        return failure();
+      auto driver = llvm::find_if(layout.driverLayouts, [&](const auto &item) {
+        return item.id == static_cast<uint64_t>(driverID.getInt());
+      });
+      if (driver == layout.driverLayouts.end() ||
+          driver->drivenWidth != *sourceWidth)
+        return failure();
+      exactDriver = &*driver;
+    }
 
     // A statically addressed partial driver update can only change the
     // connectivity components reached by the bits written by this operation.
@@ -477,7 +601,13 @@ public:
     for (const NativeStateLayout::Net &net : layout.netLayouts) {
       if (affectedNet && net.id != *affectedNet)
         continue;
-      for (unsigned bit = 0; bit < net.width; ++bit) {
+      unsigned firstBit = exactDriver ? exactDriver->drivenLow : 0;
+      unsigned endBit = exactDriver
+                            ? exactDriver->drivenLow + exactDriver->drivenWidth
+                            : net.width;
+      if (endBit > net.width)
+        return failure();
+      for (unsigned bit = firstBit; bit < endBit; ++bit) {
         std::pair<uint64_t, uint64_t> logical{net.id, bit};
         auto foundCanonical = layout.connectivityCanonical.find(logical);
         std::pair<uint64_t, uint64_t> canonical =
@@ -820,23 +950,48 @@ void annotateStaticDriverNets(ModuleOp module,
     if (drive.getDriver().template getDefiningOp<sim::SimContextDriverOp>())
       drive->setAttr("obelisk.native.whole_driver",
                      UnitAttr::get(module.getContext()));
-    std::optional<uint64_t> driverID = getStaticDriverID(drive.getDriver());
+    std::optional<ExactStaticDriverTarget> exactTarget;
+    auto frozenID = drive->template getAttrOfType<IntegerAttr>(
+        "obelisk_sim.exact_driver_id");
+    auto frozenLow = drive->template getAttrOfType<IntegerAttr>(
+        "obelisk_sim.exact_driver_low");
+    if (frozenID && frozenLow && !frozenID.getValue().isNegative() &&
+        !frozenLow.getValue().isNegative() &&
+        frozenID.getValue().getActiveBits() <= 64 &&
+        frozenLow.getValue().getActiveBits() <= 64)
+      exactTarget = ExactStaticDriverTarget{
+          frozenID.getValue().getZExtValue(),
+          frozenLow.getValue().getZExtValue()};
+    else if (!frozenID && !frozenLow)
+      exactTarget = getExactStaticDriverTarget(drive.getDriver());
+    std::optional<uint64_t> driverID =
+        exactTarget ? std::optional<uint64_t>(exactTarget->id)
+                    : getStaticDriverID(drive.getDriver());
     if (!driverID)
       return;
     drive->setAttr(
         "obelisk.native.driver_id",
         IntegerAttr::get(IntegerType::get(module.getContext(), 64), *driverID));
+    std::optional<unsigned> valueWidth =
+        nativeStateWidth(drive.getValue().getType());
     for (const NativeStateLayout::Driver &driver : layout.driverLayouts) {
       if (driver.id != *driverID)
         continue;
-      if (std::optional<uint64_t> low =
-              getStaticDriverOffset(drive.getDriver(), *driverID))
+      std::optional<uint64_t> low =
+          exactTarget ? std::optional<uint64_t>(exactTarget->lowBit)
+                      : getStaticDriverOffset(drive.getDriver(), *driverID);
+      if (low)
         drive->setAttr(
             nativeDriverLowAttr,
             IntegerAttr::get(IntegerType::get(module.getContext(), 64), *low));
       drive->setAttr("obelisk.native.net_id",
                      IntegerAttr::get(IntegerType::get(module.getContext(), 64),
                                       driver.netId));
+      if (exactTarget && exactTarget->id == *driverID && valueWidth &&
+          *valueWidth == driver.drivenWidth &&
+          exactTarget->lowBit == driver.drivenLow)
+        drive->setAttr("obelisk.native.exact_driver_range",
+                       UnitAttr::get(module.getContext()));
       return;
     }
   };

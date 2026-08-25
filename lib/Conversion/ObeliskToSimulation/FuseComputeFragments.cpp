@@ -50,24 +50,38 @@ struct FusionCandidate {
   uint64_t instanceScope;
 };
 
-bool isStraightLineContinuous(sim::SimFuncOp function) {
+bool isStraightLineContinuous(sim::SimFuncOp function,
+                              bool primitiveDriverOps) {
   if (!function || function.getEntryKind() != sim::EntryKind::Continuous ||
       function.getBody().getBlocks().size() != 2 ||
-      !isComputeBodyFusionEligible(function))
+      !(primitiveDriverOps ? isPrimitiveComputeBodyFusionEligible(function)
+                           : isComputeBodyFusionEligible(function)))
     return false;
   Block &entry = function.getBody().front();
   Block &body = function.getBody().back();
   auto branch = dyn_cast<cf::BranchOp>(entry.getTerminator());
   if (!branch || branch.getDest() != &body ||
-      !branch.getDestOperands().empty() || body.getNumArguments() != 0)
+      branch.getDestOperands().size() != body.getNumArguments())
     return false;
+  if (!primitiveDriverOps &&
+      (!branch.getDestOperands().empty() || body.getNumArguments() != 0))
+    return false;
+  auto hasCompatibleState = [&](Operation *suspend) {
+    auto branch = cast<BranchOpInterface>(suspend);
+    OperandRange forwarded =
+        branch.getSuccessorOperands(0).getForwardedOperands();
+    return forwarded.size() == body.getNumArguments() &&
+           llvm::all_of(llvm::zip_equal(body.getArguments(), forwarded),
+                        [](auto pair) {
+                          return std::get<0>(pair).getType() ==
+                                 std::get<1>(pair).getType();
+                        });
+  };
   Operation *terminator = body.getTerminator();
   if (auto change = dyn_cast<sim::SimSuspendChangeOp>(terminator))
-    return change.getContinuation() == &body &&
-           change.getContinuationOperands().empty();
+    return change.getContinuation() == &body && hasCompatibleState(change);
   if (auto any = dyn_cast<sim::SimSuspendAnyOp>(terminator))
-    return any.getContinuation() == &body &&
-           any.getContinuationOperands().empty() &&
+    return any.getContinuation() == &body && hasCompatibleState(any) &&
            llvm::all_of(any.getEdges(), [](int32_t edge) {
              return edge == static_cast<int32_t>(sim::EdgeKind::Change);
            });
@@ -315,7 +329,8 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
     flush();
   }
   if (bodyFusion) {
-    llvm::MapVector<uint64_t, SmallVector<int64_t>> continuousByScope;
+    using CohortKey = std::pair<uint64_t, Attribute>;
+    llvm::MapVector<CohortKey, SmallVector<int64_t>> continuousByScope;
     llvm::SmallDenseSet<Operation *> seen;
     for (auto [index, attribute] : llvm::enumerate(nodes)) {
       auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
@@ -325,7 +340,7 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
         continue;
       sim::SimFuncOp function = design.lookupSymbol<sim::SimFuncOp>(
           fragment.getFunction().getValue());
-      if (!isStraightLineContinuous(function) ||
+      if (!isStraightLineContinuous(function, primitiveOnly) ||
           (primitiveOnly &&
            (!function->hasAttr("obelisk_sim.primitive_name") ||
             !entirelyNative.lookup(function.getOperation()))) ||
@@ -347,11 +362,15 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
       if (resume == resumeTargets.end() ||
           (!primitiveOnly && !acyclicActive.contains(resume->second)))
         continue;
-      continuousByScope[evalBodyFusion || primitiveOnly ? *instanceScope : 0]
+      Attribute primitive =
+          primitiveOnly ? function->getAttr("obelisk_sim.primitive_name")
+                        : Attribute{};
+      continuousByScope[{evalBodyFusion || primitiveOnly ? *instanceScope : 0,
+                         primitive}]
           .push_back(static_cast<int64_t>(index));
     }
-    for (auto &[scope, continuous] : continuousByScope) {
-      (void)scope;
+    for (auto &[key, continuous] : continuousByScope) {
+      (void)key;
       llvm::sort(continuous, [&](int64_t lhs, int64_t rhs) {
         return std::tie(scheduleOrder[resumeTargets.lookup(lhs)], lhs) <
                std::tie(scheduleOrder[resumeTargets.lookup(rhs)], rhs);

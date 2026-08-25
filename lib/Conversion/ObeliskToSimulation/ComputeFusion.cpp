@@ -9,8 +9,8 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace mlir;
@@ -38,6 +38,14 @@ bool isStaticDigitalType(Type type) {
 bool hasOnlyStaticDigitalValues(Operation *operation) {
   return llvm::all_of(operation->getOperandTypes(), isStaticDigitalType) &&
          llvm::all_of(operation->getResultTypes(), isStaticDigitalType);
+}
+
+bool hasOnlyStaticDigitalOrTimeValues(Operation *operation) {
+  auto eligible = [](Type type) {
+    return isStaticDigitalType(type) || isa<sim::TimeType>(type);
+  };
+  return llvm::all_of(operation->getOperandTypes(), eligible) &&
+         llvm::all_of(operation->getResultTypes(), eligible);
 }
 
 bool hasConcreteDescriptor(
@@ -83,9 +91,10 @@ bool rangesOverlap(sim::ComputeEffectAttr lhs, sim::ComputeEffectAttr rhs) {
   return lhs.getLow() < rhsEnd && rhs.getLow() < lhsEnd;
 }
 
-bool isComputeBodyFusionEligibleImpl(
-    sim::SimFuncOp function, llvm::DenseMap<Operation *, bool> &cache,
-    llvm::SmallPtrSetImpl<Operation *> &active) {
+bool isComputeBodyFusionEligibleImpl(sim::SimFuncOp function,
+                                     llvm::DenseMap<Operation *, bool> &cache,
+                                     llvm::SmallPtrSetImpl<Operation *> &active,
+                                     bool primitiveDriverOps) {
   if (!function || function.isExternal() ||
       !llvm::all_of(function.getFunctionType().getInputs(),
                     isStaticDigitalType))
@@ -121,7 +130,7 @@ bool isComputeBodyFusionEligibleImpl(
       eligible = callee && callee.getEntryKind() == sim::EntryKind::Function &&
                  hasOnlyStaticDigitalValues(operation) &&
                  hasConcreteHandleValues(operation, provenance) &&
-                 isComputeBodyFusionEligibleImpl(callee, cache, active);
+                 isComputeBodyFusionEligibleImpl(callee, cache, active, false);
       return;
     }
 
@@ -141,8 +150,20 @@ bool isComputeBodyFusionEligibleImpl(
       return;
     }
 
+    if (primitiveDriverOps && isa<sim::SimTimeConstantOp>(operation)) {
+      eligible = hasOnlyStaticDigitalOrTimeValues(operation);
+      return;
+    }
+
+    if (primitiveDriverOps && isa<sim::SimDriverDriveInertialOp>(operation)) {
+      eligible = hasOnlyStaticDigitalOrTimeValues(operation) &&
+                 hasConcreteHandleValues(operation, provenance);
+      return;
+    }
+
     if (isa<sim::SimRefLoadOp, sim::SimRefStoreOp, sim::SimNetReadOp,
-            sim::SimDriverDriveOp, sim::SimDriverDriveChangedOp>(operation)) {
+            sim::SimDriverDriveOp, sim::SimDriverDriveChangedOp>(operation) ||
+        (primitiveDriverOps && isa<sim::SimDriverReadOp>(operation))) {
       eligible = hasOnlyStaticDigitalValues(operation) &&
                  hasConcreteHandleValues(operation, provenance);
       return;
@@ -167,7 +188,13 @@ bool isComputeBodyFusionEligibleImpl(
 bool isComputeBodyFusionEligible(sim::SimFuncOp function) {
   llvm::DenseMap<Operation *, bool> cache;
   llvm::SmallPtrSet<Operation *, 8> active;
-  return isComputeBodyFusionEligibleImpl(function, cache, active);
+  return isComputeBodyFusionEligibleImpl(function, cache, active, false);
+}
+
+bool isPrimitiveComputeBodyFusionEligible(sim::SimFuncOp function) {
+  llvm::DenseMap<Operation *, bool> cache;
+  llvm::SmallPtrSet<Operation *, 8> active;
+  return isComputeBodyFusionEligibleImpl(function, cache, active, true);
 }
 
 SmallVector<uint32_t>

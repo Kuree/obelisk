@@ -1305,13 +1305,17 @@ one commit.
     bounded for large arrays: 256 and 1024 toggle UDPs compile at O3 in 0.71
     seconds / 170 MB and 3.44 seconds / 471 MB, then simulate 1000 cycles in
     2.34 seconds / 7 MB and 20.53 seconds / 18 MB. Their loop-carried previous
-    inputs currently exclude straight-line primitive coalescing. Forced-native
-    Generic O0 for even the smaller three-row form at 256 instances takes
-    68.50 seconds / 13.26 GB to compile and 11.82 seconds / 113 MB to simulate;
-    1024 is deliberately not attempted because that measured backend growth
-    is already OOM-unsafe.
-    Compact stateful-cohort lowering of this forced tier remains a performance
-    item, not a sequential-UDP semantic gap.
+    inputs use independent per-instance lanes in bounded stateful primitive
+    kernels with one shared noinline table evaluator. Forced-native Generic O0
+    now compiles the three-row 256- and 1024-instance toggle cohorts in 1.33
+    seconds / 607 MB and 5.63 seconds / 1.33 GB. Five same-affinity native runs
+    simulate 1000 cycles at medians of 0.34 seconds / 9.6 MB (0.34-0.72
+    seconds) and 1.64 seconds / 29 MB (1.63-2.07 seconds), respectively.
+    Static per-member driver resolution keeps generated resolver work linear
+    (96 resolver calls for 32 members across the three coroutine variants,
+    down from 3072 full-net calls). Existing stateless primitive kernels retain
+    their inline graph hot path and preexisting three-tier ownership; only
+    loop-carried stateful cohorts use the outlined evaluator.
 39. **G4 — Specify paths and pulse behavior (30).** Unconditional
     whole-terminal and fixed packed-select parallel/full multi-source paths
     with all static one/two/three/six/twelve-value transition-delay forms, all

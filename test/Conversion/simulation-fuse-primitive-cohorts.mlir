@@ -95,6 +95,7 @@ module {
 // CHUNK-NOT: obelisk_sim.func private @p1
 // CHUNK-NOT: obelisk_sim.func private @p2
 // CHUNK-NOT: obelisk_sim.func private @p3
+// CHUNK-NOT: .__member
 // LIMIT: error: 'obelisk_sim.design' op straight-line fusion member limit must be between 2 and 64
 
 // SCOPE-LABEL: obelisk_sim.design @different_scopes

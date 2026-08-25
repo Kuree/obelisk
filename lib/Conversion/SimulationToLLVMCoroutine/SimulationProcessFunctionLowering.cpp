@@ -267,6 +267,16 @@ prepareOrdinaryFunction(sim::SimFuncOp function) {
       function->getAttr("obelisk.eval.path_known_probe");
   Attribute evalPathKnownPredicate =
       function->getAttr("obelisk.eval.path_known_predicate");
+  ArrayAttr outlinedPassthrough;
+  if (function->hasAttr("obelisk_sim.outlined_primitive_member")) {
+    outlinedPassthrough = function->getAttrOfType<ArrayAttr>("passthrough");
+    if (!outlinedPassthrough || outlinedPassthrough.size() != 1 ||
+        outlinedPassthrough[0] !=
+            StringAttr::get(function.getContext(), "noinline"))
+      return function.emitError(
+                 "outlined primitive member must be marked noinline"),
+             failure();
+  }
   function.getContext()->getOrLoadDialect<func::FuncDialect>();
   OpBuilder builder(function.getContext());
   builder.setInsertionPoint(function);
@@ -282,6 +292,8 @@ prepareOrdinaryFunction(sim::SimFuncOp function) {
   replacement->setAttr("obelisk.native_scratch_size",
                        builder.getI64IntegerAttr(0));
   copyNativePartition(function, replacement);
+  if (outlinedPassthrough)
+    replacement->setAttr("passthrough", outlinedPassthrough);
   if (evalFourStateSource)
     replacement->setAttr("obelisk.eval.four_state_source", evalFourStateSource);
   if (evalPromotionRanges)

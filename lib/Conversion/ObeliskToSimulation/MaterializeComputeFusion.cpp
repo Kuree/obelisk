@@ -19,6 +19,7 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace mlir;
 
@@ -693,6 +694,65 @@ std::optional<uint64_t> resolveStorageRoot(Value value) {
   return std::nullopt;
 }
 
+struct ExactDriverSlice {
+  uint64_t id;
+  uint64_t lowBit;
+};
+
+/// Resolve a driver slice before CFG capture threading obscures its static
+/// provenance. The native backend validates the frozen ID/range against its
+/// independently-computed layout before using it as a resolution bound.
+std::optional<ExactDriverSlice> resolveExactDriverSlice(Value value) {
+  uint64_t lowBit = 0;
+  llvm::SmallDenseSet<Value, 8> visited;
+  while (value && visited.insert(value).second) {
+    if (auto argument = dyn_cast<BlockArgument>(value)) {
+      auto function =
+          dyn_cast<sim::SimFuncOp>(argument.getOwner()->getParentOp());
+      if (!function || argument.getOwner() != &function.getBody().front())
+        return std::nullopt;
+      auto descriptor = function.getArgAttrOfType<IntegerAttr>(
+          argument.getArgNumber(), sim::metadata::descriptorId);
+      if (!descriptor || descriptor.getValue().isNegative() ||
+          descriptor.getValue().getBitWidth() > 64)
+        return std::nullopt;
+      return ExactDriverSlice{descriptor.getValue().getZExtValue(), lowBit};
+    }
+    Operation *definition = value.getDefiningOp();
+    if (auto context = dyn_cast_or_null<sim::SimContextDriverOp>(definition))
+      return ExactDriverSlice{context.getId(), lowBit};
+    if (auto extract = dyn_cast_or_null<sim::SimDriverExtractOp>(definition)) {
+      if (extract.getLowBit() >
+          std::numeric_limits<uint64_t>::max() - lowBit)
+        return std::nullopt;
+      lowBit += extract.getLowBit();
+      value = extract.getInput();
+      continue;
+    }
+    if (auto subelement =
+            dyn_cast_or_null<sim::SimDriverSubelementOp>(definition)) {
+      Type current = subelement.getInput().getType().getElementType();
+      for (int64_t rawIndex : subelement.getIndices()) {
+        if (rawIndex < 0 || static_cast<uint64_t>(rawIndex) >=
+                                sim::getAggregateNumElements(current))
+          return std::nullopt;
+        auto child = sim::getAggregateProvenanceSubelement(
+            current, static_cast<unsigned>(rawIndex));
+        if (!child || child->first >
+                          std::numeric_limits<uint64_t>::max() - lowBit)
+          return std::nullopt;
+        lowBit += child->first;
+        current = sim::getAggregateElementType(
+            current, static_cast<unsigned>(rawIndex));
+      }
+      value = subelement.getInput();
+      continue;
+    }
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
 /// Promote a static procedure temporary when this fused function is its sole
 /// executable accessor and one store dominates every read. Such a declaration
 /// is state only because its source-level lifetime spans activations; if every
@@ -1026,6 +1086,8 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     Block *body;
     Operation *suspend;
     SmallVector<unsigned> fusedArguments;
+    SmallVector<Value> initialState;
+    SmallVector<Value> nextState;
     int64_t fragment;
     int64_t resumeTarget;
   };
@@ -1046,13 +1108,18 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     sim::SimFuncOp function =
         design.lookupSymbol<sim::SimFuncOp>(fragment.getFunction().getValue());
     auto spawns = spawnsByCallee.find(fragment.getFunction().getAttr());
+    bool primitive =
+        function && function->hasAttr("obelisk_sim.primitive_name");
     if (!function || function.getEntryKind() != sim::EntryKind::Continuous ||
-        !isComputeBodyFusionEligible(function) ||
+        !(primitive ? isPrimitiveComputeBodyFusionEligible(function)
+                    : isComputeBodyFusionEligible(function)) ||
         function.getBody().getBlocks().size() != 2 ||
         spawns == spawnsByCallee.end() || spawns->second.size() != 1)
       return failure();
     Block &entry = function.getBody().front();
     Block &body = function.getBody().back();
+    if (!primitive && body.getNumArguments() != 0)
+      return failure();
     auto branch = dyn_cast<cf::BranchOp>(entry.getTerminator());
     Operation *suspend = body.getTerminator();
     auto resume = resumeTargets.find(member);
@@ -1061,9 +1128,22 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       changeWait = llvm::all_of(any.getEdges(), [](int32_t edge) {
         return edge == static_cast<int32_t>(sim::EdgeKind::Change);
       });
+    if (!isa<sim::SimSuspendChangeOp, sim::SimSuspendAnyOp>(suspend))
+      return failure();
+    auto successorOperands = cast<BranchOpInterface>(suspend)
+                                 .getSuccessorOperands(0)
+                                 .getForwardedOperands();
     if (!branch || branch.getDest() != &body ||
-        !branch.getDestOperands().empty() || body.getNumArguments() != 0 ||
-        !isa<sim::SimSuspendChangeOp, sim::SimSuspendAnyOp>(suspend) ||
+        branch.getDestOperands().size() != body.getNumArguments() ||
+        successorOperands.size() != body.getNumArguments() ||
+        !llvm::all_of(llvm::zip_equal(body.getArguments(),
+                                      branch.getDestOperands(),
+                                      successorOperands),
+                      [](auto values) {
+                        Type type = std::get<0>(values).getType();
+                        return std::get<1>(values).getType() == type &&
+                               std::get<2>(values).getType() == type;
+                      }) ||
         suspend->getSuccessor(0) != &body || !changeWait ||
         resume == resumeTargets.end())
       return failure();
@@ -1080,13 +1160,14 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     });
     if (hasUntrackedPublication)
       return failure();
-    candidates.push_back({function,
-                          spawns->second.front(),
-                          &body,
-                          suspend,
-                          {},
-                          member,
-                          resume->second});
+    Candidate candidate{
+        function, spawns->second.front(), &body, suspend, {}, {}, {},
+        member,   resume->second};
+    candidate.initialState.append(branch.getDestOperands().begin(),
+                                  branch.getDestOperands().end());
+    candidate.nextState.append(successorOperands.begin(),
+                               successorOperands.end());
+    candidates.push_back(std::move(candidate));
   }
   if (candidates.size() < 2 || candidates.size() > 64)
     return failure();
@@ -1174,10 +1255,16 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
   }
   kernel->setAttr("obelisk.eval.source_owners",
                   builder.getArrayAttr(sourceOwners));
+  sim::SimFuncOp memberHelper;
+  sim::SimCodeUnitDeclOp memberHelperDeclaration;
   // The kernel is built incrementally, so any later rejection must remove the
   // partially populated symbol again. Leaving it behind would publish a
   // terminator-less function to a caller that only checks for success.
   auto bail = [&]() -> FailureOr<sim::SimFuncOp> {
+    if (memberHelper)
+      memberHelper.erase();
+    if (memberHelperDeclaration)
+      memberHelperDeclaration.erase();
     kernel.erase();
     return failure();
   };
@@ -1288,6 +1375,555 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       entryOperands.push_back(snapshot);
     }
   }
+
+  // Preserve the established stateless primitive/general kernel shape. The
+  // outlined evaluator exists solely to bound compile space for loop-carried
+  // stateful primitives; adding a noinline call to the existing acyclic hot
+  // path would trade away its straight-line native performance.
+  bool carriesState = llvm::any_of(candidates, [](const Candidate &candidate) {
+    return !candidate.initialState.empty();
+  });
+  if (!carriesState) {
+    cf::BranchOp::create(builder, kernel.getLoc(), body, entryOperands);
+
+    builder.setInsertionPointToStart(body);
+    Type maskType = builder.getI64Type();
+    Value dirty = arith::ConstantOp::create(builder, kernel.getLoc(), maskType,
+                                            builder.getI64IntegerAttr(0));
+    for (const Watch &watch : watchSnapshots) {
+      Value current = loadWatched(builder, kernel.getLoc(), watch.handle);
+      if (!current)
+        return bail();
+      Value equal = sim::SimLogicCompareOp::create(
+          builder, kernel.getLoc(), builder.getI1Type(),
+          sim::CompareKind::CaseEq, current, watch.previous);
+      Value changed = arith::XOrIOp::create(
+          builder, kernel.getLoc(), equal,
+          arith::ConstantOp::create(builder, kernel.getLoc(),
+                                    builder.getI1Type(),
+                                    builder.getBoolAttr(true)));
+      Value bit = arith::ConstantOp::create(
+          builder, kernel.getLoc(), maskType,
+          builder.getI64IntegerAttr(uint64_t{1} << watch.candidate));
+      Value selected =
+          arith::SelectOp::create(builder, kernel.getLoc(), changed, bit, dirty);
+      dirty = arith::OrIOp::create(builder, kernel.getLoc(), dirty, selected);
+    }
+    Value allDirty = arith::ConstantOp::create(
+        builder, kernel.getLoc(), maskType,
+        builder.getI64IntegerAttr(candidates.size() == 64
+                                      ? UINT64_MAX
+                                      : (uint64_t{1} << candidates.size()) - 1));
+    dirty = arith::SelectOp::create(builder, kernel.getLoc(), initialize,
+                                    allDirty, dirty);
+
+    SmallVector<uint64_t> downstreamMasks(candidates.size(), 0);
+    for (Attribute attribute : graph.getEdges()) {
+      auto edge = cast<sim::ComputeEdgeAttr>(attribute);
+      if (edge.getKind() != sim::ComputeEdgeKind::Sensitivity)
+        continue;
+      for (auto [sourceIndex, source] : llvm::enumerate(candidates)) {
+        if (edge.getSource() != source.resumeTarget)
+          continue;
+        for (auto [targetIndex, target] : llvm::enumerate(candidates)) {
+          if (edge.getTarget() != target.fragment)
+            continue;
+          if (targetIndex <= sourceIndex)
+            return bail();
+          downstreamMasks[sourceIndex] |= uint64_t{1} << targetIndex;
+        }
+      }
+    }
+
+    Value currentMask = dirty;
+    Block *test = body;
+    for (auto [candidateIndex, pair] :
+         llvm::enumerate(llvm::zip_equal(candidates, mappings))) {
+      auto &[candidate, mapping] = pair;
+      builder.setInsertionPointToEnd(test);
+      Value bit = arith::ConstantOp::create(
+          builder, kernel.getLoc(), maskType,
+          builder.getI64IntegerAttr(uint64_t{1} << candidateIndex));
+      Value selectedBits =
+          arith::AndIOp::create(builder, kernel.getLoc(), currentMask, bit);
+      Value selected = arith::CmpIOp::create(
+          builder, kernel.getLoc(), arith::CmpIPredicate::ne, selectedBits,
+          arith::ConstantOp::create(builder, kernel.getLoc(), maskType,
+                                    builder.getI64IntegerAttr(0)));
+      Block *execute = new Block;
+      Block *next = new Block;
+      BlockArgument nextMask = next->addArgument(maskType, kernel.getLoc());
+      kernel.getBody().push_back(execute);
+      kernel.getBody().push_back(next);
+      cf::CondBranchOp::create(builder, kernel.getLoc(), selected, execute,
+                               ValueRange{}, next, ValueRange{currentMask});
+
+      builder.setInsertionPointToStart(execute);
+      Value changed = arith::ConstantOp::create(
+          builder, kernel.getLoc(), builder.getI1Type(),
+          builder.getBoolAttr(false));
+      for (Operation &operation : candidate.body->without_terminator()) {
+        if (hoistedWatchOps.contains(&operation))
+          continue;
+        if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation)) {
+          auto replacement = sim::SimDriverDriveChangedOp::create(
+              builder, drive.getLoc(), mapping->lookup(drive.getDriver()),
+              mapping->lookup(drive.getValue()));
+          if (Attribute defer =
+                  drive->getAttr("obelisk_sim.defer_net_resolution"))
+            replacement->setAttr("obelisk_sim.defer_net_resolution", defer);
+          changed = arith::OrIOp::create(builder, drive.getLoc(), changed,
+                                         replacement.getChanged());
+        } else {
+          Operation *cloned = builder.clone(operation, *mapping);
+          if (auto drive = dyn_cast<sim::SimDriverDriveChangedOp>(cloned))
+            changed = arith::OrIOp::create(builder, drive.getLoc(), changed,
+                                           drive.getChanged());
+        }
+      }
+      Value nextValue = currentMask;
+      if (downstreamMasks[candidateIndex] != 0) {
+        Value downstream = arith::ConstantOp::create(
+            builder, kernel.getLoc(), maskType,
+            builder.getI64IntegerAttr(downstreamMasks[candidateIndex]));
+        Value propagated = arith::OrIOp::create(builder, kernel.getLoc(),
+                                                currentMask, downstream);
+        nextValue = arith::SelectOp::create(builder, kernel.getLoc(), changed,
+                                            propagated, currentMask);
+      }
+      cf::BranchOp::create(builder, kernel.getLoc(), next,
+                           ValueRange{nextValue});
+      test = next;
+      currentMask = nextMask;
+    }
+    builder.setInsertionPointToEnd(test);
+    cf::BranchOp::create(builder, kernel.getLoc(), wait);
+
+    SmallVector<Value> watched;
+    SmallVector<int32_t> edges;
+    for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings)) {
+      if (auto change = dyn_cast<sim::SimSuspendChangeOp>(candidate.suspend)) {
+        watched.push_back(mapping->lookup(change.getWatched()));
+        edges.push_back(static_cast<int32_t>(sim::EdgeKind::Change));
+      } else {
+        auto any = cast<sim::SimSuspendAnyOp>(candidate.suspend);
+        for (auto [value, edge] :
+             llvm::zip_equal(any.getWatched(), any.getEdges())) {
+          watched.push_back(mapping->lookup(value));
+          edges.push_back(edge);
+        }
+      }
+    }
+    builder.setInsertionPointToStart(wait);
+    Value resumed = arith::ConstantOp::create(
+        builder, kernel.getLoc(), builder.getI1Type(),
+        builder.getBoolAttr(false));
+    SmallVector<Value> waitOperands(watched);
+    waitOperands.push_back(resumed);
+    for (const Watch &watch : watchSnapshots) {
+      Value snapshot = loadWatched(builder, kernel.getLoc(), watch.handle);
+      if (!snapshot)
+        return bail();
+      waitOperands.push_back(snapshot);
+    }
+    sim::SimSuspendAnyOp::create(builder, kernel.getLoc(), waitOperands,
+                                 builder.getDenseI32ArrayAttr(edges),
+                                 sim::ContinuationSiteAttr{},
+                                 sim::EventRegionAttr{}, body);
+
+    builder.setInsertionPoint(insertionSpawn);
+    sim::SimSpawnOp::create(builder, kernel.getLoc(), kernel.getSymNameAttr(),
+                            operands, ArrayAttr{}, ArrayAttr{});
+    for (Candidate &candidate : candidates)
+      candidate.spawn.erase();
+    for (Candidate &candidate : candidates)
+      candidate.function.erase();
+    return kernel;
+  }
+
+  // Outline one shared zero-time member evaluator. Array instances have the
+  // same primitive body, but their statically selected ref/driver views carry
+  // different indices. Hoist those handles into the kernel and pass them (and
+  // all other body-external values) to one helper, so LLVM compiles the UDP
+  // table once per bounded cohort instead of cloning it into every coroutine
+  // arm and every coro resume/destroy split.
+  for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings))
+    for (Operation &operation : candidate.body->without_terminator())
+      for (Value operand : operation.getOperands())
+        if (isa<sim::RefType, sim::NetType, sim::DriverType>(
+                operand.getType()) &&
+            operand.getDefiningOp() &&
+            operand.getDefiningOp()->getBlock() == candidate.body &&
+            !mapWatchHandle(operand, *mapping, mapWatchHandle))
+          return bail();
+
+  SmallVector<SmallVector<Operation *>> memberOperations(candidates.size());
+  for (auto [index, candidate] : llvm::enumerate(candidates))
+    for (Operation &operation : candidate.body->without_terminator())
+      if (!hoistedWatchOps.contains(&operation))
+        memberOperations[index].push_back(&operation);
+  ArrayRef<Operation *> templateOperations = memberOperations.front();
+  auto areEquivalentMemberOperations = [](Operation *lhs, Operation *rhs) {
+    auto lhsInertial = dyn_cast<sim::SimDriverDriveInertialOp>(lhs);
+    auto rhsInertial = dyn_cast<sim::SimDriverDriveInertialOp>(rhs);
+    if (!lhsInertial && !rhsInertial)
+      return OperationEquivalence::isEquivalentTo(
+          lhs, rhs, OperationEquivalence::ignoreValueEquivalence, nullptr,
+          OperationEquivalence::IgnoreLocations);
+    if (!lhsInertial || !rhsInertial ||
+        lhs->getOperandTypes() != rhs->getOperandTypes() ||
+        lhs->getResultTypes() != rhs->getResultTypes() ||
+        lhs->getAttrs().size() != rhs->getAttrs().size())
+      return false;
+    for (NamedAttribute attribute : lhs->getAttrs()) {
+      if (attribute.getName() == "code_unit_id")
+        continue;
+      if (rhs->getAttr(attribute.getName()) != attribute.getValue())
+        return false;
+    }
+    return true;
+  };
+  for (ArrayRef<Operation *> operations :
+       ArrayRef(memberOperations).drop_front()) {
+    if (operations.size() != templateOperations.size())
+      return bail();
+    for (auto [templateOperation, operation] :
+         llvm::zip_equal(templateOperations, operations))
+      if (!areEquivalentMemberOperations(templateOperation, operation))
+        return bail();
+  }
+
+  SmallVector<unsigned> resolveDriveOperations;
+  SetVector<Value> resolveDrivers;
+  SmallVector<unsigned> deferredDriveOperations;
+  for (auto [operationIndex, operation] : llvm::enumerate(templateOperations))
+    if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation)) {
+      if (drive->hasAttr("obelisk_sim.defer_net_resolution"))
+        return bail();
+      if (resolveDrivers.insert(drive.getDriver()))
+        resolveDriveOperations.push_back(operationIndex);
+    } else if (isa<sim::SimDriverDriveInertialOp>(operation))
+      deferredDriveOperations.push_back(operationIndex);
+    else if (auto drive = dyn_cast<sim::SimDriverDriveChangedOp>(operation);
+             drive && !drive.getChanged().use_empty())
+      return bail();
+  // Sequential UDP lowering emits at most one unconditional inertial
+  // publication per activation. Keep that exact, auditable shape: additional
+  // sites need a richer returned-publication ABI and remain separate actors.
+  if (deferredDriveOperations.size() > 1)
+    return bail();
+  for (ArrayRef<Operation *> operations : memberOperations)
+    for (unsigned operationIndex : deferredDriveOperations) {
+      auto drive =
+          cast<sim::SimDriverDriveInertialOp>(operations[operationIndex]);
+      if (!drive.getRiseDelay().getDefiningOp<sim::SimTimeConstantOp>() ||
+          !drive.getFallDelay().getDefiningOp<sim::SimTimeConstantOp>() ||
+          !drive.getTurnoffDelay().getDefiningOp<sim::SimTimeConstantOp>())
+        return bail();
+    }
+
+  struct ResultIdentity {
+    unsigned operation;
+    unsigned result;
+  };
+  DenseMap<Value, ResultIdentity> internalResults;
+  for (auto [operationIndex, operation] : llvm::enumerate(templateOperations))
+    for (auto [resultIndex, result] : llvm::enumerate(operation->getResults()))
+      internalResults.try_emplace(
+          result, ResultIdentity{static_cast<unsigned>(operationIndex),
+                                 static_cast<unsigned>(resultIndex)});
+  std::string memberFingerprint;
+  llvm::raw_string_ostream fingerprint(memberFingerprint);
+  DenseMap<Value, unsigned> fingerprintExternals;
+  auto appendValueIdentity = [&](Value value) {
+    assert(value && "fingerprinted member value must exist");
+    if (auto result = internalResults.find(value);
+        result != internalResults.end())
+      fingerprint << 'r' << result->second.operation << '.'
+                  << result->second.result;
+    else if (auto argument = dyn_cast<BlockArgument>(value);
+             argument && argument.getOwner() == candidates.front().body)
+      fingerprint << 'b' << argument.getArgNumber();
+    else {
+      auto [external, inserted] =
+          fingerprintExternals.try_emplace(value, fingerprintExternals.size());
+      (void)inserted;
+      fingerprint << 'e' << external->second;
+    }
+    fingerprint << ':';
+    value.getType().print(fingerprint);
+  };
+  bool reusableMember = true;
+  for (auto [operationIndex, operation] : llvm::enumerate(templateOperations)) {
+    reusableMember &= operation->getNumRegions() == 0;
+    fingerprint << operation->getName().getStringRef() << '(';
+    for (Value operand : operation->getOperands()) {
+      appendValueIdentity(operand);
+      fingerprint << ',';
+    }
+    fingerprint << ")->(";
+    for (Type type : operation->getResultTypes()) {
+      type.print(fingerprint);
+      fingerprint << ',';
+    }
+    fingerprint << "){";
+    for (NamedAttribute attribute : operation->getAttrs()) {
+      if (isa<sim::SimDriverDriveInertialOp>(operation) &&
+          attribute.getName() == "code_unit_id")
+        continue;
+      fingerprint << attribute.getName().strref() << '=';
+      attribute.getValue().print(fingerprint);
+      fingerprint << ',';
+    }
+    fingerprint << "};";
+  }
+  fingerprint << "returns(";
+  for (Value state : candidates.front().nextState) {
+    appendValueIdentity(state);
+    fingerprint << ',';
+  }
+  for (unsigned operationIndex : deferredDriveOperations) {
+    auto drive =
+        cast<sim::SimDriverDriveInertialOp>(templateOperations[operationIndex]);
+    SmallVector<Value, 4> returned{drive.getValue(), drive.getRiseDelay(),
+                                   drive.getFallDelay(),
+                                   drive.getTurnoffDelay()};
+    for (Value value : returned) {
+      appendValueIdentity(value);
+      fingerprint << ',';
+    }
+  }
+  fingerprint << ");";
+  if (!reusableMember)
+    fingerprint << "unique=" << kernel.getSymName();
+  fingerprint.flush();
+  DenseMap<Value, unsigned> externalIndices;
+  SmallVector<SmallVector<Value>> memberExternals(candidates.size());
+  auto registerValues = [&](Value templateValue,
+                            ArrayRef<Value> values) -> LogicalResult {
+    if (isa<sim::ContextType>(templateValue.getType())) {
+      for (auto [member, value] : llvm::enumerate(values))
+        if (value !=
+            candidates[member].function.getBody().front().getArgument(0))
+          return failure();
+      return success();
+    }
+    auto internal = internalResults.find(templateValue);
+    if (internal != internalResults.end()) {
+      for (auto [member, value] : llvm::enumerate(values))
+        if (value !=
+            memberOperations[member][internal->second.operation]->getResult(
+                internal->second.result))
+          return failure();
+      return success();
+    }
+    auto [external, inserted] =
+        externalIndices.try_emplace(templateValue, externalIndices.size());
+    unsigned index = external->second;
+    for (auto [member, value] : llvm::enumerate(values)) {
+      if (inserted)
+        memberExternals[member].push_back(value);
+      else if (memberExternals[member][index] != value)
+        return failure();
+    }
+    return success();
+  };
+  for (auto [operationIndex, operation] : llvm::enumerate(templateOperations))
+    for (auto [operandIndex, operand] :
+         llvm::enumerate(operation->getOperands())) {
+      SmallVector<Value> values;
+      for (ArrayRef<Operation *> operations : memberOperations)
+        values.push_back(operations[operationIndex]->getOperand(operandIndex));
+      if (failed(registerValues(operand, values)))
+        return bail();
+    }
+  for (auto [stateIndex, state] :
+       llvm::enumerate(candidates.front().nextState)) {
+    SmallVector<Value> values;
+    for (Candidate &candidate : candidates) {
+      if (candidate.nextState.size() != candidates.front().nextState.size())
+        return bail();
+      values.push_back(candidate.nextState[stateIndex]);
+    }
+    if (failed(registerValues(state, values)))
+      return bail();
+  }
+
+  SmallVector<Type> helperInputs;
+  helperInputs.reserve(externalIndices.size() + 1);
+  helperInputs.push_back(
+      candidates.front().function.getBody().front().getArgument(0).getType());
+  SmallVector<Value> templateExternals(externalIndices.size());
+  for (auto [value, index] : externalIndices) {
+    helperInputs.push_back({});
+    templateExternals[index] = value;
+  }
+  for (auto [index, value] : llvm::enumerate(templateExternals))
+    helperInputs[index + 1] = value.getType();
+  SmallVector<Type> helperResults;
+  for (Value state : candidates.front().nextState)
+    helperResults.push_back(state.getType());
+  for (unsigned operationIndex : deferredDriveOperations) {
+    auto drive =
+        cast<sim::SimDriverDriveInertialOp>(templateOperations[operationIndex]);
+    helperResults.push_back(drive.getValue().getType());
+  }
+  helperResults.push_back(builder.getI1Type());
+
+  OpBuilder helperBuilder = OpBuilder::atBlockEnd(&design.getBody().front());
+  FunctionType helperType =
+      FunctionType::get(design.getContext(), helperInputs, helperResults);
+  StringAttr fingerprintAttr = helperBuilder.getStringAttr(memberFingerprint);
+  sim::SimFuncOp helper;
+  for (sim::SimFuncOp existing :
+       design.getBody().front().getOps<sim::SimFuncOp>())
+    if (existing->hasAttr("obelisk_sim.outlined_primitive_member") &&
+        existing->getAttr("obelisk_sim.outlined_primitive_fingerprint") ==
+            fingerprintAttr &&
+        existing.getFunctionType() == helperType) {
+      helper = existing;
+      break;
+    }
+  if (!helper) {
+    SmallString<48> helperName;
+    (kernel.getSymName() + ".__member").toVector(helperName);
+    llvm::SmallDenseSet<uint64_t, 32> usedCodeUnits;
+    for (sim::SimCodeUnitDeclOp declaration :
+         design.getBody().front().getOps<sim::SimCodeUnitDeclOp>())
+      usedCodeUnits.insert(declaration.getId());
+    uint64_t helperCodeUnit = 1;
+    while (usedCodeUnits.contains(helperCodeUnit))
+      ++helperCodeUnit;
+    uint64_t helperScope =
+        getCodeUnitScope(design, candidates.front().function).value_or(0);
+    memberHelperDeclaration = sim::SimCodeUnitDeclOp::create(
+        helperBuilder, kernel.getLoc(), helperCodeUnit, helperScope,
+        sim::EntryKind::Function, helperBuilder.getStringAttr(helperName),
+        helperBuilder.getStringAttr("generated primitive cohort member"),
+        helperBuilder.getUnitAttr());
+    SmallVector<DictionaryAttr> helperArgumentAttrs(
+        helperInputs.size(), helperBuilder.getDictionaryAttr({}));
+    helperArgumentAttrs.front() = candidates.front().function.getArgAttrDict(0);
+    for (DictionaryAttr &attrs :
+         MutableArrayRef(helperArgumentAttrs).drop_front())
+      attrs = helperBuilder.getDictionaryAttr(helperBuilder.getNamedAttr(
+          "obelisk_sim.capture_kind",
+          helperBuilder.getI32IntegerAttr(
+              static_cast<int32_t>(sim::CaptureKind::Formal))));
+    SmallVector<NamedAttribute> helperAttributes{helperBuilder.getNamedAttr(
+        "code_unit_id", helperBuilder.getI64IntegerAttr(helperCodeUnit))};
+    helper = sim::SimFuncOp::create(helperBuilder, kernel.getLoc(), helperName,
+                                    helperType, sim::EntryKind::Function,
+                                    helperAttributes, helperArgumentAttrs);
+    memberHelper = helper;
+    SymbolTable::setSymbolVisibility(helper, SymbolTable::Visibility::Private);
+    helper->setAttr("obelisk_sim.outlined_primitive_member",
+                    helperBuilder.getUnitAttr());
+    helper->setAttr("obelisk_sim.outlined_primitive_fingerprint",
+                    fingerprintAttr);
+    helper->setAttr(
+        "passthrough",
+        helperBuilder.getArrayAttr({helperBuilder.getStringAttr("noinline")}));
+    IRMapping helperMapping;
+    helperMapping.map(
+        candidates.front().function.getBody().front().getArgument(0),
+        helper.getBody().front().getArgument(0));
+    for (auto [value, argument] :
+         llvm::zip_equal(templateExternals,
+                         helper.getBody().front().getArguments().drop_front()))
+      helperMapping.map(value, argument);
+    helperBuilder.setInsertionPointToStart(&helper.getBody().front());
+    Value helperChanged = arith::ConstantOp::create(
+        helperBuilder, kernel.getLoc(), helperBuilder.getI1Type(),
+        helperBuilder.getBoolAttr(false));
+    auto recordRawChange = [&](Location location, Value driver, Value value) {
+      Value previous = sim::SimDriverReadOp::create(helperBuilder, location,
+                                                    value.getType(), driver);
+      Value rawChanged = sim::SimLogicCompareOp::create(
+          helperBuilder, location, helperBuilder.getI1Type(),
+          sim::CompareKind::CaseNe, previous, value);
+      helperChanged = arith::OrIOp::create(helperBuilder, location,
+                                           helperChanged, rawChanged);
+    };
+    for (Operation *operation : templateOperations) {
+      if (isa<sim::SimDriverDriveInertialOp>(operation))
+        continue;
+      if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation)) {
+        Value driver = helperMapping.lookup(drive.getDriver());
+        Value value = helperMapping.lookup(drive.getValue());
+        recordRawChange(drive.getLoc(), driver, value);
+        auto replacement = sim::SimDriverDriveChangedOp::create(
+            helperBuilder, drive.getLoc(), driver, value);
+        replacement->setAttrs(drive->getAttrs());
+        replacement->setAttr("obelisk_sim.defer_net_resolution",
+                             helperBuilder.getUnitAttr());
+        continue;
+      }
+      if (auto drive = dyn_cast<sim::SimDriverDriveChangedOp>(operation)) {
+        // A delayed-only sequential UDP's unused initial-state
+        // canonicalization must not pre-write the raw driver plane: the
+        // selected inertial site compares against that plane to schedule its
+        // first publication. No immediate resolver exists in this shape.
+        if (resolveDriveOperations.empty() &&
+            !deferredDriveOperations.empty() &&
+            drive.getChanged().use_empty())
+          continue;
+        Value driver = helperMapping.lookup(drive.getDriver());
+        Value value = helperMapping.lookup(drive.getValue());
+        recordRawChange(drive.getLoc(), driver, value);
+        Operation *cloned = helperBuilder.clone(*operation, helperMapping);
+        cloned->setAttr("obelisk_sim.defer_net_resolution",
+                        helperBuilder.getUnitAttr());
+        continue;
+      }
+      helperBuilder.clone(*operation, helperMapping);
+      // Sequential UDP initialization canonicalizes its private Z sentinel
+      // through an unused drive_changed before the table evaluation. Keep the
+      // raw write in program order, but let the concrete final publication in
+      // the selected kernel arm resolve and notify the component once.
+    }
+    SmallVector<Value> helperReturn;
+    for (Value state : candidates.front().nextState) {
+      Value mapped = helperMapping.lookupOrNull(state);
+      if (!mapped)
+        return bail();
+      helperReturn.push_back(mapped);
+    }
+    for (unsigned operationIndex : deferredDriveOperations) {
+      auto drive = cast<sim::SimDriverDriveInertialOp>(
+          templateOperations[operationIndex]);
+      SmallVector<Value, 4> returned{drive.getValue(), drive.getRiseDelay(),
+                                     drive.getFallDelay(),
+                                     drive.getTurnoffDelay()};
+      Value mapped = helperMapping.lookupOrNull(returned.front());
+      if (!mapped)
+        return bail();
+      helperReturn.push_back(mapped);
+    }
+    helperReturn.push_back(helperChanged);
+    sim::SimReturnOp::create(helperBuilder, kernel.getLoc(), helperReturn);
+  }
+
+  // Keep continuation state in independent typed lanes. A UDP's carried
+  // previous input is normalized (in particular Z becomes X), whereas the
+  // union-watch snapshot above is the raw watched value. Conflating the two
+  // would corrupt edge matching and would also let an idle member inherit a
+  // different member's state.
+  SmallVector<Value> currentStates;
+  SmallVector<unsigned> stateOffsets;
+  for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings)) {
+    stateOffsets.push_back(currentStates.size());
+    for (auto [argument, initial] : llvm::zip_equal(
+             candidate.body->getArguments(), candidate.initialState)) {
+      BlockArgument state =
+          body->addArgument(argument.getType(), kernel.getLoc());
+      currentStates.push_back(state);
+      Value mappedInitial = mapping->lookupOrNull(initial);
+      if (!mappedInitial)
+        return bail();
+      entryOperands.push_back(mappedInitial);
+    }
+  }
   cf::BranchOp::create(builder, kernel.getLoc(), body, entryOperands);
 
   builder.setInsertionPointToStart(body);
@@ -1362,35 +1998,105 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     Block *execute = new Block;
     Block *next = new Block;
     BlockArgument nextMask = next->addArgument(maskType, kernel.getLoc());
+    SmallVector<BlockArgument> nextStates;
+    for (Value state : currentStates)
+      nextStates.push_back(next->addArgument(state.getType(), kernel.getLoc()));
     kernel.getBody().push_back(execute);
     kernel.getBody().push_back(next);
+    SmallVector<Value> skippedStates{currentMask};
+    llvm::append_range(skippedStates, currentStates);
     cf::CondBranchOp::create(builder, kernel.getLoc(), selected, execute,
-                             ValueRange{}, next, ValueRange{currentMask});
+                             ValueRange{}, next, skippedStates);
 
     builder.setInsertionPointToStart(execute);
+    unsigned stateOffset = stateOffsets[candidateIndex];
+    for (auto [argument, state] : llvm::zip_equal(
+             candidate.body->getArguments(),
+             ArrayRef<Value>(currentStates)
+                 .slice(stateOffset, candidate.initialState.size())))
+      mapping->map(argument, state);
+    SmallVector<Value> callOperands;
+    callOperands.push_back(
+        mapping->lookup(candidate.function.getBody().front().getArgument(0)));
+    for (Value value : memberExternals[candidateIndex]) {
+      Value mapped = mapping->lookupOrNull(value);
+      if (!mapped)
+        return bail();
+      callOperands.push_back(mapped);
+    }
+    sim::SimCallOp call = sim::SimCallOp::create(
+        builder, kernel.getLoc(), helperResults, helper.getSymNameAttr(),
+        callOperands, ArrayAttr{}, ArrayAttr{});
+    Value rawChanged = call.getResults().back();
     Value changed =
         arith::ConstantOp::create(builder, kernel.getLoc(), builder.getI1Type(),
                                   builder.getBoolAttr(false));
-    for (Operation &operation : candidate.body->without_terminator()) {
-      if (hoistedWatchOps.contains(&operation))
-        continue;
-      if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation)) {
-        auto replacement = sim::SimDriverDriveChangedOp::create(
-            builder, drive.getLoc(), mapping->lookup(drive.getDriver()),
-            mapping->lookup(drive.getValue()));
-        if (Attribute defer =
-                drive->getAttr("obelisk_sim.defer_net_resolution"))
-          replacement->setAttr("obelisk_sim.defer_net_resolution", defer);
-        Value transition = replacement.getChanged();
-        changed =
-            arith::OrIOp::create(builder, drive.getLoc(), changed, transition);
-      } else {
-        Operation *cloned = builder.clone(operation, *mapping);
-        if (auto drive = dyn_cast<sim::SimDriverDriveChangedOp>(cloned))
-          changed = arith::OrIOp::create(builder, drive.getLoc(), changed,
-                                         drive.getChanged());
+    unsigned resultIndex = candidate.nextState.size();
+    if (!resolveDriveOperations.empty()) {
+      Block *resolve = new Block;
+      Block *afterResolve = new Block;
+      BlockArgument resolvedChanged =
+          afterResolve->addArgument(builder.getI1Type(), kernel.getLoc());
+      kernel.getBody().push_back(resolve);
+      kernel.getBody().push_back(afterResolve);
+      Value unchanged = arith::ConstantOp::create(builder, kernel.getLoc(),
+                                                  builder.getI1Type(),
+                                                  builder.getBoolAttr(false));
+      cf::CondBranchOp::create(builder, kernel.getLoc(), rawChanged, resolve,
+                               ValueRange{}, afterResolve,
+                               ValueRange{unchanged});
+      builder.setInsertionPointToStart(resolve);
+      Value publishedChanged = unchanged;
+      for (unsigned operationIndex : resolveDriveOperations) {
+        auto drive = cast<sim::SimDriverDriveOp>(
+            memberOperations[candidateIndex][operationIndex]);
+        Value driver = mapping->lookupOrNull(drive.getDriver());
+        if (!driver)
+          return bail();
+        Value value = sim::SimDriverReadOp::create(
+            builder, drive.getLoc(), drive.getValue().getType(), driver);
+        auto resolver = sim::SimDriverDriveChangedOp::create(
+            builder, drive.getLoc(), driver, value);
+        resolver->setAttrs(drive->getAttrs());
+        if (std::optional<ExactDriverSlice> exact =
+                resolveExactDriverSlice(driver)) {
+          resolver->setAttr("obelisk_sim.exact_driver_id",
+                            builder.getI64IntegerAttr(exact->id));
+          resolver->setAttr("obelisk_sim.exact_driver_low",
+                            builder.getI64IntegerAttr(exact->lowBit));
+        }
+        publishedChanged = arith::OrIOp::create(
+            builder, drive.getLoc(), publishedChanged, resolver.getChanged());
       }
+      cf::BranchOp::create(builder, kernel.getLoc(), afterResolve,
+                           ValueRange{publishedChanged});
+      builder.setInsertionPointToStart(afterResolve);
+      changed = resolvedChanged;
     }
+    for (unsigned operationIndex : deferredDriveOperations) {
+      auto drive = cast<sim::SimDriverDriveInertialOp>(
+          memberOperations[candidateIndex][operationIndex]);
+      IRMapping driveMapping;
+      Value driver = mapping->lookupOrNull(drive.getDriver());
+      if (!driver)
+        return bail();
+      driveMapping.map(drive.getDriver(), driver);
+      driveMapping.map(drive.getValue(), call.getResult(resultIndex++));
+      for (Value delay : {drive.getRiseDelay(), drive.getFallDelay(),
+                          drive.getTurnoffDelay()}) {
+        Value mapped = driveMapping.lookupOrNull(delay);
+        if (!mapped) {
+          auto constant = delay.getDefiningOp<sim::SimTimeConstantOp>();
+          if (!constant)
+            return bail();
+          Operation *cloned = builder.clone(*constant, driveMapping);
+          mapped = cloned->getResult(0);
+        }
+      }
+      builder.clone(*drive, driveMapping);
+    }
+    if (resultIndex + 1 != call.getNumResults())
+      return bail();
     Value nextValue = currentMask;
     if (downstreamMasks[candidateIndex] != 0) {
       Value downstream = arith::ConstantOp::create(
@@ -1401,9 +2107,16 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       nextValue = arith::SelectOp::create(builder, kernel.getLoc(), changed,
                                           propagated, currentMask);
     }
-    cf::BranchOp::create(builder, kernel.getLoc(), next, ValueRange{nextValue});
+    SmallVector<Value> updatedStates(currentStates);
+    for (auto [index, state] : llvm::enumerate(
+             call.getResults().take_front(candidate.nextState.size())))
+      updatedStates[stateOffset + index] = state;
+    SmallVector<Value> nextOperands{nextValue};
+    llvm::append_range(nextOperands, updatedStates);
+    cf::BranchOp::create(builder, kernel.getLoc(), next, nextOperands);
     test = next;
     currentMask = nextMask;
+    currentStates.assign(nextStates.begin(), nextStates.end());
   }
   builder.setInsertionPointToEnd(test);
   cf::BranchOp::create(builder, kernel.getLoc(), wait);
@@ -1435,6 +2148,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       return bail();
     waitOperands.push_back(snapshot);
   }
+  llvm::append_range(waitOperands, currentStates);
   sim::SimSuspendAnyOp::create(builder, kernel.getLoc(), waitOperands,
                                builder.getDenseI32ArrayAttr(edges),
                                sim::ContinuationSiteAttr{},
