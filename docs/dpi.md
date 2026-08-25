@@ -5,15 +5,19 @@ The native and embedded-bytecode execution tiers enter the same validated
 runtime boundary and invoke the same generated C thunk, so marshalling,
 context functions, errors, and copy-outs are shared.
 
-Supported arguments and function results are `byte`, `shortint`, `int`,
-`longint`, `shortreal`, `real`/`realtime`, scalar `bit` and `logic`, enums with
-one of those canonical integral base types, fixed packed 2-state or 4-state
-values, `string`, and `chandle`. Formal directions may be `input`, `output`,
-or `inout`. IEEE binary32 `shortreal` maps directly to C `float`; binary64
-`real` and `realtime` map directly to C `double`. Renamed C identifiers,
-`pure`, and `context` imports are preserved. Fixed packed aggregates,
-including packed structs and unions, use the standard bit-vector or
-logic-vector representation.
+Supported formals are `byte`, `shortint`, `int`, `longint`, four-state
+`integer`, four-state 64-bit `time`, `shortreal`, `real`/`realtime`, scalar
+`bit` and `logic`, enums with a canonical integral base type, fixed packed
+2-state or 4-state values, `string`, and `chandle`. Formal directions may be
+`input`, `output`, or `inout`. Function results support the subset permitted by
+35.5.4; in particular, `integer` and `time` are valid formals but invalid
+function result types. IEEE binary32 `shortreal` maps directly to C `float`;
+binary64 `real` and `realtime` map directly to C `double`. Four-state
+`integer` and `time` use `svLogicVecVal`, preserving X and Z in every
+direction. Renamed C identifiers, `pure`, and `context` imports are preserved,
+and the deprecated `"DPI"` spelling follows the implementation's `"DPI-C"`
+ABI. Fixed packed aggregates, including packed structs and unions, use the
+standard bit-vector or logic-vector representation.
 
 Following IEEE 1800-2023 H.7.4 and H.8.10, an input string uses `const char *`
 and an output or inout string uses `const char **`; `chandle` uses `void *`

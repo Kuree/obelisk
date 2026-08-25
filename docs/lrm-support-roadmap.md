@@ -590,6 +590,19 @@ with its two expected unsupported configuration cases, plus all 425 runtime
 tests. A contended multi-worktree UVM smoke remained green with zero errors or
 fatals in both tiers.
 
+D5 closes the imported-DPI scalar type and signature surface from 35.4-35.6.
+Four-state `integer` and 64-bit `time` now marshal through the existing
+`svLogicVecVal` path for input, output, and inout formals, preserving X and Z
+without a new runtime category or dispatch path. The audit also locks down the
+35.5.4 boundary that excludes those types from function results, accepts the
+deprecated `"DPI"` spelling through the `"DPI-C"` ABI, and verifies that two
+declarations cannot assign incompatible signatures to one C identifier.
+Native and bytecode O0/O3 tests include generated-header C compilation. The
+focused O3 design compiles in 0.07 seconds at 78 MB RSS for native and 0.04
+seconds at 74 MB RSS for bytecode, then simulates below 0.01 seconds in either
+tier. Open arrays and unpacked aggregates remain explicitly owned by D3/D4;
+exports and disable handling remain D1/D2/D6.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -626,7 +639,7 @@ fatals in both tiers.
 | 32 SDF backannotation | Missing | `$sdf_annotate`, SDF parsing/mapping, multiple annotation, pulse limits, and delay replacement are absent. |
 | 33 Configuring a design | Partial | A focused probe proves basic `design`, `default liblist`, `instance ... use`, and selecting a config as a top affect elaboration. Complete library-map files, cell/config forms, nested rules, diagnostics, and binding-report behavior; also close driver module-library lookup compatibility. |
 | 34 Protected envelopes | Missing | Ordinary pragmas do not provide the standard encryption/decryption envelope flow. Implement required encodings, cipher/key/digest descriptors, key-provider integration, nested decrypted envelopes, diagnostics, and preprocessing order. |
-| 35 DPI | Partial | Imported zero-time functions and synchronous tasks, C thunks, scalar/fixed-packed/string/chandle marshalling, context scope APIs, linking, and header generation execute. Exports, open/unpacked arrays and structs, all legal formal types, suspending exported-task re-entry, and disable acknowledgement are missing. `ref` is not legal on a DPI import and is therefore not a missing import feature. |
+| 35 DPI | Partial | Imported zero-time functions and synchronous tasks, C thunks, every legal scalar formal type including four-state `integer` and `time`, fixed-packed/string/chandle marshalling, deprecated `"DPI"` spelling, context scope APIs, linking, signature-conflict diagnostics, and header generation execute. Exports, open/unpacked arrays and structs, suspending exported-task re-entry, and disable acknowledgement are missing. `ref` is not legal on a DPI import and is therefore not a missing import feature. |
 | 36-39 PLI/VPI and assertion API | Excluded | Explicitly outside this project goal. |
 | 40 Code coverage | Excluded | Explicitly outside this project goal. |
 | 41 Data read API | Not applicable | The 2017 clause contains no API, only a deprecation notice referring to 1800-2005. |
@@ -851,10 +864,11 @@ one commit.
 46. **D4 — Sized unpacked aggregates (35.5-35.8).** Marshal fixed unpacked
     arrays, unpacked structs, legal packed/unpacked nesting, and exported
     aggregate arguments with exact C layout rules.
-47. **D5 — DPI type/signature closure (35.4-35.6).** Add every legal formal
-    category currently missing, notably `time` and `integer`, audit function
-    result restrictions, deprecated `"DPI"` spelling where applicable, and
-    diagnose cross-declaration C-name/signature conflicts.
+47. **D5 — DPI type/signature closure (35.4-35.6), completed.** Every legal
+    scalar formal category executes, including four-state `time` and
+    `integer`; function-result restrictions, deprecated `"DPI"` spelling, and
+    cross-declaration C-name/signature conflicts are covered. Open and sized
+    unpacked aggregate forms remain deliberately owned by D3/D4.
 48. **D6 — DPI disable protocol (35.9).** Implement disabled-state propagation,
     `svIsDisabledState`, `svAckDisabledState`, copy-out suppression, exported
     task cancellation, and nested-call behavior.

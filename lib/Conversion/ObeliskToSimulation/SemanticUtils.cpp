@@ -939,6 +939,8 @@ FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
     return DPIABIType{DPIABIKind::ShortReal, 32, false, false};
   if (isa<semantic::RealType, semantic::RealtimeType>(type) || type.isF64())
     return DPIABIType{DPIABIKind::Real, 64, false, false};
+  if (isa<semantic::TimeType>(type))
+    return DPIABIType{DPIABIKind::LogicVector, 64, true, false};
   auto integral = dyn_cast<semantic::IntegralType>(type);
   if (integral) {
     std::optional<DPIABIKind> kind;
@@ -968,11 +970,8 @@ FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
                                        : DPIABIKind::BitVector;
       break;
     case semantic::SVIntegralFlavor::Integer:
-      emitError(location) << "DPI type category '"
-                          << semantic::stringifySVIntegralFlavor(
-                                 integral.getFlavor())
-                          << "' is not supported by the initial integral ABI";
-      return failure();
+      kind = DPIABIKind::LogicVector;
+      break;
     }
     if (integral.getWidth() == 0 ||
         integral.getWidth() > std::numeric_limits<uint32_t>::max()) {
