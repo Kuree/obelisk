@@ -44,6 +44,14 @@ SmallVector<int32_t> suspensionWaitWidths(Operation *operation) {
           scalarEdge.push_back(edge !=
                                static_cast<int32_t>(sim::EdgeKind::Change));
       })
+      .Case<sim::SimSuspendClockSetOp>([&](auto op) {
+        llvm::append_range(watched, op.getPrimaries());
+        for (int32_t edge : op.getEdges())
+          scalarEdge.push_back(edge !=
+                               static_cast<int32_t>(sim::EdgeKind::Change));
+        llvm::append_range(watched, op.getConditions());
+        scalarEdge.append(op.getConditions().size(), false);
+      })
       .Case<sim::SimSuspendEventOp>([&](auto op) {
         watched.push_back(op.getEvent());
         scalarEdge.push_back(false);
@@ -283,6 +291,7 @@ void populateSuspensionTypeConversionPatterns(RewritePatternSet &patterns,
                SimSuspendTypeConversion<sim::SimSuspendEdgeIffOp>,
                SimSuspendTypeConversion<sim::SimSuspendLevelOp>,
                SimSuspendTypeConversion<sim::SimSuspendAnyOp>,
+               SimSuspendTypeConversion<sim::SimSuspendClockSetOp>,
                SimSuspendTypeConversion<sim::SimSuspendEventOp>,
                SimSuspendTypeConversion<sim::SimSuspendEventOrderOp>,
                SimSuspendTypeConversion<sim::SimSuspendMailboxOp>,

@@ -359,6 +359,7 @@ LogicalResult SimFuncOp::verify() {
     WalkResult blocking = getBody().walk([&](Operation *op) {
       if (isa<SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
               SimSuspendEdgeIffOp, SimSuspendLevelOp, SimSuspendAnyOp,
+              SimSuspendClockSetOp,
               SimSuspendEventOp, SimSuspendEventOrderOp, SimSuspendMailboxOp,
               SimSuspendSemaphoreOp, SimSuspendObserveOp, SimSuspendForeverOp,
               SimSuspendAwaitOp, SimSuspendJoinOp, SimSuspendChildrenOp>(op)) {

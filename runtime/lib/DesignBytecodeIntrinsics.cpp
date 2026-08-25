@@ -2853,6 +2853,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
   }
   case OBELISK_RT_INTRINSIC_V1_WAIT_ORDER_FAILED:
     return sentinel(0, obelisk_rt_v1_scheduler_wait_order_failed(context));
+  case OBELISK_RT_INTRINSIC_V1_CLOCK_OCCURRENCE_CONSUME:
+    return sentinel(
+        0, obelisk_rt_v1_clock_occurrence_consume(context, signature.flags));
   case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC:
   case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC_TYPED: {
     if (!context)

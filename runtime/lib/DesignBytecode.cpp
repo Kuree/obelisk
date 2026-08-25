@@ -5,6 +5,7 @@
 #include "DesignBytecodeLogic.h"
 #include "DesignBytecodeNets.h"
 #include "DesignBytecodeRoots.h"
+#include "ProcessSignals.h"
 #include "RuntimeInternal.h"
 #include "obelisk/Runtime/StableHandle.h"
 #include "obelisk/Runtime/StableHash.h"
@@ -4623,7 +4624,8 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
                 ? wait->flags <= OBELISK_RT_WAIT_MAILBOX_NOT_FULL
                 : (wait->flags &
                    ~(OBELISK_RT_WAIT_LEVEL_TRUE | OBELISK_RT_WAIT_EDGE_IFF |
-                     OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF)) == 0 &&
+                     OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF |
+                     OBELISK_RT_WAIT_CLOCK_OCCURRENCE)) == 0 &&
                       (!suppressActiveSelf ||
                        (signalWait && behaviorFlags == 0)) &&
                       (behaviorFlags == OBELISK_RT_WAIT_FLAGS_NONE ||
@@ -4632,8 +4634,27 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
                        (action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE &&
                         behaviorFlags == OBELISK_RT_WAIT_LEVEL_TRUE) ||
                        (action.suspend_kind == OBELISK_RT_SUSPEND_EDGE &&
-                        behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF));
+                        (behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF ||
+                         behaviorFlags ==
+                             OBELISK_RT_WAIT_CLOCK_OCCURRENCE)));
+        uint32_t occurrenceConditions =
+            behaviorFlags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE
+                ? static_cast<uint32_t>(
+                      __builtin_popcountll(wait->auxiliary))
+                : 0;
+        uint32_t occurrencePrimaries =
+            occurrenceConditions < wait->count
+                ? wait->count - occurrenceConditions
+                : 0;
+        bool validOccurrence =
+            behaviorFlags != OBELISK_RT_WAIT_CLOCK_OCCURRENCE ||
+            (wait->flags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE &&
+             wait->payload != 0 && occurrencePrimaries >= 1 &&
+             occurrencePrimaries <= 64 &&
+             (occurrencePrimaries == 64 ||
+              (wait->auxiliary >> occurrencePrimaries) == 0));
         if (!validFlags ||
+            !validOccurrence ||
             (action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE &&
              behaviorFlags == OBELISK_RT_WAIT_LEVEL_TRUE && wait->count != 1) ||
             (action.suspend_kind == OBELISK_RT_SUSPEND_EDGE &&
@@ -4655,6 +4676,8 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
               waitEntries[index].edge <= OBELISK_RT_WAIT_EDGE_BOTH;
           bool iffCondition =
               behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF && index == 1;
+          if (behaviorFlags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE)
+            iffCondition = index >= occurrencePrimaries;
           bool managed =
               signalWait && !iffCondition &&
               waitEntries[index].reserved == OBELISK_RT_WAIT_WIDTH_MANAGED;
@@ -4680,7 +4703,12 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         }
         if (finalizeStatus != OBELISK_RT_OK)
           break;
-        bool sameSignalWait = signalWait && hasSameDirectSignalWait(task, wait);
+        bool sameSignalWait =
+            signalWait &&
+            (behaviorFlags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE
+                 ? obelisk_rt_same_clock_occurrence_wait_unlocked(
+                       context, wait, task.id, true)
+                 : hasSameDirectSignalWait(task, wait));
         if (!signalWait && !task.signalSubscriptions.empty())
           obelisk_rt_unregister_signal_wait_unlocked(
               context, task.signalSubscriptions, task.id, true);

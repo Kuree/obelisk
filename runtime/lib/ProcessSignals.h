@@ -6,6 +6,7 @@
 #include <cstdint>
 
 struct obelisk_rt_context;
+struct obelisk_rt_wait_record_v1;
 
 constexpr int64_t kSignalSubscriptionPageBits = 256;
 constexpr int64_t kWideSignalSubscriptionPage = INT64_MIN;
@@ -17,5 +18,8 @@ bool signalSubscriptionBucketRange(uint64_t stableID, uint64_t bitWidth,
 
 bool obelisk_rt_notify_managed_waiters_unlocked(obelisk_rt_context *context,
                                                 uint64_t token);
+bool obelisk_rt_same_clock_occurrence_wait_unlocked(
+    const obelisk_rt_context *context, const obelisk_rt_wait_record_v1 *wait,
+    uint64_t waiterToken, bool designWaiter);
 
 #endif // OBELISK_RUNTIME_LIB_PROCESSSIGNALS_H

@@ -35,6 +35,8 @@ LogicalResult serializeRuntimeWait(Operation *operation, Value wait,
     waitFlags = OBELISK_RT_WAIT_LEVEL_TRUE;
   else if (isa<sim::SimSuspendEdgeIffOp>(operation))
     waitFlags = OBELISK_RT_WAIT_EDGE_IFF;
+  else if (isa<sim::SimSuspendClockSetOp>(operation))
+    waitFlags = OBELISK_RT_WAIT_CLOCK_OCCURRENCE;
   else if (auto mailbox = dyn_cast<sim::SimSuspendMailboxOp>(operation))
     waitFlags = static_cast<uint32_t>(mailbox.getKind());
   if (operation->hasAttr(sim::metadata::topLevelWildcardWait) &&
@@ -49,9 +51,18 @@ LogicalResult serializeRuntimeWait(Operation *operation, Value wait,
     payload = asI64(builder, location, delay.getDelay());
   else if (auto semaphore = dyn_cast<sim::SimSuspendSemaphoreOp>(operation))
     payload = asI64(builder, location, semaphore.getKeys());
+  else if (auto clocks = dyn_cast<sim::SimSuspendClockSetOp>(operation))
+    payload = llvmConstant(builder, location, i64,
+                           clocks.getOccurrenceSite());
   storeAt(builder, location, wait, 16, payload, 8);
-  storeAt(builder, location, wait, 24, llvmConstant(builder, location, i64, 0),
-          8);
+  uint64_t auxiliary = 0;
+  if (auto clocks = dyn_cast<sim::SimSuspendClockSetOp>(operation))
+    for (auto [index, condition] : llvm::enumerate(
+             clocks.getConditionIndices()))
+      if (condition >= 0)
+        auxiliary |= uint64_t{1} << index;
+  storeAt(builder, location, wait, 24,
+          llvmConstant(builder, location, i64, auxiliary), 8);
 
   SmallVector<Value> watched;
   SmallVector<uint32_t> watchedEdges;
@@ -78,6 +89,13 @@ LogicalResult serializeRuntimeWait(Operation *operation, Value wait,
         llvm::append_range(watched, op.getWatched());
         for (int32_t edge : op.getEdges())
           watchedEdges.push_back(static_cast<uint32_t>(edge));
+      })
+      .Case<sim::SimSuspendClockSetOp>([&](auto op) {
+        llvm::append_range(watched, op.getPrimaries());
+        for (int32_t edge : op.getEdges())
+          watchedEdges.push_back(static_cast<uint32_t>(edge));
+        llvm::append_range(watched, op.getConditions());
+        watchedEdges.append(op.getConditions().size(), noEdge);
       })
       .Case<sim::SimSuspendEventOp>([&](auto op) {
         watched.push_back(op.getEvent());

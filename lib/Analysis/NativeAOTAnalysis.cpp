@@ -50,11 +50,50 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   bool onlyConcurrentColdBoundaries = true;
   llvm::SmallDenseSet<Operation *> dynamicActors;
   llvm::SmallDenseSet<Operation *> bytecodeActors;
-  auto isConcurrentColdActor = [](Operation *operation) {
+  auto findContainingFunction = [](Operation *operation) {
     auto function = dyn_cast_or_null<sim::SimFuncOp>(operation);
     if (!function && operation)
       function = operation->getParentOfType<sim::SimFuncOp>();
-    if (!function || !function->hasAttr("internal"))
+    return function;
+  };
+  auto isClockCoordinatorActor = [&](Operation *operation) {
+    sim::SimFuncOp function = findContainingFunction(operation);
+    if (!function ||
+        !function->hasAttr("obelisk_sim.multiclock_sequence_coordinator") ||
+        SymbolTable::getSymbolVisibility(function) !=
+            SymbolTable::Visibility::Private ||
+        function.getEntryKind() != sim::EntryKind::Always ||
+        function.getHomeRegion() != sim::EventRegion::Observed ||
+        function.getDomain() != sim::ExecutionDomain::Design)
+      return false;
+    unsigned clockWaits = 0;
+    function.walk([&](sim::SimSuspendClockSetOp) { ++clockWaits; });
+    return clockWaits == 1;
+  };
+  auto isConcurrentColdActor = [&](Operation *operation) {
+    auto function = findContainingFunction(operation);
+    if (!function)
+      return false;
+    // A multi-clock occurrence coordinator is another feature-local runtime
+    // island: the surrounding ordinary assertion monitors remain in the AOT
+    // plan, while this one actor retains exact publication-wave ordering in
+    // bytecode.  Treating it like the existing cold assertion callbacks is
+    // what makes explicit AOT select the hybrid plan instead of rejecting the
+    // complete design.
+    if (isClockCoordinatorActor(function))
+      return true;
+    if (function->hasAttr(
+            "obelisk_sim.multiclock_sequence_eos_coordinator"))
+      return SymbolTable::getSymbolVisibility(function) ==
+                 SymbolTable::Visibility::Private &&
+             function->hasAttr("internal") &&
+             function->hasAttr("obelisk_sim.concurrent_eos_coordinator") &&
+             function->hasAttr("obelisk_sim.concurrent_eos_counted") &&
+             function->hasAttr("obelisk_sim.detached_controls") &&
+             function.getEntryKind() == sim::EntryKind::Final &&
+             function.getHomeRegion() == sim::EventRegion::Active &&
+             function.getDomain() == sim::ExecutionDomain::Design;
+    if (!function->hasAttr("internal"))
       return false;
     return (function->hasAttr("obelisk_sim.concurrent_report") &&
             function->hasAttr("obelisk_sim.detached_controls") &&
@@ -382,6 +421,17 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       requireBytecodeFragment(operation,
                               "managed or automatic NBA destination");
       excludeBytecodeActor(operation);
+    } else if (isa<sim::SimSuspendClockSetOp>(operation)) {
+      // Exact occurrence cohorts retain publication-wave state in the generic
+      // scheduler. Keep only the feature coordinator in hybrid bytecode; all
+      // ordinary assertion and procedural actors remain statically eligible.
+      if (!isClockCoordinatorActor(operation)) {
+        rejectPlan("clock cohort wait lacks exact coordinator provenance");
+      } else {
+        requireBytecodeFragment(operation,
+                                "clock cohort wait requires runtime ordering");
+        excludeBytecodeActor(operation);
+      }
     } else if (isa<sim::SimSuspendEdgeIffOp, sim::SimSuspendLevelOp,
                    sim::SimSuspendObserveOp>(operation)) {
       requireBytecodeFragment(operation, "computed or conditional wait");
@@ -492,8 +542,14 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   });
   result.eligible = !result.actorSlots.empty();
   result.fullyEligible = result.eligible && result.reasons.empty();
+  // Forced hybrid admission is actor/block-provenance based. Every bytecode
+  // boundary must have been classified at the operation that created it as an
+  // exact coordinator or one of the preexisting internal assertion callback
+  // shapes. No global reason-string allowlist can make an unrelated user
+  // control loop eligible merely because a coordinator is also present.
   result.forcedHybridEligible =
-      result.eligible && !result.fullyEligible && onlyConcurrentColdBoundaries;
+      result.eligible && !result.fullyEligible &&
+      onlyConcurrentColdBoundaries;
   for (Attribute attribute : nodes) {
     auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
     if (!fragment)

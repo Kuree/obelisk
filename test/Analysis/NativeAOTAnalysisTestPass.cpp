@@ -39,7 +39,8 @@ public:
                  << " periodic="
                  << (analysis.hasPeriodicClockCandidate() ? "true" : "false")
                  << " cost=" << analysis.getNativeGraphCost() << "/"
-                 << analysis.getTotalGraphCost()
+                 << analysis.getTotalGraphCost() << " forced_hybrid="
+                 << (analysis.isForcedHybridEligible() ? "true" : "false")
                  << "\n";
 
     SmallVector<std::pair<StringRef, uint32_t>> actors;

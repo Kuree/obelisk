@@ -342,7 +342,23 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
         entriesMatch(true, OBELISK_RT_WAIT_EDGE_CHANGE, true);
     break;
   case OBELISK_RT_SUSPEND_EDGE:
-    if (behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF)
+    if (behaviorFlags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE) {
+      uint32_t conditions = static_cast<uint32_t>(
+          __builtin_popcountll(wait->auxiliary));
+      uint32_t primaries =
+          conditions < wait->count ? wait->count - conditions : 0;
+      valid = wait->flags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE &&
+              wait->payload != 0 && primaries >= 1 && primaries <= 64 &&
+              (primaries == 64 || (wait->auxiliary >> primaries) == 0);
+      for (uint32_t index = 0; valid && index != wait->count; ++index) {
+        bool condition = index >= primaries;
+        valid = validSignalHandle(entries[index].stable_id) &&
+                entries[index].reserved != 0 &&
+                (condition ? entries[index].edge ==
+                                 OBELISK_RT_WAIT_EDGE_NONE
+                           : validEdge(entries[index].edge));
+      }
+    } else if (behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF)
       valid = wait->count == 2 && wait->payload == 0 && wait->auxiliary == 0 &&
               !suppressActiveSelf && wait->flags == OBELISK_RT_WAIT_EDGE_IFF &&
               validEdge(entries[0].edge) && entries[0].reserved != 0 &&

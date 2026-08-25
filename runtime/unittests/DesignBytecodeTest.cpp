@@ -4506,6 +4506,82 @@ TEST(DesignBytecode, ScheduledSignalWaitUsesDirectSubscriptions) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(DesignBytecode, ScheduledClockOccurrenceRejectsMalformedWaitRecords) {
+  std::vector<uint8_t> bytecode = makeSignalWaitSpawnBytecode();
+  obelisk_rt_execution_descriptor_v1 execution{
+      OBELISK_RT_VERSION,
+      OBELISK_RT_EXECUTION_HAS_BYTECODE,
+      0,
+      bytecode.data(),
+      bytecode.size(),
+      nullptr,
+      0,
+      65,
+      imageChecksum(bytecode)};
+  obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
+  std::array<uint32_t, 1> continuations{{0}};
+  obelisk_rt_frame_layout_v1 layout{
+      OBELISK_RT_VERSION, 0, 8, 8, nullptr, 0, 1, continuations.data(), 0};
+  layout.checksum = frameChecksum(layout);
+  obelisk_rt_process_descriptor_v1 descriptor{
+      {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 72},
+      OBELISK_RT_VERSION,
+      0,
+      OBELISK_RT_TIER_MASK_BYTECODE,
+      0,
+      &layout,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr,
+      &execution,
+      &entry};
+
+  auto expectInvalid = [&](uint32_t count, uint64_t payload,
+                           uint64_t conditionMask,
+                           obelisk_rt_wait_edge_kind conditionEdge,
+                           uint32_t conditionWidth) {
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+              OBELISK_RT_OK);
+    obelisk_rt_process_instance_v1 *instance = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_process_instance_create(&descriptor, &instance),
+              OBELISK_RT_OK);
+    uint64_t capturedHandle = 16;
+    std::memcpy(instance->frame, &capturedHandle, sizeof(capturedHandle));
+    obelisk_rt_fragment_action_v1 action{};
+    ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                  instance, context, OBELISK_RT_TIER_BYTECODE, &action),
+              OBELISK_RT_OK);
+    ASSERT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+    ASSERT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+    ASSERT_EQ(context->scheduledDesignTasks.size(), 1u);
+    ScheduledDesignTask &task = context->scheduledDesignTasks.front();
+    size_t requiredWaitEnd = 8 + sizeof(obelisk_rt_wait_record_v1) +
+                             2 * sizeof(obelisk_rt_wait_entry_v1);
+    task.frame.resize(std::max(task.frame.size(), requiredWaitEnd));
+    task.scratchOffset = std::max(task.scratchOffset, requiredWaitEnd);
+    ASSERT_LE(8 + sizeof(obelisk_rt_wait_record_v1) +
+                  2 * sizeof(obelisk_rt_wait_entry_v1),
+              task.scratchOffset);
+    auto *wait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(
+        task.frame.data() + 8);
+    auto *entries = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
+    *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE,
+             OBELISK_RT_WAIT_CLOCK_OCCURRENCE, count, payload, conditionMask};
+    entries[0] = {16, OBELISK_RT_WAIT_EDGE_POSEDGE, 1};
+    entries[1] = {17, conditionEdge, conditionWidth};
+    EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_INVALID_FRAME);
+    obelisk_rt_v1_context_destroy(context);
+  };
+
+  expectInvalid(1, 0, 0, OBELISK_RT_WAIT_EDGE_NONE, 1);
+  expectInvalid(0, 1, 0, OBELISK_RT_WAIT_EDGE_NONE, 1);
+  expectInvalid(2, 1, 2, OBELISK_RT_WAIT_EDGE_NONE, 1);
+  expectInvalid(2, 1, 1, OBELISK_RT_WAIT_EDGE_POSEDGE, 1);
+  expectInvalid(2, 1, 1, OBELISK_RT_WAIT_EDGE_NONE, 0);
+}
+
 TEST(DesignBytecode, BlockingStorePreservesSparseTransitionCoordinates) {
   Fixture fixture;
   fixture.bytecode = makeSchedulerBytecode();

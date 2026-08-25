@@ -138,6 +138,23 @@ Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
         OBELISK_RT_SUSPEND_EDGE, directSignalWaitFlags(suspend.getOperation()),
         edges, watched);
   }
+  if (auto suspend = dyn_cast<sim::SimSuspendClockSetOp>(operation)) {
+    SmallVector<uint32_t> edges;
+    for (int32_t edge : suspend.getEdges())
+      edges.push_back(static_cast<uint32_t>(edge));
+    SmallVector<Value> watched(suspend.getPrimaries());
+    llvm::append_range(watched, suspend.getConditions());
+    edges.append(suspend.getConditions().size(), OBELISK_RT_WAIT_EDGE_NONE);
+    uint64_t conditionMask = 0;
+    for (auto [index, condition] :
+         llvm::enumerate(suspend.getConditionIndices()))
+      if (condition >= 0)
+        conditionMask |= uint64_t{1} << index;
+    return encodeWait(
+        plan, suspend.getOperation(), suspend.getContinuationOperands(),
+        OBELISK_RT_SUSPEND_EDGE, OBELISK_RT_WAIT_CLOCK_OCCURRENCE, edges,
+        watched, Value{}, suspend.getOccurrenceSite(), conditionMask);
+  }
   if (auto suspend = dyn_cast<sim::SimSuspendEventOp>(operation)) {
     uint32_t edge = OBELISK_RT_WAIT_EDGE_NONE;
     return encodeWait(plan, suspend.getOperation(),

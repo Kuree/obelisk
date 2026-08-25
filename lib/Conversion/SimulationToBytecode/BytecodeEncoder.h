@@ -192,7 +192,9 @@ private:
                                  obelisk_rt_wait_flags flags,
                                  llvm::ArrayRef<uint32_t> edges,
                                  llvm::ArrayRef<mlir::Value> watched,
-                                 mlir::Value delay = {});
+                                 mlir::Value delay = {},
+                                 uint64_t payload = 0,
+                                 uint64_t auxiliary = 0);
 
   uint32_t getVPIProfile();
   llvm::SmallVector<uint8_t> serializeBytecode();

@@ -962,6 +962,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_STRING_SCAN_DYNAMIC = UINT32_C(0x00010246),
   OBELISK_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC = UINT32_C(0x00010247),
   OBELISK_RT_INTRINSIC_V1_SCAN_DYNAMIC_VALIDATE = UINT32_C(0x00010248),
+  OBELISK_RT_INTRINSIC_V1_CLOCK_OCCURRENCE_CONSUME = UINT32_C(0x00010249),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -1521,7 +1522,12 @@ enum {
   // A direct signal wait ignores publications from the currently executing
   // logical process. This models an always @* wait that is inactive while its
   // controlled statement evaluates.
-  OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF = UINT32_C(1) << 2
+  OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF = UINT32_C(1) << 2,
+  // A compiler-generated assertion coordinator records every occurrence of
+  // up to 64 frozen direct clocks, grouped by exact scheduler publication
+  // wave. The payload is its nonzero compiler site and the auxiliary word is
+  // the per-primary iff-condition presence mask.
+  OBELISK_RT_WAIT_CLOCK_OCCURRENCE = UINT32_C(1) << 3
 };
 typedef uint32_t obelisk_rt_wait_edge_kind;
 enum {
@@ -3145,6 +3151,10 @@ void obelisk_rt_v1_scheduler_event_after(obelisk_rt_context *context,
 uint32_t obelisk_rt_v1_scheduler_event_triggered(obelisk_rt_context *context,
                                                  uint64_t stable_id);
 uint32_t obelisk_rt_v1_scheduler_wait_order_failed(obelisk_rt_context *context);
+// Consume one finalized clock-occurrence cohort for the active logical
+// process and exact compiler site. Zero means no complete cohort is pending.
+uint64_t obelisk_rt_v1_clock_occurrence_consume(obelisk_rt_context *context,
+                                                uint64_t occurrence_site);
 void obelisk_rt_v1_scheduler_fail(obelisk_rt_context *context,
                                   obelisk_rt_status status);
 // Register one compiler-assigned static-state object. Static handles retain

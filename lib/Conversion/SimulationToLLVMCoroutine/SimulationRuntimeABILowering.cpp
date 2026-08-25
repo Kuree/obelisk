@@ -73,6 +73,10 @@ void declareNativeRuntimeABI(ModuleOp module) {
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_wait_order_failed",
                            IntegerType::get(context, 32),
                            {LLVM::LLVMPointerType::get(context)});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_clock_occurrence_consume",
+                           IntegerType::get(context, 64),
+                           {LLVM::LLVMPointerType::get(context),
+                            IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_native_handle_offset",
       IntegerType::get(context, 64),

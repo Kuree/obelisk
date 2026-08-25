@@ -127,6 +127,27 @@ public:
   }
 };
 
+class ClockOccurrenceConsumeConversion final
+    : public OpConversionPattern<sim::SimClockOccurrenceConsumeOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimClockOccurrenceConsumeOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location location = operation.getLoc();
+    Value site = LLVM::ConstantOp::create(
+        rewriter, location, rewriter.getI64Type(),
+        operation.getOccurrenceSiteAttr());
+    rewriter.replaceOpWithNewOp<LLVM::CallOp>(
+        operation, TypeRange{rewriter.getI64Type()},
+        SymbolRefAttr::get(rewriter.getContext(),
+                           "obelisk_rt_v1_clock_occurrence_consume"),
+        ValueRange{loadCurrentRuntimeContext(rewriter, location), site});
+    return success();
+  }
+};
+
 class EventEqualConversion final
     : public OpConversionPattern<sim::SimEventEqualOp> {
 public:
@@ -150,6 +171,7 @@ void populateEventToLLVMConversionPatterns(RewritePatternSet &patterns,
                                            TypeConverter &converter) {
   patterns.add<EventCreateConversion, EventTriggerConversion,
                EventTriggeredConversion, WaitOrderFailedConversion,
+               ClockOccurrenceConsumeConversion,
                EventEqualConversion>(converter, patterns.getContext());
 }
 

@@ -408,7 +408,8 @@ uint64_t getSimulationOperationCost(Operation &operation) {
     return 5;
   if (isa<sim::SimSuspendDelayOp, sim::SimSuspendChangeOp,
           sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
-          sim::SimSuspendLevelOp, sim::SimSuspendAnyOp, sim::SimSuspendEventOp,
+          sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
+          sim::SimSuspendClockSetOp, sim::SimSuspendEventOp,
           sim::SimSuspendEventOrderOp, sim::SimSuspendMailboxOp,
           sim::SimSuspendSemaphoreOp, sim::SimSuspendForeverOp,
           sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp>(operation))

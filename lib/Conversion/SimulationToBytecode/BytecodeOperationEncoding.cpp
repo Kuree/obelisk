@@ -434,6 +434,10 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
                          {op.getResult()});
   if (auto op = dyn_cast<sim::SimWaitOrderFailedOp>(operation))
     return emitIntrinsic(plan, kIntrinsicWaitOrderFailed, {}, {op.getResult()});
+  if (auto op = dyn_cast<sim::SimClockOccurrenceConsumeOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicClockOccurrenceConsume, {},
+                         {op.getMask()},
+                         static_cast<uint32_t>(op.getOccurrenceSite()));
   if (auto op = dyn_cast<sim::SimEventEqualOp>(operation)) {
     emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getResult()),
           reg(plan, op.getLhs()), reg(plan, op.getRhs())});

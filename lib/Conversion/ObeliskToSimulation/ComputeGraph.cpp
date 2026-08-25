@@ -399,6 +399,15 @@ SmallVector<ComputeEffect> collectDirectEffects(const FunctionInfo &info,
             appendEffect(info, sim::ComputeEffectKind::Watch, watched, effects,
                          getTriggerKind(static_cast<sim::EdgeKind>(edge)));
         })
+        .Case<sim::SimSuspendClockSetOp>([&](auto op) {
+          for (auto [watched, edge] :
+               llvm::zip(op.getPrimaries(), op.getEdges()))
+            appendEffect(info, sim::ComputeEffectKind::Watch, watched, effects,
+                         getTriggerKind(static_cast<sim::EdgeKind>(edge)));
+          for (Value condition : op.getConditions())
+            appendEffect(info, sim::ComputeEffectKind::Read, condition,
+                         effects);
+        })
         .Case<sim::SimSuspendObserveOp>([&](auto op) {
           for (Value observerValue : op.getPrimaries()) {
             auto binding =

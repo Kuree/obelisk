@@ -257,7 +257,8 @@ LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
                                   obelisk_rt_suspend_kind kind,
                                   obelisk_rt_wait_flags flags,
                                   ArrayRef<uint32_t> edges,
-                                  ArrayRef<Value> watched, Value delay) {
+                                  ArrayRef<Value> watched, Value delay,
+                                  uint64_t payload, uint64_t auxiliary) {
   if (!plan.frame)
     return operation->emitOpError("suspension has no canonical frame");
   const ProcessSuspension *suspension = plan.frame->getSuspension(operation);
@@ -300,6 +301,8 @@ LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
   write32(bytes, 4, kind);
   write32(bytes, 8, flags);
   write32(bytes, 12, edges.size());
+  write64(bytes, 16, payload);
+  write64(bytes, 24, auxiliary);
   for (auto [index, edge] : llvm::enumerate(edges)) {
     write32(bytes, 32 + index * 16 + 8, edge);
     if (signalWait) {

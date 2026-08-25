@@ -1148,7 +1148,12 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
         wait = currentWait(scheduled);
         if (!wait)
           return OBELISK_RT_INVALID_FRAME;
-        if (!hasSameDirectSignalWait(scheduled, wait) &&
+        bool sameSignalWait =
+            wait->flags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE
+                ? obelisk_rt_same_clock_occurrence_wait_unlocked(
+                      context, wait, scheduled.token, false)
+                : hasSameDirectSignalWait(scheduled, wait);
+        if (!sameSignalWait &&
             !obelisk_rt_register_signal_wait_unlocked(
                 context, wait, scheduled.signalSubscriptions,
                 scheduled.signalLatch, scheduled.token, false)) {

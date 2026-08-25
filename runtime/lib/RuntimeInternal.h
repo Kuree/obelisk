@@ -826,6 +826,65 @@ struct SignalSubscription {
   std::vector<SignalSubscriptionBucketSlot> bucketSlots;
 };
 
+static_assert(sizeof(void *) != 8 || sizeof(SignalSubscription) == 72,
+              "clock occurrence metadata must not grow ordinary waits");
+
+struct ClockOccurrenceCondition {
+  uint64_t stableID = UINT64_MAX;
+  uint32_t width = 0;
+};
+
+struct ClockOccurrenceWaveKey {
+  uint64_t time = 0;
+  uint64_t progress = 0;
+  uint32_t region = UINT32_MAX;
+
+  bool operator==(const ClockOccurrenceWaveKey &other) const {
+    return time == other.time && progress == other.progress &&
+           region == other.region;
+  }
+};
+
+struct ClockOccurrenceWaitState {
+  uint64_t occurrenceSite = 0;
+  ClockOccurrenceWaveKey currentKey;
+  bool hasCurrentKey = false;
+  std::array<uint64_t, 64> occurrenceCounts{};
+  std::vector<uint64_t> currentCohorts;
+  std::vector<uint64_t> finalizedCohorts;
+  size_t consumedCohorts = 0;
+  std::vector<ClockOccurrenceCondition> conditions;
+  uint64_t conditionMask = 0;
+};
+
+struct ClockOccurrenceSubscription {
+  uint64_t stableID = 0;
+  uint64_t bitWidth = 0;
+  uint64_t lastExaminedSequence = 0;
+  uint64_t waiterToken = 0;
+  uint32_t edge = 0;
+  uint8_t occurrenceBit = 0;
+  bool native = false;
+  std::vector<SignalSubscriptionBucketSlot> bucketSlots;
+};
+
+struct ClockOccurrenceBucketEntry {
+  ClockOccurrenceSubscription *subscription = nullptr;
+  size_t slotIndex = 0;
+};
+
+struct ClockOccurrenceFeatureState {
+  std::unordered_map<uint64_t, ClockOccurrenceWaitState> waits;
+  std::unordered_map<SignalSubscriptionBucketKey,
+                     std::vector<ClockOccurrenceBucketEntry>,
+                     SignalSubscriptionBucketKeyHash>
+      subscriptionBuckets;
+  std::unordered_map<uint64_t,
+                     std::vector<std::unique_ptr<ClockOccurrenceSubscription>>>
+      subscriptions;
+  uint64_t conditionalWaitCount = 0;
+};
+
 struct SignalSubscriptionDiagnostics {
   uint64_t publications = 0;
   uint64_t subscriptionsCurrent = 0;
@@ -1464,6 +1523,11 @@ struct obelisk_rt_context {
   // preserves their offsets; null is the complete no-feature state.
   DynamicScanState *dynamicScanState = nullptr;
 
+  // Cold, pay-for-play exact multi-clock assertion state. Keep this pointer at
+  // the tail so every preexisting context field retains its offset, and leave
+  // it null for designs that never execute a clock-cohort wait.
+  std::unique_ptr<ClockOccurrenceFeatureState> clockOccurrences;
+
   obelisk_rt_context();
   ~obelisk_rt_context();
 };
@@ -1611,7 +1675,9 @@ inline bool obelisk_rt_unstarted_actor_pending(obelisk_rt_context *context,
 inline bool
 obelisk_rt_has_conditional_signal_waiters(const obelisk_rt_context *context) {
   return context && (!context->nativeConditionalSignalWaiters.empty() ||
-                     !context->designConditionalSignalWaiters.empty());
+                     !context->designConditionalSignalWaiters.empty() ||
+                     (context->clockOccurrences &&
+                      context->clockOccurrences->conditionalWaitCount != 0));
 }
 
 inline bool
@@ -1626,7 +1692,8 @@ obelisk_rt_design_signal_wait_blocked(const ScheduledDesignTask &task) {
     const auto *wait = reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
         task.frame.data() + task.waitOffset);
     if (wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE ||
-        wait->flags == OBELISK_RT_WAIT_EDGE_IFF)
+        wait->flags == OBELISK_RT_WAIT_EDGE_IFF ||
+        wait->flags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE)
       return true;
   }
   return !task.signalSubscriptions.empty() && task.signalLatch &&

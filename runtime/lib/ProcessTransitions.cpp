@@ -39,6 +39,161 @@
 using namespace obelisk::process;
 using namespace obelisk::runtime;
 
+namespace {
+
+void finalizeClockOccurrenceWave(ClockOccurrenceWaitState &state) {
+  if (!state.hasCurrentKey)
+    return;
+  state.finalizedCohorts.insert(state.finalizedCohorts.end(),
+                                state.currentCohorts.begin(),
+                                state.currentCohorts.end());
+  state.currentCohorts.clear();
+  state.occurrenceCounts.fill(0);
+  state.hasCurrentKey = false;
+}
+
+bool readClockOccurrenceCondition(obelisk_rt_context *context,
+                                  ClockOccurrenceCondition condition) {
+  if (!context || condition.stableID == UINT64_MAX || condition.width == 0)
+    return condition.stableID == UINT64_MAX;
+  obelisk_rt_stable_handle_v1 decoded;
+  if (!obelisk_rt_stable_handle_decode(condition.stableID, &decoded) ||
+      decoded.offset < 0)
+    return false;
+  for (uint64_t bit = 0; bit != condition.width; ++bit) {
+    uint64_t relative = static_cast<uint64_t>(decoded.offset) + bit;
+    if (relative < static_cast<uint64_t>(decoded.offset))
+      return false;
+    bool value = false;
+    bool unknown = false;
+    uint64_t indexed =
+        bit <= uint64_t{INT64_MAX}
+            ? obelisk_rt_stable_handle_offset(condition.stableID,
+                                              static_cast<int64_t>(bit))
+            : UINT64_MAX;
+    auto snapshot = indexed == UINT64_MAX
+                        ? context->signalValueSnapshots.end()
+                        : context->signalValueSnapshots.find(indexed);
+    if (snapshot != context->signalValueSnapshots.end()) {
+      // Native publications can expose the transition before the backing
+      // packed state commit. Match ordinary edge-iff sampling by preferring
+      // the publication snapshot; bytecode stores normally fall through to
+      // the already committed state and therefore observe the same value.
+      value = snapshot->second.value;
+      unknown = snapshot->second.unknown;
+    } else if (decoded.kind == OBELISK_RT_STABLE_HANDLE_AUTOMATIC) {
+      auto found = context->nativeAutomaticStates.find(decoded.id);
+      if (found == context->nativeAutomaticStates.end() ||
+          relative >= found->second.bitWidth)
+        return false;
+      value = !found->second.value.empty() &&
+              ((found->second.value[relative / 8] >> (relative % 8)) & 1) !=
+                  0;
+      unknown = !found->second.unknown.empty() &&
+                ((found->second.unknown[relative / 8] >> (relative % 8)) &
+                 1) != 0;
+    } else {
+      uint64_t absolute = relative;
+      if (decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC) {
+        const NativeStaticState *storage =
+            findNativeStaticState(context, decoded.id);
+        if (!storage || relative >= storage->bitWidth)
+          return false;
+        absolute = storage->bitOffset + relative;
+      } else if (decoded.kind != OBELISK_RT_STABLE_HANDLE_GLOBAL) {
+        return false;
+      }
+      if (absolute >= context->stateValue.size() * uint64_t{64} ||
+          absolute >= context->stateUnknown.size() * uint64_t{64})
+        return false;
+      uint64_t mask = uint64_t{1} << (absolute % 64);
+      value = (context->stateValue[absolute / 64] & mask) != 0;
+      unknown = (context->stateUnknown[absolute / 64] & mask) != 0;
+    }
+    if (value && !unknown)
+      return true;
+  }
+  return false;
+}
+
+bool recordClockOccurrenceUnlocked(obelisk_rt_context *context,
+                                   ClockOccurrenceSubscription &subscription) {
+  bool native = subscription.native;
+  uint64_t logicalToken = native
+                              ? kNativeLogicalProcessTag |
+                                    subscription.waiterToken
+                              : subscription.waiterToken;
+  if (!context->clockOccurrences) {
+    context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+    return false;
+  }
+  auto found = context->clockOccurrences->waits.find(logicalToken);
+  if (found == context->clockOccurrences->waits.end() ||
+      subscription.occurrenceBit >= found->second.conditions.size()) {
+    context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+    return false;
+  }
+  ClockOccurrenceWaitState &state = found->second;
+  if (!readClockOccurrenceCondition(
+          context, state.conditions[subscription.occurrenceBit]))
+    return true;
+  ClockOccurrenceWaveKey key{context->schedulerTime,
+                             context->schedulerSlotProgress,
+                             context->activeExecRegion};
+  if (state.hasCurrentKey && !(state.currentKey == key))
+    finalizeClockOccurrenceWave(state);
+  if (!state.hasCurrentKey) {
+    state.currentKey = key;
+    state.hasCurrentKey = true;
+  }
+  uint64_t ordinal = state.occurrenceCounts[subscription.occurrenceBit]++;
+  if (ordinal >= std::numeric_limits<size_t>::max()) {
+    context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+    return false;
+  }
+  if (state.currentCohorts.size() <= ordinal)
+    state.currentCohorts.resize(static_cast<size_t>(ordinal) + 1, 0);
+  state.currentCohorts[ordinal] |=
+      uint64_t{1} << subscription.occurrenceBit;
+
+  bool wasTriggered = false;
+  if (native) {
+    ScheduledProcess *process =
+        findScheduledProcess(context, subscription.waiterToken);
+    if (!process || !process->instance || !process->started) {
+      context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+      return false;
+    }
+    wasTriggered = process->signalTriggered;
+    process->signalTriggered = true;
+    if (!wasTriggered)
+      context->nativePollCandidates.insert(subscription.waiterToken);
+  } else {
+    auto indexed =
+        context->scheduledDesignTaskIndices.find(subscription.waiterToken);
+    if (indexed == context->scheduledDesignTaskIndices.end() ||
+        indexed->second >= context->scheduledDesignTasks.size()) {
+      context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+      return false;
+    }
+    ScheduledDesignTask &task = context->scheduledDesignTasks[indexed->second];
+    if (task.id != subscription.waiterToken || task.terminated ||
+        !task.started) {
+      context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+      return false;
+    }
+    wasTriggered = task.signalTriggered;
+    task.signalTriggered = true;
+    if (!wasTriggered)
+      context->designPollCandidates.insert(subscription.waiterToken);
+  }
+  if (!wasTriggered && ++context->schedulerSelectionGeneration == 0)
+    context->schedulerSelectionGeneration = 1;
+  return true;
+}
+
+} // namespace
+
 void wakeMonitorProcessUnlocked(obelisk_rt_context *context,
                                 uint64_t logicalToken) {
   if (!logicalToken)
@@ -75,10 +230,11 @@ void wakeMonitorProcessUnlocked(obelisk_rt_context *context,
   }
 }
 
-template <typename Matches>
+template <typename Matches, typename ClockMatches>
 static bool
 publishSignalOccurrenceUnlocked(obelisk_rt_context *context, uint64_t stableID,
                                 uint64_t bitWidth, Matches &&matches,
+                                ClockMatches &&clockMatches,
                                 uint64_t *outSequence = nullptr) {
   if (context->nextSchedulerSequence == 0) {
     context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
@@ -226,15 +382,70 @@ publishSignalOccurrenceUnlocked(obelisk_rt_context *context, uint64_t stableID,
       if (!visitBucket(page))
         return false;
   }
+
+  // Exact multi-clock coordination owns a separate lazy subscription index.
+  // Ordinary publication performs only this cold null-pointer gate and keeps
+  // its long-standing subscription representation and matching path intact.
+  ClockOccurrenceFeatureState *feature = context->clockOccurrences.get();
+  if (!feature)
+    return true;
+  auto visitClockBucket = [&](int64_t page) {
+    SignalSubscriptionBucketKey key{kind, objectID, page};
+    auto bucket = feature->subscriptionBuckets.find(key);
+    if (bucket == feature->subscriptionBuckets.end())
+      return true;
+    for (const ClockOccurrenceBucketEntry &entry : bucket->second) {
+      ClockOccurrenceSubscription *subscription = entry.subscription;
+      if (!subscription || subscription->lastExaminedSequence == sequence)
+        continue;
+      subscription->lastExaminedSequence = sequence;
+      if (context->signalDiagnosticsEnabled)
+        ++context->signalDiagnostics.subscribersExamined;
+      if (!rangesOverlap(subscription->stableID, subscription->bitWidth,
+                         stableID, bitWidth) ||
+          !clockMatches(*subscription))
+        continue;
+      if (!recordClockOccurrenceUnlocked(context, *subscription))
+        return false;
+    }
+    return true;
+  };
+  if (pageCount <= kMaximumIndexedSignalPages) {
+    if (!visitClockBucket(kWideSignalSubscriptionPage))
+      return false;
+    for (int64_t page = firstPage;; ++page) {
+      if (!visitClockBucket(page))
+        return false;
+      if (page == lastPage)
+        break;
+    }
+  } else {
+    std::vector<int64_t> pages;
+    try {
+      for (const auto &[key, bucket] : feature->subscriptionBuckets) {
+        (void)bucket;
+        if (key.kind == kind && key.id == objectID)
+          pages.push_back(key.page);
+      }
+    } catch (const std::bad_alloc &) {
+      context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+      return false;
+    }
+    for (int64_t page : pages)
+      if (!visitClockBucket(page))
+        return false;
+  }
   return true;
 }
 
-static bool signalTransitionBatchMatches(const SignalSubscription &subscription,
+template <typename Subscription>
+static bool signalTransitionBatchMatches(const Subscription &subscription,
                                          uint64_t stableID, uint64_t bitWidth,
                                          const uint8_t *changed,
                                          const uint8_t *posedge,
                                          const uint8_t *negedge,
-                                         uint64_t edgeBitOffset) {
+                                         uint64_t edgeBitOffset,
+                                         bool direct) {
   int64_t publishedOffset = 0;
   int64_t subscribedOffset = 0;
   if ((stableID & OBELISK_RT_STABLE_HANDLE_TAG_MASK) ==
@@ -261,8 +472,6 @@ static bool signalTransitionBatchMatches(const SignalSubscription &subscription,
   __int128 overlapEnd =
       std::min(static_cast<__int128>(publishedOffset) + bitWidth,
                static_cast<__int128>(subscribedOffset) + subscription.bitWidth);
-  bool direct = subscription.target == SignalSubscription::NativeDirectWait ||
-                subscription.target == SignalSubscription::DesignDirectWait;
   for (__int128 coordinate = overlapBegin; coordinate < overlapEnd;
        ++coordinate) {
     uint64_t index =
@@ -497,9 +706,17 @@ static bool publishSignalTransitionBatchImpl(
   return publishSignalOccurrenceUnlocked(
       context, stableID, bitWidth,
       [&](const SignalSubscription &subscription) {
+        bool direct =
+            subscription.target == SignalSubscription::NativeDirectWait ||
+            subscription.target == SignalSubscription::DesignDirectWait;
         return signalTransitionBatchMatches(subscription, stableID, bitWidth,
                                             changed, posedge, negedge,
-                                            edgeBitOffset);
+                                            edgeBitOffset, direct);
+      },
+      [&](const ClockOccurrenceSubscription &subscription) {
+        return signalTransitionBatchMatches(subscription, stableID, bitWidth,
+                                            changed, posedge, negedge,
+                                            edgeBitOffset, true);
       },
       outSequence);
 }
@@ -508,7 +725,8 @@ bool obelisk_rt_publish_signal_transition_batch_unlocked(
     obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
     uint64_t edgeBitOffset, uint64_t *outSequence) {
-  if (edgeBitOffset == 0 && publishStaticAOTSignalTransitionUnlocked(
+  if (!context->clockOccurrences && edgeBitOffset == 0 &&
+      publishStaticAOTSignalTransitionUnlocked(
                                 context, stableID, bitWidth, changed, posedge,
                                 negedge, outSequence, false)) {
     return context->schedulerStatus == OBELISK_RT_OK;
@@ -532,6 +750,9 @@ bool obelisk_rt_publish_signal_occurrence_unlocked(obelisk_rt_context *context,
             subscription.target == SignalSubscription::NativeDirectWait ||
             subscription.target == SignalSubscription::DesignDirectWait;
         return !direct || signalEdgeMatches(subscription.edge, edges);
+      },
+      [&](const ClockOccurrenceSubscription &subscription) {
+        return signalEdgeMatches(subscription.edge, edges);
       },
       outSequence);
 }
@@ -1298,6 +1519,57 @@ obelisk_rt_v1_scheduler_wait_order_failed(obelisk_rt_context *context) {
     return context->activeLogicalProcessToken != 0 &&
            context->activeWaitOrderFailed;
   } catch (...) {
+    return 0;
+  }
+}
+
+extern "C" uint64_t obelisk_rt_v1_clock_occurrence_consume(
+    obelisk_rt_context *context, uint64_t occurrenceSite) {
+  if (!context || occurrenceSite == 0)
+    return 0;
+  try {
+    ContextMutexLock lock(context);
+    uint64_t token = context->activeLogicalProcessToken;
+    if (token == 0 || !context->clockOccurrences)
+      return 0;
+    auto found = context->clockOccurrences->waits.find(token);
+    if (found == context->clockOccurrences->waits.end() ||
+        found->second.occurrenceSite != occurrenceSite)
+      return 0;
+    ClockOccurrenceWaitState &state = found->second;
+    if (state.consumedCohorts == state.finalizedCohorts.size() &&
+        state.hasCurrentKey) {
+      ClockOccurrenceWaveKey active{context->schedulerTime,
+                                    context->schedulerSlotProgress,
+                                    context->activeExecRegion};
+      // The producer fragment or barrier must return before its mask is
+      // visible. Until then another publication can still join this exact
+      // wave, so an early consume observes no partial cohort.
+      if (!(state.currentKey == active))
+        finalizeClockOccurrenceWave(state);
+    }
+    if (state.consumedCohorts == state.finalizedCohorts.size())
+      return 0;
+    uint64_t result = state.finalizedCohorts[state.consumedCohorts++];
+    if (state.consumedCohorts == state.finalizedCohorts.size()) {
+      state.finalizedCohorts.clear();
+      state.consumedCohorts = 0;
+    } else if (state.consumedCohorts >= 1024 &&
+               state.consumedCohorts * 2 >=
+                   state.finalizedCohorts.size()) {
+      state.finalizedCohorts.erase(
+          state.finalizedCohorts.begin(),
+          state.finalizedCohorts.begin() + state.consumedCohorts);
+      state.consumedCohorts = 0;
+    }
+    return result;
+  } catch (const std::bad_alloc &) {
+    ContextMutexLock lock(context);
+    context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+    return 0;
+  } catch (...) {
+    ContextMutexLock lock(context);
+    context->schedulerStatus = OBELISK_RT_INVALID_ARGUMENT;
     return 0;
   }
 }

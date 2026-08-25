@@ -113,6 +113,8 @@ constexpr uint32_t kIntrinsicEventTriggered =
     OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGERED;
 constexpr uint32_t kIntrinsicWaitOrderFailed =
     OBELISK_RT_INTRINSIC_V1_WAIT_ORDER_FAILED;
+constexpr uint32_t kIntrinsicClockOccurrenceConsume =
+    OBELISK_RT_INTRINSIC_V1_CLOCK_OCCURRENCE_CONSUME;
 constexpr uint32_t kIntrinsicNetCountDrivers =
     OBELISK_RT_INTRINSIC_V1_NET_COUNT_DRIVERS;
 constexpr uint32_t kIntrinsicPassSwitchControl =

@@ -144,6 +144,9 @@ SuccessorOperands SimSuspendLevelOp::getSuccessorOperands(unsigned index) {
 SuccessorOperands SimSuspendAnyOp::getSuccessorOperands(unsigned index) {
   return makeContinuationSuccessorOperands(*this, index);
 }
+SuccessorOperands SimSuspendClockSetOp::getSuccessorOperands(unsigned index) {
+  return makeContinuationSuccessorOperands(*this, index);
+}
 SuccessorOperands SimSuspendEventOp::getSuccessorOperands(unsigned index) {
   return makeContinuationSuccessorOperands(*this, index);
 }
@@ -261,6 +264,110 @@ MutableOperandRange SimSuspendAnyOp::getContinuationOperandsMutable() {
   unsigned watchedCount = std::min<size_t>(getEdges().size(), getNumOperands());
   return MutableOperandRange(getOperation(), watchedCount,
                              getNumOperands() - watchedCount);
+}
+
+Operation::operand_range SimSuspendClockSetOp::getPrimaries() {
+  size_t count = std::min<size_t>(getEdges().size(), getNumOperands());
+  return getValues().take_front(count);
+}
+
+Operation::operand_range SimSuspendClockSetOp::getConditions() {
+  size_t primaryCount = std::min<size_t>(getEdges().size(), getNumOperands());
+  size_t count = getConditionCountAttr().getValue().isNegative()
+                     ? 0
+                     : std::min<uint64_t>(getConditionCount(),
+                                          getNumOperands() - primaryCount);
+  return getValues().slice(primaryCount, count);
+}
+
+Operation::operand_range SimSuspendClockSetOp::getContinuationOperands() {
+  size_t primaryCount = std::min<size_t>(getEdges().size(), getNumOperands());
+  size_t conditionCount = getConditionCountAttr().getValue().isNegative()
+                              ? 0
+                              : std::min<uint64_t>(
+                                    getConditionCount(),
+                                    getNumOperands() - primaryCount);
+  return getValues().drop_front(primaryCount + conditionCount);
+}
+
+MutableOperandRange
+SimSuspendClockSetOp::getContinuationOperandsMutable() {
+  size_t primaryCount = std::min<size_t>(getEdges().size(), getNumOperands());
+  size_t conditionCount = getConditionCountAttr().getValue().isNegative()
+                              ? 0
+                              : std::min<uint64_t>(
+                                    getConditionCount(),
+                                    getNumOperands() - primaryCount);
+  size_t begin = primaryCount + conditionCount;
+  return MutableOperandRange(getOperation(), begin, getNumOperands() - begin);
+}
+
+LogicalResult SimSuspendClockSetOp::verify() {
+  if (getConditionCountAttr().getValue().isNegative())
+    return emitOpError("condition count must be nonnegative");
+  if (getPrimaries().empty() || getPrimaries().size() > 64)
+    return emitOpError("requires between one and 64 clock primaries");
+  if (getConditions().size() != static_cast<uint64_t>(getConditionCount()))
+    return emitOpError("condition count exceeds the operand inventory");
+  if (getEdges().size() != getPrimaries().size() ||
+      getConditionIndices().size() != getPrimaries().size())
+    return emitOpError("requires one edge and condition index per primary");
+  if (!getOccurrenceSiteAttr().getValue().isStrictlyPositive() ||
+      getOccurrenceSite() > UINT32_MAX)
+    return emitOpError("requires a positive 32-bit occurrence site");
+  SmallVector<bool> usedConditions(getConditions().size(), false);
+  int32_t nextCondition = 0;
+  for (auto [primary, edge, conditionIndex] :
+       llvm::zip_equal(getPrimaries(), getEdges(), getConditionIndices())) {
+    if (!isa<RefType, NetType, DriverType>(primary.getType()))
+      return emitOpError("clock primaries must be direct signal handles");
+    if (edge < static_cast<int32_t>(EdgeKind::Change) ||
+        edge > static_cast<int32_t>(EdgeKind::Both))
+      return emitOpError("contains an invalid edge kind");
+    if (conditionIndex < -1 ||
+        (conditionIndex >= 0 && static_cast<uint64_t>(conditionIndex) >=
+                                    getConditions().size()))
+      return emitOpError("contains an invalid condition index");
+    if (conditionIndex >= 0) {
+      if (conditionIndex != nextCondition++)
+        return emitOpError(
+            "condition indices must be in canonical ascending order");
+      if (usedConditions[conditionIndex])
+        return emitOpError("a condition may belong to only one clock");
+      usedConditions[conditionIndex] = true;
+    }
+  }
+  for (Value condition : getConditions())
+    if (!isa<RefType, NetType, DriverType>(condition.getType()))
+      return emitOpError("clock iff conditions must be direct signal handles");
+  if (llvm::is_contained(usedConditions, false))
+    return emitOpError("contains an unreferenced condition handle");
+  auto function = (*this)->getParentOfType<SimFuncOp>();
+  if (!function ||
+      !function->hasAttr("obelisk_sim.multiclock_sequence_coordinator") ||
+      SymbolTable::getSymbolVisibility(function) !=
+          SymbolTable::Visibility::Private ||
+      function.getEntryKind() != EntryKind::Always ||
+      function.getHomeRegion() != EventRegion::Observed ||
+      function.getDomain() != ExecutionDomain::Design)
+    return emitOpError(
+        "requires a private Observed design-domain multi-clock coordinator");
+  unsigned clockWaits = 0;
+  function.walk([&](SimSuspendClockSetOp) { ++clockWaits; });
+  if (clockWaits != 1)
+    return emitOpError("coordinator must contain exactly one clock-set wait");
+  return verifyContinuation(*this, getContinuationOperands(),
+                            getContinuation());
+}
+
+LogicalResult SimClockOccurrenceConsumeOp::verify() {
+  if (!getOccurrenceSiteAttr().getValue().isStrictlyPositive() ||
+      getOccurrenceSite() > UINT32_MAX)
+    return emitOpError("requires a positive 32-bit occurrence site");
+  auto function = getOperation()->getParentOfType<SimFuncOp>();
+  if (!function)
+    return emitOpError("must be nested in obelisk_sim.func");
+  return success();
 }
 LogicalResult SimSuspendEventOp::verify() {
   return verifyContinuation(*this, getContinuationOperands(),

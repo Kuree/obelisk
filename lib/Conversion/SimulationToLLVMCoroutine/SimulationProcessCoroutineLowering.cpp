@@ -36,7 +36,10 @@ uint32_t suspensionKind(Operation *operation) {
       .Case<sim::SimSuspendChangeOp, sim::SimSuspendLevelOp>(
           [](auto) { return OBELISK_RT_SUSPEND_CHANGE; })
       .Case<sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
-            sim::SimSuspendAnyOp>([](auto) { return OBELISK_RT_SUSPEND_EDGE; })
+            sim::SimSuspendAnyOp,
+            sim::SimSuspendClockSetOp>([](auto) {
+        return OBELISK_RT_SUSPEND_EDGE;
+      })
       .Case<sim::SimSuspendEventOp>(
           [](auto) { return OBELISK_RT_SUSPEND_EVENT; })
       .Case<sim::SimSuspendEventOrderOp>(

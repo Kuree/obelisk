@@ -442,7 +442,8 @@ static bool indexedSignalBlocked(const ScheduledProcess &process) {
   if (signalSuspend) {
     const obelisk_rt_wait_record_v1 *wait = currentWait(process);
     if (wait && (wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE ||
-                 wait->flags == OBELISK_RT_WAIT_EDGE_IFF))
+                 wait->flags == OBELISK_RT_WAIT_EDGE_IFF ||
+                 wait->flags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE))
       return true;
   }
   return !process.signalSubscriptions.empty() && process.signalLatch &&
@@ -969,6 +970,27 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
   ContextTransaction transaction(context);
   try {
     ContextMutexLock lock(context);
+    // A child spawned while a Final process is executing belongs to the same
+    // Final phase unless its own entry kind already selected that phase. This
+    // matches design-bytecode spawn inheritance and prevents a Reactive
+    // report child from being stranded in the already-drained ordinary
+    // phase. The check is confined to dynamic process creation.
+    if (phase == 0 && context->activeDesignTaskID != 0)
+      phase = context->activeDesignTaskPhase;
+    if (phase == 0 && context->activeNativeProcess &&
+        (context->activeLogicalProcessToken & kNativeLogicalProcessTag) != 0) {
+      uint64_t activeToken =
+          context->activeLogicalProcessToken & ~kNativeLogicalProcessTag;
+      auto indexed = context->scheduledProcessIndices.find(activeToken);
+      if (indexed != context->scheduledProcessIndices.end() &&
+          indexed->second < context->scheduledProcesses.size()) {
+        const ScheduledProcess &active =
+            context->scheduledProcesses[indexed->second];
+        if (active.token == activeToken &&
+            active.instance == context->activeNativeProcess)
+          phase = active.phase;
+      }
+    }
     ScheduledProcess process;
     process.instance = instance;
     if (context->nextNativeProcessToken == 0 ||
@@ -2457,10 +2479,14 @@ adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
           context, computedWait(scheduled), scheduled.token, false,
           scheduled.signalSubscriptions, scheduled.signalLatch))
     return context->schedulerStatus;
-  if (directSignalSuspend &&
-      !hasSameDirectSignalWait(scheduled, currentWait(scheduled)) &&
+  bool sameSignalWait =
+      wait && wait->flags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE
+          ? obelisk_rt_same_clock_occurrence_wait_unlocked(
+                context, wait, scheduled.token, false)
+          : hasSameDirectSignalWait(scheduled, wait);
+  if (directSignalSuspend && !sameSignalWait &&
       !obelisk_rt_register_signal_wait_unlocked(
-          context, currentWait(scheduled), scheduled.signalSubscriptions,
+          context, wait, scheduled.signalSubscriptions,
           scheduled.signalLatch, scheduled.token, false))
     return context->schedulerStatus;
   return OBELISK_RT_OK;

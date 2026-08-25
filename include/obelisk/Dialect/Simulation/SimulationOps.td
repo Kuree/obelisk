@@ -3837,6 +3837,26 @@ def SimWaitOrderFailedOp
   let assemblyFormat = "attr-dict";
 }
 
+def SimClockOccurrenceConsumeOp : SimOp<"assert.clock_occurrence.consume", [
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemWrite<SimSchedulerResource>,
+                   MemRead<SimProcessResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "consume one finalized multi-clock occurrence cohort";
+  let description = [{
+    Returns the nonzero bit mask of the oldest finalized clock-occurrence
+    cohort queued for the current logical process and compiler-assigned site.
+    Zero means that no complete cohort remains. Cohorts are finalized only
+    after their producer scheduler wave has ended, so signal publication order
+    cannot expose a partial mask.
+  }];
+  let arguments = (ins SimContextType:$context, I64Attr:$occurrence_site);
+  let results = (outs I64:$mask);
+  let assemblyFormat = "$context `site` $occurrence_site attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimEventEqualOp : SimOp<"event.equal", [Pure, SameTypeOperands]> {
   let summary = "compare two event handles for synchronization-object identity";
   let arguments = (ins SimEventType:$lhs, SimEventType:$rhs);
@@ -3957,6 +3977,42 @@ def SimSuspendAnyOp : SimOp<"suspend.any", [
    attr-dict `:` type($values)}];
   let extraClassDeclaration = [{
     ::mlir::Operation::operand_range getWatched();
+    ::mlir::Operation::operand_range getContinuationOperands();
+    ::mlir::MutableOperandRange getContinuationOperandsMutable();
+  }];
+  let hasVerifier = 1;
+}
+
+def SimSuspendClockSetOp : SimOp<"suspend.clock_set", [
+    Terminator, DeclareOpInterfaceMethods<BranchOpInterface>,
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "suspend on an exact set of frozen assertion clocks";
+  let description = [{
+    The first `edges.size()` values are direct signal clock primaries. They are
+    followed by `condition_count` optional iff handles and then successor
+    operands. `condition_indices` contains -1 or the condition index for every
+    primary. At most 64 primaries are accepted. The runtime groups all matched
+    primaries from one exact scheduler publication wave into an occurrence
+    mask without coalescing repeated occurrences in that wave.
+  }];
+  let arguments = (ins Variadic<AnyType>:$values,
+                       I32Attr:$condition_count,
+                       DenseI32ArrayAttr:$edges,
+                       DenseI32ArrayAttr:$condition_indices,
+                       I64Attr:$occurrence_site,
+                       OptionalAttr<SimContinuationSiteAttr>:$site,
+                       OptionalAttr<SimEventRegion>:$resume_region);
+  let successors = (successor AnySuccessor:$continuation);
+  let assemblyFormat = [{
+    $values `conditions` $condition_count `edges` $edges
+    `indices` $condition_indices `site` $occurrence_site
+    `to` $continuation attr-dict `:` type($values)
+  }];
+  let extraClassDeclaration = [{
+    ::mlir::Operation::operand_range getPrimaries();
+    ::mlir::Operation::operand_range getConditions();
     ::mlir::Operation::operand_range getContinuationOperands();
     ::mlir::MutableOperandRange getContinuationOperandsMutable();
   }];
