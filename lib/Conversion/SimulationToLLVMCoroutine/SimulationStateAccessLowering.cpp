@@ -47,8 +47,7 @@ public:
                     const NativeStateLayout *directLayout,
                     bool experimentalTwoState)
       : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
-        directLayout(directLayout), experimentalTwoState(experimentalTwoState) {
-  }
+        directLayout(directLayout), experimentalTwoState(experimentalTwoState) {}
 
   LogicalResult
   matchAndRewrite(sim::SimRefLoadOp op, OneToNOpAdaptor adaptor,
@@ -75,13 +74,13 @@ public:
           arith::BitcastOp::create(rewriter, op.getLoc(), resultType, value);
     SmallVector<Value> converted{value};
     if (containsLogic(resultType)) {
-      Value unknown =
-          twoState
-              ? llvmConstant(rewriter, op.getLoc(), plane, 0)
-              : loadStatePlane(rewriter, op.getLoc(),
-                               adaptor.getReference().front(), plane,
-                               "__obelisk_state_unknown", true, stateBitCount,
-                               directLayout, guardedPermission, assumeClean);
+      Value unknown = twoState
+                          ? llvmConstant(rewriter, op.getLoc(), plane, 0)
+                          : loadStatePlane(
+                                rewriter, op.getLoc(),
+                                adaptor.getReference().front(), plane,
+                                "__obelisk_state_unknown", true, stateBitCount,
+                                directLayout, guardedPermission, assumeClean);
       converted.push_back(unknown);
     }
     SmallVector<ValueRange> replacements{ValueRange(converted)};
@@ -103,8 +102,7 @@ public:
                      const NativeStateLayout *directLayout,
                      bool experimentalTwoState)
       : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
-        directLayout(directLayout), experimentalTwoState(experimentalTwoState) {
-  }
+        directLayout(directLayout), experimentalTwoState(experimentalTwoState) {}
 
   LogicalResult
   matchAndRewrite(sim::SimRefStoreOp op, OneToNOpAdaptor adaptor,
@@ -164,12 +162,13 @@ public:
                        directLayout, guardedPermission, assumeClean);
     Value oldUnknown;
     if (containsLogic(valueType))
-      oldUnknown = twoState ? llvmConstant(rewriter, op.getLoc(), plane, 0)
-                            : loadStatePlane(rewriter, op.getLoc(),
-                                             adaptor.getReference().front(),
-                                             plane, "__obelisk_state_unknown",
-                                             true, stateBitCount, directLayout,
-                                             guardedPermission, assumeClean);
+      oldUnknown = twoState
+                       ? llvmConstant(rewriter, op.getLoc(), plane, 0)
+                       : loadStatePlane(
+                             rewriter, op.getLoc(),
+                             adaptor.getReference().front(), plane,
+                             "__obelisk_state_unknown", true, stateBitCount,
+                             directLayout, guardedPermission, assumeClean);
     Value notificationValue = storedValue;
     Value notificationUnknown = adaptor.getValue().size() == 2 && !twoState
                                     ? adaptor.getValue()[1]
@@ -206,30 +205,32 @@ public:
           adaptor.getValue()[1], "__obelisk_state_unknown", stateBitCount,
           directLayout, guardedPermission, assumeClean,
           /*trackChange=*/true, continuous);
-      notificationUnknown =
-          arith::SelectOp::create(rewriter, op.getLoc(), unknownChanged,
-                                  adaptor.getValue()[1], oldUnknown);
+      notificationUnknown = arith::SelectOp::create(
+          rewriter, op.getLoc(), unknownChanged, adaptor.getValue()[1],
+          oldUnknown);
     }
     // A generic packed store can update only the currently unmasked bits.
     // Reload its canonical result so partial external forces cannot leak the
     // attempted value through transition publication. Direct clean stores
     // have no override mask and keep the select-only fast path above.
-    bool needsVisibleReload = sim::getPackedWidth(valueType).has_value() &&
-                              (continuous || !directLayout || !directRange ||
-                               (directRange->guarded && !assumeClean));
+    bool needsVisibleReload =
+        sim::getPackedWidth(valueType).has_value() &&
+        (continuous || !directLayout || !directRange ||
+         (directRange->guarded && !assumeClean));
     if (needsVisibleReload) {
-      notificationValue =
-          loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
-                         plane, "__obelisk_state_value", false, stateBitCount,
-                         directLayout, guardedPermission, assumeClean);
+      notificationValue = loadStatePlane(
+          rewriter, op.getLoc(), adaptor.getReference().front(), plane,
+          "__obelisk_state_value", false, stateBitCount, directLayout,
+          guardedPermission, assumeClean);
       if (containsLogic(valueType))
         notificationUnknown =
             twoState
                 ? llvmConstant(rewriter, op.getLoc(), plane, 0)
                 : loadStatePlane(rewriter, op.getLoc(),
                                  adaptor.getReference().front(), plane,
-                                 "__obelisk_state_unknown", true, stateBitCount,
-                                 directLayout, guardedPermission, assumeClean);
+                                 "__obelisk_state_unknown", true,
+                                 stateBitCount, directLayout,
+                                 guardedPermission, assumeClean);
     }
     if (isa<FloatType>(valueType)) {
       Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
@@ -277,8 +278,7 @@ public:
                     const NativeStateLayout *directLayout,
                     bool experimentalTwoState)
       : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
-        directLayout(directLayout), experimentalTwoState(experimentalTwoState) {
-  }
+        directLayout(directLayout), experimentalTwoState(experimentalTwoState) {}
 
   LogicalResult
   matchAndRewrite(sim::SimNetReadOp op, OneToNOpAdaptor adaptor,
@@ -289,19 +289,21 @@ public:
     if (!width || adaptor.getNet().size() != 1)
       return failure();
     IntegerType plane = rewriter.getIntegerType(*width);
-    Value value = loadStatePlane(
-        rewriter, op.getLoc(), adaptor.getNet().front(), plane,
-        "__obelisk_state_value", false, stateBitCount, directLayout);
+    Value value =
+        loadStatePlane(rewriter, op.getLoc(), adaptor.getNet().front(), plane,
+                       "__obelisk_state_value", false, stateBitCount,
+                       directLayout);
     if (isa<FloatType>(resultType))
-      value =
-          arith::BitcastOp::create(rewriter, op.getLoc(), resultType, value);
+      value = arith::BitcastOp::create(rewriter, op.getLoc(), resultType,
+                                       value);
     SmallVector<Value> converted{value};
     if (containsLogic(resultType)) {
-      Value unknown = twoState ? llvmConstant(rewriter, op.getLoc(), plane, 0)
-                               : loadStatePlane(rewriter, op.getLoc(),
-                                                adaptor.getNet().front(), plane,
-                                                "__obelisk_state_unknown", true,
-                                                stateBitCount, directLayout);
+      Value unknown = twoState
+                          ? llvmConstant(rewriter, op.getLoc(), plane, 0)
+                          : loadStatePlane(
+                                rewriter, op.getLoc(), adaptor.getNet().front(),
+                                plane, "__obelisk_state_unknown", true,
+                                stateBitCount, directLayout);
       converted.push_back(unknown);
     }
     SmallVector<ValueRange> replacements{ValueRange(converted)};
@@ -323,8 +325,7 @@ public:
                        const NativeStateLayout *directLayout,
                        bool experimentalTwoState)
       : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
-        directLayout(directLayout), experimentalTwoState(experimentalTwoState) {
-  }
+        directLayout(directLayout), experimentalTwoState(experimentalTwoState) {}
 
   LogicalResult
   matchAndRewrite(sim::SimDriverReadOp op, OneToNOpAdaptor adaptor,
@@ -339,16 +340,17 @@ public:
         rewriter, op.getLoc(), adaptor.getDriver().front(), plane,
         "__obelisk_state_value", false, stateBitCount, directLayout);
     if (isa<FloatType>(resultType))
-      value =
-          arith::BitcastOp::create(rewriter, op.getLoc(), resultType, value);
+      value = arith::BitcastOp::create(rewriter, op.getLoc(), resultType,
+                                       value);
     SmallVector<Value> converted{value};
     if (containsLogic(resultType)) {
       Value unknown = twoState
                           ? llvmConstant(rewriter, op.getLoc(), plane, 0)
-                          : loadStatePlane(rewriter, op.getLoc(),
-                                           adaptor.getDriver().front(), plane,
-                                           "__obelisk_state_unknown", true,
-                                           stateBitCount, directLayout);
+                          : loadStatePlane(
+                                rewriter, op.getLoc(),
+                                adaptor.getDriver().front(), plane,
+                                "__obelisk_state_unknown", true,
+                                stateBitCount, directLayout);
       converted.push_back(unknown);
     }
     SmallVector<ValueRange> replacements{ValueRange(converted)};
@@ -370,8 +372,7 @@ public:
                      const NativeStateLayout *directLayout,
                      bool experimentalTwoState)
       : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
-        directLayout(directLayout), experimentalTwoState(experimentalTwoState) {
-  }
+        directLayout(directLayout), experimentalTwoState(experimentalTwoState) {}
 
   LogicalResult
   matchAndRewrite(sim::SimNetWriteOp op, OneToNOpAdaptor adaptor,
@@ -388,19 +389,21 @@ public:
                                     stateBitCount, directLayout);
     Value oldUnknown;
     if (containsLogic(valueType))
-      oldUnknown = twoState ? llvmConstant(rewriter, op.getLoc(), plane, 0)
-                            : loadStatePlane(rewriter, op.getLoc(), handle,
-                                             plane, "__obelisk_state_unknown",
-                                             true, stateBitCount, directLayout);
+      oldUnknown = twoState
+                       ? llvmConstant(rewriter, op.getLoc(), plane, 0)
+                       : loadStatePlane(rewriter, op.getLoc(), handle, plane,
+                                        "__obelisk_state_unknown", true,
+                                        stateBitCount, directLayout);
     Value newValue = adaptor.getValue().front();
     if (isa<FloatType>(valueType))
-      newValue =
-          arith::BitcastOp::create(rewriter, op.getLoc(), plane, newValue);
+      newValue = arith::BitcastOp::create(rewriter, op.getLoc(), plane,
+                                          newValue);
     Value newUnknown = adaptor.getValue().size() == 2 && !twoState
                            ? adaptor.getValue()[1]
                            : Value{};
     (void)storeStatePlane(rewriter, op.getLoc(), handle, newValue,
-                          "__obelisk_state_value", stateBitCount, directLayout);
+                          "__obelisk_state_value", stateBitCount,
+                          directLayout);
     if (containsLogic(valueType) && !twoState)
       (void)storeStatePlane(rewriter, op.getLoc(), handle, newUnknown,
                             "__obelisk_state_unknown", stateBitCount,
@@ -409,15 +412,15 @@ public:
     if (isa<FloatType>(valueType)) {
       Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
       auto save = [&](Value value) {
-        Value storage =
-            entryAlloca(rewriter, op.getLoc(), value.getType(), 1, 1);
+        Value storage = entryAlloca(rewriter, op.getLoc(), value.getType(), 1,
+                                    1);
         LLVM::StoreOp::create(rewriter, op.getLoc(), value, storage, 1);
         return storage;
       };
       Value contextAddress = LLVM::AddressOfOp::create(
           rewriter, op.getLoc(), pointer, "__obelisk_current_context");
-      Value runtimeContext = LLVM::LoadOp::create(rewriter, op.getLoc(),
-                                                  pointer, contextAddress, 8);
+      Value runtimeContext = LLVM::LoadOp::create(
+          rewriter, op.getLoc(), pointer, contextAddress, 8);
       LLVM::CallOp::create(
           rewriter, op.getLoc(), TypeRange{},
           SymbolRefAttr::get(rewriter.getContext(),
@@ -429,7 +432,8 @@ public:
     } else {
       notifySignal(rewriter, op.getLoc(), handle, *width, oldValue, oldUnknown,
                    newValue, containsLogic(valueType) ? newUnknown : Value{},
-                   resolveDirectStaticStateRange(handle, *width, directLayout));
+                   resolveDirectStaticStateRange(handle, *width,
+                                                 directLayout));
     }
     rewriter.eraseOp(op);
     return success();
@@ -498,19 +502,19 @@ public:
     auto extend = [&](Value value) -> Value {
       return LLVM::ZExtOp::create(rewriter, location, i32, value);
     };
-    Value unknown = adaptor.getControl().size() == 2
-                        ? extend(adaptor.getControl()[1])
-                        : llvmConstant(rewriter, location, i32, 0);
-    Value status =
-        LLVM::CallOp::create(
-            rewriter, location, TypeRange{i32},
-            SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_pass_switch_control"),
-            ValueRange{
-                context,
-                llvmConstant(rewriter, location, i32, op.getPassSwitchId()),
-                extend(adaptor.getControl().front()), unknown})
-            .getResult();
+    Value unknown =
+        adaptor.getControl().size() == 2
+            ? extend(adaptor.getControl()[1])
+            : llvmConstant(rewriter, location, i32, 0);
+    Value status = LLVM::CallOp::create(
+                       rewriter, location, TypeRange{i32},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_pass_switch_control"),
+                       ValueRange{context,
+                                  llvmConstant(rewriter, location, i32,
+                                               op.getPassSwitchId()),
+                                  extend(adaptor.getControl().front()), unknown})
+                       .getResult();
     reportRuntimeControlStatus(rewriter, location, context, status);
     rewriter.eraseOp(op);
     return success();

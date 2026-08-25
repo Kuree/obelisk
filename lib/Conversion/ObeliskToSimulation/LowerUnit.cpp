@@ -2191,16 +2191,16 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
       FailureOr<Value> pControl = lowerControl(operations[3]);
       if (failed(pControl))
         return failure();
-      Value invertedP =
-          sim::SimLogicUnaryOp::create(builder, location, pControl->getType(),
-                                       sim::UnaryKind::BitNot, *pControl);
+      Value invertedP = sim::SimLogicUnaryOp::create(
+          builder, location, pControl->getType(), sim::UnaryKind::BitNot,
+          *pControl);
       activeHigh = sim::SimLogicBinaryOp::create(
           builder, location, activeHigh.getType(), sim::BinaryKind::Or,
           activeHigh, invertedP);
     } else if (name == "pmos" || name == "rpmos") {
-      activeHigh =
-          sim::SimLogicUnaryOp::create(builder, location, activeHigh.getType(),
-                                       sim::UnaryKind::BitNot, activeHigh);
+      activeHigh = sim::SimLogicUnaryOp::create(
+          builder, location, activeHigh.getType(), sim::UnaryKind::BitNot,
+          activeHigh);
     }
     auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
         "obelisk_sim.propagation_delays");

@@ -529,7 +529,8 @@ bool validIntrinsic(const Image &image, const Function &function,
         return false;
     return true;
   case OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL:
-    return site.inputCount == 1 && site.outputCount == 0 && bits(input(0), 1);
+    return site.inputCount == 1 && site.outputCount == 0 &&
+           bits(input(0), 1);
   case OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL_DELAYED:
     return site.inputCount == 4 && site.outputCount == 0 && bits(input(0), 1) &&
            bits(input(1), 64) && bits(input(2), 64) && bits(input(3), 64);

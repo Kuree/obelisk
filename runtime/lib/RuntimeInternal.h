@@ -872,7 +872,8 @@ struct NetAliasCache {
   std::unordered_map<uint32_t, std::vector<uint64_t>> delayedMosByControl;
   std::unordered_map<uint64_t, std::vector<uint64_t>> delayedMosBySource;
   std::unordered_map<uint64_t, std::vector<uint64_t>> delayedMosByDestination;
-  std::unordered_map<uint64_t, std::vector<uint64_t>> uniformDelayedRootsByRoot;
+  std::unordered_map<uint64_t, std::vector<uint64_t>>
+      uniformDelayedRootsByRoot;
   std::unordered_map<uint64_t, uint8_t> resolutionByRoot;
   std::unordered_map<uint64_t, uint8_t> chargeStrengthByBit;
   std::vector<NetAliasRange> nets;

@@ -333,10 +333,12 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
             (op->hasAttr("obelisk_sim.user_net_raw_drive")
                  ? OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW
                  : 0) |
-            (op.getValue().getType().isF32() ? OBELISK_RT_INERTIAL_DRIVER_REAL32
-                                             : 0) |
-            (op.getValue().getType().isF64() ? OBELISK_RT_INERTIAL_DRIVER_REAL64
-                                             : 0));
+            (op.getValue().getType().isF32()
+                 ? OBELISK_RT_INERTIAL_DRIVER_REAL32
+                 : 0) |
+            (op.getValue().getType().isF64()
+                 ? OBELISK_RT_INERTIAL_DRIVER_REAL64
+                 : 0));
     if (codeUnit == kInvalidRegister || component == kInvalidRegister ||
         flags == kInvalidRegister)
       return op.emitOpError("cannot encode inertial driver identity");

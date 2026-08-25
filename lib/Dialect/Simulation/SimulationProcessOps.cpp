@@ -828,7 +828,8 @@ LogicalResult SimControlEnterOp::verify() {
   return verifyPositive(*this, getTargetIdAttr(), "control target ID");
 }
 
-SuccessorOperands SimControlBoundaryOp::getSuccessorOperands(unsigned index) {
+SuccessorOperands
+SimControlBoundaryOp::getSuccessorOperands(unsigned index) {
   assert(index < 2 && "control boundary has two successors");
   return index == 0 ? SuccessorOperands(getResumeOperandsMutable())
                     : SuccessorOperands(MutableOperandRange(

@@ -2323,8 +2323,8 @@ uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
   if (!context->scheduledPassSwitchEvents.empty() &&
       context->scheduledPassSwitchEvents.begin()->first.first <=
           context->schedulerTime)
-    barrierRegion = std::min(barrierRegion,
-                             static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE));
+    barrierRegion = std::min(
+        barrierRegion, static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE));
   if (context->staticNBAAccumulatorsPending)
     for (const StaticNBAAccumulator &accumulator :
          context->staticNBAAccumulators)
@@ -3653,10 +3653,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                 managedIndex = index;
               }
             }
-            uint64_t sequence =
-                std::min(std::min(nativeSequence, managedSequence),
-                         std::min(std::min(eventSequence, passSequence),
-                                  designSequence));
+            uint64_t sequence = std::min(
+                std::min(nativeSequence, managedSequence),
+                std::min(std::min(eventSequence, passSequence), designSequence));
             if (sequence == UINT64_MAX) {
               bool hadDelayedPublications = !delayedNetPublications.empty();
               if (!flushDelayedNetPublications())
@@ -3851,7 +3850,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           if (event.dueTime > context->schedulerTime)
             considerTime(event.dueTime);
         if (!context->scheduledPassSwitchEvents.empty())
-          considerTime(context->scheduledPassSwitchEvents.begin()->first.first);
+          considerTime(
+              context->scheduledPassSwitchEvents.begin()->first.first);
         if (nextTime) {
           obelisk_rt_dump_slot_unlocked(context);
           context->schedulerTime = *nextTime;
