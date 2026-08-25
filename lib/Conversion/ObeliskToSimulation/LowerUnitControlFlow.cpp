@@ -1226,6 +1226,137 @@ UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
   return outlined;
 }
 
+FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>>
+UnitLowering::outlineAsyncPla(semantic::SVCallExpressionOp call,
+                              StringRef synchronousName) {
+  Location location = getSemanticLocation(call);
+  SmallVector<Operation *> children = getChildren(call);
+  if (children.size() != 3)
+    return failure();
+
+  // Record only the memory and input dependencies. The output reference is a
+  // capture too, but watching it would make the callback retrigger itself.
+  llvm::StringSet<> dependencyPaths;
+  auto collectDependencies = [&](Operation *root) {
+    root->walk([&](Operation *nested) {
+      StringRef path;
+      if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(nested))
+        path = named.getReferencedPath();
+      else if (auto hierarchical =
+                   dyn_cast<semantic::SVHierarchicalValueExpressionOp>(nested))
+        path = hierarchical.getReferencedPath();
+      else if (auto member =
+                   dyn_cast<semantic::SVMemberAccessExpressionOp>(nested))
+        path = member.getReferencedPath();
+      if (!path.empty())
+        dependencyPaths.insert(path);
+      if (auto callCaptures =
+              nested->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
+        for (Attribute capture : callCaptures)
+          dependencyPaths.insert(cast<StringAttr>(capture).getValue());
+      if (auto observerCaptures =
+              nested->getAttrOfType<ArrayAttr>(observerCapturesAttrName))
+        for (Attribute capture : observerCaptures)
+          dependencyPaths.insert(cast<StringAttr>(capture).getValue());
+    });
+  };
+  collectDependencies(children[0]);
+  collectDependencies(children[1]);
+
+  uint64_t ordinal = nextPlaOrdinal++;
+  uint64_t node = call->getAttrOfType<IntegerAttr>("node_id")
+                      ? call->getAttrOfType<IntegerAttr>("node_id")
+                            .getValue()
+                            .getZExtValue()
+                      : ordinal;
+  std::string identity =
+      (function.getSymName() + ".$pla." + Twine(node) + "." + Twine(ordinal))
+          .str();
+  Attribute previousForkID = call->getAttr("obelisk_sim.fork_code_unit_id");
+  StringAttr previousName = call.getCalleeNameAttr();
+  call->setAttr("obelisk_sim.fork_code_unit_id",
+                builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+  call->setAttr("callee_name", builder.getStringAttr(synchronousName));
+  FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> outlined =
+      outlineForkBranch(call, node, static_cast<unsigned>(ordinal),
+                        /*captureReferences=*/true);
+  call->setAttr("callee_name", previousName);
+  if (previousForkID)
+    call->setAttr("obelisk_sim.fork_code_unit_id", previousForkID);
+  else
+    call->removeAttr("obelisk_sim.fork_code_unit_id");
+  if (failed(outlined))
+    return failure();
+
+  sim::SimFuncOp callback = outlined->first;
+  callback->setAttr("home_region",
+                    sim::EventRegionAttr::get(function.getContext(),
+                                              sim::EventRegion::Active));
+  callback->setAttr(
+      "domain", sim::ExecutionDomainAttr::get(function.getContext(),
+                                              sim::ExecutionDomain::Design));
+  // An async PLA call must not lose a source transition made later in the
+  // same activation. Priming executes this internal detached child only as
+  // far as its initial wait, atomically installing the subscriptions before
+  // the caller continues; it does not evaluate the PLA a second time.
+  callback->setAttr("obelisk_sim.detached_controls", builder.getUnitAttr());
+  callback->setAttr("obelisk_sim.prime_on_spawn", builder.getUnitAttr());
+
+  Block &entry = callback.getBody().front();
+  SmallVector<Value> watched;
+  if (ArrayAttr bindings = callback->getAttrOfType<ArrayAttr>(bindingsAttrName))
+    for (Attribute attribute : bindings) {
+      auto binding = dyn_cast<sim::ArgumentBindingAttr>(attribute);
+      if (!binding || !dependencyPaths.contains(binding.getPath().getValue()) ||
+          binding.getArgument() >= callback.getNumArguments())
+        continue;
+      Value argument = callback.getArgument(binding.getArgument());
+      if (isa<sim::RefType, sim::NetType>(argument.getType()) &&
+          !llvm::is_contained(watched, argument))
+        watched.push_back(argument);
+    }
+  if (watched.empty()) {
+    callback.erase();
+    emitError(location)
+        << call.getCalleeName()
+        << " has no persistently watchable memory or input dependency";
+    return failure();
+  }
+
+  // The caller emitted the initial value already. Begin the child at a change
+  // wait, then reevaluate the cloned source expressions after each event.
+  Block *evaluate = entry.splitBlock(entry.begin());
+  Block *wait = new Block;
+  callback.getBody().getBlocks().insert(evaluate->getIterator(), wait);
+  OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
+  cf::BranchOp::create(entryBuilder, location, wait);
+
+  OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
+  auto active = sim::EventRegionAttr::get(function.getContext(),
+                                          sim::EventRegion::Active);
+  if (watched.size() == 1) {
+    sim::SimSuspendChangeOp::create(waitBuilder, location, watched.front(),
+                                    ValueRange{}, sim::ContinuationSiteAttr{},
+                                    active, evaluate);
+  } else {
+    SmallVector<int32_t> edges(watched.size(),
+                               static_cast<int32_t>(sim::EdgeKind::Change));
+    sim::SimSuspendAnyOp::create(waitBuilder, location, watched,
+                                 waitBuilder.getDenseI32ArrayAttr(edges),
+                                 sim::ContinuationSiteAttr{}, active, evaluate);
+  }
+
+  SmallVector<sim::SimReturnOp> returns;
+  evaluate->getParentOp()->walk(
+      [&](sim::SimReturnOp returnOp) { returns.push_back(returnOp); });
+  for (sim::SimReturnOp returnOp : returns) {
+    OpBuilder returnBuilder(returnOp);
+    cf::BranchOp::create(returnBuilder, returnOp.getLoc(), wait);
+    returnOp.erase();
+  }
+  return outlined;
+}
+
 LogicalResult UnitLowering::lowerFork(semantic::SVBlockStatementOp op) {
   Location location = getSemanticLocation(op);
   if (function.getEntryKind() == sim::EntryKind::Function &&

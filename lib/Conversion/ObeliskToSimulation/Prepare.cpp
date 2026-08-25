@@ -149,6 +149,14 @@ static bool isStatefulResolutionSystemCall(StringRef name) {
       .Cases({"$dumpfile", "$dumpvars", "$dumpon", "$dumpoff"}, true)
       .Cases({"$dumpall", "$dumplimit", "$dumpflush"}, true)
       .Cases({"$display", "$write", "$monitor", "$strobe"}, true)
+      .Cases({"$async$and$array", "$sync$and$array",
+              "$async$and$plane", "$sync$and$plane"}, true)
+      .Cases({"$async$nand$array", "$sync$nand$array",
+              "$async$nand$plane", "$sync$nand$plane"}, true)
+      .Cases({"$async$or$array", "$sync$or$array",
+              "$async$or$plane", "$sync$or$plane"}, true)
+      .Cases({"$async$nor$array", "$sync$nor$array",
+              "$async$nor$plane", "$sync$nor$plane"}, true)
       .Cases({"$info", "$warning", "$error", "$fatal"}, true)
       .Default(false);
 }

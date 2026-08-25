@@ -336,6 +336,8 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   lowerPlusargSystemCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
+  lowerPlaSystemCall(semantic::SVCallExpressionOp op);
+  ::mlir::FailureOr<::mlir::Value>
   lowerScanSystemCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
   lowerRealConversionSystemCall(semantic::SVCallExpressionOp op);
@@ -410,6 +412,10 @@ private:
       std::pair<sim::SimFuncOp, ::mlir::SmallVector<::mlir::Value>>>
   outlinePostponedDisplay(semantic::SVCallExpressionOp call,
                           ::mlir::StringRef immediateName, bool persistent);
+  ::mlir::FailureOr<
+      std::pair<sim::SimFuncOp, ::mlir::SmallVector<::mlir::Value>>>
+  outlineAsyncPla(semantic::SVCallExpressionOp call,
+                  ::mlir::StringRef synchronousName);
   ::mlir::LogicalResult
   lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op);
   ::mlir::LogicalResult lowerTiming(::mlir::Operation *control,
@@ -732,6 +738,7 @@ private:
   ::llvm::StringMap<uint64_t> assertionControlIDs;
   uint64_t nextForkOrdinal = 0;
   uint64_t nextPostponedOrdinal = 0;
+  uint64_t nextPlaOrdinal = 0;
   bool invalidBindings = false;
 };
 

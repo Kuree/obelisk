@@ -320,6 +320,9 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return constant(builder.getI1Type(), 0);
   };
 
+  if (name.starts_with("$async$") || name.starts_with("$sync$"))
+    return lowerPlaSystemCall(op);
+
   if (name == "$timeunit" || name == "$timeprecision") {
     if (children.size() > 1) {
       emitError(location) << name << " accepts zero or one scope";

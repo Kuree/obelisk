@@ -978,6 +978,20 @@ multiline-timescale `XFAIL`. The uncontended UVM smoke remains green with zero
 errors or fatals: 34.765 seconds compile / 0.184 seconds simulate for bytecode
 and 73.183 seconds compile / 0.019 seconds simulate for native.
 
+L17's PLA tranche implements all sixteen Clause 20.17 tasks: synchronous and
+asynchronous `and`, `nand`, `or`, and `nor` in both array and plane encodings.
+Memory rows, input terms, and output terms retain ascending declared order;
+array rows include only exact known-one bits, while plane rows implement
+complement, true, worst-case X, and Z don't-care semantics. Each output is one
+width-vector operation plus one reduction, so generated IR is O(outputs), not
+O(inputs times outputs). An asynchronous call performs one immediate update,
+then primes a detached persistent evaluator through its first change wait so
+input-expression and memory-word transitions cannot race registration.
+Automatic-scope references use the existing retained process-frame contract.
+Native and bytecode execution agree at O0 and O3, including all sixteen names,
+X/Z behavior, repeated calls, expression and memory sensitivity, and automatic
+scope. Designs without a PLA call gain no runtime state or design-image entry.
+
 L19's first closure tranche implements the formatted-input hierarchy conversion
 `%m` from 21.3.4.3 for both `$sscanf` and `$fscanf`. Lowering supplies the
 caller's frozen hierarchical name while the scanner still matches the ordinary
@@ -1079,7 +1093,7 @@ allocation. Native and bytecode execution match at O0 and O3.
 | 17 Checkers | Semantic only | Declarations, ports, resolved instances, identities, cloned bodies, clocks/disables, properties, procedures, and expressions are retained. Executable instances now receive a targeted Clause 17 diagnostic instead of being silently erased; A9 implements checker procedures, free variables, inferred clocks, assertions, hierarchy, and runtime behavior. Covergroups in checkers are excluded with coverage. |
 | 18 Constrained random generation | Partial | Object streams, broad packed constraints, modes, finite domains, soft constraints, direct solve ordering, distributions, bounded `randc`, lifecycle hooks, and much of randsequence execute. The authoritative boundary is `docs/randomization-support.md`; R1-R7 below close the remaining standard surface without treating a solver resource cap as language semantics. |
 | 19 Functional coverage | Excluded | Explicitly outside this project goal. |
-| 20 Utility system tasks/functions | Partial | Simulation/time control—including compile-time `$timeunit` and `$timeprecision` scope queries plus every omitted and explicitly empty `$timeformat` argument—conversions, data/array queries, real math, bit-vector functions, severity, random distributions, `$system`, the complete `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam` queue manager, most assertion control, and the implemented sampled functions execute. Missing normative families include the synchronous/asynchronous PLA tasks, the global-clock sampled functions, and complete assertion statistics/control behavior. |
+| 20 Utility system tasks/functions | Partial | Simulation/time control—including compile-time `$timeunit` and `$timeprecision` scope queries plus every omitted and explicitly empty `$timeformat` argument—conversions, data/array queries, real math, bit-vector functions, severity, random distributions, `$system`, the complete `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam` queue manager, all sixteen synchronous/asynchronous PLA tasks, most assertion control, and the implemented sampled functions execute. Missing normative families include the global-clock sampled functions and complete assertion statistics/control behavior. |
 | 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning—including formatted-input field widths, assignment suppression, zero-byte hierarchy `%m`, `$timeformat`-scaled floating-point `%t`, and canonical scalar-strength `%v`, plus `$fread` into fixed unpacked memories and captured dynamic, associative, and nested aggregate copy-out targets—read/write-memory across fixed, dynamic, queue, multidimensional, and integral associative forms, plusargs including runtime `$value$plusargs` formats, and VCD/dumpports execute. Surplus arguments after a designated `$sformat`/`$sformatf` format continue with ordinary default-radix formatting. Formatting and file corner cases remain. |
 | 22 Compiler directives | Executable for the audited surface | The Slang preprocessor implements the normative directive family. Directive persistence, separate-compilation-unit reset, and command-line default-timescale precedence have native/bytecode tests. Protected envelopes are a separate Clause 34 feature, not ordinary pragma acceptance. |
 | 23 Modules and hierarchy | Partial | ANSI/non-ANSI modules, parameters, ports, arrays, hierarchy, bind, and common upward references elaborate. External runs retain module-library lookup, hierarchical path, generate-scope, and parameter-binding failures that need clause-minimal reproducers and fixes. |
@@ -1217,11 +1231,10 @@ one commit.
     remaining virtual-interface clock-event/formal cases, clock-formal flow,
     `##0` and general maximal-subsequence composition, and legal inferred-clock
     contexts shared with SVA.
-17. **L17 — Normative utility calls (20.16-20.18).** `$system` and the five
-    `$q_*` stochastic-queue calls are complete, including FIFO/LIFO ordering,
-    four-state identifiers, all six scheduler-time statistics, scope-unit
-    rounding, and Table 20-11 status values. Implement the remaining
-    synchronous/asynchronous PLA families with exact argument behavior.
+17. **L17 — Normative utility calls (20.16-20.18), completed.** `$system`, the
+    five `$q_*` stochastic-queue calls, and all sixteen synchronous/asynchronous
+    PLA tasks execute with exact argument, ordering, four-state, scheduling,
+    statistics, and Table 20-11 status behavior.
 18. **L18 — Global sampled functions (20.13).** Implement the complete
     `$past_gclk`, `$future_gclk`, `$rising_gclk`, `$falling_gclk`,
     `$stable_gclk`, `$changed_gclk`, `$steady_gclk`, and `$changing_gclk`
