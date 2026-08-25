@@ -11,6 +11,7 @@
 
 #include "llvm/ADT/STLExtras.h"
 
+#include <algorithm>
 #include <type_traits>
 
 using namespace mlir;
@@ -21,6 +22,76 @@ namespace {
 uint64_t encodeNativeStaticHandle(uint32_t id, int32_t offset = 0) {
   return obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_STATIC, id,
                                          offset);
+}
+
+constexpr StringLiteral nativeDriverLowAttr = "obelisk.native.driver_low";
+
+std::optional<uint64_t> getStaticDriverOffset(Value value, uint64_t driverID,
+                                              DenseSet<Value> &active) {
+  if (!value || !active.insert(value).second)
+    return std::nullopt;
+  auto finish = [&](std::optional<uint64_t> result) {
+    active.erase(value);
+    return result;
+  };
+  if (auto context = value.getDefiningOp<sim::SimContextDriverOp>())
+    return finish(context.getId() == driverID ? std::optional<uint64_t>(0)
+                                              : std::nullopt);
+  if (auto extract = value.getDefiningOp<sim::SimDriverExtractOp>()) {
+    std::optional<uint64_t> base =
+        getStaticDriverOffset(extract.getInput(), driverID, active);
+    int64_t rawLow = extract.getLowBit();
+    if (!base || rawLow < 0 ||
+        static_cast<uint64_t>(rawLow) > UINT64_MAX - *base)
+      return finish(std::nullopt);
+    return finish(*base + static_cast<uint64_t>(rawLow));
+  }
+  if (auto subelement = value.getDefiningOp<sim::SimDriverSubelementOp>()) {
+    std::optional<uint64_t> base =
+        getStaticDriverOffset(subelement.getInput(), driverID, active);
+    if (!base)
+      return finish(std::nullopt);
+    Type current = subelement.getInput().getType().getElementType();
+    uint64_t offset = 0;
+    for (int64_t rawIndex : subelement.getIndices()) {
+      if (rawIndex < 0 || static_cast<uint64_t>(rawIndex) >=
+                              sim::getAggregateNumElements(current))
+        return finish(std::nullopt);
+      auto child = sim::getAggregateProvenanceSubelement(
+          current, static_cast<unsigned>(rawIndex));
+      if (!child || child->first > UINT64_MAX - offset)
+        return finish(std::nullopt);
+      offset += child->first;
+      current = sim::getAggregateElementType(current,
+                                             static_cast<unsigned>(rawIndex));
+    }
+    if (offset > UINT64_MAX - *base)
+      return finish(std::nullopt);
+    return finish(*base + offset);
+  }
+  auto argument = dyn_cast<BlockArgument>(value);
+  if (!argument)
+    return finish(std::nullopt);
+  Block *block = argument.getOwner();
+  auto function = dyn_cast<sim::SimFuncOp>(block->getParentOp());
+  if (!function || block != &function.getBody().front())
+    return finish(std::nullopt);
+  auto descriptor = function.getArgAttrOfType<IntegerAttr>(
+      argument.getArgNumber(), sim::metadata::descriptorId);
+  auto low = function.getArgAttrOfType<IntegerAttr>(
+      argument.getArgNumber(), sim::metadata::descriptorLow);
+  if (!descriptor || descriptor.getValue().isNegative() ||
+      descriptor.getValue().getActiveBits() > 64 ||
+      descriptor.getValue().getZExtValue() != driverID ||
+      (low &&
+       (low.getValue().isNegative() || low.getValue().getActiveBits() > 64)))
+    return finish(std::nullopt);
+  return finish(low ? low.getValue().getZExtValue() : uint64_t{0});
+}
+
+std::optional<uint64_t> getStaticDriverOffset(Value value, uint64_t driverID) {
+  DenseSet<Value> active;
+  return getStaticDriverOffset(value, driverID, active);
 }
 
 std::optional<uint64_t> getStaticDriverID(Value value) {
@@ -259,6 +330,59 @@ public:
             op->template getAttrOfType<IntegerAttr>("obelisk.native.net_id"))
       affectedNet = netID.getInt();
 
+    // A statically addressed partial driver update can only change the
+    // connectivity components reached by the bits written by this operation.
+    // Keep that exact component set in the compiler: expanding every scalar
+    // gate drive across every bit of its packed destination makes native IR
+    // quadratic in a generated primitive array.  If either the descriptor or
+    // the address remains dynamic, leave the set absent and retain the
+    // conservative whole-net lowering below.
+    std::optional<DenseSet<std::pair<uint64_t, uint64_t>>> affectedComponents;
+    const NativeStateLayout::Driver *affectedDriver = nullptr;
+    auto driverID =
+        op->template getAttrOfType<IntegerAttr>("obelisk.native.driver_id");
+    if (driverID) {
+      auto found = llvm::find_if(layout.driverLayouts, [&](const auto &driver) {
+        return driver.id == static_cast<uint64_t>(driverID.getInt());
+      });
+      if (found != layout.driverLayouts.end())
+        affectedDriver = &*found;
+    }
+    std::optional<uint64_t> updateLow;
+    if (auto low = op->template getAttrOfType<IntegerAttr>(nativeDriverLowAttr);
+        low && !low.getValue().isNegative() &&
+        low.getValue().getActiveBits() <= 64) {
+      updateLow = low.getValue().getZExtValue();
+    } else {
+      std::optional<uint64_t> encodedHandle =
+          resolveCFGConstantInteger(adaptor.getDriver().front());
+      obelisk_rt_stable_handle_v1 decodedHandle{};
+      if (affectedDriver && encodedHandle &&
+          obelisk_rt_stable_handle_decode(*encodedHandle, &decodedHandle) &&
+          decodedHandle.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+          decodedHandle.id == affectedDriver->handleID &&
+          decodedHandle.offset >= 0)
+        updateLow = static_cast<uint64_t>(decodedHandle.offset);
+    }
+    if (affectedDriver && updateLow) {
+      if (*updateLow <= affectedDriver->width &&
+          *sourceWidth <= affectedDriver->width - *updateLow) {
+        uint64_t drivenLow = affectedDriver->drivenLow;
+        uint64_t drivenEnd = drivenLow + affectedDriver->drivenWidth;
+        uint64_t updateEnd = *updateLow + *sourceWidth;
+        uint64_t begin = std::max(*updateLow, drivenLow);
+        uint64_t end = std::min(updateEnd, drivenEnd);
+        affectedComponents.emplace();
+        for (uint64_t bit = begin; bit != end; ++bit) {
+          std::pair<uint64_t, uint64_t> component{affectedDriver->netId, bit};
+          auto canonical = layout.connectivityCanonical.find(component);
+          if (canonical != layout.connectivityCanonical.end())
+            component = canonical->second;
+          affectedComponents->insert(component);
+        }
+      }
+    }
+
     // A full-width drive into an isolated net with one driver needs no
     // bitwise resolution: the resolved value is the driver value. Keep this
     // vector-shaped through LLVM lowering so very wide constants do not turn
@@ -360,6 +484,8 @@ public:
             foundCanonical == layout.connectivityCanonical.end()
                 ? logical
                 : foundCanonical->second;
+        if (affectedComponents && !affectedComponents->contains(canonical))
+          continue;
         auto foundComponent = layout.connectivityComponents.find(canonical);
         SmallVector<analysis::NetBit> fallback;
         ArrayRef<analysis::NetBit> component;
@@ -703,6 +829,11 @@ void annotateStaticDriverNets(ModuleOp module,
     for (const NativeStateLayout::Driver &driver : layout.driverLayouts) {
       if (driver.id != *driverID)
         continue;
+      if (std::optional<uint64_t> low =
+              getStaticDriverOffset(drive.getDriver(), *driverID))
+        drive->setAttr(
+            nativeDriverLowAttr,
+            IntegerAttr::get(IntegerType::get(module.getContext(), 64), *low));
       drive->setAttr("obelisk.native.net_id",
                      IntegerAttr::get(IntegerType::get(module.getContext(), 64),
                                       driver.netId));
