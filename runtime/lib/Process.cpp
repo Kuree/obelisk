@@ -3705,7 +3705,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               }
             }
             uint64_t sequence = std::min(
-                std::min(std::min(nativeSequence, managedSequence),
+                std::min(
+                std::min(nativeSequence, managedSequence),
                          pathSequence),
                 std::min(std::min(eventSequence, passSequence), designSequence));
             if (sequence == UINT64_MAX) {

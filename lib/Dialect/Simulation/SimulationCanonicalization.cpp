@@ -178,8 +178,8 @@ static APInt dynamicInsertPlane(const APInt &input, const APInt &replacement,
   if (index.uge(input.getBitWidth()) || !index.isIntN(64))
     return result;
   uint64_t low = index.getZExtValue();
-  for (uint64_t replacementBit = 0; replacementBit < replacement.getBitWidth();
-       ++replacementBit) {
+  for (uint64_t replacementBit = 0;
+       replacementBit < replacement.getBitWidth(); ++replacementBit) {
     uint64_t inputBit = low + replacementBit;
     if (inputBit >= input.getBitWidth())
       break;
@@ -540,8 +540,8 @@ OpFoldResult SimLogicPowerOp::fold(FoldAdaptor adaptor) {
     if (!remaining.isZero())
       factor *= factor;
   }
-  return getLogicAttribute(getContext(),
-                           {std::move(value), APInt::getZero(width)});
+  return getLogicAttribute(
+      getContext(), {std::move(value), APInt::getZero(width)});
 }
 
 OpFoldResult SimLogicLogicalOp::fold(FoldAdaptor adaptor) {
@@ -882,7 +882,8 @@ OpFoldResult SimBitsDynInsertOp::fold(FoldAdaptor adaptor) {
   if (!index->value)
     return getInput();
   auto input = dyn_cast_or_null<IntegerAttr>(adaptor.getInput());
-  auto replacement = dyn_cast_or_null<IntegerAttr>(adaptor.getReplacement());
+  auto replacement =
+      dyn_cast_or_null<IntegerAttr>(adaptor.getReplacement());
   if (!input || !replacement)
     return {};
   APInt result = dynamicInsertPlane(input.getValue(), replacement.getValue(),
@@ -1379,7 +1380,8 @@ struct ConstantDynamicInsert final : OpRewritePattern<DynamicOp> {
     if (!index || !index->value)
       return failure();
     uint64_t low;
-    if (!isKnownInRangeIndex(*index->value, op.getInput().getType().getWidth(),
+    if (!isKnownInRangeIndex(*index->value,
+                             op.getInput().getType().getWidth(),
                              op.getReplacement().getType().getWidth(), low) ||
         low > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
       return failure();
@@ -1849,8 +1851,8 @@ void SimArrayDynExtractOp::getCanonicalizationPatterns(
       context);
 }
 
-void SimArrayDynInsertOp::getCanonicalizationPatterns(
-    RewritePatternSet &results, MLIRContext *context) {
+void SimArrayDynInsertOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                     MLIRContext *context) {
   results.add<ConstantArrayInsert>(context);
 }
 
@@ -1890,13 +1892,13 @@ void SimLogicBinaryOp::getCanonicalizationPatterns(RewritePatternSet &results,
   results.add<NormalizeBinaryConstant>(context);
 }
 
-void SimStringCompareOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                                     MLIRContext *context) {
+void SimStringCompareOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
   results.add<FoldStringCompare>(context);
 }
 
-void SimStringLengthOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                                    MLIRContext *context) {
+void SimStringLengthOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
   results.add<FoldStringLength>(context);
 }
 

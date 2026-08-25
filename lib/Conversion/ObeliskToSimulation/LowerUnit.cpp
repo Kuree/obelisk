@@ -3920,33 +3920,32 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       timingPathMaskedPlan = std::move(plan);
     } else {
       std::array<Value, 3> selected;
-      for (unsigned transition = 0; transition != selected.size();
-           ++transition) {
-        SmallVector<unsigned, 4> order;
-        for (unsigned index = 0; index != timingPathRules.size(); ++index)
-          order.push_back(index);
-        llvm::sort(order, [&](unsigned lhs, unsigned rhs) {
-          return timingPathRules[lhs].delays[transition] >
-                 timingPathRules[rhs].delays[transition];
-        });
-        Value selectedTicks = arith::ConstantOp::create(
+    for (unsigned transition = 0; transition != selected.size(); ++transition) {
+      SmallVector<unsigned, 4> order;
+      for (unsigned index = 0; index != timingPathRules.size(); ++index)
+        order.push_back(index);
+      llvm::sort(order, [&](unsigned lhs, unsigned rhs) {
+        return timingPathRules[lhs].delays[transition] >
+               timingPathRules[rhs].delays[transition];
+      });
+      Value selectedTicks = arith::ConstantOp::create(
+          builder, function.getLoc(), builder.getI64Type(),
+          builder.getI64IntegerAttr(0));
+      for (unsigned index : order) {
+        Value delayTicks = arith::ConstantOp::create(
             builder, function.getLoc(), builder.getI64Type(),
-            builder.getI64IntegerAttr(0));
-        for (unsigned index : order) {
-          Value delayTicks = arith::ConstantOp::create(
-              builder, function.getLoc(), builder.getI64Type(),
-              builder.getI64IntegerAttr(
-                  timingPathRules[index].delays[transition]));
-          selectedTicks = arith::SelectOp::create(builder, function.getLoc(),
-                                                  applicable[index], delayTicks,
-                                                  selectedTicks);
-        }
-        selected[transition] = sim::SimTimeScaleOp::create(
-            builder, function.getLoc(),
-            sim::TimeType::get(function.getContext()), selectedTicks,
-            builder.getI64IntegerAttr(1), builder.getBoolAttr(false));
+            builder.getI64IntegerAttr(
+                timingPathRules[index].delays[transition]));
+        selectedTicks = arith::SelectOp::create(builder, function.getLoc(),
+                                                applicable[index], delayTicks,
+                                                selectedTicks);
       }
-      timingPathDelays = selected;
+      selected[transition] = sim::SimTimeScaleOp::create(
+          builder, function.getLoc(), sim::TimeType::get(function.getContext()),
+          selectedTicks, builder.getI64IntegerAttr(1),
+          builder.getBoolAttr(false));
+    }
+    timingPathDelays = selected;
     }
   }
   auto primitive =

@@ -1636,9 +1636,9 @@ void ObeliskSimPreparePass::runOnOperation() {
     auto output = path->getAttrOfType<DictionaryAttr>("timing_output_terminal");
     auto polarity = path->getAttrOfType<IntegerAttr>("timing_polarity");
     auto delays = path->getAttrOfType<DenseI64ArrayAttr>("timing_delay_fs");
-    if (!inputs || inputs.empty() || !output || !polarity ||
-        polarity.getInt() < 0 || polarity.getInt() > 2 || !delays ||
-        delays.empty() || delays.size() > 3) {
+    if (!inputs || inputs.empty() || !output || !polarity || polarity.getInt() < 0 ||
+        polarity.getInt() > 2 || !delays || delays.empty() ||
+        delays.size() > 3) {
       emitError(getSemanticLocation(path))
           << "simple specify path is missing frozen terminal or delay data";
       invalid = true;
@@ -1910,8 +1910,7 @@ void ObeliskSimPreparePass::runOnOperation() {
              llvm::all_of(p.inputs,
                           [](const TimingTerminal &t) { return t.isWhole(); });
     });
-    if (allWholeTerminals && !hasStateDependent &&
-        (paths.size() == 1 || identicalDelays)) {
+    if (allWholeTerminals && !hasStateDependent && (paths.size() == 1 || identicalDelays)) {
       matchedUnit->setAttr("delay_fs",
                            builder.getDenseI64ArrayAttr(path.delays));
       continue;
@@ -1940,8 +1939,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             (output + ".$timing_path_snapshot_" + Twine(snapshots.size()))
                 .str();
         if (!snapshotType || !descriptorWidth ||
-            *descriptorWidth != input.rootWidth ||
-            descriptors.count(snapshotPath)) {
+            *descriptorWidth != input.rootWidth || descriptors.count(snapshotPath)) {
           emitError(getSemanticLocation(candidate.declaration))
               << "specify path source has no unique packed snapshot";
           invalid = true;
@@ -2000,8 +1998,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       SmallVector<int64_t> inputWidths;
       for (const TimingTerminal &input : candidate.inputs) {
         inputAttrs.push_back(builder.getStringAttr(input.path));
-        snapshotAttrs.push_back(
-            builder.getStringAttr(snapshots.lookup(input.path)));
+        snapshotAttrs.push_back(builder.getStringAttr(snapshots.lookup(input.path)));
         inputLows.push_back(static_cast<int64_t>(input.low));
         inputWidths.push_back(static_cast<int64_t>(input.width));
       }
@@ -7531,12 +7528,12 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder.getNamedAttr("obelisk_sim.primitive_name", primitive));
     if (auto passSwitchIds = unit.source->getAttrOfType<DenseI64ArrayAttr>(
             "obelisk_sim.pass_switch_ids"))
-      functionAttrs.push_back(
-          builder.getNamedAttr("obelisk_sim.pass_switch_ids", passSwitchIds));
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.pass_switch_ids", passSwitchIds));
     if (auto mosTopologyIds = unit.source->getAttrOfType<DenseI64ArrayAttr>(
             "obelisk_sim.mos_topology_ids"))
-      functionAttrs.push_back(
-          builder.getNamedAttr("obelisk_sim.mos_topology_ids", mosTopologyIds));
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.mos_topology_ids", mosTopologyIds));
     if (unit.source->hasAttr(sequenceEndpointEventAttrName)) {
       functionAttrs.push_back(builder.getNamedAttr(
           sequenceEndpointMonitorAttrName, builder.getUnitAttr()));

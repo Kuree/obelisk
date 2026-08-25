@@ -349,7 +349,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
          reg(plan, op.getTurnoffDelay()), codeUnit, component, flags},
         {});
   }
-  if (auto op = dyn_cast<sim::SimDriverDriveInertialPathOp>(operation)) {
+  if (auto op =
+          dyn_cast<sim::SimDriverDriveInertialPathOp>(operation)) {
     uint32_t codeUnit = emitU64Constant(plan, op.getCodeUnitId());
     uint32_t component = emitU64Constant(plan, op.getComponent());
     uint32_t group = emitU64Constant(plan, op.getGroup());
