@@ -3,7 +3,7 @@
 // RUN:   2>&1 | FileCheck %s
 
 // CHECK: native-aot eligible=false fully=false
-// CHECK-NEXT: reason delayed pass-switch control requires generic ordering
+// CHECK-NEXT: reason delayed switch contribution requires generic ordering
 
 module {
   obelisk_sim.design @delayed_pass_ineligible {

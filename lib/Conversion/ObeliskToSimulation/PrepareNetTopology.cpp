@@ -798,11 +798,15 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     }
     for (unsigned terminal = 0; terminal != 2; ++terminal) {
       Operation *expression = roots[terminal];
-      if (terminal == 0) {
-        auto assignment =
-            dyn_cast<semantic::SVAssignmentExpressionOp>(expression);
+      // Slang represents every bidirectional tran-family connection as an
+      // assignment-shaped port expression with an empty RHS.  Older imports
+      // wrapped only the first terminal, so accepting the wrapper on one side
+      // alone makes otherwise ordinary `tran(a, b)` depend on frontend
+      // version and terminal order.
+      if (auto assignment =
+              dyn_cast<semantic::SVAssignmentExpressionOp>(expression)) {
         SmallVector<Operation *> children =
-            assignment ? getChildren(assignment) : SmallVector<Operation *>{};
+            getChildren(assignment);
         expression = children.empty() ? nullptr : children.front();
       }
       if (!expression || !flattenNetExpr(expression, terminals[terminal])) {
