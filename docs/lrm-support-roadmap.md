@@ -473,6 +473,17 @@ language features. The one legal whole-variable force case from the original
 cluster passes in both execution tiers.
 Harness-only missing inputs and excluded features are not implementation work.
 
+The seven-case port-connection cluster from that refresh contains no missing
+IEEE 1800-2017 feature. Four tests place multiple terminals inside one
+`pullup` or `pulldown` instance, although A.3.1 gives each
+`pull_gate_instance` exactly one `output_terminal` and puts repeated instances
+outside the closing parenthesis. Two declare body ports after omitting the
+non-ANSI `list_of_ports` required by 23.2.2.1. The remaining test uses the
+historical `` `protect``/`` `endprotect`` directives instead of the Clause 34
+`` `pragma protect`` envelope. The ivtest harness now excludes those cases
+with their deciding clauses rather than presenting strict diagnostics as
+implementation work.
+
 L12's nineteenth closure tranche fixes the standard time-zero evaluation of an
 explicit delayed continuous assignment in default native execution. Bytecode
 and generic native scheduling were already correct; the generated AOT graph
@@ -584,7 +595,7 @@ smoke remains green with the integrated times above and zero errors or fatals.
 | 20 Utility system tasks/functions | Partial | Simulation/time control—including compile-time `$timeunit` and `$timeprecision` scope queries plus every omitted and explicitly empty `$timeformat` argument—conversions, data/array queries, real math, bit-vector functions, severity, random distributions, `$system`, most assertion control, and the implemented sampled functions execute. Missing normative families include `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam`, the synchronous/asynchronous PLA tasks, the global-clock sampled functions, and complete assertion statistics/control behavior. |
 | 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning—including formatted-input field widths and assignment suppression plus `$fread` into fixed unpacked memories and captured dynamic, associative, and nested aggregate copy-out targets—read/write-memory across fixed, dynamic, queue, multidimensional, and integral associative forms, plusargs including runtime `$value$plusargs` formats, and VCD/dumpports execute. Formatting and file corner cases remain. |
 | 22 Compiler directives | Executable for the audited surface | The Slang preprocessor implements the normative directive family. Directive persistence, separate-compilation-unit reset, and command-line default-timescale precedence have native/bytecode tests. Protected envelopes are a separate Clause 34 feature, not ordinary pragma acceptance. |
-| 23 Modules and hierarchy | Partial | ANSI/non-ANSI modules, parameters, ports, arrays, hierarchy, bind, and common upward references elaborate. External runs retain module-library lookup, port mismatch, hierarchical path, generate-scope, and parameter-binding failures that need clause-minimal reproducers and fixes. |
+| 23 Modules and hierarchy | Partial | ANSI/non-ANSI modules, parameters, ports, arrays, hierarchy, bind, and common upward references elaborate. External runs retain module-library lookup, hierarchical path, generate-scope, and parameter-binding failures that need clause-minimal reproducers and fixes. |
 | 24 Programs | Partial | Program instances and their Reactive/Re-Inactive/Re-NBA process home execute. The normative `$exit` program-control task is missing. |
 | 25 Interfaces | Partial | Interfaces, modports, parameterization, interface tasks/functions, interface arrays, virtual-interface handles, calls, containers, and clocking-block access execute. Complete the residual virtual-interface clock/event/formal cases and inherit specify support from Clause 30. |
 | 26 Packages | Partial | Packages, imports/exports, scope lookup, and the implemented `std` package surface, including R1 `std::randomize`, execute. Complete the remaining normative Annex G behavior through the randomization and system-task chunks. |

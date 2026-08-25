@@ -21,6 +21,7 @@ import json
 import tempfile
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+from typing import NamedTuple
 
 from .. import icarus, model, runner
 
@@ -36,6 +37,41 @@ SINGLE_UNIT = True
 DEFAULT_LISTS = ["regress-sv.list", "regress-vlg.list"]
 PASSED_MARKER = "PASSED"
 _LISTS_DIR = Path(__file__).resolve().parents[2] / "lists" / "ivtest"
+
+
+class Exclusion(NamedTuple):
+    """Why one upstream test is outside the LRM, with its deciding clause."""
+    clause: str
+    reason: str
+
+
+PULL_GATE_ARITY = Exclusion(
+    "IEEE 1800-2017 A.3.1",
+    "pull_gate_instance has exactly one output_terminal; multiple pull "
+    "instances are a comma-separated list outside the closing parenthesis, "
+    "but the test places several terminals inside one named instance")
+PORT_DECLARATION_WITHOUT_LIST = Exclusion(
+    "IEEE 1800-2017 23.2.2.1",
+    "a non-ANSI module header requires list_of_ports and its body declarations "
+    "describe identifiers in that list; the test omits the list and then "
+    "declares output ports in the body")
+LEGACY_PROTECT_DIRECTIVE = Exclusion(
+    "IEEE 1800-2017 34.4",
+    "protected envelopes use `pragma protect; the test instead requires the "
+    "historical nonstandard `protect and `endprotect directives")
+
+# Tests whose expectations require Icarus extensions instead of IEEE
+# 1800-2017. Keep every decision clause-local: an unfamiliar failure remains
+# visible until the LRM itself settles it.
+EXCLUDED: dict[str, Exclusion] = {
+    "module_output_port_sv_var2": PORT_DECLARATION_WITHOUT_LIST,
+    "module_output_port_var2": PORT_DECLARATION_WITHOUT_LIST,
+    "pr1787423": PULL_GATE_ARITY,
+    "pr1787423b": PULL_GATE_ARITY,
+    "pr2834340": PULL_GATE_ARITY,
+    "pr2834340b": PULL_GATE_ARITY,
+    "pr478": LEGACY_PROTECT_DIRECTIVE,
+}
 
 
 def _ivtest_dir(root: Path) -> Path:
@@ -190,6 +226,9 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
               timeout: float, vpi_code: tuple[str, ...] = (),
               vpi_mode: str | None = None) -> tuple[str, model.Outcome]:
     """Compile, run, and judge one ivtest test in its own temporary directory."""
+    if excluded := EXCLUDED.get(desc.key):
+        return (desc.key, model.Outcome(
+            model.SKIP, f"{excluded.clause}: {excluded.reason}"))
     if not desc.source.exists():
         return (desc.key, model.Outcome(model.SKIP))
 

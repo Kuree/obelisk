@@ -126,12 +126,12 @@ in `classify.py` when it grows large enough to matter.
 
 ## Skipped tests
 
-A few Verilator tests assert Verilator's own behavior rather than the
+A few external tests assert simulator-specific behavior rather than the
 language's — `%p` spelling an integer in hex, a four-state variable starting at
-zero, an unpacked array assignment pairing elements by storage slot. Passing
-them would mean implementing something IEEE 1800-2017 says otherwise about, so
-`EXCLUDED` in `suites/verilator.py` names each one with the clause that settles
-it, and the run reports them as skips with that citation:
+zero, or Icarus accepting several terminals inside one pull-gate instance.
+Passing them would mean implementing something IEEE 1800-2017 says otherwise
+about, so each suite's `EXCLUDED` map names every such case with the clause that
+settles it, and the run reports them as skips with that citation:
 
 ```
 Skipped:
