@@ -554,8 +554,7 @@ bool validIntrinsic(const Image &image, const Function &function,
         return false;
     return true;
   case OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL:
-    return site.inputCount == 1 && site.outputCount == 0 &&
-           bits(input(0), 1);
+    return site.inputCount == 1 && site.outputCount == 0 && bits(input(0), 1);
   case OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL_DELAYED:
     return site.inputCount == 4 && site.outputCount == 0 && bits(input(0), 1) &&
            bits(input(1), 64) && bits(input(2), 64) && bits(input(3), 64);
@@ -1255,6 +1254,28 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 3 && bits(input(0), 32) && bits(input(1), 32) &&
            bytes(input(2)) && bits(input(3), 64) && bits(input(4), 64) &&
            string(output(0)) && bits(output(1), 32) && bits(output(2), 32);
+  case OBELISK_RT_INTRINSIC_V1_STRING_SCAN_RAW:
+    if (signature.flags != 0 || site.inputCount != 7 || !string(input(0)) ||
+        !bits(input(1), 32) || !bytes(input(2)) || !bits(input(3), 64) ||
+        !bits(input(4), 64) || !bits(input(5), 64) || !bits(input(6), 64))
+      return false;
+    return (site.outputCount == 3 && output(0) &&
+            output(0)->kind == OBELISK_RT_DBREG_LOGIC &&
+            output(0)->width != 0 && bits(output(1), 32) &&
+            bits(output(2), 32)) ||
+           (site.outputCount == 2 && bits(output(0), 32) &&
+            bits(output(1), 32));
+  case OBELISK_RT_INTRINSIC_V1_FILE_SCAN_RAW:
+    if (signature.flags != 0 || site.inputCount != 7 || !bits(input(0), 32) ||
+        !bits(input(1), 32) || !bytes(input(2)) || !bits(input(3), 64) ||
+        !bits(input(4), 64) || !bits(input(5), 64) || !bits(input(6), 64))
+      return false;
+    return (site.outputCount == 3 && output(0) &&
+            output(0)->kind == OBELISK_RT_DBREG_LOGIC &&
+            output(0)->width != 0 && bits(output(1), 32) &&
+            bits(output(2), 32)) ||
+           (site.outputCount == 2 && bits(output(0), 32) &&
+            bits(output(1), 32));
   case OBELISK_RT_INTRINSIC_V1_FILE_READMEM_TOKEN:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 3 && bits(input(0), 32) && bits(input(1), 64) &&

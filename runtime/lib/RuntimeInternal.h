@@ -12,6 +12,7 @@
 #include <array>
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <map>
 #include <memory>
@@ -28,6 +29,58 @@
 
 constexpr uint64_t OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG =
     OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG;
+
+inline std::optional<uint64_t>
+obelisk_rt_scan_raw_size(uint64_t bitWidth, bool fourState) noexcept {
+  if (bitWidth == 0 || bitWidth > UINT64_MAX - 31)
+    return std::nullopt;
+  uint64_t words = (bitWidth + 31) / 32;
+  uint64_t bytesPerWord = fourState ? 8 : 4;
+  if (words > UINT64_MAX / bytesPerWord)
+    return std::nullopt;
+  return words * bytesPerWord;
+}
+
+inline bool obelisk_rt_decode_scan_raw(const char *input, uint64_t inputSize,
+                                       uint64_t bitWidth, bool fourState,
+                                       void *value, uint64_t valueSize,
+                                       void *unknown,
+                                       uint64_t unknownSize) noexcept {
+  auto rawSize = obelisk_rt_scan_raw_size(bitWidth, fourState);
+  if (!rawSize || inputSize != *rawSize || bitWidth > UINT64_MAX - 7)
+    return false;
+  uint64_t packedSize = (bitWidth + 7) / 8;
+  if (packedSize > std::numeric_limits<size_t>::max() || !value || !unknown ||
+      valueSize < packedSize || unknownSize < packedSize)
+    return false;
+  std::memset(value, 0, static_cast<size_t>(packedSize));
+  std::memset(unknown, 0, static_cast<size_t>(packedSize));
+  auto *valueBytes = static_cast<unsigned char *>(value);
+  auto *unknownBytes = static_cast<unsigned char *>(unknown);
+  uint64_t words = (bitWidth + 31) / 32;
+  for (uint64_t word = 0; word != words; ++word) {
+    uint32_t aval = 0;
+    uint32_t bval = 0;
+    uint64_t source = word * (fourState ? 8 : 4);
+    std::memcpy(&aval, input + source, sizeof(aval));
+    if (fourState)
+      std::memcpy(&bval, input + source + sizeof(aval), sizeof(bval));
+    uint32_t internal = fourState ? aval ^ bval : aval;
+    uint64_t destination = word * sizeof(uint32_t);
+    uint64_t count =
+        std::min<uint64_t>(sizeof(uint32_t), packedSize - destination);
+    std::memcpy(valueBytes + destination, &internal,
+                static_cast<size_t>(count));
+    std::memcpy(unknownBytes + destination, &bval, static_cast<size_t>(count));
+  }
+  if ((bitWidth & 7) != 0) {
+    unsigned char mask =
+        static_cast<unsigned char>((UINT32_C(1) << (bitWidth & 7)) - 1);
+    valueBytes[packedSize - 1] &= mask;
+    unknownBytes[packedSize - 1] &= mask;
+  }
+  return true;
+}
 
 struct SignalWaitLatch {
   bool triggered = false;
@@ -892,8 +945,7 @@ struct NetAliasCache {
   std::unordered_map<uint32_t, std::vector<uint64_t>> delayedMosByControl;
   std::unordered_map<uint64_t, std::vector<uint64_t>> delayedMosBySource;
   std::unordered_map<uint64_t, std::vector<uint64_t>> delayedMosByDestination;
-  std::unordered_map<uint64_t, std::vector<uint64_t>>
-      uniformDelayedRootsByRoot;
+  std::unordered_map<uint64_t, std::vector<uint64_t>> uniformDelayedRootsByRoot;
   std::unordered_map<uint64_t, uint8_t> resolutionByRoot;
   std::unordered_map<uint64_t, uint8_t> chargeStrengthByBit;
   std::vector<NetAliasRange> nets;

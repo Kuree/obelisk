@@ -211,6 +211,7 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   unflattenBitStreamValue(::mlir::Value packed, uint64_t &highBit,
                           ::mlir::Type type, ::mlir::Location location);
+  std::optional<uint64_t> rawScanByteSize(::mlir::Type type, bool fourState);
   ::mlir::LogicalResult lowerClockingOutputAssignment(
       semantic::SVMemberAccessExpressionOp clockingVariable,
       ::mlir::Operation *destination, ::mlir::Value value,

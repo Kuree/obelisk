@@ -209,8 +209,7 @@ ScanResult scanFileField(FILE *stream, const char *prefix, uint64_t prefixSize,
     field.push_back(static_cast<char>(character));
     character = readFieldCharacter();
   }
-  bool real =
-      letter == 'e' || letter == 'f' || letter == 'g' || letter == 't';
+  bool real = letter == 'e' || letter == 'f' || letter == 'g' || letter == 't';
   uint32_t radix = letter == 'b'   ? 2
                    : letter == 'o' ? 8
                    : letter == 'd' ? 10
@@ -256,6 +255,39 @@ ScanResult scanFileField(FILE *stream, const char *prefix, uint64_t prefixSize,
   return ScanResult::Match;
 }
 
+ScanResult scanFileRaw(FILE *stream, const char *prefix, uint64_t prefixSize,
+                       uint64_t rawSize, uint64_t maxWidth, std::string &raw) {
+  for (uint64_t position = 0; position != prefixSize; ++position) {
+    unsigned char expected = static_cast<unsigned char>(prefix[position]);
+    if (scanSpace(expected)) {
+      int character;
+      do {
+        character = std::fgetc(stream);
+      } while (character != EOF && scanSpace(character));
+      if (putBack(stream, character) == ScanResult::Error)
+        return ScanResult::Error;
+      continue;
+    }
+    int character = std::fgetc(stream);
+    if (character == EOF)
+      return std::ferror(stream) ? ScanResult::Error : ScanResult::EndOfFile;
+    if (character != expected) {
+      if (putBack(stream, character) == ScanResult::Error)
+        return ScanResult::Error;
+      return ScanResult::Mismatch;
+    }
+  }
+  if (maxWidth != 0 && rawSize > maxWidth)
+    return ScanResult::Mismatch;
+  for (uint64_t index = 0; index != rawSize; ++index) {
+    int character = std::fgetc(stream);
+    if (character == EOF)
+      return std::ferror(stream) ? ScanResult::Error : ScanResult::EndOfFile;
+    raw.push_back(static_cast<char>(character));
+  }
+  return ScanResult::Match;
+}
+
 } // namespace
 
 obelisk_rt_status writeUnlocked(obelisk_rt_context *context,
@@ -292,9 +324,10 @@ obelisk_rt_status writeUnlocked(obelisk_rt_context *context,
 
 namespace {
 
-obelisk_rt_status checkFileArguments(obelisk_rt_context *context,
-                                     uint32_t descriptor, FileEntry *&entry,
-                                     std::unique_lock<std::recursive_mutex> &lock) {
+obelisk_rt_status
+checkFileArguments(obelisk_rt_context *context, uint32_t descriptor,
+                   FileEntry *&entry,
+                   std::unique_lock<std::recursive_mutex> &lock) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
   lock = std::unique_lock<std::recursive_mutex>(context->mutex);
@@ -392,9 +425,10 @@ obelisk_rt_v1_file_open(obelisk_rt_context *context, const char *path,
   });
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_file_open_string_mcd(
-    obelisk_rt_context *context, obelisk_rt_string_v1 path,
-    uint32_t *outDescriptor) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_file_open_string_mcd(obelisk_rt_context *context,
+                                   obelisk_rt_string_v1 path,
+                                   uint32_t *outDescriptor) {
   char scratch[8] = {};
   const char *bytes = nullptr;
   uint64_t size = 0;
@@ -641,7 +675,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_readmem_token(
             character >= '0' && character <= '9'   ? character - '0'
             : character >= 'a' && character <= 'f' ? character - 'a' + 10
             : character >= 'A' && character <= 'F' ? character - 'A' + 10
-                                                    : 16;
+                                                   : 16;
         if (digit >= 16)
           break;
         haveDigit = true;
@@ -691,14 +725,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_readmem_token(
       char digitCharacter = *position;
       if (digitCharacter == '_')
         continue;
-      unsigned digit =
-          digitCharacter >= '0' && digitCharacter <= '9'
-              ? digitCharacter - '0'
-          : digitCharacter >= 'a' && digitCharacter <= 'f'
-              ? digitCharacter - 'a' + 10
-          : digitCharacter >= 'A' && digitCharacter <= 'F'
-              ? digitCharacter - 'A' + 10
-              : 0;
+      unsigned digit = digitCharacter >= '0' && digitCharacter <= '9'
+                           ? digitCharacter - '0'
+                       : digitCharacter >= 'a' && digitCharacter <= 'f'
+                           ? digitCharacter - 'a' + 10
+                       : digitCharacter >= 'A' && digitCharacter <= 'F'
+                           ? digitCharacter - 'A' + 10
+                           : 0;
       bool isX = digitCharacter == 'x' || digitCharacter == 'X';
       bool isZ = digitCharacter == 'z' || digitCharacter == 'Z';
       for (unsigned bit = 0; bit != bitsPerDigit && outputBit < bitWidth;
@@ -779,8 +812,7 @@ obelisk_rt_v1_file_ungetc(obelisk_rt_context *context, uint32_t descriptor,
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_file_getline(obelisk_rt_context *context, uint32_t descriptor,
-                           uint64_t maxBytes,
-                           obelisk_rt_buffer_v1 *outLine) {
+                           uint64_t maxBytes, obelisk_rt_buffer_v1 *outLine) {
   if (!context || !outLine)
     return OBELISK_RT_INVALID_ARGUMENT;
   outLine->data = nullptr;
@@ -797,8 +829,8 @@ obelisk_rt_v1_file_getline(obelisk_rt_context *context, uint32_t descriptor,
         return OBELISK_RT_EOF;
       if (maxBytes == 0)
         return makeBuffer(std::string(), outLine);
-      return makeBuffer(
-          std::string(1, static_cast<char>(takePushback(*entry))), outLine);
+      return makeBuffer(std::string(1, static_cast<char>(takePushback(*entry))),
+                        outLine);
     }
     std::string line;
     errno = 0;
@@ -822,8 +854,7 @@ obelisk_rt_v1_file_getline(obelisk_rt_context *context, uint32_t descriptor,
 
 extern "C" obelisk_rt_status obelisk_rt_v1_file_getline_string(
     obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
-    uint32_t descriptor, obelisk_rt_string_v1 *outString,
-    uint32_t *outCount) {
+    uint32_t descriptor, obelisk_rt_string_v1 *outString, uint32_t *outCount) {
   if (!outString || !outCount)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outString = 0;
@@ -904,6 +935,73 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_scan_field(
   });
 }
 
+extern "C" obelisk_rt_status obelisk_rt_v1_file_scan_raw(
+    obelisk_rt_context *context, uint32_t descriptor, uint32_t enabled,
+    const char *prefix, uint64_t prefixSize, uint64_t rawSize,
+    uint64_t bitWidth, uint32_t fourState, uint64_t maxWidth, void *value,
+    uint64_t valueSize, void *unknown, uint64_t unknownSize, uint32_t *outOk,
+    uint32_t *outEOF) {
+  auto expectedSize = bitWidth
+                          ? obelisk_rt_scan_raw_size(bitWidth, fourState != 0)
+                          : std::optional<uint64_t>(rawSize);
+  uint64_t packedSize = bitWidth / 8 + (bitWidth % 8 != 0);
+  if (!context || !outOk || !outEOF || enabled > 1 || fourState > 1 ||
+      !expectedSize || rawSize == 0 || *expectedSize != rawSize ||
+      rawSize > std::numeric_limits<size_t>::max() ||
+      rawSize > std::string{}.max_size() ||
+      packedSize > std::numeric_limits<size_t>::max() ||
+      !validBytes(prefix, prefixSize) ||
+      (bitWidth &&
+       (!validBytes(value, valueSize) || !validBytes(unknown, unknownSize) ||
+        valueSize < packedSize || unknownSize < packedSize)))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outOk = 0;
+  *outEOF = 0;
+  if (bitWidth) {
+    std::memset(value, 0, static_cast<size_t>(packedSize));
+    std::memset(unknown, 0, static_cast<size_t>(packedSize));
+  }
+  if (!enabled)
+    return OBELISK_RT_OK;
+  return guarded(context, [&] {
+    FileEntry *entry;
+    std::unique_lock<std::recursive_mutex> lock;
+    obelisk_rt_status status =
+        checkFileArguments(context, descriptor, entry, lock);
+    if (status == OBELISK_RT_INVALID_HANDLE) {
+      *outEOF = 1;
+      return OBELISK_RT_OK;
+    }
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (!entry->readable) {
+      *outEOF = 1;
+      return OBELISK_RT_OK;
+    }
+    std::string raw;
+    raw.reserve(static_cast<size_t>(rawSize));
+    errno = 0;
+    ScanResult result =
+        scanFileRaw(entry->stream, prefix, prefixSize, rawSize, maxWidth, raw);
+    if (result == ScanResult::Error) {
+      recordIOError(context, *entry, "formatted raw file read failed");
+      return OBELISK_RT_IO_ERROR;
+    }
+    if (result == ScanResult::EndOfFile) {
+      *outEOF = 1;
+      return OBELISK_RT_OK;
+    }
+    if (result == ScanResult::Mismatch)
+      return OBELISK_RT_OK;
+    if (bitWidth && !obelisk_rt_decode_scan_raw(
+                        raw.data(), raw.size(), bitWidth, fourState != 0, value,
+                        valueSize, unknown, unknownSize))
+      return OBELISK_RT_INVALID_ARGUMENT;
+    *outOk = 1;
+    return OBELISK_RT_OK;
+  });
+}
+
 extern "C" obelisk_rt_status obelisk_rt_v1_file_eof(obelisk_rt_context *context,
                                                     uint32_t descriptor,
                                                     uint32_t *outIsEOF) {
@@ -918,10 +1016,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_eof(obelisk_rt_context *context,
       return status;
     // A descriptor without read access is at end of file unless a $ungetc
     // byte is still pending: it can never deliver anything else.
-    *outIsEOF = (entry->readable ? std::feof(entry->stream) != 0
-                                 : entry->pushback < 0)
-                    ? 1u
-                    : 0u;
+    *outIsEOF =
+        (entry->readable ? std::feof(entry->stream) != 0 : entry->pushback < 0)
+            ? 1u
+            : 0u;
     return OBELISK_RT_OK;
   });
 }

@@ -75,6 +75,43 @@ Encoder::encodeStringOperation(FunctionPlan &plan, Operation *operation) {
         {reg(plan, op.getField()), reg(plan, op.getNextCursor()),
          reg(plan, op.getOk())});
   }
+  if (auto op = dyn_cast<sim::SimStringScanRawOp>(operation)) {
+    uint64_t bitWidth = cast<sim::LogicType>(op.getData().getType()).getWidth();
+    uint64_t rawSize = ((bitWidth + 31) / 32) *
+                       (op.getFourState() ? uint64_t{8} : uint64_t{4});
+    uint32_t prefix = emitBytesConstant(
+        plan, {reinterpret_cast<const uint8_t *>(op.getPrefix().data()),
+               op.getPrefix().size()});
+    uint32_t size = emitU64Constant(plan, rawSize);
+    uint32_t width = emitU64Constant(plan, bitWidth);
+    uint32_t fourState = emitU64Constant(plan, op.getFourState() ? 1 : 0);
+    uint32_t maxWidth = emitU64Constant(plan, op.getMaxWidth());
+    if (prefix == kInvalidRegister || size == kInvalidRegister ||
+        width == kInvalidRegister || fourState == kInvalidRegister ||
+        maxWidth == kInvalidRegister)
+      return op.emitOpError("cannot allocate raw-scan operand registers");
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicStringScanRaw,
+        {reg(plan, op.getInput()), reg(plan, op.getCursor()), prefix, size,
+         width, fourState, maxWidth},
+        {reg(plan, op.getData()), reg(plan, op.getNextCursor()),
+         reg(plan, op.getOk())});
+  }
+  if (auto op = dyn_cast<sim::SimStringSkipRawOp>(operation)) {
+    uint32_t prefix = emitBytesConstant(
+        plan, {reinterpret_cast<const uint8_t *>(op.getPrefix().data()),
+               op.getPrefix().size()});
+    uint32_t size = emitU64Constant(plan, op.getByteCount());
+    uint32_t zero = emitU64Constant(plan, 0);
+    if (prefix == kInvalidRegister || size == kInvalidRegister ||
+        zero == kInvalidRegister)
+      return op.emitOpError("cannot allocate raw-skip operand registers");
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicStringScanRaw,
+        {reg(plan, op.getInput()), reg(plan, op.getCursor()), prefix, size,
+         zero, zero, size},
+        {reg(plan, op.getNextCursor()), reg(plan, op.getOk())});
+  }
   if (auto op = dyn_cast<sim::SimFileScanFieldOp>(operation)) {
     uint32_t prefix = emitBytesConstant(
         plan, {reinterpret_cast<const uint8_t *>(op.getPrefix().data()),
@@ -90,6 +127,43 @@ Encoder::encodeStringOperation(FunctionPlan &plan, Operation *operation) {
          specifier, width},
         {reg(plan, op.getField()), reg(plan, op.getOk()),
          reg(plan, op.getEof())});
+  }
+  if (auto op = dyn_cast<sim::SimFileScanRawOp>(operation)) {
+    uint64_t bitWidth = cast<sim::LogicType>(op.getData().getType()).getWidth();
+    uint64_t rawSize = ((bitWidth + 31) / 32) *
+                       (op.getFourState() ? uint64_t{8} : uint64_t{4});
+    uint32_t prefix = emitBytesConstant(
+        plan, {reinterpret_cast<const uint8_t *>(op.getPrefix().data()),
+               op.getPrefix().size()});
+    uint32_t size = emitU64Constant(plan, rawSize);
+    uint32_t width = emitU64Constant(plan, bitWidth);
+    uint32_t fourState = emitU64Constant(plan, op.getFourState() ? 1 : 0);
+    uint32_t maxWidth = emitU64Constant(plan, op.getMaxWidth());
+    if (prefix == kInvalidRegister || size == kInvalidRegister ||
+        width == kInvalidRegister || fourState == kInvalidRegister ||
+        maxWidth == kInvalidRegister)
+      return op.emitOpError("cannot allocate file raw-scan operands");
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicFileScanRaw,
+        {reg(plan, op.getDescriptor()), reg(plan, op.getEnabled()), prefix,
+         size, width, fourState, maxWidth},
+        {reg(plan, op.getData()), reg(plan, op.getOk()),
+         reg(plan, op.getEof())});
+  }
+  if (auto op = dyn_cast<sim::SimFileSkipRawOp>(operation)) {
+    uint32_t prefix = emitBytesConstant(
+        plan, {reinterpret_cast<const uint8_t *>(op.getPrefix().data()),
+               op.getPrefix().size()});
+    uint32_t size = emitU64Constant(plan, op.getByteCount());
+    uint32_t zero = emitU64Constant(plan, 0);
+    if (prefix == kInvalidRegister || size == kInvalidRegister ||
+        zero == kInvalidRegister)
+      return op.emitOpError("cannot allocate file raw-skip operands");
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicFileScanRaw,
+        {reg(plan, op.getDescriptor()), reg(plan, op.getEnabled()), prefix,
+         size, zero, zero, size},
+        {reg(plan, op.getOk()), reg(plan, op.getEof())});
   }
   if (auto op = dyn_cast<sim::SimStringParseIntegerOp>(operation)) {
     uint32_t radix = emitU64Constant(plan, op.getRadix());

@@ -991,6 +991,23 @@ to three input bytes, and an exhaustive runtime round trip proves every field
 the existing `%v` formatter can emit is accepted while noncanonical spellings
 are rejected. Other formatting and file corner cases remain under L19.
 
+L19's fourth closure tranche implements the formatted-input raw binary
+conversions `%u` and `%z` from Table 21-8 for both `$sscanf` and `$fscanf`.
+`%u` consumes native-endian 32-bit two-state words and clears the destination's
+unknown plane; `%z` consumes native `s_vpi_vecval`-compatible `aval`/`bval`
+pairs and preserves X/Z. Destination width determines the exact transfer size,
+including non-byte-aligned and arbitrary-width packed values. Recursively
+integral unpacked structures use declaration order, and an unpacked union uses
+its first declared member. Uppercase forms, explicit-byte-count suppression,
+prefix mismatch, partial-input EOF, consecutive fields, and file position
+execute identically in native and bytecode tiers at O0 and O3. Each packed
+conversion lowers to one typed operation and an O(words) runtime loop;
+aggregates use one operation per scalar leaf so every leaf retains its own
+32-bit word padding. A 4097-bit MLIR regression prevents width-unrolled
+lowering. Raw formatted output of unpacked
+aggregate operands and formatted reads after the runtime's synthetic
+`$ungetc` byte remain explicit L19 follow-up items.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -1170,7 +1187,12 @@ one commit.
     destination conversion, runtime format changes, and file position.
     Formatted-input `%v` is complete for canonical mnemonic and numeric-range
     strength fields, uppercase, suppression, widths, four-state destination
-    conversion, prefix/EOF handling, and file position.
+    conversion, prefix/EOF handling, and file position. Formatted-input `%u`
+    and `%z` are complete for packed and recursively integral unpacked
+    struct/union destinations, native word layout, uppercase, explicit-width
+    suppression, prefix/partial-EOF handling, and file position. Raw formatted
+    output of unpacked aggregates and formatted reads after synthetic
+    `$ungetc` remain.
 
 ### Randomization and `std`
 

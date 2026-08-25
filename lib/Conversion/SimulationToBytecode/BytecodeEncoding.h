@@ -245,6 +245,10 @@ constexpr uint32_t kIntrinsicStringCaseConvert =
     OBELISK_RT_INTRINSIC_V1_STRING_CASE_CONVERT;
 constexpr uint32_t kIntrinsicStringScanField =
     OBELISK_RT_INTRINSIC_V1_STRING_SCAN_FIELD;
+constexpr uint32_t kIntrinsicStringScanRaw =
+    OBELISK_RT_INTRINSIC_V1_STRING_SCAN_RAW;
+constexpr uint32_t kIntrinsicFileScanRaw =
+    OBELISK_RT_INTRINSIC_V1_FILE_SCAN_RAW;
 constexpr uint32_t kIntrinsicStringParseInteger =
     OBELISK_RT_INTRINSIC_V1_STRING_PARSE_INTEGER;
 constexpr uint32_t kIntrinsicStringParseLogic =

@@ -395,6 +395,16 @@ LogicalResult lowerPackedSimulationOperations(
       operation->setAttr(nativeScanPrefixGlobalAttr, name);
       return reserve(name.getValue(), scan.getPrefix());
     }
+    if (isa<sim::SimStringScanRawOp, sim::SimStringSkipRawOp>(operation)) {
+      StringRef prefix =
+          operation->getAttrOfType<StringAttr>("prefix").getValue();
+      if (prefix.empty())
+        return WalkResult::advance();
+      StringAttr name =
+          allocateGlobalName("__obelisk_scan_prefix.", scanPrefixOrdinal);
+      operation->setAttr(nativeScanPrefixGlobalAttr, name);
+      return reserve(name.getValue(), prefix);
+    }
     if (auto scan = dyn_cast<sim::SimFileScanFieldOp>(operation)) {
       if (scan.getPrefix().empty())
         return WalkResult::advance();
@@ -402,6 +412,16 @@ LogicalResult lowerPackedSimulationOperations(
                                            fileScanPrefixOrdinal);
       operation->setAttr(nativeFileScanPrefixGlobalAttr, name);
       return reserve(name.getValue(), scan.getPrefix());
+    }
+    if (isa<sim::SimFileScanRawOp, sim::SimFileSkipRawOp>(operation)) {
+      StringRef prefix =
+          operation->getAttrOfType<StringAttr>("prefix").getValue();
+      if (prefix.empty())
+        return WalkResult::advance();
+      StringAttr name = allocateGlobalName("__obelisk_file_scan_prefix.",
+                                           fileScanPrefixOrdinal);
+      operation->setAttr(nativeFileScanPrefixGlobalAttr, name);
+      return reserve(name.getValue(), prefix);
     }
     if (auto create = dyn_cast<sim::SimContainerCreateOp>(operation)) {
       if (failed(reserveTrace(create.getLoc(), "__obelisk_element_trace_",
@@ -643,16 +663,15 @@ LogicalResult lowerPackedSimulationOperations(
     target.addIllegalOp<
         sim::SimBytesConstantOp, sim::SimFinishOp, sim::SimStopOp,
         sim::SimFatalOp, sim::SimErrorOp, sim::SimTerminationRequestedOp,
-        sim::SimProgramExitOp,
-        sim::SimTimeNowOp, sim::SimDisplayOp, sim::SimStringOutputFormatOp,
-        sim::SimFileOpenMCDOp, sim::SimFileOpenOp, sim::SimFileCloseOp,
-        sim::SimFileFlushOp, sim::SimFileGetcOp, sim::SimFileUngetcOp,
-        sim::SimFileGetlineOp, sim::SimFileReadPackedOp, sim::SimFileEofOp,
-        sim::SimFileSeekOp, sim::SimFileTellOp, sim::SimFileRewindOp,
-        sim::SimDumpOpenOp, sim::SimDumpOpenStringOp, sim::SimDumpTimescaleOp,
-        sim::SimDumpVarsOp, sim::SimDumpAllOp, sim::SimDumpControlOp,
-        sim::SimDumpLimitOp, sim::SimDumpFlushOp, sim::SimDumpPortsOp,
-        sim::SimDumpPortsControlOp>();
+        sim::SimProgramExitOp, sim::SimTimeNowOp, sim::SimDisplayOp,
+        sim::SimStringOutputFormatOp, sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
+        sim::SimFileCloseOp, sim::SimFileFlushOp, sim::SimFileGetcOp,
+        sim::SimFileUngetcOp, sim::SimFileGetlineOp, sim::SimFileReadPackedOp,
+        sim::SimFileEofOp, sim::SimFileSeekOp, sim::SimFileTellOp,
+        sim::SimFileRewindOp, sim::SimDumpOpenOp, sim::SimDumpOpenStringOp,
+        sim::SimDumpTimescaleOp, sim::SimDumpVarsOp, sim::SimDumpAllOp,
+        sim::SimDumpControlOp, sim::SimDumpLimitOp, sim::SimDumpFlushOp,
+        sim::SimDumpPortsOp, sim::SimDumpPortsControlOp>();
     target.addIllegalOp<
         sim::SimContextStorageOp, sim::SimContextNetOp, sim::SimContextDriverOp,
         sim::SimContextEventOp, sim::SimRefAllocOp, sim::SimRefReleaseOwnerOp,
@@ -663,8 +682,7 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimNetCountDriversOp, sim::SimPassSwitchControlOp,
         sim::SimPassSwitchControlDelayedOp, sim::SimMosDriveDelayedOp,
         sim::SimDriverDriveInertialOp, sim::SimDriverDriveInertialPathOp,
-        sim::SimDriverDriveOp,
-        sim::SimDriverDriveInertialStrengthPairOp,
+        sim::SimDriverDriveOp, sim::SimDriverDriveInertialStrengthPairOp,
         sim::SimDriverDriveDelayedNetOp, sim::SimDriverDriveChangedOp,
         sim::SimDriverExtractOp, sim::SimDriverDynExtractOp,
         sim::SimDriverSubelementOp, sim::SimDriverArrayElementOp,
@@ -673,8 +691,7 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimEventEqualOp, sim::SimDisableChildrenOp, sim::SimControlEnterOp,
         sim::SimControlLeaveOp, sim::SimControlDisableOp,
         sim::SimControlEscapePendingOp, sim::SimControlNonlocalExitOp,
-        sim::SimStaticOnceOp,
-        sim::SimDeferredOnceOp, sim::SimDeferredEnqueueOp,
+        sim::SimStaticOnceOp, sim::SimDeferredOnceOp, sim::SimDeferredEnqueueOp,
         sim::SimDeferredMatureOp, sim::SimAssertionControlOp,
         sim::SimAssertionEnabledOp, sim::SimAssertionActionStateOp,
         sim::SimAssertionKillEpochOp, sim::SimSampledReadOp,
@@ -698,29 +715,30 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimRandomNextOp, sim::SimRandomStateOp, sim::SimRandomSetStateOp,
         sim::SimRandomSeedOp, sim::SimRandomBoundedOp,
         sim::SimRandomDistributionOp, sim::SimStochasticQueueOp,
-        sim::SimRandomCycleNextOp,
-        sim::SimRandomSolveOp, sim::SimRandomSolveWideOp,
-        sim::SimStringLiteralOp, sim::SimStringFromPackedOp,
-        sim::SimStringToPackedOp, sim::SimStringConcatOp,
-        sim::SimStringRepeatOp, sim::SimStringLengthOp, sim::SimStringGetcOp,
-        sim::SimStringPutcOp, sim::SimStringSubstrOp, sim::SimStringCompareOp,
-        sim::SimStringCaseConvertOp, sim::SimStringParseIntegerOp,
-        sim::SimStringParseLogicOp, sim::SimStringParseRealOp,
-        sim::SimStringScanFieldOp, sim::SimStringFormatIntegerOp,
-        sim::SimStringFormatRealOp, sim::SimFileOpenStringMCDOp,
-        sim::SimFileOpenStringOp, sim::SimFileGetlineStringOp,
-        sim::SimFileErrorStringOp, sim::SimTimeFormatOp,
-        sim::SimTimeScanScaleOp, sim::SimPlusargTestOp,
+        sim::SimRandomCycleNextOp, sim::SimRandomSolveOp,
+        sim::SimRandomSolveWideOp, sim::SimStringLiteralOp,
+        sim::SimStringFromPackedOp, sim::SimStringToPackedOp,
+        sim::SimStringConcatOp, sim::SimStringRepeatOp, sim::SimStringLengthOp,
+        sim::SimStringGetcOp, sim::SimStringPutcOp, sim::SimStringSubstrOp,
+        sim::SimStringCompareOp, sim::SimStringCaseConvertOp,
+        sim::SimStringParseIntegerOp, sim::SimStringParseLogicOp,
+        sim::SimStringParseRealOp, sim::SimStringScanFieldOp,
+        sim::SimStringScanRawOp, sim::SimStringSkipRawOp,
+        sim::SimStringFormatIntegerOp, sim::SimStringFormatRealOp,
+        sim::SimFileScanRawOp, sim::SimFileSkipRawOp,
+        sim::SimFileOpenStringMCDOp, sim::SimFileOpenStringOp,
+        sim::SimFileGetlineStringOp, sim::SimFileErrorStringOp,
+        sim::SimTimeFormatOp, sim::SimTimeScanScaleOp, sim::SimPlusargTestOp,
         sim::SimPlusargValueOp, sim::SimPlusargScanOp, sim::SimSystemOp,
-        sim::SimClassAllocOp, sim::SimClassCopyOp,
-        sim::SimClassIsInstanceOp, sim::SimClassIdOp, sim::SimClassCastOp,
-        sim::SimClassFieldRefOp, sim::SimManagedWatchOp,
-        sim::SimClassRootBindOp, sim::SimManagedLoadOp, sim::SimBoxPackOp,
-        sim::SimBoxCastOp, sim::SimBoxIsTypeOp, sim::SimManagedStoreOp,
-        sim::SimManagedBitsDynStoreOp, sim::SimManagedNBAEnqueueOp,
-        sim::SimReferencePathNBAEnqueueOp, sim::SimArgumentRefFromRefOp,
-        sim::SimArgumentRefFromManagedOp, sim::SimReferencePathIndexOp,
-        sim::SimReferencePathAssocOp, sim::SimReferencePathStringCharacterOp,
+        sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimClassIsInstanceOp,
+        sim::SimClassIdOp, sim::SimClassCastOp, sim::SimClassFieldRefOp,
+        sim::SimManagedWatchOp, sim::SimClassRootBindOp, sim::SimManagedLoadOp,
+        sim::SimBoxPackOp, sim::SimBoxCastOp, sim::SimBoxIsTypeOp,
+        sim::SimManagedStoreOp, sim::SimManagedBitsDynStoreOp,
+        sim::SimManagedNBAEnqueueOp, sim::SimReferencePathNBAEnqueueOp,
+        sim::SimArgumentRefFromRefOp, sim::SimArgumentRefFromManagedOp,
+        sim::SimReferencePathIndexOp, sim::SimReferencePathAssocOp,
+        sim::SimReferencePathStringCharacterOp,
         sim::SimReferencePathAggregateElementOp, sim::SimArgumentRefFromPathOp,
         sim::SimArgumentRefLoadOp, sim::SimArgumentRefStoreOp,
         sim::SimClassDirectCallOp, sim::SimClassVirtualCallOp,

@@ -1872,6 +1872,61 @@ extern "C" obelisk_rt_status obelisk_rt_v1_string_scan_field(
   return OBELISK_RT_OK;
 }
 
+extern "C" obelisk_rt_status obelisk_rt_v1_string_scan_raw(
+    obelisk_rt_string_v1 input, uint32_t cursor, const char *prefix,
+    uint64_t prefixSize, uint64_t rawSize, uint64_t bitWidth,
+    uint32_t fourState, uint64_t maxWidth, void *value, uint64_t valueSize,
+    void *unknown, uint64_t unknownSize, uint32_t *outCursor, uint32_t *outOk) {
+  auto expectedSize = bitWidth
+                          ? obelisk_rt_scan_raw_size(bitWidth, fourState != 0)
+                          : std::optional<uint64_t>(rawSize);
+  uint64_t packedSize = bitWidth / 8 + (bitWidth % 8 != 0);
+  if (!outCursor || !outOk || fourState > 1 || !expectedSize || rawSize == 0 ||
+      *expectedSize != rawSize ||
+      rawSize > std::numeric_limits<size_t>::max() ||
+      packedSize > std::numeric_limits<size_t>::max() ||
+      !validBytes(prefix, prefixSize) ||
+      (bitWidth &&
+       (!validBytes(value, valueSize) || !validBytes(unknown, unknownSize) ||
+        valueSize < packedSize || unknownSize < packedSize)))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outCursor = cursor;
+  *outOk = 0;
+  if (bitWidth) {
+    std::memset(value, 0, static_cast<size_t>(packedSize));
+    std::memset(unknown, 0, static_cast<size_t>(packedSize));
+  }
+  StringView view;
+  obelisk_rt_status status = readString(input, view);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (cursor > view.size)
+    return OBELISK_RT_OK;
+  uint64_t index = cursor;
+  for (uint64_t position = 0; position != prefixSize; ++position) {
+    if (scanSpace(prefix[position])) {
+      while (index < view.size && scanSpace(view.bytes[index]))
+        ++index;
+      continue;
+    }
+    if (index >= view.size || view.bytes[index] != prefix[position])
+      return OBELISK_RT_OK;
+    ++index;
+  }
+  if ((maxWidth != 0 && rawSize > maxWidth) || rawSize > view.size - index)
+    return OBELISK_RT_OK;
+  if (bitWidth && !obelisk_rt_decode_scan_raw(view.bytes + index, rawSize,
+                                              bitWidth, fourState != 0, value,
+                                              valueSize, unknown, unknownSize))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  index += rawSize;
+  if (index > UINT32_MAX)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  *outCursor = static_cast<uint32_t>(index);
+  *outOk = 1;
+  return OBELISK_RT_OK;
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_string_parse_integer(obelisk_rt_string_v1 string, uint32_t radix,
                                    uint64_t *outValue) {

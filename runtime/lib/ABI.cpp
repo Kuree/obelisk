@@ -947,6 +947,11 @@ ABI_FUNCTION(obelisk_rt_v1_file_scan_field,
                                    const char *, uint64_t, uint32_t, uint64_t,
                                    obelisk_rt_string_v1 *, uint32_t *,
                                    uint32_t *));
+ABI_FUNCTION(obelisk_rt_v1_file_scan_raw,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint32_t,
+                                   const char *, uint64_t, uint64_t, uint64_t,
+                                   uint32_t, uint64_t, void *, uint64_t, void *,
+                                   uint64_t, uint32_t *, uint32_t *));
 ABI_FUNCTION(obelisk_rt_v1_file_eof,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint32_t *));
 ABI_FUNCTION(obelisk_rt_v1_file_error,
@@ -1450,6 +1455,11 @@ ABI_FUNCTION(obelisk_rt_v1_string_case_convert,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
                                    obelisk_rt_string_v1, uint32_t,
                                    obelisk_rt_string_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_string_scan_raw,
+             obelisk_rt_status (*)(obelisk_rt_string_v1, uint32_t, const char *,
+                                   uint64_t, uint64_t, uint64_t, uint32_t,
+                                   uint64_t, void *, uint64_t, void *, uint64_t,
+                                   uint32_t *, uint32_t *));
 ABI_FUNCTION(obelisk_rt_v1_string_parse_integer,
              obelisk_rt_status (*)(obelisk_rt_string_v1, uint32_t, uint64_t *));
 ABI_FUNCTION(obelisk_rt_v1_string_parse_logic,

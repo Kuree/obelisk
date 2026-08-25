@@ -155,6 +155,69 @@ TEST_F(ManagedValueTest, StringSSOCoversEveryLengthAndEmbeddedNullBytes) {
             OBELISK_RT_INVALID_HANDLE);
 }
 
+TEST_F(ManagedValueTest, ScansNativeRawWordsWithoutTextInterpretation) {
+  // Three native s_vpi_vecval records encode a non-byte-aligned 69-bit value.
+  // Runtime logic stores aval^bval in its value plane and bval in unknown.
+  std::array<uint32_t, 6> records{
+      UINT32_C(0x80000001), UINT32_C(0x00000000),
+      UINT32_C(0x00000001), UINT32_C(0x00000003),
+      UINT32_C(0x00000010), UINT32_C(0x00000000)};
+  obelisk_rt_string_v1 input = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_create(
+                lane, reinterpret_cast<const char *>(records.data()),
+                sizeof(records), &input),
+            OBELISK_RT_OK);
+  std::array<uint64_t, 2> value{UINT64_MAX, UINT64_MAX};
+  std::array<uint64_t, 2> unknown{UINT64_MAX, UINT64_MAX};
+  uint32_t cursor = UINT32_MAX;
+  uint32_t ok = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_scan_raw(
+                input, 0, nullptr, 0, sizeof(records), 69, 1, 0,
+                value.data(), sizeof(value), unknown.data(), sizeof(unknown),
+                &cursor, &ok),
+            OBELISK_RT_OK);
+  EXPECT_EQ(ok, 1u);
+  EXPECT_EQ(cursor, sizeof(records));
+  EXPECT_EQ(value[0], UINT64_C(0x0000000280000001));
+  EXPECT_EQ(value[1] & UINT64_C(0x1f), UINT64_C(0x10));
+  EXPECT_EQ(unknown[0], UINT64_C(0x0000000300000000));
+  EXPECT_EQ(unknown[1] & UINT64_C(0x1f), 0u);
+
+  std::array<uint32_t, 3> twoStateWords{
+      UINT32_C(0x80000001), UINT32_C(0x00000003),
+      UINT32_C(0x00000010)};
+  ASSERT_EQ(obelisk_rt_v1_string_create(
+                lane, reinterpret_cast<const char *>(twoStateWords.data()),
+                sizeof(twoStateWords), &input),
+            OBELISK_RT_OK);
+  value = {UINT64_MAX, UINT64_MAX};
+  unknown = {UINT64_MAX, UINT64_MAX};
+  ASSERT_EQ(obelisk_rt_v1_string_scan_raw(
+                input, 0, nullptr, 0, sizeof(twoStateWords), 69, 0, 0,
+                value.data(), sizeof(value), unknown.data(), sizeof(unknown),
+                &cursor, &ok),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value[0], UINT64_C(0x0000000380000001));
+  EXPECT_EQ(value[1] & UINT64_C(0x1f), UINT64_C(0x10));
+  EXPECT_EQ(unknown[0], 0u);
+  EXPECT_EQ(unknown[1] & UINT64_C(0x1f), 0u);
+
+  // Suppressed raw fields consume their explicit byte count with no output
+  // storage, while impossible typed widths fail before touching output spans.
+  cursor = UINT32_MAX;
+  ok = 0;
+  EXPECT_EQ(obelisk_rt_v1_string_scan_raw(
+                input, 0, nullptr, 0, 4, 0, 0, 4, nullptr, 0, nullptr, 0,
+                &cursor, &ok),
+            OBELISK_RT_OK);
+  EXPECT_EQ(cursor, 4u);
+  EXPECT_EQ(ok, 1u);
+  EXPECT_EQ(obelisk_rt_v1_string_scan_raw(
+                input, 0, nullptr, 0, 4, UINT64_MAX, 0, 0, value.data(),
+                sizeof(value), unknown.data(), sizeof(unknown), &cursor, &ok),
+            OBELISK_RT_INVALID_ARGUMENT);
+}
+
 TEST_F(ManagedValueTest, ConcatManyFusesIntoOneManagedAllocation) {
   obelisk_rt_string_v1 strings[4]{};
   ASSERT_EQ(obelisk_rt_v1_string_create(nullptr, "ab", 2, &strings[0]),

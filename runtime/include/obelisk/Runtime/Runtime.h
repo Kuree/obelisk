@@ -954,6 +954,8 @@ enum {
   OBELISK_RT_INTRINSIC_V1_LOGIC_CASE_DIFFERENCE_MASK = UINT32_C(0x00010240),
   OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_DRIVER = UINT32_C(0x00010241),
   OBELISK_RT_INTRINSIC_V1_TIME_SCAN_SCALE = UINT32_C(0x00010242),
+  OBELISK_RT_INTRINSIC_V1_STRING_SCAN_RAW = UINT32_C(0x00010243),
+  OBELISK_RT_INTRINSIC_V1_FILE_SCAN_RAW = UINT32_C(0x00010244),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -2034,6 +2036,12 @@ obelisk_rt_status obelisk_rt_v1_string_scan_field(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_string_v1 input, uint32_t cursor,
     const char *prefix, uint64_t prefix_size, uint32_t specifier,
     uint64_t width, obelisk_rt_string_v1 *out_field, uint32_t *out_cursor,
+    uint32_t *out_ok);
+obelisk_rt_status obelisk_rt_v1_string_scan_raw(
+    obelisk_rt_string_v1 input, uint32_t cursor, const char *prefix,
+    uint64_t prefix_size, uint64_t raw_size, uint64_t bit_width,
+    uint32_t four_state, uint64_t max_width, void *value, uint64_t value_size,
+    void *unknown, uint64_t unknown_size, uint32_t *out_cursor,
     uint32_t *out_ok);
 obelisk_rt_status
 obelisk_rt_v1_string_parse_integer(obelisk_rt_string_v1 string, uint32_t radix,
@@ -3129,9 +3137,10 @@ obelisk_rt_v1_net_count_drivers(obelisk_rt_context *context,
                                 uint32_t *out_total, uint32_t *out_zero,
                                 uint32_t *out_one, uint32_t *out_unknown);
 // Publish one normalized active-high four-state tranif/rtranif control.
-obelisk_rt_status obelisk_rt_v1_pass_switch_control(
-    obelisk_rt_context *context, uint32_t pass_switch_id, uint32_t value,
-    uint32_t unknown);
+obelisk_rt_status obelisk_rt_v1_pass_switch_control(obelisk_rt_context *context,
+                                                    uint32_t pass_switch_id,
+                                                    uint32_t value,
+                                                    uint32_t unknown);
 obelisk_rt_status obelisk_rt_v1_pass_switch_control_delayed(
     obelisk_rt_context *context, uint32_t pass_switch_id, uint32_t value,
     uint32_t unknown, uint64_t turn_on_delay, uint64_t turn_off_delay,
@@ -3622,12 +3631,12 @@ obelisk_rt_v1_random_distribution(obelisk_rt_context *context,
 // `unit_scale` is the number of design-precision ticks in the calling scope's
 // time unit and controls the rounding of time statistics.
 obelisk_rt_status obelisk_rt_v1_stochastic_queue(
-    obelisk_rt_context *context,
-    obelisk_rt_stochastic_queue_action_v1 action, uint32_t id_value,
-    uint32_t id_unknown, uint32_t first_value, uint32_t first_unknown,
-    uint32_t second_value, uint32_t second_unknown, uint64_t unit_scale,
-    uint64_t *out_primary_value, uint64_t *out_primary_unknown,
-    uint64_t *out_secondary_value, uint64_t *out_secondary_unknown,
+    obelisk_rt_context *context, obelisk_rt_stochastic_queue_action_v1 action,
+    uint32_t id_value, uint32_t id_unknown, uint32_t first_value,
+    uint32_t first_unknown, uint32_t second_value, uint32_t second_unknown,
+    uint64_t unit_scale, uint64_t *out_primary_value,
+    uint64_t *out_primary_unknown, uint64_t *out_secondary_value,
+    uint64_t *out_secondary_unknown,
     obelisk_rt_stochastic_queue_status_v1 *out_queue_status);
 // Advance a keyed randc permutation over exactly 2^width values. Widths 1..32
 // are supported. The caller owns key/position storage and explicitly rekeys
@@ -3828,6 +3837,12 @@ obelisk_rt_status obelisk_rt_v1_file_scan_field(
     uint32_t descriptor, uint32_t enabled, const char *prefix,
     uint64_t prefix_size, uint32_t specifier, uint64_t width,
     obelisk_rt_string_v1 *out_field, uint32_t *out_ok, uint32_t *out_eof);
+obelisk_rt_status obelisk_rt_v1_file_scan_raw(
+    obelisk_rt_context *context, uint32_t descriptor, uint32_t enabled,
+    const char *prefix, uint64_t prefix_size, uint64_t raw_size,
+    uint64_t bit_width, uint32_t four_state, uint64_t max_width, void *value,
+    uint64_t value_size, void *unknown, uint64_t unknown_size, uint32_t *out_ok,
+    uint32_t *out_eof);
 obelisk_rt_status obelisk_rt_v1_file_eof(obelisk_rt_context *context,
                                          uint32_t descriptor,
                                          uint32_t *out_is_eof);
@@ -3857,10 +3872,12 @@ obelisk_rt_status obelisk_rt_v1_plusarg_value(obelisk_rt_context *context,
                                               uint32_t *out_found);
 // Parse a runtime $value$plusargs format. `out_conversion` is zero for string,
 // one for real, or the integral radix. Invalid formats report no match.
-obelisk_rt_status obelisk_rt_v1_plusarg_scan(
-    obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
-    obelisk_rt_string_v1 format, obelisk_rt_string_v1 *out_tail,
-    uint32_t *out_conversion, uint32_t *out_found);
+obelisk_rt_status obelisk_rt_v1_plusarg_scan(obelisk_rt_context *context,
+                                             obelisk_rt_gc_lane_v1 *lane,
+                                             obelisk_rt_string_v1 format,
+                                             obelisk_rt_string_v1 *out_tail,
+                                             uint32_t *out_conversion,
+                                             uint32_t *out_found);
 
 // Execute a host command and return its normalized exit status. A process
 // terminated by a signal reports 128 plus the signal number.

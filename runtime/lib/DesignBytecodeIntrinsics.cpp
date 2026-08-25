@@ -1379,6 +1379,80 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     status = sentinel(1, ok);
     return status == OBELISK_RT_OK ? sentinel(2, eof) : status;
   }
+  case OBELISK_RT_INTRINSIC_V1_STRING_SCAN_RAW: {
+    obelisk_rt_string_v1 input = 0;
+    auto cursor = scalar(1), rawSize = scalar(3), bitWidth = scalar(4),
+         fourState = scalar(5), maxWidth = scalar(6);
+    auto prefix = bytes(2);
+    if (!readString(inputRegister(0), input) || !cursor || !rawSize ||
+        !bitWidth || !fourState || !maxWidth || !prefix ||
+        *cursor > UINT32_MAX || *fourState > 1)
+      return OBELISK_RT_INVALID_BYTECODE;
+    bool assigned = site.outputCount == 3;
+    void *value = nullptr;
+    void *unknown = nullptr;
+    uint64_t planeSize = 0;
+    if (assigned) {
+      Layout output = layoutAt(image, frame.function, outputRegister(0));
+      if (output.kind != OBELISK_RT_DBREG_LOGIC || output.width == 0 ||
+          output.width != *bitWidth || output.size % 2 != 0)
+        return OBELISK_RT_INVALID_BYTECODE;
+      planeSize = output.size / 2;
+      value = frame.data + output.offset;
+      unknown = frame.data + output.offset + planeSize;
+    } else if (*bitWidth != 0 || *fourState != 0 || *maxWidth != *rawSize) {
+      return OBELISK_RT_INVALID_BYTECODE;
+    }
+    uint32_t nextCursor = 0;
+    uint32_t ok = 0;
+    obelisk_rt_status status = obelisk_rt_v1_string_scan_raw(
+        input, static_cast<uint32_t>(*cursor),
+        reinterpret_cast<const char *>(prefix->data), prefix->size, *rawSize,
+        *bitWidth, static_cast<uint32_t>(*fourState), *maxWidth, value,
+        planeSize, unknown, planeSize, &nextCursor, &ok);
+    if (status != OBELISK_RT_OK)
+      return status;
+    uint32_t cursorOutput = assigned ? 1 : 0;
+    status = sentinel(cursorOutput, nextCursor);
+    return status == OBELISK_RT_OK ? sentinel(cursorOutput + 1, ok) : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_FILE_SCAN_RAW: {
+    auto descriptor = scalar(0), enabled = scalar(1), rawSize = scalar(3),
+         bitWidth = scalar(4), fourState = scalar(5), maxWidth = scalar(6);
+    auto prefix = bytes(2);
+    if (!descriptor || !enabled || !rawSize || !bitWidth || !fourState ||
+        !maxWidth || !prefix || *descriptor > UINT32_MAX || *enabled > 1 ||
+        *fourState > 1)
+      return OBELISK_RT_INVALID_BYTECODE;
+    bool assigned = site.outputCount == 3;
+    void *value = nullptr;
+    void *unknown = nullptr;
+    uint64_t planeSize = 0;
+    if (assigned) {
+      Layout output = layoutAt(image, frame.function, outputRegister(0));
+      if (output.kind != OBELISK_RT_DBREG_LOGIC || output.width == 0 ||
+          output.width != *bitWidth || output.size % 2 != 0)
+        return OBELISK_RT_INVALID_BYTECODE;
+      planeSize = output.size / 2;
+      value = frame.data + output.offset;
+      unknown = frame.data + output.offset + planeSize;
+    } else if (*bitWidth != 0 || *fourState != 0 || *maxWidth != *rawSize) {
+      return OBELISK_RT_INVALID_BYTECODE;
+    }
+    uint32_t ok = 0;
+    uint32_t eof = 0;
+    obelisk_rt_status status = obelisk_rt_v1_file_scan_raw(
+        context, static_cast<uint32_t>(*descriptor),
+        static_cast<uint32_t>(*enabled),
+        reinterpret_cast<const char *>(prefix->data), prefix->size, *rawSize,
+        *bitWidth, static_cast<uint32_t>(*fourState), *maxWidth, value,
+        planeSize, unknown, planeSize, &ok, &eof);
+    if (status != OBELISK_RT_OK)
+      return status;
+    uint32_t okOutput = assigned ? 1 : 0;
+    status = sentinel(okOutput, ok);
+    return status == OBELISK_RT_OK ? sentinel(okOutput + 1, eof) : status;
+  }
   case OBELISK_RT_INTRINSIC_V1_STRING_PARSE_INTEGER: {
     obelisk_rt_string_v1 input = 0;
     auto radix = scalar(1);
@@ -3852,9 +3926,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     auto multiplier = scalar(1), precision = scalar(2);
     if (!input || !multiplier || !precision || *multiplier == 0)
       return OBELISK_RT_INVALID_BYTECODE;
-    return writeReal(0, obelisk_rt_v1_time_scan_scale(
-                            context, *input, *multiplier,
-                            static_cast<int32_t>(*precision)));
+    return writeReal(
+        0, obelisk_rt_v1_time_scan_scale(context, *input, *multiplier,
+                                         static_cast<int32_t>(*precision)));
   }
   case OBELISK_RT_INTRINSIC_V1_PLUSARG_TEST: {
     obelisk_rt_string_v1 name = 0;

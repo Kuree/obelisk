@@ -1182,6 +1182,24 @@ def SimStringScanFieldOp : SimOp<"string.scan_field", [
   let results = (outs SimStringType:$field, I32:$next_cursor, I32:$ok);
 }
 
+def SimStringScanRawOp : SimOp<"string.scan_raw", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "scan one destination-sized %u or %z raw field";
+  let arguments = (ins SimStringType:$input, I32:$cursor, StrAttr:$prefix,
+                       BoolAttr:$four_state, I64Attr:$max_width);
+  let results = (outs SimLogicType:$data, I32:$next_cursor, I32:$ok);
+}
+
+def SimStringSkipRawOp : SimOp<"string.skip_raw", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "skip an explicitly sized suppressed %u or %z raw field";
+  let arguments = (ins SimStringType:$input, I32:$cursor, StrAttr:$prefix,
+                       I64Attr:$byte_count);
+  let results = (outs I32:$next_cursor, I32:$ok);
+}
+
 def SimStringParseIntegerOp : SimOp<"string.parse_integer", [Pure]> {
   let summary = "parse a managed string using a fixed integer radix";
   let arguments = (ins SimStringType:$input, I32Attr:$radix);
@@ -2187,6 +2205,22 @@ def SimFileScanFieldOp : SimFileOp<"file.scan_field",
     `eof` distinguishes an input failure from an ordinary matching failure.
     The `%m` control conversion matches its prefix and consumes no field bytes.
   }];
+}
+
+def SimFileScanRawOp : SimFileOp<"file.scan_raw",
+    (ins SimContextType:$context, I32:$descriptor, I32:$enabled,
+         StrAttr:$prefix, BoolAttr:$four_state, I64Attr:$max_width),
+    (outs SimLogicType:$data, I32:$ok, I32:$eof),
+    [MemRead<SimIOResource>, MemWrite<SimIOResource>]> {
+  let summary = "consume one destination-sized %u or %z raw file field";
+}
+
+def SimFileSkipRawOp : SimFileOp<"file.skip_raw",
+    (ins SimContextType:$context, I32:$descriptor, I32:$enabled,
+         StrAttr:$prefix, I64Attr:$byte_count),
+    (outs I32:$ok, I32:$eof),
+    [MemRead<SimIOResource>, MemWrite<SimIOResource>]> {
+  let summary = "skip an explicitly sized suppressed raw file field";
 }
 
 def SimPlusargTestOp : SimFileOp<"plusarg.test",

@@ -76,7 +76,7 @@ splitScanFormat(StringRef format, std::string &unsupported) {
       }
       specifier = format[index];
     }
-    if (!StringRef("bBoOdDhHxXeEfFgGsScCmMtTvV").contains(specifier)) {
+    if (!StringRef("bBoOdDhHxXeEfFgGsScCmMtTvVuUzZ").contains(specifier)) {
       unsupported =
           format.substr(conversionStart, index - conversionStart + 1).str();
       return std::nullopt;
@@ -126,6 +126,38 @@ unsigned scanRadix(char specifier) {
 }
 
 } // namespace
+
+std::optional<uint64_t> UnitLowering::rawScanByteSize(Type type,
+                                                      bool fourState) {
+  if (sim::getPackedScalarType(type)) {
+    std::optional<unsigned> width = sim::getPackedWidth(type);
+    if (!width || *width == 0)
+      return std::nullopt;
+    return ((static_cast<uint64_t>(*width) + 31) / 32) *
+           (fourState ? 8 : 4);
+  }
+  unsigned count = 0;
+  if (isa<sim::UnpackedStructType>(type))
+    count = sim::getAggregateNumElements(type);
+  else if (auto unionType = dyn_cast<sim::UnpackedUnionType>(type)) {
+    if (unionType.getIsTagged() || unionType.getFields().empty())
+      return std::nullopt;
+    count = 1;
+  } else {
+    return std::nullopt;
+  }
+  if (count == 0)
+    return std::nullopt;
+  uint64_t total = 0;
+  for (unsigned ordinal = 0; ordinal != count; ++ordinal) {
+    std::optional<uint64_t> element = rawScanByteSize(
+        sim::getAggregateElementType(type, ordinal), fourState);
+    if (!element || *element > std::numeric_limits<uint64_t>::max() - total)
+      return std::nullopt;
+    total += *element;
+  }
+  return total ? std::optional<uint64_t>(total) : std::nullopt;
+}
 
 FailureOr<Value>
 UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
@@ -215,9 +247,8 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
   // Set once a conversion fails; every later store keeps its destination.
   Value live = arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                          builder.getBoolAttr(true));
-  Value eofSeen = arith::ConstantOp::create(builder, location,
-                                            builder.getI1Type(),
-                                            builder.getBoolAttr(false));
+  Value eofSeen = arith::ConstantOp::create(
+      builder, location, builder.getI1Type(), builder.getBoolAttr(false));
   StringAttr hierarchy = op.getSystemScopePathAttr();
   if (!hierarchy)
     hierarchy =
@@ -227,6 +258,14 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
   IntegerAttr timePrecision = designTimePrecisionExponent();
   size_t destinationIndex = 0;
   for (const ScanConversion &conversion : *conversions) {
+    bool raw = conversion.specifier == 'u' || conversion.specifier == 'U' ||
+               conversion.specifier == 'z' || conversion.specifier == 'Z';
+    if (raw && conversion.suppressed && conversion.width == 0) {
+      emitError(location) << name << " assignment suppression for raw %"
+                          << conversion.specifier
+                          << " requires an explicit byte count";
+      return failure();
+    }
     std::optional<CapturedLValue> destination;
     if (!conversion.suppressed) {
       Operation *actual = children[destinationIndex++ + 2];
@@ -247,32 +286,201 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
       destination = std::move(*captured);
     }
 
+    unsigned rawWidth = 0;
+    bool rawAggregate = false;
+    uint64_t aggregateRawSize = 0;
+    if (raw && destination) {
+      if (std::optional<unsigned> width = sim::getPackedWidth(destination->type))
+        rawWidth = *width;
+      else if (std::optional<uint64_t> bytes = rawScanByteSize(
+                   destination->type, conversion.specifier == 'z' ||
+                                          conversion.specifier == 'Z')) {
+        rawAggregate = true;
+        aggregateRawSize = *bytes;
+      } else {
+        emitError(location) << name << " %" << conversion.specifier
+                            << " destination must be an integral value or an "
+                               "unpacked struct/union of integral values";
+        return failure();
+      }
+    }
+
     Value field;
+    Value rawData;
+    Value aggregateData;
     Value scanOk;
     Value nextCursor;
+    auto scanRawAggregate = [&](bool file, Value &aggregateCursor,
+                                Value &aggregateLive,
+                                Value &aggregateEOF) -> FailureOr<Value> {
+      bool firstLeaf = true;
+      bool fourState = conversion.specifier == 'z' ||
+                       conversion.specifier == 'Z';
+      bool forceMismatch = conversion.width != 0 &&
+                           aggregateRawSize > conversion.width;
+      std::function<FailureOr<Value>(Type)> scanType =
+          [&](Type type) -> FailureOr<Value> {
+        if (Type scalar = sim::getPackedScalarType(type)) {
+          std::optional<unsigned> width = sim::getPackedWidth(type);
+          if (!width || *width == 0)
+            return failure();
+          uint64_t bytes = ((static_cast<uint64_t>(*width) + 31) / 32) *
+                           (fourState ? 8 : 4);
+          uint64_t maxWidth = forceMismatch && firstLeaf ? bytes - 1 : 0;
+          StringRef prefix = firstLeaf ? StringRef(conversion.prefix) : "";
+          firstLeaf = false;
+          Value data;
+          Value ok;
+          if (file) {
+            Value enabled =
+                arith::ExtUIOp::create(builder, location, i32, aggregateLive);
+            auto scan = sim::SimFileScanRawOp::create(
+                builder, location,
+                TypeRange{sim::LogicType::get(function.getContext(), *width),
+                          i32, i32},
+                context, fileDescriptor, enabled, prefix, fourState, maxWidth);
+            data = scan.getData();
+            ok = scan.getOk();
+            Value eof = arith::CmpIOp::create(
+                builder, location, arith::CmpIPredicate::ne, scan.getEof(),
+                constant(0));
+            aggregateEOF =
+                arith::OrIOp::create(builder, location, aggregateEOF, eof);
+          } else {
+            auto scan = sim::SimStringScanRawOp::create(
+                builder, location,
+                TypeRange{sim::LogicType::get(function.getContext(), *width),
+                          i32, i32},
+                text, aggregateCursor, prefix, fourState, maxWidth);
+            data = scan.getData();
+            ok = scan.getOk();
+            Value matched = arith::CmpIOp::create(
+                builder, location, arith::CmpIPredicate::ne, ok, constant(0));
+            Value nextLive = arith::AndIOp::create(builder, location,
+                                                   aggregateLive, matched);
+            aggregateCursor = arith::SelectOp::create(
+                builder, location, nextLive, scan.getNextCursor(),
+                aggregateCursor);
+          }
+          Value matched = arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::ne, ok, constant(0));
+          aggregateLive = arith::AndIOp::create(builder, location,
+                                                aggregateLive, matched);
+          FailureOr<Value> converted = convert(data, scalar, true, location);
+          if (failed(converted))
+            return failure();
+          if (scalar == type)
+            return *converted;
+          return sim::SimPackedUnflattenOp::create(builder, location, type,
+                                                   *converted)
+              .getResult();
+        }
+        bool isUnion = isa<sim::UnpackedUnionType>(type);
+        unsigned count = isUnion ? 1 : sim::getAggregateNumElements(type);
+        SmallVector<Value> elements;
+        for (unsigned ordinal = 0; ordinal != count; ++ordinal) {
+          FailureOr<Value> element =
+              scanType(sim::getAggregateElementType(type, ordinal));
+          if (failed(element))
+            return failure();
+          elements.push_back(*element);
+        }
+        if (isUnion)
+          return sim::SimUnionConstructOp::create(builder, location, type,
+                                                  elements.front(), 0)
+              .getResult();
+        return sim::SimAggregateConstructOp::create(builder, location, type,
+                                                    elements)
+            .getResult();
+      };
+      return scanType(destination->type);
+    };
     if (name == "$sscanf") {
-      auto scan = sim::SimStringScanFieldOp::create(
-          builder, location, TypeRange{stringType, i32, i32}, text, cursor,
-          conversion.prefix,
-          static_cast<uint32_t>(
-              static_cast<unsigned char>(conversion.specifier)),
-          conversion.width);
-      field = scan.getField();
-      scanOk = scan.getOk();
-      nextCursor = scan.getNextCursor();
+      if (raw && conversion.suppressed) {
+        auto scan = sim::SimStringSkipRawOp::create(
+            builder, location, TypeRange{i32, i32}, text, cursor,
+            conversion.prefix, conversion.width);
+        scanOk = scan.getOk();
+        nextCursor = scan.getNextCursor();
+      } else if (rawAggregate) {
+        Value aggregateCursor = cursor;
+        Value aggregateLive = live;
+        Value aggregateEOF = arith::ConstantOp::create(
+            builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+        FailureOr<Value> scanned = scanRawAggregate(
+            false, aggregateCursor, aggregateLive, aggregateEOF);
+        if (failed(scanned))
+          return failure();
+        aggregateData = *scanned;
+        scanOk = arith::ExtUIOp::create(builder, location, i32, aggregateLive);
+        nextCursor = aggregateCursor;
+      } else if (raw) {
+        auto scan = sim::SimStringScanRawOp::create(
+            builder, location,
+            TypeRange{sim::LogicType::get(function.getContext(), rawWidth), i32,
+                      i32},
+            text, cursor, conversion.prefix,
+            conversion.specifier == 'z' || conversion.specifier == 'Z',
+            conversion.width);
+        rawData = scan.getData();
+        scanOk = scan.getOk();
+        nextCursor = scan.getNextCursor();
+      } else {
+        auto scan = sim::SimStringScanFieldOp::create(
+            builder, location, TypeRange{stringType, i32, i32}, text, cursor,
+            conversion.prefix,
+            static_cast<uint32_t>(
+                static_cast<unsigned char>(conversion.specifier)),
+            conversion.width);
+        field = scan.getField();
+        scanOk = scan.getOk();
+        nextCursor = scan.getNextCursor();
+      }
     } else {
       Value enabled = arith::ExtUIOp::create(builder, location, i32, live);
-      auto scan = sim::SimFileScanFieldOp::create(
-          builder, location, TypeRange{stringType, i32, i32}, context,
-          fileDescriptor, enabled, conversion.prefix,
-          static_cast<uint32_t>(
-              static_cast<unsigned char>(conversion.specifier)),
-          conversion.width);
-      field = scan.getField();
-      scanOk = scan.getOk();
-      Value eof =
-          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
-                                scan.getEof(), constant(0));
+      Value eofValue;
+      if (raw && conversion.suppressed) {
+        auto scan = sim::SimFileSkipRawOp::create(
+            builder, location, TypeRange{i32, i32}, context, fileDescriptor,
+            enabled, conversion.prefix, conversion.width);
+        scanOk = scan.getOk();
+        eofValue = scan.getEof();
+      } else if (rawAggregate) {
+        Value aggregateCursor;
+        Value aggregateLive = live;
+        Value aggregateEOF = arith::ConstantOp::create(
+            builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+        FailureOr<Value> scanned = scanRawAggregate(
+            true, aggregateCursor, aggregateLive, aggregateEOF);
+        if (failed(scanned))
+          return failure();
+        aggregateData = *scanned;
+        scanOk = arith::ExtUIOp::create(builder, location, i32, aggregateLive);
+        eofValue = arith::ExtUIOp::create(builder, location, i32, aggregateEOF);
+      } else if (raw) {
+        auto scan = sim::SimFileScanRawOp::create(
+            builder, location,
+            TypeRange{sim::LogicType::get(function.getContext(), rawWidth), i32,
+                      i32},
+            context, fileDescriptor, enabled, conversion.prefix,
+            conversion.specifier == 'z' || conversion.specifier == 'Z',
+            conversion.width);
+        rawData = scan.getData();
+        scanOk = scan.getOk();
+        eofValue = scan.getEof();
+      } else {
+        auto scan = sim::SimFileScanFieldOp::create(
+            builder, location, TypeRange{stringType, i32, i32}, context,
+            fileDescriptor, enabled, conversion.prefix,
+            static_cast<uint32_t>(
+                static_cast<unsigned char>(conversion.specifier)),
+            conversion.width);
+        field = scan.getField();
+        scanOk = scan.getOk();
+        eofValue = scan.getEof();
+      }
+      Value eof = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, eofValue, constant(0));
       eofSeen = arith::OrIOp::create(builder, location, eofSeen, eof);
     }
 
@@ -286,7 +494,9 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
     if (destination) {
       unsigned radix = scanRadix(conversion.specifier);
       Value parsed;
-      if (conversion.specifier == 'm' || conversion.specifier == 'M') {
+      if (raw) {
+        parsed = rawAggregate ? aggregateData : rawData;
+      } else if (conversion.specifier == 'm' || conversion.specifier == 'M') {
         if (!hierarchy) {
           emitError(location)
               << name << " %m conversion has no elaborated scope";
@@ -296,8 +506,9 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
                                                  hierarchy);
       } else if (conversion.specifier == 't' || conversion.specifier == 'T') {
         if (!timeMultiplier || !timePrecision) {
-          emitError(location) << name << " %t conversion has no frozen time "
-                                         "scale";
+          emitError(location) << name
+                              << " %t conversion has no frozen time "
+                                 "scale";
           return failure();
         }
         Value real = sim::SimStringParseRealOp::create(
@@ -315,7 +526,10 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
             builder, location, sim::LogicType::get(function.getContext(), 64),
             field, radix);
       FailureOr<Value> value =
-          convert(parsed, destination->type, radix != kTextRadix, location);
+          parsed.getType() == destination->type
+              ? FailureOr<Value>(parsed)
+              : convert(parsed, destination->type, raw || radix != kTextRadix,
+                        location);
       if (failed(value))
         return failure();
 
