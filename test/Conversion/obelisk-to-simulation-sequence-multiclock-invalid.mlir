@@ -41,4 +41,4 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-// CHECK: error: immediate cross-clock sequence terms are not executable yet; the supported multi-clock handoff requires a leading ##1
+// CHECK: error: immediate cross-clock sequence terms require an age-zero term on the source clock before a ##1 handoff

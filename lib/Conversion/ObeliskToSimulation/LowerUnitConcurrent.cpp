@@ -114,9 +114,9 @@ struct BooleanMinimizationStats {
 };
 
 /// One nonempty maximal clocked subsequence in the deliberately small
-/// multi-clock slice below. Each stage is reached through a source `##1`, so
-/// an attempt waits for the next occurrence of `clock` before evaluating its
-/// predicates.
+/// multi-clock slice below. Every stage after the first is reached through a
+/// source `##1`. The first stage is either sampled on the attempt clock or is
+/// likewise reached through a leading `##1`.
 struct MultiClockSequenceStage {
   Operation *clock = nullptr;
   SmallVector<Operation *, 2> predicates;
@@ -1261,14 +1261,15 @@ compilePersistentDelay(Operation *operation) {
   return result;
 }
 
-/// Compile the leading-##1 LRM multi-clock handoff form used by UVM's
-/// conformance sequence into a short sequence of independently clocked stages.
-/// This is intentionally narrower than the single-clock compiler: every
-/// concatenation delay, including the leading delay, must be exactly ##1 and
+/// Compile the common LRM multi-clock handoff form into a short sequence of
+/// independently clocked stages. This is intentionally narrower than the
+/// single-clock compiler: the first concatenation term can be immediate or
+/// reached through a leading ##1, every later delay must be exactly ##1, and
 /// every maximal clocked subsequence must be a nonempty boolean term. A
-/// detached attempt actor can then wait on each clock in order without a
-/// runtime temporal interpreter. In particular, a transition to a different
-/// clock observes its nearest strictly subsequent tick, as required for ##1.
+/// detached attempt actor samples an immediate first term on the source clock,
+/// then waits on each later clock in order without a runtime temporal
+/// interpreter. In particular, a transition to a different clock observes its
+/// nearest strictly subsequent tick, as required for ##1.
 static FailureOr<MultiClockSequence>
 compileMultiClockSequence(Operation *operation, Operation *inheritedClock) {
   if (auto instance =
@@ -1315,7 +1316,6 @@ compileMultiClockSequence(Operation *operation, Operation *inheritedClock) {
     return failure();
 
   MultiClockSequence result;
-  result.hasLeadingDelay = true;
   Operation *previousClock = inheritedClock;
   for (auto [index, child] : llvm::enumerate(children)) {
     auto delay = dyn_cast<DictionaryAttr>(delays[index]);
@@ -1323,14 +1323,24 @@ compileMultiClockSequence(Operation *operation, Operation *inheritedClock) {
     auto maximum = delay ? delay.getAs<IntegerAttr>("max") : IntegerAttr{};
     auto unbounded = delay ? delay.getAs<BoolAttr>("is_unbounded") : BoolAttr{};
     if (!minimum || !maximum || !unbounded || unbounded.getValue() ||
-        minimum.getInt() != 1 || maximum.getInt() != 1)
+        minimum.getInt() != maximum.getInt() ||
+        (index == 0 ? minimum.getInt() < 0 || minimum.getInt() > 1
+                    : minimum.getInt() != 1))
       return failure();
     FailureOr<MultiClockSequence> nested =
         compileMultiClockSequence(child, inheritedClock);
     if (failed(nested) || nested->stages.empty())
       return failure();
+    // The compact actor records only whether its very first stage has one
+    // leading wait. Do not collapse two leading waits, or a nested leading
+    // wait below a later outer term, into one. An outer age-zero wrapper around
+    // one nested leading ##1 remains exactly representable.
+    if (nested->hasLeadingDelay &&
+        (index != 0 || minimum.getInt() != 0))
+      return failure();
     result.changesClock |= nested->changesClock;
-    result.hasLeadingDelay |= nested->hasLeadingDelay;
+    if (index == 0)
+      result.hasLeadingDelay = minimum.getInt() == 1 || nested->hasLeadingDelay;
     for (MultiClockSequenceStage &stage : nested->stages) {
       result.changesClock |=
           !areEquivalentDirectClocks(previousClock, stage.clock);
@@ -3231,14 +3241,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   FailureOr<MultiClockSequence> compiledMultiClock =
       compileMultiClockSequence(property, clock);
   if (succeeded(compiledMultiClock) && compiledMultiClock->changesClock &&
-      !compiledMultiClock->hasLeadingDelay)
+      !compiledMultiClock->hasLeadingDelay &&
+      (compiledMultiClock->stages.empty() ||
+       !areEquivalentDirectClocks(clock,
+                                  compiledMultiClock->stages.front().clock)))
     return emitError(getSemanticLocation(property))
-               << "immediate cross-clock sequence terms are not executable "
-                  "yet; the supported multi-clock handoff requires a "
-                  "leading ##1",
+               << "immediate cross-clock sequence terms require an age-zero "
+                  "term on the source clock before a ##1 handoff",
            failure();
-  if (succeeded(compiledMultiClock) && compiledMultiClock->changesClock &&
-      compiledMultiClock->hasLeadingDelay) {
+  if (succeeded(compiledMultiClock) && compiledMultiClock->changesClock) {
     multiClockSequence = std::move(*compiledMultiClock);
     if (localInstance || disable || expectMonitor || firstMatch ||
         killControlled || actionControlled ||
@@ -7916,13 +7927,21 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     emitBranch(wait);
     for (auto [index, stage] : llvm::enumerate(multiClockSequence.stages)) {
       Block *sample = addBlock();
-      setCurrent(wait);
-      if (failed(emitEventSuspend(stage.clock, sample)))
-        return failure();
-      wait->getTerminator()->setAttr(
-          "resume_region",
-          sim::EventRegionAttr::get(function.getContext(),
-                                    sim::EventRegion::Observed));
+      if (index != 0 || multiClockSequence.hasLeadingDelay) {
+        setCurrent(wait);
+        if (failed(emitEventSuspend(stage.clock, sample)))
+          return failure();
+        wait->getTerminator()->setAttr(
+            "resume_region",
+            sim::EventRegionAttr::get(function.getContext(),
+                                      sim::EventRegion::Observed));
+      } else {
+        // The monitor launches this actor in Observed on the first stage's
+        // clock. Sampling immediately preserves the age-zero term; suspending
+        // here would silently turn it into a leading ##1.
+        setCurrent(wait);
+        cf::BranchOp::create(builder, location, sample);
+      }
       setCurrent(sample);
 
       bool savedSampleAssertionValues = sampleAssertionValues;
