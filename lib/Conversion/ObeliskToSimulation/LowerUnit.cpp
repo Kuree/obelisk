@@ -1966,21 +1966,59 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
       return failure();
     }
     FailureOr<Type> type = getNormalizedSemanticType(op);
-    auto virtualType = succeeded(type)
-                           ? dyn_cast<sim::VirtualInterfaceType>(*type)
-                           : sim::VirtualInterfaceType{};
-    ensureVirtualInterfaceInventory();
-    auto scope = scopeIDs.find(interface.getReferencedPath());
-    if (!virtualType || scope == scopeIDs.end() || scope->second == 0) {
-      emitError(getSemanticLocation(op))
-          << "interface reference has no executable elaborated scope: "
-          << interface.getReferencedPath();
+    if (failed(type))
       return failure();
-    }
-    return sim::SimVirtualInterfaceBindOp::create(
-               builder, getSemanticLocation(op), virtualType,
-               builder.getI64IntegerAttr(scope->second))
-        .getResult();
+    ensureVirtualInterfaceInventory();
+    Location location = getSemanticLocation(op);
+    auto lowerInterfaceReference = [&](auto &&self, StringRef path,
+                                       Type referenceType) -> FailureOr<Value> {
+      if (auto virtualType =
+              dyn_cast<sim::VirtualInterfaceType>(referenceType)) {
+        auto scope = scopeIDs.find(path);
+        if (scope == scopeIDs.end() || scope->second == 0) {
+          emitError(location)
+              << "interface reference has no executable elaborated scope: "
+              << path;
+          return failure();
+        }
+        return sim::SimVirtualInterfaceBindOp::create(
+                   builder, location, virtualType,
+                   builder.getI64IntegerAttr(scope->second))
+            .getResult();
+      }
+
+      auto array = dyn_cast<sim::UnpackedArrayType>(referenceType);
+      if (!array) {
+        emitError(location)
+            << "interface reference has no executable value type: "
+            << referenceType;
+        return failure();
+      }
+
+      unsigned count = sim::getAggregateNumElements(array);
+      SmallVector<Value> elements;
+      elements.reserve(count);
+      int64_t index = array.getLeft();
+      int64_t step = array.getLeft() <= array.getRight() ? 1 : -1;
+      for (unsigned ordinal = 0; ordinal < count; ++ordinal) {
+        std::string elementPath =
+            (Twine(path) + "[" + Twine(index) + "]").str();
+        FailureOr<Value> element =
+            self(self, elementPath, array.getElementType());
+        if (failed(element))
+          return failure();
+        elements.push_back(*element);
+        // Do not step beyond the declared range after its final element. In
+        // particular, a valid range may end at INT64_MIN or INT64_MAX.
+        if (ordinal + 1 < count)
+          index += step;
+      }
+      return sim::SimAggregateConstructOp::create(builder, location, array,
+                                                  elements)
+          .getResult();
+    };
+    return lowerInterfaceReference(lowerInterfaceReference,
+                                   interface.getReferencedPath(), *type);
   }
   if (auto hierarchical =
           dyn_cast<semantic::SVHierarchicalValueExpressionOp>(op))

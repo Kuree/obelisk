@@ -1143,6 +1143,44 @@ scaling curve as base `-emit-slang`. The focused configured design compiles in
 below timer resolution in both tiers. No ordinary scheduler or runtime state is
 added.
 
+L13's first Clause 25.9 closure tranche converts a real interface instance
+array to a compatible fixed array of virtual-interface handles. Semantic
+lowering now walks every preserved unpacked dimension in declaration order,
+binds the exact already-elaborated scope named by each source index, and builds
+ordinary fixed aggregates. Descending, ascending, and mixed-direction nested
+arrays therefore retain distinct element identity through constructor and
+ordinary subroutine arguments, whole-array assignment, null replacement, and
+aliasing. Malformed shapes fail at the first missing indexed scope and a
+non-interface leaf receives a targeted diagnostic. This is compile-time work
+proportional to an interface array that the frontend has already elaborated;
+it adds no runtime table, loop, state, or branch to designs without the
+conversion.
+
+The bounded L13 refresh audited 38 ivtest hierarchy/generate/parameter cases
+and 420 Verilator generate, hierarchy, instance, parameter, and interface
+cases. Clause-minimal probes for parameterized generate arrays, `$root` and
+upward generated-scope paths, signed width-changing input/output connections,
+and fixed unpacked-array ports pass in both tiers. The newly reduced legal
+backend failure was the fixed real-to-virtual interface-array conversion;
+upstream `t_interface_array_class_new` now passes. Slang still selects a module
+with an unset required parameter as an automatic root and imports its parameter
+with `ErrorType`; the source case remains an xfail even with explicit `--top`
+selection. The remaining hierarchy-labelled external failures in this audit
+are missing harness/library inputs, prohibited hierarchical type names,
+nonconstant real-interface instance-array selects, or Verilator extensions.
+The exact executable L13 residual is the known per-bit native IR expansion for
+very wide hierarchical ports; compact word-loop port forwarding remains
+future performance work. A parameter-controlled unreachable partial NBA also
+still fails capture preparation, but belongs to the Clause 10-12 procedural
+lvalue long tail rather than parameter binding or generate elaboration.
+
+A 1024-element interface-array call compiles in 0.85 seconds / 85 MB for
+bytecode, 0.99 seconds / 172 MB for generic native, and 1.07 seconds / 172 MB
+for hybrid native, then simulates below timer resolution in all three tiers.
+An ordinary declaration-initializer design has byte-identical Simulation IR
+against exact base `f1d041e9`, confirming structural pay-for-play on the
+no-feature path.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -1167,11 +1205,11 @@ added.
 | 20 Utility system tasks/functions | Partial | Simulation/time control—including compile-time `$timeunit` and `$timeprecision` scope queries plus every omitted and explicitly empty `$timeformat` argument—conversions, data/array queries, real math, bit-vector functions, severity, random distributions, `$system`, the complete `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam` queue manager, all sixteen synchronous/asynchronous PLA tasks, most assertion control, and the implemented sampled functions execute. Missing normative families include the global-clock sampled functions and complete assertion statistics/control behavior. |
 | 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning—including formatted-input field widths, assignment suppression, zero-byte hierarchy `%m`, `$timeformat`-scaled floating-point `%t`, and canonical scalar-strength `%v`, plus `$fread` into fixed unpacked memories and captured dynamic, associative, and nested aggregate copy-out targets—read/write-memory across fixed, dynamic, queue, multidimensional, and integral associative forms, plusargs including runtime `$value$plusargs` formats, and VCD/dumpports execute. Surplus arguments after a designated `$sformat`/`$sformatf` format continue with ordinary default-radix formatting. Formatting and file corner cases remain. |
 | 22 Compiler directives | Executable for the audited surface | The Slang preprocessor implements the normative directive family. Directive persistence, separate-compilation-unit reset, and command-line default-timescale precedence have native/bytecode tests. Protected envelopes are a separate Clause 34 feature, not ordinary pragma acceptance. |
-| 23 Modules and hierarchy | Partial | ANSI/non-ANSI modules, parameters, ports, arrays, hierarchy, bind, and common upward references elaborate. External runs retain module-library lookup, hierarchical path, generate-scope, and parameter-binding failures that need clause-minimal reproducers and fixes. |
+| 23 Modules and hierarchy | Partial | ANSI/non-ANSI modules, parameters, ports, arrays, hierarchy, bind, common upward references, and the audited generated-scope/parameter-binding shapes elaborate. Automatic root inference still imports an unset required parameter as frontend `ErrorType` and is retained as an xfail. Compact word-loop lowering for very wide hierarchical port forwarding remains a performance residual. |
 | 24 Programs | Executable for the audited surface | Program instances execute in their Reactive/Re-Inactive/Re-NBA home. IEEE 24.7 `$exit` terminates every initial procedure and descendant owned by the calling program instance, multiple programs complete independently, and the scheduler enters finalization only after all program instances complete naturally or explicitly. Design-owned `$exit` is diagnosed. Ownership accounting is event-driven and shared by native, bytecode, and tier-transition paths. |
-| 25 Interfaces | Partial | Interfaces, modports, parameterization, interface tasks/functions, interface arrays, virtual-interface handles, calls, containers, and clocking-block access execute. Dynamic virtual-interface clock events and expanded event-formal flow are executable from semantic IR; source import remains xfailed where Slang rejects dynamic members in concurrent assertions. Inherit specify support from Clause 30 and complete the residual frontend and differential interface cases. |
+| 25 Interfaces | Partial | Interfaces, modports, parameterization, interface tasks/functions, interface arrays, virtual-interface handles, calls, containers, and clocking-block access execute. Real interface arrays convert by position to fixed virtual-interface arrays across ascending, descending, and nested ranges while preserving exact scope identity, nulls, and aliases. Dynamic virtual-interface clock events and expanded event-formal flow are executable from semantic IR; source import remains xfailed where Slang rejects dynamic members in concurrent assertions. Inherit specify support from Clause 30 and continue the residual frontend and differential interface audit. |
 | 26 Packages | Partial | Packages, imports/exports, scope lookup, and the implemented `std` package surface, including R1 `std::randomize`, execute. Complete the remaining normative Annex G behavior through the randomization and system-task chunks. |
-| 27 Generate constructs | Partial | Loop/conditional generation and ordinary external names elaborate. External tests still expose generate-scope and parameter-binding corner cases. |
+| 27 Generate constructs | Executable for the audited surface | Loop/conditional generation, canonical named scopes, parameterized arrays, `$root` paths, and common upward references elaborate. Continue differential testing; the bounded L13 refresh found no legal backend generate-scope failure. |
 | 28 Gate/switch modeling | Executable for the audited surface | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, strength-aware scalar-net `%v`, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, exact strength-preserving resolved-net source forwarding with immediate or inertial MOS/CMOS delays, and `tran`/`rtran`/`tranif0`/`tranif1`/`rtranif0`/`rtranif1` channels with exact four-state connectivity and resistive strength reduction execute. Controlled pass devices support their standard static turn-on/turn-off/high-impedance delays with keyed inertial cancellation. Forced-native primitive actors form bounded same-scope kernels while cycles remain under the convergence scheduler, and statically addressed driver publication lowers only the exact affected connectivity components. |
 | 29 User-defined primitives | Executable for the audited surface | Combinational and sequential UDP declarations preserve their validated port and ordered truth-table metadata and compile to exact four-state matching in both tiers. This includes Z-to-X input normalization, level and edge symbols, explicit transition pairs with wildcards, source-order dominance within each row class, level-over-edge dominance, missing-row X, sequential state hold and initialization, ANSI/non-ANSI declarations, instances and arrays, strengths, and legal static one/two-value inertial delays. Continue differential closure for residual declaration and scheduler corner cases. |
 | 30 Specify blocks | Partial | Specparams and specify blocks are imported. Whole and fixed packed-select parallel/full multi-source paths, including `if`/`ifnone`, edge-sensitive `if`, unknown/positive/negative polarity, all standard static one/two/three/six/twelve transition-delay tuples, and statically disjoint ordinary destination driver spans execute through compact inertial drivers in both tiers; overlapping paths arbitrate independently per selected destination bit and four-state transition class, and zero-time derived continuous outputs retain same-time edge qualification. Direct procedural edge destinations execute for exact single-source recurring controls and proven implicit sensitivity. Source event lists/derived controls and delayed procedural dependencies, atomic masked path delays for the complementary strength banks of `bufif`/`notif`, pulse controls and limits, and `showcancelled`/`noshowcancelled` remain. Unsupported forms receive targeted Clause 30 diagnostics instead of being silently erased. |
