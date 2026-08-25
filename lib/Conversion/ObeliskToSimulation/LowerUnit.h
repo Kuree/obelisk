@@ -585,6 +585,9 @@ private:
   ::llvm::DenseMap<uint64_t, ::mlir::Value> nodeLvalues;
   bool deferDriverResolution = false;
   uint64_t nextInertialDriveComponent = 0;
+  /// Per-activation rise, fall, and turnoff delays selected from statically
+  /// frozen overlapping specify paths.
+  std::optional<std::array<::mlir::Value, 3>> timingPathDelays;
   ::llvm::StringMap<std::array<::mlir::Value, 2>> strengthDriverLvalues;
   ::llvm::DenseMap<uint64_t, std::array<::mlir::Value, 2>> strengthNodeLvalues;
   ::llvm::StringMap<::mlir::Value> localDefaults;

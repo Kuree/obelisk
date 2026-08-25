@@ -2430,16 +2430,11 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
       }
       return true;
     };
-    if (auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
-            "obelisk_sim.propagation_delays")) {
-      if (delays.empty() || delays.size() > 3)
+    auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
+        "obelisk_sim.propagation_delays");
+    if (delays || timingPathDelays) {
+      if (delays && (delays.empty() || delays.size() > 3))
         return function.emitError("invalid frozen propagation delays");
-      ArrayRef<int64_t> values = delays.asArrayRef();
-      int64_t rise = values[0];
-      int64_t fall = values.size() == 1 ? rise : values[1];
-      int64_t turnoff = values.size() == 1   ? rise
-                        : values.size() == 2 ? std::min(rise, fall)
-                                             : values[2];
       auto timeConstant = [&](int64_t ticks) {
         return sim::SimTimeConstantOp::create(
             builder, location, sim::TimeType::get(function.getContext()),
@@ -2449,9 +2444,24 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
       if (!codeUnitID)
         return function.emitError(
             "delayed drive has no stable code unit identity");
-      Value riseDelay = timeConstant(rise);
-      Value fallDelay = timeConstant(fall);
-      Value turnoffDelay = timeConstant(turnoff);
+      Value riseDelay;
+      Value fallDelay;
+      Value turnoffDelay;
+      if (timingPathDelays) {
+        riseDelay = (*timingPathDelays)[0];
+        fallDelay = (*timingPathDelays)[1];
+        turnoffDelay = (*timingPathDelays)[2];
+      } else {
+        ArrayRef<int64_t> values = delays.asArrayRef();
+        int64_t rise = values[0];
+        int64_t fall = values.size() == 1 ? rise : values[1];
+        int64_t turnoff = values.size() == 1   ? rise
+                          : values.size() == 2 ? std::min(rise, fall)
+                                               : values[2];
+        riseDelay = timeConstant(rise);
+        fallDelay = timeConstant(fall);
+        turnoffDelay = timeConstant(turnoff);
+      }
       for (Operation *output : outputs) {
         if (!selectStrengthBank(0))
           return emitError(location)
@@ -3395,6 +3405,58 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                       entryKind == sim::EntryKind::PortInput ||
                       entryKind == sim::EntryKind::PortOutput;
 
+  struct TimingPathRuleState {
+    Value input;
+    Value snapshot;
+    std::array<int64_t, 3> delays;
+  };
+  SmallVector<TimingPathRuleState, 4> timingPathRules;
+  auto readTimingPathInput = [&](Value input) -> Value {
+    Value current;
+    if (auto ref = dyn_cast<sim::RefType>(input.getType()))
+      current = sim::SimRefLoadOp::create(builder, function.getLoc(),
+                                          ref.getElementType(), input);
+    else if (auto net = dyn_cast<sim::NetType>(input.getType()))
+      current = sim::SimNetReadOp::create(builder, function.getLoc(),
+                                          net.getElementType(), input);
+    if (!current)
+      return {};
+    if (isa<IntegerType, sim::LogicType>(current.getType()))
+      return current;
+    FailureOr<Value> scalar = toPackedScalar(current, function.getLoc());
+    return succeeded(scalar) ? *scalar : Value{};
+  };
+  if (auto rules = function->getAttrOfType<ArrayAttr>(
+          "obelisk_sim.timing_path_rules")) {
+    if (entryKind != sim::EntryKind::Continuous || rules.size() < 2)
+      return function.emitError("invalid overlapping timing path actor");
+    for (Attribute attr : rules) {
+      auto rule = dyn_cast<DictionaryAttr>(attr);
+      auto inputPath = rule ? rule.getAs<StringAttr>("input") : StringAttr{};
+      auto snapshotPath =
+          rule ? rule.getAs<StringAttr>("snapshot") : StringAttr{};
+      auto delays = rule ? rule.getAs<DenseI64ArrayAttr>("delays")
+                         : DenseI64ArrayAttr{};
+      Value input = inputPath ? values.lookup(inputPath.getValue()) : Value{};
+      Value snapshot =
+          snapshotPath ? values.lookup(snapshotPath.getValue()) : Value{};
+      Value current = input ? readTimingPathInput(input) : Value{};
+      if (!inputPath || !delays || delays.empty() || delays.size() > 3 ||
+          !current || !snapshot || !isa<sim::RefType>(snapshot.getType()) ||
+          cast<sim::RefType>(snapshot.getType()).getElementType() !=
+              current.getType() ||
+          !isa<IntegerType, sim::LogicType>(current.getType()))
+        return function.emitError("invalid frozen overlapping timing path");
+      ArrayRef<int64_t> values = delays.asArrayRef();
+      int64_t rise = values[0];
+      int64_t fall = values.size() == 1 ? rise : values[1];
+      int64_t turnoff = values.size() == 1   ? rise
+                        : values.size() == 2 ? std::min(rise, fall)
+                                             : values[2];
+      timingPathRules.push_back({input, snapshot, {rise, fall, turnoff}});
+    }
+  }
+
   // Keep track of the outer event control so graph construction can
   // distinguish its process-local writes from external activations. Nested
   // implicit event controls remain ordinary procedural waits.
@@ -3412,6 +3474,54 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     loopHeader = addBlock();
     emitBranch(loopHeader);
     setCurrent(loopHeader);
+  }
+  if (!timingPathRules.empty()) {
+    SmallVector<Value, 4> changed;
+    for (TimingPathRuleState &rule : timingPathRules) {
+      Value current = readTimingPathInput(rule.input);
+      Value previous = sim::SimRefLoadOp::create(
+          builder, function.getLoc(), current.getType(), rule.snapshot);
+      Value differs;
+      if (isa<sim::LogicType>(current.getType()))
+        differs = sim::SimLogicCompareOp::create(
+            builder, function.getLoc(), builder.getI1Type(),
+            sim::CompareKind::CaseNe, current, previous);
+      else
+        differs = arith::CmpIOp::create(builder, function.getLoc(),
+                                        arith::CmpIPredicate::ne, current,
+                                        previous);
+      changed.push_back(differs);
+      sim::SimRefStoreOp::create(builder, function.getLoc(), current,
+                                 rule.snapshot);
+    }
+    std::array<Value, 3> selected;
+    for (unsigned transition = 0; transition != selected.size(); ++transition) {
+      SmallVector<unsigned, 4> order;
+      for (unsigned index = 0; index != timingPathRules.size(); ++index)
+        order.push_back(index);
+      llvm::sort(order, [&](unsigned lhs, unsigned rhs) {
+        return timingPathRules[lhs].delays[transition] >
+               timingPathRules[rhs].delays[transition];
+      });
+      int64_t fallback = timingPathRules[order.front()].delays[transition];
+      Value selectedTicks = arith::ConstantOp::create(
+          builder, function.getLoc(), builder.getI64Type(),
+          builder.getI64IntegerAttr(fallback));
+      for (unsigned index : ArrayRef<unsigned>(order).drop_front()) {
+        Value delayTicks = arith::ConstantOp::create(
+            builder, function.getLoc(), builder.getI64Type(),
+            builder.getI64IntegerAttr(
+                timingPathRules[index].delays[transition]));
+        selectedTicks = arith::SelectOp::create(
+            builder, function.getLoc(), changed[index], delayTicks,
+            selectedTicks);
+      }
+      selected[transition] = sim::SimTimeScaleOp::create(
+          builder, function.getLoc(), sim::TimeType::get(function.getContext()),
+          selectedTicks, builder.getI64IntegerAttr(1),
+          builder.getBoolAttr(false));
+    }
+    timingPathDelays = selected;
   }
   auto primitive =
       function->getAttrOfType<StringAttr>("obelisk_sim.primitive_name");

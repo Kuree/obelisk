@@ -600,6 +600,32 @@ unsupported tests). The UVM smoke remains green with zero errors or fatals:
 35.369 seconds compile / 0.185 seconds simulate for bytecode and 76.028 seconds
 compile / 0.019 seconds simulate for native.
 
+G4's third closure tranche adds path-sensitive arbitration for overlapping
+unconditional whole-terminal paths to one destination actor. Elaboration
+allocates one design-lifetime packed snapshot per distinct path source and
+freezes its delay tuple. Each activation compares those direct snapshots and
+uses statically unrolled selects to choose the shortest applicable rise, fall,
+or turnoff delay before reusing the existing inertial drive; neither scheduler
+nor runtime performs a table scan. Driver dependency equality remains a
+correctness guard: a functional input absent from every declared path is
+rejected instead of receiving an invented delay. Five exact upstream cases
+now pass: `br_gh315`, `br_gh316a`, `br_gh316b`, `br_gh356a`, and `br_gh356b`.
+The 26-case non-`sdf*` specify audit is 8 passes and 18 compile-time
+rejections, with no runtime failures; six of those rejections now stop only at
+the separately excluded `$sdf_annotate`. Remaining standard path subclusters
+are polarity (three cases), conditional paths (one), edge/data-source and
+state-dependent paths (five), six-value transition tables (one), and general
+path-to-driver dependency mapping (one). The separate `real_delay` case is a
+mutable real primitive-delay form, and the six `$sdf_annotate` cases remain G6.
+
+The focused O3 arbitration case compiles in 0.06 seconds at 78 MB RSS for
+native and 0.04 seconds at 74 MB RSS for bytecode, then simulates below 0.01
+seconds at 4 MB RSS in either tier. The full regression gate passes all 1316
+supported tests (with two explicitly unsupported tests and one expected
+failure). The uncontended UVM smoke remains green with zero errors or fatals:
+34.183 seconds compile / 0.183 seconds simulate for bytecode and 72.485 seconds
+compile / 0.019 seconds simulate for native.
+
 The lexical-time audit now preserves the enclosing compilation-unit, package,
 class, or module time scope when `$printtimescale`, `$timeunit`, or
 `$timeprecision` appears inside a subroutine. Four upstream `br1003` cases now
@@ -705,7 +731,7 @@ does not carry a local parser patch for this bug.
 | 27 Generate constructs | Partial | Loop/conditional generation and ordinary external names elaborate. External tests still expose generate-scope and parameter-binding corner cases. |
 | 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, strength-aware scalar-net `%v`, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, and static unconditional `tran`/`rtran` channels with exact resistive strength reduction execute. Complete delayed and controlled pass devices and forced-native large gate-netlist coalescing. |
 | 29 User-defined primitives | Missing | UDP declarations and ports are imported, but table rows and sequential state semantics are not preserved, and an instance currently reaches the built-in-primitive diagnostic. |
-| 30 Specify blocks | Partial | Specparams and specify blocks are imported. Unconditional whole-terminal parallel and full multi-source paths with one/two/three static delays and one destination driver execute through compact inertial drivers in both tiers. Complete partial-select mapping, polarity, conditions, edge/data-source forms, six/twelve-transition delays, state-dependent and multiple-path selection, pulse controls and limits, and `showcancelled`/`noshowcancelled`. Unsupported forms receive targeted Clause 30 diagnostics instead of being silently erased. |
+| 30 Specify blocks | Partial | Specparams and specify blocks are imported. Unconditional whole-terminal parallel and full multi-source paths with one/two/three static delays and one destination driver execute through compact inertial drivers in both tiers; overlapping paths with distinct whole sources use precomputed path-sensitive arbitration. Complete partial-select mapping, polarity, conditions, edge/data-source forms, six/twelve-transition delays, the remaining general path-to-driver mappings, pulse controls and limits, and `showcancelled`/`noshowcancelled`. Unsupported forms receive targeted Clause 30 diagnostics instead of being silently erased. |
 | 31 Timing checks | Semantic only | System timing-check nodes are imported and now receive a targeted Clause 31 diagnostic instead of being silently erased. G5 implements all stability-window and clock/control checks, edge and condition forms, notifiers, vectors, negative checks, and violation scheduling. |
 | 32 SDF backannotation | Missing | `$sdf_annotate`, SDF parsing/mapping, multiple annotation, pulse limits, and delay replacement are absent. |
 | 33 Configuring a design | Partial | A focused probe proves basic `design`, `default liblist`, `instance ... use`, and selecting a config as a top affect elaboration. Complete library-map files, cell/config forms, nested rules, diagnostics, and binding-report behavior; also close driver module-library lookup compatibility. |

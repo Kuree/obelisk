@@ -946,18 +946,11 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         return failure();
       }
       bool userRaw = isUserNetDriver(destination.reference);
-      if (auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
-              "obelisk_sim.propagation_delays")) {
-        if (delays.empty() || delays.size() > 3)
+      auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
+          "obelisk_sim.propagation_delays");
+      if (delays || timingPathDelays) {
+        if (delays && (delays.empty() || delays.size() > 3))
           return function.emitError("invalid frozen propagation delays");
-        ArrayRef<int64_t> values = delays.asArrayRef();
-        int64_t rise = values[0];
-        int64_t fall = values.size() == 1 ? rise : values[1];
-        int64_t turnoff = values.size() == 1
-                              ? rise
-                              : values.size() == 2
-                                    ? std::min(rise, fall)
-                                    : values[2];
         auto timeConstant = [&](int64_t ticks) {
           return sim::SimTimeConstantOp::create(
               builder, location, sim::TimeType::get(function.getContext()),
@@ -980,9 +973,26 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
             *drivenWidth != 1;
         if (nextInertialDriveComponent > UINT32_MAX)
           return function.emitError("too many delayed drive sites");
-        Value riseDelay = timeConstant(rise);
-        Value fallDelay = timeConstant(fall);
-        Value turnoffDelay = timeConstant(turnoff);
+        Value riseDelay;
+        Value fallDelay;
+        Value turnoffDelay;
+        if (timingPathDelays) {
+          riseDelay = (*timingPathDelays)[0];
+          fallDelay = (*timingPathDelays)[1];
+          turnoffDelay = (*timingPathDelays)[2];
+        } else {
+          ArrayRef<int64_t> values = delays.asArrayRef();
+          int64_t rise = values[0];
+          int64_t fall = values.size() == 1 ? rise : values[1];
+          int64_t turnoff = values.size() == 1
+                                ? rise
+                                : values.size() == 2
+                                      ? std::min(rise, fall)
+                                      : values[2];
+          riseDelay = timeConstant(rise);
+          fallDelay = timeConstant(fall);
+          turnoffDelay = timeConstant(turnoff);
+        }
         auto drive = sim::SimDriverDriveInertialOp::create(
             builder, location, destination.reference, published, riseDelay,
             fallDelay, turnoffDelay, codeUnitID,

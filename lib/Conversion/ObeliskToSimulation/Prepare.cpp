@@ -1613,7 +1613,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     uint64_t outputWidth;
     SmallVector<int64_t, 3> delays;
   };
-  llvm::StringMap<SimpleTimingPath> simpleTimingPaths;
+  llvm::StringMap<SmallVector<SimpleTimingPath, 2>> simpleTimingPaths;
   semanticRoot->walk([&](semantic::SVTimingPathSymbolOp path) {
     if (!path->hasAttr("obelisk.simple_timing_path"))
       return;
@@ -1640,26 +1640,23 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       inputPaths.push_back(input.getValue().str());
     }
-    SimpleTimingPath rule{path, inputPaths,
-                          static_cast<uint64_t>(outputWidth.getInt()),
-                          SmallVector<int64_t, 3>(delays.asArrayRef())};
-    auto [found, inserted] =
-        simpleTimingPaths.try_emplace(output.getValue(), std::move(rule));
-    if (!inserted &&
-        (found->second.inputs != inputPaths ||
-         found->second.outputWidth !=
-             static_cast<uint64_t>(outputWidth.getInt()) ||
-         ArrayRef<int64_t>(found->second.delays) != delays.asArrayRef())) {
-      emitError(getSemanticLocation(path))
-          << "multiple specify paths to the same output require "
-             "path-sensitive delay selection";
-      invalid = true;
-    }
+    simpleTimingPaths[output.getValue()].push_back(
+        {path, inputPaths, static_cast<uint64_t>(outputWidth.getInt()),
+         SmallVector<int64_t, 3>(delays.asArrayRef())});
   });
 
   for (auto &entry : simpleTimingPaths) {
     StringRef output = entry.getKey();
-    SimpleTimingPath &path = entry.getValue();
+    SmallVectorImpl<SimpleTimingPath> &paths = entry.getValue();
+    SimpleTimingPath &path = paths.front();
+    if (llvm::any_of(paths, [&](const SimpleTimingPath &candidate) {
+          return candidate.outputWidth != path.outputWidth;
+        })) {
+      emitError(getSemanticLocation(path.declaration))
+          << "specify paths to one output disagree on its whole width";
+      invalid = true;
+      continue;
+    }
     Operation *matchedUnit = nullptr;
     for (auto &drivers : continuousDrivers) {
       bool drivesOutput =
@@ -1667,10 +1664,17 @@ void ObeliskSimPreparePass::runOnOperation() {
                        [&](const DriverInfo &d) { return d.path == output; });
       if (!drivesOutput)
         continue;
-      bool wholeOutput = drivers.second.size() == 1 &&
-                         drivers.second.front().path == output &&
-                         drivers.second.front().drivenLow == 0 &&
-                         drivers.second.front().drivenWidth == path.outputWidth;
+      bool wholeCoverage = llvm::all_of(
+          drivers.second, [&](const DriverInfo &driver) {
+            return driver.path == output && driver.drivenLow == 0 &&
+                   driver.drivenWidth == path.outputWidth;
+          });
+      bool strengthPair =
+          drivers.second.size() == 2 && drivers.second[0].strengthBank &&
+          drivers.second[1].strengthBank &&
+          drivers.second[0].strengthBank != drivers.second[1].strengthBank;
+      bool wholeOutput =
+          wholeCoverage && (drivers.second.size() == 1 || strengthPair);
       if (!wholeOutput || matchedUnit) {
         emitError(getSemanticLocation(path.declaration))
             << "simple specify path output must have one whole continuous "
@@ -1727,8 +1731,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           referencedPaths.insert(referenced.getValue());
       });
     llvm::StringSet<> declaredInputs;
-    for (const std::string &input : path.inputs)
-      declaredInputs.insert(input);
+    for (const SimpleTimingPath &candidate : paths)
+      for (const std::string &input : candidate.inputs)
+        declaredInputs.insert(input);
     bool exactInputs = referencedPaths.size() == declaredInputs.size();
     if (exactInputs)
       for (StringRef input : declaredInputs.keys())
@@ -1740,7 +1745,72 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       continue;
     }
-    matchedUnit->setAttr("delay_fs", builder.getDenseI64ArrayAttr(path.delays));
+    if (paths.size() == 1) {
+      matchedUnit->setAttr("delay_fs",
+                           builder.getDenseI64ArrayAttr(path.delays));
+      continue;
+    }
+
+    // Each overlapping rule gets one direct source snapshot. The lowered
+    // actor compares those snapshots with statically unrolled operations and
+    // selects the shortest delay among simultaneously changing sources; no
+    // path table is scanned by the scheduler or runtime.
+    SmallVector<Attribute> frozenRules;
+    llvm::StringSet<> distinctInputs;
+    for (auto [index, candidate] : llvm::enumerate(paths)) {
+      if (candidate.inputs.size() != 1 ||
+          !distinctInputs.insert(candidate.inputs.front()).second) {
+        emitError(getSemanticLocation(candidate.declaration))
+            << "overlapping specify paths require one distinct whole source "
+               "terminal per path";
+        invalid = true;
+        break;
+      }
+      auto inputDescriptor = descriptors.find(candidate.inputs.front());
+      Type snapshotType =
+          inputDescriptor == descriptors.end()
+              ? Type{}
+              : sim::getPackedScalarType(inputDescriptor->second.type);
+      std::string snapshotPath =
+          (output + ".$timing_path_snapshot_" + Twine(index)).str();
+      if (!snapshotType || descriptors.count(snapshotPath)) {
+        emitError(getSemanticLocation(candidate.declaration))
+            << "overlapping specify path source has no unique packed "
+               "snapshot";
+        invalid = true;
+        break;
+      }
+      if (nextStorageId == UINT64_MAX) {
+        emitError(getSemanticLocation(candidate.declaration))
+            << "timing path snapshots exceed the storage descriptor space";
+        invalid = true;
+        break;
+      }
+      uint64_t snapshotId = nextStorageId++;
+      uint64_t scopeId = getScopeId(matchedUnit);
+      DescriptorInfo snapshot{DescriptorInfo::Kind::Storage, snapshotId,
+                              scopeId, snapshotType,
+                              sim::NetResolutionKind::Wire};
+      snapshot.rootType = snapshotType;
+      descriptors[snapshotPath] = snapshot;
+      sim::SimStorageDeclOp::create(
+          builder, getSemanticLocation(candidate.declaration), snapshotId,
+          scopeId, snapshotType, sim::Lifetime::Design,
+          builder.getStringAttr(snapshotPath),
+          builder.getStringAttr("__obelisk_timing_path_snapshot"),
+          sim::ComputeObservabilityKindAttr{});
+      frozenRules.push_back(builder.getDictionaryAttr({
+          builder.getNamedAttr("input",
+                               builder.getStringAttr(candidate.inputs.front())),
+          builder.getNamedAttr("snapshot",
+                               builder.getStringAttr(snapshotPath)),
+          builder.getNamedAttr("delay_fs",
+                               builder.getDenseI64ArrayAttr(candidate.delays)),
+      }));
+    }
+    if (!invalid)
+      matchedUnit->setAttr("obelisk.timing_path_rules",
+                           builder.getArrayAttr(frozenRules));
   }
   if (invalid)
     return abort();
@@ -5976,6 +6046,30 @@ void ObeliskSimPreparePass::runOnOperation() {
   auto &observerReadLocals = preparedCaptures->observerReadLocals;
   auto &indirectRefTasks = preparedCaptures->indirectRefTasks;
 
+  for (PreparedUnit &unit : units) {
+    auto rules = unit.source->getAttrOfType<ArrayAttr>(
+        "obelisk.timing_path_rules");
+    if (!rules)
+      continue;
+    for (Attribute attr : rules) {
+      auto rule = dyn_cast<DictionaryAttr>(attr);
+      auto snapshot =
+          rule ? rule.getAs<StringAttr>("snapshot") : StringAttr{};
+      auto found = snapshot ? descriptors.find(snapshot.getValue())
+                            : descriptors.end();
+      if (!snapshot || found == descriptors.end()) {
+        emitError(getSemanticLocation(unit.source))
+            << "timing path snapshot no longer resolves";
+        invalid = true;
+        continue;
+      }
+      unitCaptures[unit.source].push_back(
+          {snapshot.getValue().str(), found->second});
+    }
+  }
+  if (invalid)
+    return abort();
+
   auto usesContextStorage = [&](Operation *source, const auto &capture) {
     return preparedCaptures->contextStorageSources.contains(source) &&
            isContextResolvableStorage(capture.second);
@@ -6849,6 +6943,50 @@ void ObeliskSimPreparePass::runOnOperation() {
       functionAttrs.push_back(
           builder.getNamedAttr("obelisk_sim.propagation_delays",
                                builder.getDenseI64ArrayAttr(ticks)));
+    }
+    if (auto rules = unit.source->getAttrOfType<ArrayAttr>(
+            "obelisk.timing_path_rules")) {
+      SmallVector<Attribute> tickRules;
+      bool rulesInvalid = false;
+      for (Attribute attr : rules) {
+        auto rule = dyn_cast<DictionaryAttr>(attr);
+        auto input = rule ? rule.getAs<StringAttr>("input") : StringAttr{};
+        auto snapshot =
+            rule ? rule.getAs<StringAttr>("snapshot") : StringAttr{};
+        auto delays = rule ? rule.getAs<DenseI64ArrayAttr>("delay_fs")
+                           : DenseI64ArrayAttr{};
+        if (!input || !snapshot || !delays || delays.empty() ||
+            delays.size() > 3) {
+          rulesInvalid = true;
+          break;
+        }
+        SmallVector<int64_t, 3> ticks;
+        for (int64_t femtoseconds : delays.asArrayRef()) {
+          if (femtoseconds < 0 ||
+              static_cast<uint64_t>(femtoseconds) % designPrecisionFs != 0) {
+            rulesInvalid = true;
+            break;
+          }
+          ticks.push_back(static_cast<int64_t>(
+              static_cast<uint64_t>(femtoseconds) / designPrecisionFs));
+        }
+        if (rulesInvalid)
+          break;
+        tickRules.push_back(builder.getDictionaryAttr({
+            builder.getNamedAttr("input", input),
+            builder.getNamedAttr("snapshot", snapshot),
+            builder.getNamedAttr("delays",
+                                 builder.getDenseI64ArrayAttr(ticks)),
+        }));
+      }
+      if (rulesInvalid) {
+        emitError(getSemanticLocation(unit.source))
+            << "timing path delay is incompatible with design precision";
+        invalid = true;
+        continue;
+      }
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.timing_path_rules", builder.getArrayAttr(tickRules)));
     }
     if (instanceClassMethod)
       functionAttrs.push_back(builder.getNamedAttr(
