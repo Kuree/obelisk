@@ -65,6 +65,13 @@ module {
 // CHECK: %[[QUEUE_COPY:.*]] = obelisk_sim.container.clone %[[QUEUE]]
 // CHECK: obelisk_sim.ref.store %[[QUEUE_COPY]]
 // CHECK: %[[QUEUE_SIZE:.*]] = obelisk_sim.container.size %[[QUEUE_COPY]]
+// The omitted range on an empty queue closes the file without entering the
+// token loop. Explicit ranges still use the normal bounds-error edge.
+// CHECK: %[[QUEUE_EMPTY:.*]] = arith.cmpi eq, %[[QUEUE_SIZE]],
+// CHECK: ^[[QUEUE_LOOP:bb[0-9]+]](
 // CHECK: obelisk_sim.file.readmem_token {{.*}} {radix = 16 : i32}
 // CHECK: obelisk_sim.container.write %[[QUEUE_COPY]],
+// CHECK: cf.cond_br %[[QUEUE_EMPTY]], ^[[QUEUE_EXIT:bb[0-9]+]], ^[[QUEUE_LOOP]]
+// CHECK: ^[[QUEUE_EXIT]]
+// CHECK: obelisk_sim.file.close
 // CHECK-NOT: obelisk_sim.container.create

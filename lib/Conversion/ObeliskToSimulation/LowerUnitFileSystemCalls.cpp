@@ -813,6 +813,13 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
                                                dimensions.front().getRight())
                                     : associativeLow);
     Value high;
+    bool hasExplicitStart =
+        children.size() >= 3 &&
+        !isa<semantic::SVEmptyArgumentExpressionOp>(children[2]);
+    bool hasExplicitFinish =
+        children.size() >= 4 &&
+        !isa<semantic::SVEmptyArgumentExpressionOp>(children[3]);
+    Value emptyDefault = constant(builder.getI1Type(), 0);
     if (array)
       high = indexConstant(std::max(dimensions.front().getLeft(),
                                     dimensions.front().getRight()));
@@ -820,6 +827,10 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       Value size = sim::SimContainerSizeOp::create(builder, location, i64,
                                                    memory);
       high = arith::SubIOp::create(builder, location, size, indexConstant(1));
+      if (!hasExplicitStart && !hasExplicitFinish)
+        emptyDefault = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq, size,
+            indexConstant(0));
     } else
       high = indexConstant(associativeHigh);
     uint64_t rowSizeValue = 1;
@@ -850,9 +861,7 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     FailureOr<Value> finish = addressArgument(3, high);
     if (failed(start) || failed(finish))
       return failure();
-    bool hasExplicitFinish =
-        children.size() >= 4 &&
-        !isa<semantic::SVEmptyArgumentExpressionOp>(children[3]);
+    bool hasExplicitRange = hasExplicitStart && hasExplicitFinish;
     bool unsignedAddress = associative && !associative.getSignedKey();
     auto greaterThan = unsignedAddress ? arith::CmpIPredicate::ugt
                                        : arith::CmpIPredicate::sgt;
@@ -887,6 +896,8 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     Block *setAddress = addBlock();
     Block *acceptAddress = addBlock();
     Block *storeData = addBlock();
+    Block *rejectData = addBlock();
+    Block *extraData = addBlock();
     Block *acceptData = addBlock();
     Block *writeData = addBlock();
     Block *checkWordCount = addBlock();
@@ -894,6 +905,7 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     Block *addressError = addBlock();
     Block *dataError = addBlock();
     Block *readFile = addBlock();
+    Block *beginFile = !array && !associative ? addBlock() : nullptr;
     Block *openError = addBlock();
     Block *exit = addBlock();
     Block *done = addBlock();
@@ -934,11 +946,22 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
 
     Value validBounds = arith::AndIOp::create(
         builder, location, withinMemory(*start), withinMemory(*finish));
-    cf::CondBranchOp::create(
-        builder, location, validBounds, header,
-        ValueRange{*start, constant(builder.getI1Type(), 0), indexConstant(0),
-                   indexConstant(0), constant(builder.getI1Type(), 0)},
-        addressError, ValueRange{});
+    SmallVector<Value> initialState{
+        *start, constant(builder.getI1Type(), 0), indexConstant(0),
+        indexConstant(0), constant(builder.getI1Type(), 0)};
+    if (!array && !associative) {
+      validBounds = arith::OrIOp::create(builder, location, validBounds,
+                                         emptyDefault);
+      cf::CondBranchOp::create(builder, location, validBounds, beginFile,
+                               ValueRange{}, addressError, ValueRange{});
+
+      setCurrent(beginFile);
+      cf::CondBranchOp::create(builder, location, emptyDefault, exit,
+                               ValueRange{}, header, initialState);
+    } else {
+      cf::CondBranchOp::create(builder, location, validBounds, header,
+                               initialState, addressError, ValueRange{});
+    }
 
     setCurrent(header);
     Value address = header->getArgument(0);
@@ -1034,7 +1057,18 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
           builder, location, validDataAddress, validEnumAddress);
     }
     cf::CondBranchOp::create(builder, location, validDataAddress, acceptData,
+                             ValueRange{}, rejectData, ValueRange{});
+
+    setCurrent(rejectData);
+    cf::CondBranchOp::create(builder, location, rangeExhausted, extraData,
                              ValueRange{}, checkWordCount, ValueRange{});
+
+    setCurrent(extraData);
+    Value suppressExtraWarning = sawFileAddress;
+    if (!hasExplicitRange)
+      suppressExtraWarning = constant(builder.getI1Type(), 1);
+    cf::CondBranchOp::create(builder, location, suppressExtraWarning, exit,
+                             ValueRange{}, warnWordCount, ValueRange{});
 
     setCurrent(acceptData);
     Value validEnumData = constant(builder.getI1Type(), 1);
@@ -1171,7 +1205,7 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
         builder, location, arith::CmpIPredicate::eq, wordCount, expectedWords);
     Value suppressWarning = arith::OrIOp::create(
         builder, location, sawFileAddress, countMatches);
-    if (!hasExplicitFinish)
+    if (!hasExplicitRange)
       suppressWarning = constant(builder.getI1Type(), 1);
     cf::CondBranchOp::create(builder, location, suppressWarning, exit,
                              ValueRange{}, warnWordCount, ValueRange{});

@@ -1257,6 +1257,14 @@ one commit.
     and `$display`/`$write`/`$fwrite`/`$sformat[f]` output. Formatted reads
     also consume and restore the synthetic byte held by `$ungetc` on a
     descriptor without read access, with exact EOF and file-position behavior.
+    The four `$readmem*`/`$writemem*` tasks implement numerical address order
+    for either declaration direction, omitted/start-only/explicit directed
+    ranges, in-range `@` repositioning, exact explicit-range word-count
+    warnings, empty variable-size container behavior, and sparse integral
+    associative addresses. Fixed, dynamic, queue, multidimensional, and
+    associative targets share extent-independent generated loops; empty
+    dynamic and queue reads remain no-ops rather than resizing or rejecting
+    their omitted range.
 
 ### Randomization and `std`
 
