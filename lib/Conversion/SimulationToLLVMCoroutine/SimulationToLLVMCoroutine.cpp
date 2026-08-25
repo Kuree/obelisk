@@ -3147,7 +3147,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     for (Operation *operation : nested) {
       if (isa<sim::SimScopeDeclOp, sim::SimCodeUnitDeclOp,
               sim::SimStorageDeclOp, sim::SimNetDeclOp, sim::SimDriverDeclOp,
-              sim::SimPortDeclOp, sim::SimNetConnectDeclOp, sim::SimClassDeclOp,
+              sim::SimPortDeclOp, sim::SimNetConnectDeclOp,
+              sim::SimPassSwitchDeclOp, sim::SimClassDeclOp,
               sim::SimCovergroupDeclOp, sim::SimClassFieldDeclOp,
               sim::SimClassMethodDeclOp, sim::SimRandomConstraintTemplateOp>(
               operation)) {

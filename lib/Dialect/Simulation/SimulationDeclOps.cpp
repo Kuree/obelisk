@@ -194,6 +194,20 @@ LogicalResult SimNetConnectDeclOp::verify() {
   return success();
 }
 
+LogicalResult SimPassSwitchDeclOp::verify() {
+  if (failed(verifyNonnegative(*this, getIdAttr(), "pass-switch ID")) ||
+      failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||
+      failed(verifyNonnegative(*this, getLhsNetIdAttr(), "left net ID")) ||
+      failed(verifyNonnegative(*this, getLhsOffsetAttr(), "left offset")) ||
+      failed(verifyNonnegative(*this, getRhsNetIdAttr(), "right net ID")) ||
+      failed(verifyNonnegative(*this, getRhsOffsetAttr(), "right offset")) ||
+      failed(verifyNonnegative(*this, getWidthAttr(), "width")))
+    return failure();
+  if (getWidth() == 0)
+    return emitOpError("width must be positive");
+  return success();
+}
+
 LogicalResult SimDriverDeclOp::verify() {
   if (failed(verifyNonnegative(*this, getIdAttr(), "driver ID")) ||
       failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||

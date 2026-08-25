@@ -1830,15 +1830,19 @@ bool validateImage(const Image &image) {
     previousDriverEnd = driver.valueOffset + driver.planeSize;
   }
 
-  std::tuple<uint64_t, uint64_t, uint64_t, uint8_t> previousConnection;
+  std::tuple<uint64_t, uint64_t, uint64_t, uint8_t, uint32_t>
+      previousConnection;
   bool firstConnection = true;
   uint64_t expandedConnections = 0;
+  uint64_t expandedStaticConnections = 0;
   struct ScalarConnection {
     uint64_t lhs = 0, rhs = 0;
     uint8_t lhsResolution = 0, rhsResolution = 0;
     uint8_t dominanceFlags = 0;
+    uint32_t passSwitchId = 0;
     auto tie() const {
-      return std::tie(lhs, rhs, lhsResolution, rhsResolution, dominanceFlags);
+      return std::tie(lhs, rhs, lhsResolution, rhsResolution, dominanceFlags,
+                      passSwitchId);
     }
   };
   std::vector<ConnectivityRecord> connectionRecords;
@@ -1859,14 +1863,19 @@ bool validateImage(const Image &image) {
   for (uint64_t index = 0; index != image.connectivityCount; ++index) {
     ConnectivityRecord connection = connectivityAt(image, index);
     auto key = std::make_tuple(connection.lhsOffset, connection.rhsOffset,
-                               connection.width, connection.flags);
+                               connection.width, connection.flags,
+                               connection.tailReserved);
+    bool passSwitch = (connection.flags & 8) != 0;
     const CaptureRecord *lhs =
         containingNet(connection.lhsOffset, connection.width, false);
     const CaptureRecord *rhs = containingNet(
         connection.rhsOffset, connection.width, (connection.flags & 1) != 0);
-    if (connection.width == 0 || (connection.flags & ~uint8_t{7}) != 0 ||
+    if (connection.width == 0 || (connection.flags & ~uint8_t{15}) != 0 ||
         ((connection.flags & 2) == 0 && (connection.flags & 4) != 0) ||
-        connection.reserved != 0 || connection.tailReserved != 0 ||
+        (passSwitch && ((connection.flags & 6) != 0 ||
+                        connection.tailReserved == 0)) ||
+        (!passSwitch && connection.tailReserved != 0) ||
+        connection.reserved != 0 ||
         connection.lhsResolution > 9 || connection.rhsResolution > 9 || !lhs ||
         !rhs ||
         connection.lhsResolution != decodeNetResolution(lhs->argument) ||
@@ -1879,9 +1888,11 @@ bool validateImage(const Image &image) {
     firstConnection = false;
     connectionRecords.push_back(connection);
     expandedConnections += connection.width;
+    if (!passSwitch)
+      expandedStaticConnections += connection.width;
     // A corrupt image must not turn validation into an unbounded expansion.
     if ((image.stateBitCount <= UINT64_MAX / 8 &&
-         expandedConnections > image.stateBitCount * 8) ||
+         expandedStaticConnections > image.stateBitCount * 8) ||
         expandedConnections > UINT32_MAX)
       return reject(__LINE__, "connectivity expansion exceeds image bounds");
     for (uint64_t bit = 0; bit != connection.width; ++bit) {
@@ -1894,12 +1905,15 @@ bool validateImage(const Image &image) {
             "connectivity edge endpoints are not canonically ordered");
       scalarConnections.push_back({lhsBit, rhsBit, connection.lhsResolution,
                                    connection.rhsResolution,
-                                   static_cast<uint8_t>(connection.flags & 6)});
-      uint64_t lhsRoot = findConnectivity(lhsBit);
-      uint64_t rhsRoot = findConnectivity(rhsBit);
-      if (lhsRoot != rhsRoot)
-        connectivityParents[std::max(lhsRoot, rhsRoot)] =
-            std::min(lhsRoot, rhsRoot);
+                                   static_cast<uint8_t>(connection.flags & 6),
+                                   connection.tailReserved});
+      if (!passSwitch) {
+        uint64_t lhsRoot = findConnectivity(lhsBit);
+        uint64_t rhsRoot = findConnectivity(rhsBit);
+        if (lhsRoot != rhsRoot)
+          connectivityParents[std::max(lhsRoot, rhsRoot)] =
+              std::min(lhsRoot, rhsRoot);
+      }
     }
   }
   std::sort(scalarConnections.begin(), scalarConnections.end(),
@@ -1908,7 +1922,9 @@ bool validateImage(const Image &image) {
             });
   for (size_t index = 1; index < scalarConnections.size(); ++index)
     if (scalarConnections[index - 1].lhs == scalarConnections[index].lhs &&
-        scalarConnections[index - 1].rhs == scalarConnections[index].rhs)
+        scalarConnections[index - 1].rhs == scalarConnections[index].rhs &&
+        scalarConnections[index - 1].passSwitchId ==
+            scalarConnections[index].passSwitchId)
       return reject(__LINE__, "duplicate scalar connectivity edge");
 
   // The serialized table is the unique maximal interval encoding of its
@@ -1934,6 +1950,7 @@ bool validateImage(const Image &image) {
       if (candidate.lhsResolution != first.lhsResolution ||
           candidate.rhsResolution != first.rhsResolution ||
           candidate.dominanceFlags != first.dominanceFlags ||
+          candidate.passSwitchId != first.passSwitchId ||
           candidate.lhs != first.lhs + width)
         break;
       if (!withinNet(lhsNet, candidate.lhs) ||
@@ -1953,7 +1970,9 @@ bool validateImage(const Image &image) {
     }
     canonicalRecords.push_back(
         {first.lhs, first.rhs, width, first.lhsResolution, first.rhsResolution,
-         static_cast<uint8_t>((direction < 0) | first.dominanceFlags), 0, 0});
+         static_cast<uint8_t>((direction < 0) | first.dominanceFlags |
+                              (first.passSwitchId ? 8 : 0)),
+         0, first.passSwitchId});
     scalar = next;
   }
   if (canonicalRecords.size() != connectionRecords.size())
@@ -1966,7 +1985,8 @@ bool validateImage(const Image &image) {
         actual.width != expected.width ||
         actual.lhsResolution != expected.lhsResolution ||
         actual.rhsResolution != expected.rhsResolution ||
-        actual.flags != expected.flags)
+        actual.flags != expected.flags ||
+        actual.tailReserved != expected.tailReserved)
       return reject(__LINE__,
                     "connectivity table differs from its canonical encoding");
   }
@@ -1995,6 +2015,8 @@ bool validateImage(const Image &image) {
     componentBits[root].push_back(bit);
   }
   for (const ScalarConnection &connection : scalarConnections) {
+    if (connection.passSwitchId)
+      continue;
     uint8_t lhsResolution =
         connection.lhsResolution == 1 ? 0 : connection.lhsResolution;
     uint8_t rhsResolution =

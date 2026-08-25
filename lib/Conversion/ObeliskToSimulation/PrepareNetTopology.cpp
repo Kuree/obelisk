@@ -650,6 +650,86 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
              "simulated net";
     sourceUnits.push_back(connection);
   }
+
+  // IEEE 1800-2017 28.12: an unconditional tran channel is electrical
+  // topology, not two continuously evaluated feedback processes. Preserve
+  // the terminal nets as distinct nodes so driver introspection still sees
+  // one switch contribution at each endpoint.
+  uint64_t nextPassSwitchId = 0;
+  SmallVector<Operation *> executableUnits;
+  executableUnits.reserve(sourceUnits.size());
+  for (Operation *unit : sourceUnits) {
+    auto primitive = dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(unit);
+    auto name = primitive
+                    ? primitive->getAttrOfType<StringAttr>("primitive_name")
+                    : StringAttr{};
+    if (!name || name.getValue() != "tran") {
+      executableUnits.push_back(unit);
+      continue;
+    }
+    if (primitive.getDelayFs()) {
+      emitError(getSemanticLocation(unit))
+          << "delayed tran primitives are not yet supported";
+      invalid = true;
+      continue;
+    }
+    SmallVector<Operation *> roots = getChildren(unit);
+    SmallVector<NetRun> terminals[2];
+    bool invalidTerminal = false;
+    if (roots.size() != 2) {
+      emitError(getSemanticLocation(unit))
+          << "tran primitive requires exactly two terminals";
+      invalid = true;
+      continue;
+    }
+    for (unsigned terminal = 0; terminal != 2; ++terminal) {
+      auto assignment =
+          dyn_cast<semantic::SVAssignmentExpressionOp>(roots[terminal]);
+      SmallVector<Operation *> children =
+          assignment ? getChildren(assignment) : SmallVector<Operation *>{};
+      if (children.empty() ||
+          !flattenNetExpr(children.front(), terminals[terminal])) {
+        emitError(getSemanticLocation(roots[terminal]))
+            << "tran terminal must be a statically selected net";
+        invalid = true;
+        invalidTerminal = true;
+        break;
+      }
+    }
+    if (invalidTerminal)
+      continue;
+    size_t lhsIndex = 0, rhsIndex = 0;
+    uint64_t lhsConsumed = 0, rhsConsumed = 0;
+    while (lhsIndex != terminals[0].size() &&
+           rhsIndex != terminals[1].size()) {
+      const NetRun &lhs = terminals[0][lhsIndex];
+      const NetRun &rhs = terminals[1][rhsIndex];
+      uint64_t width =
+          std::min(lhs.width - lhsConsumed, rhs.width - rhsConsumed);
+      sim::SimPassSwitchDeclOp::create(
+          builder, getSemanticLocation(unit), nextPassSwitchId++,
+          scopes.lookup(unit), lhs.descriptor.id, lhs.offset + lhsConsumed,
+          rhs.descriptor.id, rhs.offset + rhsConsumed, width, false);
+      lhsConsumed += width;
+      rhsConsumed += width;
+      if (lhsConsumed == lhs.width) {
+        ++lhsIndex;
+        lhsConsumed = 0;
+      }
+      if (rhsConsumed == rhs.width) {
+        ++rhsIndex;
+        rhsConsumed = 0;
+      }
+    }
+    if (lhsIndex != terminals[0].size() ||
+        rhsIndex != terminals[1].size()) {
+      emitError(getSemanticLocation(unit))
+          << "tran terminals have incompatible widths";
+      invalid = true;
+    }
+  }
+  sourceUnits.clear();
+  llvm::append_range(sourceUnits, executableUnits);
   if (invalid)
     return failure();
 

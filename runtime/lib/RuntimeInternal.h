@@ -785,6 +785,9 @@ struct NetAliasCache {
   std::unordered_map<uint64_t, uint64_t> rootByBit;
   std::unordered_map<uint64_t, std::vector<uint64_t>> members;
   std::unordered_map<uint64_t, std::vector<NetDriverBit>> driverBits;
+  std::unordered_map<uint64_t, std::vector<uint64_t>> passNeighbors;
+  std::unordered_map<uint64_t, uint64_t> passComponentByRoot;
+  std::unordered_map<uint64_t, std::vector<uint64_t>> passComponents;
   std::unordered_map<uint64_t, std::vector<uint64_t>>
       uniformDelayedRootsByRoot;
   std::unordered_map<uint64_t, uint8_t> resolutionByRoot;

@@ -231,9 +231,10 @@ SmallVector<uint8_t> serializeBytecodeImage(
     output.push_back(static_cast<uint8_t>(connection.rhsResolution));
     output.push_back((connection.rhsReversed ? 1 : 0) |
                      (connection.hasDominance ? 2 : 0) |
-                     (connection.rhsDominates ? 4 : 0));
+                     (connection.rhsDominates ? 4 : 0) |
+                     (connection.passSwitchId ? 8 : 0));
     output.push_back(0);
-    append32(output, 0);
+    append32(output, connection.passSwitchId);
   }
 
   write64(output, offsetof(Header, image_size), output.size());

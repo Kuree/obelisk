@@ -40,8 +40,14 @@ bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,
                     std::vector<NetPublication> &publications, bool &changed);
 bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
                      std::vector<uint64_t> roots, bool &changed);
+bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
+                     std::vector<uint64_t> roots, bool &changed,
+                     bool useNativeState);
 bool resolveDrivenNets(const Image &image, obelisk_rt_context *context,
                        int64_t changedBegin, int64_t changedEnd, bool &changed);
+bool resolveDrivenNets(const Image &image, obelisk_rt_context *context,
+                       int64_t changedBegin, int64_t changedEnd, bool &changed,
+                       bool useNativeState);
 
 } // namespace obelisk::designbytecode
 

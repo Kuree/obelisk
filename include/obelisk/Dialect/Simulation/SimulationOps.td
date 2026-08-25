@@ -163,6 +163,26 @@ def SimNetConnectDeclOp : SimOp<"net.connect.decl", [
   let hasVerifier = 1;
 }
 
+def SimPassSwitchDeclOp : SimOp<"net.pass.decl", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "static bidirectional pass-switch connection run";
+  let description = [{
+    Records an unconditional `tran` channel without collapsing the terminal
+    nets into one declaration. The runtime resolves the electrically connected
+    component together while retaining one logical switch contribution at
+    each endpoint for driver introspection.
+  }];
+  let arguments = (ins I64Attr:$id, I64Attr:$scope_id,
+                       I64Attr:$lhs_net_id, I64Attr:$lhs_offset,
+                       I64Attr:$rhs_net_id, I64Attr:$rhs_offset,
+                       I64Attr:$width, BoolAttr:$rhs_reversed);
+  let assemblyFormat = [{$id `in` $scope_id $lhs_net_id `[` $lhs_offset `]`
+    `to` $rhs_net_id `[` $rhs_offset `]` `width` $width
+    `reversed` `=` $rhs_reversed attr-dict}];
+  let hasVerifier = 1;
+}
+
 def SimDriverDeclOp : SimOp<"driver.decl", [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
   let summary = "immutable static net-driver descriptor";
   let arguments = (ins I64Attr:$id, I64Attr:$scope_id, I64Attr:$net_id,

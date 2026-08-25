@@ -70,6 +70,7 @@ struct NativeStateLayoutAnalysis {
       connectivityComponents;
   llvm::DenseMap<std::pair<uint64_t, uint64_t>, sim::NetResolutionKind>
       connectivityResolutions;
+  bool hasPassSwitch = false;
   uint64_t bitCount = 0;
 };
 

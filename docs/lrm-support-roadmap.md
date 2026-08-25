@@ -490,14 +490,30 @@ inout components; and counts the complementary strength banks of one
 conditional primitive as one logical driver. Native and bytecode execution
 read their own authoritative state planes, and each query walks only the
 queried component's drivers with logarithmic paired-bank lookup, leaving the
-ordinary net-resolution hot path unchanged. Four of the five upstream
-`countdrivers` cases now pass; the remaining case is blocked independently by
-the missing `tran` primitive. The focused O3 case compiles in 0.06 seconds at
+ordinary net-resolution hot path unchanged. All five upstream `countdrivers`
+cases now pass after the following `tran` tranche supplied the last case's
+pass-switch topology. The focused O3 case compiles in 0.06 seconds at
 77 MB RSS for bytecode and 0.42 seconds at 94 MB RSS for native, then simulates
 below 0.01 seconds in either tier. The UVM smoke ran in 34.910 seconds compile /
 0.181 seconds simulate for bytecode and 72.585 seconds compile / 0.020 seconds
 simulate for native, with zero UVM errors or fatals. The full regression suite
 passes 1305/1305 tests and all 427 runtime tests.
+
+G1's second closure tranche implements static, unconditional `tran` channels
+without collapsing their terminal nets. Distinct endpoints retain local
+driver accounting and local supply strength, while contributions crossing the
+switch are capped at strong as required by 28.12.1. Resolution expands only
+the affected static pass component, supports chains, parallel devices, packed
+orientation, and force/release propagation, and shares the compact serialized
+topology between native and bytecode execution. The previously blocked
+`countdrivers5` case now passes. The upstream `tran` strength matrix reaches
+its oracle and is blocked only by the separately missing `%v` strength-aware
+formatter. The focused O3 case compiles in 0.04 seconds at 74 MB RSS for
+bytecode and 0.13 seconds at 80 MB RSS for native, then simulates below 0.01
+seconds in either tier. The UVM smoke ran in 40.715 seconds compile / 0.205
+seconds simulate for bytecode and 78.756 seconds compile / 0.020 seconds
+simulate for native, with zero UVM errors or fatals. The full regression suite
+passes 1306/1306 tests, including all 427 runtime tests.
 
 ## Clause ledger
 
@@ -528,7 +544,7 @@ passes 1305/1305 tests and all 427 runtime tests.
 | 25 Interfaces | Partial | Interfaces, modports, parameterization, interface tasks/functions, interface arrays, virtual-interface handles, calls, containers, and clocking-block access execute. Complete the residual virtual-interface clock/event/formal cases and inherit specify support from Clause 30. |
 | 26 Packages | Partial | Packages, imports/exports, scope lookup, and the implemented `std` package surface, including R1 `std::randomize`, execute. Complete the remaining normative Annex G behavior through the randomization and system-task chunks. |
 | 27 Generate constructs | Partial | Loop/conditional generation and ordinary external names elaborate. External tests still expose generate-scope and parameter-binding corner cases. |
-| 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, static one/two/three propagation delays including parameter arithmetic, and the four-state truth tables of MOS/CMOS plus resistive variants execute. Complete source-strength forwarding and reduction, strength-aware `%v`, bidirectional pass devices, controlled pass devices, and forced-native large gate-netlist coalescing. |
+| 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, and static unconditional `tran` channels execute. Complete strength-aware `%v`, delayed and controlled pass devices, resistive pass-strength reduction, and forced-native large gate-netlist coalescing. |
 | 29 User-defined primitives | Missing | UDP declarations and ports are imported, but table rows and sequential state semantics are not preserved, and an instance currently reaches the built-in-primitive diagnostic. |
 | 30 Specify blocks | Semantic only | Specparams, timing paths, and specify blocks are imported. Executable timing paths and pulse controls now receive targeted Clause 30 diagnostics instead of being silently erased; G4 implements simple/full/edge-sensitive/state-dependent paths, delay tuples, and `showcancelled`/`noshowcancelled`. |
 | 31 Timing checks | Semantic only | System timing-check nodes are imported and now receive a targeted Clause 31 diagnostic instead of being silently erased. G5 implements all stability-window and clock/control checks, edge and condition forms, notifiers, vectors, negative checks, and violation scheduling. |

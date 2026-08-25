@@ -21,6 +21,7 @@
 #include <iterator>
 #include <map>
 #include <optional>
+#include <type_traits>
 #include <utility>
 
 using namespace mlir;
@@ -173,10 +174,11 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
   // merging across that boundary emits a record no net contains.
   using ScalarConnection =
       std::tuple<sim::NetResolutionKind, sim::NetResolutionKind, uint64_t,
-                 uint64_t, std::optional<bool>>;
-  std::map<std::pair<uint64_t, uint64_t>, ScalarConnection> scalarConnections;
-  for (sim::SimNetConnectDeclOp connection :
-       design.getBody().getOps<sim::SimNetConnectDeclOp>()) {
+                 uint64_t, std::optional<bool>, uint32_t>;
+  using ScalarConnectionKey = std::tuple<uint64_t, uint64_t, uint32_t>;
+  std::map<ScalarConnectionKey, ScalarConnection> scalarConnections;
+  auto collectConnection = [&](auto connection,
+                               uint32_t passSwitchId) -> LogicalResult {
     auto lhs = llvm::find_if(result.netLayouts, [&](const auto &layout) {
       return layout.id == connection.getLhsNetId();
     });
@@ -194,7 +196,10 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
       sim::NetResolutionKind lhsResolution = lhs->resolution;
       sim::NetResolutionKind rhsResolution = rhs->resolution;
       uint64_t lhsNet = lhs->id, rhsNet = rhs->id;
-      std::optional<bool> rhsDominates = connection.getRhsDominates();
+      std::optional<bool> rhsDominates;
+      if constexpr (std::is_same_v<decltype(connection),
+                                   sim::SimNetConnectDeclOp>)
+        rhsDominates = connection.getRhsDominates();
       if (rhsBit < lhsBit) {
         std::swap(lhsBit, rhsBit);
         std::swap(lhsResolution, rhsResolution);
@@ -205,33 +210,50 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
       if (lhsBit == rhsBit)
         continue;
       auto [found, inserted] = scalarConnections.try_emplace(
-          std::pair{lhsBit, rhsBit},
+          ScalarConnectionKey{lhsBit, rhsBit, passSwitchId},
           ScalarConnection{lhsResolution, rhsResolution, lhsNet, rhsNet,
-                           rhsDominates});
+                           rhsDominates, passSwitchId});
       if (!inserted &&
           found->second != ScalarConnection{lhsResolution, rhsResolution,
-                                            lhsNet, rhsNet, rhsDominates})
+                                            lhsNet, rhsNet, rhsDominates,
+                                            passSwitchId})
         return connection.emitOpError(
                    "has inconsistent duplicate scalar connectivity"),
                failure();
     }
+    return success();
+  };
+  for (sim::SimNetConnectDeclOp connection :
+       design.getBody().getOps<sim::SimNetConnectDeclOp>())
+    if (failed(collectConnection(connection, 0)))
+      return failure();
+  for (sim::SimPassSwitchDeclOp connection :
+       design.getBody().getOps<sim::SimPassSwitchDeclOp>()) {
+    if (connection.getId() >= UINT32_MAX)
+      return connection.emitOpError("ID exceeds bytecode pass-switch range"),
+             failure();
+    if (failed(collectConnection(connection,
+                                 static_cast<uint32_t>(connection.getId()) +
+                                     1)))
+      return failure();
   }
   for (auto scalar = scalarConnections.begin();
        scalar != scalarConnections.end();) {
-    auto [lhsOffset, rhsOffset] = scalar->first;
-    auto [lhsResolution, rhsResolution, lhsNet, rhsNet, rhsDominates] =
-        scalar->second;
+    auto [lhsOffset, rhsOffset, passSwitchId] = scalar->first;
+    auto [lhsResolution, rhsResolution, lhsNet, rhsNet, rhsDominates,
+          ignoredPassSwitchId] = scalar->second;
     uint64_t width = 1;
     int direction = 0;
     auto next = std::next(scalar);
     while (next != scalarConnections.end()) {
       if (next->second != scalar->second ||
-          next->first.first != lhsOffset + width)
+          std::get<0>(next->first) != lhsOffset + width)
         break;
       int candidateDirection = 0;
-      if (next->first.second == rhsOffset + width)
+      if (std::get<1>(next->first) == rhsOffset + width)
         candidateDirection = 1;
-      else if (rhsOffset >= width && next->first.second == rhsOffset - width)
+      else if (rhsOffset >= width &&
+               std::get<1>(next->first) == rhsOffset - width)
         candidateDirection = -1;
       if (candidateDirection == 0 ||
           (direction != 0 && direction != candidateDirection))
@@ -243,7 +265,7 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
     result.connections.push_back({lhsOffset, rhsOffset, width, lhsResolution,
                                   rhsResolution, direction < 0,
                                   rhsDominates.has_value(),
-                                  rhsDominates.value_or(false)});
+                                  rhsDominates.value_or(false), passSwitchId});
     scalar = next;
   }
 

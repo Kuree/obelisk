@@ -113,17 +113,19 @@ public:
           rewriter, op.getLoc(), adaptor.getDriver().front(), driveType,
           "__obelisk_state_unknown", true, layout.bitCount, storeLayout);
     }
-    storeStatePlane(rewriter, op.getLoc(), adaptor.getDriver().front(),
-                    driveValue, "__obelisk_state_value", layout.bitCount,
-                    storeLayout);
-    storeStatePlane(rewriter, op.getLoc(), adaptor.getDriver().front(),
-                    driveUnknown, "__obelisk_state_unknown", layout.bitCount,
-                    storeLayout);
+    Value driveValueChanged = storeStatePlane(
+        rewriter, op.getLoc(), adaptor.getDriver().front(), driveValue,
+        "__obelisk_state_value", layout.bitCount, storeLayout);
+    Value driveUnknownChanged = storeStatePlane(
+        rewriter, op.getLoc(), adaptor.getDriver().front(), driveUnknown,
+        "__obelisk_state_unknown", layout.bitCount, storeLayout);
     IntegerType i1 = rewriter.getI1Type();
     auto boolean = [&](bool value) {
       return arith::ConstantOp::create(rewriter, op.getLoc(), i1,
                                        rewriter.getBoolAttr(value));
     };
+    Value rawChanged = arith::OrIOp::create(
+        rewriter, op.getLoc(), driveValueChanged, driveUnknownChanged);
     Value changed = boolean(false);
     // A conditional gate stores its complementary low-polarity bank before
     // its high-polarity bank. The first store deliberately stops here so the
@@ -165,6 +167,53 @@ public:
       else
         rewriter.eraseOp(op);
       return success();
+    }
+
+    if constexpr (!std::is_same_v<DriveOp,
+                                  sim::SimDriverDriveDelayedNetOp>) {
+      if (layout.hasPassSwitch) {
+        auto driverID =
+            op->template getAttrOfType<IntegerAttr>("obelisk.native.driver_id");
+        auto driver =
+            driverID
+                ? llvm::find_if(layout.driverLayouts,
+                                [&](const auto &candidate) {
+                                  return candidate.id == static_cast<uint64_t>(
+                                                             driverID.getInt());
+                                })
+                : layout.driverLayouts.end();
+        if (driver == layout.driverLayouts.end())
+          return failure();
+        uint64_t begin = driver->offset + driver->drivenLow;
+        uint64_t end = begin + driver->drivenWidth;
+        Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+        Type i32 = rewriter.getI32Type();
+        Type i64 = rewriter.getI64Type();
+        Value contextAddress = LLVM::AddressOfOp::create(
+            rewriter, op.getLoc(), pointer, "__obelisk_current_context");
+        Value runtimeContext = LLVM::LoadOp::create(
+            rewriter, op.getLoc(), pointer, contextAddress, 8);
+        Value status =
+            LLVM::CallOp::create(
+                rewriter, op.getLoc(), TypeRange{i32},
+                SymbolRefAttr::get(rewriter.getContext(),
+                                   "obelisk_rt_v1_scheduler_resolve_drivers"),
+                ValueRange{runtimeContext,
+                           llvmConstant(rewriter, op.getLoc(), i64, begin),
+                           llvmConstant(rewriter, op.getLoc(), i64, end)})
+                .getResult();
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_scheduler_fail"),
+            ValueRange{runtimeContext, status});
+        if constexpr (std::is_same_v<DriveOp,
+                                     sim::SimDriverDriveChangedOp>)
+          rewriter.replaceOp(op, rawChanged);
+        else
+          rewriter.eraseOp(op);
+        return success();
+      }
     }
 
     if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveDelayedNetOp>) {

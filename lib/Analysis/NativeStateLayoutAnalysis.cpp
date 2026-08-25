@@ -177,6 +177,8 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
            offset, *width, static_cast<unsigned>(drivenLow),
            static_cast<unsigned>(drivenWidth), declaration.getStrength0(),
            declaration.getStrength1(), strengthGroup, strengthBank});
+    } else if (isa<sim::SimPassSwitchDeclOp>(operation)) {
+      layout.hasPassSwitch = true;
     }
     return WalkResult::advance();
   });

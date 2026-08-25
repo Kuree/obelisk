@@ -487,6 +487,7 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
   bool hasDriverNBA = false;
   bool hasDelayedNet = false;
   bool hasInertialDriver = false;
+  bool hasPassSwitch = false;
   module.walk([&](mlir::Operation *operation) {
     if (mlir::isa<obelisk::sim::SimOverrideOp,
                   obelisk::sim::SimDynamicOverrideOp,
@@ -501,6 +502,7 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
         mlir::isa<obelisk::sim::SimDriverDriveInertialOp,
                   obelisk::sim::SimDriverDriveInertialStrengthPairOp>(
             operation);
+    hasPassSwitch |= mlir::isa<obelisk::sim::SimPassSwitchDeclOp>(operation);
   });
   requiresStateSync = vpi != "off" || hasLanguageOverride || hasDriverNBA ||
                       hasDelayedNet || hasInertialDriver;
@@ -519,7 +521,7 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
   module.walk(
       [&](obelisk::sim::SimSampledReadOp) { needsSampledStatePlan = true; });
   bool needsWaveformMetadata = false;
-  bool needsNetDriverTopology = false;
+  bool needsNetDriverTopology = hasPassSwitch;
   module.walk([&](mlir::Operation *operation) {
     needsWaveformMetadata |= mlir::isa<
         obelisk::sim::SimDumpOpenOp, obelisk::sim::SimDumpOpenStringOp,
