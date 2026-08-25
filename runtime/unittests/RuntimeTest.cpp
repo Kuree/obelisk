@@ -947,6 +947,49 @@ struct DpiObservation {
   int userKey = 0;
 };
 
+TEST(RuntimeDPI, ImplementsCanonicalPackedVectorUtilities) {
+  EXPECT_STREQ(svDpiVersion(), "1800-2005");
+  EXPECT_EQ(SV_PACKED_DATA_NELEMS(65), 3);
+  EXPECT_EQ(SV_GET_UNSIGNED_BITS(UINT32_C(0x1234abcd), 12),
+            UINT32_C(0xbcd));
+
+  svBitVecVal bits[3]{UINT32_C(0x80000001), UINT32_C(0x00000003), 0};
+  EXPECT_EQ(svGetBitselBit(bits, 0), sv_1);
+  EXPECT_EQ(svGetBitselBit(bits, 31), sv_1);
+  EXPECT_EQ(svGetBitselBit(bits, 33), sv_1);
+  svPutBitselBit(bits, 32, sv_1);
+  EXPECT_EQ(bits[1], UINT32_C(3));
+  svPutBitselBit(bits, 33, sv_0);
+  EXPECT_EQ(bits[1], UINT32_C(1));
+
+  svBitVecVal bitPart = 0;
+  svGetPartselBit(&bitPart, bits, 28, 8);
+  EXPECT_EQ(bitPart, UINT32_C(0x18));
+  svPutPartselBit(bits, UINT32_C(0xa5), 30, 8);
+  svGetPartselBit(&bitPart, bits, 30, 8);
+  EXPECT_EQ(bitPart, UINT32_C(0xa5));
+
+  svLogicVecVal logic[2]{{0, 0}, {0, 0}};
+  svPutBitselLogic(logic, 0, sv_1);
+  svPutBitselLogic(logic, 31, sv_z);
+  svPutBitselLogic(logic, 32, sv_x);
+  svPutBitselLogic(logic, 33, sv_0);
+  EXPECT_EQ(svGetBitselLogic(logic, 0), sv_1);
+  EXPECT_EQ(svGetBitselLogic(logic, 31), sv_z);
+  EXPECT_EQ(svGetBitselLogic(logic, 32), sv_x);
+  EXPECT_EQ(svGetBitselLogic(logic, 33), sv_0);
+
+  svLogicVecVal logicPart{};
+  svGetPartselLogic(&logicPart, logic, 30, 4);
+  EXPECT_EQ(logicPart.aval, UINT32_C(4));
+  EXPECT_EQ(logicPart.bval, UINT32_C(6));
+  svLogicVecVal replacement{UINT32_C(0xa), UINT32_C(0xc)};
+  svPutPartselLogic(logic, replacement, 29, 4);
+  svGetPartselLogic(&logicPart, logic, 29, 4);
+  EXPECT_EQ(logicPart.aval, replacement.aval);
+  EXPECT_EQ(logicPart.bval, replacement.bval);
+}
+
 obelisk_rt_status observeDpiCall(obelisk_rt_context *context, uint32_t importID,
                                  const obelisk_rt_import_input_v1 *inputs,
                                  uint32_t inputCount,

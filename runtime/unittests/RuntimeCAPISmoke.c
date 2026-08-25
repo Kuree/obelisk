@@ -2,6 +2,7 @@
 
 #include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Runtime/StableHandle.h"
+#include "svdpi.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -305,9 +306,20 @@ int obelisk_runtime_c_api_smoke(void) {
   obelisk_rt_stable_handle_v1 decoded = {0};
   uint64_t stable =
       obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_STATIC, 7, -3);
+  svLogicVecVal logic[2] = {{0, 0}, {0, 0}};
+  svLogicVecVal selected = {0, 0};
 
   if (OBELISK_RT_VERSION != 1u)
     return 1;
+  if (strcmp(svDpiVersion(), "1800-2005") != 0 ||
+      SV_PACKED_DATA_NELEMS(33) != 2 ||
+      SV_GET_UNSIGNED_BITS(UINT32_C(0xfeedbeef), 8) != UINT32_C(0xef))
+    return 21;
+  svPutBitselLogic(logic, 31, sv_z);
+  svPutBitselLogic(logic, 32, sv_x);
+  svGetPartselLogic(&selected, logic, 31, 2);
+  if (selected.aval != UINT32_C(2) || selected.bval != UINT32_C(3))
+    return 22;
   if (!obelisk_rt_stable_handle_decode(stable, &decoded) ||
       decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.id != 7 ||
       decoded.offset != -3 ||

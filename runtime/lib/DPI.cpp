@@ -278,7 +278,101 @@ obelisk_rt_v1_dpi_string_copy(obelisk_rt_context *context, const char *string,
                                      outString);
 }
 
-extern "C" const char *svDpiVersion(void) { return "1800-2023"; }
+extern "C" const char *svDpiVersion(void) { return "1800-2005"; }
+
+extern "C" svBit svGetBitselBit(const svBitVecVal *source, int index) {
+  if (!source || index < 0)
+    return sv_0;
+  return static_cast<svBit>((source[static_cast<unsigned>(index) / 32] >>
+                             (static_cast<unsigned>(index) % 32)) &
+                            1U);
+}
+
+extern "C" svLogic svGetBitselLogic(const svLogicVecVal *source, int index) {
+  if (!source || index < 0)
+    return sv_0;
+  unsigned word = static_cast<unsigned>(index) / 32;
+  unsigned bit = static_cast<unsigned>(index) % 32;
+  return static_cast<svLogic>(((source[word].aval >> bit) & 1U) |
+                              (((source[word].bval >> bit) & 1U) << 1));
+}
+
+extern "C" void svPutBitselBit(svBitVecVal *destination, int index,
+                                 svBit source) {
+  if (!destination || index < 0)
+    return;
+  unsigned word = static_cast<unsigned>(index) / 32;
+  unsigned bit = static_cast<unsigned>(index) % 32;
+  uint32_t mask = uint32_t{1} << bit;
+  destination[word] = (destination[word] & ~mask) |
+                      (static_cast<uint32_t>(source & 1U) << bit);
+}
+
+extern "C" void svPutBitselLogic(svLogicVecVal *destination, int index,
+                                   svLogic source) {
+  if (!destination || index < 0)
+    return;
+  unsigned word = static_cast<unsigned>(index) / 32;
+  unsigned bit = static_cast<unsigned>(index) % 32;
+  uint32_t mask = uint32_t{1} << bit;
+  destination[word].aval =
+      (destination[word].aval & ~mask) |
+      (static_cast<uint32_t>(source & 1U) << bit);
+  destination[word].bval =
+      (destination[word].bval & ~mask) |
+      (static_cast<uint32_t>((source >> 1) & 1U) << bit);
+}
+
+extern "C" void svGetPartselBit(svBitVecVal *destination,
+                                  const svBitVecVal *source, int index,
+                                  int width) {
+  if (!destination)
+    return;
+  *destination = 0;
+  if (!source || index < 0 || width <= 0 || width > 32)
+    return;
+  for (int bit = 0; bit != width; ++bit)
+    *destination |= static_cast<uint32_t>(svGetBitselBit(source, index + bit))
+                    << bit;
+}
+
+extern "C" void svGetPartselLogic(svLogicVecVal *destination,
+                                    const svLogicVecVal *source, int index,
+                                    int width) {
+  if (!destination)
+    return;
+  destination->aval = 0;
+  destination->bval = 0;
+  if (!source || index < 0 || width <= 0 || width > 32)
+    return;
+  for (int bit = 0; bit != width; ++bit) {
+    svLogic value = svGetBitselLogic(source, index + bit);
+    destination->aval |= static_cast<uint32_t>(value & 1U) << bit;
+    destination->bval |= static_cast<uint32_t>((value >> 1) & 1U) << bit;
+  }
+}
+
+extern "C" void svPutPartselBit(svBitVecVal *destination,
+                                  const svBitVecVal source, int index,
+                                  int width) {
+  if (!destination || index < 0 || width <= 0 || width > 32)
+    return;
+  for (int bit = 0; bit != width; ++bit)
+    svPutBitselBit(destination, index + bit,
+                   static_cast<svBit>((source >> bit) & 1U));
+}
+
+extern "C" void svPutPartselLogic(svLogicVecVal *destination,
+                                    const svLogicVecVal source, int index,
+                                    int width) {
+  if (!destination || index < 0 || width <= 0 || width > 32)
+    return;
+  for (int bit = 0; bit != width; ++bit) {
+    svLogic value = static_cast<svLogic>(((source.aval >> bit) & 1U) |
+                                         (((source.bval >> bit) & 1U) << 1));
+    svPutBitselLogic(destination, index + bit, value);
+  }
+}
 
 extern "C" svScope svGetScope(void) {
   return activeDpiCall ? activeDpiCall->scope : nullptr;

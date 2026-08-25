@@ -899,7 +899,10 @@ one commit.
     task cancellation, and nested-call behavior.
 49. **D7 — Complete `svdpi.h`/C-layer conformance (Annexes H-I).** Audit every
     required type, macro, scope/time/userdata routine, canonical header
-    signature, C/C++ compatibility, and error/lifetime rule after D1-D6.
+    signature, C/C++ compatibility, and error/lifetime rule after D1-D6. The
+    scalar/packed layer now includes the canonical size/mask macros and exact
+    bit-select and narrow part-select helpers; open-array-dependent declarations
+    remain owned by D3 rather than advertising unimplemented runtime symbols.
 
 ## Optional non-standard annex tail
 

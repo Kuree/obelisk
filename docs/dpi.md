@@ -121,9 +121,11 @@ registers the C thunks before the root process is spawned.
 
 ## Context functions
 
-The supplied `svdpi.h` exposes scope get/set and lookup, scope names, per-scope
-user data, caller file and line, simulation time, time unit, and time
-precision. Scope handles are stable for the lifetime of one runtime context.
+The supplied `svdpi.h` exposes the canonical packed-vector size/mask macros,
+bit-select and narrow part-select utilities, scope get/set and lookup, scope
+names, per-scope user data, caller file and line, simulation time, time unit,
+and time precision. Scope handles are stable for the lifetime of one runtime
+context.
 Nested calls restore the previous thread-local active scope. A nonzero C
 return from an imported task reports the dedicated unsupported-disable status.
 Both execution tiers stop the current process before committing copy-outs or
