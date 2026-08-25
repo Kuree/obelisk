@@ -1116,6 +1116,33 @@ one parse operation in native and bytecode IR. Dynamic scan format
 expressions, variable-size `$fread` destinations, and the remaining thinly
 tested EOF/error corners remain explicit L19 residuals.
 
+L14's configuration closure records the effective elaborated binding on only
+the affected Slang module and checker instance operations and exposes it
+through the opt-in, hierarchically sorted `-emit-bindings` report. Ordered
+default library lists,
+cell and exact-instance `use` or `liblist` rules, parameter assignments,
+multiple design roots, nested configuration selection, and instance arrays all
+retain Slang's elaboration result. Exact-instance selection is tested over a
+conflicting cell rule and inherited default, while bind targets, directly
+inserted module or checker instances, and descendants remain distinct even
+below a nested configuration. Rule locations print only a reproducible
+basename, line, and column. Slang deliberately does not expose configuration
+declaration syntax
+through semantic AST visitation, so this reports effective binding and the
+effective rule where Slang retains it, not a reconstructed source-rule AST.
+
+The provenance attributes are removed before semantic lowering. Exact-base
+SHA-256 comparisons are byte-identical for ordinary `-emit-slang`, named `-v`,
+`-y/-Y`, and `--libmap` inputs, and for ordinary and configured `-emit-sim`
+output. A no-configuration 16,384-element hierarchy compiles in 2.23 seconds
+at 108 MB RSS versus 2.20 seconds at 108 MB on the exact base. The binding
+report takes 0.01 seconds / 38 MB for 256 configured elements and 0.02 seconds
+/ 41 MB for 1024; larger array elaboration follows the same existing frontend
+scaling curve as base `-emit-slang`. The focused configured design compiles in
+0.29 seconds / 77 MB native and 0.15 seconds / 73 MB bytecode and simulates
+below timer resolution in both tiers. No ordinary scheduler or runtime state is
+added.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -1150,7 +1177,7 @@ tested EOF/error corners remain explicit L19 residuals.
 | 30 Specify blocks | Partial | Specparams and specify blocks are imported. Whole and fixed packed-select parallel/full multi-source paths, including `if`/`ifnone`, edge-sensitive `if`, unknown/positive/negative polarity, all standard static one/two/three/six/twelve transition-delay tuples, and statically disjoint ordinary destination driver spans execute through compact inertial drivers in both tiers; overlapping paths arbitrate independently per selected destination bit and four-state transition class, and zero-time derived continuous outputs retain same-time edge qualification. Direct procedural edge destinations execute for exact single-source recurring controls and proven implicit sensitivity. Source event lists/derived controls and delayed procedural dependencies, atomic masked path delays for the complementary strength banks of `bufif`/`notif`, pulse controls and limits, and `showcancelled`/`noshowcancelled` remain. Unsupported forms receive targeted Clause 30 diagnostics instead of being silently erased. |
 | 31 Timing checks | Semantic only | System timing-check nodes are imported and now receive a targeted Clause 31 diagnostic instead of being silently erased. G5 implements all stability-window and clock/control checks, edge and condition forms, notifiers, vectors, negative checks, and violation scheduling. |
 | 32 SDF backannotation | Missing | `$sdf_annotate`, SDF parsing/mapping, multiple annotation, pulse limits, and delay replacement are absent. |
-| 33 Configuring a design | Partial | Module-library discovery accepts ordered `-y` directories, `-Y` and `+libext+` extension lists, conventional `-v` files (with `-l` retained as an alias), and ordered `--libmap` files. Library maps implement declarations, recursive relative includes, wildcard specificity, per-library include directories, duplicate mapping diagnostics, declaration-order binding, and optional primary-unit macro inheritance through the frontend's single-pass precompile model. Directory discovery stays lazy and does not parse unrelated files; explicit library files and arbitrary library-map patterns are syntax-parsed up front as permitted by 33.5.1. A focused probe also proves basic `design`, `default liblist`, `instance ... use`, and selecting a config as a top affect elaboration. Config cell/config forms, nested rules, diagnostics, and binding reports remain. |
+| 33 Configuring a design | Executable for the audited surface | Module-library discovery accepts ordered `-y` directories, `-Y` and `+libext+` extension lists, conventional `-v` files (with `-l` retained as an alias), and ordered `--libmap` files. Library maps implement declarations, recursive relative includes, wildcard specificity, per-library include directories, duplicate mapping diagnostics, declaration-order binding, and optional primary-unit macro inheritance through the frontend's single-pass precompile model. Directory discovery stays lazy and does not parse unrelated files; explicit library files and arbitrary library-map patterns are syntax-parsed up front as permitted by 33.5.1. Configurations execute ordered default library lists; cell and exact-instance `use`, `liblist`, and parameter rules; multiple roots; nested configuration selection; arrays; and bind interaction. `-emit-bindings` deterministically reports the effective selected cell, config/root/liblist, bind provenance, and retained rule location. The boundary is intentionally effective elaboration: Slang does not expose the configuration declaration source AST to semantic visitors, so Obelisk does not reconstruct a source-rule tree. |
 | 34 Protected envelopes | Missing | Ordinary pragmas do not provide the standard encryption/decryption envelope flow. Implement required encodings, cipher/key/digest descriptors, key-provider integration, nested decrypted envelopes, diagnostics, and preprocessing order. |
 | 35 DPI | Partial | Imported zero-time functions and synchronous tasks, C thunks, every legal scalar formal type including four-state `integer` and `time`, fixed-packed/string/chandle marshalling, deprecated `"DPI"` spelling, context scope APIs, linking, signature-conflict diagnostics, and header generation execute. Exports, open/unpacked arrays and structs, suspending exported-task re-entry, and disable acknowledgement are missing. `ref` is not legal on a DPI import and is therefore not a missing import feature. |
 | 36-39 PLI/VPI and assertion API | Excluded | Explicitly outside this project goal. |
@@ -1259,10 +1286,14 @@ one commit.
 13. **L13 — Hierarchy, ports, and generate closure (23, 25, 27).** Fix the
     remaining legal port conversions/connections, hierarchical paths, upward
     lookup, generated scope naming, and parameter binding.
-14. **L14 — Libraries, bind, and configurations (23.11, 33).** Module-library
-    discovery and library-map syntax are implemented with deterministic option,
-    directory, extension, map, and declaration ordering. Complete config
-    cell/instance/config rules, nested selection, and binding reports.
+14. **L14 — Libraries, bind, and configurations (23.11, 33), completed.**
+    Module-library discovery and library-map syntax use deterministic option,
+    directory, extension, map, and declaration ordering. Effective config
+    cell/instance/config selection, nested and multiple-root elaboration,
+    parameter rules, module/checker bind provenance, diagnostics, and
+    deterministic binding reports are implemented. Reports intentionally stop
+    at Slang's effective
+    semantic binding rather than reconstructing its unavailable source AST.
 15. **L15 — Program control (24.7), completed.** `$exit` follows dynamic
     program-thread ancestry, terminates all roots and descendants of that
     program instance, and waits for every other program before finalization.

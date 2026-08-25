@@ -19,6 +19,7 @@
 #include "obelisk/Dialect/Simulation/SimulationDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Dialect/Slang/SlangDialect.h"
+#include "obelisk/Dialect/Slang/SlangOps.h"
 #include "obelisk/Frontend/Frontend.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -39,6 +40,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/StringSaver.h"
 #include "llvm/Support/ThreadPool.h"
@@ -427,6 +429,61 @@ static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
   return success();
 }
 
+static void writeBindingReport(ModuleOp module, raw_ostream &output) {
+  SmallVector<Operation *> instances;
+  module.walk([&](Operation *instance) {
+    if (!isa<obelisk::slangir::InstanceSymbolOp,
+             obelisk::slangir::CheckerInstanceSymbolOp>(instance))
+      return;
+    if (instance->hasAttr("configuration") ||
+        instance->hasAttr("is_from_bind") ||
+        instance->hasAttr("is_below_bind") ||
+        instance->hasAttr("is_bind_target"))
+      instances.push_back(instance);
+  });
+  llvm::sort(instances, [](Operation *lhs, Operation *rhs) {
+    return lhs->getAttrOfType<StringAttr>("hierarchical_name").getValue() <
+           rhs->getAttrOfType<StringAttr>("hierarchical_name").getValue();
+  });
+
+  for (Operation *instance : instances) {
+    output
+        << "binding "
+        << instance->getAttrOfType<StringAttr>("hierarchical_name").getValue()
+        << " -> "
+        << instance->getAttrOfType<StringAttr>("selected_cell").getValue();
+    if (instance->getAttrOfType<BoolAttr>("is_from_bind"))
+      output << " from-bind";
+    if (instance->getAttrOfType<BoolAttr>("is_below_bind"))
+      output << " below-bind";
+    if (instance->getAttrOfType<BoolAttr>("is_bind_target"))
+      output << " bind-target";
+    if (StringAttr config =
+            instance->getAttrOfType<StringAttr>("configuration"))
+      output << " config=" << config.getValue() << " root="
+             << instance->getAttrOfType<StringAttr>("configuration_root")
+                    .getValue();
+    if (ArrayAttr liblist =
+            instance->getAttrOfType<ArrayAttr>("configuration_liblist")) {
+      output << " liblist=[";
+      llvm::interleaveComma(liblist, output, [&](Attribute library) {
+        output << cast<StringAttr>(library).getValue();
+      });
+      output << ']';
+    }
+    if (StringAttr kind =
+            instance->getAttrOfType<StringAttr>("configuration_rule_kind")) {
+      output << " rule=" << kind.getValue();
+      auto range = cast<obelisk::slangir::SourceRangeType>(
+          instance->getAttrOfType<TypeAttr>("configuration_rule_source_range")
+              .getValue());
+      output << '@' << sys::path::filename(range.getStartFile()) << ':'
+             << range.getStartLine() << ':' << range.getStartColumn();
+    }
+    output << '\n';
+  }
+}
+
 static obelisk::frontend::FrontendOptions
 buildFrontendOptions(const InputArgList &args, bool &valid) {
   obelisk::frontend::FrontendOptions options;
@@ -619,11 +676,12 @@ static int executeCompilation(const InputArgList &args) {
       std::max(1u, llvm::hardware_concurrency().compute_thread_count()));
   frontendOptions.numThreads = resolvedCompilerThreads;
 
-  const Arg *action = args.getLastArg(OPT_E, OPT_emit_slang, OPT_emit_obelisk,
-                                      OPT_emit_sim, OPT_emit_schedule, OPT_c,
-                                      OPT_emit_llvm, OPT_emit_dpi_header);
+  const Arg *action = args.getLastArg(
+      OPT_E, OPT_emit_slang, OPT_emit_bindings, OPT_emit_obelisk, OPT_emit_sim,
+      OPT_emit_schedule, OPT_c, OPT_emit_llvm, OPT_emit_dpi_header);
   bool preprocess = action && action->getOption().matches(OPT_E);
   bool emitSlang = action && action->getOption().matches(OPT_emit_slang);
+  bool emitBindings = action && action->getOption().matches(OPT_emit_bindings);
   bool emitSim = action && action->getOption().matches(OPT_emit_sim);
   bool emitSchedule = action && action->getOption().matches(OPT_emit_schedule);
   bool emitObject = action && action->getOption().matches(OPT_c);
@@ -755,7 +813,7 @@ static int executeCompilation(const InputArgList &args) {
                            &context, pipelineScheduler));
   }
 
-  if (!emitSlang) {
+  if (!emitSlang && !emitBindings) {
     PassManager passManager(&context);
     if (args.hasArg(OPT_mlir_timing))
       passManager.enableTiming();
@@ -810,7 +868,9 @@ static int executeCompilation(const InputArgList &args) {
     return 1;
   }
 
-  if (emitDPIHeader) {
+  if (emitBindings) {
+    writeBindingReport(*module, output.os());
+  } else if (emitDPIHeader) {
     if (failed(writeDPIHeader(*module, output.os())))
       return 1;
   } else if (emitSchedule) {

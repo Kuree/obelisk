@@ -183,6 +183,114 @@ SourceRangeType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                            endFile, endLine, endColumn);
 }
 
+static LogicalResult verifyBindingProvenance(
+    Operation *op, std::optional<bool> isFromBind,
+    std::optional<bool> isBelowBind, std::optional<bool> isBindTarget,
+    std::optional<StringRef> selectedCell, bool hasConfiguration = false) {
+  auto requireTrue = [&](std::optional<bool> value,
+                         StringRef name) -> LogicalResult {
+    if (value && !*value)
+      return op->emitOpError() << name << " must be true when present";
+    return success();
+  };
+  if (failed(requireTrue(isFromBind, "is_from_bind")) ||
+      failed(requireTrue(isBelowBind, "is_below_bind")) ||
+      failed(requireTrue(isBindTarget, "is_bind_target")))
+    return failure();
+  unsigned provenanceCount = isFromBind.value_or(false) +
+                             isBelowBind.value_or(false) +
+                             isBindTarget.value_or(false);
+  if (provenanceCount > 1)
+    return op->emitOpError()
+           << "bind provenance flags must be mutually exclusive";
+
+  bool hasBindProvenance = provenanceCount != 0;
+  if ((hasBindProvenance || hasConfiguration) != selectedCell.has_value())
+    return op->emitOpError()
+           << "requires selected_cell exactly for bind or configuration "
+              "provenance";
+  if (selectedCell && selectedCell->empty())
+    return op->emitOpError() << "selected_cell must be nonempty";
+  return success();
+}
+
+LogicalResult InstanceSymbolOp::verify() {
+  auto getBool = [&](StringRef name) -> std::optional<bool> {
+    if (auto attr = (*this)->getAttrOfType<BoolAttr>(name))
+      return attr.getValue();
+    return std::nullopt;
+  };
+  auto getString = [&](StringRef name) -> std::optional<StringRef> {
+    if (auto attr = (*this)->getAttrOfType<StringAttr>(name))
+      return attr.getValue();
+    return std::nullopt;
+  };
+  std::optional<StringRef> configuration = getString("configuration");
+  std::optional<StringRef> configurationRoot = getString("configuration_root");
+  ArrayAttr configurationLiblist =
+      (*this)->getAttrOfType<ArrayAttr>("configuration_liblist");
+  std::optional<StringRef> ruleKind = getString("configuration_rule_kind");
+  TypeAttr ruleRange =
+      (*this)->getAttrOfType<TypeAttr>("configuration_rule_source_range");
+
+  bool hasConfiguration = configuration.has_value();
+  if (failed(verifyBindingProvenance(
+          *this, getBool("is_from_bind"), getBool("is_below_bind"),
+          getBool("is_bind_target"), getString("selected_cell"),
+          hasConfiguration)))
+    return failure();
+
+  bool hasRoot = configurationRoot.has_value();
+  bool hasLiblist = static_cast<bool>(configurationLiblist);
+  if (hasConfiguration != hasRoot || hasConfiguration != hasLiblist)
+    return emitOpError() << "requires configuration, configuration_root, and "
+                            "configuration_liblist together";
+  if (hasConfiguration && configuration->empty())
+    return emitOpError() << "configuration must be nonempty";
+  if (hasRoot && configurationRoot->empty())
+    return emitOpError() << "configuration_root must be nonempty";
+  if (hasLiblist)
+    for (Attribute library : configurationLiblist)
+      if (auto name = dyn_cast<StringAttr>(library);
+          name && name.getValue().empty())
+        return emitOpError()
+               << "configuration_liblist entries must be nonempty";
+
+  bool hasRuleKind = ruleKind.has_value();
+  bool hasRuleRange = static_cast<bool>(ruleRange);
+  if (hasRuleKind != hasRuleRange)
+    return emitOpError()
+           << "requires configuration rule kind and source range together";
+  if (hasRuleKind) {
+    if (!hasConfiguration)
+      return emitOpError()
+             << "configuration rule metadata requires a configuration";
+    StringRef kind = *ruleKind;
+    if (kind != "cell" && kind != "instance")
+      return emitOpError() << "has invalid configuration rule kind '" << kind
+                           << "'";
+    Type range = ruleRange.getValue();
+    if (!isa<SourceRangeType>(range))
+      return emitOpError()
+             << "configuration rule source range must be !slang.source_range";
+  }
+  return success();
+}
+
+LogicalResult CheckerInstanceSymbolOp::verify() {
+  auto getBool = [&](StringRef name) -> std::optional<bool> {
+    if (auto attr = (*this)->getAttrOfType<BoolAttr>(name))
+      return attr.getValue();
+    return std::nullopt;
+  };
+  std::optional<StringRef> selectedCell;
+  if (auto attr = (*this)->getAttrOfType<StringAttr>("selected_cell"))
+    selectedCell = attr.getValue();
+  return verifyBindingProvenance(*this, getBool("is_from_bind"),
+                                 getBool("is_below_bind"),
+                                 getBool("is_bind_target"), selectedCell);
+}
+
 static uint64_t astBodySize(Operation *operation) {
   if (operation->getNumRegions() != 1 || operation->getRegion(0).empty())
     return 0;

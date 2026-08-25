@@ -95,6 +95,50 @@ constexpr llvm::StringLiteral typeReferenceIdentityAttrName =
 // instances of a UDP share it without retaining frontend objects.
 constexpr llvm::StringLiteral udpMetadataAttrName = "udp_metadata";
 
+std::string getQualifiedLibraryCell(const slang::ast::Symbol &symbol,
+                                    StringRef cellName) {
+  std::string result;
+  if (const slang::SourceLibrary *library = symbol.getSourceLibrary();
+      library && !library->name.empty()) {
+    result += library->name;
+    result.push_back('.');
+  }
+  result += cellName;
+  return result;
+}
+
+StringRef getConfigurationRuleKind(const slang::ast::ConfigRule &rule) {
+  using slang::syntax::SyntaxKind;
+  switch (rule.syntax->kind) {
+  case SyntaxKind::CellConfigRule:
+    return "cell";
+  case SyntaxKind::InstanceConfigRule:
+    return "instance";
+  default:
+    return "unknown";
+  }
+}
+
+bool containsDirectBoundInstance(const slang::ast::Symbol &symbol) {
+  using slang::ast::InstanceFlags;
+  using slang::ast::SymbolKind;
+  switch (symbol.kind) {
+  case SymbolKind::Instance:
+    return symbol.as<slang::ast::InstanceSymbol>().body.flags.has(
+        InstanceFlags::FromBind);
+  case SymbolKind::CheckerInstance:
+    return symbol.as<slang::ast::CheckerInstanceSymbol>().body.flags.has(
+        InstanceFlags::FromBind);
+  case SymbolKind::InstanceArray:
+    return llvm::any_of(symbol.as<slang::ast::InstanceArraySymbol>().elements,
+                        [](const slang::ast::Symbol *element) {
+                          return containsDirectBoundInstance(*element);
+                        });
+  default:
+    return false;
+  }
+}
+
 std::string formatConstant(const slang::ConstantValue &value) {
   if (value.isString())
     return value.str();
@@ -2654,6 +2698,55 @@ private:
           isScopeMember |= &member == &node;
       if (!isScopeMember)
         SET_OP_ATTR(IsVirtualInterfaceTypeInstance, builder.getBoolAttr(true));
+
+      const auto flags = node.body.flags;
+      bool fromBind = flags.has(slang::ast::InstanceFlags::FromBind);
+      // Slang carries ParentFromBind on the directly inserted instance too,
+      // and propagates TargetedByBind through that inserted subtree. Normalize
+      // those implementation flags into the three disjoint provenance facts
+      // that the semantic tree and user-facing report promise.
+      bool belowBind =
+          !fromBind && flags.has(slang::ast::InstanceFlags::ParentFromBind);
+      bool bindTarget =
+          flags.has(slang::ast::InstanceFlags::TargetedByBind) &&
+          llvm::any_of(node.body.members(),
+                       [](const slang::ast::Symbol &member) {
+                         return containsDirectBoundInstance(member);
+                       });
+      if (fromBind)
+        attrs.set("is_from_bind", builder.getBoolAttr(true));
+      if (belowBind)
+        attrs.set("is_below_bind", builder.getBoolAttr(true));
+      if (bindTarget)
+        attrs.set("is_bind_target", builder.getBoolAttr(true));
+
+      // Slang has already applied every configuration and bind rule by this
+      // point. Freeze the effective result rather than rebuilding the source
+      // rule tree downstream; configuration declarations are intentionally
+      // not part of Slang's semantic AST visitation surface.
+      if (node.resolvedConfig || fromBind || belowBind || bindTarget)
+        attrs.set("selected_cell",
+                  builder.getStringAttr(getQualifiedLibraryCell(
+                      node.getDefinition(), node.getDefinition().name)));
+      if (const slang::ast::ResolvedConfig *config = node.resolvedConfig) {
+        attrs.set("configuration",
+                  builder.getStringAttr(getQualifiedLibraryCell(
+                      config->useConfig, config->useConfig.name)));
+        attrs.set("configuration_root",
+                  builder.getStringAttr(getSymbolPath(config->rootInstance)));
+        SmallVector<Attribute> liblist;
+        liblist.reserve(config->liblist.size());
+        for (const slang::SourceLibrary *library : config->liblist)
+          liblist.push_back(builder.getStringAttr(library->name));
+        attrs.set("configuration_liblist", builder.getArrayAttr(liblist));
+        if (const slang::ast::ConfigRule *rule = config->configRule) {
+          attrs.set("configuration_rule_kind",
+                    builder.getStringAttr(getConfigurationRuleKind(*rule)));
+          if (std::optional<TypeAttr> range =
+                  sourceRangeAttr(rule->syntax->sourceRange()))
+            attrs.set("configuration_rule_source_range", *range);
+        }
+      }
     } else if constexpr (std::same_as<T, slang::ast::ContinuousAssignSymbol>) {
       auto [strength0, strength1] = node.getDriveStrength();
       if (strength0)
@@ -3015,6 +3108,27 @@ private:
       setSymbolReference(attrs, node.body.checker,
                          Op::getReferencedCheckerSymbolAttrName(operationName),
                          Op::getReferencedCheckerPathAttrName(operationName));
+
+      const auto flags = node.body.flags;
+      bool fromBind = flags.has(slang::ast::InstanceFlags::FromBind);
+      bool belowBind =
+          !fromBind && flags.has(slang::ast::InstanceFlags::ParentFromBind);
+      bool bindTarget =
+          flags.has(slang::ast::InstanceFlags::TargetedByBind) &&
+          llvm::any_of(node.body.members(),
+                       [](const slang::ast::Symbol &member) {
+                         return containsDirectBoundInstance(member);
+                       });
+      if (fromBind)
+        attrs.set("is_from_bind", builder.getBoolAttr(true));
+      if (belowBind)
+        attrs.set("is_below_bind", builder.getBoolAttr(true));
+      if (bindTarget)
+        attrs.set("is_bind_target", builder.getBoolAttr(true));
+      if (fromBind || belowBind || bindTarget)
+        attrs.set("selected_cell",
+                  builder.getStringAttr(getQualifiedLibraryCell(
+                      node.body.checker, node.body.checker.name)));
 
       SmallVector<Attribute> formalSymbols;
       SmallVector<Attribute> formalPaths;

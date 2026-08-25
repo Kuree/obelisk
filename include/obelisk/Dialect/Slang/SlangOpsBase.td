@@ -257,8 +257,14 @@ class SlangCheckerInstanceASTNodeOp<string mnemonic>
         DenseI64ArrayAttr:$connection_has_actual,
         DenseI64ArrayAttr:$connection_has_output_initial,
         DenseI64ArrayAttr:$connection_attribute_counts,
-        BoolAttr:$is_procedural
-      ), [SlangVerifyCheckerInstanceMetadata]>;
+        BoolAttr:$is_procedural,
+        OptionalAttr<BoolAttr>:$is_from_bind,
+        OptionalAttr<BoolAttr>:$is_below_bind,
+        OptionalAttr<BoolAttr>:$is_bind_target,
+        OptionalAttr<StrAttr>:$selected_cell
+      ), [SlangVerifyCheckerInstanceMetadata]> {
+  let hasVerifier = 1;
+}
 
 class SlangCheckerInstanceBodyASTNodeOp<string mnemonic>
     : SlangSymbolTableASTNodeOp<mnemonic, (ins
@@ -304,8 +310,19 @@ class SlangInstanceASTNodeOp<string mnemonic>
         OptionalAttr<SymbolRefAttr>:$referenced_symbol,
         OptionalAttr<StrAttr>:$referenced_path,
         OptionalAttr<BoolAttr>:$is_uninstantiated,
-        OptionalAttr<BoolAttr>:$is_virtual_interface_type_instance
-      )>;
+        OptionalAttr<BoolAttr>:$is_virtual_interface_type_instance,
+        OptionalAttr<BoolAttr>:$is_from_bind,
+        OptionalAttr<BoolAttr>:$is_below_bind,
+        OptionalAttr<BoolAttr>:$is_bind_target,
+        OptionalAttr<StrAttr>:$selected_cell,
+        OptionalAttr<StrAttr>:$configuration,
+        OptionalAttr<StrAttr>:$configuration_root,
+        OptionalAttr<StrArrayAttr>:$configuration_liblist,
+        OptionalAttr<StrAttr>:$configuration_rule_kind,
+        OptionalAttr<TypeAttr>:$configuration_rule_source_range
+      )> {
+  let hasVerifier = 1;
+}
 
 def PortConnectionOp : Op<SlangDialect, "port.connection", [
     NoTerminator, SlangSemanticASTNode

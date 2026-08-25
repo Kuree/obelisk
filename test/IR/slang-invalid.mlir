@@ -1,6 +1,272 @@
 // RUN: obelisk-opt --split-input-file --verify-diagnostics %s
 
 module {
+  // expected-error @+1 {{is_from_bind must be true when present}}
+  slang.symbol.instance attributes {
+    is_from_bind = false, node_id = 0 : i64, selected_cell = "work.child",
+    sym_name = "child"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{requires selected_cell exactly for bind or configuration provenance}}
+  slang.symbol.instance attributes {
+    is_bind_target = true, node_id = 0 : i64, sym_name = "target"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{bind provenance flags must be mutually exclusive}}
+  slang.symbol.instance attributes {
+    is_below_bind = true, is_from_bind = true, node_id = 0 : i64,
+    selected_cell = "work.child", sym_name = "child"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{bind provenance flags must be mutually exclusive}}
+  slang.symbol.instance attributes {
+    is_bind_target = true, is_from_bind = true, node_id = 0 : i64,
+    selected_cell = "work.child", sym_name = "child"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{bind provenance flags must be mutually exclusive}}
+  slang.symbol.instance attributes {
+    is_below_bind = true, is_bind_target = true, node_id = 0 : i64,
+    selected_cell = "work.child", sym_name = "child"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{requires selected_cell exactly for bind or configuration provenance}}
+  slang.symbol.instance attributes {
+    node_id = 0 : i64, selected_cell = "work.child", sym_name = "child"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{selected_cell must be nonempty}}
+  slang.symbol.instance attributes {
+    is_from_bind = true, node_id = 0 : i64, selected_cell = "",
+    sym_name = "child"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{requires configuration, configuration_root, and configuration_liblist together}}
+  slang.symbol.instance attributes {
+    configuration = "work.cfg", node_id = 0 : i64,
+    selected_cell = "work.child", sym_name = "child"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{configuration must be nonempty}}
+  slang.symbol.instance attributes {
+    configuration = "", configuration_liblist = ["work"],
+    configuration_root = "top", node_id = 0 : i64,
+    selected_cell = "work.child", sym_name = "child"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{configuration_root must be nonempty}}
+  slang.symbol.instance attributes {
+    configuration = "work.cfg", configuration_liblist = ["work"],
+    configuration_root = "", node_id = 0 : i64,
+    selected_cell = "work.child", sym_name = "child"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{configuration_liblist entries must be nonempty}}
+  slang.symbol.instance attributes {
+    configuration = "work.cfg", configuration_liblist = [""],
+    configuration_root = "top", node_id = 0 : i64,
+    selected_cell = "work.child", sym_name = "child"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{requires configuration rule kind and source range together}}
+  slang.symbol.instance attributes {
+    configuration = "work.cfg", configuration_liblist = ["work"],
+    configuration_root = "top", configuration_rule_kind = "cell",
+    node_id = 0 : i64, selected_cell = "work.child", sym_name = "child"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{requires configuration rule kind and source range together}}
+  slang.symbol.instance attributes {
+    configuration = "work.cfg", configuration_liblist = ["work"],
+    configuration_root = "top",
+    configuration_rule_source_range = !slang.source_range<"config.sv", 1, 1, "config.sv", 1, 20, "">,
+    node_id = 0 : i64, selected_cell = "work.child", sym_name = "child"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{configuration rule metadata requires a configuration}}
+  slang.symbol.instance attributes {
+    configuration_rule_kind = "cell",
+    configuration_rule_source_range = !slang.source_range<"config.sv", 1, 1, "config.sv", 1, 20, "">,
+    is_from_bind = true, node_id = 0 : i64,
+    selected_cell = "work.child", sym_name = "child"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{configuration rule source range must be !slang.source_range}}
+  slang.symbol.instance attributes {
+    configuration = "work.cfg", configuration_liblist = ["work"],
+    configuration_root = "top", configuration_rule_kind = "cell",
+    configuration_rule_source_range = i32, node_id = 0 : i64,
+    selected_cell = "work.child", sym_name = "child"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{has invalid configuration rule kind 'other'}}
+  slang.symbol.instance attributes {
+    configuration = "work.cfg", configuration_liblist = ["work"],
+    configuration_root = "top", configuration_rule_kind = "other",
+    configuration_rule_source_range = !slang.source_range<"config.sv", 1, 1, "config.sv", 1, 20, "">,
+    node_id = 0 : i64, selected_cell = "work.child", sym_name = "child"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{bind provenance flags must be mutually exclusive}}
+  slang.symbol.checker_instance attributes {
+    connection_actual_kinds = array<i64>, connection_attribute_counts = array<i64>,
+    connection_count = 0 : i64, connection_formal_paths = [],
+    connection_formal_symbols = [], connection_has_actual = array<i64>,
+    connection_has_output_initial = array<i64>, is_below_bind = true,
+    is_from_bind = true, is_procedural = false, node_id = 0 : i64,
+    referenced_checker_path = "checker", referenced_checker_symbol = @checker,
+    selected_cell = "work.checker", sym_name = "instance"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{bind provenance flags must be mutually exclusive}}
+  slang.symbol.checker_instance attributes {
+    connection_actual_kinds = array<i64>, connection_attribute_counts = array<i64>,
+    connection_count = 0 : i64, connection_formal_paths = [],
+    connection_formal_symbols = [], connection_has_actual = array<i64>,
+    connection_has_output_initial = array<i64>, is_bind_target = true,
+    is_from_bind = true, is_procedural = false, node_id = 0 : i64,
+    referenced_checker_path = "checker", referenced_checker_symbol = @checker,
+    selected_cell = "work.checker", sym_name = "instance"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{bind provenance flags must be mutually exclusive}}
+  slang.symbol.checker_instance attributes {
+    connection_actual_kinds = array<i64>, connection_attribute_counts = array<i64>,
+    connection_count = 0 : i64, connection_formal_paths = [],
+    connection_formal_symbols = [], connection_has_actual = array<i64>,
+    connection_has_output_initial = array<i64>, is_below_bind = true,
+    is_bind_target = true, is_procedural = false, node_id = 0 : i64,
+    referenced_checker_path = "checker", referenced_checker_symbol = @checker,
+    selected_cell = "work.checker", sym_name = "instance"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{requires selected_cell exactly for bind or configuration provenance}}
+  slang.symbol.checker_instance attributes {
+    connection_actual_kinds = array<i64>, connection_attribute_counts = array<i64>,
+    connection_count = 0 : i64, connection_formal_paths = [],
+    connection_formal_symbols = [], connection_has_actual = array<i64>,
+    connection_has_output_initial = array<i64>, is_procedural = false,
+    node_id = 0 : i64, referenced_checker_path = "checker",
+    referenced_checker_symbol = @checker, selected_cell = "work.checker",
+    sym_name = "instance"
+  } {
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{selected_cell must be nonempty}}
+  slang.symbol.checker_instance attributes {
+    connection_actual_kinds = array<i64>, connection_attribute_counts = array<i64>,
+    connection_count = 0 : i64, connection_formal_paths = [],
+    connection_formal_symbols = [], connection_has_actual = array<i64>,
+    connection_has_output_initial = array<i64>, is_from_bind = true,
+    is_procedural = false, node_id = 0 : i64,
+    referenced_checker_path = "checker", referenced_checker_symbol = @checker,
+    selected_cell = "", sym_name = "instance"
+  } {
+  }
+}
+
+// -----
+
+module {
   slang.symbol.variable attributes {
     node_id = 0 : i64, sym_name = "bad_width",
     // expected-error @+1 {{integral width must be greater than zero}}

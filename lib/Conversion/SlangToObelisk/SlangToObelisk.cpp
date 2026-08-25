@@ -384,10 +384,25 @@ public:
         *static_cast<const SlangTypeConverter *>(this->getTypeConverter());
     NamedAttrList attrs;
     for (NamedAttribute attr : op->getAttrs()) {
-      if constexpr (std::is_same_v<SourceOp,
-                                   slangir::GenerateBlockSymbolOp>)
+      if constexpr (std::is_same_v<SourceOp, slangir::GenerateBlockSymbolOp>)
         if (attr.getName() == "is_uninstantiated")
           continue;
+      if constexpr (std::is_same_v<SourceOp, slangir::InstanceSymbolOp> ||
+                    std::is_same_v<SourceOp,
+                                   slangir::CheckerInstanceSymbolOp>) {
+        // Binding provenance is an opt-in frontend report surface. The
+        // selected hierarchy itself is already frozen in the semantic tree;
+        // dropping its explanation here keeps executable Obelisk and
+        // simulation IR identical to the pre-reporting pipeline.
+        StringRef name = attr.getName().getValue();
+        if (name == "is_from_bind" || name == "is_below_bind" ||
+            name == "is_bind_target" || name == "selected_cell" ||
+            name == "configuration" || name == "configuration_root" ||
+            name == "configuration_liblist" ||
+            name == "configuration_rule_kind" ||
+            name == "configuration_rule_source_range")
+          continue;
+      }
       FailureOr<Attribute> converted =
           converter.convertAttribute(attr.getValue());
       if (failed(converted))
