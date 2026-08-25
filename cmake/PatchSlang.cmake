@@ -781,6 +781,295 @@ endif()
 
 file(WRITE "${select_expressions_source}" "${contents}")
 
+# IEEE 1800-2017 8.24 permits an out-of-block method definition whose class
+# scope is itself nested, for example C::Nested::method. Slang v11 parses only
+# one class qualifier and keys definitions by that unqualified class name.
+# Accept an arbitrary identifier-only class scope and key it canonically so
+# same-named nested classes remain distinct.
+set(parser_members_source
+  "${SOURCE_DIR}/source/parsing/Parser_members.cpp")
+file(READ "${parser_members_source}" contents)
+set(old_code [[
+static bool checkSubroutineName(const NameSyntax& name) {
+    auto checkKind = [](auto& node) {
+        return node.kind == SyntaxKind::IdentifierName || node.kind == SyntaxKind::ConstructorName;
+    };
+
+    if (name.kind == SyntaxKind::ScopedName) {
+        auto& scoped = name.as<ScopedNameSyntax>();
+        return checkKind(*scoped.left) && checkKind(*scoped.right);
+    }
+
+    return checkKind(name);
+}
+]])
+set(new_code [[
+static bool checkSubroutineName(const NameSyntax& name) {
+    auto checkFinalKind = [](const NameSyntax& node) {
+        return node.kind == SyntaxKind::IdentifierName ||
+               node.kind == SyntaxKind::ConstructorName;
+    };
+
+    auto checkClassScope = [&](const auto& self, const NameSyntax& node) -> bool {
+        if (node.kind == SyntaxKind::IdentifierName)
+            return true;
+        if (node.kind != SyntaxKind::ScopedName)
+            return false;
+
+        auto& scoped = node.as<ScopedNameSyntax>();
+        return scoped.separator.kind == TokenKind::DoubleColon && self(self, *scoped.left) &&
+               scoped.right->kind == SyntaxKind::IdentifierName;
+    };
+
+    if (name.kind == SyntaxKind::ScopedName) {
+        auto& scoped = name.as<ScopedNameSyntax>();
+        if (scoped.separator.kind == TokenKind::Dot)
+            return checkFinalKind(*scoped.left) && checkFinalKind(*scoped.right);
+        return scoped.separator.kind == TokenKind::DoubleColon &&
+               checkClassScope(checkClassScope, *scoped.left) && checkFinalKind(*scoped.right);
+    }
+
+    return checkFinalKind(name);
+}
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's out-of-block subroutine-name check no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+  file(WRITE "${parser_members_source}" "${contents}")
+endif()
+
+set(compilation_header "${SOURCE_DIR}/include/slang/ast/Compilation.h")
+file(READ "${compilation_header}" contents)
+set(old_code [[
+    mutable flat_hash_map<
+        std::tuple<std::string_view, std::string_view, const Scope*>,
+        std::tuple<const syntax::SyntaxNode*, const syntax::ScopedNameSyntax*, SymbolIndex, bool>>
+        outOfBlockDecls;
+]])
+set(new_code [[
+    mutable flat_hash_map<
+        std::tuple<std::string, std::string_view, const Scope*>,
+        std::tuple<const syntax::SyntaxNode*, const syntax::ScopedNameSyntax*, SymbolIndex, bool>>
+        outOfBlockDecls;
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's out-of-block declaration map no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+  file(WRITE "${compilation_header}" "${contents}")
+endif()
+
+set(compilation_source "${SOURCE_DIR}/source/ast/Compilation.cpp")
+file(READ "${compilation_source}" contents)
+set(old_code [[
+void Compilation::addOutOfBlockDecl(const Scope& scope, const ScopedNameSyntax& name,
+                                    const SyntaxNode& syntax, SymbolIndex index) {
+    SLANG_ASSERT(!isFrozen());
+
+    std::string_view className = name.left->getLastToken().valueText();
+    std::string_view declName = name.right->getLastToken().valueText();
+    auto [it, inserted] = outOfBlockDecls.emplace(std::make_tuple(className, declName, &scope),
+                                                  std::make_tuple(&syntax, &name, index, false));
+
+    if (!inserted && !className.empty() && !declName.empty()) {
+        std::string combined = fmt::format("{}::{}", className, declName);
+        auto range = std::get<1>(it->second)->sourceRange();
+
+        auto& diag = scope.addDiag(diag::Redefinition, name.sourceRange());
+        diag << combined;
+        diag.addNote(diag::NotePreviousDefinition, range);
+    }
+}
+
+std::tuple<const SyntaxNode*, SymbolIndex, bool*> Compilation::findOutOfBlockDecl(
+    const Scope& scope, std::string_view className, std::string_view declName) const {
+
+    auto it = outOfBlockDecls.find({className, declName, &scope});
+    if (it != outOfBlockDecls.end()) {
+        auto& [syntax, name, index, used] = it->second;
+        return {syntax, index, &used};
+    }
+
+    return {nullptr, SymbolIndex(), nullptr};
+}
+]])
+set(new_code [[
+static void appendClassScopeName(const NameSyntax& name, std::string& result) {
+    if (name.kind == SyntaxKind::ScopedName) {
+        auto& scoped = name.as<ScopedNameSyntax>();
+        appendClassScopeName(*scoped.left, result);
+        result += "::";
+        appendClassScopeName(*scoped.right, result);
+        return;
+    }
+
+    result += name.getLastToken().valueText();
+}
+
+void Compilation::addOutOfBlockDecl(const Scope& scope, const ScopedNameSyntax& name,
+                                    const SyntaxNode& syntax, SymbolIndex index) {
+    SLANG_ASSERT(!isFrozen());
+
+    std::string className;
+    appendClassScopeName(*name.left, className);
+    std::string_view declName = name.right->getLastToken().valueText();
+    auto [it, inserted] = outOfBlockDecls.emplace(std::make_tuple(className, declName, &scope),
+                                                  std::make_tuple(&syntax, &name, index, false));
+
+    if (!inserted && !className.empty() && !declName.empty()) {
+        std::string combined = fmt::format("{}::{}", className, declName);
+        auto range = std::get<1>(it->second)->sourceRange();
+
+        auto& diag = scope.addDiag(diag::Redefinition, name.sourceRange());
+        diag << combined;
+        diag.addNote(diag::NotePreviousDefinition, range);
+    }
+}
+
+std::tuple<const SyntaxNode*, SymbolIndex, bool*> Compilation::findOutOfBlockDecl(
+    const Scope& scope, std::string_view className, std::string_view declName) const {
+
+    std::string classPath(className);
+    const Scope* declarationScope = &scope;
+    while (declarationScope->asSymbol().kind == SymbolKind::ClassType) {
+        classPath.insert(0, "::");
+        classPath.insert(0, declarationScope->asSymbol().name);
+        declarationScope = declarationScope->asSymbol().getParentScope();
+        SLANG_ASSERT(declarationScope);
+    }
+
+    auto it = outOfBlockDecls.find({classPath, declName, declarationScope});
+    if (it != outOfBlockDecls.end()) {
+        auto& [syntax, name, index, used] = it->second;
+        return {syntax, index, &used};
+    }
+
+    return {nullptr, SymbolIndex(), nullptr};
+}
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's out-of-block declaration lookup no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+
+set(old_code [[
+                auto classRange = name->left->sourceRange();
+                auto sym = Lookup::unqualifiedAt(*scope, className,
+                                                 LookupLocation(scope, uint32_t(index)),
+                                                 classRange);
+]])
+set(new_code [[
+                auto classRange = name->left->sourceRange();
+                auto firstClassName = name->left->getFirstToken().valueText();
+                auto sym = Lookup::unqualifiedAt(*scope, firstClassName,
+                                                 LookupLocation(scope, uint32_t(index)),
+                                                 classRange);
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's unused out-of-block diagnostic no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+endif()
+file(WRITE "${compilation_source}" "${contents}")
+
+set(subroutine_symbols_source
+  "${SOURCE_DIR}/source/ast/symbols/SubroutineSymbols.cpp")
+file(READ "${subroutine_symbols_source}" contents)
+set(old_code [[
+    // The method definition must be located after the class definition.
+    if (index <= parentSym.getIndex()) {
+        auto& diag = outerScope.addDiag(diag::MemberDefinitionBeforeClass,
+                                        syntax->prototype->name->getLastToken().location());
+        diag << name << parentSym.name;
+        diag.addNote(diag::NoteDeclarationHere, parentSym.location);
+    }
+]])
+set(new_code [[
+    // The method definition must be located after the outermost containing
+    // class definition. Nested class member indexes are local to their class
+    // scope and cannot be compared to the definition's enclosing-scope index.
+    const Symbol* sourceOrderedClass = &parentSym;
+    for (const Scope* parentScope = parentSym.getParentScope();
+         parentScope && parentScope->asSymbol().kind == SymbolKind::ClassType;
+         parentScope = parentScope->asSymbol().getParentScope()) {
+        sourceOrderedClass = &parentScope->asSymbol();
+    }
+    if (index <= sourceOrderedClass->getIndex()) {
+        auto& diag = outerScope.addDiag(diag::MemberDefinitionBeforeClass,
+                                        syntax->prototype->name->getLastToken().location());
+        diag << name << parentSym.name;
+        diag.addNote(diag::NoteDeclarationHere, parentSym.location);
+    }
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's out-of-block method source-order check no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+  file(WRITE "${subroutine_symbols_source}" "${contents}")
+endif()
+
+set(class_symbols_source "${SOURCE_DIR}/source/ast/symbols/ClassSymbols.cpp")
+file(READ "${class_symbols_source}" contents)
+set(old_code [[
+        // The method definition must be located after the class definition.
+        outOfBlockIndex = index;
+        if (index <= parentSym.getIndex()) {
+            auto& diag = outerScope.addDiag(diag::MemberDefinitionBeforeClass,
+                                            cds.name->getLastToken().location());
+            diag << name << parentSym.name;
+            diag.addNote(diag::NoteDeclarationHere, parentSym.location);
+        }
+]])
+set(new_code [[
+        // Compare source order against the outermost containing class; nested
+        // member indexes belong to a different scope than this definition.
+        outOfBlockIndex = index;
+        const Symbol* sourceOrderedClass = &parentSym;
+        for (const Scope* parentScope = parentSym.getParentScope();
+             parentScope && parentScope->asSymbol().kind == SymbolKind::ClassType;
+             parentScope = parentScope->asSymbol().getParentScope()) {
+            sourceOrderedClass = &parentScope->asSymbol();
+        }
+        if (index <= sourceOrderedClass->getIndex()) {
+            auto& diag = outerScope.addDiag(diag::MemberDefinitionBeforeClass,
+                                            cds.name->getLastToken().location());
+            diag << name << parentSym.name;
+            diag.addNote(diag::NoteDeclarationHere, parentSym.location);
+        }
+]])
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's out-of-block constraint source-order check no longer matches the expected source")
+  endif()
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+  file(WRITE "${class_symbols_source}" "${contents}")
+endif()
+
 # Annex D.2 permits a scalar net or a bit-select of a vector net. Slang v11
 # asks getSymbolReference to reject every packed select before checking the
 # selected expression's width, diagnosing the specified vector form.

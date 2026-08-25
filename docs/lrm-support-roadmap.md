@@ -603,6 +603,31 @@ seconds at 74 MB RSS for bytecode, then simulates below 0.01 seconds in either
 tier. Open arrays and unpacked aggregates remain explicitly owned by D3/D4;
 exports and disable handling remain D1/D2/D6.
 
+L12's twenty-second closure tranche implements nested-class out-of-block method
+definitions from 8.24. A definition such as `Outer::Nested::method` now parses,
+binds to the exact nested prototype, and remains distinct from the same nested
+class name under another outer class. Source-order validation compares the
+definition against the outermost containing class instead of comparing symbol
+indexes from unrelated scopes. This is frontend-only work: it adds no runtime
+lookup or generated simulation state. The upstream `t_class_extern` case now
+passes in both native and whole-design bytecode execution. Its focused O3
+compile takes 0.11 seconds / 80 MB RSS for native and 0.04 seconds / 75 MB RSS
+for bytecode, then simulates below 0.01 seconds in either tier. The isolated
+full gate passes all 1305 available tests; its two in-tree real-UVM wrappers
+are unsupported only because that fixture is not mirrored into the worktree.
+The external Accellera UVM smoke passes separately in 34.772 seconds compile /
+0.183 seconds simulate for bytecode and 73.658 seconds compile / 0.019 seconds
+simulate for native, with zero errors or fatals.
+
+The accompanying parse/name audit found no shared permissive switch that can be
+enabled as language support. Most residual cases are mandatory declaration
+order and grammar diagnostics, undefined or implementation-specific compiler
+directives, malformed upstream negative probes, misspelled identifiers, or
+harness inputs that omit their companion source or macro definitions. The
+remaining genuine cases stay attached to their owning features: the isolated
+multiline lexical-time directive case, protected envelopes, port declarations,
+assignment-pattern context, and interface method export.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
