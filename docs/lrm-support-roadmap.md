@@ -520,6 +520,19 @@ seconds simulate for bytecode and 78.756 seconds compile / 0.020 seconds
 simulate for native, with zero UVM errors or fatals. The full regression suite
 passes 1306/1306 tests, including all 427 runtime tests.
 
+G4's first closure tranche executes unconditional scalar parallel specify
+paths with one, two, or three static delay values, including specparam and
+min/typ/max-selected values. Elaboration freezes path terminals and rounded
+femtosecond delays once; preparation proves the destination has one scalar
+continuous driver depending only on the declared source, then lowers the path
+to the existing compact inertial-drive operation. Native and bytecode runtime
+hot paths therefore gain no new dispatch or lookup. Full/vector,
+multi-source, edge-sensitive, state-dependent, multi-path-output, pulse-limit,
+and SDF-controlled forms remain targeted diagnostics. The focused O3 case
+compiles in 0.15 seconds at 81 MB RSS for native and 0.05 seconds at 74 MB RSS
+for bytecode, then simulates below 0.01 seconds in either tier; upstream
+`specify2` now passes.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -551,7 +564,7 @@ passes 1306/1306 tests, including all 427 runtime tests.
 | 27 Generate constructs | Partial | Loop/conditional generation and ordinary external names elaborate. External tests still expose generate-scope and parameter-binding corner cases. |
 | 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, and static unconditional `tran` channels execute. Complete strength-aware `%v`, delayed and controlled pass devices, resistive pass-strength reduction, and forced-native large gate-netlist coalescing. |
 | 29 User-defined primitives | Missing | UDP declarations and ports are imported, but table rows and sequential state semantics are not preserved, and an instance currently reaches the built-in-primitive diagnostic. |
-| 30 Specify blocks | Semantic only | Specparams, timing paths, and specify blocks are imported. Executable timing paths and pulse controls now receive targeted Clause 30 diagnostics instead of being silently erased; G4 implements simple/full/edge-sensitive/state-dependent paths, delay tuples, and `showcancelled`/`noshowcancelled`. |
+| 30 Specify blocks | Partial | Specparams and specify blocks are imported. Unconditional scalar parallel paths with one/two/three static delays execute through compact inertial drivers in both tiers. Complete full/vector, multi-source, edge-sensitive, state-dependent, and multiple-path selection, pulse controls and limits, and `showcancelled`/`noshowcancelled`. Unsupported forms receive targeted Clause 30 diagnostics instead of being silently erased. |
 | 31 Timing checks | Semantic only | System timing-check nodes are imported and now receive a targeted Clause 31 diagnostic instead of being silently erased. G5 implements all stability-window and clock/control checks, edge and condition forms, notifiers, vectors, negative checks, and violation scheduling. |
 | 32 SDF backannotation | Missing | `$sdf_annotate`, SDF parsing/mapping, multiple annotation, pulse limits, and delay replacement are absent. |
 | 33 Configuring a design | Partial | A focused probe proves basic `design`, `default liblist`, `instance ... use`, and selecting a config as a top affect elaboration. Complete library-map files, cell/config forms, nested rules, diagnostics, and binding-report behavior; also close driver module-library lookup compatibility. |
@@ -750,9 +763,11 @@ one commit.
     strengths, and delays.
 38. **G3 — Sequential UDPs (29.5-29.10).** Add state, initialization,
     level/edge tables, mixed descriptions, dominance, and scheduling.
-39. **G4 — Specify paths and pulse behavior (30).** Execute all path forms,
-    delay tuple selection, conditions, edge polarity/data sources, pulse
-    filtering, and cancellation display controls.
+39. **G4 — Specify paths and pulse behavior (30).** Unconditional scalar
+    parallel paths with static one/two/three-value delay selection execute.
+    Complete full/vector and multi-source paths, conditions, edge
+    polarity/data sources, path-sensitive selection, pulse filtering and
+    limits, and cancellation display controls.
 40. **G5 — System timing checks (31).** Implement every standard timing check,
     conditioned/edge events, notifiers, vector expansion, negative checks, and
     violation scheduling.

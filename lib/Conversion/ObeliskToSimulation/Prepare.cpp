@@ -1601,6 +1601,125 @@ void ObeliskSimPreparePass::runOnOperation() {
     return abort();
   ContinuousDriverMap &continuousDrivers = *preparedNetTopology;
 
+  // IEEE 1800-2017 Clause 30 module paths delay changes produced by a path's
+  // source before publishing them at its destination. The common
+  // unconditional scalar, single-driver case is exactly an inertial delay on
+  // the already isolated continuous driver, so reuse that compact machinery
+  // instead of installing a runtime path interpreter. More general paths are
+  // rejected during validation and remain separate roadmap work.
+  struct SimpleTimingPath {
+    semantic::SVTimingPathSymbolOp declaration;
+    std::string input;
+    SmallVector<int64_t, 3> delays;
+  };
+  llvm::StringMap<SimpleTimingPath> simpleTimingPaths;
+  semanticRoot->walk([&](semantic::SVTimingPathSymbolOp path) {
+    if (!path->hasAttr("obelisk.simple_timing_path"))
+      return;
+    auto input = path->getAttrOfType<StringAttr>("timing_input_path");
+    auto output = path->getAttrOfType<StringAttr>("timing_output_path");
+    auto delays = path->getAttrOfType<DenseI64ArrayAttr>("timing_delay_fs");
+    if (!input || !output || !delays || delays.empty() || delays.size() > 3) {
+      emitError(getSemanticLocation(path))
+          << "simple specify path is missing frozen terminal or delay data";
+      invalid = true;
+      return;
+    }
+    SimpleTimingPath rule{path, input.getValue().str(),
+                          SmallVector<int64_t, 3>(delays.asArrayRef())};
+    auto [found, inserted] =
+        simpleTimingPaths.try_emplace(output.getValue(), std::move(rule));
+    if (!inserted &&
+        (found->second.input != input.getValue() ||
+         ArrayRef<int64_t>(found->second.delays) != delays.asArrayRef())) {
+      emitError(getSemanticLocation(path))
+          << "multiple specify paths to the same scalar output require "
+             "path-sensitive delay selection";
+      invalid = true;
+    }
+  });
+
+  for (auto &entry : simpleTimingPaths) {
+    StringRef output = entry.getKey();
+    SimpleTimingPath &path = entry.getValue();
+    Operation *matchedUnit = nullptr;
+    for (auto &drivers : continuousDrivers) {
+      bool drivesOutput =
+          llvm::any_of(drivers.second,
+                       [&](const DriverInfo &d) { return d.path == output; });
+      if (!drivesOutput)
+        continue;
+      bool onlyScalarOutput =
+          llvm::all_of(drivers.second, [&](const DriverInfo &driver) {
+            return driver.path == output && driver.drivenWidth == 1;
+          });
+      if (!onlyScalarOutput || matchedUnit) {
+        emitError(getSemanticLocation(path.declaration))
+            << "simple specify path output must have one scalar continuous "
+               "driver";
+        invalid = true;
+        matchedUnit = nullptr;
+        break;
+      }
+      matchedUnit = drivers.first;
+    }
+    if (invalid)
+      continue;
+    if (!matchedUnit) {
+      emitError(getSemanticLocation(path.declaration))
+          << "simple specify path output has no continuous driver";
+      invalid = true;
+      continue;
+    }
+    if (matchedUnit->hasAttr("delay_fs")) {
+      emitError(getSemanticLocation(path.declaration))
+          << "combining a specify path with an explicitly delayed driver is "
+             "not executable yet";
+      invalid = true;
+      continue;
+    }
+
+    SmallVector<Operation *> dependencyRoots;
+    if (isa<semantic::SVContinuousAssignSymbolOp>(matchedUnit)) {
+      SmallVector<Operation *> roots = getChildren(matchedUnit);
+      auto assignment =
+          roots.empty()
+              ? semantic::SVAssignmentExpressionOp{}
+              : dyn_cast<semantic::SVAssignmentExpressionOp>(roots.front());
+      SmallVector<Operation *> children =
+          assignment ? getChildren(assignment) : SmallVector<Operation *>{};
+      if (children.size() == 2)
+        dependencyRoots.push_back(children.back());
+    } else if (isa<semantic::SVPrimitiveInstanceSymbolOp>(matchedUnit)) {
+      bool sawInput = false;
+      for (Operation *root : getChildren(matchedUnit)) {
+        sawInput |= !isa<semantic::SVAssignmentExpressionOp>(root);
+        if (sawInput)
+          dependencyRoots.push_back(root);
+      }
+    } else if (isa<semantic::SVNetSymbolOp>(matchedUnit)) {
+      dependencyRoots = getNetInitializerExpressions(matchedUnit);
+    }
+
+    llvm::StringSet<> referencedPaths;
+    for (Operation *root : dependencyRoots)
+      root->walk([&](Operation *nested) {
+        if (auto referenced =
+                nested->getAttrOfType<StringAttr>("referenced_path"))
+          referencedPaths.insert(referenced.getValue());
+      });
+    if (referencedPaths.size() != 1 || !referencedPaths.contains(path.input)) {
+      emitError(getSemanticLocation(path.declaration))
+          << "simple specify path driver must depend only on its declared "
+             "scalar input";
+      invalid = true;
+      continue;
+    }
+    matchedUnit->setAttr("delay_fs", builder.getDenseI64ArrayAttr(path.delays));
+  }
+  if (invalid)
+    return abort();
+
   // Static variable initialization precedes process execution, but established
   // simulators expose a declaration net's sole constant driver to those
   // initializers. Record only literal, full-net, single-driver cases. Folding

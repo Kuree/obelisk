@@ -185,10 +185,14 @@ FailureOr<ValidatedSemanticDesign> validateSemanticDesign(ModuleOp module) {
       return;
     }
     if (isa<semantic::SVTimingPathSymbolOp>(op)) {
-      emitError(getSemanticLocation(op))
-          << "IEEE 1800-2017 Clause 30 specify timing paths are retained in "
-             "semantic IR but are not executable yet";
-      invalid = true;
+      if (!op->hasAttr("obelisk.simple_timing_path")) {
+        emitError(getSemanticLocation(op))
+            << "IEEE 1800-2017 Clause 30 specify timing paths are not "
+               "executable yet for this form (supported subset: "
+               "unconditional scalar "
+               "parallel paths with one to three static delays)";
+        invalid = true;
+      }
       return;
     }
     if (isa<semantic::SVPulseStyleSymbolOp>(op)) {

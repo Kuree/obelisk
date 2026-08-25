@@ -1702,6 +1702,114 @@ private:
                 builder.getI64IntegerAttr(getFemtoseconds(scale.precision)));
     }
 
+    if constexpr (std::same_as<T, slang::ast::TimingPathSymbol>) {
+      using TimingPath = slang::ast::TimingPathSymbol;
+      attrs.set("timing_connection_full",
+                builder.getBoolAttr(node.connectionKind ==
+                                    TimingPath::ConnectionKind::Full));
+      attrs.set("timing_polarity",
+                builder.getI32IntegerAttr(static_cast<int32_t>(node.polarity)));
+      attrs.set(
+          "timing_edge_polarity",
+          builder.getI32IntegerAttr(static_cast<int32_t>(node.edgePolarity)));
+      attrs.set(
+          "timing_edge_identifier",
+          builder.getI32IntegerAttr(static_cast<int32_t>(node.edgeIdentifier)));
+      attrs.set("timing_state_dependent",
+                builder.getBoolAttr(node.isStateDependent));
+
+      auto directScalarPath = [&](const slang::ast::Expression *expression)
+          -> std::optional<std::string> {
+        if (!expression || !expression->type ||
+            expression->type->getBitWidth() != 1)
+          return std::nullopt;
+        if (!expression->template as_if<slang::ast::NamedValueExpression>() &&
+            !expression
+                 ->template as_if<slang::ast::HierarchicalValueExpression>())
+          return std::nullopt;
+        const slang::ast::Symbol *symbol = expression->getSymbolReference();
+        if (!symbol)
+          return std::nullopt;
+        return getSymbolPath(*symbol);
+      };
+
+      auto inputs = node.getInputs();
+      auto outputs = node.getOutputs();
+      attrs.set("timing_input_count", builder.getI64IntegerAttr(inputs.size()));
+      attrs.set("timing_output_count",
+                builder.getI64IntegerAttr(outputs.size()));
+      if (inputs.size() == 1)
+        if (std::optional<std::string> path = directScalarPath(inputs.front()))
+          attrs.set("timing_input_path", builder.getStringAttr(*path));
+      if (outputs.size() == 1)
+        if (std::optional<std::string> path = directScalarPath(outputs.front()))
+          attrs.set("timing_output_path", builder.getStringAttr(*path));
+
+      slang::TimeScale scale;
+      if (const slang::ast::Scope *scope = node.getParentScope())
+        scale = scope->getTimeScale().value_or(slang::TimeScale{});
+      uint64_t unitFs = getFemtoseconds(scale.base);
+      uint64_t precisionFs = getFemtoseconds(scale.precision);
+      SmallVector<int64_t, 3> delays;
+      bool staticDelays = unitFs != 0 && precisionFs != 0 &&
+                          unitFs >= precisionFs && unitFs % precisionFs == 0;
+      slang::ast::EvalContext evalContext(node);
+      for (const slang::ast::Expression *expression : node.getDelays()) {
+        slang::ConstantValue value = expression->eval(evalContext);
+        long double amount = 0;
+        if (value.isInteger()) {
+          const slang::SVInt &integer = value.integer();
+          std::optional<uint64_t> converted;
+          if (!integer.hasUnknown() &&
+              !(integer.isSigned() && integer.isNegative()))
+            converted = integer.as<uint64_t>();
+          if (!converted) {
+            staticDelays = false;
+            break;
+          }
+          amount = static_cast<long double>(*converted);
+        } else if (value.isReal()) {
+          amount = static_cast<long double>(value.real());
+        } else if (value.isShortReal()) {
+          amount = static_cast<long double>(value.shortReal());
+        } else {
+          staticDelays = false;
+          break;
+        }
+        if (!std::isfinite(amount)) {
+          staticDelays = false;
+          break;
+        }
+        if (amount < 0)
+          amount = 0;
+        long double steps =
+            amount * static_cast<long double>(unitFs / precisionFs);
+        long double femtoseconds = std::round(steps) * precisionFs;
+        if (!std::isfinite(femtoseconds) || femtoseconds < 0 ||
+            femtoseconds >
+                static_cast<long double>(std::numeric_limits<int64_t>::max())) {
+          staticDelays = false;
+          break;
+        }
+        delays.push_back(static_cast<int64_t>(femtoseconds));
+      }
+      attrs.set("timing_delay_count",
+                builder.getI64IntegerAttr(node.getDelays().size()));
+      if (staticDelays)
+        attrs.set("timing_delay_fs", builder.getDenseI64ArrayAttr(delays));
+
+      bool supportedCandidate =
+          node.connectionKind == TimingPath::ConnectionKind::Parallel &&
+          node.edgeIdentifier == slang::ast::EdgeKind::None &&
+          !node.getEdgeSourceExpr() && !node.getConditionExpr() &&
+          !node.isStateDependent && inputs.size() == 1 && outputs.size() == 1 &&
+          attrs.get("timing_input_path") && attrs.get("timing_output_path") &&
+          staticDelays && delays.size() == node.getDelays().size() &&
+          delays.size() >= 1 && delays.size() <= 3;
+      if (supportedCandidate)
+        attrs.set("obelisk.simple_timing_path", builder.getUnitAttr());
+    }
+
     if constexpr (std::same_as<T, slang::ast::InstanceBodySymbol>) {
       slang::TimeScale scale = node.getTimeScale().value_or(slang::TimeScale{});
       attrs.set("time_unit_fs",
