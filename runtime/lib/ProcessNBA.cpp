@@ -781,7 +781,19 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
     InertialDriverSite site{codeUnit, component};
     InertialPathPending &pending = context->inertialPathPending[site];
     size_t bytes = static_cast<size_t>((bitWidth - 1) / 8 + 1);
+    auto cancelScheduled = [&](uint64_t bit) {
+      size_t index = static_cast<size_t>(bit);
+      if (index >= pending.scheduledSequence.size() ||
+          pending.scheduledSequence[index] == 0)
+        return;
+      context->scheduledInertialPathNBAs.erase(
+          {pending.scheduledDueTime[index], pending.scheduledSequence[index]});
+      pending.scheduledDueTime[index] = 0;
+      pending.scheduledSequence[index] = 0;
+    };
     auto resetState = [&] {
+      for (uint64_t bit = 0; bit != pending.width; ++bit)
+        cancelScheduled(bit);
       pending = InertialPathPending{};
       pending.destination = selectedHandle;
       pending.width = bitWidth;
@@ -792,6 +804,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
       pending.delayed.assign(static_cast<size_t>(bitWidth), 0);
       pending.needsSchedule.assign(static_cast<size_t>(bitWidth), 0);
       pending.candidateDelay.assign(static_cast<size_t>(bitWidth), UINT64_MAX);
+      pending.scheduledDueTime.assign(static_cast<size_t>(bitWidth), 0);
+      pending.scheduledSequence.assign(static_cast<size_t>(bitWidth), 0);
     };
     if (group == 0) {
       if (pending.destination != selectedHandle || pending.width != bitWidth)
@@ -849,7 +863,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
       update.inlinePacked = true;
       update.inlineValue = byteBit(value, bit) ? 1 : 0;
       update.inlineUnknown = unknownPlane && byteBit(unknown, bit) ? 1 : 0;
-      context->scheduledNBAs.push_back(std::move(update));
+      auto key = std::make_pair(update.dueTime, update.sequence);
+      if (!context->scheduledInertialPathNBAs.emplace(key, std::move(update))
+               .second)
+        return false;
+      pending.scheduledDueTime[static_cast<size_t>(bit)] = key.first;
+      pending.scheduledSequence[static_cast<size_t>(bit)] = key.second;
       return true;
     };
 
@@ -873,6 +892,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
         pending.candidateDelay[static_cast<size_t>(bit)] = UINT64_MAX;
         if (pendingSame)
           continue;
+        cancelScheduled(bit);
         incrementGeneration(bit);
         pending.valid[static_cast<size_t>(bit)] = 0;
         pending.delayed[static_cast<size_t>(bit)] = 0;

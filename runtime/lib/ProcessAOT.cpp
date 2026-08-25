@@ -2355,6 +2355,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
       considerDeadline(update.dueTime);
     for (const ScheduledNBA &update : context->scheduledNBAs)
       considerDeadline(update.dueTime);
+    if (!context->scheduledInertialPathNBAs.empty())
+      considerDeadline(
+          context->scheduledInertialPathNBAs.begin()->first.first);
     for (const ScheduledManagedNBA &update : context->scheduledManagedNBAs)
       considerDeadline(update.dueTime);
     for (const ScheduledDesignEvent &event : context->scheduledDesignEvents)
@@ -2765,6 +2768,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_snapshot_aot(
     };
     for (const ScheduledNBA &nba : context->scheduledNBAs)
       appendNBA(nba.execRegion, nba.sequence, nba.dueTime);
+    for (const auto &entry : context->scheduledInertialPathNBAs) {
+      const ScheduledNBA &nba = entry.second;
+      appendNBA(nba.execRegion, nba.sequence, nba.dueTime);
+    }
     for (const ScheduledManagedNBA &nba : context->scheduledManagedNBAs)
       appendNBA(nba.execRegion, nba.sequence, nba.dueTime);
     for (const ScheduledDesignNBA &nba : context->scheduledDesignNBAs)
@@ -3171,6 +3178,7 @@ retryNativeSchedule:;
     for (obelisk_rt_process_instance_v1 *actor : context->nativeScheduleActors)
       liveActors += actor != nullptr;
     uint64_t pendingNBAs = context->scheduledNBAs.size();
+    pendingNBAs += context->scheduledInertialPathNBAs.size();
     pendingNBAs += context->scheduledManagedNBAs.size();
     pendingNBAs += context->scheduledDesignNBAs.size();
     pendingNBAs += context->scheduledDesignEvents.size();
@@ -3247,6 +3255,10 @@ retryNativeSchedule:;
     };
     for (const ScheduledNBA &nba : context->scheduledNBAs)
       validateNBA(nba.execRegion, nba.sequence, nba.dueTime);
+    for (const auto &entry : context->scheduledInertialPathNBAs) {
+      const ScheduledNBA &nba = entry.second;
+      validateNBA(nba.execRegion, nba.sequence, nba.dueTime);
+    }
     for (const ScheduledManagedNBA &nba : context->scheduledManagedNBAs)
       validateNBA(nba.execRegion, nba.sequence, nba.dueTime);
     for (const ScheduledDesignNBA &nba : context->scheduledDesignNBAs)

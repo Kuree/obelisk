@@ -2184,6 +2184,7 @@ obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context,
       !context->scheduledDesignNBAs.empty() ||
       !context->scheduledDesignEvents.empty() ||
       !context->scheduledPassSwitchEvents.empty() ||
+      !context->scheduledInertialPathNBAs.empty() ||
       (!allowRuntimeTasks && !context->scheduledDesignTasks.empty()) ||
       context->nativeScheduleExternalWritePending)
     return OBELISK_RT_TIER_UNAVAILABLE;
@@ -2317,6 +2318,11 @@ uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
   for (const ScheduledNBA &entry : context->scheduledNBAs)
     if (!entry.cancelled && entry.dueTime <= context->schedulerTime)
       barrierRegion = std::min(barrierRegion, entry.execRegion);
+  if (!context->scheduledInertialPathNBAs.empty() &&
+      context->scheduledInertialPathNBAs.begin()->first.first <=
+          context->schedulerTime)
+    barrierRegion = std::min(
+        barrierRegion, static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE));
   considerBarrier(context->scheduledManagedNBAs);
   considerBarrier(context->scheduledDesignNBAs);
   considerBarrier(context->scheduledDesignEvents);
@@ -3421,9 +3427,14 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               pending->second
                   .valid[static_cast<size_t>(update.inertialPathBit)] = 0;
             if (pending != context->inertialPathPending.end() &&
-                update.inertialPathBit < pending->second.width)
+                update.inertialPathBit < pending->second.width) {
               pending->second
                   .delayed[static_cast<size_t>(update.inertialPathBit)] = 0;
+              pending->second.scheduledDueTime[static_cast<size_t>(
+                  update.inertialPathBit)] = 0;
+              pending->second.scheduledSequence[static_cast<size_t>(
+                  update.inertialPathBit)] = 0;
+            }
             return;
           }
           auto pending =
@@ -3573,7 +3584,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         if (context->scheduledManagedNBAs.empty() &&
             context->scheduledDesignNBAs.empty() &&
             context->scheduledDesignEvents.empty() &&
-            context->scheduledPassSwitchEvents.empty()) {
+            context->scheduledPassSwitchEvents.empty() &&
+            context->scheduledInertialPathNBAs.empty()) {
           size_t retained = 0;
           for (size_t index = 0;; ++index) {
             if (index == context->scheduledNBAs.size()) {
@@ -3682,8 +3694,19 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                 managedIndex = index;
               }
             }
+            uint64_t pathSequence = UINT64_MAX;
+            auto pathUpdate = context->scheduledInertialPathNBAs.end();
+            if (barrierRegion == OBELISK_RT_REGION_ACTIVE &&
+                !context->scheduledInertialPathNBAs.empty()) {
+              auto candidate = context->scheduledInertialPathNBAs.begin();
+              if (candidate->first.first <= context->schedulerTime) {
+                pathSequence = candidate->second.sequence;
+                pathUpdate = candidate;
+              }
+            }
             uint64_t sequence = std::min(
-                std::min(nativeSequence, managedSequence),
+                std::min(std::min(nativeSequence, managedSequence),
+                         pathSequence),
                 std::min(std::min(eventSequence, passSequence), designSequence));
             if (sequence == UINT64_MAX) {
               bool hadDelayedPublications = !delayedNetPublications.empty();
@@ -3695,6 +3718,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             }
             if (sequence == nativeSequence) {
               if (!prepareDelayedNetBatch(context->scheduledNBAs[nativeIndex]))
+                return context->schedulerStatus;
+            } else if (sequence == pathSequence) {
+              if (!prepareDelayedNetBatch(pathUpdate->second))
                 return context->schedulerStatus;
             } else if (!flushDelayedNetPublications()) {
               return context->schedulerStatus;
@@ -3726,6 +3752,18 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               }
               context->scheduledNBAs.erase(context->scheduledNBAs.begin() +
                                            nativeIndex);
+            } else if (sequence == pathSequence) {
+              ScheduledNBA update = std::move(pathUpdate->second);
+              bool pathCurrent = currentPathUpdate(update);
+              if (pathCurrent)
+                completeInertial(update);
+              context->schedulerApplyingNativeUpdate = pathCurrent;
+              if (pathCurrent)
+                applyNative(update);
+              context->schedulerApplyingNativeUpdate = false;
+              context->scheduledInertialPathNBAs.erase(pathUpdate);
+              if (context->schedulerStatus != OBELISK_RT_OK)
+                return context->schedulerStatus;
             } else if (sequence == managedSequence) {
               obelisk_rt_status status = obelisk_rt_apply_managed_nba(
                   context, context->scheduledManagedNBAs[managedIndex]);
@@ -3876,6 +3914,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         for (const ScheduledNBA &update : context->scheduledNBAs)
           if (!update.cancelled && update.dueTime > context->schedulerTime)
             considerTime(update.dueTime);
+        if (!context->scheduledInertialPathNBAs.empty())
+          considerTime(
+              context->scheduledInertialPathNBAs.begin()->first.first);
         for (const ScheduledManagedNBA &update : context->scheduledManagedNBAs)
           if (update.dueTime > context->schedulerTime)
             considerTime(update.dueTime);

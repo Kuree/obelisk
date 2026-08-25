@@ -480,6 +480,8 @@ struct InertialPathPending {
   std::vector<uint8_t> delayed;
   std::vector<uint8_t> needsSchedule;
   std::vector<uint64_t> candidateDelay;
+  std::vector<uint64_t> scheduledDueTime;
+  std::vector<uint64_t> scheduledSequence;
 };
 
 struct InertialNetPending {
@@ -1088,6 +1090,12 @@ struct obelisk_rt_context {
   bool signalDiagnosticsReport = false;
   SignalSubscriptionDiagnostics signalDiagnostics;
   std::vector<ScheduledNBA> scheduledNBAs;
+  // Path-delay events have one live entry per destination bit. Keeping them
+  // in an ordered keyed calendar lets pulse rejection remove a superseded
+  // long-delay event directly instead of leaving a tombstone in the generic
+  // NBA vector for every transition.
+  std::map<std::pair<uint64_t, uint64_t>, ScheduledNBA>
+      scheduledInertialPathNBAs;
   std::unordered_map<InertialDriverSite, InertialDriverPending,
                      InertialDriverSiteHash>
       inertialDriverPending;
