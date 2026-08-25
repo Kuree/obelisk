@@ -1603,37 +1603,55 @@ void ObeliskSimPreparePass::runOnOperation() {
 
   // IEEE 1800-2017 Clause 30 module paths delay changes produced by a path's
   // source before publishing them at its destination. The common
-  // unconditional scalar, single-driver case is exactly an inertial delay on
-  // the already isolated continuous driver, so reuse that compact machinery
-  // instead of installing a runtime path interpreter. More general paths are
-  // rejected during validation and remain separate roadmap work.
+  // unconditional whole-terminal, single-driver case is exactly an inertial
+  // delay on the already isolated continuous driver, so reuse that compact
+  // machinery instead of installing a runtime path interpreter. More general
+  // paths are rejected during validation and remain separate roadmap work.
   struct SimpleTimingPath {
     semantic::SVTimingPathSymbolOp declaration;
-    std::string input;
+    SmallVector<std::string, 2> inputs;
+    uint64_t outputWidth;
     SmallVector<int64_t, 3> delays;
   };
   llvm::StringMap<SimpleTimingPath> simpleTimingPaths;
   semanticRoot->walk([&](semantic::SVTimingPathSymbolOp path) {
     if (!path->hasAttr("obelisk.simple_timing_path"))
       return;
-    auto input = path->getAttrOfType<StringAttr>("timing_input_path");
+    auto inputs = path->getAttrOfType<ArrayAttr>("timing_input_paths");
     auto output = path->getAttrOfType<StringAttr>("timing_output_path");
+    auto outputWidth = path->getAttrOfType<IntegerAttr>("timing_output_width");
     auto delays = path->getAttrOfType<DenseI64ArrayAttr>("timing_delay_fs");
-    if (!input || !output || !delays || delays.empty() || delays.size() > 3) {
+    if (!inputs || inputs.empty() || !output || !outputWidth ||
+        outputWidth.getInt() <= 0 || !delays || delays.empty() ||
+        delays.size() > 3) {
       emitError(getSemanticLocation(path))
           << "simple specify path is missing frozen terminal or delay data";
       invalid = true;
       return;
     }
-    SimpleTimingPath rule{path, input.getValue().str(),
+    SmallVector<std::string, 2> inputPaths;
+    for (Attribute attr : inputs) {
+      auto input = dyn_cast<StringAttr>(attr);
+      if (!input) {
+        emitError(getSemanticLocation(path))
+            << "simple specify path has malformed terminal data";
+        invalid = true;
+        return;
+      }
+      inputPaths.push_back(input.getValue().str());
+    }
+    SimpleTimingPath rule{path, inputPaths,
+                          static_cast<uint64_t>(outputWidth.getInt()),
                           SmallVector<int64_t, 3>(delays.asArrayRef())};
     auto [found, inserted] =
         simpleTimingPaths.try_emplace(output.getValue(), std::move(rule));
     if (!inserted &&
-        (found->second.input != input.getValue() ||
+        (found->second.inputs != inputPaths ||
+         found->second.outputWidth !=
+             static_cast<uint64_t>(outputWidth.getInt()) ||
          ArrayRef<int64_t>(found->second.delays) != delays.asArrayRef())) {
       emitError(getSemanticLocation(path))
-          << "multiple specify paths to the same scalar output require "
+          << "multiple specify paths to the same output require "
              "path-sensitive delay selection";
       invalid = true;
     }
@@ -1649,13 +1667,13 @@ void ObeliskSimPreparePass::runOnOperation() {
                        [&](const DriverInfo &d) { return d.path == output; });
       if (!drivesOutput)
         continue;
-      bool onlyScalarOutput =
-          llvm::all_of(drivers.second, [&](const DriverInfo &driver) {
-            return driver.path == output && driver.drivenWidth == 1;
-          });
-      if (!onlyScalarOutput || matchedUnit) {
+      bool wholeOutput = drivers.second.size() == 1 &&
+                         drivers.second.front().path == output &&
+                         drivers.second.front().drivenLow == 0 &&
+                         drivers.second.front().drivenWidth == path.outputWidth;
+      if (!wholeOutput || matchedUnit) {
         emitError(getSemanticLocation(path.declaration))
-            << "simple specify path output must have one scalar continuous "
+            << "simple specify path output must have one whole continuous "
                "driver";
         invalid = true;
         matchedUnit = nullptr;
@@ -1708,10 +1726,17 @@ void ObeliskSimPreparePass::runOnOperation() {
                 nested->getAttrOfType<StringAttr>("referenced_path"))
           referencedPaths.insert(referenced.getValue());
       });
-    if (referencedPaths.size() != 1 || !referencedPaths.contains(path.input)) {
+    llvm::StringSet<> declaredInputs;
+    for (const std::string &input : path.inputs)
+      declaredInputs.insert(input);
+    bool exactInputs = referencedPaths.size() == declaredInputs.size();
+    if (exactInputs)
+      for (StringRef input : declaredInputs.keys())
+        exactInputs &= referencedPaths.contains(input);
+    if (!exactInputs) {
       emitError(getSemanticLocation(path.declaration))
           << "simple specify path driver must depend only on its declared "
-             "scalar input";
+             "whole inputs";
       invalid = true;
       continue;
     }

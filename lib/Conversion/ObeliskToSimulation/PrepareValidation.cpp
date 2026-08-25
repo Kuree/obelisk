@@ -189,8 +189,8 @@ FailureOr<ValidatedSemanticDesign> validateSemanticDesign(ModuleOp module) {
         emitError(getSemanticLocation(op))
             << "IEEE 1800-2017 Clause 30 specify timing paths are not "
                "executable yet for this form (supported subset: "
-               "unconditional scalar "
-               "parallel paths with one to three static delays)";
+               "unconditional whole-terminal parallel or full paths with "
+               "one to three static delays and one destination driver)";
         invalid = true;
       }
       return;

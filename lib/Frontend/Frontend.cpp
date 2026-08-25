@@ -1723,19 +1723,27 @@ private:
       attrs.set("timing_state_dependent",
                 builder.getBoolAttr(node.isStateDependent));
 
-      auto directScalarPath = [&](const slang::ast::Expression *expression)
-          -> std::optional<std::string> {
-        if (!expression || !expression->type ||
-            expression->type->getBitWidth() != 1)
-          return std::nullopt;
-        if (!expression->template as_if<slang::ast::NamedValueExpression>() &&
-            !expression
-                 ->template as_if<slang::ast::HierarchicalValueExpression>())
+      struct DirectTimingTerminal {
+        std::string path;
+        uint64_t width;
+      };
+      auto directWholeTerminal = [&](const slang::ast::Expression *expression)
+          -> std::optional<DirectTimingTerminal> {
+        if (!expression || !expression->type)
           return std::nullopt;
         const slang::ast::Symbol *symbol = expression->getSymbolReference();
         if (!symbol)
           return std::nullopt;
-        return getSymbolPath(*symbol);
+        const auto *value = symbol->template as_if<slang::ast::ValueSymbol>();
+        if (!value)
+          return std::nullopt;
+        uint64_t width = expression->type->getBitWidth();
+        // A selected terminal is safe to collapse to its static symbol path
+        // only when it denotes the entire packed value. Partial selects need
+        // explicit bit mapping and remain outside this compact path form.
+        if (width == 0 || width != value->getType().getBitWidth())
+          return std::nullopt;
+        return DirectTimingTerminal{getSymbolPath(*symbol), width};
       };
 
       auto inputs = node.getInputs();
@@ -1743,12 +1751,34 @@ private:
       attrs.set("timing_input_count", builder.getI64IntegerAttr(inputs.size()));
       attrs.set("timing_output_count",
                 builder.getI64IntegerAttr(outputs.size()));
-      if (inputs.size() == 1)
-        if (std::optional<std::string> path = directScalarPath(inputs.front()))
-          attrs.set("timing_input_path", builder.getStringAttr(*path));
+      SmallVector<Attribute> inputPaths;
+      SmallVector<int64_t> inputWidths;
+      for (const slang::ast::Expression *input : inputs) {
+        std::optional<DirectTimingTerminal> terminal =
+            directWholeTerminal(input);
+        if (!terminal) {
+          inputPaths.clear();
+          inputWidths.clear();
+          break;
+        }
+        inputPaths.push_back(builder.getStringAttr(terminal->path));
+        inputWidths.push_back(terminal->width);
+      }
+      if (inputPaths.size() == inputs.size()) {
+        attrs.set("timing_input_paths", builder.getArrayAttr(inputPaths));
+        attrs.set("timing_input_widths",
+                  builder.getDenseI64ArrayAttr(inputWidths));
+        if (inputs.size() == 1)
+          attrs.set("timing_input_path", cast<StringAttr>(inputPaths.front()));
+      }
+      std::optional<DirectTimingTerminal> output;
       if (outputs.size() == 1)
-        if (std::optional<std::string> path = directScalarPath(outputs.front()))
-          attrs.set("timing_output_path", builder.getStringAttr(*path));
+        output = directWholeTerminal(outputs.front());
+      if (output) {
+        attrs.set("timing_output_path", builder.getStringAttr(output->path));
+        attrs.set("timing_output_width",
+                  builder.getI64IntegerAttr(output->width));
+      }
 
       slang::TimeScale scale;
       if (const slang::ast::Scope *scope = node.getParentScope())
@@ -1803,14 +1833,23 @@ private:
       if (staticDelays)
         attrs.set("timing_delay_fs", builder.getDenseI64ArrayAttr(delays));
 
+      bool shapeSupported = false;
+      if (inputPaths.size() == inputs.size() && output) {
+        if (node.connectionKind == TimingPath::ConnectionKind::Parallel)
+          shapeSupported =
+              inputs.size() == 1 &&
+              static_cast<uint64_t>(inputWidths.front()) == output->width;
+        else
+          shapeSupported = !inputs.empty();
+      }
       bool supportedCandidate =
-          node.connectionKind == TimingPath::ConnectionKind::Parallel &&
+          shapeSupported && node.polarity == TimingPath::Polarity::Unknown &&
+          node.edgePolarity == TimingPath::Polarity::Unknown &&
           node.edgeIdentifier == slang::ast::EdgeKind::None &&
           !node.getEdgeSourceExpr() && !node.getConditionExpr() &&
-          !node.isStateDependent && inputs.size() == 1 && outputs.size() == 1 &&
-          attrs.get("timing_input_path") && attrs.get("timing_output_path") &&
-          staticDelays && delays.size() == node.getDelays().size() &&
-          delays.size() >= 1 && delays.size() <= 3;
+          !node.isStateDependent && outputs.size() == 1 && staticDelays &&
+          delays.size() == node.getDelays().size() && delays.size() >= 1 &&
+          delays.size() <= 3;
       if (supportedCandidate)
         attrs.set("obelisk.simple_timing_path", builder.getUnitAttr());
     }

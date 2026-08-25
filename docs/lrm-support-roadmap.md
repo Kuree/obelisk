@@ -558,6 +558,23 @@ compiles in 0.15 seconds at 81 MB RSS for native and 0.05 seconds at 74 MB RSS
 for bytecode, then simulates below 0.01 seconds in either tier; upstream
 `specify2` now passes.
 
+G4's second closure tranche extends that frozen representation to
+unconditional whole packed parallel paths and full multi-source paths with a
+single destination driver. Elaboration records complete terminal paths and
+widths, and preparation proves both whole-output coverage and exact driver
+dependency equality before attaching the same compact inertial delay. This
+keeps compile work linear in the small static terminal list and adds no runtime
+path selection or event dispatch. Partial selects, path polarity, conditional
+and edge-sensitive forms, overlapping paths to one output, six/twelve-value
+transition tables, pulse controls, and SDF remain explicit diagnostics. Exact
+upstream `br1006` and `pr2829776b` now pass. The focused O3 case compiles in
+1.21 seconds at 85 MB RSS for native and 0.45 seconds at 78 MB RSS for bytecode,
+then simulates below 0.01 seconds at 4 MB RSS in either tier. The full
+regression gate passes all 1314 supported tests (with two explicitly
+unsupported tests). The UVM smoke remains green with zero errors or fatals:
+35.369 seconds compile / 0.185 seconds simulate for bytecode and 76.028 seconds
+compile / 0.019 seconds simulate for native.
+
 The lexical-time audit now preserves the enclosing compilation-unit, package,
 class, or module time scope when `$printtimescale`, `$timeunit`, or
 `$timeprecision` appears inside a subroutine. Four upstream `br1003` cases now
@@ -663,7 +680,7 @@ does not carry a local parser patch for this bug.
 | 27 Generate constructs | Partial | Loop/conditional generation and ordinary external names elaborate. External tests still expose generate-scope and parameter-binding corner cases. |
 | 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, strength-aware scalar-net `%v`, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, and static unconditional `tran` channels execute. Complete delayed and controlled pass devices, resistive pass-strength reduction, and forced-native large gate-netlist coalescing. |
 | 29 User-defined primitives | Missing | UDP declarations and ports are imported, but table rows and sequential state semantics are not preserved, and an instance currently reaches the built-in-primitive diagnostic. |
-| 30 Specify blocks | Partial | Specparams and specify blocks are imported. Unconditional scalar parallel paths with one/two/three static delays execute through compact inertial drivers in both tiers. Complete full/vector, multi-source, edge-sensitive, state-dependent, and multiple-path selection, pulse controls and limits, and `showcancelled`/`noshowcancelled`. Unsupported forms receive targeted Clause 30 diagnostics instead of being silently erased. |
+| 30 Specify blocks | Partial | Specparams and specify blocks are imported. Unconditional whole-terminal parallel and full multi-source paths with one/two/three static delays and one destination driver execute through compact inertial drivers in both tiers. Complete partial-select mapping, polarity, conditions, edge/data-source forms, six/twelve-transition delays, state-dependent and multiple-path selection, pulse controls and limits, and `showcancelled`/`noshowcancelled`. Unsupported forms receive targeted Clause 30 diagnostics instead of being silently erased. |
 | 31 Timing checks | Semantic only | System timing-check nodes are imported and now receive a targeted Clause 31 diagnostic instead of being silently erased. G5 implements all stability-window and clock/control checks, edge and condition forms, notifiers, vectors, negative checks, and violation scheduling. |
 | 32 SDF backannotation | Missing | `$sdf_annotate`, SDF parsing/mapping, multiple annotation, pulse limits, and delay replacement are absent. |
 | 33 Configuring a design | Partial | A focused probe proves basic `design`, `default liblist`, `instance ... use`, and selecting a config as a top affect elaboration. Complete library-map files, cell/config forms, nested rules, diagnostics, and binding-report behavior; also close driver module-library lookup compatibility. |
@@ -863,10 +880,11 @@ one commit.
     strengths, and delays.
 38. **G3 — Sequential UDPs (29.5-29.10).** Add state, initialization,
     level/edge tables, mixed descriptions, dominance, and scheduling.
-39. **G4 — Specify paths and pulse behavior (30).** Unconditional scalar
-    parallel paths with static one/two/three-value delay selection execute.
-    Complete full/vector and multi-source paths, conditions, edge
-    polarity/data sources, path-sensitive selection, pulse filtering and
+39. **G4 — Specify paths and pulse behavior (30).** Unconditional
+    whole-terminal parallel and full multi-source paths with static
+    one/two/three-value delay selection and one destination driver execute.
+    Complete partial-select mapping, six/twelve-transition delays, conditions,
+    edge polarity/data sources, path-sensitive selection, pulse filtering and
     limits, and cancellation display controls.
 40. **G5 — System timing checks (31).** Implement every standard timing check,
     conditioned/edge events, notifiers, vector expansion, negative checks, and

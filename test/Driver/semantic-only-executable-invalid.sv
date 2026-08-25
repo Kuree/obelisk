@@ -15,7 +15,7 @@ module semantic_only_executable_invalid(
   activity_checker checker_i(activity);
   specify
     pulsestyle_onevent observed;
-    (activity *> observed) = 1;
+    if (activity) (activity *> observed) = 1;
     $setup(activity, posedge clock, 1);
   endspecify
 endmodule
