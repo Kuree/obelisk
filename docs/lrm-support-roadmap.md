@@ -1220,7 +1220,8 @@ one commit.
     struct/union destinations and operands, native word layout, uppercase,
     explicit-width suppression, prefix/partial-EOF handling, file position,
     and `$display`/`$write`/`$fwrite`/`$sformat[f]` output. Formatted reads
-    after synthetic `$ungetc` remain.
+    also consume and restore the synthetic byte held by `$ungetc` on a
+    descriptor without read access, with exact EOF and file-position behavior.
 
 ### Randomization and `std`
 
