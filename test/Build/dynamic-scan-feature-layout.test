@@ -1,0 +1,20 @@
+# RUN: obelisk -fno-lto -O3 --vpi=off --native-scheduler=generic \
+# RUN:   %S/../Driver/scan-dynamic-pay-for-play.sv -o %t.no-generic
+# RUN: obelisk -fno-lto -O3 --vpi=off --execution-tier=bytecode \
+# RUN:   %S/../Driver/scan-dynamic-pay-for-play.sv -o %t.no-bytecode
+# RUN: obelisk -fno-lto -O3 --vpi=off --execution-tier=bytecode \
+# RUN:   %S/../Driver/scan-dynamic-format.sv -o %t.yes-bytecode
+# RUN: obelisk -O3 --vpi=off --execution-tier=bytecode \
+# RUN:   %S/../Driver/scan-dynamic-pay-for-play.sv -o %t.no-bytecode-lto
+# RUN: obelisk -O3 --vpi=off --execution-tier=bytecode \
+# RUN:   %S/../Driver/scan-dynamic-format.sv -o %t.yes-bytecode-lto
+# RUN: %python %S/../Inputs/check-dynamic-scan-feature-layout.py \
+# RUN:   %source_root %runtime_archive %llvm_dist %t.no-generic \
+# RUN:   %t.no-bytecode %t.yes-bytecode %t.no-bytecode-lto \
+# RUN:   %t.yes-bytecode-lto
+
+# This is a structural pay-for-play regression.  It inspects the built native
+# runtime archive, native/wasm build graphs, and actual native linked binaries.
+# Cross builds feed their final wasm binaries and wasm-ld maps to
+# check-dynamic-scan-wasm-link.py; the native build cannot create an
+# Emscripten-linked executable without an external wasm sysroot.

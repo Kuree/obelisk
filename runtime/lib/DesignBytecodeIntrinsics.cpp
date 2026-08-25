@@ -4456,6 +4456,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         value.fourState ? value.unknown.data() : nullptr, value.width);
     return finishVPI(0, status);
   }
+  case OBELISK_RT_INTRINSIC_V1_STRING_SCAN_DYNAMIC:
+  case OBELISK_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC:
+  case OBELISK_RT_INTRINSIC_V1_SCAN_DYNAMIC_VALIDATE:
+    if (!invokeDynamicScanIntrinsic)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return invokeDynamicScanIntrinsic(image, frame, context, site,
+                                      signature.id);
   default:
     return OBELISK_RT_INVALID_BYTECODE;
   }

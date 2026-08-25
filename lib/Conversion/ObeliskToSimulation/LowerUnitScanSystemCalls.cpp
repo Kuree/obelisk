@@ -14,6 +14,8 @@
 
 #include "LowerUnit.h"
 
+#include "obelisk/Runtime/Runtime.h"
+
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
@@ -219,9 +221,280 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
   }
   auto literal = dyn_cast<semantic::SVStringLiteralOp>(spelling);
   if (!literal) {
-    emitError(getSemanticLocation(children[1]))
-        << name << " requires a literal format string";
-    return failure();
+    FailureOr<Value> loweredFormat = lowerExpression(children[1]);
+    if (failed(loweredFormat))
+      return failure();
+    FailureOr<Value> dynamicFormat =
+        convert(*loweredFormat, stringType, isSignedNode(children[1]), location);
+    if (failed(dynamicFormat))
+      return failure();
+
+    auto maskFor = [](StringRef letters) {
+      uint64_t mask = 0;
+      for (char letter : letters) {
+        char normalized = letter >= 'A' && letter <= 'Z'
+                              ? static_cast<char>(letter - 'A' + 'a')
+                              : letter;
+        mask |= UINT64_C(1) << static_cast<unsigned>(normalized - 'a');
+      }
+      return mask;
+    };
+    StringAttr hierarchy = op.getSystemScopePathAttr();
+    if (!hierarchy)
+      hierarchy =
+          function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+    IntegerAttr timeMultiplier =
+        function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+    IntegerAttr timePrecision = designTimePrecisionExponent();
+
+    struct DynamicDestination {
+      CapturedLValue captured;
+      bool packed;
+      bool string;
+      bool real;
+      uint64_t allowed;
+      std::optional<unsigned> packedWidth;
+    };
+    SmallVector<DynamicDestination> destinations;
+    destinations.reserve(children.size() - 2);
+    for (size_t destinationIndex = 2; destinationIndex != children.size();
+         ++destinationIndex) {
+      Operation *actual = children[destinationIndex];
+      if (auto assignment =
+              dyn_cast<semantic::SVAssignmentExpressionOp>(actual)) {
+        SmallVector<Operation *> outputChildren = getChildren(assignment);
+        if (outputChildren.size() == 2 &&
+            isa<semantic::SVEmptyArgumentExpressionOp>(outputChildren[1]))
+          actual = outputChildren.front();
+      }
+      FailureOr<CapturedLValue> captured =
+          captureLValue(actual, getSemanticLocation(actual));
+      if (failed(captured)) {
+        emitError(getSemanticLocation(actual))
+            << name << " destination must be a writable variable";
+        return failure();
+      }
+
+      Type destinationType = captured->type;
+      bool packed = static_cast<bool>(sim::getPackedScalarType(destinationType));
+      bool string = isa<sim::StringType>(destinationType);
+      bool real = isa<FloatType>(destinationType);
+      uint64_t allowed = 0;
+      if (packed)
+        allowed = maskFor("bodhxefgscmtv");
+      else if (string)
+        allowed = maskFor("scm");
+      else if (real)
+        allowed = maskFor("efgt");
+      else {
+        emitError(getSemanticLocation(actual))
+            << name << " dynamic-format destination must be packed, real, or "
+               "string; assigned dynamic %u/%z aggregates are not yet "
+               "supported";
+        return failure();
+      }
+      std::optional<unsigned> packedWidth =
+          packed ? sim::getPackedWidth(destinationType) : std::nullopt;
+      if (packed && (!packedWidth || *packedWidth == 0))
+        return failure();
+      if ((packed || string) && !hierarchy) {
+        emitError(location) << name
+                            << " dynamic %m conversion has no elaborated scope";
+        return failure();
+      }
+      if ((packed || real) && (!timeMultiplier || !timePrecision)) {
+        emitError(location) << name
+                            << " dynamic %t conversion has no frozen time scale";
+        return failure();
+      }
+      destinations.push_back({std::move(*captured), packed, string, real,
+                              allowed, packedWidth});
+    }
+
+    // Validate the complete cached plan and destination shape before the
+    // scanner can consume input. This preserves the LRM's unconditional
+    // argument checking even when the first field mismatches or a file is
+    // already at EOF. The cursor makes this pass linear in conversions plus
+    // destinations rather than rescanning the plan for every destination.
+    Value validationCursor = constant(0);
+    for (const DynamicDestination &destination : destinations) {
+      validationCursor = sim::SimScanDynamicValidateOp::create(
+          builder, location, i32, *dynamicFormat, validationCursor,
+          name == "$fscanf", false, destination.allowed);
+    }
+    validationCursor = sim::SimScanDynamicValidateOp::create(
+        builder, location, i32, *dynamicFormat, validationCursor,
+        name == "$fscanf", true, 0);
+
+    Value cursor = constant(0);
+    Value planCursor = constant(0);
+    Value assigned = constant(0);
+    Value live = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    Value eofSeen = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+
+    for (DynamicDestination &destination : destinations) {
+      CapturedLValue &captured = destination.captured;
+      Type destinationType = captured.type;
+      bool packed = destination.packed;
+      bool string = destination.string;
+      bool real = destination.real;
+      uint64_t allowed = destination.allowed;
+      std::optional<unsigned> packedWidth = destination.packedWidth;
+
+      Value enabled =
+          arith::ExtUIOp::create(builder, location, i32, live).getResult();
+      Value field;
+      Value conversionKind;
+      Value scanOk;
+      Value nextCursor = cursor;
+      Value nextPlanCursor;
+      if (name == "$sscanf") {
+        auto scan = sim::SimStringScanDynamicOp::create(
+            builder, location, TypeRange{stringType, i32, i32, i32, i32}, text,
+            cursor, *dynamicFormat, planCursor, enabled, false, allowed);
+        field = scan.getField();
+        nextCursor = scan.getNextCursor();
+        nextPlanCursor = scan.getNextPlanCursor();
+        conversionKind = scan.getConversionKind();
+        scanOk = scan.getOk();
+      } else {
+        auto scan = sim::SimFileScanDynamicOp::create(
+            builder, location,
+            TypeRange{stringType, i32, i32, i32, i32}, context, fileDescriptor,
+            *dynamicFormat, planCursor, enabled, false, allowed);
+        field = scan.getField();
+        nextPlanCursor = scan.getNextPlanCursor();
+        conversionKind = scan.getConversionKind();
+        scanOk = scan.getOk();
+        Value eof = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, scan.getEof(),
+            constant(0));
+        eofSeen = arith::OrIOp::create(builder, location, eofSeen, eof);
+      }
+      Value matched = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, scanOk, constant(0));
+      live = arith::AndIOp::create(builder, location, live, matched);
+      cursor = arith::SelectOp::create(builder, location, live, nextCursor,
+                                       cursor);
+      planCursor = arith::SelectOp::create(builder, location, live,
+                                           nextPlanCursor, planCursor);
+
+      Block *dispatch = addBlock();
+      Block *resume = addBlock();
+      cf::CondBranchOp::create(builder, location, live, dispatch, ValueRange{},
+                               resume, ValueRange{});
+      setCurrent(dispatch);
+
+      SmallVector<int32_t> kinds;
+      SmallVector<Block *> targets;
+      auto addConversion = [&](int32_t kind, unsigned radix,
+                               bool hierarchyConversion, bool timeConversion) {
+        Block *target = addBlock();
+        kinds.push_back(kind);
+        targets.push_back(target);
+        setCurrent(target);
+        Value parsed;
+        bool numeric = false;
+        if (hierarchyConversion) {
+          parsed = sim::SimStringLiteralOp::create(builder, location, stringType,
+                                                   hierarchy);
+        } else if (timeConversion) {
+          Value parsedReal = sim::SimStringParseRealOp::create(
+              builder, location, builder.getF64Type(), field);
+          parsed = sim::SimTimeScanScaleOp::create(
+              builder, location, builder.getF64Type(), context, parsedReal,
+              timeMultiplier, timePrecision);
+          numeric = true;
+        } else if (radix == kTextRadix) {
+          parsed = field;
+        } else if (radix == kRealRadix) {
+          parsed = sim::SimStringParseRealOp::create(
+              builder, location, builder.getF64Type(), field);
+          numeric = true;
+        } else {
+          parsed = sim::SimStringParseLogicOp::create(
+              builder, location,
+              sim::LogicType::get(function.getContext(), *packedWidth), field,
+              radix);
+          numeric = true;
+        }
+        FailureOr<Value> converted =
+            parsed.getType() == destinationType
+                ? FailureOr<Value>(parsed)
+                : convert(parsed, destinationType, numeric, location);
+        if (failed(converted))
+          return failure();
+        if (failed(writeCapturedLValue(captured, *converted, false, false,
+                                       location)))
+          return failure();
+        cf::BranchOp::create(builder, location, resume);
+        return success();
+      };
+      if (string || packed) {
+        if (failed(addConversion(OBELISK_RT_SCAN_DYNAMIC_TEXT, kTextRadix,
+                                 false, false)) ||
+            failed(addConversion(OBELISK_RT_SCAN_DYNAMIC_HIERARCHY,
+                                 kTextRadix, true, false)))
+          return failure();
+      }
+      if (real || packed) {
+        if (failed(addConversion(OBELISK_RT_SCAN_DYNAMIC_REAL, kRealRadix,
+                                 false, false)) ||
+            failed(addConversion(OBELISK_RT_SCAN_DYNAMIC_TIME, kRealRadix,
+                                 false, true)))
+          return failure();
+      }
+      if (packed) {
+        if (failed(addConversion(OBELISK_RT_SCAN_DYNAMIC_LOGIC2, 2, false,
+                                 false)) ||
+            failed(addConversion(OBELISK_RT_SCAN_DYNAMIC_LOGIC8, 8, false,
+                                 false)) ||
+            failed(addConversion(OBELISK_RT_SCAN_DYNAMIC_LOGIC10, 10, false,
+                                 false)) ||
+            failed(addConversion(OBELISK_RT_SCAN_DYNAMIC_LOGIC16, 16, false,
+                                 false)))
+          return failure();
+      }
+      setCurrent(dispatch);
+      auto caseType = RankedTensorType::get(
+          {static_cast<int64_t>(kinds.size())}, i32);
+      DenseIntElementsAttr caseValues =
+          DenseIntElementsAttr::get(caseType, ArrayRef<int32_t>(kinds));
+      SmallVector<ValueRange> caseOperands(kinds.size(), ValueRange{});
+      cf::SwitchOp::create(builder, location, conversionKind, resume,
+                           ValueRange{}, caseValues, targets, caseOperands);
+      setCurrent(resume);
+
+      Value increment = arith::ExtUIOp::create(builder, location, i32, live);
+      assigned = arith::AddIOp::create(builder, location, assigned, increment);
+    }
+
+    Value enabled =
+        arith::ExtUIOp::create(builder, location, i32, live).getResult();
+    if (name == "$sscanf") {
+      auto finish = sim::SimStringScanDynamicOp::create(
+          builder, location, TypeRange{stringType, i32, i32, i32, i32}, text,
+          cursor, *dynamicFormat, planCursor, enabled, true, 0);
+      cursor = arith::SelectOp::create(builder, location, live,
+                                       finish.getNextCursor(), cursor);
+    } else {
+      auto finish = sim::SimFileScanDynamicOp::create(
+          builder, location, TypeRange{stringType, i32, i32, i32, i32},
+          context, fileDescriptor, *dynamicFormat, planCursor, enabled, true, 0);
+      Value eof = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, finish.getEof(),
+          constant(0));
+      eofSeen = arith::OrIOp::create(builder, location, eofSeen, eof);
+      Value noneAssigned = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, assigned, constant(0));
+      Value inputFailure =
+          arith::AndIOp::create(builder, location, noneAssigned, eofSeen);
+      assigned = arith::SelectOp::create(builder, location, inputFailure,
+                                         constant(-1), assigned);
+    }
+    return convertResult(assigned);
   }
   std::string unsupported;
   std::optional<SmallVector<ScanConversion>> conversions =

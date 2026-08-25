@@ -13,6 +13,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 namespace {
@@ -987,6 +988,189 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_scan_field(
     if (status == OBELISK_RT_OK)
       *outOk = 1;
     return status;
+  });
+}
+
+extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status
+obelisk_rt_v1_file_scan_dynamic(
+    obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
+    uint32_t descriptor, obelisk_rt_string_v1 format, uint32_t planCursor,
+    uint32_t enabled, uint32_t finalize, uint64_t allowedSpecifiers,
+    obelisk_rt_string_v1 *outField, uint32_t *outPlanCursor,
+    uint32_t *outSpecifier, uint32_t *outOk, uint32_t *outEOF) {
+  if (!context || !lane || !outField || !outPlanCursor || !outSpecifier ||
+      !outOk || !outEOF || enabled > 1 || finalize > 1)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (obelisk_rt_managed_lane_context(lane) != context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  obelisk_rt_status ownership = obelisk_rt_validate_string(context, format);
+  if (ownership != OBELISK_RT_OK)
+    return ownership;
+  *outField = 0;
+  *outPlanCursor = planCursor;
+  *outSpecifier = 0;
+  *outOk = 0;
+  *outEOF = 0;
+  if (!enabled)
+    return OBELISK_RT_OK;
+
+  std::shared_ptr<const DynamicScanPlan> plan;
+  obelisk_rt_status status =
+      obelisk_rt_dynamic_scan_plan(context, format, plan);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (!plan->error.empty()) {
+    std::fprintf(stderr, "obelisk: malformed dynamic $fscanf conversion '%s'\n",
+                 plan->error.c_str());
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+  if (planCursor > plan->conversions.size()) {
+    std::fprintf(stderr, "obelisk: invalid dynamic $fscanf format cursor\n");
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+
+  return obelisk_rt_feature_guarded(context, [&]() OBELISK_RT_FEATURE_HELPER {
+    FileEntry *entry;
+    std::unique_lock<std::recursive_mutex> lock;
+    obelisk_rt_status checked =
+        checkFileArguments(context, descriptor, entry, lock);
+    if (checked == OBELISK_RT_INVALID_HANDLE) {
+      *outEOF = 1;
+      return OBELISK_RT_OK;
+    }
+    if (checked != OBELISK_RT_OK)
+      return checked;
+
+    auto letter = [](uint32_t specifier) OBELISK_RT_FEATURE_HELPER {
+      return static_cast<char>(std::tolower(
+          static_cast<unsigned char>(static_cast<char>(specifier))));
+    };
+    auto allowed = [&](uint32_t specifier) OBELISK_RT_FEATURE_HELPER {
+      char normalized = letter(specifier);
+      return normalized >= 'a' && normalized <= 'z' &&
+             (allowedSpecifiers &
+              (UINT64_C(1) << static_cast<unsigned>(normalized - 'a'))) != 0;
+    };
+    auto conversionKind = [&](uint32_t specifier) OBELISK_RT_FEATURE_HELPER {
+      switch (letter(specifier)) {
+      case 's':
+      case 'c':
+        return OBELISK_RT_SCAN_DYNAMIC_TEXT;
+      case 'm':
+        return OBELISK_RT_SCAN_DYNAMIC_HIERARCHY;
+      case 'e':
+      case 'f':
+      case 'g':
+        return OBELISK_RT_SCAN_DYNAMIC_REAL;
+      case 't':
+        return OBELISK_RT_SCAN_DYNAMIC_TIME;
+      case 'b':
+      case 'v':
+        return OBELISK_RT_SCAN_DYNAMIC_LOGIC2;
+      case 'o':
+        return OBELISK_RT_SCAN_DYNAMIC_LOGIC8;
+      case 'd':
+        return OBELISK_RT_SCAN_DYNAMIC_LOGIC10;
+      default:
+        return OBELISK_RT_SCAN_DYNAMIC_LOGIC16;
+      }
+    };
+    auto interpret = [&](auto synthetic)
+                         OBELISK_RT_FEATURE_HELPER -> obelisk_rt_status {
+      constexpr bool Synthetic = decltype(synthetic)::value;
+      for (size_t ordinal = planCursor; ordinal != plan->conversions.size();
+           ++ordinal) {
+        const DynamicScanConversion &conversion = plan->conversions[ordinal];
+        char normalized = letter(conversion.specifier);
+        if (!conversion.suppressed) {
+          if (finalize) {
+            std::fprintf(stderr,
+                         "obelisk: dynamic $fscanf format has more "
+                         "conversions than destinations\n");
+            return OBELISK_RT_INVALID_ARGUMENT;
+          }
+          if (normalized == 'u' || normalized == 'z') {
+            std::fprintf(stderr,
+                         "obelisk: assigned dynamic $fscanf %%%c is not yet "
+                         "supported\n",
+                         static_cast<char>(conversion.specifier));
+            return OBELISK_RT_INVALID_ARGUMENT;
+          }
+          if (!allowed(conversion.specifier)) {
+            std::fprintf(stderr,
+                         "obelisk: dynamic $fscanf %%%c is incompatible with "
+                         "destination %u\n",
+                         static_cast<char>(conversion.specifier),
+                         planCursor + 1);
+            return OBELISK_RT_INVALID_ARGUMENT;
+          }
+        }
+
+        ScanResult result;
+        std::string field;
+        if (normalized == 'u' || normalized == 'z') {
+          if (conversion.width == 0) {
+            std::fprintf(
+                stderr,
+                "obelisk: dynamic $fscanf assignment suppression for raw "
+                "%%%c requires an explicit byte count\n",
+                static_cast<char>(conversion.specifier));
+            return OBELISK_RT_INVALID_ARGUMENT;
+          }
+          result = scanFileRaw<Synthetic>(
+              *entry, conversion.prefix.data(), conversion.prefix.size(),
+              conversion.width, conversion.width, field);
+        } else {
+          result = scanFileField<Synthetic>(
+              *entry, conversion.prefix.data(), conversion.prefix.size(),
+              conversion.specifier, conversion.width, field);
+        }
+        if (result == ScanResult::Error) {
+          recordIOError(context, *entry, "dynamic formatted file read failed");
+          return OBELISK_RT_IO_ERROR;
+        }
+        if (result == ScanResult::EndOfFile) {
+          *outEOF = 1;
+          return OBELISK_RT_OK;
+        }
+        if (result == ScanResult::Mismatch)
+          return OBELISK_RT_OK;
+        *outPlanCursor = static_cast<uint32_t>(ordinal + 1);
+        if (!conversion.suppressed) {
+          obelisk_rt_status created = obelisk_rt_v1_string_create(
+              lane, field.data(), field.size(), outField);
+          if (created != OBELISK_RT_OK)
+            return created;
+          *outSpecifier = conversionKind(conversion.specifier);
+          *outOk = 1;
+          return OBELISK_RT_OK;
+        }
+      }
+
+      if (!finalize) {
+        std::fprintf(stderr,
+                     "obelisk: dynamic $fscanf format has fewer conversions "
+                     "than destinations\n");
+        return OBELISK_RT_INVALID_ARGUMENT;
+      }
+      std::string ignored;
+      ScanResult result = scanFileField<Synthetic>(
+          *entry, plan->suffix.data(), plan->suffix.size(), 'm', 0, ignored);
+      if (result == ScanResult::Error) {
+        recordIOError(context, *entry, "dynamic formatted file read failed");
+        return OBELISK_RT_IO_ERROR;
+      }
+      if (result == ScanResult::EndOfFile)
+        *outEOF = 1;
+      else if (result == ScanResult::Match)
+        *outOk = 1;
+      *outPlanCursor = static_cast<uint32_t>(plan->conversions.size());
+      return OBELISK_RT_OK;
+    };
+    errno = 0;
+    return entry->readable
+               ? interpret(std::integral_constant<bool, false>{})
+               : interpret(std::integral_constant<bool, true>{});
   });
 }
 

@@ -48,6 +48,7 @@ struct EncodedSimulationDesign {
   llvm::SmallVector<SimulationSampledRange> sampledRanges;
   uint64_t stateBitCount = 0;
   uint32_t executionFlags = 0;
+  bool requiresDynamicScanFeature = false;
 };
 
 /// Encode without mutating the supplied design. This API accepts the closed,

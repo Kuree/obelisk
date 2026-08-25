@@ -75,6 +75,35 @@ Encoder::encodeStringOperation(FunctionPlan &plan, Operation *operation) {
         {reg(plan, op.getField()), reg(plan, op.getNextCursor()),
          reg(plan, op.getOk())});
   }
+  if (auto op = dyn_cast<sim::SimScanDynamicValidateOp>(operation)) {
+    requiresDynamicScanFeature = true;
+    uint32_t file = emitU64Constant(plan, op.getFile() ? 1 : 0);
+    uint32_t finalize = emitU64Constant(plan, op.getFinalize() ? 1 : 0);
+    uint32_t allowed = emitU64Constant(plan, op.getAllowedSpecifiers());
+    if (file == kInvalidRegister || finalize == kInvalidRegister ||
+        allowed == kInvalidRegister)
+      return op.emitOpError("cannot allocate dynamic scan validation operands");
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicScanDynamicValidate,
+        {reg(plan, op.getFormat()), reg(plan, op.getPlanCursor()), file,
+         finalize, allowed},
+        {reg(plan, op.getNextPlanCursor())});
+  }
+  if (auto op = dyn_cast<sim::SimStringScanDynamicOp>(operation)) {
+    requiresDynamicScanFeature = true;
+    uint32_t finalize = emitU64Constant(plan, op.getFinalize() ? 1 : 0);
+    uint32_t allowed = emitU64Constant(plan, op.getAllowedSpecifiers());
+    if (finalize == kInvalidRegister || allowed == kInvalidRegister)
+      return op.emitOpError("cannot allocate dynamic scan operands");
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicStringScanDynamic,
+        {reg(plan, op.getInput()), reg(plan, op.getCursor()),
+         reg(plan, op.getFormat()), reg(plan, op.getPlanCursor()),
+         reg(plan, op.getEnabled()), finalize, allowed},
+        {reg(plan, op.getField()), reg(plan, op.getNextCursor()),
+         reg(plan, op.getNextPlanCursor()), reg(plan, op.getConversionKind()),
+         reg(plan, op.getOk())});
+  }
   if (auto op = dyn_cast<sim::SimStringScanRawOp>(operation)) {
     uint64_t bitWidth = cast<sim::LogicType>(op.getData().getType()).getWidth();
     uint64_t rawSize = ((bitWidth + 31) / 32) *
@@ -126,6 +155,21 @@ Encoder::encodeStringOperation(FunctionPlan &plan, Operation *operation) {
         {reg(plan, op.getDescriptor()), reg(plan, op.getEnabled()), prefix,
          specifier, width},
         {reg(plan, op.getField()), reg(plan, op.getOk()),
+         reg(plan, op.getEof())});
+  }
+  if (auto op = dyn_cast<sim::SimFileScanDynamicOp>(operation)) {
+    requiresDynamicScanFeature = true;
+    uint32_t finalize = emitU64Constant(plan, op.getFinalize() ? 1 : 0);
+    uint32_t allowed = emitU64Constant(plan, op.getAllowedSpecifiers());
+    if (finalize == kInvalidRegister || allowed == kInvalidRegister)
+      return op.emitOpError("cannot allocate dynamic file scan operands");
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicFileScanDynamic,
+        {reg(plan, op.getDescriptor()), reg(plan, op.getFormat()),
+         reg(plan, op.getPlanCursor()), reg(plan, op.getEnabled()), finalize,
+         allowed},
+        {reg(plan, op.getField()), reg(plan, op.getNextPlanCursor()),
+         reg(plan, op.getConversionKind()), reg(plan, op.getOk()),
          reg(plan, op.getEof())});
   }
   if (auto op = dyn_cast<sim::SimFileScanRawOp>(operation)) {

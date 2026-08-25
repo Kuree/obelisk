@@ -233,6 +233,8 @@ obelisk_rt_context::~obelisk_rt_context() {
     obelisk_rt_unregister_design_database(execution);
   obelisk_rt_report_signal_diagnostics_unlocked(this);
   obelisk_rt_release_native_schedule_plan(this);
+  if (dynamicScanState && dynamicScanState->destroy)
+    dynamicScanState->destroy(dynamicScanState);
   threadErrors.erase(this);
   obelisk_rt_managed_heap_destroy(managedHeap);
 }

@@ -175,6 +175,7 @@ FailureOr<EncodedSimulationDesign> Encoder::encode() {
   }
   result.stateBitCount = state.bits;
   result.sampledRanges = std::move(*sampledRanges);
+  result.requiresDynamicScanFeature = requiresDynamicScanFeature;
   result.executionFlags = kExecutionHasBytecode;
   if (!result.sampledRanges.empty())
     result.executionFlags |= kExecutionPreponedSnapshot;
@@ -848,6 +849,10 @@ public:
                     builder.getI32IntegerAttr(encoded->executionFlags));
     module->setAttr("obelisk.execution.state_bits",
                     builder.getI64IntegerAttr(encoded->stateBitCount));
+    if (encoded->requiresDynamicScanFeature)
+      module->setAttr("obelisk.feature.dynamic_scan", builder.getUnitAttr());
+    else
+      module->removeAttr("obelisk.feature.dynamic_scan");
     SmallVector<int64_t> sampledRanges;
     sampledRanges.reserve(encoded->sampledRanges.size() * 2);
     for (const SimulationSampledRange &range : encoded->sampledRanges) {

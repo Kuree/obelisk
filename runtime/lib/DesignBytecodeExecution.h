@@ -24,6 +24,17 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                   obelisk_rt_context *context,
                                   uint32_t siteIndex);
 
+// Keep uncommon feature service bodies out of the monolithic intrinsic
+// dispatcher. This preserves the established bytecode interpreter layout for
+// designs that never encode these intrinsics.
+#if defined(__clang__) || defined(__GNUC__)
+__attribute__((weak))
+#endif
+obelisk_rt_status
+invokeDynamicScanIntrinsic(const Image &image, Frame &frame,
+                           obelisk_rt_context *context, IntrinsicSite site,
+                           uint32_t intrinsicId);
+
 } // namespace obelisk::designbytecode
 
 #endif // OBELISK_RUNTIME_LIB_DESIGNBYTECODEEXECUTION_H

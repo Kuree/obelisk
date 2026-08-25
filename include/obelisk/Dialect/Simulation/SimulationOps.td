@@ -1182,6 +1182,41 @@ def SimStringScanFieldOp : SimOp<"string.scan_field", [
   let results = (outs SimStringType:$field, I32:$next_cursor, I32:$ok);
 }
 
+def SimScanDynamicValidateOp : SimOp<"scan_dynamic_validate", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "preflight one destination of a dynamic scanf format";
+  let description = [{
+    This operation never consumes input. Lowering threads `plan_cursor`
+    through every statically typed destination and one `finalize` operation,
+    ensuring the complete cached format is valid before scanning begins.
+    `file` selects `$fscanf` rather than `$sscanf` diagnostics.
+  }];
+  let arguments = (ins SimStringType:$format, I32:$plan_cursor,
+                       BoolAttr:$file, BoolAttr:$finalize,
+                       I64Attr:$allowed_specifiers);
+  let results = (outs I32:$next_plan_cursor);
+}
+
+def SimStringScanDynamicOp : SimOp<"string.scan_dynamic", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "interpret one destination of a dynamic $sscanf format";
+  let description = [{
+    The runtime caches the parsed `format`, consumes preceding suppressed
+    conversions, and returns the next assigned field and its compact
+    `conversion_kind`.
+    `plan_cursor` indexes the immutable cached plan. `finalize` consumes only
+    trailing suppression and literal text. `allowed_specifiers` has one bit
+    per lower-case letter and provides a targeted runtime type check.
+  }];
+  let arguments = (ins SimStringType:$input, I32:$cursor,
+                       SimStringType:$format, I32:$plan_cursor, I32:$enabled,
+                       BoolAttr:$finalize, I64Attr:$allowed_specifiers);
+  let results = (outs SimStringType:$field, I32:$next_cursor,
+                      I32:$next_plan_cursor, I32:$conversion_kind, I32:$ok);
+}
+
 def SimStringScanRawOp : SimOp<"string.scan_raw", [
     MemoryEffects<[MemRead<SimHeapResource>]>
   ]> {
@@ -2206,6 +2241,17 @@ def SimFileScanFieldOp : SimFileOp<"file.scan_field",
     `eof` distinguishes an input failure from an ordinary matching failure.
     The `%m` control conversion matches its prefix and consumes no field bytes.
   }];
+}
+
+def SimFileScanDynamicOp : SimFileOp<"file.scan_dynamic",
+    (ins SimContextType:$context, I32:$descriptor, SimStringType:$format,
+         I32:$plan_cursor, I32:$enabled, BoolAttr:$finalize,
+         I64Attr:$allowed_specifiers),
+    (outs SimStringType:$field, I32:$next_plan_cursor, I32:$conversion_kind,
+          I32:$ok, I32:$eof),
+    [MemRead<SimIOResource>, MemWrite<SimIOResource>,
+     MemRead<SimHeapResource>, MemWrite<SimHeapResource>]> {
+  let summary = "interpret one destination of a dynamic $fscanf format";
 }
 
 def SimFileScanRawOp : SimFileOp<"file.scan_raw",

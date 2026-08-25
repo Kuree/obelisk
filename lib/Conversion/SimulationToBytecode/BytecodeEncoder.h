@@ -220,6 +220,7 @@ private:
       intrinsicSignatureIndices;
   llvm::SmallVector<IntrinsicSite> intrinsicSites;
   llvm::SmallVector<CaptureRecord> captureRecords;
+  bool requiresDynamicScanFeature = false;
 };
 
 } // namespace obelisk::bytecode

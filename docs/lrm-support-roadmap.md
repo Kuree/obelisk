@@ -1112,9 +1112,35 @@ parsed directly at its destination's packed width, removing the former
 Power-of-two conversion directly places each digit in O(input digits plus
 destination words), and decimal retains bounded word-wise
 multiply-and-accumulate. A 4096-bit destination remains one scan operation and
-one parse operation in native and bytecode IR. Dynamic scan format
-expressions, variable-size `$fread` destinations, and the remaining thinly
-tested EOF/error corners remain explicit L19 residuals.
+one parse operation in native and bytecode IR.
+
+L19's tenth closure tranche implements runtime-valued `$sscanf` and `$fscanf`
+formats from 21.3.4.3 for the ordinary conversion families. A feature-local
+interpreter handles literal prefixes and `%%`, widths, assignment suppression,
+`%b/%o/%d/%h/%x`, `%e/%f/%g`, `%s/%c`, `%m`, `%t`, and `%v` in either case;
+explicitly sized suppressed `%u/%z` fields also advance by their raw byte
+count. Each destination is still converted and stored through its statically
+typed lowering path, so generated dispatch is O(destination count times the
+constant conversion-family count), never O(destination width or runtime format
+length). A linear plan preflight validates the full format, exact destination
+count, every statically typed destination, and the assigned-raw diagnostic
+before input or file position can change, including on an initial mismatch or
+EOF. The runtime allocates its bounded eight-entry LRU only on the first
+dynamic scan, reuses resident plans by immutable string identity or content,
+reparses an entry after eviction, and destroys the state with the simulation
+context. Literal-format and no-scan generated IR remains byte-identical. In a
+no-feature runtime context the only delta is a lazy null pointer at the cold
+tail (so every preexisting field offset is unchanged) and its cold destroy
+branch: no cache storage, scan plan, or common-path allocation is created. A
+weak bytecode handler plus a feature-only generated link anchor also keeps the
+parser, cache, interpreter, and dynamic scan ABI bodies out of linked native
+and WebAssembly binaries unless the design contains a dynamic scan intrinsic.
+Native `auto` directly compiles the scan actor and these runtime calls; its
+managed string state retains the preexisting exclusion from static AOT
+scheduler nodes rather than silently converting the actor to design bytecode.
+Assigned dynamic `%u/%z`, whose transfer layout depends recursively on
+the destination type, and variable-size `$fread` destinations remain explicit
+L19 residuals.
 
 L14's configuration closure records the effective elaborated binding on only
 the affected Slang module and checker instance operations and exposes it
@@ -1396,10 +1422,13 @@ one commit.
     associative addresses. Fixed, dynamic, queue, multidimensional, and
     associative targets share extent-independent generated loops; empty
     dynamic and queue reads remain no-ops rather than resizing or rejecting
-    their omitted range. Assigned numeric scans with literal formats preserve
-    exact destination width and the full Table 21-8 X/Z/? alphabet. Dynamic
-    `$sscanf`/`$fscanf` format expressions, variable-size `$fread`
-    destinations, and residual EOF/error-position combinations remain.
+    their omitted range. Assigned numeric scans preserve exact destination
+    width and the full Table 21-8 X/Z/? alphabet. Runtime-valued
+    `$sscanf`/`$fscanf` formats implement the ordinary conversion families,
+    arbitrary widths and suppression, mismatch/EOF/file-position behavior,
+    and a bounded lazy format-plan cache. Assigned dynamic `%u/%z`,
+    variable-size `$fread` destinations, and residual EOF/error-position
+    combinations remain.
 
 ### Randomization and `std`
 

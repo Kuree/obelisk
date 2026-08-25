@@ -166,15 +166,18 @@ if(OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS)
   list(APPEND _obelisk_target_runtime_definitions
     -DOBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS=1)
 endif()
-foreach(source ABI Bytecode Containers Coverage DesignBytecode
-               DesignBytecodeImage DesignBytecodeIntrinsics
-               DesignBytecodeLogic DesignBytecodeNets DesignBytecodeObservers
-               DesignBytecodeRoots DesignDatabase DPI
-               FileIO Format ManagedHeap Plusargs Process
-               ProcessAllocation ProcessAOT ProcessNativeState ProcessNBA
-               ProcessObservers ProcessSignals
-               ProcessState ProcessTransitions ProcessValidation Random RandSolve RandSolveWide
-               Runtime Sampled StochasticQueue System VCD VPI)
+set(_obelisk_target_runtime_common_sources
+    ABI Bytecode Containers Coverage DesignBytecode DesignBytecodeImage
+    DesignBytecodeIntrinsics DesignBytecodeLogic DesignBytecodeNets
+    DesignBytecodeObservers DesignBytecodeRoots DesignDatabase DPI FileIO
+    Format ManagedHeap Plusargs Process ProcessAllocation ProcessAOT
+    ProcessNativeState ProcessNBA ProcessObservers ProcessSignals ProcessState
+    ProcessTransitions ProcessValidation Random RandSolve RandSolveWide Runtime
+    Sampled StochasticQueue System VCD VPI)
+set(_obelisk_target_runtime_cold_tail_sources
+    ScanFormat DynamicScanBytecode)
+foreach(source IN LISTS _obelisk_target_runtime_common_sources
+                        _obelisk_target_runtime_cold_tail_sources)
   set(object "${_obelisk_target_runtime_dir}/${source}.o")
   set(lto_object "${_obelisk_target_runtime_dir}/${source}.bc")
   list(APPEND _obelisk_target_runtime_objects "${object}")

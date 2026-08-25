@@ -53,6 +53,10 @@ constexpr uint32_t kIntrinsicFileGetlineString =
     OBELISK_RT_INTRINSIC_V1_FILE_GETLINE_STRING;
 constexpr uint32_t kIntrinsicFileScanField =
     OBELISK_RT_INTRINSIC_V1_FILE_SCAN_FIELD;
+constexpr uint32_t kIntrinsicFileScanDynamic =
+    OBELISK_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC;
+constexpr uint32_t kIntrinsicScanDynamicValidate =
+    OBELISK_RT_INTRINSIC_V1_SCAN_DYNAMIC_VALIDATE;
 constexpr uint32_t kIntrinsicFileReadMemToken =
     OBELISK_RT_INTRINSIC_V1_FILE_READMEM_TOKEN;
 constexpr uint32_t kIntrinsicFileErrorString =
@@ -251,6 +255,8 @@ constexpr uint32_t kIntrinsicStringCaseConvert =
     OBELISK_RT_INTRINSIC_V1_STRING_CASE_CONVERT;
 constexpr uint32_t kIntrinsicStringScanField =
     OBELISK_RT_INTRINSIC_V1_STRING_SCAN_FIELD;
+constexpr uint32_t kIntrinsicStringScanDynamic =
+    OBELISK_RT_INTRINSIC_V1_STRING_SCAN_DYNAMIC;
 constexpr uint32_t kIntrinsicStringScanRaw =
     OBELISK_RT_INTRINSIC_V1_STRING_SCAN_RAW;
 constexpr uint32_t kIntrinsicFileScanRaw =

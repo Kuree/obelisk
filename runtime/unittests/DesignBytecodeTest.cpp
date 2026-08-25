@@ -164,6 +164,89 @@ std::vector<uint8_t> makeBytecode() {
   return bytes;
 }
 
+std::vector<uint8_t> makeDynamicScanIntrinsicBytecode(uint32_t intrinsicID) {
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t layoutOffset = functionOffset + 96;
+  constexpr size_t codeOffset = layoutOffset + 3 * 40;
+  constexpr size_t operandOffset = codeOffset + 2 * 32;
+  constexpr size_t continuationOffset = operandOffset + 12 * 8;
+  constexpr size_t intrinsicOffset = continuationOffset + 24;
+  constexpr size_t siteOffset = intrinsicOffset + 16;
+  std::vector<uint8_t> bytes(siteOffset + 16, 0);
+  std::memcpy(bytes.data(), "OBBCDS1\0", 8);
+  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, 40, functionOffset);
+  put64(bytes, 48, 1);
+  put64(bytes, 56, layoutOffset);
+  put64(bytes, 64, 3);
+  put64(bytes, 72, codeOffset);
+  put64(bytes, 80, 2);
+  put64(bytes, 88, operandOffset);
+  put64(bytes, 96, 12);
+  put64(bytes, 104, continuationOffset);
+  put64(bytes, 112, 0);
+  put64(bytes, 120, continuationOffset);
+  put64(bytes, 128, 1);
+  put64(bytes, 136, intrinsicOffset);
+  put64(bytes, 144, 1);
+  put64(bytes, 152, siteOffset);
+  put64(bytes, 160, 1);
+  put64(bytes, 168, bytes.size());
+  put64(bytes, 184, bytes.size());
+
+  put64(bytes, functionOffset, 1);
+  put64(bytes, functionOffset + 24, 2);
+  put64(bytes, functionOffset + 40, 3);
+  put32(bytes, functionOffset + 48, 3);
+  put64(bytes, functionOffset + 56, 24);
+  put64(bytes, functionOffset + 64, 8);
+  put64(bytes, functionOffset + 80, 1);
+  put64(bytes, functionOffset + 88, 0);
+  auto layout = [&](size_t index, uint8_t kind, uint32_t width,
+                    uint64_t offset) {
+    size_t record = layoutOffset + index * 40;
+    bytes[record] = kind;
+    put32(bytes, record + 4, width);
+    put64(bytes, record + 8, offset);
+    put64(bytes, record + 16, 8);
+  };
+  layout(0, OBELISK_RT_DBREG_STRING, 64, 0);
+  layout(1, OBELISK_RT_DBREG_BITS, 32, 8);
+  layout(2, OBELISK_RT_DBREG_BITS, 64, 16);
+  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_INTRINSIC);
+  instruction(bytes, codeOffset, 1, OBELISK_RT_DB_RETURN);
+
+  std::vector<uint32_t> inputs;
+  std::vector<uint32_t> outputs;
+  if (intrinsicID == OBELISK_RT_INTRINSIC_V1_STRING_SCAN_DYNAMIC) {
+    inputs = {0, 1, 0, 1, 1, 2, 2};
+    outputs = {0, 1, 1, 1, 1};
+  } else if (intrinsicID == OBELISK_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC) {
+    inputs = {1, 0, 1, 1, 2, 2};
+    outputs = {0, 1, 1, 1, 1};
+  } else {
+    inputs = {0, 1, 2, 2, 2};
+    outputs = {1};
+  }
+  for (size_t index = 0; index != inputs.size(); ++index)
+    put32(bytes, operandOffset + index * 8 + 4, inputs[index]);
+  for (size_t index = 0; index != outputs.size(); ++index)
+    put32(bytes, operandOffset + (inputs.size() + index) * 8, outputs[index]);
+  put32(bytes, continuationOffset, 0);
+  put32(bytes, continuationOffset + 4, 0);
+  put32(bytes, intrinsicOffset, intrinsicID);
+  put32(bytes, intrinsicOffset + 4, inputs.size());
+  put32(bytes, intrinsicOffset + 8, outputs.size());
+  put32(bytes, siteOffset, 0);
+  put32(bytes, siteOffset + 4, 0);
+  put32(bytes, siteOffset + 8, inputs.size());
+  put32(bytes, siteOffset + 12, outputs.size());
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeComparisonBytecode(uint8_t resultKind,
                                             uint16_t comparisonKind) {
   constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
@@ -4856,6 +4939,54 @@ TEST(DesignBytecode, ValidatesComparisonResultDomains) {
             OBELISK_RT_OK);
   EXPECT_EQ(validate(OBELISK_RT_DBREG_LOGIC, OBELISK_RT_DB_CMP_CASEZ_EQ),
             OBELISK_RT_INVALID_BYTECODE);
+}
+
+TEST(DesignBytecode, RejectsCorruptDynamicScanIntrinsicSignatures) {
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t layoutOffset = functionOffset + 96;
+  constexpr size_t codeOffset = layoutOffset + 3 * 40;
+  constexpr size_t operandOffset = codeOffset + 2 * 32;
+  constexpr size_t continuationOffset = operandOffset + 12 * 8;
+  constexpr size_t intrinsicOffset = continuationOffset + 24;
+  auto validate = [](std::vector<uint8_t> bytecode) {
+    Fixture fixture;
+    put64(bytecode, 32, imageChecksum(bytecode));
+    fixture.bytecode = std::move(bytecode);
+    fixture.execution.bytecode = fixture.bytecode.data();
+    fixture.execution.bytecode_size = fixture.bytecode.size();
+    fixture.execution.checksum = imageChecksum(fixture.bytecode);
+    uint64_t scratchSize = 0;
+    uint64_t scratchAlignment = 0;
+    return obelisk_rt_validate_design_bytecode(fixture.entry, nullptr,
+                                               &scratchSize, &scratchAlignment);
+  };
+  std::array<uint32_t, 3> ids{{
+      OBELISK_RT_INTRINSIC_V1_STRING_SCAN_DYNAMIC,
+      OBELISK_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC,
+      OBELISK_RT_INTRINSIC_V1_SCAN_DYNAMIC_VALIDATE,
+  }};
+  for (uint32_t id : ids) {
+    std::vector<uint8_t> valid = makeDynamicScanIntrinsicBytecode(id);
+    EXPECT_EQ(validate(valid), OBELISK_RT_OK) << id;
+
+    std::vector<uint8_t> arity = valid;
+    put32(arity, intrinsicOffset + 4, 8);
+    EXPECT_EQ(validate(std::move(arity)), OBELISK_RT_INVALID_BYTECODE) << id;
+
+    std::vector<uint8_t> flags = valid;
+    put32(flags, intrinsicOffset + 12, 1);
+    EXPECT_EQ(validate(std::move(flags)), OBELISK_RT_INVALID_BYTECODE) << id;
+
+    std::vector<uint8_t> stringKind = valid;
+    stringKind[layoutOffset] = OBELISK_RT_DBREG_BITS;
+    EXPECT_EQ(validate(std::move(stringKind)), OBELISK_RT_INVALID_BYTECODE)
+        << id;
+
+    std::vector<uint8_t> scalarKind = valid;
+    scalarKind[layoutOffset + 40] = OBELISK_RT_DBREG_STRING;
+    EXPECT_EQ(validate(std::move(scalarKind)), OBELISK_RT_INVALID_BYTECODE)
+        << id;
+  }
 }
 
 TEST(DesignBytecode, ValidatesManagedAggregateExtractionBounds) {

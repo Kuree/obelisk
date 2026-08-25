@@ -85,16 +85,19 @@ set(_obelisk_wasm_flags
   -I "${_obelisk_runtime_source_dir}/include"
   -I "${_obelisk_runtime_source_dir}/lib")
 
+set(_obelisk_target_runtime_common_sources
+    ABI Bytecode Containers Coverage DesignBytecode DesignBytecodeImage
+    DesignBytecodeIntrinsics DesignBytecodeLogic DesignBytecodeNets
+    DesignBytecodeObservers DesignBytecodeRoots DesignDatabase DPI FileIO
+    Format ManagedHeap Plusargs Process ProcessAllocation ProcessAOT
+    ProcessNativeState ProcessNBA ProcessObservers ProcessSignals ProcessState
+    ProcessTransitions ProcessValidation Random RandSolve RandSolveWide Runtime
+    Sampled StochasticQueue System VCD VPI)
+set(_obelisk_target_runtime_cold_tail_sources
+    ScanFormat DynamicScanBytecode)
 set(_obelisk_target_runtime_objects)
-foreach(source ABI Bytecode Containers Coverage DesignBytecode
-               DesignBytecodeImage DesignBytecodeIntrinsics
-               DesignBytecodeLogic DesignBytecodeNets DesignBytecodeObservers
-               DesignBytecodeRoots DesignDatabase DPI
-               FileIO Format ManagedHeap Plusargs Process
-               ProcessAllocation ProcessAOT ProcessNativeState ProcessNBA
-               ProcessObservers ProcessSignals
-               ProcessState ProcessTransitions ProcessValidation Random RandSolve RandSolveWide
-               Runtime Sampled StochasticQueue System VCD VPI)
+foreach(source IN LISTS _obelisk_target_runtime_common_sources
+                        _obelisk_target_runtime_cold_tail_sources)
   set(object "${_obelisk_target_runtime_dir}/${source}.o")
   list(APPEND _obelisk_target_runtime_objects "${object}")
   add_custom_command(

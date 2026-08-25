@@ -27,6 +27,22 @@
 #include <utility>
 #include <vector>
 
+#if (defined(__clang__) || defined(__GNUC__)) && !defined(__wasm__)
+#define OBELISK_RT_FEATURE_TEXT                                                \
+  __attribute__((noinline, cold, section(".obelisk.feature.text")))
+#define OBELISK_RT_FEATURE_HELPER                                              \
+  __attribute__((section(".obelisk.feature.text")))
+#elif defined(__clang__) || defined(__GNUC__)
+// WebAssembly has a single code section, so it cannot provide the ELF-style
+// feature text section above.  Keep feature services out of their callers and
+// give the backend its portable cold-placement hint instead.
+#define OBELISK_RT_FEATURE_TEXT __attribute__((noinline, cold))
+#define OBELISK_RT_FEATURE_HELPER
+#else
+#define OBELISK_RT_FEATURE_TEXT
+#define OBELISK_RT_FEATURE_HELPER
+#endif
+
 constexpr uint64_t OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG =
     OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG;
 
@@ -99,6 +115,44 @@ struct FileEntry {
   // then corrupts it on the next write.
   int pushback = -1;
 };
+
+// Parsed dynamic $sscanf/$fscanf formats are feature-local and immutable.
+// Prefix strings are owned by the plan, so scanners may use their bytes after
+// releasing the cache mutex. The cache itself is allocated only on the first
+// dynamic-format scan and remains bounded independently of user input.
+struct DynamicScanConversion {
+  std::string prefix;
+  uint64_t width = 0;
+  uint32_t specifier = 0;
+  bool suppressed = false;
+};
+
+struct DynamicScanPlan {
+  std::string format;
+  std::vector<DynamicScanConversion> conversions;
+  std::string suffix;
+  std::string error;
+};
+
+struct DynamicScanCacheEntry {
+  uint64_t hash = 0;
+  uint64_t size = 0;
+  uint64_t identity = 0;
+  obelisk_rt_string_v1 inlineValue = 0;
+  std::shared_ptr<const DynamicScanPlan> plan;
+};
+
+struct DynamicScanState {
+  void (*destroy)(DynamicScanState *) = nullptr;
+  std::mutex mutex;
+  std::vector<DynamicScanCacheEntry> plans;
+  uint64_t parseCount = 0;
+  uint64_t contentCompareBytes = 0;
+};
+
+obelisk_rt_status obelisk_rt_dynamic_scan_plan(
+    obelisk_rt_context *context, obelisk_rt_string_v1 format,
+    std::shared_ptr<const DynamicScanPlan> &plan) noexcept;
 
 struct OwnedElementTypeDescriptor {
   obelisk_rt_element_type_v1 descriptor{};
@@ -1405,6 +1459,10 @@ struct obelisk_rt_context {
   std::vector<obelisk_rt_process_instance_v1 *> managedRootProcesses;
   ManagedHeap *managedHeap = nullptr;
   obelisk_rt_random_state_v1 random{};
+  // Cold feature-local tail: bounded parsed plans for dynamic
+  // $sscanf/$fscanf format strings. Keeping this after all preexisting fields
+  // preserves their offsets; null is the complete no-feature state.
+  DynamicScanState *dynamicScanState = nullptr;
 
   obelisk_rt_context();
   ~obelisk_rt_context();
@@ -1787,6 +1845,23 @@ obelisk_rt_status obelisk_rt_initialize_dpi_scopes(
 template <typename Callable>
 obelisk_rt_status guarded(obelisk_rt_context *context,
                           Callable &&callable) noexcept {
+  try {
+    return callable();
+  } catch (const std::bad_alloc &) {
+    setLastError(context, "runtime allocation failed");
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    setLastError(context, "unexpected runtime exception");
+    return OBELISK_RT_IO_ERROR;
+  }
+}
+
+// Feature-only counterpart to guarded().  Keeping the wrapper itself in the
+// feature section prevents a cold callable from leaving a template
+// instantiation in the ordinary runtime text.
+template <typename Callable>
+OBELISK_RT_FEATURE_HELPER obelisk_rt_status obelisk_rt_feature_guarded(
+    obelisk_rt_context *context, Callable &&callable) noexcept {
   try {
     return callable();
   } catch (const std::bad_alloc &) {

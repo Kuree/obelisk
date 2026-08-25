@@ -1887,6 +1887,194 @@ extern "C" obelisk_rt_status obelisk_rt_v1_string_scan_field(
   return OBELISK_RT_OK;
 }
 
+extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status
+obelisk_rt_v1_string_scan_dynamic(
+    obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
+    obelisk_rt_string_v1 input, uint32_t cursor,
+    obelisk_rt_string_v1 format, uint32_t planCursor, uint32_t enabled,
+    uint32_t finalize, uint64_t allowedSpecifiers,
+    obelisk_rt_string_v1 *outField, uint32_t *outCursor,
+    uint32_t *outPlanCursor, uint32_t *outSpecifier, uint32_t *outOk) {
+  if (!context || !lane || !outField || !outCursor || !outPlanCursor ||
+      !outSpecifier || !outOk || enabled > 1 || finalize > 1)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (obelisk_rt_managed_lane_context(lane) != context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  obelisk_rt_status ownership = obelisk_rt_validate_string(context, input);
+  if (ownership != OBELISK_RT_OK)
+    return ownership;
+  ownership = obelisk_rt_validate_string(context, format);
+  if (ownership != OBELISK_RT_OK)
+    return ownership;
+  *outField = 0;
+  *outCursor = cursor;
+  *outPlanCursor = planCursor;
+  *outSpecifier = 0;
+  *outOk = 0;
+  if (!enabled)
+    return OBELISK_RT_OK;
+
+  std::shared_ptr<const DynamicScanPlan> plan;
+  obelisk_rt_status status =
+      obelisk_rt_dynamic_scan_plan(context, format, plan);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (!plan->error.empty()) {
+    std::fprintf(stderr, "obelisk: malformed dynamic $sscanf conversion '%s'\n",
+                 plan->error.c_str());
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+  if (planCursor > plan->conversions.size()) {
+    std::fprintf(stderr, "obelisk: invalid dynamic $sscanf format cursor\n");
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+  StringView view;
+  status = readString(input, view);
+  if (status != OBELISK_RT_OK)
+    return status;
+  uint64_t index = cursor;
+
+  auto matchPrefix = [&](std::string_view prefix,
+                         uint64_t &position) OBELISK_RT_FEATURE_HELPER {
+    uint64_t candidate = position;
+    for (char expected : prefix) {
+      if (scanSpace(expected)) {
+        while (candidate < view.size && scanSpace(view.bytes[candidate]))
+          ++candidate;
+      } else if (candidate == view.size || view.bytes[candidate] != expected) {
+        return false;
+      } else {
+        ++candidate;
+      }
+    }
+    position = candidate;
+    return true;
+  };
+  auto letter = [](uint32_t specifier) OBELISK_RT_FEATURE_HELPER {
+    return static_cast<char>(std::tolower(
+        static_cast<unsigned char>(static_cast<char>(specifier))));
+  };
+  auto allowed = [&](uint32_t specifier) OBELISK_RT_FEATURE_HELPER {
+    char normalized = letter(specifier);
+    return normalized >= 'a' && normalized <= 'z' &&
+           (allowedSpecifiers &
+           (UINT64_C(1) << static_cast<unsigned>(normalized - 'a'))) != 0;
+  };
+  auto conversionKind = [&](uint32_t specifier) OBELISK_RT_FEATURE_HELPER {
+    switch (letter(specifier)) {
+    case 's':
+    case 'c':
+      return OBELISK_RT_SCAN_DYNAMIC_TEXT;
+    case 'm':
+      return OBELISK_RT_SCAN_DYNAMIC_HIERARCHY;
+    case 'e':
+    case 'f':
+    case 'g':
+      return OBELISK_RT_SCAN_DYNAMIC_REAL;
+    case 't':
+      return OBELISK_RT_SCAN_DYNAMIC_TIME;
+    case 'b':
+    case 'v':
+      return OBELISK_RT_SCAN_DYNAMIC_LOGIC2;
+    case 'o':
+      return OBELISK_RT_SCAN_DYNAMIC_LOGIC8;
+    case 'd':
+      return OBELISK_RT_SCAN_DYNAMIC_LOGIC10;
+    default:
+      return OBELISK_RT_SCAN_DYNAMIC_LOGIC16;
+    }
+  };
+
+  for (size_t ordinal = planCursor; ordinal != plan->conversions.size();
+       ++ordinal) {
+    const DynamicScanConversion &conversion = plan->conversions[ordinal];
+    char normalized = letter(conversion.specifier);
+    if (!conversion.suppressed) {
+      if (finalize) {
+        std::fprintf(stderr,
+                     "obelisk: dynamic $sscanf format has more conversions "
+                     "than destinations\n");
+        return OBELISK_RT_INVALID_ARGUMENT;
+      }
+      if (normalized == 'u' || normalized == 'z') {
+        std::fprintf(stderr,
+                     "obelisk: assigned dynamic $sscanf %%%c is not yet "
+                     "supported\n",
+                     static_cast<char>(conversion.specifier));
+        return OBELISK_RT_INVALID_ARGUMENT;
+      }
+      if (!allowed(conversion.specifier)) {
+        std::fprintf(stderr,
+                     "obelisk: dynamic $sscanf %%%c is incompatible with "
+                     "destination %u\n",
+                     static_cast<char>(conversion.specifier), planCursor + 1);
+        return OBELISK_RT_INVALID_ARGUMENT;
+      }
+    }
+
+    uint64_t next = index;
+    if (!matchPrefix(conversion.prefix, next))
+      return OBELISK_RT_OK;
+    if (normalized == 'u' || normalized == 'z') {
+      if (conversion.width == 0) {
+        std::fprintf(stderr,
+                     "obelisk: dynamic $sscanf assignment suppression for "
+                     "raw %%%c requires an explicit byte count\n",
+                     static_cast<char>(conversion.specifier));
+        return OBELISK_RT_INVALID_ARGUMENT;
+      }
+      if (conversion.width > view.size - std::min<uint64_t>(next, view.size))
+        return OBELISK_RT_OK;
+      next += conversion.width;
+    } else if (normalized != 'm') {
+      uint64_t fieldBegin = next;
+      uint64_t extent =
+          scanFieldExtent(view, next, conversion.specifier, conversion.width);
+      if (extent == 0)
+        return OBELISK_RT_OK;
+      if (!conversion.suppressed) {
+        if (normalized == 'v') {
+          char logic = 0;
+          if (!obelisk_rt_parse_strength_field(view.bytes + fieldBegin, extent,
+                                               logic))
+            return OBELISK_RT_OK;
+          status = createString(lane, &logic, 1, outField);
+        } else {
+          status = createString(lane, view.bytes + fieldBegin, extent, outField);
+        }
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
+    }
+    index = next;
+    *outPlanCursor = static_cast<uint32_t>(ordinal + 1);
+    if (!conversion.suppressed) {
+      if (index > UINT32_MAX)
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      *outCursor = static_cast<uint32_t>(index);
+      *outSpecifier = conversionKind(conversion.specifier);
+      *outOk = 1;
+      return OBELISK_RT_OK;
+    }
+  }
+
+  if (!finalize) {
+    std::fprintf(stderr,
+                 "obelisk: dynamic $sscanf format has fewer conversions than "
+                 "destinations\n");
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+  uint64_t next = index;
+  if (!matchPrefix(plan->suffix, next))
+    return OBELISK_RT_OK;
+  if (next > UINT32_MAX)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  *outCursor = static_cast<uint32_t>(next);
+  *outPlanCursor = static_cast<uint32_t>(plan->conversions.size());
+  *outOk = 1;
+  return OBELISK_RT_OK;
+}
+
 extern "C" obelisk_rt_status obelisk_rt_v1_string_scan_raw(
     obelisk_rt_string_v1 input, uint32_t cursor, const char *prefix,
     uint64_t prefixSize, uint64_t rawSize, uint64_t bitWidth,

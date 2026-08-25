@@ -1,6 +1,6 @@
 find_package(Threads REQUIRED)
 
-add_library(obelisk_rt STATIC
+set(_obelisk_runtime_common_sources
   lib/ABI.cpp
   lib/Bytecode.cpp
   lib/DesignBytecode.cpp
@@ -37,6 +37,17 @@ add_library(obelisk_rt STATIC
   lib/StochasticQueue.cpp
   lib/VCD.cpp
   lib/VPI.cpp
+)
+set(_obelisk_runtime_cold_tail_sources
+  # Keep feature-only services after every common runtime object. Native links
+  # additionally group their functions in .obelisk.feature.text; wasm uses
+  # the portable cold attribute in its single code section.
+  lib/ScanFormat.cpp
+  lib/DynamicScanBytecode.cpp
+)
+add_library(obelisk_rt STATIC
+  ${_obelisk_runtime_common_sources}
+  ${_obelisk_runtime_cold_tail_sources}
 )
 
 add_library(ObeliskRuntime ALIAS obelisk_rt)

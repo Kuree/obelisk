@@ -640,6 +640,126 @@ public:
   }
 };
 
+class DynamicScanValidateConversion final
+    : public OpConversionPattern<sim::SimScanDynamicValidateOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimScanDynamicValidateOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Type i32 = rewriter.getI32Type();
+    Type i64 = rewriter.getI64Type();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    getOrDeclareLLVMFunction(op->getParentOfType<ModuleOp>(),
+                             "obelisk_rt_v1_scan_dynamic_validate", i32,
+                             {pointer, i64, i32, i32, i32, i64, pointer});
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    Value output = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+    LLVM::StoreOp::create(rewriter, op.getLoc(), adaptor.getPlanCursor().front(),
+                          output, 4);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_scan_dynamic_validate"),
+            ValueRange{context, adaptor.getFormat().front(),
+                       adaptor.getPlanCursor().front(),
+                       llvmConstant(rewriter, op.getLoc(), i32,
+                                    op.getFile() ? 1 : 0),
+                       llvmConstant(rewriter, op.getLoc(), i32,
+                                    op.getFinalize() ? 1 : 0),
+                       llvmConstant(rewriter, op.getLoc(), i64,
+                                    op.getAllowedSpecifiers()),
+                       output})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.replaceOp(
+        op, LLVM::LoadOp::create(rewriter, op.getLoc(), i32, output, 4));
+    return success();
+  }
+};
+
+template <typename Op, bool IsFile>
+class DynamicScanConversion final : public OpConversionPattern<Op> {
+public:
+  using OpConversionPattern<Op>::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(Op op,
+                  typename OpConversionPattern<Op>::OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Type i64 = rewriter.getI64Type();
+    Type i32 = rewriter.getI32Type();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    SmallVector<Type> argumentTypes{pointer, pointer};
+    if constexpr (IsFile)
+      argumentTypes.append({i32, i64, i32, i32});
+    else
+      argumentTypes.append({i64, i32, i64, i32, i32});
+    argumentTypes.append(
+        {i32, i64, pointer, pointer, pointer, pointer, pointer});
+    getOrDeclareLLVMFunction(op->template getParentOfType<ModuleOp>(),
+                             IsFile ? "obelisk_rt_v1_file_scan_dynamic"
+                                    : "obelisk_rt_v1_string_scan_dynamic",
+                             i32, argumentTypes);
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    Value fieldOutput = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          LLVM::ZeroOp::create(rewriter, op.getLoc(), i64),
+                          fieldOutput, 8);
+    SmallVector<Value> scalarOutputs;
+    for (unsigned index = 0; index != 4; ++index) {
+      Value output = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+      LLVM::StoreOp::create(rewriter, op.getLoc(),
+                            LLVM::ZeroOp::create(rewriter, op.getLoc(), i32),
+                            output, 4);
+      scalarOutputs.push_back(output);
+    }
+    auto constant = [&](Type type, uint64_t value) {
+      return llvmConstant(rewriter, op.getLoc(), type, value);
+    };
+    SmallVector<Value> arguments{context, lane};
+    if constexpr (IsFile) {
+      arguments.append({adaptor.getDescriptor().front(),
+                        adaptor.getFormat().front(),
+                        adaptor.getPlanCursor().front(),
+                        adaptor.getEnabled().front()});
+    } else {
+      arguments.append({adaptor.getInput().front(), adaptor.getCursor().front(),
+                        adaptor.getFormat().front(),
+                        adaptor.getPlanCursor().front(),
+                        adaptor.getEnabled().front()});
+    }
+    arguments.append(
+        {constant(i32, op.getFinalize() ? 1 : 0),
+         constant(i64, op.getAllowedSpecifiers()), fieldOutput});
+    if constexpr (!IsFile)
+      arguments.push_back(scalarOutputs[0]);
+    arguments.append({scalarOutputs[IsFile ? 0 : 1],
+                      scalarOutputs[IsFile ? 1 : 2],
+                      scalarOutputs[IsFile ? 2 : 3]});
+    if constexpr (IsFile)
+      arguments.push_back(scalarOutputs[3]);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(
+                rewriter.getContext(),
+                IsFile ? "obelisk_rt_v1_file_scan_dynamic"
+                       : "obelisk_rt_v1_string_scan_dynamic"),
+            arguments)
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    SmallVector<Value> results{
+        LLVM::LoadOp::create(rewriter, op.getLoc(), i64, fieldOutput, 8)};
+    for (Value output : scalarOutputs)
+      results.push_back(
+          LLVM::LoadOp::create(rewriter, op.getLoc(), i32, output, 4));
+    rewriter.replaceOp(op, results);
+    return success();
+  }
+};
+
 class PlusargTestConversion final
     : public OpConversionPattern<sim::SimPlusargTestOp> {
 public:
@@ -999,9 +1119,12 @@ void populateManagedStringToLLVMConversionPatterns(RewritePatternSet &patterns,
       StringLiteralConversion, StringFromPackedConversion,
       StringToPackedConversion, StringConcatConversion, StringLengthConversion,
       StringGetcConversion, StringCompareConversion, StringScanFieldConversion,
+      DynamicScanValidateConversion,
+      DynamicScanConversion<sim::SimStringScanDynamicOp, false>,
       RawScanConversion<sim::SimStringScanRawOp, false, false>,
       RawScanConversion<sim::SimStringSkipRawOp, false, true>,
       FileScanFieldConversion,
+      DynamicScanConversion<sim::SimFileScanDynamicOp, true>,
       RawScanConversion<sim::SimFileScanRawOp, true, false>,
       RawScanConversion<sim::SimFileSkipRawOp, true, true>,
       StringParseLogicConversion, PlusargParseLogicConversion,

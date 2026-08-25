@@ -959,6 +959,9 @@ enum {
   OBELISK_RT_INTRINSIC_V1_STRING_SCAN_RAW = UINT32_C(0x00010243),
   OBELISK_RT_INTRINSIC_V1_FILE_SCAN_RAW = UINT32_C(0x00010244),
   OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_STORAGE = UINT32_C(0x00010245),
+  OBELISK_RT_INTRINSIC_V1_STRING_SCAN_DYNAMIC = UINT32_C(0x00010246),
+  OBELISK_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC = UINT32_C(0x00010247),
+  OBELISK_RT_INTRINSIC_V1_SCAN_DYNAMIC_VALIDATE = UINT32_C(0x00010248),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -2039,6 +2042,39 @@ obelisk_rt_status obelisk_rt_v1_string_scan_field(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_string_v1 input, uint32_t cursor,
     const char *prefix, uint64_t prefix_size, uint32_t specifier,
     uint64_t width, obelisk_rt_string_v1 *out_field, uint32_t *out_cursor,
+    uint32_t *out_ok);
+// Interpret one cached dynamic scanf plan through its next assigned
+// conversion. Bits 0..25 of allowed_specifiers correspond to lower-case a..z.
+// `finalize` consumes only trailing suppressed conversions / literal text and
+// diagnoses a remaining assigned conversion. Plans and their prefixes remain
+// runtime-owned; unchanged formats reuse a resident entry in the bounded
+// cache, while an entry reparses after eviction.
+enum {
+  OBELISK_RT_SCAN_DYNAMIC_TEXT = 1,
+  OBELISK_RT_SCAN_DYNAMIC_HIERARCHY = 2,
+  OBELISK_RT_SCAN_DYNAMIC_REAL = 3,
+  OBELISK_RT_SCAN_DYNAMIC_TIME = 4,
+  OBELISK_RT_SCAN_DYNAMIC_LOGIC2 = 5,
+  OBELISK_RT_SCAN_DYNAMIC_LOGIC8 = 6,
+  OBELISK_RT_SCAN_DYNAMIC_LOGIC10 = 7,
+  OBELISK_RT_SCAN_DYNAMIC_LOGIC16 = 8
+};
+// Validate one destination against the next assigned conversion without
+// consuming input. `file` selects the task name used by diagnostics. Lowering
+// threads `out_plan_cursor` through every destination and one final call, so
+// the complete format is checked in O(conversions + destinations) before any
+// scanner touches its source.
+obelisk_rt_status obelisk_rt_v1_scan_dynamic_validate(
+    obelisk_rt_context *context, obelisk_rt_string_v1 format,
+    uint32_t plan_cursor, uint32_t file, uint32_t finalize,
+    uint64_t allowed_specifiers, uint32_t *out_plan_cursor);
+obelisk_rt_status obelisk_rt_v1_string_scan_dynamic(
+    obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
+    obelisk_rt_string_v1 input, uint32_t cursor,
+    obelisk_rt_string_v1 format, uint32_t plan_cursor, uint32_t enabled,
+    uint32_t finalize, uint64_t allowed_specifiers,
+    obelisk_rt_string_v1 *out_field, uint32_t *out_cursor,
+    uint32_t *out_plan_cursor, uint32_t *out_conversion_kind,
     uint32_t *out_ok);
 obelisk_rt_status obelisk_rt_v1_string_scan_raw(
     obelisk_rt_string_v1 input, uint32_t cursor, const char *prefix,
@@ -3865,6 +3901,12 @@ obelisk_rt_status obelisk_rt_v1_file_scan_field(
     uint32_t descriptor, uint32_t enabled, const char *prefix,
     uint64_t prefix_size, uint32_t specifier, uint64_t width,
     obelisk_rt_string_v1 *out_field, uint32_t *out_ok, uint32_t *out_eof);
+obelisk_rt_status obelisk_rt_v1_file_scan_dynamic(
+    obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
+    uint32_t descriptor, obelisk_rt_string_v1 format, uint32_t plan_cursor,
+    uint32_t enabled, uint32_t finalize, uint64_t allowed_specifiers,
+    obelisk_rt_string_v1 *out_field, uint32_t *out_plan_cursor,
+    uint32_t *out_conversion_kind, uint32_t *out_ok, uint32_t *out_eof);
 obelisk_rt_status obelisk_rt_v1_file_scan_raw(
     obelisk_rt_context *context, uint32_t descriptor, uint32_t enabled,
     const char *prefix, uint64_t prefix_size, uint64_t raw_size,
