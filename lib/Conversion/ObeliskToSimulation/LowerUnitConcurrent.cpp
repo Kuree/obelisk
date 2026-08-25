@@ -840,6 +840,56 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
   return diagnosed;
 }
 
+static bool areEquivalentDirectClockAddresses(Operation *left,
+                                              Operation *right) {
+  if (!left || !right || left->getName() != right->getName())
+    return false;
+
+  if (isa<semantic::SVNamedValueExpressionOp,
+          semantic::SVHierarchicalValueExpressionOp>(left)) {
+    auto lhs = left->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+    auto rhs = right->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+    return lhs && rhs && lhs == rhs;
+  }
+
+  if (isa<semantic::SVMemberAccessExpressionOp>(left)) {
+    auto member = [](Operation *operation) -> StringAttr {
+      if (auto clockMember = operation->getAttrOfType<StringAttr>(
+              "virtual_interface_clock_member"))
+        return clockMember;
+      return operation->getAttrOfType<StringAttr>("member_name");
+    };
+    if (!member(left) || member(left) != member(right))
+      return false;
+    SmallVector<Operation *> lhsChildren = getChildren(left);
+    SmallVector<Operation *> rhsChildren = getChildren(right);
+    return !lhsChildren.empty() && !rhsChildren.empty() &&
+           areEquivalentDirectClockAddresses(lhsChildren.front(),
+                                             rhsChildren.front());
+  }
+
+  if (isa<semantic::SVElementSelectExpressionOp,
+          semantic::SVRangeSelectExpressionOp>(left)) {
+    SmallVector<Operation *> lhsChildren = getChildren(left);
+    SmallVector<Operation *> rhsChildren = getChildren(right);
+    if (lhsChildren.size() != rhsChildren.size() || lhsChildren.empty() ||
+        !areEquivalentDirectClockAddresses(lhsChildren.front(),
+                                           rhsChildren.front()))
+      return false;
+    for (auto [lhs, rhs] : llvm::zip_equal(
+             ArrayRef<Operation *>(lhsChildren).drop_front(),
+             ArrayRef<Operation *>(rhsChildren).drop_front())) {
+      std::optional<StringRef> lhsConstant = getConstantSpelling(lhs);
+      std::optional<StringRef> rhsConstant = getConstantSpelling(rhs);
+      if (!lhsConstant || !rhsConstant || *lhsConstant != *rhsConstant)
+        return false;
+    }
+    return true;
+  }
+
+  return false;
+}
+
 static bool areEquivalentDirectClocks(Operation *left, Operation *right) {
   auto lhs = dyn_cast_or_null<semantic::SVSignalEventControlOp>(left);
   auto rhs = dyn_cast_or_null<semantic::SVSignalEventControlOp>(right);
@@ -852,6 +902,9 @@ static bool areEquivalentDirectClocks(Operation *left, Operation *right) {
   auto effectiveEdge = [](semantic::SVSignalEventControlOp event,
                           Operation *expression) {
     if (auto edge = expression->getAttrOfType<semantic::EdgeKindAttr>(
+            "virtual_interface_clock_event_edge"))
+      return edge.getValue();
+    if (auto edge = expression->getAttrOfType<semantic::EdgeKindAttr>(
             clockingEventEdgeAttrName))
       return edge.getValue();
     return event.getEdgeKind();
@@ -859,22 +912,62 @@ static bool areEquivalentDirectClocks(Operation *left, Operation *right) {
   if (effectiveEdge(lhs, lhsChildren.front()) !=
       effectiveEdge(rhs, rhsChildren.front()))
     return false;
-  // A member clock may have the same leaf path through two different dynamic
-  // receivers (for example vif0.clk and vif1.clk). This initial multi-clock
-  // slice deliberately accepts only statically identified storage, where an
-  // exact semantic symbol is sufficient to prove clock identity.
-  auto identity = [](Operation *expression) {
-    if (auto symbol = expression->getAttrOfType<SymbolRefAttr>(
-            clockingEventSymbolAttrName))
-      return symbol;
-    return expression->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+  auto qualifiedClockingDescriptor = [](Operation *expression) {
+    return expression->hasAttr(clockingEventHasIffAttrName) ||
+           expression->hasAttr(clockingEventMonitorRequiredAttrName) ||
+           expression->hasAttr(clockingEventListAttrName) ||
+           expression->hasAttr("virtual_interface_clock_event_has_iff") ||
+           expression->hasAttr("virtual_interface_clock_event_monitor") ||
+           expression->hasAttr("virtual_interface_clock_event_list");
   };
-  auto lhsSymbol = identity(lhsChildren.front());
-  auto rhsSymbol = identity(rhsChildren.front());
-  return lhsSymbol && rhsSymbol && lhsSymbol == rhsSymbol;
+  bool lhsQualified = qualifiedClockingDescriptor(lhsChildren.front());
+  bool rhsQualified = qualifiedClockingDescriptor(rhsChildren.front());
+  if (lhsQualified || rhsQualified) {
+    if (lhsQualified != rhsQualified)
+      return false;
+    auto lhsBlock = lhsChildren.front()->getAttrOfType<SymbolRefAttr>(
+        "referenced_symbol");
+    auto rhsBlock = rhsChildren.front()->getAttrOfType<SymbolRefAttr>(
+        "referenced_symbol");
+    if (!lhsBlock || !rhsBlock || lhsBlock != rhsBlock)
+      return false;
+    if (isa<semantic::SVMemberAccessExpressionOp>(lhsChildren.front()) ||
+        isa<semantic::SVMemberAccessExpressionOp>(rhsChildren.front()))
+      return areEquivalentDirectClockAddresses(lhsChildren.front(),
+                                               rhsChildren.front());
+    return true;
+  }
+  auto lhsClockingSymbol = lhsChildren.front()->getAttrOfType<SymbolRefAttr>(
+      clockingEventSymbolAttrName);
+  auto rhsClockingSymbol = rhsChildren.front()->getAttrOfType<SymbolRefAttr>(
+      clockingEventSymbolAttrName);
+  if (lhsClockingSymbol || rhsClockingSymbol) {
+    // A virtual clocking-block member may carry both its statically selected
+    // event symbol and a dynamic receiver. The symbol identifies the member,
+    // not the interface instance selected at runtime, so it must not bypass
+    // structural receiver comparison.
+    if (isa<semantic::SVMemberAccessExpressionOp>(lhsChildren.front()) ||
+        isa<semantic::SVMemberAccessExpressionOp>(rhsChildren.front()))
+      return areEquivalentDirectClockAddresses(lhsChildren.front(),
+                                               rhsChildren.front());
+    auto identity = [](Operation *expression,
+                       SymbolRefAttr clockingSymbol) -> SymbolRefAttr {
+      if (clockingSymbol)
+        return clockingSymbol;
+      if (isa<semantic::SVNamedValueExpressionOp,
+              semantic::SVHierarchicalValueExpressionOp>(expression))
+        return expression->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+      return {};
+    };
+    auto lhsIdentity = identity(lhsChildren.front(), lhsClockingSymbol);
+    auto rhsIdentity = identity(rhsChildren.front(), rhsClockingSymbol);
+    return lhsIdentity && rhsIdentity && lhsIdentity == rhsIdentity;
+  }
+  return areEquivalentDirectClockAddresses(lhsChildren.front(),
+                                           rhsChildren.front());
 }
 
-static bool isStaticDirectClock(Operation *operation) {
+static bool isDirectClock(Operation *operation) {
   auto event = dyn_cast_or_null<semantic::SVSignalEventControlOp>(operation);
   if (!event || event.getHasIff())
     return false;
@@ -3261,10 +3354,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                     "accounting",
              failure();
     for (const MultiClockSequenceStage &stage : multiClockSequence.stages) {
-      if (!isStaticDirectClock(stage.clock))
+      if (!isDirectClock(stage.clock))
         return emitError(getSemanticLocation(stage.clock))
-                   << "multi-clock sequence stages require one direct signal "
-                      "edge clock without iff",
+                   << "multi-clock sequence stages require one direct "
+                      "addressable edge clock without an explicit iff",
                failure();
     }
 
