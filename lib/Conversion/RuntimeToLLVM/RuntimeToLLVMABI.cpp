@@ -36,6 +36,7 @@ FailureOr<ABIAlignments> validateTargetABI(ModuleOp module,
       llvm::StructType::get(context, {i32, i32, i64, pointer, pointer});
   auto *enumArgument =
       llvm::StructType::get(context, {i64, i32, i32, pointer, pointer, i64});
+  auto *rawAggregateArgument = llvm::StructType::get(context, {i64, i64, i64});
   auto *formatEnvironment = llvm::StructType::get(
       context, {pointer, i64, pointer, i64, i32, i32, pointer, i64, i64});
   auto *handle = llvm::StructType::get(context, {i32, i32, i64});
@@ -88,6 +89,9 @@ FailureOr<ABIAlignments> validateTargetABI(ModuleOp module,
                          {0, 4, 8, 16, 24}, 32, 8)) ||
       failed(checkStruct("enum format argument", enumArgument->elements(),
                          {0, 8, 12, 16, 24, 32}, 40, 8)) ||
+      failed(checkStruct("raw aggregate format argument",
+                         rawAggregateArgument->elements(), {0, 8, 16}, 24,
+                         8)) ||
       failed(checkStruct("stable handle", {i32, i32, i64}, {0, 4, 8}, 16, 8)) ||
       failed(checkStruct("fragment action", {i32, i32, i32, i32, i64, i64},
                          {0, 4, 8, 12, 16, 24}, 32, 8)) ||
@@ -164,6 +168,8 @@ ABITypes::ABITypes(MLIRContext *context, ABIAlignments alignments,
           context, {i32, i32, i64, pointer, pointer})),
       enumArgument(LLVM::LLVMStructType::getLiteral(
           context, {i64, i32, i32, pointer, pointer, i64})),
+      rawAggregateArgument(
+          LLVM::LLVMStructType::getLiteral(context, {i64, i64, i64})),
       formatEnvironment(LLVM::LLVMStructType::getLiteral(
           context, {pointer, i64, pointer, i64, i32, i32, pointer, i64, i64})),
       handle(LLVM::LLVMStructType::getLiteral(context, {i32, i32, i64})),

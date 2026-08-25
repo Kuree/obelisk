@@ -71,6 +71,13 @@ def RTArgumentNetOp : RTOp<"argument.net", [MemoryEffects<[MemAlloc]>]> {
   let hasVerifier = 1;
 }
 
+def RTArgumentRawAggregateOp
+    : RTOp<"argument.raw_aggregate", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins I64:$pattern, I64:$two_state, I64:$four_state);
+  let results = (outs RTArgumentType:$result);
+  let hasVerifier = 1;
+}
+
 def RTArgumentRealOp : RTOp<"argument.real", [MemoryEffects<[MemAlloc]>]> {
   let arguments = (ins F64:$value);
   let results = (outs RTArgumentType:$result);

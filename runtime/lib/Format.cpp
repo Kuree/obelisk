@@ -593,6 +593,36 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
                                  const TimeOverride &timeFormat) {
   char spec =
       static_cast<char>(std::tolower(static_cast<unsigned char>(specifier)));
+  if (argument.kind == OBELISK_RT_ARG_RAW_AGGREGATE) {
+    if (argument.flags != 0 || argument.size != 0 || argument.unknown ||
+        !argument.data)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    const auto *aggregate =
+        static_cast<const obelisk_rt_raw_aggregate_arg_v1 *>(argument.data);
+    const obelisk_rt_string_v1 *selected = &aggregate->pattern;
+    if (spec == 'u')
+      selected = &aggregate->two_state;
+    else if (spec == 'z')
+      selected = &aggregate->four_state;
+    obelisk_rt_arg_v1 stringArgument{OBELISK_RT_ARG_MANAGED_STRING, 0, 0,
+                                     selected, nullptr};
+    // The compiler has already emitted each scalar raw record independently;
+    // copying the selected managed string preserves that padding and keeps a
+    // dynamic conversion O(total bytes). Every non-raw conversion delegates
+    // to the prior assignment-pattern string behavior.
+    if (spec == 'u' || spec == 'z') {
+      char scratch[8];
+      const char *bytes = nullptr;
+      uint64_t size = 0;
+      if (!getStringBytes(stringArgument, scratch, bytes, size) ||
+          size > std::numeric_limits<size_t>::max())
+        return OBELISK_RT_INVALID_ARGUMENT;
+      output.append(bytes, static_cast<size_t>(size));
+      return OBELISK_RT_OK;
+    }
+    return formatArgument(context, output, stringArgument, specifier, options,
+                          environment, timeFormat);
+  }
   LogicView view;
   std::vector<uint64_t> stringLogic;
   switch (spec) {
@@ -1032,6 +1062,7 @@ char defaultSpecifier(const obelisk_rt_arg_v1 &argument,
                                              : 'd';
   case OBELISK_RT_ARG_STRING:
   case OBELISK_RT_ARG_MANAGED_STRING:
+  case OBELISK_RT_ARG_RAW_AGGREGATE:
     return 's';
   case OBELISK_RT_ARG_REAL:
     return 'f';

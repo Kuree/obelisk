@@ -3364,7 +3364,10 @@ enum {
   // data points to an obelisk_rt_net_arg_v1; size and unknown must be zero.
   // Its packed snapshot serves every ordinary conversion, while %v queries
   // the named resolved net bit for its exact strength range.
-  OBELISK_RT_ARG_NET = 11
+  OBELISK_RT_ARG_NET = 11,
+  // data points to an obelisk_rt_raw_aggregate_arg_v1; size, flags, and
+  // unknown must be zero. The runtime selects its pattern, %u, or %z string.
+  OBELISK_RT_ARG_RAW_AGGREGATE = 12
 };
 
 typedef uint32_t obelisk_rt_arg_flags;
@@ -3404,6 +3407,16 @@ typedef struct obelisk_rt_net_arg_v1 {
   const uint64_t *unknown;
   uint64_t handle;
 } obelisk_rt_net_arg_v1;
+
+// Compiler-built renderings of a recursively integral unpacked struct or
+// untagged union. Each raw string concatenates one independently 32-bit-padded
+// record per scalar leaf in declaration order; a union contributes its first
+// member only.
+typedef struct obelisk_rt_raw_aggregate_arg_v1 {
+  obelisk_rt_string_v1 pattern;
+  obelisk_rt_string_v1 two_state;
+  obelisk_rt_string_v1 four_state;
+} obelisk_rt_raw_aggregate_arg_v1;
 
 // LOGIC: size is the bit width, data points to little-endian uint64_t value
 // words, and unknown points to matching unknown words (or is null for known

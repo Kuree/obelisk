@@ -3356,6 +3356,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     enumArguments.reserve(itemCount);
     std::vector<obelisk_rt_net_arg_v1> netArguments;
     netArguments.reserve(itemCount);
+    std::vector<obelisk_rt_raw_aggregate_arg_v1> rawAggregateArguments;
+    rawAggregateArguments.reserve(itemCount);
     for (uint32_t index = 0; index != itemCount; ++index) {
       uint32_t itemFlags = read32(flags + uint64_t{index} * 4);
       if ((itemFlags & ~uint32_t{OBELISK_RT_OUTPUT_ITEM_ALL}) != 0 ||
@@ -3432,6 +3434,25 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                      ? OBELISK_RT_ARG_SIGNED
                                      : 0),
                              0, &netArguments.back(), nullptr});
+      } else if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_RAW_AGGREGATE) != 0) {
+        if (itemFlags != OBELISK_RT_OUTPUT_ITEM_RAW_AGGREGATE ||
+            physical + 1 >= site.inputCount)
+          return OBELISK_RT_INVALID_BYTECODE;
+        obelisk_rt_string_v1 strings[3] = {};
+        Layout stringLayouts[3] = {
+            layout, layoutAt(image, frame.function, inputRegister(physical++)),
+            layoutAt(image, frame.function, inputRegister(physical++))};
+        for (unsigned ordinal = 0; ordinal != 3; ++ordinal) {
+          if (stringLayouts[ordinal].kind != OBELISK_RT_DBREG_STRING ||
+              stringLayouts[ordinal].size != sizeof(obelisk_rt_string_v1))
+            return OBELISK_RT_INVALID_BYTECODE;
+          std::memcpy(&strings[ordinal],
+                      frame.data + stringLayouts[ordinal].offset,
+                      sizeof(strings[ordinal]));
+        }
+        rawAggregateArguments.push_back({strings[0], strings[1], strings[2]});
+        arguments.push_back({OBELISK_RT_ARG_RAW_AGGREGATE, 0, 0,
+                             &rawAggregateArguments.back(), nullptr});
       } else if (layout.kind == OBELISK_RT_DBREG_BYTES) {
         auto value = readByteSpan(image, frame, reg);
         if (!value || (itemFlags != 0 &&

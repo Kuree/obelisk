@@ -361,6 +361,11 @@ LogicalResult RTArgumentNetOp::verify() {
       *this, getResult(), "stack-backed net format argument");
 }
 
+LogicalResult RTArgumentRawAggregateOp::verify() {
+  return verifyLocalConsumers<RTArgumentArrayOp>(
+      *this, getResult(), "stack-backed raw aggregate format argument");
+}
+
 LogicalResult RTArgumentRealOp::verify() {
   return verifyLocalConsumers<RTArgumentArrayOp>(
       *this, getResult(), "stack-backed real format argument");

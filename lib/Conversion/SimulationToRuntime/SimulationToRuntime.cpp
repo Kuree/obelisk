@@ -148,6 +148,25 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
           (flags & OBELISK_RT_OUTPUT_ITEM_SIGNED) != 0));
       continue;
     }
+    if ((flags & OBELISK_RT_OUTPUT_ITEM_RAW_AGGREGATE) != 0) {
+      if (flags != OBELISK_RT_OUTPUT_ITEM_RAW_AGGREGATE ||
+          itemIndex + 2 >= op.getItems().size())
+        return rewriter.notifyMatchFailure(
+            op, "raw aggregate output item has malformed operands");
+      SmallVector<Value, 3> strings;
+      for (unsigned ordinal = 0; ordinal != 3; ++ordinal) {
+        ValueRange converted = adaptor.getItems()[itemIndex];
+        Type sourceType = op.getItems()[itemIndex++].getType();
+        if (!isa<sim::StringType>(sourceType) || converted.size() != 1)
+          return rewriter.notifyMatchFailure(
+              op, "raw aggregate output item did not convert to strings");
+        strings.push_back(converted.front());
+      }
+      arguments.push_back(runtime::RTArgumentRawAggregateOp::create(
+          rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
+          strings[0], strings[1], strings[2]));
+      continue;
+    }
     ValueRange converted = adaptor.getItems()[itemIndex];
     Type sourceType = op.getItems()[itemIndex++].getType();
     if (isa<sim::BytesType>(sourceType)) {

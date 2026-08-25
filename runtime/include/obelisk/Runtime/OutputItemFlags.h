@@ -27,7 +27,11 @@ enum {
   // the net handle. The handle is consulted only by the %v strength format;
   // every other conversion uses the packed snapshot normally.
   OBELISK_RT_OUTPUT_ITEM_NET = 1u << 11,
-  OBELISK_RT_OUTPUT_ITEM_ALL = (1u << 12) - 1
+  // One recursively integral unpacked aggregate is carried as three managed
+  // strings: its assignment-pattern rendering, followed by its independently
+  // leaf-padded two-state and four-state raw encodings.
+  OBELISK_RT_OUTPUT_ITEM_RAW_AGGREGATE = 1u << 12,
+  OBELISK_RT_OUTPUT_ITEM_ALL = (1u << 13) - 1
 };
 
 #endif // OBELISK_RUNTIME_OUTPUTITEMFLAGS_H

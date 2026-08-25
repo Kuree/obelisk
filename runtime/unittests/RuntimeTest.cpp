@@ -509,6 +509,8 @@ TEST(RuntimeABI, StableScalarLayout) {
   EXPECT_EQ(offsetof(obelisk_rt_net_arg_v1, native_state), 12u);
   EXPECT_EQ(offsetof(obelisk_rt_net_arg_v1, value), 16u);
   EXPECT_EQ(offsetof(obelisk_rt_net_arg_v1, handle), 32u);
+  EXPECT_EQ(sizeof(obelisk_rt_raw_aggregate_arg_v1), 24u);
+  EXPECT_EQ(offsetof(obelisk_rt_raw_aggregate_arg_v1, four_state), 16u);
   EXPECT_EQ(sizeof(obelisk_rt_activation_descriptor_v1), 24u);
   EXPECT_EQ(offsetof(obelisk_rt_activation_descriptor_v1, native_entry), 8u);
   EXPECT_EQ(offsetof(obelisk_rt_activation_descriptor_v1, bytecode_function),
@@ -3985,6 +3987,56 @@ TEST_F(ManagedHeapTest, FormatsEnumsWithNamesAndPackedFallbacks) {
   EXPECT_EQ(obelisk_rt_v1_format(context, "%p", 2, &argument, 1, nullptr,
                                  invalidOutput.out()),
             OBELISK_RT_INVALID_ARGUMENT);
+}
+
+TEST_F(ManagedHeapTest, FormatsRawAggregateRepresentationsWithoutTextLoss) {
+  const std::string pattern("P\0Q", 3);
+  const std::string twoState("A\0B", 3);
+  const std::string fourState("C\0D", 3);
+  obelisk_rt_raw_aggregate_arg_v1 aggregate{};
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, pattern.data(), pattern.size(),
+                                        &aggregate.pattern),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, twoState.data(), twoState.size(),
+                                        &aggregate.two_state),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, fourState.data(),
+                                        fourState.size(),
+                                        &aggregate.four_state),
+            OBELISK_RT_OK);
+  obelisk_rt_arg_v1 argument{OBELISK_RT_ARG_RAW_AGGREGATE, 0, 0, &aggregate,
+                             nullptr};
+  const obelisk_rt_arg_v1 arguments[] = {argument, argument};
+  RuntimeBuffer rawOutput;
+  ASSERT_EQ(obelisk_rt_v1_format(context, "%u%z", 4, arguments,
+                                 std::size(arguments), nullptr,
+                                 rawOutput.out()),
+            OBELISK_RT_OK);
+  EXPECT_EQ(rawOutput.str(), twoState + fourState);
+  EXPECT_EQ(rawOutput.str().size(), 6u);
+
+  RuntimeBuffer patternOutput;
+  ASSERT_EQ(obelisk_rt_v1_format(context, "%s", 2, &argument, 1, nullptr,
+                                 patternOutput.out()),
+            OBELISK_RT_OK);
+  EXPECT_EQ(patternOutput.str(), "P Q");
+
+  uint64_t packed = 1;
+  obelisk_rt_arg_v1 packedArgument{OBELISK_RT_ARG_LOGIC, 0, 1, &packed,
+                                   nullptr};
+  RuntimeBuffer packedWidth;
+  RuntimeBuffer aggregateWidth;
+  EXPECT_EQ(obelisk_rt_v1_format(context, "%1u", 3, &packedArgument, 1, nullptr,
+                                 packedWidth.out()),
+            OBELISK_RT_FORMAT_ERROR);
+  EXPECT_EQ(obelisk_rt_v1_format(context, "%1u", 3, &argument, 1, nullptr,
+                                 aggregateWidth.out()),
+            OBELISK_RT_FORMAT_ERROR);
+
+  RuntimeBuffer malformed;
+  EXPECT_EQ(obelisk_rt_v1_format(context, "%", 1, &argument, 1, nullptr,
+                                 malformed.out()),
+            OBELISK_RT_FORMAT_ERROR);
 }
 
 TEST_F(ManagedHeapTest, CollectsCyclesAndClearsWeakReferences) {

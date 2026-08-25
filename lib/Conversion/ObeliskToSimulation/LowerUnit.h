@@ -489,6 +489,9 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   formatUnpackedAggregatePattern(::mlir::Value value,
                                  ::mlir::Location location);
+  ::mlir::FailureOr<std::pair<::mlir::Value, ::mlir::Value>>
+  formatUnpackedAggregateRaw(::mlir::Value value, ::mlir::Location location,
+                             char mode);
   ::mlir::IntegerAttr designTimePrecisionExponent();
   // One design-precision tick in femtoseconds, the unit every lowered
   // simulation delay is counted in.

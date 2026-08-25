@@ -1004,9 +1004,28 @@ execute identically in native and bytecode tiers at O0 and O3. Each packed
 conversion lowers to one typed operation and an O(words) runtime loop;
 aggregates use one operation per scalar leaf so every leaf retains its own
 32-bit word padding. A 4097-bit MLIR regression prevents width-unrolled
-lowering. Raw formatted output of unpacked
-aggregate operands and formatted reads after the runtime's synthetic
-`$ungetc` byte remain explicit L19 follow-up items.
+lowering. Formatted reads after the runtime's synthetic `$ungetc` byte remain
+an explicit L19 follow-up item.
+
+L19's fifth closure tranche extends raw formatted output `%u` and `%z` to
+recursively integral unpacked structures and untagged unions for every shared
+output path: `$display`, `$write`, `$fwrite`, `$sformat`, `$sformatf`, and the
+postponed/persistent `$strobe`, `$fstrobe`, and `$monitor` paths.
+Structure leaves retain declaration order and independent `ceil(width/32)`
+word padding; an untagged union contributes its first declared member. `%u`
+clears X/Z bits and `%z` preserves the native `aval`/`bval` word pairs. A
+literal format builds only the selected raw representation, ordinary `%p` and
+default output keep the pre-existing single pattern string, and only a dynamic
+format carries pattern, `%u`, and `%z` strings for runtime selection. Thus
+lowering is O(leaves), raw formatting is O(words), and ordinary aggregate
+simulation gains no raw work. Native and bytecode execution match at O0 and O3
+for nested structures/unions, X/Z, dynamic formats, chained literals, and
+embedded NUL bytes. Postponed-path tests prove same-slot reevaluation, repeated
+monitor reevaluation, and exact raw file bytes. A 4097-bit leaf remains one
+raw-format operation. A
+128-leaf, 1000-iteration ordinary `%p` benchmark is unchanged from the prior
+path at 0.27 versus 0.28 seconds compile and 0.03 seconds simulation at about
+7 MB RSS.
 
 ## Clause ledger
 
@@ -1189,10 +1208,10 @@ one commit.
     strength fields, uppercase, suppression, widths, four-state destination
     conversion, prefix/EOF handling, and file position. Formatted-input `%u`
     and `%z` are complete for packed and recursively integral unpacked
-    struct/union destinations, native word layout, uppercase, explicit-width
-    suppression, prefix/partial-EOF handling, and file position. Raw formatted
-    output of unpacked aggregates and formatted reads after synthetic
-    `$ungetc` remain.
+    struct/union destinations and operands, native word layout, uppercase,
+    explicit-width suppression, prefix/partial-EOF handling, file position,
+    and `$display`/`$write`/`$fwrite`/`$sformat[f]` output. Formatted reads
+    after synthetic `$ungetc` remain.
 
 ### Randomization and `std`
 

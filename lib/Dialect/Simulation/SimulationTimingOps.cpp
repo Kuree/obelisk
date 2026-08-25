@@ -557,6 +557,19 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
       ++itemIndex;
       continue;
     }
+    if ((flags & OBELISK_RT_OUTPUT_ITEM_RAW_AGGREGATE) != 0) {
+      if (flags != OBELISK_RT_OUTPUT_ITEM_RAW_AGGREGATE)
+        return operation->emitOpError(
+            "raw aggregate display items cannot carry other flags");
+      if (!isa<StringType>(item.getType()) || itemIndex + 1 >= items.size() ||
+          !isa<StringType>(items[itemIndex].getType()) ||
+          !isa<StringType>(items[itemIndex + 1].getType()))
+        return operation->emitOpError(
+            "raw aggregate display items require pattern, two-state, and "
+            "four-state strings");
+      itemIndex += 2;
+      continue;
+    }
     if (!isa<BytesType, StringType, DynamicArrayType, QueueType, AssocArrayType,
              ClassHandleType, VirtualInterfaceType, ProcessType, IntegerType,
              LogicType>(item.getType()) &&

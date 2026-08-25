@@ -9,6 +9,8 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Matchers.h"
 
+#include <cctype>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -261,6 +263,89 @@ UnitLowering::formatUnpackedAggregatePattern(Value value, Location location) {
       .getResult();
 }
 
+FailureOr<std::pair<Value, Value>>
+UnitLowering::formatUnpackedAggregateRaw(Value value, Location location,
+                                         char mode) {
+  Type rootType = value.getType();
+  if (!isa<sim::UnpackedStructType, sim::UnpackedUnionType>(rootType))
+    return failure();
+  auto timeMultiplier =
+      function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+  StringAttr lexicalScope =
+      function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+  if (!timeMultiplier || !lexicalScope)
+    return failure();
+
+  Type stringType = sim::StringType::get(function.getContext());
+  SmallVector<Value> leaves;
+
+  // IEEE 1800-2017 21.2.1.5 recursively formats unpacked structures in
+  // declaration order. Each singular integral leaf owns its own
+  // ceil(width/32) record; an untagged union contributes its first member.
+  std::function<LogicalResult(Value)> traverse =
+      [&](Value element) -> LogicalResult {
+    Type type = element.getType();
+    if (auto unionType = dyn_cast<sim::UnpackedUnionType>(type)) {
+      if (unionType.getIsTagged() || unionType.getFields().empty())
+        return failure();
+      Type fieldType = sim::getAggregateElementType(type, 0);
+      return traverse(sim::SimUnionExtractOp::create(builder, location,
+                                                     fieldType, element, 0));
+    }
+    if (isa<sim::UnpackedStructType>(type)) {
+      unsigned count = sim::getAggregateNumElements(type);
+      if (count == 0)
+        return failure();
+      for (unsigned ordinal = 0; ordinal != count; ++ordinal) {
+        Type fieldType = sim::getAggregateElementType(type, ordinal);
+        Value field = sim::SimAggregateExtractOp::create(
+            builder, location, fieldType, element, ordinal);
+        if (failed(traverse(field)))
+          return failure();
+      }
+      return success();
+    }
+    if (!sim::getPackedScalarType(type))
+      return failure();
+    FailureOr<Value> scalar = toPackedScalar(element, location);
+    if (failed(scalar))
+      return failure();
+    leaves.push_back(*scalar);
+    return success();
+  };
+  if (failed(traverse(value)) || leaves.empty())
+    return failure();
+
+  // One formatting call can carry one conversion per scalar leaf. This keeps
+  // each leaf's independent raw-word padding while avoiding one managed-string
+  // allocation per leaf and a subsequent concatenation at run time.
+  auto formatLeaves = [&](char specifier) -> Value {
+    std::string format;
+    format.reserve(leaves.size() * 2);
+    SmallVector<Value> items;
+    SmallVector<int32_t> flags;
+    items.reserve(leaves.size() + 1);
+    flags.assign(leaves.size() + 1, 0);
+    flags.front() = OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT;
+    for (Value leaf : leaves) {
+      format.push_back('%');
+      format.push_back(specifier);
+      items.push_back(leaf);
+    }
+    items.insert(items.begin(),
+                 sim::SimBytesConstantOp::create(builder, location, format));
+    return sim::SimStringOutputFormatOp::create(
+               builder, location, stringType,
+               function.getBody().front().getArgument(0), items, 10, flags,
+               lexicalScope, StringAttr{}, timeMultiplier,
+               designTimePrecisionExponent())
+        .getResult();
+  };
+  return std::pair<Value, Value>{
+      mode == 'z' ? Value{} : formatLeaves('u'),
+      mode == 'u' ? Value{} : formatLeaves('z')};
+}
+
 FailureOr<Value> UnitLowering::lowerEnumFormatName(Value receiver,
                                                    ArrayAttr values,
                                                    ArrayAttr names,
@@ -339,8 +424,93 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
         .getResult();
   };
 
+  // Track which source operand a statically known format conversion consumes.
+  // This lets ordinary/default aggregate output keep its old single pattern
+  // string, and lets literal %u or %z build only the representation that can
+  // actually be selected. A dynamic format conservatively keeps all three.
+  auto parseConversions = [](StringRef format,
+                             SmallVectorImpl<char> &result) -> bool {
+    auto parseUnsigned = [&](size_t &position) -> bool {
+      uint64_t value = 0;
+      size_t start = position;
+      while (position < format.size() &&
+             std::isdigit(static_cast<unsigned char>(format[position]))) {
+        value = value * 10 + static_cast<unsigned>(format[position] - '0');
+        if (value > std::numeric_limits<uint32_t>::max())
+          return false;
+        ++position;
+      }
+      return position != start;
+    };
+    for (size_t position = 0; position < format.size();) {
+      if (format[position++] != '%')
+        continue;
+      if (position < format.size() && format[position] == '%') {
+        ++position;
+        continue;
+      }
+      bool left = false;
+      bool zero = false;
+      while (position < format.size()) {
+        if (format[position] == '-' && !left) {
+          left = true;
+          ++position;
+        } else if (format[position] == '0' && !zero) {
+          zero = true;
+          ++position;
+        } else {
+          break;
+        }
+      }
+      bool width = false;
+      if (position < format.size() &&
+          std::isdigit(static_cast<unsigned char>(format[position]))) {
+        if (!parseUnsigned(position))
+          return false;
+        width = true;
+      }
+      bool precision = false;
+      if (position < format.size() && format[position] == '.') {
+        ++position;
+        precision = true;
+        if (position < format.size() &&
+            std::isdigit(static_cast<unsigned char>(format[position])) &&
+            !parseUnsigned(position))
+          return false;
+      }
+      if (position == format.size())
+        return false;
+      char specifier = format[position++];
+      char spec = static_cast<char>(
+          std::tolower(static_cast<unsigned char>(specifier)));
+      bool integer = spec == 'b' || spec == 'o' || spec == 'd' || spec == 'h' ||
+                     spec == 'x';
+      bool floating = spec == 'e' || spec == 'f' || spec == 'g';
+      bool widthAllowed =
+          integer || floating || spec == 's' || spec == 't';
+      bool nonConsuming = spec == 'm' || spec == 'l';
+      bool recognized = widthAllowed || nonConsuming || spec == 'c' ||
+                        spec == 'v' || spec == 'u' || spec == 'z' || spec == 'p';
+      if (!recognized || ((width || left) && !widthAllowed && spec != 'p') ||
+          (precision && !floating))
+        return false;
+      if (!nonConsuming)
+        result.push_back(spec);
+    }
+    return true;
+  };
+  SmallVector<char> pendingConversions;
+  unsigned pendingConversion = 0;
+  bool dynamicFormatOwnsRemainder = false;
+
   for (auto [index, child] : llvm::enumerate(operations)) {
     bool isFormat = designatedFormat && index == *designatedFormat;
+    char consumingSpecifier = 0;
+    if (pendingConversion < pendingConversions.size())
+      consumingSpecifier = pendingConversions[pendingConversion++];
+    else if (dynamicFormatOwnsRemainder)
+      consumingSpecifier = '?';
+    bool unconsumed = consumingSpecifier == 0;
     if (isa<semantic::SVEmptyArgumentExpressionOp>(child)) {
       if (isFormat) {
         emitError(getSemanticLocation(child))
@@ -356,6 +526,11 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
           builder, getSemanticLocation(literal), literal.getConstantValue()));
       output.flags.push_back(isFormat ? OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT
                                       : 0);
+      if (unconsumed) {
+        pendingConversions.clear();
+        pendingConversion = 0;
+        (void)parseConversions(literal.getConstantValue(), pendingConversions);
+      }
       continue;
     }
 
@@ -384,6 +559,7 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
       output.items.push_back(format);
       output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING |
                              OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT);
+      dynamicFormatOwnsRemainder = true;
       continue;
     }
     if (isa<FloatType>((*value).getType())) {
@@ -403,6 +579,8 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
       output.flags.push_back(
           OBELISK_RT_OUTPUT_ITEM_STRING |
           (interpretLiteralsAsFormats ? OBELISK_RT_OUTPUT_ITEM_FORMAT : 0));
+      if (unconsumed && interpretLiteralsAsFormats)
+        dynamicFormatOwnsRemainder = true;
     } else if (auto bytes = lowerByteArray(child, *value); succeeded(bytes)) {
       output.items.push_back(*bytes);
       output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING);
@@ -445,6 +623,36 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
         return failure();
       output.items.push_back(*pattern);
       output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING);
+    } else if ((consumingSpecifier == 'u' || consumingSpecifier == 'z' ||
+                consumingSpecifier == '?') &&
+               isa<sim::UnpackedStructType, sim::UnpackedUnionType>(
+                   (*value).getType())) {
+      char rawMode = consumingSpecifier == '?' ? '?' : consumingSpecifier;
+      FailureOr<std::pair<Value, Value>> raw = formatUnpackedAggregateRaw(
+          *value, getSemanticLocation(child), rawMode);
+      if (failed(raw)) {
+        FailureOr<Value> pattern =
+            formatUnpackedAggregatePattern(*value, getSemanticLocation(child));
+        if (failed(pattern))
+          return failure();
+        output.items.push_back(*pattern);
+        output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING);
+        continue;
+      }
+      Value pattern;
+      if (consumingSpecifier == '?') {
+        FailureOr<Value> rendered =
+            formatUnpackedAggregatePattern(*value, getSemanticLocation(child));
+        if (failed(rendered))
+          return failure();
+        pattern = *rendered;
+      } else {
+        pattern = raw->first ? raw->first : raw->second;
+      }
+      Value twoState = raw->first ? raw->first : pattern;
+      Value fourState = raw->second ? raw->second : pattern;
+      output.items.append({pattern, twoState, fourState});
+      output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_RAW_AGGREGATE);
     } else if (FailureOr<Value> pattern = formatUnpackedAggregatePattern(
                    *value, getSemanticLocation(child));
                succeeded(pattern)) {

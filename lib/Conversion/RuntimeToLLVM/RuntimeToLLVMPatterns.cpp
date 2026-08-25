@@ -311,6 +311,7 @@ enum class RuntimeMaterializer {
   ArgumentPacked,
   ArgumentEnum,
   ArgumentNet,
+  ArgumentRawAggregate,
   ArgumentReal,
   ArgumentBytes,
   ArgumentManagedString,
@@ -644,6 +645,30 @@ public:
           llvmIntegerConstant(rewriter, location, abi.i32,
                               op.getIsSigned() ? OBELISK_RT_ARG_SIGNED : 0),
           1);
+      argument = insertStructValue(rewriter, location, argument,
+                                   *descriptorAddress, 3);
+      rewriter.replaceOp(operation, argument);
+      return success();
+    }
+    case RuntimeMaterializer::ArgumentRawAggregate: {
+      Value descriptor =
+          LLVM::ZeroOp::create(rewriter, location, abi.rawAggregateArgument);
+      for (int64_t index = 0; index != 3; ++index)
+        descriptor = insertStructValue(rewriter, location, descriptor,
+                                       operands[index], index);
+      FailureOr<Value> descriptorAddress = allocateAtFunctionEntry(
+          operation, rewriter, abi, abi.rawAggregateArgument, 1,
+          abi.alignments.i64);
+      if (failed(descriptorAddress))
+        return failure();
+      LLVM::StoreOp::create(rewriter, location, descriptor, *descriptorAddress,
+                            abi.alignments.i64);
+      Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
+      argument =
+          insertStructValue(rewriter, location, argument,
+                            llvmIntegerConstant(rewriter, location, abi.i32,
+                                                OBELISK_RT_ARG_RAW_AGGREGATE),
+                            0);
       argument = insertStructValue(rewriter, location, argument,
                                    *descriptorAddress, 3);
       rewriter.replaceOp(operation, argument);
@@ -1169,6 +1194,7 @@ void populateRuntimePatterns(const TypeConverter &converter,
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentPackedOp, ArgumentPacked);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentEnumOp, ArgumentEnum);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentNetOp, ArgumentNet);
+  OBELISK_RUNTIME_MATERIALIZER(RTArgumentRawAggregateOp, ArgumentRawAggregate);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentRealOp, ArgumentReal);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentBytesOp, ArgumentBytes);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentManagedStringOp,
