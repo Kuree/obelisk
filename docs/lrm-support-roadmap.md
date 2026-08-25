@@ -626,8 +626,11 @@ directives, malformed upstream negative probes, misspelled identifiers, or
 harness inputs that omit their companion source or macro definitions. The
 remaining genuine cases stay attached to their owning features: protected
 envelopes, port declarations, assignment-pattern context, and interface method
-export. The isolated multiline lexical-time directive case is now executable:
-comments and newlines may separate every token of the Clause 22.7 token grammar.
+export. The isolated multiline lexical-time directive case remains a recorded
+`XFAIL`: comments and newlines may separate every token of the Clause 22.7
+token grammar, but upstream Slang v11.0 and current `master` incorrectly require
+an integer and its unit suffix to share one physical line. Obelisk deliberately
+does not carry a local parser patch for this bug.
 
 ## Clause ledger
 
@@ -635,7 +638,7 @@ comments and newlines may separate every token of the Clause 22.7 token grammar.
 | --- | --- | --- |
 | 3 Design and verification building blocks | Partial | Modules, programs, interfaces, packages, ordinary hierarchy, and basic configuration selection elaborate. Compilation-unit, package, module, directive, and command-line time-unit/precision precedence executes across the full legal 1 fs through 100 s scale range. Checker bodies are semantic only and UDP behavior is absent. |
 | 4 Scheduling semantics | Partial | Active, Inactive, NBA, Observed, Reactive, Re-Inactive, Re-NBA, Postponed, and the Preponed snapshot hook execute through one native/bytecode scheduler. Remaining language gaps are attached to the timed constructs below. PLI callback regions are excluded with VPI. |
-| 5 Lexical conventions | Executable for the audited surface | Slang supplies the lexer, preprocessor-facing tokens, literals, attributes, keywords, and identifiers. Keep this clause under differential testing, especially revision switches and literal corner cases. |
+| 5 Lexical conventions | Partial | Slang supplies the lexer, preprocessor-facing tokens, literals, attributes, keywords, and identifiers. A source-level `XFAIL` records the upstream multiline `` `timescale`` bug without a local frontend patch. Keep this clause under differential testing, especially revision switches and literal corner cases. |
 | 6 Data types | Partial | Packed 2/4-state values, real/realtime variables and nets, strings, chandles, events, enums, typedefs, parameters, static timing/delay `specparam` expressions, casts, strengths, common net kinds, user-defined nettypes/resolution functions, typed/heterogeneous fixed-array `interconnect`, and trireg charge strength/retention/decay/sharing execute. Remaining gaps are tracked by the operator, aggregate, and container chunks below. |
 | 7 Aggregate data types | Partial | Fixed arrays/structs/unions, tagged managed unions, and untagged managed unions using validated candidate roots execute, including four-state overlapping arms. Dynamic arrays, queues, associative arrays, queries, traversal, ordering, registered manipulation methods, queue/unpacked slice lvalues, and persistent element references execute. Whole-container replacement and structural mutation preserve the LRM's reference lifetime rules. String character selection and NBA execute; strings are not sliceable, and a string character select is not a legal `ref` actual under 13.5.2. Continue differential closure for residual aggregate corner cases. |
 | 8 Classes | Partial | Construction, inheritance, polymorphism, virtual/interface methods, parameterized classes, copying, managed properties, garbage collection, and the UVM-used surface execute. Complete the residual class/type/operator/constructor long tail exposed by focused probes and the aggregate/reference gaps shared with Clauses 6, 7, and 11. |

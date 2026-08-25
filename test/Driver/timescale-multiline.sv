@@ -1,3 +1,7 @@
+// XFAIL: *
+// Known upstream Slang v11.0 frontend bug: expectTimeScaleSpecifier requires
+// an integer and its unit suffix to share a physical source line. Keep this
+// executable reproducer expected-failing until the upstream parser is fixed.
 // RUN: obelisk %s -o %t.native
 // RUN: %t.native | FileCheck %s
 // RUN: obelisk --execution-tier=bytecode %s -o %t.bytecode
