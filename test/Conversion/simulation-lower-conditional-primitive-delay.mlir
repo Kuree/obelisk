@@ -99,8 +99,8 @@ module {
         attributes {entry_kind = 7 : i32, code_unit_id = 4 : i64,
                     obelisk_sim.primitive_name = "bufif1",
                     obelisk_sim.timing_path_rules = [
-                      {input = "top.data", snapshot = "top.data_snapshot", delays = array<i64: 2, 3, 4>},
-                      {input = "top.control", snapshot = "top.control_snapshot", delays = array<i64: 5, 7, 11>}],
+                      {input = "top.data", snapshot = "top.data_snapshot", polarity = 1 : i32, delays = array<i64: 2, 3, 4>},
+                      {input = "top.control", snapshot = "top.control_snapshot", polarity = 2 : i32, delays = array<i64: 5, 7, 11>}],
                     obelisk_sim.bindings = [
                       #obelisk_sim.argument_binding<path = "top.path_out", argument = 1, kind = lvalue_only, copyOut = false>,
                       #obelisk_sim.argument_binding<path = "top.path_out", argument = 2, kind = lvalue_only, copyOut = false>,
@@ -151,6 +151,8 @@ module {
 
 // Overlapping path delays are selected by statically unrolled source-change
 // comparisons and persistent snapshots; the driver remains one inertial site.
+// Positive and negative polarity remain descriptive static metadata and do
+// not swap the rise/fall/turnoff banks selected by the destination transition.
 // CHECK-LABEL: obelisk_sim.func @path_selected
 // CHECK: obelisk_sim.ref.load %arg5
 // CHECK: obelisk_sim.logic.compare case_ne

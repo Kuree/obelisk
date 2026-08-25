@@ -29,6 +29,7 @@
 #include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
@@ -1613,6 +1614,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     semantic::SVTimingPathSymbolOp declaration;
     SmallVector<std::string, 2> inputs;
     uint64_t outputWidth;
+    int32_t polarity;
     SmallVector<int64_t, 3> delays;
   };
   llvm::StringMap<SmallVector<SimpleTimingPath, 2>> simpleTimingPaths;
@@ -1622,9 +1624,11 @@ void ObeliskSimPreparePass::runOnOperation() {
     auto inputs = path->getAttrOfType<ArrayAttr>("timing_input_paths");
     auto output = path->getAttrOfType<StringAttr>("timing_output_path");
     auto outputWidth = path->getAttrOfType<IntegerAttr>("timing_output_width");
+    auto polarity = path->getAttrOfType<IntegerAttr>("timing_polarity");
     auto delays = path->getAttrOfType<DenseI64ArrayAttr>("timing_delay_fs");
     if (!inputs || inputs.empty() || !output || !outputWidth ||
-        outputWidth.getInt() <= 0 || !delays || delays.empty() ||
+        outputWidth.getInt() <= 0 || !polarity || polarity.getInt() < 0 ||
+        polarity.getInt() > 2 || !delays || delays.empty() ||
         delays.size() > 3) {
       emitError(getSemanticLocation(path))
           << "simple specify path is missing frozen terminal or delay data";
@@ -1644,8 +1648,72 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     simpleTimingPaths[output.getValue()].push_back(
         {path, inputPaths, static_cast<uint64_t>(outputWidth.getInt()),
+         static_cast<int32_t>(polarity.getInt()),
          SmallVector<int64_t, 3>(delays.asArrayRef())});
   });
+
+  auto getDriverDependencyRoots = [&](Operation *unit) {
+    SmallVector<Operation *> dependencyRoots;
+    if (isa<semantic::SVContinuousAssignSymbolOp>(unit)) {
+      SmallVector<Operation *> roots = getChildren(unit);
+      auto assignment =
+          roots.empty()
+              ? semantic::SVAssignmentExpressionOp{}
+              : dyn_cast<semantic::SVAssignmentExpressionOp>(roots.front());
+      SmallVector<Operation *> children =
+          assignment ? getChildren(assignment) : SmallVector<Operation *>{};
+      if (children.size() == 2)
+        dependencyRoots.push_back(children.back());
+    } else if (isa<semantic::SVPrimitiveInstanceSymbolOp>(unit)) {
+      bool sawInput = false;
+      for (Operation *root : getChildren(unit)) {
+        sawInput |= !isa<semantic::SVAssignmentExpressionOp>(root);
+        if (sawInput)
+          dependencyRoots.push_back(root);
+      }
+    } else if (isa<semantic::SVNetSymbolOp>(unit)) {
+      dependencyRoots = getNetInitializerExpressions(unit);
+    }
+    return dependencyRoots;
+  };
+
+  // Map only statically whole, unique driver actors. This is used below to
+  // prove the source closure of equal-delay paths through internal zero-delay
+  // combinational nets; ambiguous or partial topology remains unsupported.
+  llvm::StringMap<Operation *> wholeDriverActors;
+  llvm::StringSet<> ambiguousWholeDrivers;
+  if (!simpleTimingPaths.empty())
+    for (const auto &entry : continuousDrivers) {
+      ArrayRef<DriverInfo> drivers = entry.second;
+      // A module-path delay is measured from the declared source transition,
+      // so folding it onto a destination actor is valid across only
+      // zero-delay combinational intermediates. Otherwise the intermediate
+      // delay would be added before the path delay instead of being replaced
+      // by the module-path timing relationship.
+      if (drivers.empty() || entry.first->hasAttr("delay_fs"))
+        continue;
+      StringRef output = drivers.front().path;
+      auto descriptor = descriptors.find(output);
+      std::optional<unsigned> width =
+          descriptor == descriptors.end()
+              ? std::nullopt
+              : sim::getPackedWidth(descriptor->second.type);
+      bool wholeCoverage =
+          width && llvm::all_of(drivers, [&](const auto &driver) {
+            return driver.path == output && driver.drivenLow == 0 &&
+                   driver.drivenWidth == *width;
+          });
+      bool strengthPair = drivers.size() == 2 && drivers[0].strengthBank &&
+                          drivers[1].strengthBank &&
+                          drivers[0].strengthBank != drivers[1].strengthBank;
+      if (!wholeCoverage || (drivers.size() != 1 && !strengthPair))
+        continue;
+      auto inserted = wholeDriverActors.try_emplace(output, entry.first);
+      if (!inserted.second && inserted.first->second != entry.first)
+        ambiguousWholeDrivers.insert(output);
+    }
+  for (StringRef output : ambiguousWholeDrivers.keys())
+    wholeDriverActors.erase(output);
 
   for (auto &entry : simpleTimingPaths) {
     StringRef output = entry.getKey();
@@ -1666,8 +1734,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                        [&](const DriverInfo &d) { return d.path == output; });
       if (!drivesOutput)
         continue;
-      bool wholeCoverage = llvm::all_of(
-          drivers.second, [&](const DriverInfo &driver) {
+      bool wholeCoverage =
+          llvm::all_of(drivers.second, [&](const DriverInfo &driver) {
             return driver.path == output && driver.drivenLow == 0 &&
                    driver.drivenWidth == path.outputWidth;
           });
@@ -1703,27 +1771,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       continue;
     }
 
-    SmallVector<Operation *> dependencyRoots;
-    if (isa<semantic::SVContinuousAssignSymbolOp>(matchedUnit)) {
-      SmallVector<Operation *> roots = getChildren(matchedUnit);
-      auto assignment =
-          roots.empty()
-              ? semantic::SVAssignmentExpressionOp{}
-              : dyn_cast<semantic::SVAssignmentExpressionOp>(roots.front());
-      SmallVector<Operation *> children =
-          assignment ? getChildren(assignment) : SmallVector<Operation *>{};
-      if (children.size() == 2)
-        dependencyRoots.push_back(children.back());
-    } else if (isa<semantic::SVPrimitiveInstanceSymbolOp>(matchedUnit)) {
-      bool sawInput = false;
-      for (Operation *root : getChildren(matchedUnit)) {
-        sawInput |= !isa<semantic::SVAssignmentExpressionOp>(root);
-        if (sawInput)
-          dependencyRoots.push_back(root);
-      }
-    } else if (isa<semantic::SVNetSymbolOp>(matchedUnit)) {
-      dependencyRoots = getNetInitializerExpressions(matchedUnit);
-    }
+    SmallVector<Operation *> dependencyRoots =
+        getDriverDependencyRoots(matchedUnit);
 
     llvm::StringSet<> referencedPaths;
     for (Operation *root : dependencyRoots)
@@ -1740,6 +1789,54 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (exactInputs)
       for (StringRef input : declaredInputs.keys())
         exactInputs &= referencedPaths.contains(input);
+    bool identicalDelays =
+        llvm::all_of(paths, [&](const SimpleTimingPath &candidate) {
+          return candidate.delays == path.delays;
+        });
+    if (!exactInputs && identicalDelays) {
+      // When every applicable path has the same tuple, delay selection is
+      // independent of which source was most recent. Prove that the declared
+      // terminals are exactly the transitive combinational leaves and attach
+      // one ordinary inertial delay to the output actor. This admits standard
+      // polarized paths through internal gates without inventing behavior for
+      // the still-unsupported differing-delay transitive case.
+      llvm::StringSet<> transitiveInputs;
+      llvm::DenseSet<Operation *> activeDrivers;
+      std::function<bool(Operation *)> collectTransitiveInputs =
+          [&](Operation *unit) {
+            if (!activeDrivers.insert(unit).second)
+              return false;
+            bool valid = true;
+            for (Operation *root : getDriverDependencyRoots(unit))
+              root->walk([&](Operation *nested) {
+                if (!valid)
+                  return;
+                auto referenced =
+                    nested->getAttrOfType<StringAttr>("referenced_path");
+                if (!referenced)
+                  return;
+                StringRef referencedPath = referenced.getValue();
+                if (declaredInputs.contains(referencedPath)) {
+                  transitiveInputs.insert(referencedPath);
+                  return;
+                }
+                auto driver = wholeDriverActors.find(referencedPath);
+                if (driver == wholeDriverActors.end() ||
+                    !collectTransitiveInputs(driver->second)) {
+                  transitiveInputs.insert(referencedPath);
+                  valid = false;
+                }
+              });
+            activeDrivers.erase(unit);
+            return valid;
+          };
+      bool transitiveValid = collectTransitiveInputs(matchedUnit);
+      exactInputs =
+          transitiveValid && transitiveInputs.size() == declaredInputs.size();
+      if (exactInputs)
+        for (StringRef input : declaredInputs.keys())
+          exactInputs &= transitiveInputs.contains(input);
+    }
     if (!exactInputs) {
       emitError(getSemanticLocation(path.declaration))
           << "simple specify path driver must depend only on its declared "
@@ -1747,7 +1844,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       continue;
     }
-    if (paths.size() == 1) {
+    if (paths.size() == 1 || identicalDelays) {
       matchedUnit->setAttr("delay_fs",
                            builder.getDenseI64ArrayAttr(path.delays));
       continue;
@@ -1804,8 +1901,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       frozenRules.push_back(builder.getDictionaryAttr({
           builder.getNamedAttr("input",
                                builder.getStringAttr(candidate.inputs.front())),
-          builder.getNamedAttr("snapshot",
-                               builder.getStringAttr(snapshotPath)),
+          builder.getNamedAttr("snapshot", builder.getStringAttr(snapshotPath)),
+          builder.getNamedAttr("polarity",
+                               builder.getI32IntegerAttr(candidate.polarity)),
           builder.getNamedAttr("delay_fs",
                                builder.getDenseI64ArrayAttr(candidate.delays)),
       }));
@@ -6955,9 +7053,12 @@ void ObeliskSimPreparePass::runOnOperation() {
         auto input = rule ? rule.getAs<StringAttr>("input") : StringAttr{};
         auto snapshot =
             rule ? rule.getAs<StringAttr>("snapshot") : StringAttr{};
+        auto polarity =
+            rule ? rule.getAs<IntegerAttr>("polarity") : IntegerAttr{};
         auto delays = rule ? rule.getAs<DenseI64ArrayAttr>("delay_fs")
                            : DenseI64ArrayAttr{};
-        if (!input || !snapshot || !delays || delays.empty() ||
+        if (!input || !snapshot || !polarity || polarity.getInt() < 0 ||
+            polarity.getInt() > 2 || !delays || delays.empty() ||
             delays.size() > 3) {
           rulesInvalid = true;
           break;
@@ -6977,8 +7078,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         tickRules.push_back(builder.getDictionaryAttr({
             builder.getNamedAttr("input", input),
             builder.getNamedAttr("snapshot", snapshot),
-            builder.getNamedAttr("delays",
-                                 builder.getDenseI64ArrayAttr(ticks)),
+            builder.getNamedAttr("polarity", polarity),
+            builder.getNamedAttr("delays", builder.getDenseI64ArrayAttr(ticks)),
         }));
       }
       if (rulesInvalid) {

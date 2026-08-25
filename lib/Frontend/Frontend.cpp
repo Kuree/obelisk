@@ -1862,8 +1862,13 @@ private:
         else
           shapeSupported = !inputs.empty();
       }
+      // IEEE 1800-2017 30.4.7 makes path polarity a declaration of the
+      // expected relationship between source and destination transitions; it
+      // does not invert data or alter which destination transition-delay bank
+      // is selected. All three legal simple-path polarities can therefore use
+      // the same frozen driver-delay representation.
       bool supportedCandidate =
-          shapeSupported && node.polarity == TimingPath::Polarity::Unknown &&
+          shapeSupported &&
           node.edgePolarity == TimingPath::Polarity::Unknown &&
           node.edgeIdentifier == slang::ast::EdgeKind::None &&
           !node.getEdgeSourceExpr() && !node.getConditionExpr() &&

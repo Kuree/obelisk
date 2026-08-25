@@ -3458,8 +3458,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     FailureOr<Value> scalar = toPackedScalar(current, function.getLoc());
     return succeeded(scalar) ? *scalar : Value{};
   };
-  if (auto rules = function->getAttrOfType<ArrayAttr>(
-          "obelisk_sim.timing_path_rules")) {
+  if (auto rules =
+          function->getAttrOfType<ArrayAttr>("obelisk_sim.timing_path_rules")) {
     if (entryKind != sim::EntryKind::Continuous || rules.size() < 2)
       return function.emitError("invalid overlapping timing path actor");
     for (Attribute attr : rules) {
@@ -3467,14 +3467,18 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       auto inputPath = rule ? rule.getAs<StringAttr>("input") : StringAttr{};
       auto snapshotPath =
           rule ? rule.getAs<StringAttr>("snapshot") : StringAttr{};
-      auto delays = rule ? rule.getAs<DenseI64ArrayAttr>("delays")
-                         : DenseI64ArrayAttr{};
+      auto polarity =
+          rule ? rule.getAs<IntegerAttr>("polarity") : IntegerAttr{};
+      auto delays =
+          rule ? rule.getAs<DenseI64ArrayAttr>("delays") : DenseI64ArrayAttr{};
       Value input = inputPath ? values.lookup(inputPath.getValue()) : Value{};
       Value snapshot =
           snapshotPath ? values.lookup(snapshotPath.getValue()) : Value{};
       Value current = input ? readTimingPathInput(input) : Value{};
-      if (!inputPath || !delays || delays.empty() || delays.size() > 3 ||
-          !current || !snapshot || !isa<sim::RefType>(snapshot.getType()) ||
+      if (!inputPath || !polarity || polarity.getInt() < 0 ||
+          polarity.getInt() > 2 || !delays || delays.empty() ||
+          delays.size() > 3 || !current || !snapshot ||
+          !isa<sim::RefType>(snapshot.getType()) ||
           cast<sim::RefType>(snapshot.getType()).getElementType() !=
               current.getType() ||
           !isa<IntegerType, sim::LogicType>(current.getType()))
