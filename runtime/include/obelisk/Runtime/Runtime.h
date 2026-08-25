@@ -2026,7 +2026,9 @@ obelisk_rt_status obelisk_rt_v1_string_case_convert(
 // none, and every other character must match exactly. `specifier` is the
 // conversion letter, whose field is returned as text for the caller to parse.
 // A zero `width` is unbounded. `out_ok` is zero when the prefix failed to match
-// or the field was empty, in which case the cursor does not advance.
+// or an ordinary field was empty, in which case the cursor does not advance.
+// The `%m` control conversion succeeds after its prefix and returns no field;
+// lowering supplies the lexical hierarchy without consuming input bytes.
 obelisk_rt_status obelisk_rt_v1_string_scan_field(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_string_v1 input, uint32_t cursor,
     const char *prefix, uint64_t prefix_size, uint32_t specifier,
@@ -3810,7 +3812,8 @@ obelisk_rt_status obelisk_rt_v1_file_getline_string(
     obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
     uint32_t descriptor, obelisk_rt_string_v1 *out_string, uint32_t *out_count);
 // Consume one formatted field at the descriptor's current position. Disabled
-// calls leave the stream untouched so lowering can stop after a mismatch.
+// calls leave the stream untouched so lowering can stop after a mismatch. `%m`
+// matches its prefix successfully without consuming a field byte.
 obelisk_rt_status obelisk_rt_v1_file_scan_field(
     obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
     uint32_t descriptor, uint32_t enabled, const char *prefix,

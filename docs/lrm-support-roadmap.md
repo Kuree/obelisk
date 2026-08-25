@@ -911,6 +911,17 @@ multiline-timescale `XFAIL`. The uncontended UVM smoke remains green with zero
 errors or fatals: 34.765 seconds compile / 0.184 seconds simulate for bytecode
 and 73.183 seconds compile / 0.019 seconds simulate for native.
 
+L19's first closure tranche implements the formatted-input hierarchy conversion
+`%m` from 21.3.4.3 for both `$sscanf` and `$fscanf`. Lowering supplies the
+caller's frozen hierarchical name while the scanner still matches the ordinary
+format prefix; the conversion consumes zero input bytes, counts as an
+assignment unless suppressed, and accepts either letter case. Consecutive
+conversions, `%m%c`, prefix mismatch, an empty string or file at EOF, and file
+position preservation execute identically in native and bytecode tiers at O0
+and O3. The runtime scanner ABI is unchanged, and ordinary formats do not gain
+a hierarchy lookup or input path scan. Formatting and file corner cases remain
+under L19.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -933,7 +944,7 @@ and 73.183 seconds compile / 0.019 seconds simulate for native.
 | 18 Constrained random generation | Partial | Object streams, broad packed constraints, modes, finite domains, soft constraints, direct solve ordering, distributions, bounded `randc`, lifecycle hooks, and much of randsequence execute. The authoritative boundary is `docs/randomization-support.md`; R1-R7 below close the remaining standard surface without treating a solver resource cap as language semantics. |
 | 19 Functional coverage | Excluded | Explicitly outside this project goal. |
 | 20 Utility system tasks/functions | Partial | Simulation/time control—including compile-time `$timeunit` and `$timeprecision` scope queries plus every omitted and explicitly empty `$timeformat` argument—conversions, data/array queries, real math, bit-vector functions, severity, random distributions, `$system`, the complete `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam` queue manager, most assertion control, and the implemented sampled functions execute. Missing normative families include the synchronous/asynchronous PLA tasks, the global-clock sampled functions, and complete assertion statistics/control behavior. |
-| 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning—including formatted-input field widths and assignment suppression plus `$fread` into fixed unpacked memories and captured dynamic, associative, and nested aggregate copy-out targets—read/write-memory across fixed, dynamic, queue, multidimensional, and integral associative forms, plusargs including runtime `$value$plusargs` formats, and VCD/dumpports execute. Surplus arguments after a designated `$sformat`/`$sformatf` format continue with ordinary default-radix formatting. Formatting and file corner cases remain. |
+| 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning—including formatted-input field widths, assignment suppression, zero-byte hierarchy `%m`, plus `$fread` into fixed unpacked memories and captured dynamic, associative, and nested aggregate copy-out targets—read/write-memory across fixed, dynamic, queue, multidimensional, and integral associative forms, plusargs including runtime `$value$plusargs` formats, and VCD/dumpports execute. Surplus arguments after a designated `$sformat`/`$sformatf` format continue with ordinary default-radix formatting. Formatting and file corner cases remain. |
 | 22 Compiler directives | Executable for the audited surface | The Slang preprocessor implements the normative directive family. Directive persistence, separate-compilation-unit reset, and command-line default-timescale precedence have native/bytecode tests. Protected envelopes are a separate Clause 34 feature, not ordinary pragma acceptance. |
 | 23 Modules and hierarchy | Partial | ANSI/non-ANSI modules, parameters, ports, arrays, hierarchy, bind, and common upward references elaborate. External runs retain module-library lookup, hierarchical path, generate-scope, and parameter-binding failures that need clause-minimal reproducers and fixes. |
 | 24 Programs | Executable for the audited surface | Program instances execute in their Reactive/Re-Inactive/Re-NBA home. IEEE 24.7 `$exit` terminates every initial procedure and descendant owned by the calling program instance, multiple programs complete independently, and the scheduler enters finalization only after all program instances complete naturally or explicitly. Design-owned `$exit` is diagnosed. Ownership accounting is event-driven and shared by native, bytecode, and tier-transition paths. |
@@ -1082,7 +1093,10 @@ one commit.
 19. **L19 — I/O completion (21).** Close the remaining format, scan,
     file-position, memory-range, plusarg, and VCD conformance cases.
     `$writememb`, `$writememh`, and default formatting of surplus arguments
-    after a designated `$sformat`/`$sformatf` format are complete.
+    after a designated `$sformat`/`$sformatf` format are complete. The
+    zero-byte `%m` hierarchy conversion for `$sscanf` and `$fscanf` is also
+    complete, including suppression, prefix matching, EOF, and file-position
+    behavior.
 
 ### Randomization and `std`
 

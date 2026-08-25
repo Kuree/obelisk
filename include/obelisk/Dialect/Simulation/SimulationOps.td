@@ -1173,8 +1173,9 @@ def SimStringScanFieldOp : SimOp<"string.scan_field", [
     matches any run of input whitespace including none, and every other
     character must match exactly. A zero `width` is unbounded; every other
     value limits the field to that many input characters. `ok` is zero when
-    the prefix did not match or the field was empty, and `next_cursor` then
-    repeats `cursor`.
+    the prefix did not match or an ordinary field was empty, and `next_cursor`
+    then repeats `cursor`. The `%m` control conversion succeeds after matching
+    the prefix and consumes no field bytes; lowering supplies its hierarchy.
   }];
   let arguments = (ins SimStringType:$input, I32:$cursor, StrAttr:$prefix,
                        I32Attr:$specifier, I64Attr:$width);
@@ -2163,6 +2164,7 @@ def SimFileScanFieldOp : SimFileOp<"file.scan_field",
   let description = [{
     `enabled` suppresses all file access after an earlier conversion failed.
     `eof` distinguishes an input failure from an ordinary matching failure.
+    The `%m` control conversion matches its prefix and consumes no field bytes.
   }];
 }
 

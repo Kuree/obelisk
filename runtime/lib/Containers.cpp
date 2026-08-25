@@ -1835,6 +1835,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_string_scan_field(
       return OBELISK_RT_OK;
     ++index;
   }
+  // IEEE 1800-2017 21.3.4.3: %m returns the current hierarchical path but
+  // consumes no field bytes. The compiler supplies the path; this primitive
+  // only matches the preceding format text and advances past that prefix.
+  char letter =
+      static_cast<char>(std::tolower(static_cast<unsigned char>(specifier)));
+  if (letter == 'm') {
+    *outCursor = static_cast<uint32_t>(index);
+    *outOk = 1;
+    return OBELISK_RT_OK;
+  }
   uint64_t extent = scanFieldExtent(view, index, specifier, width);
   if (extent == 0)
     return OBELISK_RT_OK;

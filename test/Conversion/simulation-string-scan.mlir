@@ -12,6 +12,8 @@
 // whitespace prefix must therefore begin at the byte after that character.
 // CHECK: 61:62:6364:1:3:6:1:1:1
 // CHECK-NEXT: 01xz
+// CHECK-NEXT: 4:1:4:1:51:5:1
+// CHECK-NEXT: 0:1
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -72,6 +74,44 @@ module attributes {
       obelisk_sim.display %ctx to %stdout(%logic_format, %logic)
           newline = true radix = 10 flags = [0, 0] :
           !obelisk_sim.bytes, !obelisk_sim.logic<64>
+
+      // %m matches its literal prefix but consumes no field bytes. The next
+      // %c therefore reads Q at the cursor immediately after "tag=".
+      %hierarchy_input = obelisk_sim.string.literal "tag=Q"
+      %hierarchy_field, %hierarchy_cursor, %hierarchy_ok =
+          obelisk_sim.string.scan_field %hierarchy_input, %zero
+          {prefix = "tag=", specifier = 109 : i32, width = 0 : i64} :
+          (!obelisk_sim.string, i32) -> (!obelisk_sim.string, i32, i32)
+      %second_hierarchy_field, %second_hierarchy_cursor, %second_hierarchy_ok =
+          obelisk_sim.string.scan_field %hierarchy_input, %hierarchy_cursor
+          {prefix = "", specifier = 77 : i32, width = 0 : i64} :
+          (!obelisk_sim.string, i32) -> (!obelisk_sim.string, i32, i32)
+      %character_field, %character_cursor, %character_ok =
+          obelisk_sim.string.scan_field %hierarchy_input,
+          %second_hierarchy_cursor
+          {prefix = "", specifier = 99 : i32, width = 0 : i64} :
+          (!obelisk_sim.string, i32) -> (!obelisk_sim.string, i32, i32)
+      %character = obelisk_sim.string.to_packed %character_field :
+          (!obelisk_sim.string) -> i8
+      %hierarchy_format = obelisk_sim.bytes.constant
+          "%0d:%0d:%0d:%0d:%0h:%0d:%0d"
+      obelisk_sim.display %ctx to %stdout(
+          %hierarchy_format, %hierarchy_cursor, %hierarchy_ok,
+          %second_hierarchy_cursor, %second_hierarchy_ok, %character,
+          %character_cursor, %character_ok) newline = true radix = 10
+          flags = [0, 0, 0, 0, 0, 0, 0, 0] :
+          !obelisk_sim.bytes, i32, i32, i32, i32, i8, i32, i32
+
+      %empty_input = obelisk_sim.string.literal ""
+      %empty_field, %empty_cursor, %empty_ok = obelisk_sim.string.scan_field
+          %empty_input, %zero
+          {prefix = "", specifier = 109 : i32, width = 0 : i64} :
+          (!obelisk_sim.string, i32) -> (!obelisk_sim.string, i32, i32)
+      %empty_format = obelisk_sim.bytes.constant "%0d:%0d"
+      obelisk_sim.display %ctx to %stdout(
+          %empty_format, %empty_cursor, %empty_ok)
+          newline = true radix = 10 flags = [0, 0, 0] :
+          !obelisk_sim.bytes, i32, i32
       obelisk_sim.return
     }
   }

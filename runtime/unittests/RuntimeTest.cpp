@@ -1685,6 +1685,57 @@ TEST_F(RuntimeTest, ReadsWritesAndPositionsBinaryFiles) {
   EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
 }
 
+TEST_F(RuntimeTest, HierarchyScanMatchesPrefixWithoutConsumingAField) {
+  TempDirectory temporary;
+  std::filesystem::path path = temporary.file("hierarchy-scan.bin");
+  { std::ofstream(path, std::ios::binary) << "tag=Q"; }
+  uint32_t descriptor = open(path, "rb");
+
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+  obelisk_rt_string_v1 field = 1;
+  uint32_t ok = 0;
+  uint32_t scanEOF = 1;
+  ASSERT_EQ(obelisk_rt_v1_file_scan_field(context, lane, descriptor, 1, "tag=",
+                                          4, 'M', 0, &field, &ok, &scanEOF),
+            OBELISK_RT_OK);
+  EXPECT_EQ(field, 0u);
+  EXPECT_EQ(ok, 1u);
+  EXPECT_EQ(scanEOF, 0u);
+
+  int64_t offset = -1;
+  ASSERT_EQ(obelisk_rt_v1_file_tell(context, descriptor, &offset),
+            OBELISK_RT_OK);
+  EXPECT_EQ(offset, 4);
+  uint8_t byte = 0;
+  ASSERT_EQ(obelisk_rt_v1_file_getc(context, descriptor, &byte), OBELISK_RT_OK);
+  EXPECT_EQ(byte, 'Q');
+  EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
+
+  std::filesystem::path emptyPath = temporary.file("empty-hierarchy-scan.bin");
+  { std::ofstream(emptyPath, std::ios::binary); }
+  descriptor = open(emptyPath, "rb");
+  field = 1;
+  ok = 0;
+  scanEOF = 1;
+  ASSERT_EQ(obelisk_rt_v1_file_scan_field(context, lane, descriptor, 1,
+                                          nullptr, 0, 'm', 0, &field, &ok,
+                                          &scanEOF),
+            OBELISK_RT_OK);
+  EXPECT_EQ(field, 0u);
+  EXPECT_EQ(ok, 1u);
+  EXPECT_EQ(scanEOF, 0u);
+  ASSERT_EQ(obelisk_rt_v1_file_tell(context, descriptor, &offset),
+            OBELISK_RT_OK);
+  EXPECT_EQ(offset, 0);
+  EXPECT_EQ(obelisk_rt_v1_file_getc(context, descriptor, &byte),
+            OBELISK_RT_EOF);
+  EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+}
+
 TEST_F(RuntimeTest, ReadMemTokenizerPreservesFourStateWordsAndAddresses) {
   TempDirectory temporary;
   std::filesystem::path path = temporary.file("memory.hex");

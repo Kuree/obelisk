@@ -137,6 +137,11 @@ ScanResult scanFileField(FILE *stream, const char *prefix, uint64_t prefixSize,
 
   char letter =
       static_cast<char>(std::tolower(static_cast<unsigned char>(specifier)));
+  // IEEE 1800-2017 21.3.4.3: %m consumes no input field. The lexical scope is
+  // materialized by lowering, while the runtime still owns prefix matching
+  // and the descriptor position.
+  if (letter == 'm')
+    return ScanResult::Match;
   uint64_t remaining = width == 0 ? UINT64_MAX : width;
   auto readFieldCharacter = [&]() {
     if (remaining == 0)

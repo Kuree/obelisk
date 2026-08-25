@@ -76,7 +76,7 @@ splitScanFormat(StringRef format, std::string &unsupported) {
       }
       specifier = format[index];
     }
-    if (!StringRef("bBoOdDhHxXeEfFgGsScC").contains(specifier)) {
+    if (!StringRef("bBoOdDhHxXeEfFgGsScCmM").contains(specifier)) {
       unsupported =
           format.substr(conversionStart, index - conversionStart + 1).str();
       return std::nullopt;
@@ -213,6 +213,10 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
   Value eofSeen = arith::ConstantOp::create(builder, location,
                                             builder.getI1Type(),
                                             builder.getBoolAttr(false));
+  StringAttr hierarchy = op.getSystemScopePathAttr();
+  if (!hierarchy)
+    hierarchy =
+        function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
   size_t destinationIndex = 0;
   for (const ScanConversion &conversion : *conversions) {
     std::optional<CapturedLValue> destination;
@@ -274,7 +278,15 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
     if (destination) {
       unsigned radix = scanRadix(conversion.specifier);
       Value parsed;
-      if (radix == kTextRadix)
+      if (conversion.specifier == 'm' || conversion.specifier == 'M') {
+        if (!hierarchy) {
+          emitError(location)
+              << name << " %m conversion has no elaborated scope";
+          return failure();
+        }
+        parsed = sim::SimStringLiteralOp::create(builder, location, stringType,
+                                                 hierarchy);
+      } else if (radix == kTextRadix)
         parsed = field;
       else if (radix == kRealRadix)
         parsed = sim::SimStringParseRealOp::create(builder, location,

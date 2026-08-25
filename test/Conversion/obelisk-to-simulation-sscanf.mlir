@@ -18,6 +18,11 @@
 // CHECK: %[[LIVE2:.*]] = arith.andi {{.*}}, %[[MATCHED2]]
 // CHECK: cf.cond_br %[[LIVE2]]
 // CHECK: obelisk_sim.ref.store %[[FIELD2]]
+// CHECK: %[[SUPPRESSED:.*]], %[[SUPPRESSED_CURSOR:.*]], %[[SUPPRESSED_OK:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = "", specifier = 77 : i32, width = 0 : i64}
+// CHECK: %[[FIELD3:.*]], %[[CURSOR3:.*]], %[[OK3:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = "", specifier = 109 : i32, width = 0 : i64}
+// CHECK: %[[HIERARCHY:.*]] = obelisk_sim.string.literal "top"
+// CHECK: cf.cond_br
+// CHECK: obelisk_sim.ref.store %[[HIERARCHY]]
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {
@@ -35,16 +40,18 @@ module {
         }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.word", lifetime = 1 : i32, name = "word", node_id = 8 : i64, semantic_type = !obelisk.string, sym_name = "s8.word"} {
         }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.hierarchy", lifetime = 1 : i32, name = "hierarchy", node_id = 26 : i64, semantic_type = !obelisk.string, sym_name = "s26.hierarchy"} {
+        }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 9 : i64, procedure_kind = 0 : i32, sym_name = "s9", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 10 : i64} {
             obelisk.sv.statement.expression_statement attributes {node_id = 11 : i64} {
               obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 12 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>} {
                 obelisk.sv.expression.named_value attributes {node_id = 13 : i64, referenced_path = "top.count", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.count, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>} {
                 }
-                obelisk.sv.expression.call attributes {argument_count = 5 : i64, callee_name = "$sscanf", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0, 0, 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = true, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 14 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s3.top::@s4.top} {
+                obelisk.sv.expression.call attributes {argument_count = 6 : i64, callee_name = "$sscanf", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0, 0, 0, 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = true, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 14 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s3.top::@s4.top} {
                   obelisk.sv.expression.string_literal attributes {constant_value = "1 2.5 hi", node_id = 15 : i64, semantic_type = !obelisk.ranged_packed_array<63 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
                   }
-                  obelisk.sv.expression.string_literal attributes {constant_value = "%d %f %s", node_id = 16 : i64, semantic_type = !obelisk.ranged_packed_array<63 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  obelisk.sv.expression.string_literal attributes {constant_value = "%d %f %s%*M%m", node_id = 16 : i64, semantic_type = !obelisk.ranged_packed_array<103 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
                   }
                   obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 17 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>} {
                     obelisk.sv.expression.named_value attributes {node_id = 18 : i64, referenced_path = "top.first", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.first, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>} {
@@ -62,6 +69,12 @@ module {
                     obelisk.sv.expression.named_value attributes {node_id = 24 : i64, referenced_path = "top.word", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.word, semantic_type = !obelisk.string} {
                     }
                     obelisk.sv.expression.empty_argument attributes {node_id = 25 : i64, semantic_type = !obelisk.string} {
+                    }
+                  }
+                  obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 27 : i64, semantic_type = !obelisk.string} {
+                    obelisk.sv.expression.named_value attributes {node_id = 28 : i64, referenced_path = "top.hierarchy", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s26.hierarchy, semantic_type = !obelisk.string} {
+                    }
+                    obelisk.sv.expression.empty_argument attributes {node_id = 29 : i64, semantic_type = !obelisk.string} {
                     }
                   }
                 }
