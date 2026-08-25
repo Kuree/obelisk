@@ -192,7 +192,7 @@ FailureOr<ValidatedSemanticDesign> validateSemanticDesign(ModuleOp module) {
                "whole-terminal parallel or full paths, including if/ifnone, "
                "with "
                "unknown, positive, or negative polarity, one to three static "
-               "delays, and one destination driver actor; "
+               "delays, and statically disjoint destination driver spans; "
                "unconditional overlapping paths require one distinct whole "
                "source per path and exact driver dependencies)";
         invalid = true;

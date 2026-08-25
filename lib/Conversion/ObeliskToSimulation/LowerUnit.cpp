@@ -26,6 +26,7 @@
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SetVector.h"
@@ -3711,10 +3712,11 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     uint64_t outputLow = 0;
     uint64_t outputWidth = 0;
     uint64_t outputRootWidth = 0;
+    std::optional<uint64_t> driverNodeID;
     bool full = false;
     bool masked = false;
   };
-  SmallVector<TimingPathRuleState, 4> timingPathRules;
+  SmallVector<TimingPathRuleState, 4> allTimingPathRules;
   auto readTimingPathInput = [&](Value input) -> Value {
     Value current;
     if (auto ref = dyn_cast<sim::RefType>(input.getType()))
@@ -3788,6 +3790,12 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         if (state.outputLow >= state.outputRootWidth ||
             state.outputWidth > state.outputRootWidth - state.outputLow)
           return function.emitError("timing path destination is out of bounds");
+        if (auto driverNodeID = rule.getAs<IntegerAttr>("driver_node_id")) {
+          if (driverNodeID.getInt() < 0)
+            return function.emitError("invalid timing path driver identity");
+          state.driverNodeID =
+              static_cast<uint64_t>(driverNodeID.getInt());
+        }
       }
       for (size_t index = 0; index != inputPaths.size(); ++index) {
         StringAttr inputPath = inputPaths[index];
@@ -3852,7 +3860,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
           state.conditionCaptures.push_back(capture);
         }
       }
-      timingPathRules.push_back(std::move(state));
+      allTimingPathRules.push_back(std::move(state));
     }
   }
 
@@ -3874,7 +3882,9 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     emitBranch(loopHeader);
     setCurrent(loopHeader);
   }
-  if (!timingPathRules.empty()) {
+  auto buildTimingPathPlan =
+      [&](MutableArrayRef<TimingPathRuleState> timingPathRules,
+          std::optional<uint64_t> driverNodeID) -> LogicalResult {
     SmallVector<Value, 4> changed;
     SmallVector<Value, 4> changedMasks;
     llvm::StringMap<std::pair<Value, Value>> changedSnapshots;
@@ -4078,35 +4088,62 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                                          applicableMasks[index]);
         }
       }
-      timingPathMaskedPlan = std::move(plan);
+      if (driverNodeID)
+        timingPathMaskedPlans.try_emplace(*driverNodeID, std::move(plan));
+      else
+        timingPathMaskedPlan = std::move(plan);
     } else {
       std::array<Value, 3> selected;
-    for (unsigned transition = 0; transition != selected.size(); ++transition) {
-      SmallVector<unsigned, 4> order;
-      for (unsigned index = 0; index != timingPathRules.size(); ++index)
-        order.push_back(index);
-      llvm::sort(order, [&](unsigned lhs, unsigned rhs) {
-        return timingPathRules[lhs].delays[transition] >
-               timingPathRules[rhs].delays[transition];
-      });
-      Value selectedTicks = arith::ConstantOp::create(
-          builder, function.getLoc(), builder.getI64Type(),
-          builder.getI64IntegerAttr(0));
-      for (unsigned index : order) {
-        Value delayTicks = arith::ConstantOp::create(
+      for (unsigned transition = 0; transition != selected.size();
+           ++transition) {
+        SmallVector<unsigned, 4> order;
+        for (unsigned index = 0; index != timingPathRules.size(); ++index)
+          order.push_back(index);
+        llvm::sort(order, [&](unsigned lhs, unsigned rhs) {
+          return timingPathRules[lhs].delays[transition] >
+                 timingPathRules[rhs].delays[transition];
+        });
+        Value selectedTicks = arith::ConstantOp::create(
             builder, function.getLoc(), builder.getI64Type(),
-            builder.getI64IntegerAttr(
-                timingPathRules[index].delays[transition]));
-        selectedTicks = arith::SelectOp::create(builder, function.getLoc(),
-                                                applicable[index], delayTicks,
-                                                selectedTicks);
+            builder.getI64IntegerAttr(0));
+        for (unsigned index : order) {
+          Value delayTicks = arith::ConstantOp::create(
+              builder, function.getLoc(), builder.getI64Type(),
+              builder.getI64IntegerAttr(
+                  timingPathRules[index].delays[transition]));
+          selectedTicks = arith::SelectOp::create(builder, function.getLoc(),
+                                                  applicable[index], delayTicks,
+                                                  selectedTicks);
+        }
+        selected[transition] = sim::SimTimeScaleOp::create(
+            builder, function.getLoc(),
+            sim::TimeType::get(function.getContext()), selectedTicks,
+            builder.getI64IntegerAttr(1), builder.getBoolAttr(false));
       }
-      selected[transition] = sim::SimTimeScaleOp::create(
-          builder, function.getLoc(), sim::TimeType::get(function.getContext()),
-          selectedTicks, builder.getI64IntegerAttr(1),
-          builder.getBoolAttr(false));
+      if (driverNodeID)
+        return function.emitError(
+            "driver-specific timing paths require masked rules");
+      timingPathDelays = selected;
     }
-    timingPathDelays = selected;
+    return success();
+  };
+  if (!allTimingPathRules.empty()) {
+    bool keyed = allTimingPathRules.front().driverNodeID.has_value();
+    if (llvm::any_of(allTimingPathRules,
+                     [&](const TimingPathRuleState &rule) {
+                       return rule.driverNodeID.has_value() != keyed;
+                     }))
+      return function.emitError("mixed timing path driver identities");
+    if (!keyed) {
+      if (failed(buildTimingPathPlan(allTimingPathRules, std::nullopt)))
+        return failure();
+    } else {
+      llvm::MapVector<uint64_t, SmallVector<TimingPathRuleState, 4>> groups;
+      for (TimingPathRuleState &rule : allTimingPathRules)
+        groups[*rule.driverNodeID].push_back(std::move(rule));
+      for (auto &entry : groups)
+        if (failed(buildTimingPathPlan(entry.second, entry.first)))
+          return failure();
     }
   }
   auto primitive =
@@ -4137,6 +4174,9 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   observedDependencies = savedDependencies;
   if (failed(lowered))
     return failure();
+  if (usedTimingPathMaskedPlans.size() != timingPathMaskedPlans.size())
+    return function.emitError(
+        "timing path driver identity did not match an assignment leaf");
   if (!current->empty() && current->back().hasTrait<OpTrait::IsTerminator>())
     return success();
 

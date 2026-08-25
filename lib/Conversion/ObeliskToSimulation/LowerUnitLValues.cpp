@@ -948,26 +948,50 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
       bool userRaw = isUserNetDriver(destination.reference);
       auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
           "obelisk_sim.propagation_delays");
-      if (timingPathMaskedPlan) {
+      TimingPathMaskedPlan *maskedPlan = nullptr;
+      Operation *driverNode = destination.semanticNode;
+      while (isa_and_nonnull<semantic::SVElementSelectExpressionOp,
+                             semantic::SVRangeSelectExpressionOp,
+                             semantic::SVMemberAccessExpressionOp>(
+          driverNode)) {
+        SmallVector<Operation *> children = getChildren(driverNode);
+        if (children.empty())
+          break;
+        driverNode = children.front();
+      }
+      if (auto nodeID = driverNode
+                            ? driverNode->getAttrOfType<IntegerAttr>("node_id")
+                            : IntegerAttr{}) {
+        auto found = timingPathMaskedPlans.find(
+            nodeID.getValue().getZExtValue());
+        if (found != timingPathMaskedPlans.end()) {
+          maskedPlan = &found->second;
+          usedTimingPathMaskedPlans.insert(
+              nodeID.getValue().getZExtValue());
+        }
+      }
+      if (!maskedPlan && timingPathMaskedPlan)
+        maskedPlan = &*timingPathMaskedPlan;
+      if (maskedPlan) {
         auto codeUnitID = function->getAttrOfType<IntegerAttr>("code_unit_id");
         std::optional<unsigned> drivenWidth =
             sim::getPackedWidth(published.getType());
         auto maskType =
-            dyn_cast<IntegerType>(timingPathMaskedPlan->coverageMask.getType());
+            dyn_cast<IntegerType>(maskedPlan->coverageMask.getType());
         if (!codeUnitID || !drivenWidth || !maskType ||
             maskType.getWidth() != *drivenWidth ||
-            timingPathMaskedPlan->groups.empty() ||
+            maskedPlan->groups.empty() ||
             nextInertialDriveComponent > UINT32_MAX)
           return function.emitError("invalid masked timing path drive plan");
         uint32_t component =
             static_cast<uint32_t>(nextInertialDriveComponent++);
         uint32_t groupCount =
-            static_cast<uint32_t>(timingPathMaskedPlan->groups.size());
+            static_cast<uint32_t>(maskedPlan->groups.size());
         for (auto [index, group] :
-             llvm::enumerate(timingPathMaskedPlan->groups)) {
+             llvm::enumerate(maskedPlan->groups)) {
           auto drive = sim::SimDriverDriveInertialPathOp::create(
               builder, location, destination.reference, published,
-              timingPathMaskedPlan->coverageMask, group.masks[0],
+              maskedPlan->coverageMask, group.masks[0],
               group.masks[1], group.masks[2], group.delays[0], group.delays[1],
               group.delays[2], codeUnitID, builder.getI32IntegerAttr(component),
               builder.getI32IntegerAttr(static_cast<uint32_t>(index)),

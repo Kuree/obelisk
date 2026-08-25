@@ -787,6 +787,26 @@ seconds at 4 MB RSS in either tier. General split-driver destination spans,
 edge/data-source paths, six/twelve-transition delays, pulse controls, and SDF
 remain separate work; no Slang patch is carried.
 
+G4's seventh closure tranche maps those packed module paths onto statically
+disjoint continuous-driver spans. Preparation proves complete destination
+ownership by advancing across driver endpoints rather than destination bits,
+then clips each path into driver-local output coordinates. Parallel paths clip
+the corresponding positional source window; full paths retain the complete
+ordered source list and broadcast semantics. A single concatenation actor may
+therefore own several output leaves, and one output may be assembled from
+several part-select assignments, without creating per-bit actors.
+
+Each clipped rule carries the stable semantic identity of its assignment leaf.
+Lowering groups rules by that identity and applies the packed changed-mask and
+keyed inertial plan only while lowering the matching lvalue. Conditions,
+`ifnone` grouping, polarities, and one/two/three-value delays compose with the
+existing partial-select machinery; the scheduler and runtime gain no lookup or
+scan. Ambiguous physical overlap and explicit driver delays remain mandatory
+diagnostics. General actors whose unrelated output leaves depend on inputs
+outside one output's complete path group remain a separate driver-dependency
+mapping tranche, as do edge/data-source paths, six/twelve-transition delays,
+pulse controls, and SDF.
+
 The lexical-time audit now preserves the enclosing compilation-unit, package,
 class, or module time scope when `$printtimescale`, `$timeunit`, or
 `$timeprecision` appears inside a subroutine. Four upstream `br1003` cases now

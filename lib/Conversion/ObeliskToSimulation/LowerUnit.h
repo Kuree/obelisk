@@ -13,6 +13,8 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/IRMapping.h"
 
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
@@ -597,6 +599,11 @@ private:
   /// path set. Delay groups are statically unrolled and their three masks are
   /// disjoint independently for rise, fall, and turnoff.
   std::optional<TimingPathMaskedPlan> timingPathMaskedPlan;
+  /// Driver actors can publish several disjoint lvalue leaves (for example a
+  /// concatenation assignment).  A split specify destination selects its
+  /// driver-local plan by the stable semantic lvalue node ID.
+  ::llvm::DenseMap<uint64_t, TimingPathMaskedPlan> timingPathMaskedPlans;
+  ::llvm::DenseSet<uint64_t> usedTimingPathMaskedPlans;
   /// Per-activation rise, fall, and turnoff delays selected from statically
   /// frozen overlapping specify paths.
   std::optional<std::array<::mlir::Value, 3>> timingPathDelays;

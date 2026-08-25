@@ -1794,6 +1794,14 @@ void ObeliskSimPreparePass::runOnOperation() {
   for (StringRef output : ambiguousWholeDrivers.keys())
     wholeDriverActors.erase(output);
 
+  struct TimingDriverSpan {
+    Operation *unit;
+    std::optional<uint64_t> nodeID;
+    uint64_t low;
+    uint64_t width;
+  };
+  llvm::DenseMap<Operation *, SmallVector<Attribute>> frozenTimingRules;
+  llvm::DenseMap<Operation *, llvm::StringMap<int32_t>> frozenTimingGroups;
   for (auto &entry : simpleTimingPaths) {
     StringRef output = entry.getKey();
     SmallVectorImpl<SimpleTimingPath> &paths = entry.getValue();
@@ -1806,186 +1814,84 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       continue;
     }
-    Operation *matchedUnit = nullptr;
+
+    SmallVector<TimingDriverSpan> spans;
     for (auto &drivers : continuousDrivers) {
-      bool drivesOutput =
-          llvm::any_of(drivers.second,
-                       [&](const DriverInfo &d) { return d.path == output; });
-      if (!drivesOutput)
-        continue;
-      bool wholeCoverage =
-          llvm::all_of(drivers.second, [&](const DriverInfo &driver) {
-            return driver.path == output && driver.drivenLow == 0 &&
-                   driver.drivenWidth == path.output.rootWidth;
-          });
-      bool strengthPair =
-          drivers.second.size() == 2 && drivers.second[0].strengthBank &&
-          drivers.second[1].strengthBank &&
-          drivers.second[0].strengthBank != drivers.second[1].strengthBank;
-      bool wholeOutput =
-          wholeCoverage && (drivers.second.size() == 1 || strengthPair);
-      if (!wholeOutput || matchedUnit) {
-        emitError(getSemanticLocation(path.declaration))
-            << "simple specify path output must have one whole continuous "
-               "driver";
-        invalid = true;
-        matchedUnit = nullptr;
-        break;
+      SmallVector<const DriverInfo *> matching;
+      for (const DriverInfo &driver : drivers.second)
+        if (driver.path == output)
+          matching.push_back(&driver);
+      while (!matching.empty()) {
+        const DriverInfo &first = *matching.pop_back_val();
+        SmallVector<const DriverInfo *> equivalent{&first};
+        llvm::erase_if(matching, [&](const DriverInfo *candidate) {
+          bool same = candidate->drivenLow == first.drivenLow &&
+                      candidate->drivenWidth == first.drivenWidth &&
+                      candidate->nodeId == first.nodeId;
+          if (same)
+            equivalent.push_back(candidate);
+          return same;
+        });
+        bool strengthPair =
+            equivalent.size() == 2 && equivalent[0]->strengthBank &&
+            equivalent[1]->strengthBank &&
+            equivalent[0]->strengthBank != equivalent[1]->strengthBank;
+        if (equivalent.size() != 1 && !strengthPair) {
+          emitError(getSemanticLocation(path.declaration))
+              << "specify path destination has an ambiguous continuous "
+                 "driver span";
+          invalid = true;
+          break;
+        }
+        spans.push_back({drivers.first, first.nodeId, first.drivenLow,
+                         first.drivenWidth});
       }
-      matchedUnit = drivers.first;
+      if (invalid)
+        break;
     }
     if (invalid)
       continue;
-    if (!matchedUnit) {
+    if (spans.empty()) {
       emitError(getSemanticLocation(path.declaration))
           << "simple specify path output has no continuous driver";
       invalid = true;
       continue;
     }
-    if (matchedUnit->hasAttr("delay_fs")) {
-      emitError(getSemanticLocation(path.declaration))
-          << "combining a specify path with an explicitly delayed driver is "
-             "not executable yet";
-      invalid = true;
-      continue;
-    }
 
-    SmallVector<Operation *> dependencyRoots =
-        getDriverDependencyRoots(matchedUnit);
-
-    llvm::StringSet<> referencedPaths;
-    for (Operation *root : dependencyRoots)
-      root->walk([&](Operation *nested) {
-        if (auto referenced =
-                nested->getAttrOfType<StringAttr>("referenced_path"))
-          referencedPaths.insert(referenced.getValue());
-      });
-    llvm::StringSet<> declaredInputs;
-    for (const SimpleTimingPath &candidate : paths)
-      for (const TimingTerminal &input : candidate.inputs)
-        declaredInputs.insert(input.path);
-    bool exactInputs = referencedPaths.size() == declaredInputs.size();
-    if (exactInputs)
-      for (StringRef input : declaredInputs.keys())
-        exactInputs &= referencedPaths.contains(input);
-    bool identicalDelays =
-        llvm::all_of(paths, [&](const SimpleTimingPath &candidate) {
-          return candidate.delays == path.delays;
-        });
-    bool hasStateDependent = llvm::any_of(paths, [](const SimpleTimingPath &p) {
-      return p.condition || p.ifnone;
-    });
-    if (!exactInputs && identicalDelays && !hasStateDependent) {
-      // When every applicable path has the same tuple, delay selection is
-      // independent of which source was most recent. Prove that the declared
-      // terminals are exactly the transitive combinational leaves and attach
-      // one ordinary inertial delay to the output actor. This admits standard
-      // polarized paths through internal gates without inventing behavior for
-      // the still-unsupported differing-delay transitive case.
-      llvm::StringSet<> transitiveInputs;
-      llvm::DenseSet<Operation *> activeDrivers;
-      std::function<bool(Operation *)> collectTransitiveInputs =
-          [&](Operation *unit) {
-            if (!activeDrivers.insert(unit).second)
-              return false;
-            bool valid = true;
-            for (Operation *root : getDriverDependencyRoots(unit))
-              root->walk([&](Operation *nested) {
-                if (!valid)
-                  return;
-                auto referenced =
-                    nested->getAttrOfType<StringAttr>("referenced_path");
-                if (!referenced)
-                  return;
-                StringRef referencedPath = referenced.getValue();
-                if (declaredInputs.contains(referencedPath)) {
-                  transitiveInputs.insert(referencedPath);
-                  return;
-                }
-                auto driver = wholeDriverActors.find(referencedPath);
-                if (driver == wholeDriverActors.end() ||
-                    !collectTransitiveInputs(driver->second)) {
-                  transitiveInputs.insert(referencedPath);
-                  valid = false;
-                }
-              });
-            activeDrivers.erase(unit);
-            return valid;
-          };
-      bool transitiveValid = collectTransitiveInputs(matchedUnit);
-      exactInputs =
-          transitiveValid && transitiveInputs.size() == declaredInputs.size();
-      if (exactInputs)
-        for (StringRef input : declaredInputs.keys())
-          exactInputs &= transitiveInputs.contains(input);
-    }
-    if (!exactInputs) {
-      emitError(getSemanticLocation(path.declaration))
-          << "simple specify path driver must depend only on its declared "
-             "whole inputs";
-      invalid = true;
-      continue;
-    }
-    bool allWholeTerminals = llvm::all_of(paths, [](const SimpleTimingPath &p) {
-      return p.output.isWhole() &&
-             llvm::all_of(p.inputs,
-                          [](const TimingTerminal &t) { return t.isWhole(); });
-    });
-    if (allWholeTerminals && !hasStateDependent && (paths.size() == 1 || identicalDelays)) {
-      matchedUnit->setAttr("delay_fs",
-                           builder.getDenseI64ArrayAttr(path.delays));
-      continue;
-    }
-
-    // Freeze a direct source snapshot inventory. Conditional paths can share
-    // sources and full paths can name several sources, so snapshots are
-    // allocated once per distinct input instead of once per declaration.
-    // The lowered actor shares each comparison across all matching rules.
-    SmallVector<Attribute> frozenRules;
-    llvm::StringMap<std::string> snapshots;
+    // Every bit named by every path must have one logical owner.  Advance by
+    // span endpoints instead of visiting individual bits, so wide packed
+    // destinations remain compile-time constant work per driver span.
     for (const SimpleTimingPath &candidate : paths) {
-      for (const TimingTerminal &input : candidate.inputs) {
-        if (snapshots.count(input.path))
-          continue;
-        auto inputDescriptor = descriptors.find(input.path);
-        Type snapshotType =
-            inputDescriptor == descriptors.end()
-                ? Type{}
-                : sim::getPackedScalarType(inputDescriptor->second.type);
-        std::optional<unsigned> descriptorWidth =
-            inputDescriptor == descriptors.end()
-                ? std::nullopt
-                : sim::getPackedWidth(inputDescriptor->second.type);
-        std::string snapshotPath =
-            (output + ".$timing_path_snapshot_" + Twine(snapshots.size()))
-                .str();
-        if (!snapshotType || !descriptorWidth ||
-            *descriptorWidth != input.rootWidth || descriptors.count(snapshotPath)) {
+      uint64_t next = candidate.output.low;
+      uint64_t end = next + candidate.output.width;
+      while (next != end) {
+        const TimingDriverSpan *owner = nullptr;
+        uint64_t ownerEnd = end;
+        for (const TimingDriverSpan &span : spans) {
+          uint64_t spanEnd = span.low + span.width;
+          if (span.low <= next && next < spanEnd) {
+            if (owner) {
+              emitError(getSemanticLocation(candidate.declaration))
+                  << "specify path destination has overlapping continuous "
+                     "drivers";
+              invalid = true;
+              break;
+            }
+            owner = &span;
+            ownerEnd = std::min(end, spanEnd);
+          }
+          if (next < span.low)
+            ownerEnd = std::min(ownerEnd, span.low);
+        }
+        if (invalid)
+          break;
+        if (!owner) {
           emitError(getSemanticLocation(candidate.declaration))
-              << "specify path source has no unique packed snapshot";
+              << "specify path destination is not completely driven";
           invalid = true;
           break;
         }
-        if (nextStorageId == UINT64_MAX) {
-          emitError(getSemanticLocation(candidate.declaration))
-              << "timing path snapshots exceed the storage descriptor space";
-          invalid = true;
-          break;
-        }
-        uint64_t snapshotId = nextStorageId++;
-        uint64_t scopeId = getScopeId(matchedUnit);
-        DescriptorInfo snapshot{DescriptorInfo::Kind::Storage, snapshotId,
-                                scopeId, snapshotType,
-                                sim::NetResolutionKind::Wire};
-        snapshot.rootType = snapshotType;
-        descriptors[snapshotPath] = snapshot;
-        sim::SimStorageDeclOp::create(
-            builder, getSemanticLocation(candidate.declaration), snapshotId,
-            scopeId, snapshotType, sim::Lifetime::Design,
-            builder.getStringAttr(snapshotPath),
-            builder.getStringAttr("__obelisk_timing_path_snapshot"),
-            sim::ComputeObservabilityKindAttr{});
-        snapshots.try_emplace(input.path, std::move(snapshotPath));
+        next = ownerEnd;
       }
       if (invalid)
         break;
@@ -1993,81 +1899,259 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (invalid)
       continue;
 
-    // ifnone is local to paths with the same source and destination. Freeze a
-    // stable integer group so lowering can OR the ordinary if predicates once
-    // and apply the fallback without string comparisons at runtime.
-    llvm::StringMap<int32_t> groups;
-    for (const SimpleTimingPath &candidate : paths) {
-      std::string groupKey;
-      groupKey += candidate.full ? "F;" : "P;";
-      for (const TimingTerminal &input : candidate.inputs) {
-        groupKey += Twine(input.path.size()).str();
-        groupKey.push_back(':');
-        groupKey += input.path;
-        groupKey +=
-            (":" + Twine(input.low) + ":" + Twine(input.width) + ";").str();
-      }
-      groupKey += ("->" + Twine(candidate.output.low) + ":" +
-                   Twine(candidate.output.width))
-                      .str();
-      auto [group, inserted] =
-          groups.try_emplace(groupKey, static_cast<int32_t>(groups.size()));
-      (void)inserted;
-      SmallVector<Attribute> inputAttrs;
-      SmallVector<Attribute> snapshotAttrs;
-      SmallVector<int64_t> inputLows;
-      SmallVector<int64_t> inputWidths;
-      for (const TimingTerminal &input : candidate.inputs) {
-        inputAttrs.push_back(builder.getStringAttr(input.path));
-        snapshotAttrs.push_back(builder.getStringAttr(snapshots.lookup(input.path)));
-        inputLows.push_back(static_cast<int64_t>(input.low));
-        inputWidths.push_back(static_cast<int64_t>(input.width));
-      }
-      SmallVector<NamedAttribute> attrs{
-          builder.getNamedAttr("inputs", builder.getArrayAttr(inputAttrs)),
-          builder.getNamedAttr("snapshots",
-                               builder.getArrayAttr(snapshotAttrs)),
-          builder.getNamedAttr("input_lows",
-                               builder.getDenseI64ArrayAttr(inputLows)),
-          builder.getNamedAttr("input_widths",
-                               builder.getDenseI64ArrayAttr(inputWidths)),
-          builder.getNamedAttr("output_low",
-                               builder.getI64IntegerAttr(candidate.output.low)),
-          builder.getNamedAttr("output_width", builder.getI64IntegerAttr(
-                                                   candidate.output.width)),
-          builder.getNamedAttr(
-              "output_root_width",
-              builder.getI64IntegerAttr(candidate.output.rootWidth)),
-          builder.getNamedAttr("connection_full",
-                               builder.getBoolAttr(candidate.full)),
-          builder.getNamedAttr("polarity",
-                               builder.getI32IntegerAttr(candidate.polarity)),
-          builder.getNamedAttr("delay_fs",
-                               builder.getDenseI64ArrayAttr(candidate.delays)),
-          builder.getNamedAttr("condition_kind", builder.getI32IntegerAttr(
-                                                     candidate.condition ? 1
-                                                     : candidate.ifnone  ? 2
-                                                                         : 0)),
-          builder.getNamedAttr("condition_group",
-                               builder.getI32IntegerAttr(group->second)),
+    llvm::StringSet<> declaredInputs;
+    for (const SimpleTimingPath &candidate : paths)
+      for (const TimingTerminal &input : candidate.inputs)
+        declaredInputs.insert(input.path);
+    bool identicalDelays =
+        llvm::all_of(paths, [&](const SimpleTimingPath &candidate) {
+          return candidate.delays == path.delays;
+        });
+    bool hasStateDependent = llvm::any_of(paths, [](const SimpleTimingPath &p) {
+      return p.condition || p.ifnone;
+    });
+    auto hasExactInputs = [&](Operation *unit, bool allowTransitive) {
+      llvm::StringSet<> referencedPaths;
+      for (Operation *root : getDriverDependencyRoots(unit))
+        root->walk([&](Operation *nested) {
+          if (auto referenced =
+                  nested->getAttrOfType<StringAttr>("referenced_path"))
+            referencedPaths.insert(referenced.getValue());
+        });
+      bool exact = referencedPaths.size() == declaredInputs.size();
+      if (exact)
+        for (StringRef input : declaredInputs.keys())
+          exact &= referencedPaths.contains(input);
+      if (exact || !allowTransitive)
+        return exact;
+      llvm::StringSet<> transitiveInputs;
+      llvm::DenseSet<Operation *> activeDrivers;
+      std::function<bool(Operation *)> collect = [&](Operation *driverUnit) {
+        if (!activeDrivers.insert(driverUnit).second)
+          return false;
+        bool valid = true;
+        for (Operation *root : getDriverDependencyRoots(driverUnit))
+          root->walk([&](Operation *nested) {
+            if (!valid)
+              return;
+            auto referenced =
+                nested->getAttrOfType<StringAttr>("referenced_path");
+            if (!referenced)
+              return;
+            StringRef referencedPath = referenced.getValue();
+            if (declaredInputs.contains(referencedPath)) {
+              transitiveInputs.insert(referencedPath);
+              return;
+            }
+            auto driver = wholeDriverActors.find(referencedPath);
+            if (driver == wholeDriverActors.end() || !collect(driver->second)) {
+              transitiveInputs.insert(referencedPath);
+              valid = false;
+            }
+          });
+        activeDrivers.erase(driverUnit);
+        return valid;
       };
-      if (candidate.condition) {
-        auto nodeID =
-            candidate.condition->getAttrOfType<IntegerAttr>("node_id");
-        if (!nodeID) {
-          emitError(getSemanticLocation(candidate.declaration))
-              << "conditional specify path condition has no stable node ID";
-          invalid = true;
-          break;
-        }
-        attrs.push_back(builder.getNamedAttr("condition_node_id", nodeID));
-      }
-      frozenRules.push_back(builder.getDictionaryAttr(attrs));
+      exact = collect(unit) && transitiveInputs.size() == declaredInputs.size();
+      if (exact)
+        for (StringRef input : declaredInputs.keys())
+          exact &= transitiveInputs.contains(input);
+      return exact;
+    };
+
+    bool allWholeTerminals = llvm::all_of(paths, [](const SimpleTimingPath &p) {
+      return p.output.isWhole() &&
+             llvm::all_of(p.inputs,
+                          [](const TimingTerminal &t) { return t.isWhole(); });
+    });
+    bool hasExplicitDriverDelay = llvm::any_of(
+        spans, [](const TimingDriverSpan &span) {
+          return span.unit->hasAttr("delay_fs");
+        });
+    if (hasExplicitDriverDelay) {
+      emitError(getSemanticLocation(path.declaration))
+          << "combining a specify path with an explicitly delayed driver is "
+             "not executable yet";
+      invalid = true;
+      continue;
     }
-    if (!invalid)
-      matchedUnit->setAttr("obelisk.timing_path_rules",
-                           builder.getArrayAttr(frozenRules));
+    if (spans.size() == 1 && spans.front().low == 0 &&
+        spans.front().width == path.output.rootWidth && allWholeTerminals &&
+        !hasStateDependent && (paths.size() == 1 || identicalDelays) &&
+        hasExactInputs(spans.front().unit,
+                       identicalDelays && !hasStateDependent)) {
+      spans.front().unit->setAttr("delay_fs",
+                                  builder.getDenseI64ArrayAttr(path.delays));
+      continue;
+    }
+
+    llvm::DenseSet<Operation *> validatedUnits;
+    for (const TimingDriverSpan &span : spans) {
+      bool used = llvm::any_of(paths, [&](const SimpleTimingPath &candidate) {
+        uint64_t begin = std::max(span.low, candidate.output.low);
+        uint64_t end = std::min(span.low + span.width,
+                                candidate.output.low + candidate.output.width);
+        return begin < end;
+      });
+      if (!used)
+        continue;
+      if (!span.nodeID) {
+        emitError(getSemanticLocation(path.declaration))
+            << "split specify path driver has no stable lvalue identity";
+        invalid = true;
+        break;
+      }
+      if (validatedUnits.insert(span.unit).second &&
+          !hasExactInputs(span.unit, false)) {
+        emitError(getSemanticLocation(path.declaration))
+            << "simple specify path driver must depend only on its declared "
+               "whole inputs";
+        invalid = true;
+        break;
+      }
+
+      llvm::StringMap<std::string> snapshots;
+      for (const SimpleTimingPath &candidate : paths)
+        for (const TimingTerminal &input : candidate.inputs) {
+          if (snapshots.count(input.path))
+            continue;
+          auto inputDescriptor = descriptors.find(input.path);
+          Type snapshotType =
+              inputDescriptor == descriptors.end()
+                  ? Type{}
+                  : sim::getPackedScalarType(inputDescriptor->second.type);
+          std::optional<unsigned> descriptorWidth =
+              inputDescriptor == descriptors.end()
+                  ? std::nullopt
+                  : sim::getPackedWidth(inputDescriptor->second.type);
+          std::string snapshotPath =
+              (output + ".$timing_path_snapshot_" + Twine(*span.nodeID) + "_" +
+               Twine(snapshots.size()))
+                  .str();
+          if (!snapshotType || !descriptorWidth ||
+              *descriptorWidth != input.rootWidth ||
+              descriptors.count(snapshotPath) || nextStorageId == UINT64_MAX) {
+            emitError(getSemanticLocation(candidate.declaration))
+                << "specify path source has no unique packed snapshot";
+            invalid = true;
+            break;
+          }
+          uint64_t snapshotId = nextStorageId++;
+          uint64_t scopeId = getScopeId(span.unit);
+          DescriptorInfo snapshot{DescriptorInfo::Kind::Storage, snapshotId,
+                                  scopeId, snapshotType,
+                                  sim::NetResolutionKind::Wire};
+          snapshot.rootType = snapshotType;
+          descriptors[snapshotPath] = snapshot;
+          sim::SimStorageDeclOp::create(
+              builder, getSemanticLocation(candidate.declaration), snapshotId,
+              scopeId, snapshotType, sim::Lifetime::Design,
+              builder.getStringAttr(snapshotPath),
+              builder.getStringAttr("__obelisk_timing_path_snapshot"),
+              sim::ComputeObservabilityKindAttr{});
+          snapshots.try_emplace(input.path, std::move(snapshotPath));
+        }
+      if (invalid)
+        break;
+
+      llvm::StringMap<int32_t> &groups = frozenTimingGroups[span.unit];
+      for (const SimpleTimingPath &candidate : paths) {
+        uint64_t intersectionLow = std::max(span.low, candidate.output.low);
+        uint64_t intersectionEnd =
+            std::min(span.low + span.width,
+                     candidate.output.low + candidate.output.width);
+        if (intersectionLow >= intersectionEnd)
+          continue;
+        uint64_t intersectionWidth = intersectionEnd - intersectionLow;
+        std::string groupKey;
+        groupKey += Twine(output.size()).str();
+        groupKey.push_back(':');
+        groupKey += output;
+        groupKey.push_back(';');
+        groupKey += candidate.full ? "F;" : "P;";
+        for (const TimingTerminal &input : candidate.inputs) {
+          groupKey += Twine(input.path.size()).str();
+          groupKey.push_back(':');
+          groupKey += input.path;
+          groupKey +=
+              (":" + Twine(input.low) + ":" + Twine(input.width) + ";")
+                  .str();
+        }
+        groupKey += ("->" + Twine(candidate.output.low) + ":" +
+                     Twine(candidate.output.width))
+                        .str();
+        auto [group, inserted] =
+            groups.try_emplace(groupKey, static_cast<int32_t>(groups.size()));
+        (void)inserted;
+        SmallVector<Attribute> inputAttrs;
+        SmallVector<Attribute> snapshotAttrs;
+        SmallVector<int64_t> inputLows;
+        SmallVector<int64_t> inputWidths;
+        for (const TimingTerminal &input : candidate.inputs) {
+          uint64_t inputLow = input.low;
+          uint64_t inputWidth = input.width;
+          if (!candidate.full) {
+            inputLow += intersectionLow - candidate.output.low;
+            inputWidth = intersectionWidth;
+          }
+          inputAttrs.push_back(builder.getStringAttr(input.path));
+          snapshotAttrs.push_back(
+              builder.getStringAttr(snapshots.lookup(input.path)));
+          inputLows.push_back(static_cast<int64_t>(inputLow));
+          inputWidths.push_back(static_cast<int64_t>(inputWidth));
+        }
+        SmallVector<NamedAttribute> attrs{
+            builder.getNamedAttr("inputs", builder.getArrayAttr(inputAttrs)),
+            builder.getNamedAttr("snapshots",
+                                 builder.getArrayAttr(snapshotAttrs)),
+            builder.getNamedAttr("input_lows",
+                                 builder.getDenseI64ArrayAttr(inputLows)),
+            builder.getNamedAttr("input_widths",
+                                 builder.getDenseI64ArrayAttr(inputWidths)),
+            builder.getNamedAttr(
+                "output_low",
+                builder.getI64IntegerAttr(intersectionLow - span.low)),
+            builder.getNamedAttr(
+                "output_width", builder.getI64IntegerAttr(intersectionWidth)),
+            builder.getNamedAttr("output_root_width",
+                                 builder.getI64IntegerAttr(span.width)),
+            builder.getNamedAttr("driver_node_id",
+                                 builder.getI64IntegerAttr(*span.nodeID)),
+            builder.getNamedAttr("connection_full",
+                                 builder.getBoolAttr(candidate.full)),
+            builder.getNamedAttr("polarity",
+                                 builder.getI32IntegerAttr(candidate.polarity)),
+            builder.getNamedAttr(
+                "delay_fs", builder.getDenseI64ArrayAttr(candidate.delays)),
+            builder.getNamedAttr(
+                "condition_kind",
+                builder.getI32IntegerAttr(candidate.condition
+                                              ? 1
+                                              : candidate.ifnone ? 2 : 0)),
+            builder.getNamedAttr("condition_group",
+                                 builder.getI32IntegerAttr(group->second)),
+        };
+        if (candidate.condition) {
+          auto nodeID =
+              candidate.condition->getAttrOfType<IntegerAttr>("node_id");
+          if (!nodeID) {
+            emitError(getSemanticLocation(candidate.declaration))
+                << "conditional specify path condition has no stable node ID";
+            invalid = true;
+            break;
+          }
+          attrs.push_back(builder.getNamedAttr("condition_node_id", nodeID));
+        }
+        frozenTimingRules[span.unit].push_back(
+            builder.getDictionaryAttr(attrs));
+      }
+      if (invalid)
+        break;
+    }
   }
+  for (auto &entry : frozenTimingRules)
+    entry.first->setAttr("obelisk.timing_path_rules",
+                         builder.getArrayAttr(entry.second));
   if (invalid)
     return abort();
 
@@ -7316,6 +7400,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             rule ? rule.getAs<IntegerAttr>("output_width") : IntegerAttr{};
         auto outputRootWidth =
             rule ? rule.getAs<IntegerAttr>("output_root_width") : IntegerAttr{};
+        auto driverNodeID =
+            rule ? rule.getAs<IntegerAttr>("driver_node_id") : IntegerAttr{};
         auto connectionFull =
             rule ? rule.getAs<BoolAttr>("connection_full") : BoolAttr{};
         auto polarity =
@@ -7364,6 +7450,9 @@ void ObeliskSimPreparePass::runOnOperation() {
               builder.getNamedAttr("output_root_width", outputRootWidth));
           fields.push_back(
               builder.getNamedAttr("connection_full", connectionFull));
+          if (driverNodeID)
+            fields.push_back(
+                builder.getNamedAttr("driver_node_id", driverNodeID));
         }
         fields.push_back(builder.getNamedAttr("polarity", polarity));
         fields.push_back(builder.getNamedAttr(
