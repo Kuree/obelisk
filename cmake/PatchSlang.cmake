@@ -2,6 +2,16 @@ if(NOT DEFINED SOURCE_DIR)
   message(FATAL_ERROR "SOURCE_DIR is required")
 endif()
 
+# FetchContent reruns this patch command when the parent project reconfigures.
+# Avoid changing source mtimes when all requested patches are already present;
+# otherwise an unrelated test glob or CMake edit recompiles patched slang TUs.
+function(obelisk_write_if_different path new_contents)
+  file(READ "${path}" old_contents)
+  if(NOT old_contents STREQUAL new_contents)
+    file(WRITE "${path}" "${new_contents}")
+  endif()
+endfunction()
+
 set(expression_source "${SOURCE_DIR}/source/ast/Expression.cpp")
 file(READ "${expression_source}" contents)
 
@@ -213,7 +223,7 @@ if(patched_at EQUAL -1)
   string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
 endif()
 
-file(WRITE "${system_tasks_source}" "${contents}")
+obelisk_write_if_different("${system_tasks_source}" "${contents}")
 
 # IEEE 1800-2017 6.6.7 permits a package-qualified user-defined nettype in an
 # ANSI or non-ANSI port declaration. Slang v11 only probes an unqualified
@@ -320,7 +330,7 @@ if(patched_at EQUAL -1)
   string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
 endif()
 
-file(WRITE "${port_symbols_source}" "${contents}")
+obelisk_write_if_different("${port_symbols_source}" "${contents}")
 
 # IEEE 1800-2017 10.9 defines an assignment-pattern type key as a
 # simple_type. A ps_type_identifier is syntactically a simple_type even when
@@ -552,7 +562,7 @@ if(patched_at EQUAL -1)
   string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
 endif()
 
-file(WRITE "${assignment_expressions_source}" "${contents}")
+obelisk_write_if_different("${assignment_expressions_source}" "${contents}")
 
 # Equality operands provide assignment context to each other under the usual
 # aggregate comparison rules. Slang v11 binds both operands independently,
@@ -779,7 +789,7 @@ if(patched_at EQUAL -1)
   string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
 endif()
 
-file(WRITE "${select_expressions_source}" "${contents}")
+obelisk_write_if_different("${select_expressions_source}" "${contents}")
 
 # IEEE 1800-2017 8.24 permits an out-of-block method definition whose class
 # scope is itself nested, for example C::Nested::method. Slang v11 parses only
@@ -988,7 +998,7 @@ if(patched_at EQUAL -1)
   endif()
   string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
 endif()
-file(WRITE "${compilation_source}" "${contents}")
+obelisk_write_if_different("${compilation_source}" "${contents}")
 
 set(subroutine_symbols_source
   "${SOURCE_DIR}/source/ast/symbols/SubroutineSymbols.cpp")

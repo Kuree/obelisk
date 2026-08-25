@@ -5,6 +5,41 @@ project(obelisk
   DESCRIPTION "An AOT SystemVerilog simulator targeting IEEE 1800 conformance and real UVM"
   LANGUAGES C CXX)
 
+include(FetchContent)
+
+# FetchContent's base directory contains configured object files in addition to
+# downloaded sources. Pointing it into another CMake build tree lets independent
+# Ninja processes write the same objects while maintaining different dependency
+# databases, which corrupts incremental-build state. A standalone external
+# cache remains valid; reject only a base nested in a different configured tree.
+cmake_path(ABSOLUTE_PATH FETCHCONTENT_BASE_DIR NORMALIZE
+  OUTPUT_VARIABLE _obelisk_fetchcontent_base_dir)
+cmake_path(ABSOLUTE_PATH CMAKE_BINARY_DIR NORMALIZE
+  OUTPUT_VARIABLE _obelisk_binary_dir)
+set(_obelisk_fetchcontent_probe "${_obelisk_fetchcontent_base_dir}")
+while(TRUE)
+  if("${_obelisk_fetchcontent_probe}" STREQUAL "${_obelisk_binary_dir}")
+    break()
+  endif()
+  if(EXISTS "${_obelisk_fetchcontent_probe}/CMakeCache.txt")
+    message(FATAL_ERROR
+      "FETCHCONTENT_BASE_DIR (${_obelisk_fetchcontent_base_dir}) is inside "
+      "another CMake build tree (${_obelisk_fetchcontent_probe}). Use this "
+      "build's own ${CMAKE_BINARY_DIR}/_deps directory or a standalone cache.")
+  endif()
+  cmake_path(GET _obelisk_fetchcontent_probe PARENT_PATH
+    _obelisk_fetchcontent_parent)
+  if("${_obelisk_fetchcontent_parent}" STREQUAL
+     "${_obelisk_fetchcontent_probe}")
+    break()
+  endif()
+  set(_obelisk_fetchcontent_probe "${_obelisk_fetchcontent_parent}")
+endwhile()
+unset(_obelisk_fetchcontent_parent)
+unset(_obelisk_fetchcontent_probe)
+unset(_obelisk_binary_dir)
+unset(_obelisk_fetchcontent_base_dir)
+
 option(OBELISK_INCLUDE_TESTS "Build the Obelisk test suites" ON)
 option(OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
   "Report failed bytecode image validation checks" OFF)
@@ -213,8 +248,6 @@ set(OBELISK_SLANG_ARCHIVE_SHA256
 set(OBELISK_SLANG_SOURCE_DIR "" CACHE PATH
     "Extracted slang v${OBELISK_SLANG_VERSION} source tree (offline builds)")
 
-include(FetchContent)
-
 # Z3 is a host-side compiler dependency only. Build a pinned static library
 # from source so the compiler does not inherit the glibc floor of Z3's release
 # binaries, and keep the runtime dependency-free. The source override supports
@@ -353,7 +386,32 @@ set(SLANG_INCLUDE_PYLIB OFF CACHE BOOL "" FORCE)
 set(SLANG_INCLUDE_INSTALL OFF CACHE BOOL "" FORCE)
 set(SLANG_INCLUDE_BENCHMARKS OFF CACHE BOOL "" FORCE)
 set(SLANG_USE_MIMALLOC OFF CACHE BOOL "" FORCE)
+
+# The fetched release archive lives below Obelisk's repository. Slang's
+# version probe otherwise walks through the archive root, finds Obelisk's .git,
+# and embeds the changing Obelisk commit in VersionInfo.cpp. Stop Git's search
+# at FetchContent's base for the archive path. An explicit source override may
+# be a real slang checkout, so leave its repository discovery intact.
+set(_obelisk_had_git_ceiling_directories FALSE)
+if(NOT OBELISK_SLANG_SOURCE_DIR)
+  if(DEFINED ENV{GIT_CEILING_DIRECTORIES})
+    set(_obelisk_had_git_ceiling_directories TRUE)
+    set(_obelisk_saved_git_ceiling_directories
+      "$ENV{GIT_CEILING_DIRECTORIES}")
+  endif()
+  set(ENV{GIT_CEILING_DIRECTORIES} "${FETCHCONTENT_BASE_DIR}")
+endif()
 FetchContent_MakeAvailable(obelisk_slang)
+if(NOT OBELISK_SLANG_SOURCE_DIR)
+  if(_obelisk_had_git_ceiling_directories)
+    set(ENV{GIT_CEILING_DIRECTORIES}
+      "${_obelisk_saved_git_ceiling_directories}")
+  else()
+    unset(ENV{GIT_CEILING_DIRECTORIES})
+  endif()
+endif()
+unset(_obelisk_saved_git_ceiling_directories)
+unset(_obelisk_had_git_ceiling_directories)
 set(OBELISK_SLANG_SOURCE_DIR "${obelisk_slang_SOURCE_DIR}")
 set(OBELISK_SLANG_INCLUDE_DIR "${OBELISK_SLANG_SOURCE_DIR}/include")
 message(STATUS
