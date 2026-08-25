@@ -1,9 +1,9 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
 
-// The first source-clock term is age zero. The detached actor must sample it
-// immediately on the clock that launched the attempt, then wait for the
-// nearest strictly subsequent destination-clock tick for the ##1 handoff.
+// The first source-clock term is age zero. One aggregate coordinator samples
+// it from the finalized source cohort, then retains one token count for the
+// nearest strictly subsequent destination-clock ##1 handoff.
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {}
   obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
@@ -41,15 +41,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0.fork.10.0.24(
-// CHECK-SAME: obelisk_sim.multiclock_sequence_attempt_actor
-// CHECK-NOT: obelisk_sim.suspend.edge
-// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg3
-// CHECK: cf.cond_br
-// CHECK: obelisk_sim.suspend.edge posedge %arg2{{.*}}resume_region = 8 : i32
-// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg4
-// CHECK: cf.cond_br
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.multiclock_sequence_monitor
-// CHECK: obelisk_sim.suspend.edge posedge %arg1
-// CHECK: obelisk_sim.spawn @unit_0.fork.10.0.24
+// CHECK-SAME: obelisk_sim.multiclock_sequence_coordinator
+// CHECK: obelisk_sim.suspend.clock_set %arg1, %arg2{{.*}}conditions 0 edges [1, 1] indices [-1, -1] site
+// CHECK: obelisk_sim.assert.clock_occurrence.consume
+// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg3
+// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg4
+// CHECK-NOT: obelisk_sim.multiclock_sequence_attempt_actor

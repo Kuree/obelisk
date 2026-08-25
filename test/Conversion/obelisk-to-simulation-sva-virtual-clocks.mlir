@@ -164,24 +164,18 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0.fork.21.0.24(
-// CHECK-SAME: obelisk_sim.multiclock_sequence_attempt_actor
-// CHECK: obelisk_sim.virtual_interface.scope
-// CHECK: obelisk_sim.suspend.edge posedge
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.multiclock_sequence_monitor
-// CHECK: obelisk_sim.virtual_interface.scope
-// CHECK: obelisk_sim.spawn @unit_0.fork.21.0.24
-// CHECK: obelisk_sim.suspend.edge posedge
-// CHECK-LABEL: obelisk_sim.func private @unit_1.fork.81.0.24(
-// CHECK-SAME: obelisk_sim.multiclock_sequence_attempt_actor
-// CHECK: obelisk_sim.virtual_interface.scope
-// CHECK: obelisk_sim.suspend.edge posedge
+// CHECK-SAME: obelisk_sim.multiclock_sequence_coordinator
+// CHECK-COUNT-2: obelisk_sim.virtual_interface.scope
+// CHECK: obelisk_sim.suspend.clock_set
+// CHECK: obelisk_sim.assert.clock_occurrence.consume
+// CHECK: obelisk_sim.spawn @unit_0.fork.
 // CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.multiclock_sequence_monitor
-// CHECK: obelisk_sim.virtual_interface.scope
-// CHECK: obelisk_sim.spawn @unit_1.fork.81.0.24
-// CHECK: obelisk_sim.suspend.edge posedge
+// CHECK-SAME: obelisk_sim.multiclock_sequence_coordinator
+// CHECK-COUNT-2: obelisk_sim.virtual_interface.scope
+// CHECK: obelisk_sim.suspend.clock_set
+// CHECK: obelisk_sim.assert.clock_occurrence.consume
+// CHECK: obelisk_sim.spawn @unit_1.fork.
 // CHECK-LABEL: obelisk_sim.func private @unit_2(
 // CHECK-NOT: obelisk_sim.multiclock_sequence_monitor
 // CHECK: obelisk_sim.virtual_interface.scope

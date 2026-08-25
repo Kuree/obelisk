@@ -114,12 +114,14 @@ struct BooleanMinimizationStats {
 };
 
 /// One nonempty maximal clocked subsequence in the deliberately small
-/// multi-clock slice below. Every stage after the first is reached through a
-/// source `##1`. The first stage is either sampled on the attempt clock or is
-/// likewise reached through a leading `##1`.
+/// multi-clock slice below. `delay` is the exact ##0/##1 handoff from the
+/// preceding stage, or from the directive clock for the first stage. A ##0
+/// stage never owns persistent state: it is fused into the current occurrence
+/// cohort. Only ##1 stages retain an aggregate token count.
 struct MultiClockSequenceStage {
   Operation *clock = nullptr;
   SmallVector<Operation *, 2> predicates;
+  uint8_t delay = 0;
 };
 
 struct MultiClockSequence {
@@ -893,11 +895,13 @@ static bool areEquivalentDirectClockAddresses(Operation *left,
 static bool areEquivalentDirectClocks(Operation *left, Operation *right) {
   auto lhs = dyn_cast_or_null<semantic::SVSignalEventControlOp>(left);
   auto rhs = dyn_cast_or_null<semantic::SVSignalEventControlOp>(right);
-  if (!lhs || !rhs || lhs.getHasIff() || rhs.getHasIff())
+  if (!lhs || !rhs || lhs.getHasIff() != rhs.getHasIff())
     return false;
   SmallVector<Operation *> lhsChildren = getChildren(lhs);
   SmallVector<Operation *> rhsChildren = getChildren(rhs);
-  if (lhsChildren.size() != 1 || rhsChildren.size() != 1)
+  size_t expectedChildren = lhs.getHasIff() ? 2 : 1;
+  if (lhsChildren.size() != expectedChildren ||
+      rhsChildren.size() != expectedChildren)
     return false;
   auto effectiveEdge = [](semantic::SVSignalEventControlOp event,
                           Operation *expression) {
@@ -910,7 +914,10 @@ static bool areEquivalentDirectClocks(Operation *left, Operation *right) {
     return event.getEdgeKind();
   };
   if (effectiveEdge(lhs, lhsChildren.front()) !=
-      effectiveEdge(rhs, rhsChildren.front()))
+          effectiveEdge(rhs, rhsChildren.front()) ||
+      (lhs.getHasIff() &&
+       !areEquivalentDirectClockAddresses(lhsChildren.back(),
+                                          rhsChildren.back())))
     return false;
   auto qualifiedClockingDescriptor = [](Operation *expression) {
     return expression->hasAttr(clockingEventHasIffAttrName) ||
@@ -969,10 +976,13 @@ static bool areEquivalentDirectClocks(Operation *left, Operation *right) {
 
 static bool isDirectClock(Operation *operation) {
   auto event = dyn_cast_or_null<semantic::SVSignalEventControlOp>(operation);
-  if (!event || event.getHasIff())
+  if (!event)
     return false;
   SmallVector<Operation *> children = getChildren(event);
-  if (children.size() != 1 || !isAddressableExpression(children.front()))
+  size_t expectedChildren = event.getHasIff() ? 2 : 1;
+  if (children.size() != expectedChildren ||
+      !isAddressableExpression(children.front()) ||
+      (event.getHasIff() && !isAddressableExpression(children.back())))
     return false;
   return children.front()->hasAttr("referenced_symbol") ||
          children.front()->hasAttr(clockingEventSymbolAttrName);
@@ -1355,14 +1365,12 @@ compilePersistentDelay(Operation *operation) {
 }
 
 /// Compile the common LRM multi-clock handoff form into a short sequence of
-/// independently clocked stages. This is intentionally narrower than the
-/// single-clock compiler: the first concatenation term can be immediate or
-/// reached through a leading ##1, every later delay must be exactly ##1, and
-/// every maximal clocked subsequence must be a nonempty boolean term. A
-/// detached attempt actor samples an immediate first term on the source clock,
-/// then waits on each later clock in order without a runtime temporal
-/// interpreter. In particular, a transition to a different clock observes its
-/// nearest strictly subsequent tick, as required for ##1.
+/// independently clocked stages. Exact ##0 and ##1 delays are retained at
+/// every boundary. Adjacent ##0 stages on the same frozen clock denote the
+/// same occurrence and are fused here; cross-clock ##0 stages remain separate
+/// so the aggregate coordinator can require their bits in one exact cohort.
+/// Wider/ranged delays and empty matches deliberately remain in the general
+/// maximal-subsequence residual.
 static FailureOr<MultiClockSequence>
 compileMultiClockSequence(Operation *operation, Operation *inheritedClock) {
   if (auto instance =
@@ -1396,7 +1404,7 @@ compileMultiClockSequence(Operation *operation, Operation *inheritedClock) {
     if (isa<semantic::SVAssertionInstanceExpressionOp>(children.front()))
       return compileMultiClockSequence(children.front(), inheritedClock);
     MultiClockSequence result;
-    result.stages.push_back({inheritedClock, {children.front()}});
+    result.stages.push_back({inheritedClock, {children.front()}, 0});
     return result;
   }
 
@@ -1409,7 +1417,6 @@ compileMultiClockSequence(Operation *operation, Operation *inheritedClock) {
     return failure();
 
   MultiClockSequence result;
-  Operation *previousClock = inheritedClock;
   for (auto [index, child] : llvm::enumerate(children)) {
     auto delay = dyn_cast<DictionaryAttr>(delays[index]);
     auto minimum = delay ? delay.getAs<IntegerAttr>("min") : IntegerAttr{};
@@ -1417,30 +1424,35 @@ compileMultiClockSequence(Operation *operation, Operation *inheritedClock) {
     auto unbounded = delay ? delay.getAs<BoolAttr>("is_unbounded") : BoolAttr{};
     if (!minimum || !maximum || !unbounded || unbounded.getValue() ||
         minimum.getInt() != maximum.getInt() ||
-        (index == 0 ? minimum.getInt() < 0 || minimum.getInt() > 1
-                    : minimum.getInt() != 1))
+        minimum.getInt() < 0 || minimum.getInt() > 1)
       return failure();
     FailureOr<MultiClockSequence> nested =
         compileMultiClockSequence(child, inheritedClock);
     if (failed(nested) || nested->stages.empty())
       return failure();
-    // The compact actor records only whether its very first stage has one
-    // leading wait. Do not collapse two leading waits, or a nested leading
-    // wait below a later outer term, into one. An outer age-zero wrapper around
-    // one nested leading ##1 remains exactly representable.
-    if (nested->hasLeadingDelay &&
-        (index != 0 || minimum.getInt() != 0))
+    uint64_t combinedDelay = static_cast<uint64_t>(minimum.getInt()) +
+                             nested->stages.front().delay;
+    if (combinedDelay > 1)
       return failure();
+    nested->stages.front().delay = combinedDelay;
     result.changesClock |= nested->changesClock;
-    if (index == 0)
-      result.hasLeadingDelay = minimum.getInt() == 1 || nested->hasLeadingDelay;
     for (MultiClockSequenceStage &stage : nested->stages) {
+      Operation *previousClock = result.stages.empty()
+                                     ? inheritedClock
+                                     : result.stages.back().clock;
       result.changesClock |=
           !areEquivalentDirectClocks(previousClock, stage.clock);
-      previousClock = stage.clock;
+      if (!result.stages.empty() && stage.delay == 0 &&
+          areEquivalentDirectClocks(result.stages.back().clock, stage.clock)) {
+        llvm::append_range(result.stages.back().predicates, stage.predicates);
+        continue;
+      }
       result.stages.push_back(std::move(stage));
     }
   }
+  if (result.stages.empty())
+    return failure();
+  result.hasLeadingDelay = result.stages.front().delay == 1;
   return result;
 }
 
@@ -3806,8 +3818,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
            hasOnlyFirstMatchBoundary(candidate, outerFirstMatchOperation);
   };
 
-  bool multiClockAttempt =
-      op->hasAttr("obelisk_sim.multiclock_sequence_attempt");
+  bool multiClockAttempt = false;
   MultiClockSequence multiClockSequence;
   FailureOr<MultiClockSequence> compiledMultiClock =
       compileMultiClockSequence(property, clock);
@@ -3835,79 +3846,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       if (!isDirectClock(stage.clock))
         return emitError(getSemanticLocation(stage.clock))
                    << "multi-clock sequence stages require one direct "
-                      "addressable edge clock without an explicit iff",
+                      "addressable edge clock with at most one direct iff",
                failure();
     }
 
-    if (!multiClockAttempt) {
-      auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
-      uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
-      uint64_t occurrence = nextForkOrdinal;
-      std::string identity = (function.getSymName() + ".$multiclock_attempt." +
-                              Twine(node) + "." + Twine(occurrence))
-                                 .str();
-      Attribute previousCodeUnit = op->getAttr("obelisk_sim.fork_code_unit_id");
-      op->setAttr("obelisk_sim.fork_code_unit_id",
-                  builder.getI64IntegerAttr(stableCodeUnitID(identity)));
-      op->setAttr("obelisk_sim.multiclock_sequence_attempt",
-                  builder.getUnitAttr());
-      FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> attempt =
-          outlineForkBranch(op, node, /*branchIndex=*/24,
-                            /*captureReferences=*/true);
-      op->removeAttr("obelisk_sim.multiclock_sequence_attempt");
-      if (previousCodeUnit)
-        op->setAttr("obelisk_sim.fork_code_unit_id", previousCodeUnit);
-      else
-        op->removeAttr("obelisk_sim.fork_code_unit_id");
-      if (failed(attempt))
-        return failure();
-
-      attempt->first->setAttr("obelisk_sim.multiclock_sequence_attempt_actor",
-                              builder.getUnitAttr());
-      attempt->first->setAttr("obelisk_sim.detached_controls",
-                              builder.getUnitAttr());
-      attempt->first->setAttr(
-          "home_region", sim::EventRegionAttr::get(function.getContext(),
-                                                   sim::EventRegion::Observed));
-      attempt->first->setAttr(
-          "domain", sim::ExecutionDomainAttr::get(
-                        function.getContext(), sim::ExecutionDomain::Design));
-      function->setAttr("obelisk_sim.multiclock_sequence_monitor",
-                        builder.getUnitAttr());
-      function->setAttr("home_region",
-                        sim::EventRegionAttr::get(function.getContext(),
-                                                  sim::EventRegion::Observed));
-      function->setAttr(
-          "domain", sim::ExecutionDomainAttr::get(
-                        function.getContext(), sim::ExecutionDomain::Design));
-
-      Block *wait = addBlock();
-      Block *start = addBlock();
-      emitBranch(wait);
-      setCurrent(wait);
-      if (failed(emitEventSuspend(clock, start)))
-        return failure();
-      wait->getTerminator()->setAttr(
-          "resume_region",
-          sim::EventRegionAttr::get(function.getContext(),
-                                    sim::EventRegion::Observed));
-      setCurrent(start);
-      if (Value enabled = queryAttemptEnabled()) {
-        Block *launch = addBlock();
-        cf::CondBranchOp::create(builder, location, enabled, launch,
-                                 ValueRange{}, wait, ValueRange{});
-        setCurrent(launch);
-      }
-      sim::SimSpawnOp::create(builder, location,
-                              attempt->first.getSymNameAttr(), attempt->second,
-                              ArrayAttr{}, ArrayAttr{});
-      cf::BranchOp::create(builder, location, wait);
-      return success();
-    }
-  } else if (multiClockAttempt) {
-    return emitError(getSemanticLocation(property))
-               << "malformed multi-clock sequence attempt",
-           failure();
+    multiClockAttempt = true;
   }
 
   semantic::SVBinaryAssertionExprOp implication;
@@ -6004,6 +5947,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                          builder.getUnitAttr());
     coordinator->setAttr("obelisk_sim.detached_controls",
                          builder.getUnitAttr());
+    if (identityTag.starts_with("multiclock_"))
+      coordinator->setAttr(
+          "obelisk_sim.multiclock_sequence_eos_coordinator",
+          builder.getUnitAttr());
 
     Block &entry = coordinator.getBody().front();
     OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
@@ -8492,29 +8439,190 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     function->setAttr(
         "domain", sim::ExecutionDomainAttr::get(function.getContext(),
                                                 sim::ExecutionDomain::Design));
-    Block *successBlock = addBlock();
-    Block *failureBlock = addBlock();
-    Block *wait = addBlock();
-    emitBranch(wait);
-    for (auto [index, stage] : llvm::enumerate(multiClockSequence.stages)) {
-      Block *sample = addBlock();
-      if (index != 0 || multiClockSequence.hasLeadingDelay) {
-        setCurrent(wait);
-        if (failed(emitEventSuspend(stage.clock, sample)))
-          return failure();
-        wait->getTerminator()->setAttr(
-            "resume_region",
-            sim::EventRegionAttr::get(function.getContext(),
-                                      sim::EventRegion::Observed));
-      } else {
-        // The monitor launches this actor in Observed on the first stage's
-        // clock. Sampling immediately preserves the age-zero term; suspending
-        // here would silently turn it into a leading ##1.
-        setCurrent(wait);
-        cf::BranchOp::create(builder, location, sample);
-      }
-      setCurrent(sample);
+    function->setAttr("obelisk_sim.multiclock_sequence_coordinator",
+                      builder.getUnitAttr());
 
+    // Freeze one structurally distinct inventory of direct clocks. Dynamic
+    // virtual-interface receivers remain distinct descriptors here even when
+    // two receivers happen to alias at runtime; if they resolve to the same
+    // signal, one publication correctly contributes both frozen clock bits.
+    SmallVector<Operation *, 8> clocks;
+    auto clockIndex = [&](Operation *candidate) {
+      for (auto [index, existing] : llvm::enumerate(clocks))
+        if (areEquivalentDirectClocks(existing, candidate))
+          return static_cast<unsigned>(index);
+      clocks.push_back(candidate);
+      return static_cast<unsigned>(clocks.size() - 1);
+    };
+    unsigned sourceClockIndex = clockIndex(clock);
+    SmallVector<unsigned, 8> stageClockIndices;
+    for (const MultiClockSequenceStage &stage : multiClockSequence.stages)
+      stageClockIndices.push_back(clockIndex(stage.clock));
+    if (clocks.size() > 64)
+      return emitError(getSemanticLocation(property))
+                 << "multi-clock occurrence coordinators support at most 64 "
+                    "distinct frozen clocks",
+             failure();
+
+    SmallVector<Value, 8> clockHandles;
+    SmallVector<Value, 8> conditionHandles;
+    SmallVector<int32_t, 8> edges;
+    SmallVector<int32_t, 8> conditionIndices;
+    for (Operation *clockOperation : clocks) {
+      auto event = dyn_cast<semantic::SVSignalEventControlOp>(clockOperation);
+      SmallVector<Operation *> children = getChildren(event);
+      size_t expectedChildren = event.getHasIff() ? 2 : 1;
+      if (children.size() != expectedChildren)
+        return emitError(getSemanticLocation(clockOperation))
+                   << "malformed frozen multi-clock event inventory",
+               failure();
+      Operation *primaryExpression = children.front();
+      bool virtualClockingBlockEvent = primaryExpression->hasAttr(
+          "virtual_interface_clocking_block_event");
+      bool declaredClockingIff =
+          primaryExpression->hasAttr(clockingEventHasIffAttrName) ||
+          primaryExpression->hasAttr(
+              "virtual_interface_clock_event_has_iff");
+      bool monitoredClockingEvent =
+          primaryExpression->hasAttr(clockingEventMonitorRequiredAttrName) ||
+          primaryExpression->hasAttr(clockingEventListAttrName) ||
+          primaryExpression->hasAttr(
+              "virtual_interface_clock_event_monitor") ||
+          primaryExpression->hasAttr("virtual_interface_clock_event_list");
+      if (declaredClockingIff || monitoredClockingEvent)
+        return emitError(getSemanticLocation(clockOperation))
+                   << "multi-clock occurrence coordination requires direct "
+                      "clock handles; computed clocking-block iff or event "
+                      "list descriptors remain unsupported",
+               failure();
+
+      FailureOr<Value> handle = failure();
+      if (virtualClockingBlockEvent) {
+        auto access =
+            dyn_cast<semantic::SVMemberAccessExpressionOp>(primaryExpression);
+        SmallVector<Operation *> accessChildren =
+            access ? getChildren(access) : SmallVector<Operation *>{};
+        if (!access || accessChildren.size() != 1)
+          return emitError(getSemanticLocation(primaryExpression))
+                     << "virtual multi-clock event has no frozen receiver",
+                 failure();
+        FailureOr<Value> receiver = lowerExpression(accessChildren.front());
+        if (failed(receiver))
+          return failure();
+        handle = lowerVirtualInterfaceClock(access, *receiver);
+      } else {
+        handle = lowerExpression(primaryExpression, true);
+      }
+      if (failed(handle))
+        return failure();
+      if (isa<sim::DriverType>((*handle).getType()))
+        if (auto path = primaryExpression->getAttrOfType<StringAttr>(
+                "referenced_path"))
+          if (Value net = values.lookup(path.getValue());
+              net && isa<sim::NetType>(net.getType()))
+            handle = net;
+      if (!isa<sim::RefType, sim::NetType, sim::DriverType>(
+              (*handle).getType()))
+        return emitError(getSemanticLocation(primaryExpression))
+                   << "multi-clock occurrence primary is not a direct signal "
+                      "handle",
+               failure();
+      clockHandles.push_back(*handle);
+
+      sim::EdgeKind edge = static_cast<sim::EdgeKind>(event.getEdgeKind());
+      if (auto clockingEdge = primaryExpression->getAttrOfType<
+              semantic::EdgeKindAttr>("virtual_interface_clock_event_edge"))
+        edge = static_cast<sim::EdgeKind>(clockingEdge.getValue());
+      else if (auto clockingEdge = primaryExpression->getAttrOfType<
+                   semantic::EdgeKindAttr>(clockingEventEdgeAttrName))
+        edge = static_cast<sim::EdgeKind>(clockingEdge.getValue());
+      edges.push_back(static_cast<int32_t>(edge));
+
+      if (!event.getHasIff()) {
+        conditionIndices.push_back(-1);
+        continue;
+      }
+      FailureOr<Value> condition = lowerExpression(children.back(), true);
+      if (failed(condition))
+        return failure();
+      if (!isa<sim::RefType, sim::NetType, sim::DriverType>(
+              (*condition).getType()))
+        return emitError(getSemanticLocation(children.back()))
+                   << "multi-clock explicit iff is not a direct signal "
+                      "handle",
+               failure();
+      conditionIndices.push_back(conditionHandles.size());
+      conditionHandles.push_back(*condition);
+    }
+
+    auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
+    uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
+    uint64_t stableSite = stableCodeUnitID(
+        (function.getSymName() + ".$clock_occurrence." + Twine(node)).str());
+    uint32_t occurrenceSite = static_cast<uint32_t>(stableSite);
+    if (occurrenceSite == 0)
+      occurrenceSite = 1;
+
+    // Persistent state is one count per ##1 destination, independent of the
+    // number of source occurrences. ##0 chains are evaluated directly against
+    // one finalized mask and therefore allocate no state of their own.
+    SmallVector<Value, 8> tokenStorages(multiClockSequence.stages.size());
+    for (auto [index, stage] : llvm::enumerate(multiClockSequence.stages))
+      if (stage.delay == 1)
+        tokenStorages[index] = sim::SimRefAllocOp::create(
+            builder, location,
+            sim::RefType::get(function.getContext(), stateType), zero);
+
+    // Every ##1 storage is an exact count of still-pending attempts. Complete
+    // those attempts in the Final phase with the same directive defaults as
+    // the existing aggregate monitors: sequence properties are weak for
+    // assert/assume and strong for cover-property/restrict unless explicitly
+    // qualified. A weak cover-sequence has separate per-match accounting and
+    // intentionally remains outside this executable slice.
+    bool weakCompletion = usesWeakSequenceCompletion();
+    SmallVector<Value> endCounts;
+    if (!weakCompletion || !coverSequence)
+      for (Value storage : tokenStorages)
+        if (storage)
+          endCounts.push_back(storage);
+    StringRef completionTag =
+        weakCompletion ? "multiclock_weak" : "multiclock_strong";
+    if (failed(outlineCountedEndOfSimulation(
+            endCounts, {}, weakCompletion, completionTag,
+            sequenceCompletionSource ? sequenceCompletionSource : property)))
+      return failure();
+
+    Block *wait = addBlock();
+    Block *drain = addBlock();
+    Block *process = addBlock();
+    emitBranch(wait);
+    setCurrent(wait);
+    SmallVector<Value> waitValues(clockHandles.begin(), clockHandles.end());
+    llvm::append_range(waitValues, conditionHandles);
+    sim::SimSuspendClockSetOp::create(
+        builder, location, waitValues,
+        builder.getI32IntegerAttr(conditionHandles.size()),
+        builder.getDenseI32ArrayAttr(edges),
+        builder.getDenseI32ArrayAttr(conditionIndices),
+        builder.getI64IntegerAttr(occurrenceSite),
+        sim::ContinuationSiteAttr{},
+        sim::EventRegionAttr::get(function.getContext(),
+                                  sim::EventRegion::Observed),
+        drain);
+
+    setCurrent(drain);
+    Value context = function.getBody().front().getArgument(0);
+    Value cohort = sim::SimClockOccurrenceConsumeOp::create(
+        builder, location, builder.getI64Type(), context,
+        builder.getI64IntegerAttr(occurrenceSite));
+    Value hasCohort = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne, cohort, zero);
+    cf::CondBranchOp::create(builder, location, hasCohort, process,
+                             ValueRange{}, wait, ValueRange{});
+
+    setCurrent(process);
+    SmallVector<Value, 8> stageMatches;
+    for (const MultiClockSequenceStage &stage : multiClockSequence.stages) {
       bool savedSampleAssertionValues = sampleAssertionValues;
       Operation *savedSampledClock = activeSampledClock;
       sampleAssertionValues = true;
@@ -8539,22 +8647,92 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       }
       sampleAssertionValues = savedSampleAssertionValues;
       activeSampledClock = savedSampledClock;
-
-      Block *matched = index + 1 == multiClockSequence.stages.size()
-                           ? successBlock
-                           : addBlock();
-      cf::CondBranchOp::create(builder, location, matches, matched,
-                               ValueRange{}, failureBlock, ValueRange{});
-      wait = matched;
+      stageMatches.push_back(matches);
     }
-    auto finish = [&](Block *block, bool passed) {
-      setCurrent(block);
-      scheduleResult(passed);
-      sim::SimReturnOp::create(builder, location, ValueRange{});
+
+    auto bitPresent = [&](unsigned index) -> Value {
+      Value bit = arith::ConstantOp::create(
+          builder, location, stateType,
+          builder.getI64IntegerAttr(uint64_t{1} << index));
+      Value selected =
+          arith::AndIOp::create(builder, location, cohort, bit);
+      return arith::CmpIOp::create(builder, location,
+                                   arith::CmpIPredicate::ne, selected, zero);
     };
-    finish(successBlock, true);
-    finish(failureBlock, false);
-    setCurrent(addBlock());
+    SmallVector<Value, 8> present;
+    for (unsigned index : stageClockIndices)
+      present.push_back(bitPresent(index));
+
+    Value successCount = zero;
+    Value failureCount = zero;
+    SmallVector<Value, 8> nextAmounts(multiClockSequence.stages.size(), zero);
+    auto add = [&](Value &destination, Value amount) {
+      destination =
+          arith::AddIOp::create(builder, location, destination, amount);
+    };
+    auto selectAmount = [&](Value condition, Value amount) -> Value {
+      return arith::SelectOp::create(builder, location, condition, amount,
+                                     zero);
+    };
+    auto routeAfter = [&](size_t completed, Value amount) {
+      for (size_t index = completed + 1;
+           index < multiClockSequence.stages.size(); ++index) {
+        if (multiClockSequence.stages[index].delay == 1) {
+          add(nextAmounts[index], amount);
+          return;
+        }
+        Value eligible = arith::AndIOp::create(
+            builder, location, present[index], stageMatches[index]);
+        Value matched = selectAmount(eligible, amount);
+        add(failureCount,
+            arith::SubIOp::create(builder, location, amount, matched));
+        amount = matched;
+      }
+      add(successCount, amount);
+    };
+
+    // Existing ##1 tokens see this cohort first. A token created by the source
+    // occurrence below cannot consume the same cohort, which is the exact
+    // nearest-strictly-later rule rather than an artifact of publication order.
+    for (auto [index, stage] : llvm::enumerate(multiClockSequence.stages)) {
+      if (stage.delay != 1)
+        continue;
+      Value amount = sim::SimRefLoadOp::create(builder, location, stateType,
+                                               tokenStorages[index]);
+      Value consumed = selectAmount(present[index], amount);
+      Value retained = arith::SubIOp::create(builder, location, amount,
+                                             consumed);
+      add(nextAmounts[index], retained);
+      Value matched = selectAmount(stageMatches[index], consumed);
+      add(failureCount,
+          arith::SubIOp::create(builder, location, consumed, matched));
+      routeAfter(index, matched);
+    }
+
+    Value oneAmount = arith::ConstantOp::create(
+        builder, location, stateType, builder.getI64IntegerAttr(1));
+    Value sourceAmount =
+        selectAmount(bitPresent(sourceClockIndex), oneAmount);
+    if (Value enabled = queryAttemptEnabled())
+      sourceAmount = selectAmount(enabled, sourceAmount);
+    if (multiClockSequence.stages.front().delay == 1) {
+      add(nextAmounts.front(), sourceAmount);
+    } else {
+      Value eligible = arith::AndIOp::create(builder, location, present.front(),
+                                             stageMatches.front());
+      Value matched = selectAmount(eligible, sourceAmount);
+      add(failureCount,
+          arith::SubIOp::create(builder, location, sourceAmount, matched));
+      routeAfter(0, matched);
+    }
+
+    for (auto [index, storage] : llvm::enumerate(tokenStorages))
+      if (storage)
+        sim::SimRefStoreOp::create(builder, location, nextAmounts[index],
+                                   storage);
+    scheduleCount(successCount, true);
+    scheduleCount(failureCount, false);
+    cf::BranchOp::create(builder, location, drain);
     return success();
   }
 

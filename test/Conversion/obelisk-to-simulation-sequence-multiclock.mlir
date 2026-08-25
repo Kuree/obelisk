@@ -1,10 +1,10 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' | FileCheck %s
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
 
-// A new attempt begins on every clk0 edge. Its leading ##1 waits for the next
-// clk0 edge before sampling out0, then the cross-clock ##1 waits for the
-// nearest strictly subsequent clk1 edge before sampling out1. Each attempt is
-// detached so overlapping clk0 starts remain live independently.
+// A new aggregate token begins on every clk0 edge. Its leading ##1 waits for
+// the next clk0 edge before sampling out0, then the cross-clock ##1 waits for
+// the nearest strictly subsequent clk1 edge. Overlap is represented by two
+// bounded counters rather than one detached actor per source occurrence.
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {
   }
@@ -58,21 +58,12 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0.fork.11.0.24(
-// CHECK-SAME: domain = 0 : i32
-// CHECK-SAME: home_region = 8 : i32
-// CHECK-SAME: obelisk_sim.detached_controls
-// CHECK-SAME: obelisk_sim.multiclock_sequence_attempt_actor
-// CHECK: obelisk_sim.suspend.edge posedge %arg1{{.*}}resume_region = 8 : i32
-// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg3
-// CHECK: cf.cond_br
-// CHECK: obelisk_sim.suspend.edge posedge %arg2{{.*}}resume_region = 8 : i32
-// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg4
-// CHECK: cf.cond_br
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
 // CHECK-SAME: domain = 0 : i32
 // CHECK-SAME: home_region = 8 : i32
-// CHECK-SAME: obelisk_sim.multiclock_sequence_monitor
-// CHECK: obelisk_sim.suspend.edge posedge %arg1
-// CHECK: obelisk_sim.spawn @unit_0.fork.11.0.24
-// CHECK: cf.br
+// CHECK-SAME: obelisk_sim.multiclock_sequence_coordinator
+// CHECK: obelisk_sim.suspend.clock_set %arg1, %arg2{{.*}}conditions 0 edges [1, 1] indices [-1, -1] site
+// CHECK: obelisk_sim.assert.clock_occurrence.consume
+// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg3
+// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg4
+// CHECK-NOT: obelisk_sim.multiclock_sequence_attempt_actor

@@ -1222,7 +1222,7 @@ no-feature path.
 | 11 Operators and expressions | Partial | Legal equality, ordering, logical operations, concatenation, replication, streaming and bit-stream casts, and packed selection execute for strings, containers, unpacked aggregates, handles, and arbitrary-width packed values. This includes packed-to-queue/dynamic-array casts, handle wildcard identity equality, two-state XNOR, compact integral power, constant ordinary part-selects, dynamic indexed part-selects with partial out-of-range behavior, dynamic string replication, and fixed/dynamic unpacked concatenation with per-element conversion. Ordinary part-select bounds must be constant and strings are not sliceable, so those former diagnostic branches are not missing language features. Public `--timing=min|typ|max` selects constant and dynamic expressions. Remaining expression work is tracked by references, randomization, assertions, and the differential long tail. |
 | 12 Procedural statements | Partial | Conditional, ordinary/pattern case, loops, jumps, `randcase`, and most `randsequence` forms execute. Recursive randsequence productions and value-returning productions still require activation frames and expression-valued production calls. |
 | 13 Tasks and functions | Executable for the audited non-DPI surface | Static/automatic, recursive, virtual, class/interface, timed task, value/output/inout/ref, default argument, and cancellation behavior execute. Continue differential closure for unusual aggregate and hierarchical formal cases; DPI is tracked separately in Clause 35. |
-| 14 Clocking blocks | Partial | Input/output skews, `#1step`, synchronous drives, event lists and `iff`, cycle delays, defaults, virtual-interface clocking handles, and hierarchically resolved global clocking through `$global_clock` execute. Concurrent lowering accepts dynamically selected virtual-interface direct and clocking-block events, distinguishes handles that select the same static interface member, and carries event clocks through expanded property and sequence formals. Multi-clock assertions support an immediate source-clock Boolean term followed by exact `##1` handoffs, as well as the leading-`##1` form. The current Slang frontend rejects virtual-interface members in concurrent assertions and produces an invalid expanded AST for untyped formals carrying clock events; both source cases are recorded xfails without a Slang patch. Assertion clock inference, `##0`, and general multi-clock composition remain. |
+| 14 Clocking blocks | Partial | Input/output skews, `#1step`, synchronous drives, event lists and `iff`, cycle delays, defaults, virtual-interface clocking handles, and hierarchically resolved global clocking through `$global_clock` execute. Concurrent lowering accepts dynamically selected virtual-interface direct and clocking-block events, distinguishes handles that select the same static interface member, and carries event clocks through expanded property and sequence formals. Common Boolean maximal clocked subsequences compose through exact `##0` same-occurrence fusion and `##1` nearest-strictly-later handoffs, including leading `##1`, direct `iff`, and repeated same-time occurrences. One feature-local coordinator retains at most 64 frozen clocks and aggregate per-stage counts; ordinary single-clock assertions allocate no cohort state. The current Slang frontend rejects virtual-interface members in concurrent assertions and produces an invalid expanded AST for untyped formals carrying clock events; both source cases are recorded xfails without a Slang patch. General property algebra across maximal subsequences, computed/declared clocking-block `iff` descriptors, and remaining inferred-clock contexts remain. |
 | 15 Interprocess synchronization | Executable for the audited surface | Semaphores; typed and default untyped mailboxes; heterogeneous untyped payloads with exact per-message type checks; named-event creation/alias/null, blocking and nonblocking trigger, `.triggered`, and `wait_order` execute in both tiers. Typed-mismatch `get`/`try_get`/`peek` behavior follows 15.4.3-15.4.9. Continue differential testing of scheduling corner cases. |
 | 16 Assertions | Partial | Immediate/deferred assertions and a substantial compiled concurrent subset execute. The authoritative fine-grained boundary is `docs/sva-lrm-support.md`; the implementation plan below covers accounting, full temporal composition, clocks, locals/match items, sampled values, controls, and `expect`. |
 | 17 Checkers | Semantic only | Declarations, ports, resolved instances, identities, cloned bodies, clocks/disables, properties, procedures, and expressions are retained. Executable instances now receive a targeted Clause 17 diagnostic instead of being silently erased; A9 implements checker procedures, free variables, inferred clocks, assertions, hierarchy, and runtime behavior. Covergroups in checkers are excluded with coverage. |
@@ -1368,12 +1368,25 @@ one commit.
     Event-typed property and sequence clock arguments flow through nested
     expanded invocations, and dynamically selected virtual-interface clocks
     retain receiver identity through single-clock monitors and cross-clock
-    handoffs. The common multi-clock sequence forms support either a leading
-    `##1` or an immediate Boolean term on the source clock followed by exact
-    `##1` handoffs. Slang currently rejects the legal source-level virtual
-    member and untyped clock-formal forms, which remain recorded xfails without
-    a frontend patch. Implement `##0`, general maximal-subsequence composition,
-    legal inferred-clock contexts, and those upstream frontend cases.
+    handoffs. Common Boolean maximal clocked subsequences support exact `##0`
+    same-occurrence fusion and `##1` nearest-strictly-later handoffs, including
+    leading `##1`, direct `iff`, receiver-sensitive frozen identities, and
+    repeated occurrences in one publication wave. A feature-only private
+    coordinator is bounded to 64 clocks and one token count per `##1`
+    destination. Its occurrence state and subscriptions are allocated lazily
+    in a separate cold-tail structure; ordinary signal subscriptions and
+    single-clock monitor IR/tier ownership are unchanged. Every pending `##1`
+    stage participates in counted end-of-simulation closure using the existing
+    directive weak/strong rule, through a private generated Final coordinator.
+    Forced AOT admits only those exact private coordinator actors as a hybrid
+    island. Ordinary emitted Simulation IR remains byte-identical; a two-million
+    cycle native-generic/bytecode/AOT smoke measured 2.01/4.48/0.31 seconds
+    versus 1.97/4.56/0.33 seconds on the pre-feature baseline. Slang currently
+    rejects the legal source-level virtual member and untyped clock-formal
+    forms, which remain recorded xfails without a frontend patch. Implement
+    general property algebra across maximal subsequences, computed/declared
+    clocking-block `iff`, remaining inferred-clock contexts, and those upstream
+    frontend cases; this tranche does not complete L16 or A4.
 17. **L17 — Normative utility calls (20.16-20.18), completed.** `$system`, the
     five `$q_*` stochastic-queue calls, and all sixteen synchronous/asynchronous
     PLA tasks execute with exact argument, ordering, four-state, scheduling,

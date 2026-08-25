@@ -575,16 +575,13 @@ module {
 // CHECK: [[KILL_EXPECTED:%.*]] = obelisk_sim.ref.load [[KILL_REF]]
 // CHECK: obelisk_sim.spawn @unit_10.fork.{{[0-9.]+}}({{.*}}, [[DISABLE_REF]], [[DISABLE_EXPECTED]], [[KILL_REF]], [[KILL_EXPECTED]])
 
-// A multi-clock attempt is detached only while enabled. Once spawned, its
-// subsequent clock stages contain no enabled query and therefore remain live
-// if Off is applied later.
-// CHECK-LABEL: obelisk_sim.func private @unit_11.fork.{{[0-9.]+}}(
-// CHECK-SAME: obelisk_sim.multiclock_sequence_attempt_actor
-// CHECK-NOT: obelisk_sim.assert.enabled
-// CHECK: obelisk_sim.suspend.edge
+// A multi-clock coordinator admits source tokens only while enabled. Once
+// admitted, its bounded ##1 count remains live if Off is applied before the
+// destination occurrence; only the final report remains detached.
 // CHECK-LABEL: obelisk_sim.func private @unit_11(
-// CHECK-SAME: obelisk_sim.multiclock_sequence_monitor
+// CHECK-SAME: obelisk_sim.multiclock_sequence_coordinator
+// CHECK: obelisk_sim.suspend.clock_set
+// CHECK: obelisk_sim.assert.clock_occurrence.consume
 // CHECK: [[MULTI_ENABLE:%.*]] = obelisk_sim.assert.enabled
-// CHECK: cf.cond_br [[MULTI_ENABLE]], [[MULTI_SPAWN:\^bb[0-9]+]],
-// CHECK: [[MULTI_SPAWN]]
+// CHECK: arith.select [[MULTI_ENABLE]]
 // CHECK: obelisk_sim.spawn @unit_11.fork.
