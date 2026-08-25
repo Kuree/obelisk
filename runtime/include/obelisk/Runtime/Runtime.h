@@ -3288,9 +3288,9 @@ typedef uint32_t obelisk_rt_arg_flags;
 enum {
   OBELISK_RT_ARG_SIGNED = 1u << 0,
   OBELISK_RT_ARG_FORMAT_STRING = 1u << 1,
-  // Marks the sole format expression of $sformat/$sformatf. Unlike an
-  // output-list format item, it owns all following arguments; surplus values
-  // are diagnosed and ignored rather than formatted as subsequent items.
+  // Marks the sole format expression of $sformat/$sformatf. It owns format
+  // substitutions in the following arguments; values left after those
+  // substitutions continue as ordinary output-list items.
   OBELISK_RT_ARG_DESIGNATED_FORMAT = 1u << 2
 };
 

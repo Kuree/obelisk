@@ -1125,12 +1125,10 @@ buildDisplay(obelisk_rt_context *context, std::string &output,
           items, itemCount, index, environment, timeFormat, error, &warnings);
       if (status != OBELISK_RT_OK)
         return status;
-      if ((item.flags & OBELISK_RT_ARG_DESIGNATED_FORMAT) != 0) {
-        if (index != itemCount)
-          warnings.push_back(std::to_string(itemCount - index) +
-                             " extra argument(s) for format string");
-        index = itemCount;
-      }
+      // IEEE 1800-2017 21.2.1: arguments left after a format string are
+      // ordinary output-list items and use the task's default radix. A
+      // designated $sformat/$sformatf string owns format substitutions, but
+      // does not discard the remaining list once its substitutions end.
       continue;
     }
     char specifier = defaultSpecifier(item, radix);

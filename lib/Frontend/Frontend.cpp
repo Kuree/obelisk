@@ -4123,7 +4123,8 @@ buildSlangArguments(ArrayRef<std::string> inputs,
   // and writes, so simulating one is conforming rather than an error. Slang
   // raises these to errors by default; put the downgrade ahead of the user's
   // own options so `-Werror=range-oob` still wins.
-  for (llvm::StringRef warning : {"index-oob", "range-oob", "range-width-oob"})
+  for (llvm::StringRef warning : {"index-oob", "range-oob", "range-width-oob",
+                                  "format-too-many-args"})
     result.emplace_back(("-Wno-error=" + warning).str());
   appendValues(result, "-W", options.warningOptions);
   appendValues(result, "--suppress-warnings", options.suppressWarningsPaths);

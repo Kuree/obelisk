@@ -13,6 +13,7 @@
 // null bytes. File close and flush are void system tasks, so a stale descriptor
 // records an I/O error without terminating the process. MCD zero writes nowhere.
 // CHECK: :00610062:610062: a b:a b:
+// CHECK-NEXT: value=12         97
 // CHECK-NEXT: PASSED
 
 module attributes {
@@ -58,6 +59,20 @@ module attributes {
       %as_string = obelisk_sim.bytes.constant "%0s"
       %stdout = arith.constant 1 : i32
       obelisk_sim.display %ctx to %stdout(%as_string, %formatted)
+          newline = true radix = 10 flags = [0, 8] :
+          !obelisk_sim.bytes, !obelisk_sim.string
+
+      // IEEE 1800-2017 21.2.1: a designated format consumes the arguments
+      // named by its conversions. Remaining output-list items continue with
+      // the default radix instead of being discarded.
+      %designated_format = obelisk_sim.bytes.constant "value=%0d"
+      %twelve = arith.constant 12 : i32
+      %ninety_seven = arith.constant 97 : i32
+      %designated = obelisk_sim.string.output_format %ctx(
+          %designated_format, %twelve, %ninety_seven)
+          radix = 10 flags = [32, 0, 1] :
+          !obelisk_sim.bytes, i32, i32
+      obelisk_sim.display %ctx to %stdout(%as_string, %designated)
           newline = true radix = 10 flags = [0, 8] :
           !obelisk_sim.bytes, !obelisk_sim.string
 

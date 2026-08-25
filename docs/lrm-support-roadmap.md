@@ -671,7 +671,7 @@ does not carry a local parser patch for this bug.
 | 18 Constrained random generation | Partial | Object streams, broad packed constraints, modes, finite domains, soft constraints, direct solve ordering, distributions, bounded `randc`, lifecycle hooks, and much of randsequence execute. The authoritative boundary is `docs/randomization-support.md`; R1-R7 below close the remaining standard surface without treating a solver resource cap as language semantics. |
 | 19 Functional coverage | Excluded | Explicitly outside this project goal. |
 | 20 Utility system tasks/functions | Partial | Simulation/time control—including compile-time `$timeunit` and `$timeprecision` scope queries plus every omitted and explicitly empty `$timeformat` argument—conversions, data/array queries, real math, bit-vector functions, severity, random distributions, `$system`, most assertion control, and the implemented sampled functions execute. Missing normative families include `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam`, the synchronous/asynchronous PLA tasks, the global-clock sampled functions, and complete assertion statistics/control behavior. |
-| 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning—including formatted-input field widths and assignment suppression plus `$fread` into fixed unpacked memories and captured dynamic, associative, and nested aggregate copy-out targets—read/write-memory across fixed, dynamic, queue, multidimensional, and integral associative forms, plusargs including runtime `$value$plusargs` formats, and VCD/dumpports execute. Formatting and file corner cases remain. |
+| 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning—including formatted-input field widths and assignment suppression plus `$fread` into fixed unpacked memories and captured dynamic, associative, and nested aggregate copy-out targets—read/write-memory across fixed, dynamic, queue, multidimensional, and integral associative forms, plusargs including runtime `$value$plusargs` formats, and VCD/dumpports execute. Surplus arguments after a designated `$sformat`/`$sformatf` format continue with ordinary default-radix formatting. Formatting and file corner cases remain. |
 | 22 Compiler directives | Executable for the audited surface | The Slang preprocessor implements the normative directive family. Directive persistence, separate-compilation-unit reset, and command-line default-timescale precedence have native/bytecode tests. Protected envelopes are a separate Clause 34 feature, not ordinary pragma acceptance. |
 | 23 Modules and hierarchy | Partial | ANSI/non-ANSI modules, parameters, ports, arrays, hierarchy, bind, and common upward references elaborate. External runs retain module-library lookup, hierarchical path, generate-scope, and parameter-binding failures that need clause-minimal reproducers and fixes. |
 | 24 Programs | Partial | Program instances and their Reactive/Re-Inactive/Re-NBA process home execute. The normative `$exit` program-control task is missing. |
@@ -809,8 +809,9 @@ one commit.
     `$stable_gclk`, `$changed_gclk`, `$steady_gclk`, and `$changing_gclk`
     family on global-clock samples.
 19. **L19 — I/O completion (21).** Close the remaining format, scan,
-    file-position, memory-range, plusarg, and VCD conformance cases;
-    `$writememb` and `$writememh` are complete.
+    file-position, memory-range, plusarg, and VCD conformance cases.
+    `$writememb`, `$writememh`, and default formatting of surplus arguments
+    after a designated `$sformat`/`$sformatf` format are complete.
 
 ### Randomization and `std`
 

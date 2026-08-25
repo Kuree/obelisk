@@ -3779,7 +3779,7 @@ TEST_F(RuntimeTest, ClosedOutputDescriptorWarnsAndContinues) {
   EXPECT_NE(warnings.find("output descriptor"), std::string::npos);
 }
 
-TEST_F(RuntimeTest, DesignatedFormatWarnsAndContinuesOnArgumentMismatch) {
+TEST_F(RuntimeTest, DesignatedFormatContinuesWithUnformattedArguments) {
   TempDirectory temporary;
   uint32_t descriptor = open(temporary.file("designated-format.bin"), "w+b");
   uint32_t designated =
@@ -3799,7 +3799,7 @@ TEST_F(RuntimeTest, DesignatedFormatWarnsAndContinuesOnArgumentMismatch) {
             OBELISK_RT_OK);
   std::string warnings = testing::internal::GetCapturedStderr();
   EXPECT_NE(warnings.find("not enough arguments"), std::string::npos);
-  EXPECT_NE(warnings.find("1 extra argument"), std::string::npos);
+  EXPECT_EQ(warnings.find("extra argument"), std::string::npos);
 
   ASSERT_EQ(obelisk_rt_v1_file_flush(context, descriptor), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_file_rewind(context, descriptor), OBELISK_RT_OK);
@@ -3808,7 +3808,7 @@ TEST_F(RuntimeTest, DesignatedFormatWarnsAndContinuesOnArgumentMismatch) {
   ASSERT_EQ(
       obelisk_rt_v1_file_read(context, descriptor, bytes, sizeof(bytes), &read),
       OBELISK_RT_OK);
-  EXPECT_EQ(std::string(bytes, static_cast<size_t>(read)), "<%s>kept");
+  EXPECT_EQ(std::string(bytes, static_cast<size_t>(read)), "<%s>kept2");
   EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
 }
 
