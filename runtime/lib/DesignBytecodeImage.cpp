@@ -384,6 +384,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       signature.id != OBELISK_RT_INTRINSIC_V1_REAL_COMPARE &&
       signature.id != OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL &&
       signature.id != OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL_DELAYED &&
+      signature.id != OBELISK_RT_INTRINSIC_V1_MOS_DRIVE_DELAYED &&
       signature.flags != 0)
     return false;
   auto input = [&](uint32_t index) -> std::optional<Layout> {
@@ -528,9 +529,11 @@ bool validIntrinsic(const Image &image, const Function &function,
         return false;
     return true;
   case OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL:
-    return site.inputCount == 1 && site.outputCount == 0 &&
-           bits(input(0), 1);
+    return site.inputCount == 1 && site.outputCount == 0 && bits(input(0), 1);
   case OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL_DELAYED:
+    return site.inputCount == 4 && site.outputCount == 0 && bits(input(0), 1) &&
+           bits(input(1), 64) && bits(input(2), 64) && bits(input(3), 64);
+  case OBELISK_RT_INTRINSIC_V1_MOS_DRIVE_DELAYED:
     return site.inputCount == 4 && site.outputCount == 0 && bits(input(0), 1) &&
            bits(input(1), 64) && bits(input(2), 64) && bits(input(3), 64);
   case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC:
@@ -1892,11 +1895,14 @@ bool validateImage(const Image &image) {
         connection.rhsOffset, connection.width, (connection.flags & 1) != 0);
     bool resistivePass = (connection.flags & 16) != 0;
     bool controlledPass = (connection.flags & 32) != 0;
-    if (connection.width == 0 || (connection.flags & ~uint8_t{63}) != 0 ||
+    bool delayedPass = (connection.flags & 64) != 0;
+    bool directedPass = (connection.flags & 2) != 0;
+    if (connection.width == 0 || (connection.flags & ~uint8_t{127}) != 0 ||
         ((connection.flags & 2) == 0 && (connection.flags & 4) != 0) ||
         (passSwitch && connection.tailReserved == 0) ||
-        (!passSwitch &&
-         (connection.tailReserved != 0 || resistivePass || controlledPass)) ||
+        (delayedPass && (!passSwitch || !controlledPass || !directedPass)) ||
+        (!passSwitch && (connection.tailReserved != 0 || resistivePass ||
+                         controlledPass || delayedPass)) ||
         connection.reserved != 0 || connection.lhsResolution > 9 ||
         connection.rhsResolution > 9 || !lhs || !rhs ||
         connection.lhsResolution != decodeNetResolution(lhs->argument) ||
@@ -1926,7 +1932,7 @@ bool validateImage(const Image &image) {
             "connectivity edge endpoints are not canonically ordered");
       scalarConnections.push_back({lhsBit, rhsBit, connection.lhsResolution,
                                    connection.rhsResolution,
-                                   static_cast<uint8_t>(connection.flags & 54),
+                                   static_cast<uint8_t>(connection.flags & 118),
                                    connection.tailReserved});
       if (!passSwitch) {
         uint64_t lhsRoot = findConnectivity(lhsBit);

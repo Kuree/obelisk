@@ -576,6 +576,8 @@ struct ScheduledDesignEvent {
 struct ScheduledPassSwitchEvent {
   uint32_t passSwitchID = UINT32_MAX;
   uint8_t state = 0;
+  uint64_t delayedMosEdge = UINT64_MAX;
+  uint16_t strengths = 0;
 };
 
 using ScheduledPassSwitchEvents =
@@ -584,6 +586,16 @@ using ScheduledPassSwitchEvents =
 struct DelayedPassSwitchPending {
   ScheduledPassSwitchEvents::iterator event;
   uint8_t state = 0;
+};
+
+struct DelayedMosPending {
+  ScheduledPassSwitchEvents::iterator event;
+  uint16_t strengths = 0;
+};
+
+struct DelayedMosControl {
+  uint8_t state = 3;
+  std::array<uint64_t, 3> delays{};
 };
 
 struct DesignActivation {
@@ -815,6 +827,14 @@ struct NetControlledPassEdge {
   bool directed = false;
 };
 
+struct NetDelayedMosEdge {
+  uint64_t key = UINT64_MAX;
+  uint32_t control = 0;
+  uint64_t sourceRoot = 0;
+  uint64_t destinationRoot = 0;
+  bool resistive = false;
+};
+
 struct NetPassComponent {
   struct ReachableSource {
     uint32_t index = 0;
@@ -848,8 +868,11 @@ struct NetAliasCache {
   std::unordered_map<uint32_t, std::vector<NetControlledPassEdge>>
       controlledPassEdges;
   std::unordered_map<uint32_t, uint8_t> controlledPassStates;
-  std::unordered_map<uint64_t, std::vector<uint64_t>>
-      uniformDelayedRootsByRoot;
+  std::unordered_map<uint64_t, NetDelayedMosEdge> delayedMosEdges;
+  std::unordered_map<uint32_t, std::vector<uint64_t>> delayedMosByControl;
+  std::unordered_map<uint64_t, std::vector<uint64_t>> delayedMosBySource;
+  std::unordered_map<uint64_t, std::vector<uint64_t>> delayedMosByDestination;
+  std::unordered_map<uint64_t, std::vector<uint64_t>> uniformDelayedRootsByRoot;
   std::unordered_map<uint64_t, uint8_t> resolutionByRoot;
   std::unordered_map<uint64_t, uint8_t> chargeStrengthByBit;
   std::vector<NetAliasRange> nets;
@@ -1067,6 +1090,9 @@ struct obelisk_rt_context {
   ScheduledPassSwitchEvents scheduledPassSwitchEvents;
   std::unordered_map<uint32_t, DelayedPassSwitchPending>
       delayedPassSwitchPending;
+  std::unordered_map<uint64_t, DelayedMosPending> delayedMosPending;
+  std::unordered_map<uint32_t, DelayedMosControl> delayedMosControls;
+  std::unordered_map<uint64_t, uint16_t> delayedMosContributions;
   std::vector<ScheduledDesignTask> scheduledDesignTasks;
   std::unordered_map<uint64_t, size_t> scheduledDesignTaskIndices;
   std::unordered_set<uint64_t> designPollCandidates;

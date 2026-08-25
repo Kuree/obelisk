@@ -193,8 +193,8 @@ LogicalResult verifyPostponedReadOnly(SimFuncOp root) {
               SimReferencePathNBAEnqueueOp, SimArgumentRefStoreOp,
               SimRefStoreOp, SimDriverDriveOp, SimDriverDriveInertialOp,
               SimDriverDriveInertialStrengthPairOp, SimDriverDriveDelayedNetOp,
-              SimDriverDriveChangedOp, SimNBAEnqueueOp, SimSpawnOp,
-              SimEventTriggerOp, SimSuspendDelayOp, SimTaskCallOp,
+              SimDriverDriveChangedOp, SimMosDriveDelayedOp, SimNBAEnqueueOp,
+              SimSpawnOp, SimEventTriggerOp, SimSuspendDelayOp, SimTaskCallOp,
               SimClassVirtualTaskCallOp, SimProcessControlOp,
               SimProcessSetRandomStateOp, SimRandomSetStateOp>(operation)) {
         operation->emitOpError(

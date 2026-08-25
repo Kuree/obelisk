@@ -214,11 +214,23 @@ LogicalResult SimPassSwitchDeclOp::verify() {
   if (Attribute directed = (*this)->getAttr("directed");
       directed && !isa<BoolAttr>(directed))
     return emitOpError("directed attribute must be boolean");
+  if (Attribute delayed = (*this)->getAttr("delayed");
+      delayed && !isa<BoolAttr>(delayed))
+    return emitOpError("delayed attribute must be boolean");
   if (auto directed = (*this)->getAttrOfType<BoolAttr>("directed");
       directed && directed.getValue()) {
     auto controlled = (*this)->getAttrOfType<BoolAttr>("controlled");
     if (!controlled || !controlled.getValue())
       return emitOpError("directed pass switch requires controlled = true");
+  }
+  if (auto delayed = (*this)->getAttrOfType<BoolAttr>("delayed");
+      delayed && delayed.getValue()) {
+    auto directed = (*this)->getAttrOfType<BoolAttr>("directed");
+    auto controlled = (*this)->getAttrOfType<BoolAttr>("controlled");
+    if (!directed || !directed.getValue() || !controlled ||
+        !controlled.getValue())
+      return emitOpError(
+          "delayed pass switch requires directed = true and controlled = true");
   }
   if (Attribute group = (*this)->getAttr("control_group")) {
     auto integer = dyn_cast<IntegerAttr>(group);

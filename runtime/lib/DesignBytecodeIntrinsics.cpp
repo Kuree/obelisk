@@ -3471,6 +3471,22 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                                      value, unknown, *turnOn,
                                                      *turnOff, *unknownDelay);
   }
+  case OBELISK_RT_INTRINSIC_V1_MOS_DRIVE_DELAYED: {
+    Layout input = layoutAt(image, frame.function, inputRegister(0));
+    Logic control = readLogic(frame.data, input);
+    auto rise = scalar(1);
+    auto fall = scalar(2);
+    auto turnoff = scalar(3);
+    if (control.width != 1 || control.value.empty() || !rise || !fall ||
+        !turnoff)
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint32_t value = static_cast<uint32_t>(control.value[0] & 1);
+    uint32_t unknown = control.fourState && !control.unknown.empty()
+                           ? static_cast<uint32_t>(control.unknown[0] & 1)
+                           : 0;
+    return obelisk_rt_v1_mos_drive_delayed(context, signature.flags, value,
+                                           unknown, *rise, *fall, *turnoff);
+  }
   case OBELISK_RT_INTRINSIC_V1_TIME_NOW:
     return sentinel(0, obelisk_rt_v1_scheduler_time(context));
   case OBELISK_RT_INTRINSIC_V1_SAMPLED_READ: {

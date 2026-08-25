@@ -93,6 +93,7 @@ struct StateLayout {
     bool passControlled;
     bool passDirected;
     bool passRhsToLhs;
+    bool passDelayed;
   };
   llvm::DenseMap<uint64_t, uint64_t> storage;
   llvm::DenseMap<uint64_t, uint64_t> nets;

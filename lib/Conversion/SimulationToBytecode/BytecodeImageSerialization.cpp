@@ -235,7 +235,8 @@ SmallVector<uint8_t> serializeBytecodeImage(
         (connection.passResistive ? 16 : 0) |
         (connection.passControlled ? 32 : 0) |
         (connection.passDirected ? 2 : 0) |
-        (connection.passDirected && connection.passRhsToLhs ? 4 : 0));
+        (connection.passDirected && connection.passRhsToLhs ? 4 : 0) |
+        (connection.passDelayed ? 64 : 0));
     output.push_back(0);
     append32(output, connection.passSwitchId);
   }

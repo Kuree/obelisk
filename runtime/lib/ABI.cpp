@@ -1116,6 +1116,9 @@ ABI_FUNCTION(obelisk_rt_v1_pass_switch_control,
 ABI_FUNCTION(obelisk_rt_v1_pass_switch_control_delayed,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint32_t,
                                    uint32_t, uint64_t, uint64_t, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_mos_drive_delayed,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint32_t,
+                                   uint32_t, uint64_t, uint64_t, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_clocking_nba,
              obelisk_rt_status (*)(obelisk_rt_context *, uint8_t *, uint8_t *,
                                    uint64_t, uint64_t, uint64_t, uint64_t,

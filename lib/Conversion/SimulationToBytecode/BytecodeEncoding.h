@@ -61,8 +61,7 @@ constexpr uint32_t kIntrinsicTimeFormat = OBELISK_RT_INTRINSIC_V1_TIME_FORMAT;
 constexpr uint32_t kIntrinsicPlusargTest = OBELISK_RT_INTRINSIC_V1_PLUSARG_TEST;
 constexpr uint32_t kIntrinsicPlusargValue =
     OBELISK_RT_INTRINSIC_V1_PLUSARG_VALUE;
-constexpr uint32_t kIntrinsicPlusargScan =
-    OBELISK_RT_INTRINSIC_V1_PLUSARG_SCAN;
+constexpr uint32_t kIntrinsicPlusargScan = OBELISK_RT_INTRINSIC_V1_PLUSARG_SCAN;
 constexpr uint32_t kIntrinsicSystem = OBELISK_RT_INTRINSIC_V1_SYSTEM;
 constexpr uint32_t kIntrinsicFileClose = OBELISK_RT_INTRINSIC_V1_FILE_CLOSE;
 constexpr uint32_t kIntrinsicFileFlush = OBELISK_RT_INTRINSIC_V1_FILE_FLUSH;
@@ -103,6 +102,8 @@ constexpr uint32_t kIntrinsicPassSwitchControl =
     OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL;
 constexpr uint32_t kIntrinsicPassSwitchControlDelayed =
     OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL_DELAYED;
+constexpr uint32_t kIntrinsicMosDriveDelayed =
+    OBELISK_RT_INTRINSIC_V1_MOS_DRIVE_DELAYED;
 constexpr uint32_t kIntrinsicStateAlloc = OBELISK_RT_INTRINSIC_V1_STATE_ALLOC;
 constexpr uint32_t kIntrinsicStateAllocTyped =
     OBELISK_RT_INTRINSIC_V1_STATE_ALLOC_TYPED;

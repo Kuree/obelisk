@@ -828,8 +828,7 @@ LogicalResult SimControlEnterOp::verify() {
   return verifyPositive(*this, getTargetIdAttr(), "control target ID");
 }
 
-SuccessorOperands
-SimControlBoundaryOp::getSuccessorOperands(unsigned index) {
+SuccessorOperands SimControlBoundaryOp::getSuccessorOperands(unsigned index) {
   assert(index < 2 && "control boundary has two successors");
   return index == 0 ? SuccessorOperands(getResumeOperandsMutable())
                     : SuccessorOperands(MutableOperandRange(
@@ -1763,12 +1762,24 @@ LogicalResult SimNetCountDriversOp::verify() {
   return success();
 }
 
+static LogicalResult verifyPassSwitchId(Operation *op, IntegerAttr attr) {
+  if (failed(verifyNonnegative(op, attr, "pass-switch ID")))
+    return failure();
+  if (attr.getValue().getZExtValue() >= std::numeric_limits<uint32_t>::max())
+    return op->emitOpError("pass-switch ID must be less than 4294967295");
+  return success();
+}
+
 LogicalResult SimPassSwitchControlOp::verify() {
-  return verifyNonnegative(*this, getPassSwitchIdAttr(), "pass-switch ID");
+  return verifyPassSwitchId(*this, getPassSwitchIdAttr());
 }
 
 LogicalResult SimPassSwitchControlDelayedOp::verify() {
-  return verifyNonnegative(*this, getPassSwitchIdAttr(), "pass-switch ID");
+  return verifyPassSwitchId(*this, getPassSwitchIdAttr());
+}
+
+LogicalResult SimMosDriveDelayedOp::verify() {
+  return verifyPassSwitchId(*this, getPassSwitchIdAttr());
 }
 
 LogicalResult SimDriverDriveInertialStrengthPairOp::verify() {

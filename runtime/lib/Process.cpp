@@ -2323,8 +2323,8 @@ uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
   if (!context->scheduledPassSwitchEvents.empty() &&
       context->scheduledPassSwitchEvents.begin()->first.first <=
           context->schedulerTime)
-    barrierRegion = std::min(
-        barrierRegion, static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE));
+    barrierRegion = std::min(barrierRegion,
+                             static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE));
   if (context->staticNBAAccumulatorsPending)
     for (const StaticNBAAccumulator &accumulator :
          context->staticNBAAccumulators)
@@ -3653,9 +3653,10 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                 managedIndex = index;
               }
             }
-            uint64_t sequence = std::min(
-                std::min(nativeSequence, managedSequence),
-                std::min(std::min(eventSequence, passSequence), designSequence));
+            uint64_t sequence =
+                std::min(std::min(nativeSequence, managedSequence),
+                         std::min(std::min(eventSequence, passSequence),
+                                  designSequence));
             if (sequence == UINT64_MAX) {
               bool hadDelayedPublications = !delayedNetPublications.empty();
               if (!flushDelayedNetPublications())
@@ -3703,18 +3704,32 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             } else if (sequence == passSequence) {
               auto scheduled = context->scheduledPassSwitchEvents.begin();
               ScheduledPassSwitchEvent event = scheduled->second;
-              auto pending = context->delayedPassSwitchPending.find(
-                  event.passSwitchID);
-              if (pending == context->delayedPassSwitchPending.end() ||
-                  pending->second.event != scheduled ||
-                  pending->second.state != event.state)
-                return OBELISK_RT_INVALID_DESIGN;
-              context->scheduledPassSwitchEvents.erase(scheduled);
-              context->delayedPassSwitchPending.erase(pending);
               bool switchChanged = false;
-              obelisk_rt_status status =
-                  obelisk::designbytecode::applyPassSwitchControl(
-                      context, event.passSwitchID, event.state, switchChanged);
+              obelisk_rt_status status = OBELISK_RT_INVALID_DESIGN;
+              if (event.delayedMosEdge != UINT64_MAX) {
+                auto pending =
+                    context->delayedMosPending.find(event.delayedMosEdge);
+                if (pending == context->delayedMosPending.end() ||
+                    pending->second.event != scheduled ||
+                    pending->second.strengths != event.strengths)
+                  return OBELISK_RT_INVALID_DESIGN;
+                context->scheduledPassSwitchEvents.erase(scheduled);
+                context->delayedMosPending.erase(pending);
+                status = obelisk::designbytecode::applyDelayedMosEvent(
+                    context, event.delayedMosEdge, event.strengths,
+                    switchChanged);
+              } else {
+                auto pending =
+                    context->delayedPassSwitchPending.find(event.passSwitchID);
+                if (pending == context->delayedPassSwitchPending.end() ||
+                    pending->second.event != scheduled ||
+                    pending->second.state != event.state)
+                  return OBELISK_RT_INVALID_DESIGN;
+                context->scheduledPassSwitchEvents.erase(scheduled);
+                context->delayedPassSwitchPending.erase(pending);
+                status = obelisk::designbytecode::applyPassSwitchControl(
+                    context, event.passSwitchID, event.state, switchChanged);
+              }
               if (status != OBELISK_RT_OK)
                 return status;
               changed |= switchChanged;
@@ -3836,8 +3851,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           if (event.dueTime > context->schedulerTime)
             considerTime(event.dueTime);
         if (!context->scheduledPassSwitchEvents.empty())
-          considerTime(
-              context->scheduledPassSwitchEvents.begin()->first.first);
+          considerTime(context->scheduledPassSwitchEvents.begin()->first.first);
         if (nextTime) {
           obelisk_rt_dump_slot_unlocked(context);
           context->schedulerTime = *nextTime;

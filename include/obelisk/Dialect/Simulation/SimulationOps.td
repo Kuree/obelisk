@@ -221,6 +221,26 @@ def SimPassSwitchControlDelayedOp : SimOp<"net.pass.control_delayed", [
   let hasVerifier = 1;
 }
 
+def SimMosDriveDelayedOp : SimOp<"net.mos.drive_delayed", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimNetResource>]>
+  ]> {
+  let summary = "publish a strength-preserving inertial MOS contribution";
+  let description = [{
+    Samples the resolved strength range at the source of one frozen directed
+    MOS/CMOS edge, applies the normalized active-high four-state control and
+    the edge's resistive transfer, and schedules that exact contribution
+    inertially.  Pending updates are keyed by scalar edge, so source-strength
+    changes that preserve the logical value are not discarded.
+  }];
+  let arguments = (ins SimLogic1Type:$control, SimTimeType:$rise_delay,
+                       SimTimeType:$fall_delay, SimTimeType:$turnoff_delay,
+                       I64Attr:$pass_switch_id);
+  let assemblyFormat = [{$pass_switch_id `=` $control `after` `[` $rise_delay
+    `,` $fall_delay `,` $turnoff_delay `]` attr-dict `:`
+    qualified(type($control))}];
+  let hasVerifier = 1;
+}
+
 def SimDriverDeclOp : SimOp<"driver.decl", [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
   let summary = "immutable static net-driver descriptor";
   let arguments = (ins I64Attr:$id, I64Attr:$scope_id, I64Attr:$net_id,

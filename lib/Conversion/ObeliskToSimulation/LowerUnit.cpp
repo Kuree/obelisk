@@ -2191,19 +2191,48 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
       FailureOr<Value> pControl = lowerControl(operations[3]);
       if (failed(pControl))
         return failure();
-      Value invertedP = sim::SimLogicUnaryOp::create(
-          builder, location, pControl->getType(), sim::UnaryKind::BitNot,
-          *pControl);
+      Value invertedP =
+          sim::SimLogicUnaryOp::create(builder, location, pControl->getType(),
+                                       sim::UnaryKind::BitNot, *pControl);
       activeHigh = sim::SimLogicBinaryOp::create(
           builder, location, activeHigh.getType(), sim::BinaryKind::Or,
           activeHigh, invertedP);
     } else if (name == "pmos" || name == "rpmos") {
-      activeHigh = sim::SimLogicUnaryOp::create(
-          builder, location, activeHigh.getType(), sim::UnaryKind::BitNot,
-          activeHigh);
+      activeHigh =
+          sim::SimLogicUnaryOp::create(builder, location, activeHigh.getType(),
+                                       sim::UnaryKind::BitNot, activeHigh);
     }
-    for (int64_t id : ids.asArrayRef())
-      sim::SimPassSwitchControlOp::create(builder, location, activeHigh, id);
+    auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
+        "obelisk_sim.propagation_delays");
+    bool delayed =
+        delays && llvm::any_of(delays.asArrayRef(),
+                               [](int64_t value) { return value != 0; });
+    if (delayed) {
+      if (delays.empty() || delays.size() > 3)
+        return function.emitError(
+            "MOS/CMOS propagation delay must contain one to three values");
+      ArrayRef<int64_t> values = delays.asArrayRef();
+      int64_t rise = values[0];
+      int64_t fall = values.size() == 1 ? rise : values[1];
+      int64_t turnoff = values.size() == 1   ? rise
+                        : values.size() == 2 ? std::min(rise, fall)
+                                             : values[2];
+      auto timeConstant = [&](int64_t ticks) {
+        return sim::SimTimeConstantOp::create(
+            builder, location, sim::TimeType::get(function.getContext()),
+            builder.getI64IntegerAttr(ticks));
+      };
+      Value riseValue = timeConstant(rise);
+      Value fallValue = timeConstant(fall);
+      Value turnoffValue = timeConstant(turnoff);
+      for (int64_t id : ids.asArrayRef())
+        sim::SimMosDriveDelayedOp::create(builder, location, activeHigh,
+                                          riseValue, fallValue, turnoffValue,
+                                          id);
+    } else {
+      for (int64_t id : ids.asArrayRef())
+        sim::SimPassSwitchControlOp::create(builder, location, activeHigh, id);
+    }
     return success();
   }
   if (name == "tranif0" || name == "tranif1" || name == "rtranif0" ||

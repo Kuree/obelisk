@@ -1,9 +1,7 @@
-// RUN: not obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
-// A delayed resolved-net source cannot fall back to a fixed-strength driver:
-// that would silently lose a same-value strength transition. Keep the precise
-// implementation boundary diagnosed until a strength-carrying inertial edge
-// is available.
+// A delayed resolved-net source becomes one strength-carrying directed edge;
+// it must not fall back to a fixed-strength ordinary primitive driver.
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "delayed_mos", name = "delayed_mos", node_id = 0 : i64, sym_name = "s0.delayed_mos"} {
     obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
@@ -33,4 +31,9 @@ module {
   }
 }
 
-// CHECK: delayed MOS/CMOS with a resolved-net source requires strength-preserving inertial topology delay support
+// CHECK: obelisk_sim.net.pass.decl 0
+// CHECK-SAME: controlled = true
+// CHECK-SAME: delayed = true
+// CHECK-SAME: directed = true
+// CHECK: obelisk_sim.net.mos.drive_delayed 0 =
+// CHECK-SAME: after[

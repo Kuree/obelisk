@@ -102,10 +102,9 @@ static bool isControlledPassSwitch(Operation *unit) {
   auto primitive = dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(unit);
   auto name = primitive ? primitive->getAttrOfType<StringAttr>("primitive_name")
                         : StringAttr{};
-  return name && (name.getValue() == "tranif0" ||
-                  name.getValue() == "tranif1" ||
-                  name.getValue() == "rtranif0" ||
-                  name.getValue() == "rtranif1");
+  return name &&
+         (name.getValue() == "tranif0" || name.getValue() == "tranif1" ||
+          name.getValue() == "rtranif0" || name.getValue() == "rtranif1");
 }
 
 static bool isPassSwitch(Operation *unit) {
@@ -122,10 +121,9 @@ static bool isMosSwitch(Operation *unit) {
   auto primitive = dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(unit);
   auto name = primitive ? primitive->getAttrOfType<StringAttr>("primitive_name")
                         : StringAttr{};
-  return name &&
-         (name.getValue() == "nmos" || name.getValue() == "pmos" ||
-          name.getValue() == "cmos" || name.getValue() == "rnmos" ||
-          name.getValue() == "rpmos" || name.getValue() == "rcmos");
+  return name && (name.getValue() == "nmos" || name.getValue() == "pmos" ||
+                  name.getValue() == "cmos" || name.getValue() == "rnmos" ||
+                  name.getValue() == "rpmos" || name.getValue() == "rcmos");
 }
 
 static Operation *peelClockingOutputSelects(Operation *destination) {
@@ -177,15 +175,14 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
             analysis::getSimulationStorageBitWidth(descriptor->type);
         if (!width)
           return false;
-        runs.push_back(
-            {*descriptor, 0, *width, path.str(), std::nullopt});
+        runs.push_back({*descriptor, 0, *width, path.str(), std::nullopt});
       }
       return !matches.empty();
     }
     for (Attribute attribute : definitions) {
       auto definition = dyn_cast<DictionaryAttr>(attribute);
-      auto path = definition ? definition.getAs<StringAttr>("path")
-                             : StringAttr{};
+      auto path =
+          definition ? definition.getAs<StringAttr>("path") : StringAttr{};
       auto descriptor =
           path ? descriptors.find(path.getValue()) : descriptors.end();
       if (descriptor == descriptors.end() ||
@@ -195,8 +192,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
           analysis::getSimulationStorageBitWidth(descriptor->second.type);
       if (!width)
         return false;
-      runs.push_back({descriptor->second, 0, *width, path.getValue().str(),
-                      std::nullopt});
+      runs.push_back(
+          {descriptor->second, 0, *width, path.getValue().str(), std::nullopt});
     }
     return !runs.empty();
   };
@@ -218,8 +215,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       std::optional<uint64_t> nodeId;
       if (auto id = expression->getAttrOfType<IntegerAttr>("node_id"))
         nodeId = id.getValue().getZExtValue();
-      runs.push_back({descriptor->second, 0, *width,
-                      leafPath.getValue().str(), nodeId});
+      runs.push_back(
+          {descriptor->second, 0, *width, leafPath.getValue().str(), nodeId});
       return true;
     }
     if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(expression)) {
@@ -243,8 +240,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
             dyn_cast<semantic::SVHierarchicalValueExpressionOp>(expression)) {
       auto descriptor = descriptors.find(hierarchical.getReferencedPath());
       if (descriptor == descriptors.end())
-        return appendInterconnectLeaves(hierarchical.getReferencedPath(),
-                                        runs);
+        return appendInterconnectLeaves(hierarchical.getReferencedPath(), runs);
       if (descriptor->second.kind != DescriptorInfo::Kind::Net)
         return false;
       std::optional<unsigned> width =
@@ -616,8 +612,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     bool hasImplicitInternalLeaves =
         internalDescriptor == descriptors.end() &&
         appendInterconnectLeaves(internalPath, implicitInternalLeaves);
-    if (internalDescriptor == descriptors.end() &&
-        !hasImplicitInternalLeaves) {
+    if (internalDescriptor == descriptors.end() && !hasImplicitInternalLeaves) {
       if (connection.getInterfaceInstanceSymbol() ||
           isa<semantic::UntypedType>(connection.getFormalType()))
         continue;
@@ -733,9 +728,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     bool topologyMos = false;
     if (isMosSwitch(unit)) {
       SmallVector<Operation *> roots = getChildren(unit);
-      bool complementary = name &&
-                           (name.getValue() == "cmos" ||
-                            name.getValue() == "rcmos");
+      bool complementary =
+          name && (name.getValue() == "cmos" || name.getValue() == "rcmos");
       if (roots.size() == (complementary ? 4u : 3u)) {
         auto output = dyn_cast<semantic::SVAssignmentExpressionOp>(roots[0]);
         SmallVector<Operation *> outputChildren =
@@ -747,34 +741,33 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       }
     }
     controlled |= topologyMos;
-    bool resistive = name && (name.getValue() == "rtran" ||
-                              name.getValue() == "rtranif0" ||
-                              name.getValue() == "rtranif1" ||
-                              (topologyMos &&
-                               (name.getValue() == "rnmos" ||
-                                name.getValue() == "rpmos" ||
-                                name.getValue() == "rcmos")));
-    if (!name ||
-        (name.getValue() != "tran" && !resistive && !controlled &&
-         !topologyMos)) {
+    bool resistive =
+        name && (name.getValue() == "rtran" || name.getValue() == "rtranif0" ||
+                 name.getValue() == "rtranif1" ||
+                 (topologyMos &&
+                  (name.getValue() == "rnmos" || name.getValue() == "rpmos" ||
+                   name.getValue() == "rcmos")));
+    if (!name || (name.getValue() != "tran" && !resistive && !controlled &&
+                  !topologyMos)) {
       executableUnits.push_back(unit);
       continue;
     }
     if (auto delays = primitive.getDelayFs()) {
       if (topologyMos) {
-        emitError(getSemanticLocation(unit))
-            << "delayed MOS/CMOS with a resolved-net source requires "
-               "strength-preserving inertial topology delay support";
-        invalid = true;
-        continue;
+        if (delays->empty() || delays->size() > 3) {
+          emitError(getSemanticLocation(unit))
+              << "MOS/CMOS propagation delay must contain one to three values";
+          invalid = true;
+          continue;
+        }
       }
-      if (!controlled) {
+      if (!topologyMos && !controlled) {
         emitError(getSemanticLocation(unit))
             << "tran and rtran primitives cannot have delays";
         invalid = true;
         continue;
       }
-      if (delays->empty() || delays->size() > 2) {
+      if (!topologyMos && (delays->empty() || delays->size() > 2)) {
         emitError(getSemanticLocation(unit))
             << "controlled pass-switch delay must contain one or two values";
         invalid = true;
@@ -784,11 +777,10 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     SmallVector<Operation *> roots = getChildren(unit);
     SmallVector<NetRun> terminals[2];
     bool invalidTerminal = false;
-    bool complementaryMos =
-        topologyMos &&
-        (name.getValue() == "cmos" || name.getValue() == "rcmos");
-    if (roots.size() != (topologyMos ? (complementaryMos ? 4u : 3u)
-                                    : (controlled ? 3u : 2u))) {
+    bool complementaryMos = topologyMos && (name.getValue() == "cmos" ||
+                                            name.getValue() == "rcmos");
+    if (roots.size() !=
+        (topologyMos ? (complementaryMos ? 4u : 3u) : (controlled ? 3u : 2u))) {
       emitError(getSemanticLocation(unit))
           << "tran-family primitive requires two terminals"
           << (controlled ? " and one control" : "");
@@ -909,6 +901,11 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
         pass->setAttr("resistive", builder.getBoolAttr(true));
       if (topologyMos)
         pass->setAttr("directed", builder.getBoolAttr(true));
+      if (topologyMos)
+        if (auto delays = primitive.getDelayFs();
+            delays &&
+            llvm::any_of(*delays, [](int64_t delay) { return delay != 0; }))
+          pass->setAttr("delayed", builder.getBoolAttr(true));
       if (controlled) {
         pass->setAttr("controlled", builder.getBoolAttr(true));
         pass->setAttr("control_group",
@@ -952,7 +949,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
           executableUnits.push_back(representative);
       } else {
         unit->setAttr(topologyMos ? "obelisk_sim.mos_topology_ids"
-                                 : "obelisk_sim.pass_switch_ids",
+                                  : "obelisk_sim.pass_switch_ids",
                       builder.getDenseI64ArrayAttr(passSwitchIds));
         executableUnits.push_back(unit);
       }
