@@ -39,5 +39,5 @@ module attributes {
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
 // CHECK-NOT: obelisk_sim.ref.store_inertial_path
 
-// BYTECODE: intrinsic {{[0-9]+}}: id=0x00010243 inputs=15 outputs=0 flags=0
-// BYTECODE: site {{[0-9]+}}: signature={{[0-9]+}} id=0x00010243 inputs={{\[[0-9, ]+\]}} outputs=[]
+// BYTECODE: intrinsic {{[0-9]+}}: id=0x00010245 inputs=15 outputs=0 flags=0
+// BYTECODE: site {{[0-9]+}}: signature={{[0-9]+}} id=0x00010245 inputs={{\[[0-9, ]+\]}} outputs=[]

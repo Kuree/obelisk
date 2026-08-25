@@ -38,9 +38,9 @@ module attributes {
 
 // -----
 
-// A statically selected value narrower than the driver's declared range is
-// not exact: resolving only the selected bit would miss other raw
-// contributions owned by the same drive operation.
+// A statically selected value narrower than the driver's declared range does
+// not qualify for the whole-declaration exact-range shortcut, but its static
+// low offset still proves that only the written component needs resolution.
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
@@ -69,7 +69,7 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @mismatched_slice
-// CHECK-COUNT-4: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-COUNT-1: llvm.call @obelisk_rt_v1_strength_resolve_kind
 // CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
 
 // -----
