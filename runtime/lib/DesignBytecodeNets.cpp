@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <deque>
 #include <map>
 #include <new>
 #include <unordered_map>
@@ -36,16 +37,37 @@ static uint16_t implicitNetStrength(uint8_t resolution) {
   }
 }
 
-// IEEE 1800-2017 28.12.1: a nonresistive bidirectional pass switch limits a
-// strength propagated through it to strong, while preserving weaker strengths
-// and high impedance. Apply the transfer pointwise because an ambiguous value
-// is represented as a range on the signed strength scale.
-static uint16_t propagateThroughTran(uint16_t strengths) {
+// IEEE 1800-2017 28.13 and 28.14: a nonresistive bidirectional pass switch
+// limits supply to strong, while a resistive switch applies Table 28-8. Apply
+// the transfer pointwise because an ambiguous value is represented as a range
+// on the signed strength scale.
+static uint16_t propagateThroughPass(uint16_t strengths,
+                                     uint8_t resistiveEdges) {
+  // Table 28-8. Four resistive crossings are enough to reach the fixed small
+  // strength for every non-high-impedance input.
+  static constexpr std::array<int, 8> resistiveReduction = {
+      0, // high impedance
+      1, // small capacitor -> small capacitor
+      1, // medium capacitor -> small capacitor
+      2, // weak drive -> medium capacitor
+      2, // large capacitor -> medium capacitor
+      3, // pull drive -> weak drive
+      5, // strong drive -> pull drive
+      5, // supply drive -> pull drive
+  };
   uint16_t propagated = 0;
   for (int strength = -7; strength <= 7; ++strength) {
     if ((strengths & strengthBit(strength)) == 0)
       continue;
-    propagated |= strengthBit(std::clamp(strength, -6, 6));
+    int sign = strength < 0 ? -1 : 1;
+    int magnitude = std::abs(strength);
+    if (resistiveEdges == 0) {
+      magnitude = std::min(magnitude, 6);
+    } else {
+      for (uint8_t edge = 0; edge != resistiveEdges; ++edge)
+        magnitude = resistiveReduction[magnitude];
+    }
+    propagated |= strengthBit(sign * magnitude);
   }
   return propagated;
 }
@@ -236,8 +258,9 @@ NetAliasCache *getNetAliasCache(const Image &image,
                                             : connection.rhsOffset + bitIndex;
       uint64_t lhsRoot = cache.rootByBit.at(lhs);
       uint64_t rhsRoot = cache.rootByBit.at(rhs);
-      cache.passNeighbors[lhsRoot].push_back(rhsRoot);
-      cache.passNeighbors[rhsRoot].push_back(lhsRoot);
+      bool resistive = (connection.flags & 16) != 0;
+      cache.passNeighbors[lhsRoot].push_back({rhsRoot, resistive});
+      cache.passNeighbors[rhsRoot].push_back({lhsRoot, resistive});
     }
   }
   std::unordered_map<uint64_t, uint64_t> passParents;
@@ -254,20 +277,55 @@ NetAliasCache *getNetAliasCache(const Image &image,
     return root;
   };
   for (const auto &[root, neighbors] : cache.passNeighbors)
-    for (uint64_t neighbor : neighbors) {
+    for (const NetPassNeighbor &neighbor : neighbors) {
       uint64_t lhsRoot = findPassRoot(root);
-      uint64_t rhsRoot = findPassRoot(neighbor);
+      uint64_t rhsRoot = findPassRoot(neighbor.root);
       if (lhsRoot != rhsRoot)
         passParents[std::max(lhsRoot, rhsRoot)] = std::min(lhsRoot, rhsRoot);
     }
   for (const auto &[root, parent] : passParents) {
     uint64_t component = findPassRoot(root);
     cache.passComponentByRoot.emplace(root, component);
-    cache.passComponents[component].push_back(root);
+    cache.passComponents[component].roots.push_back(root);
   }
-  for (auto &[component, roots] : cache.passComponents) {
+  for (auto &[component, passComponent] : cache.passComponents) {
+    std::vector<uint64_t> &roots = passComponent.roots;
     std::sort(roots.begin(), roots.end());
     roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
+    if (!roots.empty() && roots.size() > SIZE_MAX / roots.size())
+      return nullptr;
+    passComponent.reductions.reserve(roots.size() * roots.size());
+    std::unordered_map<uint64_t, size_t> rootIndex;
+    for (size_t index = 0; index != roots.size(); ++index)
+      rootIndex.emplace(roots[index], index);
+    // Resolution is hot; topology is immutable. Precompute the least number
+    // of resistive crossings between every terminal pair once, with four as
+    // the saturated Table 28-8 reduction. Ordinary tran edges cost zero.
+    for (uint64_t target : roots) {
+      std::vector<uint8_t> reductions(roots.size(), uint8_t{5});
+      std::deque<uint64_t> worklist;
+      reductions[rootIndex.at(target)] = 0;
+      worklist.push_back(target);
+      while (!worklist.empty()) {
+        uint64_t current = worklist.front();
+        worklist.pop_front();
+        uint8_t currentReduction = reductions[rootIndex.at(current)];
+        for (const NetPassNeighbor &edge : cache.passNeighbors.at(current)) {
+          uint8_t candidate = static_cast<uint8_t>(
+              std::min<unsigned>(4, currentReduction + edge.resistive));
+          uint8_t &known = reductions[rootIndex.at(edge.root)];
+          if (candidate >= known)
+            continue;
+          known = candidate;
+          if (edge.resistive)
+            worklist.push_back(edge.root);
+          else
+            worklist.push_front(edge.root);
+        }
+      }
+      passComponent.reductions.insert(passComponent.reductions.end(),
+                                      reductions.begin(), reductions.end());
+    }
   }
   for (const CaptureRecord &driver : drivers) {
     uint8_t strength0 = decodeDriverStrength(driver.argument, 3);
@@ -633,7 +691,7 @@ static bool computeResolvedStrengths(const NetAliasCache &cache,
   uint8_t resolution = cache.resolutionByRoot.at(root);
   auto component = cache.passComponentByRoot.find(root);
   resolvedStrengths = strengthBit(0);
-  auto accumulateRoot = [&](uint64_t sourceRoot) {
+  auto accumulateRoot = [&](uint64_t sourceRoot, uint8_t resistiveEdges) {
     bool remote = sourceRoot != root;
     auto sourceMembers = cache.members.find(sourceRoot);
     if (sourceMembers == cache.members.end())
@@ -649,7 +707,7 @@ static bool computeResolvedStrengths(const NetAliasCache &cache,
       uint16_t strengths = driverStrengths(stateBit(false, *forcedMember),
                                            stateBit(true, *forcedMember), 7, 7);
       if (remote)
-        strengths = propagateThroughTran(strengths);
+        strengths = propagateThroughPass(strengths, resistiveEdges);
       resolvedStrengths =
           combineStrengthRanges(resolvedStrengths, strengths, resolution);
       return true;
@@ -657,7 +715,7 @@ static bool computeResolvedStrengths(const NetAliasCache &cache,
     uint16_t implicit =
         implicitNetStrength(cache.resolutionByRoot.at(sourceRoot));
     if (remote)
-      implicit = propagateThroughTran(implicit);
+      implicit = propagateThroughPass(implicit, resistiveEdges);
     resolvedStrengths =
         combineStrengthRanges(resolvedStrengths, implicit, resolution);
     auto componentDrivers = cache.driverBits.find(sourceRoot);
@@ -669,17 +727,27 @@ static bool computeResolvedStrengths(const NetAliasCache &cache,
       uint16_t strengths = driverStrengths(driverValue, driverUnknown,
                                            driver.strength0, driver.strength1);
       if (remote)
-        strengths = propagateThroughTran(strengths);
+        strengths = propagateThroughPass(strengths, resistiveEdges);
       resolvedStrengths =
           combineStrengthRanges(resolvedStrengths, strengths, resolution);
     }
     return true;
   };
   if (component != cache.passComponentByRoot.end()) {
-    for (uint64_t sourceRoot : cache.passComponents.at(component->second))
-      if (!accumulateRoot(sourceRoot))
+    const NetPassComponent &passComponent =
+        cache.passComponents.at(component->second);
+    const std::vector<uint64_t> &roots = passComponent.roots;
+    auto target = std::lower_bound(roots.begin(), roots.end(), root);
+    if (target == roots.end() || *target != root ||
+        passComponent.reductions.size() != roots.size() * roots.size())
+      return false;
+    size_t reductionOffset =
+        static_cast<size_t>(target - roots.begin()) * roots.size();
+    for (size_t index = 0; index != roots.size(); ++index)
+      if (!accumulateRoot(roots[index],
+                          passComponent.reductions[reductionOffset + index]))
         return false;
-  } else if (!accumulateRoot(root)) {
+  } else if (!accumulateRoot(root, 0)) {
     return false;
   }
   return true;
@@ -699,7 +767,7 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
     auto component = cache.passComponentByRoot.find(affectedRoots[index]);
     if (component == cache.passComponentByRoot.end())
       continue;
-    for (uint64_t root : cache.passComponents.at(component->second))
+    for (uint64_t root : cache.passComponents.at(component->second).roots)
       if (affectedSet.insert(root).second)
         affectedRoots.push_back(root);
   }
@@ -1132,8 +1200,8 @@ obelisk_rt_status obelisk_rt_count_design_drivers(
     }
     auto neighbors = cache->passNeighbors.find(root);
     if (neighbors != cache->passNeighbors.end())
-      for (uint64_t neighbor : neighbors->second) {
-        auto neighborMembers = cache->members.find(neighbor);
+      for (const NetPassNeighbor &neighbor : neighbors->second) {
+        auto neighborMembers = cache->members.find(neighbor.root);
         if (neighborMembers == cache->members.end() ||
             neighborMembers->second.empty())
           return OBELISK_RT_INVALID_DESIGN;

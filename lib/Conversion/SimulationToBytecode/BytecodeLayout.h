@@ -89,6 +89,7 @@ struct StateLayout {
     bool hasDominance;
     bool rhsDominates;
     uint32_t passSwitchId;
+    bool passResistive;
   };
   llvm::DenseMap<uint64_t, uint64_t> storage;
   llvm::DenseMap<uint64_t, uint64_t> nets;

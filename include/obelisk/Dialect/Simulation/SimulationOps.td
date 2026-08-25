@@ -168,10 +168,10 @@ def SimPassSwitchDeclOp : SimOp<"net.pass.decl", [
   ]> {
   let summary = "static bidirectional pass-switch connection run";
   let description = [{
-    Records an unconditional `tran` channel without collapsing the terminal
-    nets into one declaration. The runtime resolves the electrically connected
-    component together while retaining one logical switch contribution at
-    each endpoint for driver introspection.
+    Records an unconditional `tran` or `rtran` channel without collapsing the
+    terminal nets into one declaration. The runtime resolves the electrically
+    connected component together while retaining terminal-local strength and
+    one logical switch contribution at each endpoint for driver introspection.
   }];
   let arguments = (ins I64Attr:$id, I64Attr:$scope_id,
                        I64Attr:$lhs_net_id, I64Attr:$lhs_offset,

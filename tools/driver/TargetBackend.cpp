@@ -20,6 +20,7 @@
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Runtime/OutputItemFlags.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
@@ -532,6 +533,17 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
         operation);
     needsNetDriverTopology |=
         mlir::isa<obelisk::sim::SimNetCountDriversOp>(operation);
+    if (auto display = mlir::dyn_cast<obelisk::sim::SimDisplayOp>(operation))
+      needsNetDriverTopology |= llvm::any_of(
+          display.getItemFlags(), [](int32_t flags) {
+            return (flags & OBELISK_RT_OUTPUT_ITEM_NET) != 0;
+          });
+    if (auto format =
+            mlir::dyn_cast<obelisk::sim::SimStringOutputFormatOp>(operation))
+      needsNetDriverTopology |= llvm::any_of(
+          format.getItemFlags(), [](int32_t flags) {
+            return (flags & OBELISK_RT_OUTPUT_ITEM_NET) != 0;
+          });
   });
   // The query reads raw driver contributions through the runtime. Bind the
   // generated native planes even when no force/VPI feature otherwise needs

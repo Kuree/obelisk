@@ -545,6 +545,31 @@ exactly in native and bytecode execution at both O0 and O3, including asymmetric
 ranges, high-impedance bounds, local supply strength, and strong-capped remote
 strength across chained pass switches.
 
+G1's fourth closure tranche implements unconditional `rtran` channels from
+28.8 and the exact resistive strength reductions in Table 28-8. Static pass
+components retain separate terminal nets and precompute the least resistive
+crossing count between their roots once, capped where the standard's reduction
+reaches `small`; resolution then uses direct indexed transfers without scanning
+devices in the hot loop. Mixed `tran`/`rtran` chains, parallel paths, primitive
+arrays, bidirectional propagation, force and driver introspection share the
+same compact serialized topology in native and bytecode execution. Native
+generic schedules now retain that image when a display or
+`string.output_format` item carries a direct-net `%v` handle, closing the
+previous status-9 failure without forcing those processes onto bytecode.
+The exact upstream `rtran` strength matrix matches all 112 oracle lines at O0
+and O3 in
+both tiers. Its O3 build takes 0.09 seconds / 82 MB bytecode and 0.43 seconds /
+147 MB native, and its simulation takes below 0.01 seconds in either tier. A
+512-device array with 10,000 input transitions compiles in 0.11 seconds
+bytecode / 0.16 seconds native and simulates in 2.26 / 2.20 seconds, without a
+per-device topology scan during resolution. The real-UVM smoke compiles in
+40.663 seconds bytecode / 107.816 seconds native and simulates in 0.182 / 0.020
+seconds, with zero UVM errors or fatals in both tiers.
+Controlled `tranif0`, `tranif1`, `rtranif0`, and `rtranif1` remain the next G1
+tranche because their four-state controls require scheduler-visible dynamic
+channel enablement; unlike `rtran`, those controlled primitives may also carry
+static turn-on, turn-off, and high-impedance delays.
+
 G4's first closure tranche executes unconditional scalar parallel specify
 paths with one, two, or three static delay values, including specparam and
 min/typ/max-selected values. Elaboration freezes path terminals and rounded
@@ -678,7 +703,7 @@ does not carry a local parser patch for this bug.
 | 25 Interfaces | Partial | Interfaces, modports, parameterization, interface tasks/functions, interface arrays, virtual-interface handles, calls, containers, and clocking-block access execute. Complete the residual virtual-interface clock/event/formal cases and inherit specify support from Clause 30. |
 | 26 Packages | Partial | Packages, imports/exports, scope lookup, and the implemented `std` package surface, including R1 `std::randomize`, execute. Complete the remaining normative Annex G behavior through the randomization and system-task chunks. |
 | 27 Generate constructs | Partial | Loop/conditional generation and ordinary external names elaborate. External tests still expose generate-scope and parameter-binding corner cases. |
-| 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, strength-aware scalar-net `%v`, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, and static unconditional `tran` channels execute. Complete delayed and controlled pass devices, resistive pass-strength reduction, and forced-native large gate-netlist coalescing. |
+| 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, strength-aware scalar-net `%v`, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, and static unconditional `tran`/`rtran` channels with exact resistive strength reduction execute. Complete delayed and controlled pass devices and forced-native large gate-netlist coalescing. |
 | 29 User-defined primitives | Missing | UDP declarations and ports are imported, but table rows and sequential state semantics are not preserved, and an instance currently reaches the built-in-primitive diagnostic. |
 | 30 Specify blocks | Partial | Specparams and specify blocks are imported. Unconditional whole-terminal parallel and full multi-source paths with one/two/three static delays and one destination driver execute through compact inertial drivers in both tiers. Complete partial-select mapping, polarity, conditions, edge/data-source forms, six/twelve-transition delays, state-dependent and multiple-path selection, pulse controls and limits, and `showcancelled`/`noshowcancelled`. Unsupported forms receive targeted Clause 30 diagnostics instead of being silently erased. |
 | 31 Timing checks | Semantic only | System timing-check nodes are imported and now receive a targeted Clause 31 diagnostic instead of being silently erased. G5 implements all stability-window and clock/control checks, edge and condition forms, notifiers, vectors, negative checks, and violation scheduling. |

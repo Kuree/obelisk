@@ -205,6 +205,9 @@ LogicalResult SimPassSwitchDeclOp::verify() {
     return failure();
   if (getWidth() == 0)
     return emitOpError("width must be positive");
+  if (Attribute resistive = (*this)->getAttr("resistive");
+      resistive && !isa<BoolAttr>(resistive))
+    return emitOpError("resistive attribute must be boolean");
   return success();
 }
 

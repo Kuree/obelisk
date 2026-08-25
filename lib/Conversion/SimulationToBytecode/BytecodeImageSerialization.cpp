@@ -229,10 +229,10 @@ SmallVector<uint8_t> serializeBytecodeImage(
     append64(output, connection.width);
     output.push_back(static_cast<uint8_t>(connection.lhsResolution));
     output.push_back(static_cast<uint8_t>(connection.rhsResolution));
-    output.push_back((connection.rhsReversed ? 1 : 0) |
-                     (connection.hasDominance ? 2 : 0) |
-                     (connection.rhsDominates ? 4 : 0) |
-                     (connection.passSwitchId ? 8 : 0));
+    output.push_back(
+        (connection.rhsReversed ? 1 : 0) | (connection.hasDominance ? 2 : 0) |
+        (connection.rhsDominates ? 4 : 0) | (connection.passSwitchId ? 8 : 0) |
+        (connection.passResistive ? 16 : 0));
     output.push_back(0);
     append32(output, connection.passSwitchId);
   }

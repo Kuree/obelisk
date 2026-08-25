@@ -174,11 +174,11 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
   // merging across that boundary emits a record no net contains.
   using ScalarConnection =
       std::tuple<sim::NetResolutionKind, sim::NetResolutionKind, uint64_t,
-                 uint64_t, std::optional<bool>, uint32_t>;
+                 uint64_t, std::optional<bool>, uint32_t, bool>;
   using ScalarConnectionKey = std::tuple<uint64_t, uint64_t, uint32_t>;
   std::map<ScalarConnectionKey, ScalarConnection> scalarConnections;
-  auto collectConnection = [&](auto connection,
-                               uint32_t passSwitchId) -> LogicalResult {
+  auto collectConnection = [&](auto connection, uint32_t passSwitchId,
+                               bool passResistive) -> LogicalResult {
     auto lhs = llvm::find_if(result.netLayouts, [&](const auto &layout) {
       return layout.id == connection.getLhsNetId();
     });
@@ -212,11 +212,11 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
       auto [found, inserted] = scalarConnections.try_emplace(
           ScalarConnectionKey{lhsBit, rhsBit, passSwitchId},
           ScalarConnection{lhsResolution, rhsResolution, lhsNet, rhsNet,
-                           rhsDominates, passSwitchId});
+                           rhsDominates, passSwitchId, passResistive});
       if (!inserted &&
           found->second != ScalarConnection{lhsResolution, rhsResolution,
                                             lhsNet, rhsNet, rhsDominates,
-                                            passSwitchId})
+                                            passSwitchId, passResistive})
         return connection.emitOpError(
                    "has inconsistent duplicate scalar connectivity"),
                failure();
@@ -225,23 +225,24 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
   };
   for (sim::SimNetConnectDeclOp connection :
        design.getBody().getOps<sim::SimNetConnectDeclOp>())
-    if (failed(collectConnection(connection, 0)))
+    if (failed(collectConnection(connection, 0, false)))
       return failure();
   for (sim::SimPassSwitchDeclOp connection :
        design.getBody().getOps<sim::SimPassSwitchDeclOp>()) {
     if (connection.getId() >= UINT32_MAX)
       return connection.emitOpError("ID exceeds bytecode pass-switch range"),
              failure();
+    auto resistive = connection->getAttrOfType<BoolAttr>("resistive");
     if (failed(collectConnection(connection,
-                                 static_cast<uint32_t>(connection.getId()) +
-                                     1)))
+                                 static_cast<uint32_t>(connection.getId()) + 1,
+                                 resistive && resistive.getValue())))
       return failure();
   }
   for (auto scalar = scalarConnections.begin();
        scalar != scalarConnections.end();) {
     auto [lhsOffset, rhsOffset, passSwitchId] = scalar->first;
     auto [lhsResolution, rhsResolution, lhsNet, rhsNet, rhsDominates,
-          ignoredPassSwitchId] = scalar->second;
+          ignoredPassSwitchId, passResistive] = scalar->second;
     uint64_t width = 1;
     int direction = 0;
     auto next = std::next(scalar);
@@ -262,10 +263,10 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
       ++width;
       ++next;
     }
-    result.connections.push_back({lhsOffset, rhsOffset, width, lhsResolution,
-                                  rhsResolution, direction < 0,
-                                  rhsDominates.has_value(),
-                                  rhsDominates.value_or(false), passSwitchId});
+    result.connections.push_back(
+        {lhsOffset, rhsOffset, width, lhsResolution, rhsResolution,
+         direction < 0, rhsDominates.has_value(), rhsDominates.value_or(false),
+         passSwitchId, passResistive});
     scalar = next;
   }
 

@@ -651,10 +651,10 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     sourceUnits.push_back(connection);
   }
 
-  // IEEE 1800-2017 28.12: an unconditional tran channel is electrical
-  // topology, not two continuously evaluated feedback processes. Preserve
-  // the terminal nets as distinct nodes so driver introspection still sees
-  // one switch contribution at each endpoint.
+  // IEEE 1800-2017 28.8 and 28.12: an unconditional tran/rtran channel is
+  // electrical topology, not two continuously evaluated feedback processes.
+  // Preserve the terminal nets as distinct nodes so terminal-local strength
+  // and driver introspection remain observable.
   uint64_t nextPassSwitchId = 0;
   SmallVector<Operation *> executableUnits;
   executableUnits.reserve(sourceUnits.size());
@@ -663,13 +663,14 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     auto name = primitive
                     ? primitive->getAttrOfType<StringAttr>("primitive_name")
                     : StringAttr{};
-    if (!name || name.getValue() != "tran") {
+    bool resistive = name && name.getValue() == "rtran";
+    if (!name || (name.getValue() != "tran" && !resistive)) {
       executableUnits.push_back(unit);
       continue;
     }
     if (primitive.getDelayFs()) {
       emitError(getSemanticLocation(unit))
-          << "delayed tran primitives are not yet supported";
+          << "tran and rtran primitives shall not have delays";
       invalid = true;
       continue;
     }
@@ -678,7 +679,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     bool invalidTerminal = false;
     if (roots.size() != 2) {
       emitError(getSemanticLocation(unit))
-          << "tran primitive requires exactly two terminals";
+          << "tran/rtran primitive requires exactly two terminals";
       invalid = true;
       continue;
     }
@@ -690,7 +691,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       if (children.empty() ||
           !flattenNetExpr(children.front(), terminals[terminal])) {
         emitError(getSemanticLocation(roots[terminal]))
-            << "tran terminal must be a statically selected net";
+            << "tran/rtran terminal must be a statically selected net";
         invalid = true;
         invalidTerminal = true;
         break;
@@ -700,16 +701,17 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       continue;
     size_t lhsIndex = 0, rhsIndex = 0;
     uint64_t lhsConsumed = 0, rhsConsumed = 0;
-    while (lhsIndex != terminals[0].size() &&
-           rhsIndex != terminals[1].size()) {
+    while (lhsIndex != terminals[0].size() && rhsIndex != terminals[1].size()) {
       const NetRun &lhs = terminals[0][lhsIndex];
       const NetRun &rhs = terminals[1][rhsIndex];
       uint64_t width =
           std::min(lhs.width - lhsConsumed, rhs.width - rhsConsumed);
-      sim::SimPassSwitchDeclOp::create(
+      auto pass = sim::SimPassSwitchDeclOp::create(
           builder, getSemanticLocation(unit), nextPassSwitchId++,
           scopes.lookup(unit), lhs.descriptor.id, lhs.offset + lhsConsumed,
           rhs.descriptor.id, rhs.offset + rhsConsumed, width, false);
+      if (resistive)
+        pass->setAttr("resistive", builder.getBoolAttr(true));
       lhsConsumed += width;
       rhsConsumed += width;
       if (lhsConsumed == lhs.width) {
@@ -721,10 +723,9 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
         rhsConsumed = 0;
       }
     }
-    if (lhsIndex != terminals[0].size() ||
-        rhsIndex != terminals[1].size()) {
+    if (lhsIndex != terminals[0].size() || rhsIndex != terminals[1].size()) {
       emitError(getSemanticLocation(unit))
-          << "tran terminals have incompatible widths";
+          << "tran/rtran terminals have incompatible widths";
       invalid = true;
     }
   }

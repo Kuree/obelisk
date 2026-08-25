@@ -80,6 +80,7 @@ target_include_directories(obelisk
   PRIVATE
   ${CMAKE_CURRENT_BINARY_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}
+  ${PROJECT_SOURCE_DIR}/runtime/include
 )
 
 target_compile_definitions(obelisk

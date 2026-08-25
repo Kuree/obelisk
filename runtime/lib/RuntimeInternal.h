@@ -780,14 +780,24 @@ struct NetStrengthDriverPairRange {
   uint8_t highStrength1 = 6;
 };
 
+struct NetPassNeighbor {
+  uint64_t root = 0;
+  bool resistive = false;
+};
+
+struct NetPassComponent {
+  std::vector<uint64_t> roots;
+  std::vector<uint8_t> reductions;
+};
+
 struct NetAliasCache {
   const obelisk_rt_execution_descriptor_v1 *execution = nullptr;
   std::unordered_map<uint64_t, uint64_t> rootByBit;
   std::unordered_map<uint64_t, std::vector<uint64_t>> members;
   std::unordered_map<uint64_t, std::vector<NetDriverBit>> driverBits;
-  std::unordered_map<uint64_t, std::vector<uint64_t>> passNeighbors;
+  std::unordered_map<uint64_t, std::vector<NetPassNeighbor>> passNeighbors;
   std::unordered_map<uint64_t, uint64_t> passComponentByRoot;
-  std::unordered_map<uint64_t, std::vector<uint64_t>> passComponents;
+  std::unordered_map<uint64_t, NetPassComponent> passComponents;
   std::unordered_map<uint64_t, std::vector<uint64_t>>
       uniformDelayedRootsByRoot;
   std::unordered_map<uint64_t, uint8_t> resolutionByRoot;

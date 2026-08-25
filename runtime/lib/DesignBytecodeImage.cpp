@@ -1870,14 +1870,14 @@ bool validateImage(const Image &image) {
         containingNet(connection.lhsOffset, connection.width, false);
     const CaptureRecord *rhs = containingNet(
         connection.rhsOffset, connection.width, (connection.flags & 1) != 0);
-    if (connection.width == 0 || (connection.flags & ~uint8_t{15}) != 0 ||
+    bool resistivePass = (connection.flags & 16) != 0;
+    if (connection.width == 0 || (connection.flags & ~uint8_t{31}) != 0 ||
         ((connection.flags & 2) == 0 && (connection.flags & 4) != 0) ||
-        (passSwitch && ((connection.flags & 6) != 0 ||
-                        connection.tailReserved == 0)) ||
-        (!passSwitch && connection.tailReserved != 0) ||
-        connection.reserved != 0 ||
-        connection.lhsResolution > 9 || connection.rhsResolution > 9 || !lhs ||
-        !rhs ||
+        (passSwitch &&
+         ((connection.flags & 6) != 0 || connection.tailReserved == 0)) ||
+        (!passSwitch && (connection.tailReserved != 0 || resistivePass)) ||
+        connection.reserved != 0 || connection.lhsResolution > 9 ||
+        connection.rhsResolution > 9 || !lhs || !rhs ||
         connection.lhsResolution != decodeNetResolution(lhs->argument) ||
         connection.rhsResolution != decodeNetResolution(rhs->argument) ||
         ((lhs->argument ^ rhs->argument) & 1) != 0 ||
@@ -1905,7 +1905,7 @@ bool validateImage(const Image &image) {
             "connectivity edge endpoints are not canonically ordered");
       scalarConnections.push_back({lhsBit, rhsBit, connection.lhsResolution,
                                    connection.rhsResolution,
-                                   static_cast<uint8_t>(connection.flags & 6),
+                                   static_cast<uint8_t>(connection.flags & 22),
                                    connection.tailReserved});
       if (!passSwitch) {
         uint64_t lhsRoot = findConnectivity(lhsBit);
