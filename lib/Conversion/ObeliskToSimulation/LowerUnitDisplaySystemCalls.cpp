@@ -645,18 +645,23 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
           targetScope = scope;
           break;
         }
-    if (!targetScope) {
+    IntegerAttr unit;
+    IntegerAttr precision;
+    if (targetScope) {
+      unit = targetScope->getAttrOfType<IntegerAttr>("dpi_unit_femtoseconds");
+      precision =
+          targetScope->getAttrOfType<IntegerAttr>("dpi_precision_femtoseconds");
+    } else if (children.empty()) {
+      unit = op->getAttrOfType<IntegerAttr>("system_scope_time_unit_fs");
+      precision =
+          op->getAttrOfType<IntegerAttr>("system_scope_time_precision_fs");
+      if (auto path = op->getAttrOfType<StringAttr>("system_time_scope_path"))
+        targetPath = path;
+    }
+    if (!unit || !precision) {
       emitError(location) << "$printtimescale target scope '"
                           << targetPath.getValue()
                           << "' has no simulation descriptor";
-      return failure();
-    }
-    auto unit =
-        targetScope->getAttrOfType<IntegerAttr>("dpi_unit_femtoseconds");
-    auto precision =
-        targetScope->getAttrOfType<IntegerAttr>("dpi_precision_femtoseconds");
-    if (!unit || !precision) {
-      emitError(location) << "$printtimescale target has no frozen time scale";
       return failure();
     }
 

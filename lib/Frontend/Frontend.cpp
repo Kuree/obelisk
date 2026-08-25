@@ -2245,6 +2245,33 @@ private:
         setSymbolReference(attrs, scope,
                            Op::getSystemScopeSymbolAttrName(operationName),
                            Op::getSystemScopePathAttrName(operationName));
+        StringRef systemName = node.getSubroutineName();
+        if (systemName == "$printtimescale" || systemName == "$timeunit" ||
+            systemName == "$timeprecision") {
+          if (std::optional<slang::TimeScale> scale =
+                  system->scope->getTimeScale()) {
+            attrs.set("system_scope_time_unit_fs",
+                      builder.getI64IntegerAttr(getFemtoseconds(scale->base)));
+            attrs.set(
+                "system_scope_time_precision_fs",
+                builder.getI64IntegerAttr(getFemtoseconds(scale->precision)));
+          }
+          const slang::ast::Scope *timeScope = system->scope;
+          while (timeScope) {
+            const slang::ast::Symbol &timeScopeSymbol = timeScope->asSymbol();
+            if (timeScopeSymbol.kind == slang::ast::SymbolKind::InstanceBody ||
+                timeScopeSymbol.kind == slang::ast::SymbolKind::Package ||
+                timeScopeSymbol.kind ==
+                    slang::ast::SymbolKind::CompilationUnit) {
+              std::string path = getSymbolPath(timeScopeSymbol);
+              if (timeScopeSymbol.kind != slang::ast::SymbolKind::InstanceBody)
+                path += "::";
+              attrs.set("system_time_scope_path", builder.getStringAttr(path));
+              break;
+            }
+            timeScope = timeScopeSymbol.getParentScope();
+          }
+        }
         std::string libraryCell;
         if (const auto *library = scope.getSourceLibrary()) {
           libraryCell += library->name;

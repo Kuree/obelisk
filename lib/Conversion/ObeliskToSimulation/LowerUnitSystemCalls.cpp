@@ -343,15 +343,23 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
           targetScope = scope;
           break;
         }
-    if (!targetScope) {
+    IntegerAttr scale;
+    if (targetScope) {
+      StringRef scaleName = name == "$timeunit" ? "dpi_unit_femtoseconds"
+                                                : "dpi_precision_femtoseconds";
+      scale = targetScope->getAttrOfType<IntegerAttr>(scaleName);
+    } else if (children.empty()) {
+      StringRef scaleName = name == "$timeunit"
+                                ? "system_scope_time_unit_fs"
+                                : "system_scope_time_precision_fs";
+      scale = op->getAttrOfType<IntegerAttr>(scaleName);
+    }
+    if (!scale) {
       emitError(location) << name << " target scope '" << targetPath.getValue()
                           << "' has no simulation descriptor";
       return failure();
     }
-    StringRef scaleName = name == "$timeunit" ? "dpi_unit_femtoseconds"
-                                               : "dpi_precision_femtoseconds";
-    auto scale = targetScope->getAttrOfType<IntegerAttr>(scaleName);
-    if (!scale || !scale.getValue().isStrictlyPositive()) {
+    if (!scale.getValue().isStrictlyPositive()) {
       emitError(location) << name << " target has no frozen time scale";
       return failure();
     }
