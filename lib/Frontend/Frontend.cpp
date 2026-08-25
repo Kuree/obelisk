@@ -89,6 +89,11 @@ constexpr llvm::StringLiteral foldedConstantAttrName = "folded_constant";
 // settled without re-implementing the matching rules downstream.
 constexpr llvm::StringLiteral typeReferenceIdentityAttrName =
     "type_reference_identity";
+// Ordered, post-elaboration UDP declaration data.  Slang has already
+// normalized table spellings and rejected conflicting rows by the time this
+// snapshot is taken; keeping the snapshot in one uniqued dictionary lets all
+// instances of a UDP share it without retaining frontend objects.
+constexpr llvm::StringLiteral udpMetadataAttrName = "udp_metadata";
 
 std::string formatConstant(const slang::ConstantValue &value) {
   if (value.isString())
@@ -1948,6 +1953,66 @@ private:
         if (!isScopeMember)
           attrs.set("is_virtual_interface_type_instance",
                     builder.getBoolAttr(true));
+      }
+    }
+
+    if constexpr (std::same_as<T, slang::ast::PrimitiveSymbol> ||
+                  std::same_as<T, slang::ast::PrimitiveInstanceSymbol>) {
+      const slang::ast::PrimitiveSymbol &primitive = [&]() -> const auto & {
+        if constexpr (std::same_as<T, slang::ast::PrimitiveSymbol>)
+          return node;
+        else
+          return node.primitiveType;
+      }();
+      if (primitive.primitiveKind == slang::ast::PrimitiveSymbol::UserDefined) {
+        SmallVector<NamedAttribute> metadata;
+        SmallVector<Attribute> portNames;
+        SmallVector<int64_t> portDirections;
+        portNames.reserve(primitive.ports.size());
+        portDirections.reserve(primitive.ports.size());
+        for (const slang::ast::PrimitivePortSymbol *port : primitive.ports) {
+          portNames.push_back(builder.getStringAttr(port->name));
+          portDirections.push_back(static_cast<int64_t>(port->direction));
+        }
+        SmallVector<Attribute> tableInputs;
+        SmallVector<int64_t> tableStates;
+        SmallVector<int64_t> tableOutputs;
+        SmallVector<int64_t> tableEdges;
+        tableInputs.reserve(primitive.table.size());
+        tableStates.reserve(primitive.table.size());
+        tableOutputs.reserve(primitive.table.size());
+        tableEdges.reserve(primitive.table.size());
+        for (const slang::ast::PrimitiveSymbol::TableEntry &entry :
+             primitive.table) {
+          tableInputs.push_back(builder.getStringAttr(entry.inputs));
+          tableStates.push_back(static_cast<unsigned char>(entry.state));
+          tableOutputs.push_back(static_cast<unsigned char>(entry.output));
+          tableEdges.push_back(entry.isEdgeSensitive);
+        }
+        metadata.push_back(builder.getNamedAttr(
+            "name", builder.getStringAttr(primitive.name)));
+        metadata.push_back(builder.getNamedAttr(
+            "port_names", builder.getArrayAttr(portNames)));
+        metadata.push_back(builder.getNamedAttr(
+            "port_directions", builder.getDenseI64ArrayAttr(portDirections)));
+        metadata.push_back(builder.getNamedAttr(
+            "table_inputs", builder.getArrayAttr(tableInputs)));
+        metadata.push_back(builder.getNamedAttr(
+            "table_states", builder.getDenseI64ArrayAttr(tableStates)));
+        metadata.push_back(builder.getNamedAttr(
+            "table_outputs", builder.getDenseI64ArrayAttr(tableOutputs)));
+        metadata.push_back(builder.getNamedAttr(
+            "table_edges", builder.getDenseI64ArrayAttr(tableEdges)));
+        metadata.push_back(builder.getNamedAttr(
+            "is_sequential", builder.getBoolAttr(primitive.isSequential)));
+        metadata.push_back(builder.getNamedAttr(
+            "is_edge_sensitive",
+            builder.getBoolAttr(primitive.isEdgeSensitive)));
+        if (primitive.initVal)
+          metadata.push_back(builder.getNamedAttr(
+              "init_value",
+              builder.getStringAttr(formatConstant(*primitive.initVal))));
+        attrs.set(udpMetadataAttrName, builder.getDictionaryAttr(metadata));
       }
     }
 

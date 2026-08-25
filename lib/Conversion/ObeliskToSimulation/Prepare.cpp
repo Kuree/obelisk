@@ -1096,6 +1096,27 @@ void ObeliskSimPreparePass::runOnOperation() {
             << *primitive.getUnsupportedDelay();
         invalid = true;
       }
+      if (auto udp = primitive->getAttrOfType<DictionaryAttr>(
+              udpSemanticMetadataAttrName)) {
+        auto sequential = udp.getAs<BoolAttr>("is_sequential");
+        auto edgeSensitive = udp.getAs<BoolAttr>("is_edge_sensitive");
+        if (!sequential || !edgeSensitive) {
+          emitError(getSemanticLocation(unit))
+              << "user-defined primitive is missing validated declaration "
+                 "metadata";
+          invalid = true;
+        } else if (sequential.getValue() || edgeSensitive.getValue()) {
+          emitError(getSemanticLocation(unit))
+              << "sequential user-defined primitives are not supported yet";
+          invalid = true;
+        }
+        if (auto delays = primitive.getDelayFs();
+            delays && delays->size() > 2) {
+          emitError(getSemanticLocation(unit))
+              << "user-defined primitive delay must contain one or two values";
+          invalid = true;
+        }
+      }
     }
     // Synthetic code units do not carry an elaborated time scale. They must
     // not introduce a 1ns precision into a design whose actual declarations
@@ -7270,6 +7291,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder.getNamedAttr("obelisk_sim.propagation_delays",
                                builder.getDenseI64ArrayAttr(ticks)));
     }
+    if (auto udp = unit.source->getAttrOfType<DictionaryAttr>(
+            udpSemanticMetadataAttrName))
+      functionAttrs.push_back(builder.getNamedAttr(udpMetadataAttrName, udp));
     if (auto rules = unit.source->getAttrOfType<ArrayAttr>(
             "obelisk.timing_path_rules")) {
       SmallVector<Attribute> tickRules;

@@ -183,6 +183,14 @@ inline constexpr ::mlir::StringLiteral interconnectLeavesAttrName =
 /// fixed there as well.
 inline constexpr ::mlir::StringLiteral typeReferenceIdentityAttrName =
     "type_reference_identity";
+/// Ordered post-validation user-defined primitive declaration data.  The
+/// frontend stores this dictionary under the unqualified semantic spelling;
+/// preparation carries it on the isolated executable unit under the Simulation
+/// spelling until unit lowering consumes it.
+inline constexpr ::mlir::StringLiteral udpSemanticMetadataAttrName =
+    "udp_metadata";
+inline constexpr ::mlir::StringLiteral udpMetadataAttrName =
+    "obelisk_sim.udp_metadata";
 inline constexpr ::llvm::StringLiteral captureKindAttrName =
     sim::metadata::captureKind;
 inline constexpr ::llvm::StringLiteral descriptorIdAttrName =

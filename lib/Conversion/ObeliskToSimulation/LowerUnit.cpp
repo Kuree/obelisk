@@ -2357,7 +2357,168 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
 
   Value result;
   std::optional<std::array<Value, 2>> strengthResults;
-  if (name == "pullup" || name == "pulldown") {
+  if (auto udp = function->getAttrOfType<DictionaryAttr>(udpMetadataAttrName)) {
+    auto udpName = udp.getAs<StringAttr>("name");
+    auto portNames = udp.getAs<ArrayAttr>("port_names");
+    auto portDirections = udp.getAs<DenseI64ArrayAttr>("port_directions");
+    auto tableInputs = udp.getAs<ArrayAttr>("table_inputs");
+    auto tableStates = udp.getAs<DenseI64ArrayAttr>("table_states");
+    auto tableOutputs = udp.getAs<DenseI64ArrayAttr>("table_outputs");
+    auto tableEdges = udp.getAs<DenseI64ArrayAttr>("table_edges");
+    auto sequential = udp.getAs<BoolAttr>("is_sequential");
+    auto edgeSensitive = udp.getAs<BoolAttr>("is_edge_sensitive");
+    if (!udpName || udpName.getValue() != name || !portNames ||
+        !portDirections || !tableInputs || !tableStates || !tableOutputs ||
+        !tableEdges || !sequential || !edgeSensitive ||
+        static_cast<int64_t>(portNames.size()) != portDirections.size() ||
+        portNames.size() < 2 ||
+        static_cast<int64_t>(tableInputs.size()) != tableStates.size() ||
+        static_cast<int64_t>(tableInputs.size()) != tableOutputs.size() ||
+        static_cast<int64_t>(tableInputs.size()) != tableEdges.size())
+      return function.emitError("malformed frozen UDP declaration metadata");
+    if (sequential.getValue() || edgeSensitive.getValue())
+      return function.emitError(
+          "sequential user-defined primitive reached combinational lowering");
+    ArrayRef<int64_t> directions = portDirections.asArrayRef();
+    if (directions.front() != 1 ||
+        !llvm::all_of(directions.drop_front(),
+                      [](int64_t direction) { return direction == 0; }) ||
+        !llvm::all_of(portNames, [](Attribute name) {
+          auto string = dyn_cast<StringAttr>(name);
+          return string && !string.getValue().empty();
+        }))
+      return function.emitError(
+          "combinational UDP ports must be one output followed by inputs");
+    if (outputs.size() != 1 || logicType.getWidth() != 1)
+      return function.emitError(
+          "combinational UDP requires one scalar four-state output");
+    unsigned inputCount = portNames.size() - 1;
+    if (inputs.size() != inputCount)
+      return function.emitError(
+          "combinational UDP connection count does not match its ports");
+
+    SmallVector<Value> loweredInputs;
+    loweredInputs.reserve(inputs.size());
+    Type inputType = sim::LogicType::get(function.getContext(), 1);
+    for (Operation *input : inputs) {
+      FailureOr<Value> lowered = lowerInput(input, inputType);
+      if (failed(lowered))
+        return failure();
+      loweredInputs.push_back(*lowered);
+    }
+    auto packedType = sim::LogicType::get(function.getContext(), inputCount);
+    Value packed = loweredInputs.size() == 1
+                       ? loweredInputs.front()
+                       : Value(sim::SimLogicConcatOp::create(
+                             builder, location, packedType, loweredInputs));
+    auto packedPlaneType = IntegerType::get(function.getContext(), inputCount);
+    APInt allBits = APInt::getAllOnes(inputCount);
+    APInt noBits = APInt::getZero(inputCount);
+    auto logicConstant = [&](const APInt &data, const APInt &unknown) -> Value {
+      return sim::SimLogicConstantOp::create(
+          builder, location, packedType,
+          builder.getIntegerAttr(packedPlaneType, data),
+          builder.getIntegerAttr(packedPlaneType, unknown));
+    };
+    Value allOnes = logicConstant(allBits, noBits);
+    // IEEE 1800-2017 29.4: a Z on a UDP input is treated as X.  The gate
+    // truth-table identity `value & '1` performs exactly that canonicalization
+    // while preserving ordinary 0, 1, and X inputs.
+    Value normalized = sim::SimLogicBinaryOp::create(
+        builder, location, packedType, sim::BinaryKind::And, packed, allOnes);
+    auto scalarPlaneType = IntegerType::get(function.getContext(), 1);
+    auto scalarConstant = [&](char value) -> Value {
+      APInt data(1, value == '1');
+      APInt unknown(1, value == 'x');
+      return sim::SimLogicConstantOp::create(
+          builder, location, logicType,
+          builder.getIntegerAttr(scalarPlaneType, data),
+          builder.getIntegerAttr(scalarPlaneType, unknown));
+    };
+    Value outputZero = scalarConstant('0');
+    Value outputOne = scalarConstant('1');
+    Value outputX = scalarConstant('x');
+    result = outputX;
+    Value knownTrue = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    Value selfDifference;
+    ArrayRef<int64_t> states = tableStates.asArrayRef();
+    ArrayRef<int64_t> tableOutputValues = tableOutputs.asArrayRef();
+    ArrayRef<int64_t> edges = tableEdges.asArrayRef();
+    for (int64_t rowIndex = static_cast<int64_t>(tableInputs.size()) - 1;
+         rowIndex >= 0; --rowIndex) {
+      auto row = dyn_cast<StringAttr>(tableInputs[rowIndex]);
+      int64_t outputValue = tableOutputValues[rowIndex];
+      char output = static_cast<char>(outputValue);
+      if (!row || row.getValue().size() != inputCount ||
+          states[rowIndex] != 0 || edges[rowIndex] != 0 ||
+          (outputValue != '0' && outputValue != '1' && outputValue != 'x'))
+        return function.emitError("malformed combinational UDP table row");
+      APInt exactMask(inputCount, 0);
+      APInt knownMask(inputCount, 0);
+      APInt patternData(inputCount, 0);
+      APInt patternUnknown(inputCount, 0);
+      for (auto [inputIndex, symbol] : llvm::enumerate(row.getValue())) {
+        unsigned bit = inputCount - 1 - inputIndex;
+        switch (symbol) {
+        case '0':
+          exactMask.setBit(bit);
+          break;
+        case '1':
+          exactMask.setBit(bit);
+          patternData.setBit(bit);
+          break;
+        case 'x':
+          exactMask.setBit(bit);
+          patternUnknown.setBit(bit);
+          break;
+        case 'b':
+          knownMask.setBit(bit);
+          break;
+        case '?':
+          break;
+        default:
+          return function.emitError(
+              "invalid symbol in frozen combinational UDP table");
+        }
+      }
+      Value matches = knownTrue;
+      if (!exactMask.isZero()) {
+        Value mask = logicConstant(exactMask, noBits);
+        Value masked = sim::SimLogicBinaryOp::create(
+            builder, location, packedType, sim::BinaryKind::And, normalized,
+            mask);
+        Value pattern = logicConstant(patternData, patternUnknown);
+        matches = sim::SimLogicCompareOp::create(
+            builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
+            masked, pattern);
+      }
+      if (!knownMask.isZero()) {
+        if (!selfDifference)
+          selfDifference = sim::SimLogicBinaryOp::create(
+              builder, location, packedType, sim::BinaryKind::Xor, normalized,
+              normalized);
+        Value mask = logicConstant(knownMask, noBits);
+        Value maskedDifference = sim::SimLogicBinaryOp::create(
+            builder, location, packedType, sim::BinaryKind::And, selfDifference,
+            mask);
+        Value known = sim::SimLogicCompareOp::create(
+            builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
+            maskedDifference, logicConstant(noBits, noBits));
+        matches = exactMask.isZero() ? known
+                                     : Value(arith::AndIOp::create(
+                                           builder, location, matches, known));
+      }
+      Value rowOutput = output == '0'   ? outputZero
+                        : output == '1' ? outputOne
+                                        : outputX;
+      result = arith::SelectOp::create(builder, location, matches, rowOutput,
+                                       result);
+    }
+    // This compile-time inventory is deliberately absent from the finalized
+    // hot function; only the compact lookup SSA above survives downstream.
+    function->removeAttr(udpMetadataAttrName);
+  } else if (name == "pullup" || name == "pulldown") {
     if (!inputs.empty())
       return emitError(location)
              << "primitive '" << name << "' requires no inputs";
