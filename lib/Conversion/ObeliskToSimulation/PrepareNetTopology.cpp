@@ -118,6 +118,16 @@ static bool isPassSwitch(Operation *unit) {
           name.getValue() == "rtranif0" || name.getValue() == "rtranif1");
 }
 
+static bool isMosSwitch(Operation *unit) {
+  auto primitive = dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(unit);
+  auto name = primitive ? primitive->getAttrOfType<StringAttr>("primitive_name")
+                        : StringAttr{};
+  return name &&
+         (name.getValue() == "nmos" || name.getValue() == "pmos" ||
+          name.getValue() == "cmos" || name.getValue() == "rnmos" ||
+          name.getValue() == "rpmos" || name.getValue() == "rcmos");
+}
+
 static Operation *peelClockingOutputSelects(Operation *destination) {
   while (isa<semantic::SVElementSelectExpressionOp,
              semantic::SVRangeSelectExpressionOp>(destination)) {
@@ -720,14 +730,44 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
                     ? primitive->getAttrOfType<StringAttr>("primitive_name")
                     : StringAttr{};
     bool controlled = isControlledPassSwitch(unit);
+    bool topologyMos = false;
+    if (isMosSwitch(unit)) {
+      SmallVector<Operation *> roots = getChildren(unit);
+      bool complementary = name &&
+                           (name.getValue() == "cmos" ||
+                            name.getValue() == "rcmos");
+      if (roots.size() == (complementary ? 4u : 3u)) {
+        auto output = dyn_cast<semantic::SVAssignmentExpressionOp>(roots[0]);
+        SmallVector<Operation *> outputChildren =
+            output ? getChildren(output) : SmallVector<Operation *>{};
+        SmallVector<NetRun> outputRuns, sourceRuns;
+        topologyMos = !outputChildren.empty() &&
+                      flattenNetExpr(outputChildren.front(), outputRuns) &&
+                      flattenNetExpr(roots[1], sourceRuns);
+      }
+    }
+    controlled |= topologyMos;
     bool resistive = name && (name.getValue() == "rtran" ||
                               name.getValue() == "rtranif0" ||
-                              name.getValue() == "rtranif1");
-    if (!name || (name.getValue() != "tran" && !resistive && !controlled)) {
+                              name.getValue() == "rtranif1" ||
+                              (topologyMos &&
+                               (name.getValue() == "rnmos" ||
+                                name.getValue() == "rpmos" ||
+                                name.getValue() == "rcmos")));
+    if (!name ||
+        (name.getValue() != "tran" && !resistive && !controlled &&
+         !topologyMos)) {
       executableUnits.push_back(unit);
       continue;
     }
     if (auto delays = primitive.getDelayFs()) {
+      if (topologyMos) {
+        emitError(getSemanticLocation(unit))
+            << "delayed MOS/CMOS with a resolved-net source requires "
+               "strength-preserving inertial topology delay support";
+        invalid = true;
+        continue;
+      }
       if (!controlled) {
         emitError(getSemanticLocation(unit))
             << "tran and rtran primitives cannot have delays";
@@ -744,7 +784,11 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     SmallVector<Operation *> roots = getChildren(unit);
     SmallVector<NetRun> terminals[2];
     bool invalidTerminal = false;
-    if (roots.size() != (controlled ? 3u : 2u)) {
+    bool complementaryMos =
+        topologyMos &&
+        (name.getValue() == "cmos" || name.getValue() == "rcmos");
+    if (roots.size() != (topologyMos ? (complementaryMos ? 4u : 3u)
+                                    : (controlled ? 3u : 2u))) {
       emitError(getSemanticLocation(unit))
           << "tran-family primitive requires two terminals"
           << (controlled ? " and one control" : "");
@@ -752,14 +796,19 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       continue;
     }
     for (unsigned terminal = 0; terminal != 2; ++terminal) {
-      auto assignment =
-          dyn_cast<semantic::SVAssignmentExpressionOp>(roots[terminal]);
-      SmallVector<Operation *> children =
-          assignment ? getChildren(assignment) : SmallVector<Operation *>{};
-      if (children.empty() ||
-          !flattenNetExpr(children.front(), terminals[terminal])) {
+      Operation *expression = roots[terminal];
+      if (terminal == 0) {
+        auto assignment =
+            dyn_cast<semantic::SVAssignmentExpressionOp>(expression);
+        SmallVector<Operation *> children =
+            assignment ? getChildren(assignment) : SmallVector<Operation *>{};
+        expression = children.empty() ? nullptr : children.front();
+      }
+      if (!expression || !flattenNetExpr(expression, terminals[terminal])) {
         emitError(getSemanticLocation(roots[terminal]))
-            << "tran/rtran terminal must be a statically selected net";
+            << (topologyMos ? "MOS source and output terminals"
+                            : "tran/rtran terminal")
+            << " must be a statically selected net";
         invalid = true;
         invalidTerminal = true;
         break;
@@ -788,7 +837,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       }
     }
     bool sharedArrayControl =
-        controlled && arrayParent &&
+        controlled && !topologyMos && arrayParent &&
         !isa<semantic::SVElementSelectExpressionOp,
              semantic::SVRangeSelectExpressionOp>(roots[2]);
 
@@ -858,6 +907,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
           rhs.offset + rhsConsumed, width, false);
       if (resistive)
         pass->setAttr("resistive", builder.getBoolAttr(true));
+      if (topologyMos)
+        pass->setAttr("directed", builder.getBoolAttr(true));
       if (controlled) {
         pass->setAttr("controlled", builder.getBoolAttr(true));
         pass->setAttr("control_group",
@@ -900,7 +951,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
         if (arrayOrdinal == 0)
           executableUnits.push_back(representative);
       } else {
-        unit->setAttr("obelisk_sim.pass_switch_ids",
+        unit->setAttr(topologyMos ? "obelisk_sim.mos_topology_ids"
+                                 : "obelisk_sim.pass_switch_ids",
                       builder.getDenseI64ArrayAttr(passSwitchIds));
         executableUnits.push_back(unit);
       }
@@ -1077,7 +1129,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     }
   };
   for (Operation *unit : sourceUnits) {
-    if (isControlledPassSwitch(unit))
+    if (isControlledPassSwitch(unit) ||
+        unit->hasAttr("obelisk_sim.mos_topology_ids"))
       continue;
     bool continuous =
         isa<semantic::SVContinuousAssignSymbolOp,

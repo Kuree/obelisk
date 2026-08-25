@@ -601,6 +601,19 @@ already-recorded per-instance actor scheduling/coalescing boundary, not a
 pending-event or topology-device scan. Exact MOS source-strength forwarding
 and forced-native large gate-netlist coalescing still keep G1 partial.
 
+G1's seventh closure tranche forwards the exact resolved source strength of
+undelayed `nmos`, `pmos`, `cmos`, `rnmos`, `rpmos`, and `rcmos` devices. A
+statically selected net source becomes a frozen directed controlled topology
+edge, so strength-only source transitions, force/release, uncertain controls,
+CMOS dominance, one-way isolation, supply-to-strong limiting, and Table 28-8
+resistive reduction reuse the same 15-point resolver as pass switches. Sparse
+reachable-source rows keep resolution proportional to actual fanout rather
+than scanning the full component or device inventory. Native and bytecode
+execution match at O0 and O3. Delayed MOS/CMOS with a resolved-net source now
+receives a precise diagnostic instead of silently falling back to a
+fixed-strength driver; a strength-carrying inertial topology edge and
+forced-native large gate-netlist coalescing remain before G1 is complete.
+
 G4's first closure tranche executes unconditional scalar parallel specify
 paths with one, two, or three static delay values, including specparam and
 min/typ/max-selected values. Elaboration freezes path terminals and rounded
@@ -806,7 +819,7 @@ and 73.183 seconds compile / 0.019 seconds simulate for native.
 | 25 Interfaces | Partial | Interfaces, modports, parameterization, interface tasks/functions, interface arrays, virtual-interface handles, calls, containers, and clocking-block access execute. Complete the residual virtual-interface clock/event/formal cases and inherit specify support from Clause 30. |
 | 26 Packages | Partial | Packages, imports/exports, scope lookup, and the implemented `std` package surface, including R1 `std::randomize`, execute. Complete the remaining normative Annex G behavior through the randomization and system-task chunks. |
 | 27 Generate constructs | Partial | Loop/conditional generation and ordinary external names elaborate. External tests still expose generate-scope and parameter-binding corner cases. |
-| 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, strength-aware scalar-net `%v`, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, and `tran`/`rtran`/`tranif0`/`tranif1`/`rtranif0`/`rtranif1` channels with exact four-state connectivity and resistive strength reduction execute. Controlled pass devices support their standard static turn-on/turn-off/high-impedance delays with keyed inertial cancellation. Complete exact MOS source-strength forwarding and forced-native large gate-netlist coalescing. |
+| 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, strength-aware scalar-net `%v`, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, exact undelayed resolved-net source-strength forwarding, and `tran`/`rtran`/`tranif0`/`tranif1`/`rtranif0`/`rtranif1` channels with exact four-state connectivity and resistive strength reduction execute. Controlled pass devices support their standard static turn-on/turn-off/high-impedance delays with keyed inertial cancellation. Complete strength-preserving delayed MOS topology and forced-native large gate-netlist coalescing. |
 | 29 User-defined primitives | Missing | UDP declarations and ports are imported, but table rows and sequential state semantics are not preserved, and an instance currently reaches the built-in-primitive diagnostic. |
 | 30 Specify blocks | Partial | Specparams and specify blocks are imported. Unconditional whole-terminal parallel and full multi-source paths with unknown, positive, or negative polarity, one/two/three static delays, and one destination driver execute through compact inertial drivers in both tiers; overlapping paths with distinct whole sources use precomputed path-sensitive arbitration, and equal-delay paths may cross a proven static combinational source closure. Complete partial-select mapping, conditions, edge/data-source forms, six/twelve-transition delays, the remaining general path-to-driver mappings, pulse controls and limits, and `showcancelled`/`noshowcancelled`. Unsupported forms receive targeted Clause 30 diagnostics instead of being silently erased. |
 | 31 Timing checks | Semantic only | System timing-check nodes are imported and now receive a targeted Clause 31 diagnostic instead of being silently erased. G5 implements all stability-window and clock/control checks, edge and condition forms, notifiers, vectors, negative checks, and violation scheduling. |
@@ -1011,8 +1024,9 @@ one commit.
     tables, arrays, exact strength-aware scalar `%v`, and unconditional and
     four-state-controlled tran/rtran propagation with chained exact resistive
     strength reduction are complete; controlled pass devices also implement
-    their standard static delays. Implement exact MOS source-strength
-    forwarding and forced-native gate-fragment coalescing.
+    their standard static delays, and exact undelayed MOS source-strength
+    forwarding executes. Implement strength-preserving delayed MOS topology
+    and forced-native gate-fragment coalescing.
 37. **G2 — Combinational UDPs (29.3-29.4, 29.8).** Preserve truth-table rows
     in semantic IR and compile exact four-state matching, instances, arrays,
     strengths, and delays.

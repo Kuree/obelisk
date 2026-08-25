@@ -7255,6 +7255,10 @@ void ObeliskSimPreparePass::runOnOperation() {
             "obelisk_sim.pass_switch_ids"))
       functionAttrs.push_back(builder.getNamedAttr(
           "obelisk_sim.pass_switch_ids", passSwitchIds));
+    if (auto mosTopologyIds = unit.source->getAttrOfType<DenseI64ArrayAttr>(
+            "obelisk_sim.mos_topology_ids"))
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.mos_topology_ids", mosTopologyIds));
     if (unit.source->hasAttr(sequenceEndpointEventAttrName)) {
       functionAttrs.push_back(builder.getNamedAttr(
           sequenceEndpointMonitorAttrName, builder.getUnitAttr()));

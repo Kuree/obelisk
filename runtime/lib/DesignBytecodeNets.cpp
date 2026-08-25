@@ -196,6 +196,16 @@ static bool rebuildPassComponent(NetPassComponent &component) {
         component.reductions);
   close(component.possibleNonresistive, component.possibleResistive,
         component.possibleReductions);
+  component.reachableSources.assign(count, {});
+  for (size_t target = 0; target != count; ++target)
+    for (size_t source = 0; source != count; ++source) {
+      size_t slot = target * count + source;
+      if (component.possibleReductions[slot] == 5)
+        continue;
+      component.reachableSources[target].push_back(
+          {static_cast<uint32_t>(source), component.reductions[slot],
+           component.possibleReductions[slot]});
+    }
   return true;
 }
 
@@ -310,10 +320,14 @@ NetAliasCache *getNetAliasCache(const Image &image,
       uint64_t rhsRoot = cache.rootByBit.at(rhs);
       bool resistive = (connection.flags & 16) != 0;
       bool controlled = (connection.flags & 32) != 0;
+      bool directed = (connection.flags & 2) != 0;
+      bool rhsToLhs = (connection.flags & 4) != 0;
       cache.passNeighbors[lhsRoot].push_back(
-          {rhsRoot, connection.tailReserved, resistive, controlled});
+          {rhsRoot, connection.tailReserved, resistive, controlled, directed,
+           !directed || rhsToLhs});
       cache.passNeighbors[rhsRoot].push_back(
-          {lhsRoot, connection.tailReserved, resistive, controlled});
+          {lhsRoot, connection.tailReserved, resistive, controlled, directed,
+           !directed || !rhsToLhs});
     }
   }
   std::unordered_map<uint64_t, uint64_t> passParents;
@@ -359,7 +373,8 @@ NetAliasCache *getNetAliasCache(const Image &image,
       for (const NetPassNeighbor &edge : cache.passNeighbors.at(lhsRoot)) {
         uint32_t lhs = static_cast<uint32_t>(rootIndex.at(lhsRoot));
         uint32_t rhs = static_cast<uint32_t>(rootIndex.at(edge.root));
-        if (lhs >= rhs)
+        if ((edge.directed && !edge.receives) ||
+            (!edge.directed && lhs >= rhs))
           continue;
         size_t forward = static_cast<size_t>(lhs) * roots.size() + rhs;
         size_t reverse = static_cast<size_t>(rhs) * roots.size() + lhs;
@@ -369,12 +384,13 @@ NetAliasCache *getNetAliasCache(const Image &image,
           // necessarily been resolved through it yet.
           cache.controlledPassStates.try_emplace(edge.passSwitchId, 3);
           cache.controlledPassEdges[edge.passSwitchId].push_back(
-              {component, lhs, rhs, edge.resistive});
+              {component, lhs, rhs, edge.resistive, edge.directed});
           auto &possible = edge.resistive
                                ? passComponent.possibleResistive
                                : passComponent.possibleNonresistive;
           ++possible[forward];
-          ++possible[reverse];
+          if (!edge.directed)
+            ++possible[reverse];
           continue;
         }
         auto &definite = edge.resistive
@@ -384,9 +400,11 @@ NetAliasCache *getNetAliasCache(const Image &image,
                              ? passComponent.possibleResistive
                              : passComponent.possibleNonresistive;
         ++definite[forward];
-        ++definite[reverse];
+        if (!edge.directed)
+          ++definite[reverse];
         ++possible[forward];
-        ++possible[reverse];
+        if (!edge.directed)
+          ++possible[reverse];
       }
     if (!rebuildPassComponent(passComponent))
       return nullptr;
@@ -835,15 +853,15 @@ static bool computeResolvedStrengths(const NetAliasCache &cache,
     if (target == roots.end() || *target != root ||
         passComponent.reductions.size() != roots.size() * roots.size() ||
         passComponent.possibleReductions.size() !=
-            roots.size() * roots.size())
+            roots.size() * roots.size() ||
+        passComponent.reachableSources.size() != roots.size())
       return false;
-    size_t reductionOffset =
-        static_cast<size_t>(target - roots.begin()) * roots.size();
-    for (size_t index = 0; index != roots.size(); ++index)
-      if (!accumulateRoot(
-              roots[index], passComponent.reductions[reductionOffset + index],
-              passComponent
-                  .possibleReductions[reductionOffset + index]))
+    size_t targetIndex = static_cast<size_t>(target - roots.begin());
+    for (const NetPassComponent::ReachableSource &source :
+         passComponent.reachableSources[targetIndex])
+      if (source.index >= roots.size() ||
+          !accumulateRoot(roots[source.index], source.definiteReduction,
+                          source.possibleReduction))
         return false;
   } else if (!accumulateRoot(root, 0, 0)) {
     return false;
@@ -1299,6 +1317,8 @@ obelisk_rt_status obelisk_rt_count_design_drivers(
     auto neighbors = cache->passNeighbors.find(root);
     if (neighbors != cache->passNeighbors.end())
       for (const NetPassNeighbor &neighbor : neighbors->second) {
+        if (neighbor.directed && !neighbor.receives)
+          continue;
         if (neighbor.controlled) {
           auto state = cache->controlledPassStates.find(neighbor.passSwitchId);
           if (state == cache->controlledPassStates.end())
@@ -1367,10 +1387,12 @@ applyPassSwitchControl(obelisk_rt_context *context, uint32_t passSwitchId,
     auto adjust = [&](std::vector<uint32_t> &counts, bool add) {
       if (add) {
         ++counts[forward];
-        ++counts[reverse];
+        if (!edge.directed)
+          ++counts[reverse];
       } else {
         --counts[forward];
-        --counts[reverse];
+        if (!edge.directed)
+          --counts[reverse];
       }
     };
     auto &definite = edge.resistive ? pass.definiteResistive

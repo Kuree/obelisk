@@ -171,9 +171,12 @@ def SimPassSwitchDeclOp : SimOp<"net.pass.decl", [
   let summary = "static bidirectional pass-switch connection run";
   let description = [{
     Records a `tran`, `rtran`, `tranif`, or `rtranif` channel without collapsing the
-    terminal nets into one declaration. The runtime resolves the electrically
-    connected component together while retaining terminal-local strength and
-    one logical switch contribution at each endpoint for driver introspection.
+    terminal nets into one declaration. A boolean `directed` attribute extends
+    the same frozen representation to a MOS/CMOS source-to-output channel; its
+    right terminal is the source and its left terminal is the destination. The
+    runtime resolves the electrically connected component together while
+    retaining terminal-local strength and one logical switch contribution at
+    each endpoint for driver introspection.
   }];
   let arguments = (ins I64Attr:$id, I64Attr:$scope_id,
                        I64Attr:$lhs_net_id, I64Attr:$lhs_offset,

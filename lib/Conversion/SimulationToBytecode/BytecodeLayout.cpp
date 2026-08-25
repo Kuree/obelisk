@@ -174,7 +174,8 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
   // merging across that boundary emits a record no net contains.
   using ScalarConnection =
       std::tuple<sim::NetResolutionKind, sim::NetResolutionKind, uint64_t,
-                 uint64_t, std::optional<bool>, uint32_t, bool, bool>;
+                 uint64_t, std::optional<bool>, uint32_t, bool, bool, bool,
+                 bool>;
   // Keep the declaration identity separate from the runtime control ID.  An
   // elaborated primitive array can publish one shared scalar control for many
   // distinct switches, including parallel switches between the same bits.
@@ -185,7 +186,8 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
   std::map<ScalarConnectionKey, ScalarConnection> scalarConnections;
   auto collectConnection = [&](auto connection, uint32_t identity,
                                uint32_t passSwitchId, bool passResistive,
-                               bool passControlled) -> LogicalResult {
+                               bool passControlled,
+                               bool passDirected = false) -> LogicalResult {
     auto lhs = llvm::find_if(result.netLayouts, [&](const auto &layout) {
       return layout.id == connection.getLhsNetId();
     });
@@ -204,6 +206,10 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
       sim::NetResolutionKind rhsResolution = rhs->resolution;
       uint64_t lhsNet = lhs->id, rhsNet = rhs->id;
       std::optional<bool> rhsDominates;
+      // Directed switch declarations use the semantic right terminal as the
+      // source and the left terminal as the destination. Preserve that
+      // orientation after canonical endpoint ordering.
+      bool passRhsToLhs = true;
       if constexpr (std::is_same_v<decltype(connection),
                                    sim::SimNetConnectDeclOp>)
         rhsDominates = connection.getRhsDominates();
@@ -213,6 +219,7 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
         std::swap(lhsNet, rhsNet);
         if (rhsDominates)
           rhsDominates = !*rhsDominates;
+        passRhsToLhs = false;
       }
       if (lhsBit == rhsBit)
         continue;
@@ -220,12 +227,13 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
           ScalarConnectionKey{lhsBit, rhsBit, identity, passSwitchId},
           ScalarConnection{lhsResolution, rhsResolution, lhsNet, rhsNet,
                            rhsDominates, passSwitchId, passResistive,
-                           passControlled});
+                           passControlled, passDirected, passRhsToLhs});
       if (!inserted &&
           found->second != ScalarConnection{lhsResolution, rhsResolution,
                                             lhsNet, rhsNet, rhsDominates,
                                             passSwitchId, passResistive,
-                                            passControlled})
+                                            passControlled, passDirected,
+                                            passRhsToLhs})
         return connection.emitOpError(
                    "has inconsistent duplicate scalar connectivity"),
                failure();
@@ -234,7 +242,7 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
   };
   for (sim::SimNetConnectDeclOp connection :
        design.getBody().getOps<sim::SimNetConnectDeclOp>())
-    if (failed(collectConnection(connection, 0, 0, false, false)))
+    if (failed(collectConnection(connection, 0, 0, false, false, false)))
       return failure();
   for (sim::SimPassSwitchDeclOp connection :
        design.getBody().getOps<sim::SimPassSwitchDeclOp>()) {
@@ -243,6 +251,7 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
              failure();
     auto resistive = connection->getAttrOfType<BoolAttr>("resistive");
     auto controlled = connection->getAttrOfType<BoolAttr>("controlled");
+    auto directed = connection->getAttrOfType<BoolAttr>("directed");
     uint32_t controlId = static_cast<uint32_t>(connection.getId()) + 1;
     if (auto group = connection->getAttrOfType<IntegerAttr>("control_group")) {
       if (group.getValue().isNegative() ||
@@ -256,14 +265,16 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
     if (failed(collectConnection(connection,
                                  static_cast<uint32_t>(connection.getId()) + 1,
                                  controlId, resistive && resistive.getValue(),
-                                 controlled && controlled.getValue())))
+                                 controlled && controlled.getValue(),
+                                 directed && directed.getValue())))
       return failure();
   }
   for (auto scalar = scalarConnections.begin();
        scalar != scalarConnections.end();) {
     auto [lhsOffset, rhsOffset, ignoredIdentity, passSwitchId] = scalar->first;
     auto [lhsResolution, rhsResolution, lhsNet, rhsNet, rhsDominates,
-          ignoredPassSwitchId, passResistive, passControlled] = scalar->second;
+          ignoredPassSwitchId, passResistive, passControlled, passDirected,
+          passRhsToLhs] = scalar->second;
     uint64_t width = 1;
     int direction = 0;
     auto next = std::next(scalar);
@@ -287,7 +298,8 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
     result.connections.push_back(
         {lhsOffset, rhsOffset, width, lhsResolution, rhsResolution,
          direction < 0, rhsDominates.has_value(), rhsDominates.value_or(false),
-         passSwitchId, passResistive, passControlled});
+         passSwitchId, passResistive, passControlled, passDirected,
+         passRhsToLhs});
     scalar = next;
   }
 

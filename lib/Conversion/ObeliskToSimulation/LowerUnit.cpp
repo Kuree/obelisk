@@ -2163,6 +2163,49 @@ LogicalResult UnitLowering::lowerSequence(ArrayRef<Operation *> operations) {
 LogicalResult UnitLowering::lowerPrimitive(StringRef name,
                                            ArrayRef<Operation *> operations) {
   Location location = function.getLoc();
+  if (auto ids = function->getAttrOfType<DenseI64ArrayAttr>(
+          "obelisk_sim.mos_topology_ids")) {
+    bool complementary = name == "cmos" || name == "rcmos";
+    if (ids.empty() || operations.size() != (complementary ? 4u : 3u))
+      return emitError(location)
+             << "strength-forwarding MOS primitive has malformed topology";
+    auto lowerControl = [&](Operation *operation) -> FailureOr<Value> {
+      FailureOr<Value> lowered = lowerExpression(operation);
+      if (failed(lowered))
+        return failure();
+      Location controlLocation = getSemanticLocation(operation);
+      FailureOr<Value> scalar = toPackedScalar(*lowered, controlLocation);
+      if (failed(scalar))
+        return failure();
+      FailureOr<Value> logic = toLogic(*scalar, controlLocation);
+      if (failed(logic))
+        return failure();
+      return convert(*logic, sim::LogicType::get(function.getContext(), 1),
+                     isSignedNode(operation), controlLocation);
+    };
+    FailureOr<Value> nControl = lowerControl(operations[2]);
+    if (failed(nControl))
+      return failure();
+    Value activeHigh = *nControl;
+    if (complementary) {
+      FailureOr<Value> pControl = lowerControl(operations[3]);
+      if (failed(pControl))
+        return failure();
+      Value invertedP = sim::SimLogicUnaryOp::create(
+          builder, location, pControl->getType(), sim::UnaryKind::BitNot,
+          *pControl);
+      activeHigh = sim::SimLogicBinaryOp::create(
+          builder, location, activeHigh.getType(), sim::BinaryKind::Or,
+          activeHigh, invertedP);
+    } else if (name == "pmos" || name == "rpmos") {
+      activeHigh = sim::SimLogicUnaryOp::create(
+          builder, location, activeHigh.getType(), sim::UnaryKind::BitNot,
+          activeHigh);
+    }
+    for (int64_t id : ids.asArrayRef())
+      sim::SimPassSwitchControlOp::create(builder, location, activeHigh, id);
+    return success();
+  }
   if (name == "tranif0" || name == "tranif1" || name == "rtranif0" ||
       name == "rtranif1") {
     if (operations.size() != 3)

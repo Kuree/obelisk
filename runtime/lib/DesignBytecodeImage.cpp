@@ -1894,8 +1894,7 @@ bool validateImage(const Image &image) {
     bool controlledPass = (connection.flags & 32) != 0;
     if (connection.width == 0 || (connection.flags & ~uint8_t{63}) != 0 ||
         ((connection.flags & 2) == 0 && (connection.flags & 4) != 0) ||
-        (passSwitch &&
-         ((connection.flags & 6) != 0 || connection.tailReserved == 0)) ||
+        (passSwitch && connection.tailReserved == 0) ||
         (!passSwitch &&
          (connection.tailReserved != 0 || resistivePass || controlledPass)) ||
         connection.reserved != 0 || connection.lhsResolution > 9 ||

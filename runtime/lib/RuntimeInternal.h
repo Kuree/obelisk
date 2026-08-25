@@ -801,6 +801,10 @@ struct NetPassNeighbor {
   uint32_t passSwitchId = 0;
   bool resistive = false;
   bool controlled = false;
+  // A directed MOS edge is retained in both adjacency lists for component
+  // discovery, but contributes only where `receives` is true.
+  bool directed = false;
+  bool receives = true;
 };
 
 struct NetControlledPassEdge {
@@ -808,9 +812,15 @@ struct NetControlledPassEdge {
   uint32_t lhs = 0;
   uint32_t rhs = 0;
   bool resistive = false;
+  bool directed = false;
 };
 
 struct NetPassComponent {
+  struct ReachableSource {
+    uint32_t index = 0;
+    uint8_t definiteReduction = 5;
+    uint8_t possibleReduction = 5;
+  };
   std::vector<uint64_t> roots;
   // Direct-edge reference counts make one controlled switch update O(1) per
   // scalar edge even in the presence of parallel devices. Resolution reads
@@ -821,6 +831,10 @@ struct NetPassComponent {
   std::vector<uint32_t> possibleResistive;
   std::vector<uint8_t> reductions;
   std::vector<uint8_t> possibleReductions;
+  // Sparse rows keep resolution proportional to electrically reachable
+  // sources. This matters for a common MOS fanout: N one-way outputs share a
+  // source, but each output has only two contributing roots rather than N.
+  std::vector<std::vector<ReachableSource>> reachableSources;
 };
 
 struct NetAliasCache {
