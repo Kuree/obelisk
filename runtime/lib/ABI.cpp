@@ -728,6 +728,7 @@ static_assert(OBELISK_RT_ARG_MANAGED_OBJECT == 7);
 static_assert(OBELISK_RT_ARG_VIRTUAL_INTERFACE == 8);
 static_assert(OBELISK_RT_ARG_PROCESS == 9);
 static_assert(OBELISK_RT_ARG_ENUM == 10);
+static_assert(OBELISK_RT_ARG_NET == 11);
 static_assert(OBELISK_RT_ARG_SIGNED == 1);
 static_assert(OBELISK_RT_ARG_FORMAT_STRING == 2);
 static_assert(OBELISK_RT_ARG_DESIGNATED_FORMAT == 4);

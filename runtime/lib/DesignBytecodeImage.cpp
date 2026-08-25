@@ -1120,7 +1120,7 @@ bool validIntrinsic(const Image &image, const Function &function,
     for (uint32_t index = 1; index < site.inputCount; ++index)
       if (!bytes(input(index)) && !numeric(input(index)) &&
           !floating(input(index)) && !string(input(index)) &&
-          !managed(input(index)))
+          !managed(input(index)) && !handle(input(index)))
         return false;
     return true;
   case OBELISK_RT_INTRINSIC_V1_DISPLAY:
@@ -1130,7 +1130,7 @@ bool validIntrinsic(const Image &image, const Function &function,
     for (uint32_t index = 2; index < site.inputCount; ++index)
       if (!bytes(input(index)) && !numeric(input(index)) &&
           !floating(input(index)) && !string(input(index)) &&
-          !managed(input(index)))
+          !managed(input(index)) && !handle(input(index)))
         return false;
     return true;
   case OBELISK_RT_INTRINSIC_V1_FINISH:

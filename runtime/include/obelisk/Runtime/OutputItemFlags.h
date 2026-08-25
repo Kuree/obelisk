@@ -23,7 +23,11 @@ enum {
   // One logical enum item is carried as two physical operands: its packed
   // value followed by its precomputed mnemonic string.
   OBELISK_RT_OUTPUT_ITEM_ENUM = 1u << 10,
-  OBELISK_RT_OUTPUT_ITEM_ALL = (1u << 11) - 1
+  // One logical direct-net item is carried as its packed value followed by
+  // the net handle. The handle is consulted only by the %v strength format;
+  // every other conversion uses the packed snapshot normally.
+  OBELISK_RT_OUTPUT_ITEM_NET = 1u << 11,
+  OBELISK_RT_OUTPUT_ITEM_ALL = (1u << 12) - 1
 };
 
 #endif // OBELISK_RUNTIME_OUTPUTITEMFLAGS_H

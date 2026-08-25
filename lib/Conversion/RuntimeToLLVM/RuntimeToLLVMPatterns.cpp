@@ -63,7 +63,7 @@ LLVM::LLVMFunctionType getFunctionType(runtime::RuntimeCall call,
                  abi.i64,     abi.pointer, abi.pointer};
     break;
   case runtime::RuntimeSignature::StringOutputFormat:
-    arguments = {abi.pointer, abi.i32, abi.pointer,
+    arguments = {abi.pointer, abi.i32,     abi.pointer,
                  abi.i64,     abi.pointer, abi.pointer};
     break;
   case runtime::RuntimeSignature::Display:
@@ -263,8 +263,8 @@ static Value getSpanField(OpBuilder &builder, Location location, Value span,
 
 static FailureOr<std::pair<Value, Value>>
 materializeGlobalBytes(Operation *anchor, StringRef bytes,
-                       ConversionPatternRewriter &rewriter,
-                       const ABITypes &abi, unsigned preparedIndex) {
+                       ConversionPatternRewriter &rewriter, const ABITypes &abi,
+                       unsigned preparedIndex) {
   Location location = anchor->getLoc();
   Value size = llvmIntegerConstant(rewriter, location, abi.i64, bytes.size());
   if (bytes.empty())
@@ -274,8 +274,7 @@ materializeGlobalBytes(Operation *anchor, StringRef bytes,
   ModuleOp module = anchor->getParentOfType<ModuleOp>();
   if (!module)
     return anchor->emitOpError() << "requires a containing module";
-  auto names =
-      anchor->getAttrOfType<ArrayAttr>(preparedRuntimeByteGlobalsAttr);
+  auto names = anchor->getAttrOfType<ArrayAttr>(preparedRuntimeByteGlobalsAttr);
   if (!names || preparedIndex >= names.size())
     return anchor->emitOpError(
         "runtime byte global names were not prepared before conversion");
@@ -287,12 +286,12 @@ materializeGlobalBytes(Operation *anchor, StringRef bytes,
   {
     OpBuilder::InsertionGuard guard(rewriter);
     rewriter.setInsertionPointToStart(module.getBody());
-    global = LLVM::GlobalOp::create(
-        rewriter, location, arrayType, true, name.getValue(),
-        LLVM::Linkage::Internal,
-        false, false, false, rewriter.getStringAttr(bytes),
-        rewriter.getI64IntegerAttr(abi.alignments.i8), 0, {}, {}, {}, {},
-        LLVM::Visibility::Default, {});
+    global =
+        LLVM::GlobalOp::create(rewriter, location, arrayType, true,
+                               name.getValue(), LLVM::Linkage::Internal, false,
+                               false, false, rewriter.getStringAttr(bytes),
+                               rewriter.getI64IntegerAttr(abi.alignments.i8), 0,
+                               {}, {}, {}, {}, LLVM::Visibility::Default, {});
   }
   Value address = LLVM::AddressOfOp::create(rewriter, location, abi.pointer,
                                             global.getSymName());
@@ -307,6 +306,7 @@ enum class RuntimeMaterializer {
   ArgumentEmpty,
   ArgumentPacked,
   ArgumentEnum,
+  ArgumentNet,
   ArgumentReal,
   ArgumentBytes,
   ArgumentManagedString,
@@ -550,8 +550,8 @@ public:
       descriptor = insertStructValue(rewriter, location, descriptor, *data, 3);
       descriptor =
           insertStructValue(rewriter, location, descriptor, unknown, 4);
-      descriptor = insertStructValue(rewriter, location, descriptor,
-                                     operands.back(), 5);
+      descriptor =
+          insertStructValue(rewriter, location, descriptor, operands.back(), 5);
       FailureOr<Value> descriptorAddress = allocateAtFunctionEntry(
           operation, rewriter, abi, abi.enumArgument, 1, abi.alignments.i64);
       if (failed(descriptorAddress))
@@ -561,8 +561,79 @@ public:
       Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
       argument = insertStructValue(
           rewriter, location, argument,
+          llvmIntegerConstant(rewriter, location, abi.i32, OBELISK_RT_ARG_ENUM),
+          0);
+      argument = insertStructValue(
+          rewriter, location, argument,
           llvmIntegerConstant(rewriter, location, abi.i32,
-                              OBELISK_RT_ARG_ENUM),
+                              op.getIsSigned() ? OBELISK_RT_ARG_SIGNED : 0),
+          1);
+      argument = insertStructValue(rewriter, location, argument,
+                                   *descriptorAddress, 3);
+      rewriter.replaceOp(operation, argument);
+      return success();
+    }
+    case RuntimeMaterializer::ArgumentNet: {
+      auto op = cast<runtime::RTArgumentNetOp>(operation);
+      auto valueType = cast<IntegerType>(operands.front().getType());
+      unsigned width = valueType.getWidth();
+      uint64_t wordCount = (static_cast<uint64_t>(width) + 63) / 64;
+      uint64_t paddedWidth64 = wordCount * 64;
+      if (paddedWidth64 > std::numeric_limits<unsigned>::max())
+        return operation->emitOpError("net argument width is unsupported");
+      auto paddedType = IntegerType::get(rewriter.getContext(),
+                                         static_cast<unsigned>(paddedWidth64));
+      unsigned alignment =
+          abi.layout.getABIIntegerTypeAlignment(paddedType.getWidth()).value();
+      auto storePlane = [&](Value plane) -> FailureOr<Value> {
+        FailureOr<Value> address = allocateAtFunctionEntry(
+            operation, rewriter, abi, paddedType, 1, alignment);
+        if (failed(address))
+          return failure();
+        Value padded = plane;
+        if (width != paddedType.getWidth())
+          padded = LLVM::ZExtOp::create(rewriter, location, paddedType, plane);
+        LLVM::StoreOp::create(rewriter, location, padded, *address, alignment);
+        return *address;
+      };
+      FailureOr<Value> data = storePlane(operands.front());
+      if (failed(data))
+        return failure();
+      Value unknown = LLVM::ZeroOp::create(rewriter, location, abi.pointer);
+      if (op.getUnknown()) {
+        FailureOr<Value> stored = storePlane(operands[1]);
+        if (failed(stored))
+          return failure();
+        unknown = *stored;
+      }
+      Value descriptor =
+          LLVM::ZeroOp::create(rewriter, location, abi.enumArgument);
+      descriptor = insertStructValue(
+          rewriter, location, descriptor,
+          llvmIntegerConstant(rewriter, location, abi.i64, width), 0);
+      descriptor = insertStructValue(
+          rewriter, location, descriptor,
+          llvmIntegerConstant(rewriter, location, abi.i32,
+                              op.getIsSigned() ? OBELISK_RT_ARG_SIGNED : 0),
+          1);
+      descriptor = insertStructValue(
+          rewriter, location, descriptor,
+          llvmIntegerConstant(rewriter, location, abi.i32, 1), 2);
+      descriptor = insertStructValue(rewriter, location, descriptor, *data, 3);
+      descriptor =
+          insertStructValue(rewriter, location, descriptor, unknown, 4);
+      descriptor =
+          insertStructValue(rewriter, location, descriptor, operands.back(), 5);
+      FailureOr<Value> descriptorAddress = allocateAtFunctionEntry(
+          operation, rewriter, abi, abi.enumArgument, 1, abi.alignments.i64);
+      if (failed(descriptorAddress))
+        return failure();
+      LLVM::StoreOp::create(rewriter, location, descriptor, *descriptorAddress,
+                            abi.alignments.i64);
+      Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
+      argument = insertStructValue(
+          rewriter, location, argument,
+          llvmIntegerConstant(rewriter, location, abi.i32, OBELISK_RT_ARG_NET),
           0);
       argument = insertStructValue(
           rewriter, location, argument,
@@ -619,11 +690,11 @@ public:
       LLVM::StoreOp::create(rewriter, location, operands[0], *data,
                             abi.alignments.i64);
       Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
-      argument = insertStructValue(
-          rewriter, location, argument,
-          llvmIntegerConstant(rewriter, location, abi.i32,
-                              OBELISK_RT_ARG_MANAGED_STRING),
-          0);
+      argument =
+          insertStructValue(rewriter, location, argument,
+                            llvmIntegerConstant(rewriter, location, abi.i32,
+                                                OBELISK_RT_ARG_MANAGED_STRING),
+                            0);
       argument = insertStructValue(
           rewriter, location, argument,
           llvmIntegerConstant(rewriter, location, abi.i32,
@@ -683,7 +754,8 @@ public:
       argument = insertStructValue(
           rewriter, location, argument,
           llvmIntegerConstant(rewriter, location, abi.i32,
-                              materializer == RuntimeMaterializer::ArgumentProcess
+                              materializer ==
+                                      RuntimeMaterializer::ArgumentProcess
                                   ? OBELISK_RT_ARG_PROCESS
                                   : OBELISK_RT_ARG_VIRTUAL_INTERFACE),
           0);
@@ -720,12 +792,10 @@ public:
       auto op = cast<runtime::RTFormatEnvironmentOp>(operation);
       FailureOr<std::pair<Value, Value>> scope =
           materializeGlobalBytes(operation, op.getScope(), rewriter, abi, 0);
-      FailureOr<std::pair<Value, Value>> libraryCell =
-          materializeGlobalBytes(operation, op.getLibraryCell(), rewriter, abi,
-                                 1);
-      FailureOr<std::pair<Value, Value>> suffix =
-          materializeGlobalBytes(operation, op.getTimeSuffix(), rewriter, abi,
-                                 2);
+      FailureOr<std::pair<Value, Value>> libraryCell = materializeGlobalBytes(
+          operation, op.getLibraryCell(), rewriter, abi, 1);
+      FailureOr<std::pair<Value, Value>> suffix = materializeGlobalBytes(
+          operation, op.getTimeSuffix(), rewriter, abi, 2);
       if (failed(scope) || failed(libraryCell) || failed(suffix))
         return failure();
       Value environment =
@@ -742,11 +812,11 @@ public:
           rewriter, location, environment,
           llvmIntegerConstant(rewriter, location, abi.i32, op.getTimeWidth()),
           4);
-      environment = insertStructValue(
-          rewriter, location, environment,
-          llvmIntegerConstant(rewriter, location, abi.i32,
-                              op.getTimePrecision()),
-          5);
+      environment =
+          insertStructValue(rewriter, location, environment,
+                            llvmIntegerConstant(rewriter, location, abi.i32,
+                                                op.getTimePrecision()),
+                            5);
       environment =
           insertStructValue(rewriter, location, environment, suffix->first, 6);
       environment =
@@ -1090,6 +1160,7 @@ void populateRuntimePatterns(const TypeConverter &converter,
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentEmptyOp, ArgumentEmpty);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentPackedOp, ArgumentPacked);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentEnumOp, ArgumentEnum);
+  OBELISK_RUNTIME_MATERIALIZER(RTArgumentNetOp, ArgumentNet);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentRealOp, ArgumentReal);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentBytesOp, ArgumentBytes);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentManagedStringOp,

@@ -25,8 +25,8 @@ namespace obelisk {
 void addSimulationToRuntimeTypeConversions(TypeConverter &converter) {
   converter.addConversion([&converter](sim::BytesType type,
                                        SmallVectorImpl<Type> &results) {
-    Type converted = converter.convertType(
-        runtime::ByteSpanType::get(type.getContext()));
+    Type converted =
+        converter.convertType(runtime::ByteSpanType::get(type.getContext()));
     if (!converted)
       return failure();
     results.push_back(converted);
@@ -89,8 +89,7 @@ static std::string displayScope(Operation *operation) {
   return {};
 }
 
-template <typename Op>
-class SimIOConversion : public OpConversionPattern<Op> {
+template <typename Op> class SimIOConversion : public OpConversionPattern<Op> {
 public:
   using OpConversionPattern<Op>::OpConversionPattern;
 };
@@ -124,6 +123,28 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
       arguments.push_back(runtime::RTArgumentEnumOp::create(
           rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
           converted.front(), unknown, convertedName.front(),
+          (flags & OBELISK_RT_OUTPUT_ITEM_SIGNED) != 0));
+      continue;
+    }
+    if ((flags & OBELISK_RT_OUTPUT_ITEM_NET) != 0) {
+      if (itemIndex + 1 >= op.getItems().size())
+        return rewriter.notifyMatchFailure(
+            op, "net output item has no packed value and handle");
+      ValueRange converted = adaptor.getItems()[itemIndex];
+      Type sourceType = op.getItems()[itemIndex++].getType();
+      ValueRange convertedHandle = adaptor.getItems()[itemIndex];
+      Type handleType = op.getItems()[itemIndex++].getType();
+      if (!isa<IntegerType, sim::LogicType>(sourceType) ||
+          converted.size() < 1 || converted.size() > 2 ||
+          !isa<sim::NetType>(handleType) || convertedHandle.size() != 1 ||
+          !convertedHandle.front().getType().isInteger(64))
+        return rewriter.notifyMatchFailure(
+            op,
+            "net output item did not convert to packed value and i64 handle");
+      Value unknown = converted.size() == 2 ? converted[1] : Value();
+      arguments.push_back(runtime::RTArgumentNetOp::create(
+          rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
+          converted.front(), unknown, convertedHandle.front(),
           (flags & OBELISK_RT_OUTPUT_ITEM_SIGNED) != 0));
       continue;
     }
@@ -329,14 +350,13 @@ public:
   using SimIOConversion<Op>::SimIOConversion;
 
   LogicalResult
-  matchAndRewrite(
-      Op op, typename SimIOConversion<Op>::OneToNOpAdaptor adaptor,
-      ConversionPatternRewriter &rewriter) const override {
+  matchAndRewrite(Op op, typename SimIOConversion<Op>::OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     Value context = runtimeContext(rewriter, loc, adaptor.getContext().front());
     Value status = RuntimeOp::create(
-        rewriter, loc, runtime::StatusType::get(rewriter.getContext()),
-        context, adaptor.getVerbosity().front());
+        rewriter, loc, runtime::StatusType::get(rewriter.getContext()), context,
+        adaptor.getVerbosity().front());
     sim::SimStatusCheckOp::create(rewriter, loc, status);
     rewriter.eraseOp(op);
     return success();
@@ -398,8 +418,7 @@ public:
   using SimIOConversion<Op>::SimIOConversion;
 
   LogicalResult
-  matchAndRewrite(
-      Op op, typename SimIOConversion<Op>::OneToNOpAdaptor adaptor,
+  matchAndRewrite(Op op, typename SimIOConversion<Op>::OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     Value context = runtimeContext(rewriter, loc, adaptor.getContext().front());
@@ -425,8 +444,7 @@ public:
   using SimIOConversion<Op>::SimIOConversion;
 
   LogicalResult
-  matchAndRewrite(
-      Op op, typename SimIOConversion<Op>::OneToNOpAdaptor adaptor,
+  matchAndRewrite(Op op, typename SimIOConversion<Op>::OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     Value context = runtimeContext(rewriter, loc, adaptor.getContext().front());
@@ -447,9 +465,8 @@ public:
   using SimIOConversion<Op>::SimIOConversion;
 
   LogicalResult
-  matchAndRewrite(
-      Op op, typename SimIOConversion<Op>::OneToNOpAdaptor adaptor,
-      ConversionPatternRewriter &rewriter) const override {
+  matchAndRewrite(Op op, typename SimIOConversion<Op>::OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     Value context = runtimeContext(rewriter, loc, adaptor.getContext().front());
     Value fd = descriptor(rewriter, loc, adaptor.getDescriptor().front());
@@ -471,9 +488,8 @@ public:
   using SimIOConversion<Op>::SimIOConversion;
 
   LogicalResult
-  matchAndRewrite(
-      Op op, typename SimIOConversion<Op>::OneToNOpAdaptor adaptor,
-      ConversionPatternRewriter &rewriter) const override {
+  matchAndRewrite(Op op, typename SimIOConversion<Op>::OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     Value context = runtimeContext(rewriter, loc, adaptor.getContext().front());
     SmallVector<Value> operands{context};
@@ -521,8 +537,7 @@ public:
   }
 };
 
-class UngetcConversion final
-    : public SimIOConversion<sim::SimFileUngetcOp> {
+class UngetcConversion final : public SimIOConversion<sim::SimFileUngetcOp> {
 public:
   using SimIOConversion::SimIOConversion;
 
@@ -531,8 +546,8 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     Value byte = adaptor.getByte().front();
-    Value narrowed = arith::TruncIOp::create(rewriter, loc, rewriter.getI8Type(),
-                                             byte);
+    Value narrowed =
+        arith::TruncIOp::create(rewriter, loc, rewriter.getI8Type(), byte);
     Value status = runtime::RTFileUngetcOp::create(
         rewriter, loc, runtime::StatusType::get(rewriter.getContext()),
         runtimeContext(rewriter, loc, adaptor.getContext().front()),
@@ -544,8 +559,7 @@ public:
   }
 };
 
-class GetlineConversion final
-    : public SimIOConversion<sim::SimFileGetlineOp> {
+class GetlineConversion final : public SimIOConversion<sim::SimFileGetlineOp> {
 public:
   using SimIOConversion::SimIOConversion;
 
@@ -569,8 +583,8 @@ public:
     Value packed = runtime::RTPackedFromBytesOp::create(
         rewriter, loc, op.getData().getType(), call.getLine(), count, false);
     runtime::RTBufferReleaseOp::create(rewriter, loc, call.getLine());
-    Value count32 = arith::TruncIOp::create(rewriter, loc,
-                                            rewriter.getI32Type(), count);
+    Value count32 =
+        arith::TruncIOp::create(rewriter, loc, rewriter.getI32Type(), count);
     Value zero = iConstant(rewriter, loc, rewriter.getI32Type(), 0);
     Value result = sentinel(rewriter, loc, call.getStatus(), count32, zero);
     rewriter.replaceOp(op, ValueRange{packed, result});
@@ -590,8 +604,8 @@ public:
     unsigned width = cast<IntegerType>(op.getData().getType()).getWidth();
     uint64_t maxBytes = (static_cast<uint64_t>(width) + 7) / 8;
     Value scratch = runtime::RTScratchOp::create(
-        rewriter, loc,
-        runtime::MutableByteSpanType::get(rewriter.getContext()), maxBytes);
+        rewriter, loc, runtime::MutableByteSpanType::get(rewriter.getContext()),
+        maxBytes);
     auto call = runtime::RTFileReadOp::create(
         rewriter, loc,
         TypeRange{runtime::StatusType::get(rewriter.getContext()),
@@ -619,18 +633,19 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     auto logicType = op.getData().getType();
-    auto packedType = IntegerType::get(rewriter.getContext(),
-                                       logicType.getWidth());
-    uint64_t byteSize =
-        (static_cast<uint64_t>(packedType.getWidth()) + 7) / 8;
-    auto mutableBytes = runtime::MutableByteSpanType::get(rewriter.getContext());
-    Value valueScratch = runtime::RTScratchOp::create(
-        rewriter, loc, mutableBytes, byteSize);
-    Value unknownScratch = runtime::RTScratchOp::create(
-        rewriter, loc, mutableBytes, byteSize);
-    Value radix = iConstant(rewriter, loc, rewriter.getI32Type(), op.getRadix());
-    Value bitWidth = iConstant(rewriter, loc, rewriter.getI64Type(),
-                               packedType.getWidth());
+    auto packedType =
+        IntegerType::get(rewriter.getContext(), logicType.getWidth());
+    uint64_t byteSize = (static_cast<uint64_t>(packedType.getWidth()) + 7) / 8;
+    auto mutableBytes =
+        runtime::MutableByteSpanType::get(rewriter.getContext());
+    Value valueScratch =
+        runtime::RTScratchOp::create(rewriter, loc, mutableBytes, byteSize);
+    Value unknownScratch =
+        runtime::RTScratchOp::create(rewriter, loc, mutableBytes, byteSize);
+    Value radix =
+        iConstant(rewriter, loc, rewriter.getI32Type(), op.getRadix());
+    Value bitWidth =
+        iConstant(rewriter, loc, rewriter.getI64Type(), packedType.getWidth());
     auto call = runtime::RTFileReadMemTokenOp::create(
         rewriter, loc,
         TypeRange{runtime::StatusType::get(rewriter.getContext()),
@@ -711,8 +726,8 @@ public:
         runtimeContext(rewriter, loc, adaptor.getContext().front()),
         descriptor(rewriter, loc, adaptor.getDescriptor().front()));
     Value failure = iConstant(rewriter, loc, rewriter.getI64Type(), -1);
-    rewriter.replaceOp(
-        op, sentinel(rewriter, loc, call.getStatus(), call.getOffset(), failure));
+    rewriter.replaceOp(op, sentinel(rewriter, loc, call.getStatus(),
+                                    call.getOffset(), failure));
     return success();
   }
 };
@@ -743,8 +758,8 @@ public:
         sim::SimFileTellOp, sim::SimFileRewindOp, sim::SimDumpOpenOp,
         sim::SimDumpTimescaleOp, sim::SimDumpVarsOp, sim::SimDumpAllOp,
         sim::SimDumpControlOp, sim::SimDumpLimitOp, sim::SimDumpFlushOp>();
-    target.addLegalDialect<runtime::ObeliskRuntimeDialect,
-                           arith::ArithDialect>();
+    target
+        .addLegalDialect<runtime::ObeliskRuntimeDialect, arith::ArithDialect>();
     target.addLegalOp<ModuleOp, sim::SimContextRuntimeOp,
                       sim::SimStatusCheckOp>();
     target.addDynamicallyLegalOp<func::FuncOp>([&](func::FuncOp function) {
@@ -764,20 +779,18 @@ public:
 void populateSimulationToRuntimePatterns(const TypeConverter &converter,
                                          RewritePatternSet &patterns) {
   MLIRContext *context = patterns.getContext();
-  patterns.add<BytesConstantConversion, TimeFormatConversion,
-               DisplayConversion, StringOutputFormatConversion, GetcConversion,
-               UngetcConversion, GetlineConversion, ReadPackedConversion,
-               ReadMemTokenConversion,
+  patterns.add<BytesConstantConversion, TimeFormatConversion, DisplayConversion,
+               StringOutputFormatConversion, GetcConversion, UngetcConversion,
+               GetlineConversion, ReadPackedConversion, ReadMemTokenConversion,
                EofConversion, SeekConversion, TellConversion>(converter,
-                                                               context);
+                                                              context);
   patterns.add<TerminationConversion<sim::SimFinishOp, runtime::RTFinishOp>,
                TerminationConversion<sim::SimStopOp, runtime::RTStopOp>,
                TerminationConversion<sim::SimFatalOp, runtime::RTFatalOp>>(
       converter, context);
   patterns.add<ErrorConversion, TerminationRequestedConversion,
                SchedulerTimeConversion>(converter, context);
-  patterns.add<OpenConversion<sim::SimFileOpenMCDOp,
-                              runtime::RTFileOpenMCDOp>,
+  patterns.add<OpenConversion<sim::SimFileOpenMCDOp, runtime::RTFileOpenMCDOp>,
                OpenConversion<sim::SimFileOpenOp, runtime::RTFileOpenOp>,
                DescriptorTaskConversion<sim::SimFileCloseOp,
                                         runtime::RTFileCloseOp, false>,
@@ -785,17 +798,16 @@ void populateSimulationToRuntimePatterns(const TypeConverter &converter,
                                         runtime::RTFileFlushOp, false>,
                DescriptorStatusConversion<sim::SimFileRewindOp,
                                           runtime::RTFileRewindOp>>(converter,
-                                                                   context);
-  patterns
-      .add<DumpTaskConversion<sim::SimDumpOpenOp, runtime::RTDumpOpenOp>,
-           DumpTaskConversion<sim::SimDumpTimescaleOp,
-                              runtime::RTDumpTimescaleOp>,
-           DumpTaskConversion<sim::SimDumpVarsOp, runtime::RTDumpVarsOp>,
-           DumpTaskConversion<sim::SimDumpAllOp, runtime::RTDumpAllOp>,
-           DumpTaskConversion<sim::SimDumpControlOp, runtime::RTDumpControlOp>,
-           DumpTaskConversion<sim::SimDumpLimitOp, runtime::RTDumpLimitOp>,
-           DumpTaskConversion<sim::SimDumpFlushOp, runtime::RTDumpFlushOp>>(
-          converter, context);
+                                                                    context);
+  patterns.add<
+      DumpTaskConversion<sim::SimDumpOpenOp, runtime::RTDumpOpenOp>,
+      DumpTaskConversion<sim::SimDumpTimescaleOp, runtime::RTDumpTimescaleOp>,
+      DumpTaskConversion<sim::SimDumpVarsOp, runtime::RTDumpVarsOp>,
+      DumpTaskConversion<sim::SimDumpAllOp, runtime::RTDumpAllOp>,
+      DumpTaskConversion<sim::SimDumpControlOp, runtime::RTDumpControlOp>,
+      DumpTaskConversion<sim::SimDumpLimitOp, runtime::RTDumpLimitOp>,
+      DumpTaskConversion<sim::SimDumpFlushOp, runtime::RTDumpFlushOp>>(
+      converter, context);
 }
 
 } // namespace obelisk

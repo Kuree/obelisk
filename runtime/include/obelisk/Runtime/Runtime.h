@@ -3277,7 +3277,11 @@ enum {
   // Zero is the null process handle. This representation is accepted by %p.
   OBELISK_RT_ARG_PROCESS = 9,
   // data points to an obelisk_rt_enum_arg_v1; size and unknown must be zero.
-  OBELISK_RT_ARG_ENUM = 10
+  OBELISK_RT_ARG_ENUM = 10,
+  // data points to an obelisk_rt_net_arg_v1; size and unknown must be zero.
+  // Its packed snapshot serves every ordinary conversion, while %v queries
+  // the named resolved net bit for its exact strength range.
+  OBELISK_RT_ARG_NET = 11
 };
 
 typedef uint32_t obelisk_rt_arg_flags;
@@ -3302,6 +3306,21 @@ typedef struct obelisk_rt_enum_arg_v1 {
   const uint64_t *unknown;
   obelisk_rt_string_v1 name;
 } obelisk_rt_enum_arg_v1;
+
+// Runtime-only pairing of a direct net read with its stable net handle. This
+// deliberately has the same ABI layout as obelisk_rt_enum_arg_v1 so native
+// lowering can share the compact stack descriptor materializer.
+typedef struct obelisk_rt_net_arg_v1 {
+  uint64_t width;
+  uint32_t flags;
+  // Nonzero when the value and handle originate in native execution. This
+  // selects the compiler-emitted state planes when no AOT schedule plan owns
+  // them; bytecode descriptors leave this zero and use canonical state.
+  uint32_t native_state;
+  const uint64_t *value;
+  const uint64_t *unknown;
+  uint64_t handle;
+} obelisk_rt_net_arg_v1;
 
 // LOGIC: size is the bit width, data points to little-endian uint64_t value
 // words, and unknown points to matching unknown words (or is null for known

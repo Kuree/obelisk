@@ -512,14 +512,27 @@ the affected static pass component, supports chains, parallel devices, packed
 orientation, and force/release propagation, and shares the compact serialized
 topology between native and bytecode execution. The previously blocked
 `countdrivers5` case now passes. The upstream `tran` strength matrix reaches
-its oracle and is blocked only by the separately missing `%v` strength-aware
-formatter. The focused O3 case compiles in 0.04 seconds at 74 MB RSS for
+its oracle through the following `%v` tranche. The focused O3 case compiles in
+0.04 seconds at 74 MB RSS for
 bytecode and 0.13 seconds at 80 MB RSS for native, then simulates below 0.01
 seconds in either tier. The uncontended integrated UVM smoke ran in 35.423
 seconds compile / 0.188 seconds simulate for bytecode and 73.788 seconds
 compile / 0.020 seconds simulate for native, with zero UVM errors or fatals.
 The full regression suite passes 1306/1306 tests, including all 427 runtime
 tests.
+
+G1's third closure tranche implements the scalar-net `%v` format from 21.2.1.5.
+Direct net reads retain a stable net handle beside their already-materialized
+logic value; only `%v` uses that handle to walk the queried static component and
+reconstruct its exact 15-point resolved strength range. Ordinary formats and
+net resolution therefore retain their existing hot paths. Native descriptors
+select compiler-emitted state planes, including optimized designs without an
+AOT schedule-plan record, while bytecode descriptors select canonical state.
+Constants and other scalar expressions use the standard strong defaults. The
+upstream 55-channel `tran` strength matrix now matches its 6288-byte oracle
+exactly in native and bytecode execution at both O0 and O3, including asymmetric
+ranges, high-impedance bounds, local supply strength, and strong-capped remote
+strength across chained pass switches.
 
 G4's first closure tranche executes unconditional scalar parallel specify
 paths with one, two, or three static delay values, including specparam and
@@ -576,7 +589,7 @@ smoke remains green with the integrated times above and zero errors or fatals.
 | 25 Interfaces | Partial | Interfaces, modports, parameterization, interface tasks/functions, interface arrays, virtual-interface handles, calls, containers, and clocking-block access execute. Complete the residual virtual-interface clock/event/formal cases and inherit specify support from Clause 30. |
 | 26 Packages | Partial | Packages, imports/exports, scope lookup, and the implemented `std` package surface, including R1 `std::randomize`, execute. Complete the remaining normative Annex G behavior through the randomization and system-task chunks. |
 | 27 Generate constructs | Partial | Loop/conditional generation and ordinary external names elaborate. External tests still expose generate-scope and parameter-binding corner cases. |
-| 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, and static unconditional `tran` channels execute. Complete strength-aware `%v`, delayed and controlled pass devices, resistive pass-strength reduction, and forced-native large gate-netlist coalescing. |
+| 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, strength-aware scalar-net `%v`, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, and static unconditional `tran` channels execute. Complete delayed and controlled pass devices, resistive pass-strength reduction, and forced-native large gate-netlist coalescing. |
 | 29 User-defined primitives | Missing | UDP declarations and ports are imported, but table rows and sequential state semantics are not preserved, and an instance currently reaches the built-in-primitive diagnostic. |
 | 30 Specify blocks | Partial | Specparams and specify blocks are imported. Unconditional scalar parallel paths with one/two/three static delays execute through compact inertial drivers in both tiers. Complete full/vector, multi-source, edge-sensitive, state-dependent, and multiple-path selection, pulse controls and limits, and `showcancelled`/`noshowcancelled`. Unsupported forms receive targeted Clause 30 diagnostics instead of being silently erased. |
 | 31 Timing checks | Semantic only | System timing-check nodes are imported and now receive a targeted Clause 31 diagnostic instead of being silently erased. G5 implements all stability-window and clock/control checks, edge and condition forms, notifiers, vectors, negative checks, and violation scheduling. |
@@ -768,10 +781,11 @@ one commit.
 ### Gates, timing, SDF, and protected source
 
 36. **G1 — MOS/pass/CMOS devices (28.7-28.9, 28.13-28.14).** MOS/CMOS truth
-    tables, arrays, and the first resistive reduction are complete. Implement
-    exact source-strength forwarding and chained reduction, strength-aware
-    `%v`, tran/controlled-tran and resistive variants, bidirectional
-    propagation, and forced-native gate-fragment coalescing.
+    tables, arrays, the first resistive reduction, exact strength-aware scalar
+    `%v`, and static unconditional `tran` propagation with chained strength
+    reduction are complete. Implement controlled-tran and resistive variants,
+    exact MOS source-strength forwarding, and forced-native gate-fragment
+    coalescing.
 37. **G2 — Combinational UDPs (29.3-29.4, 29.8).** Preserve truth-table rows
     in semantic IR and compile exact four-state matching, instances, arrays,
     strengths, and delays.

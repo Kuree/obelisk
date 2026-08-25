@@ -501,6 +501,10 @@ TEST(RuntimeABI, StableScalarLayout) {
   EXPECT_EQ(sizeof(obelisk_rt_enum_arg_v1), 40u);
   EXPECT_EQ(offsetof(obelisk_rt_enum_arg_v1, value), 16u);
   EXPECT_EQ(offsetof(obelisk_rt_enum_arg_v1, name), 32u);
+  EXPECT_EQ(sizeof(obelisk_rt_net_arg_v1), 40u);
+  EXPECT_EQ(offsetof(obelisk_rt_net_arg_v1, native_state), 12u);
+  EXPECT_EQ(offsetof(obelisk_rt_net_arg_v1, value), 16u);
+  EXPECT_EQ(offsetof(obelisk_rt_net_arg_v1, handle), 32u);
   EXPECT_EQ(sizeof(obelisk_rt_activation_descriptor_v1), 24u);
   EXPECT_EQ(offsetof(obelisk_rt_activation_descriptor_v1, native_entry), 8u);
   EXPECT_EQ(offsetof(obelisk_rt_activation_descriptor_v1, bytecode_function),
@@ -1404,6 +1408,17 @@ TEST_F(RuntimeTest, FormatsRemainingScalarFormsAndEmptyStrings) {
   auto [timeStatus, timeOutput] = format("[%t]", {timeArg(time)});
   EXPECT_EQ(timeStatus, OBELISK_RT_OK);
   EXPECT_EQ(timeOutput, "[" + std::string(18, ' ') + "10]");
+}
+
+TEST_F(RuntimeTest, FormatsDefaultScalarStrengths) {
+  LogicValue zero("0");
+  LogicValue one("1");
+  LogicValue unknown("x");
+  LogicValue highz("z");
+  auto [status, output] = format(
+      "%v|%v|%v|%v", {zero.arg(), one.arg(), unknown.arg(), highz.arg()});
+  EXPECT_EQ(status, OBELISK_RT_OK);
+  EXPECT_EQ(output, "St0|St1|StX|HiZ");
 }
 
 // IEEE 1800-2017 21.2.1.7: a singular value that is not a packed structure,

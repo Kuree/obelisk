@@ -232,9 +232,8 @@ NetAliasCache *getNetAliasCache(const Image &image,
       continue;
     for (uint64_t bitIndex = 0; bitIndex != connection.width; ++bitIndex) {
       uint64_t lhs = connection.lhsOffset + bitIndex;
-      uint64_t rhs = (connection.flags & 1)
-                         ? connection.rhsOffset - bitIndex
-                         : connection.rhsOffset + bitIndex;
+      uint64_t rhs = (connection.flags & 1) ? connection.rhsOffset - bitIndex
+                                            : connection.rhsOffset + bitIndex;
       uint64_t lhsRoot = cache.rootByBit.at(lhs);
       uint64_t rhsRoot = cache.rootByBit.at(rhs);
       cache.passNeighbors[lhsRoot].push_back(rhsRoot);
@@ -462,8 +461,7 @@ void cancelNetBit(obelisk_rt_context *context, uint64_t destination,
   if (context->schedulerApplyingNativeUpdate) {
     for (ScheduledNBA &update : context->scheduledNBAs)
       if (update.inertialNetBit == destination &&
-          (!preserveInitialProjection ||
-           !update.inertialNetInitialProjection))
+          (!preserveInitialProjection || !update.inertialNetInitialProjection))
         update.cancelled = true;
   } else {
     context->scheduledNBAs.erase(
@@ -502,9 +500,8 @@ void cancelNetGroup(obelisk_rt_context *context, uint64_t group) {
 
 bool scheduleNetBit(obelisk_rt_context *context, uint64_t root,
                     uint64_t cancelGroup, uint64_t destination, bool value,
-                    bool unknown,
-                    const std::array<uint64_t, 3> &delays, uint8_t resolution,
-                    bool chargeDecay) {
+                    bool unknown, const std::array<uint64_t, 3> &delays,
+                    uint8_t resolution, bool chargeDecay) {
   if (auto pending = context->inertialNetPending.find(destination);
       pending != context->inertialNetPending.end() &&
       pending->second.value == value && pending->second.unknown == unknown &&
@@ -589,6 +586,105 @@ bool scheduleNetBit(obelisk_rt_context *context, uint64_t root,
   return true;
 }
 
+static bool computeResolvedStrengths(const NetAliasCache &cache,
+                                     obelisk_rt_context *context, uint64_t root,
+                                     bool useNativeState,
+                                     bool useSchedulePlan,
+                                     uint16_t &resolvedStrengths) {
+  auto members = cache.members.find(root);
+  if (members == cache.members.end())
+    return false;
+  auto driverStrengths = [&](bool value, bool unknown, uint8_t strength0,
+                             uint8_t strength1) {
+    if (!unknown)
+      return strengthBit(value ? strength1 : -static_cast<int>(strength0));
+    if (value)
+      return strengthBit(0);
+    uint16_t result = 0;
+    for (int strength = -static_cast<int>(strength0);
+         strength <= static_cast<int>(strength1); ++strength)
+      result |= strengthBit(strength);
+    return result;
+  };
+  const uint8_t *nativeValue = nullptr;
+  const uint8_t *nativeUnknown = nullptr;
+  uint64_t nativeBits = 0;
+  if (useSchedulePlan && context->nativeSchedulePlan && context->execution &&
+        context->nativeSchedulePlan->state_bit_count ==
+            context->execution->state_bit_count) {
+    nativeValue = context->nativeSchedulePlan->state_value;
+    nativeUnknown = context->nativeSchedulePlan->state_unknown;
+    nativeBits = context->nativeSchedulePlan->state_bit_count;
+  } else if (useNativeState && context->execution &&
+             context->nativeStateBitCount ==
+                 context->execution->state_bit_count) {
+    nativeValue = context->nativeStateValue;
+    nativeUnknown = context->nativeStateUnknown;
+    nativeBits = context->nativeStateBitCount;
+  }
+  auto stateBit = [&](bool unknownPlane, uint64_t offset) {
+    const uint8_t *native = unknownPlane ? nativeUnknown : nativeValue;
+    if (native && offset < nativeBits)
+      return (native[offset / 8] & static_cast<uint8_t>(1u << (offset % 8))) !=
+             0;
+    return bit(unknownPlane ? context->stateUnknown : context->stateValue,
+               offset);
+  };
+  uint8_t resolution = cache.resolutionByRoot.at(root);
+  auto component = cache.passComponentByRoot.find(root);
+  resolvedStrengths = strengthBit(0);
+  auto accumulateRoot = [&](uint64_t sourceRoot) {
+    bool remote = sourceRoot != root;
+    auto sourceMembers = cache.members.find(sourceRoot);
+    if (sourceMembers == cache.members.end())
+      return false;
+    auto forcedMember =
+        std::find_if(sourceMembers->second.begin(), sourceMembers->second.end(),
+                     [&](uint64_t member) {
+                       return member / 64 < context->forceMask.size() &&
+                              (context->forceMask[member / 64] &
+                               (uint64_t{1} << (member % 64))) != 0;
+                     });
+    if (forcedMember != sourceMembers->second.end()) {
+      uint16_t strengths = driverStrengths(stateBit(false, *forcedMember),
+                                           stateBit(true, *forcedMember), 7, 7);
+      if (remote)
+        strengths = propagateThroughTran(strengths);
+      resolvedStrengths =
+          combineStrengthRanges(resolvedStrengths, strengths, resolution);
+      return true;
+    }
+    uint16_t implicit =
+        implicitNetStrength(cache.resolutionByRoot.at(sourceRoot));
+    if (remote)
+      implicit = propagateThroughTran(implicit);
+    resolvedStrengths =
+        combineStrengthRanges(resolvedStrengths, implicit, resolution);
+    auto componentDrivers = cache.driverBits.find(sourceRoot);
+    if (componentDrivers == cache.driverBits.end())
+      return true;
+    for (const NetDriverBit &driver : componentDrivers->second) {
+      bool driverValue = stateBit(false, driver.valueOffset);
+      bool driverUnknown = stateBit(true, driver.valueOffset);
+      uint16_t strengths = driverStrengths(driverValue, driverUnknown,
+                                           driver.strength0, driver.strength1);
+      if (remote)
+        strengths = propagateThroughTran(strengths);
+      resolvedStrengths =
+          combineStrengthRanges(resolvedStrengths, strengths, resolution);
+    }
+    return true;
+  };
+  if (component != cache.passComponentByRoot.end()) {
+    for (uint64_t sourceRoot : cache.passComponents.at(component->second))
+      if (!accumulateRoot(sourceRoot))
+        return false;
+  } else if (!accumulateRoot(root)) {
+    return false;
+  }
+  return true;
+}
+
 bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
                      std::vector<uint64_t> affectedRoots, bool &changed,
                      bool useNativeState) {
@@ -638,77 +734,12 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
     // domain exactly, then collapse the final range to a four-state value.
     // Keeping L/H ranges until every driver participates is essential: a
     // strong L combined with a strong 0 resolves to 0, not x.
-    auto driverStrengths = [&](bool value, bool unknown, uint8_t strength0,
-                               uint8_t strength1) {
-      if (!unknown)
-        return strengthBit(value ? strength1 : -static_cast<int>(strength0));
-      if (value)
-        return strengthBit(0); // z
-      uint16_t result = 0;
-      for (int strength = -static_cast<int>(strength0);
-           strength <= static_cast<int>(strength1); ++strength)
-        result |= strengthBit(strength);
-      return result;
-    };
-    auto stateBit = [&](bool unknownPlane, uint64_t offset) {
-      const uint8_t *native = unknownPlane ? context->nativeStateUnknown
-                                           : context->nativeStateValue;
-      if (useNativeState && native && offset < context->nativeStateBitCount)
-        return (native[offset / 8] &
-                static_cast<uint8_t>(1u << (offset % 8))) != 0;
-      return bit(unknownPlane ? context->stateUnknown : context->stateValue,
-                 offset);
-    };
     uint8_t resolution = cache.resolutionByRoot.at(root);
-    auto component = cache.passComponentByRoot.find(root);
-    uint16_t resolvedStrengths = strengthBit(0);
-    auto accumulateRoot = [&](uint64_t sourceRoot) {
-      bool remote = sourceRoot != root;
-      auto sourceMembers = cache.members.find(sourceRoot);
-      if (sourceMembers == cache.members.end())
-        return;
-      auto forcedMember = std::find_if(
-          sourceMembers->second.begin(), sourceMembers->second.end(),
-          [&](uint64_t member) {
-            return member / 64 < context->forceMask.size() &&
-                   (context->forceMask[member / 64] &
-                    (uint64_t{1} << (member % 64))) != 0;
-          });
-      if (forcedMember != sourceMembers->second.end()) {
-        uint16_t strengths = driverStrengths(
-            stateBit(false, *forcedMember), stateBit(true, *forcedMember), 7,
-            7);
-        if (remote)
-          strengths = propagateThroughTran(strengths);
-        resolvedStrengths =
-            combineStrengthRanges(resolvedStrengths, strengths, resolution);
-        return;
-      }
-      uint16_t implicit =
-          implicitNetStrength(cache.resolutionByRoot.at(sourceRoot));
-      if (remote)
-        implicit = propagateThroughTran(implicit);
-      resolvedStrengths =
-          combineStrengthRanges(resolvedStrengths, implicit, resolution);
-      auto componentDrivers = cache.driverBits.find(sourceRoot);
-      if (componentDrivers == cache.driverBits.end())
-        return;
-      for (const NetDriverBit &driver : componentDrivers->second) {
-        bool driverValue = stateBit(false, driver.valueOffset);
-        bool driverUnknown = stateBit(true, driver.valueOffset);
-        uint16_t strengths = driverStrengths(
-            driverValue, driverUnknown, driver.strength0, driver.strength1);
-        if (remote)
-          strengths = propagateThroughTran(strengths);
-        resolvedStrengths =
-            combineStrengthRanges(resolvedStrengths, strengths, resolution);
-      }
-    };
-    if (component != cache.passComponentByRoot.end())
-      for (uint64_t sourceRoot : cache.passComponents.at(component->second))
-        accumulateRoot(sourceRoot);
-    else
-      accumulateRoot(root);
+    uint16_t resolvedStrengths = 0;
+    if (!computeResolvedStrengths(cache, context, root, useNativeState,
+                                  /*useSchedulePlan=*/false,
+                                  resolvedStrengths))
+      return false;
     bool hasZero = (resolvedStrengths & strengthBit(0)) != 0;
     constexpr uint16_t negativeMask = (uint16_t{1} << 7) - 1;
     constexpr uint16_t positiveMask = static_cast<uint16_t>(
@@ -804,8 +835,7 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
             cancelNetBit(context, destination);
           }
         } else {
-          uint64_t group =
-              net->bitwiseDelay ? destination : net->valueOffset;
+          uint64_t group = net->bitwiseDelay ? destination : net->valueOffset;
           auto [initial, inserted] =
               initiallyHighZGroups.try_emplace(group, true);
           if (inserted)
@@ -815,8 +845,8 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
                                                net->valueOffset + bit) &&
                   obelisk::designbytecode::bit(context->stateUnknown,
                                                net->valueOffset + bit);
-          delayedPublications.push_back({root, group, publication, *delays,
-                                         resolution, initial->second});
+          delayedPublications.push_back(
+              {root, group, publication, *delays, resolution, initial->second});
         }
       } else {
         publications.push_back(publication);
@@ -870,8 +900,8 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
 }
 
 bool resolveDrivenNets(const Image &image, obelisk_rt_context *context,
-                       int64_t changedBegin, int64_t changedEnd,
-                       bool &changed, bool useNativeState) {
+                       int64_t changedBegin, int64_t changedEnd, bool &changed,
+                       bool useNativeState) {
   if (!context || changedBegin < 0 || changedEnd < changedBegin)
     return false;
   NetAliasCache *cache = getNetAliasCache(image, context);
@@ -924,6 +954,54 @@ using namespace obelisk::designbytecode;
 
 extern "C" uint16_t obelisk_rt_v1_strength_resolve(uint16_t lhs, uint16_t rhs) {
   return combineStrengthRanges(lhs, rhs);
+}
+
+obelisk_rt_status
+obelisk_rt_design_net_strength(obelisk_rt_context *context, uint64_t netHandle,
+                               uint16_t *outStrengths,
+                               bool useNativeState) noexcept {
+  if (!context || !context->execution || !outStrengths)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outStrengths = 0;
+  try {
+    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    Image image;
+    if (!loadValidatedImage(entry, context, image))
+      return OBELISK_RT_INVALID_BYTECODE;
+    ContextTransaction transaction(context);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+
+    int64_t coordinate = 0;
+    uint64_t absolute = 0;
+    uint32_t staticID = 0;
+    if (decodeNativeStatic(netHandle, staticID, coordinate)) {
+      const NativeStaticState *state = findNativeStaticState(context, staticID);
+      if (!state || coordinate < 0 ||
+          static_cast<uint64_t>(coordinate) >= state->bitWidth)
+        return OBELISK_RT_INVALID_HANDLE;
+      absolute = state->bitOffset + static_cast<uint64_t>(coordinate);
+    } else if (decodeNativeGlobal(netHandle, coordinate)) {
+      if (coordinate < 0)
+        return OBELISK_RT_INVALID_HANDLE;
+      absolute = static_cast<uint64_t>(coordinate);
+    } else {
+      return OBELISK_RT_INVALID_HANDLE;
+    }
+
+    NetAliasCache *cache = getNetAliasCache(image, context);
+    auto root = cache->rootByBit.find(absolute);
+    if (root == cache->rootByBit.end())
+      return OBELISK_RT_INVALID_HANDLE;
+    if (!computeResolvedStrengths(*cache, context, root->second, useNativeState,
+                                  /*useSchedulePlan=*/useNativeState,
+                                  *outStrengths))
+      return OBELISK_RT_INVALID_HANDLE;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_BYTECODE;
+  }
 }
 
 obelisk_rt_status obelisk_rt_count_design_drivers(

@@ -544,6 +544,19 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
       ++itemIndex;
       continue;
     }
+    if ((flags & OBELISK_RT_OUTPUT_ITEM_NET) != 0) {
+      if (flags != OBELISK_RT_OUTPUT_ITEM_NET &&
+          flags != (OBELISK_RT_OUTPUT_ITEM_NET | OBELISK_RT_OUTPUT_ITEM_SIGNED))
+        return operation->emitOpError(
+            "net display items may only also carry the signed flag");
+      if (!isa<IntegerType, LogicType>(item.getType()) ||
+          itemIndex == items.size() ||
+          !isa<NetType>(items[itemIndex].getType()))
+        return operation->emitOpError(
+            "net display items require a packed value and net handle");
+      ++itemIndex;
+      continue;
+    }
     if (!isa<BytesType, StringType, DynamicArrayType, QueueType, AssocArrayType,
              ClassHandleType, VirtualInterfaceType, ProcessType, IntegerType,
              LogicType>(item.getType()) &&

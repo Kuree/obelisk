@@ -3198,6 +3198,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     arguments.reserve(itemCount);
     std::vector<obelisk_rt_enum_arg_v1> enumArguments;
     enumArguments.reserve(itemCount);
+    std::vector<obelisk_rt_net_arg_v1> netArguments;
+    netArguments.reserve(itemCount);
     for (uint32_t index = 0; index != itemCount; ++index) {
       uint32_t itemFlags = read32(flags + uint64_t{index} * 4);
       if ((itemFlags & ~uint32_t{OBELISK_RT_OUTPUT_ITEM_ALL}) != 0 ||
@@ -3243,6 +3245,37 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                      ? OBELISK_RT_ARG_SIGNED
                                      : 0),
                              0, &enumArguments.back(), nullptr});
+      } else if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_NET) != 0) {
+        if (itemFlags != OBELISK_RT_OUTPUT_ITEM_NET &&
+            itemFlags !=
+                (OBELISK_RT_OUTPUT_ITEM_NET | OBELISK_RT_OUTPUT_ITEM_SIGNED))
+          return OBELISK_RT_INVALID_BYTECODE;
+        if (physical >= site.inputCount ||
+            (layout.kind != OBELISK_RT_DBREG_BITS &&
+             layout.kind != OBELISK_RT_DBREG_LOGIC))
+          return OBELISK_RT_INVALID_BYTECODE;
+        uint32_t handleReg = inputRegister(physical++);
+        Layout handleLayout = layoutAt(image, frame.function, handleReg);
+        if (handleLayout.kind != OBELISK_RT_DBREG_HANDLE)
+          return OBELISK_RT_INVALID_BYTECODE;
+        uint64_t stable = UINT64_MAX;
+        if (!encodeCanonicalHandle(frame.data + handleLayout.offset, stable))
+          return OBELISK_RT_INVALID_HANDLE;
+        values.push_back(readLogic(frame.data, layout));
+        Logic &value = values.back();
+        netArguments.push_back(
+            {value.width,
+             static_cast<uint32_t>((itemFlags & OBELISK_RT_OUTPUT_ITEM_SIGNED)
+                                       ? OBELISK_RT_ARG_SIGNED
+                                       : 0),
+             0, value.value.data(),
+             value.fourState ? value.unknown.data() : nullptr, stable});
+        arguments.push_back({OBELISK_RT_ARG_NET,
+                             static_cast<obelisk_rt_arg_flags>(
+                                 (itemFlags & OBELISK_RT_OUTPUT_ITEM_SIGNED)
+                                     ? OBELISK_RT_ARG_SIGNED
+                                     : 0),
+                             0, &netArguments.back(), nullptr});
       } else if (layout.kind == OBELISK_RT_DBREG_BYTES) {
         auto value = readByteSpan(image, frame, reg);
         if (!value || (itemFlags != 0 &&

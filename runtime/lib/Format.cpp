@@ -1,5 +1,6 @@
 //===- Format.cpp - Obelisk runtime formatting and display ----------------===//
 
+#include "DesignBytecodeNets.h"
 #include "RuntimeInternal.h"
 
 #include <algorithm>
@@ -84,6 +85,18 @@ bool getLogicView(const obelisk_rt_arg_v1 &argument, LogicView &view) {
             enumeration->value, enumeration->unknown};
     return true;
   }
+  if (argument.kind == OBELISK_RT_ARG_NET) {
+    if (argument.size != 0 || argument.unknown || !argument.data ||
+        (argument.flags & ~OBELISK_RT_ARG_SIGNED) != 0)
+      return false;
+    const auto *net = static_cast<const obelisk_rt_net_arg_v1 *>(argument.data);
+    if (net->width == 0 || net->width > std::numeric_limits<uint32_t>::max() ||
+        !net->value || net->native_state > 1 || net->flags != argument.flags)
+      return false;
+    view = {net->width, (net->flags & OBELISK_RT_ARG_SIGNED) != 0, net->value,
+            net->unknown};
+    return true;
+  }
   return false;
 }
 
@@ -92,8 +105,7 @@ bool getEnumName(const obelisk_rt_arg_v1 &argument, char scratch[8],
   data = "";
   size = 0;
   LogicView ignored;
-  if (argument.kind != OBELISK_RT_ARG_ENUM ||
-      !getLogicView(argument, ignored))
+  if (argument.kind != OBELISK_RT_ARG_ENUM || !getLogicView(argument, ignored))
     return false;
   const auto *enumeration =
       static_cast<const obelisk_rt_enum_arg_v1 *>(argument.data);
@@ -135,8 +147,8 @@ bool getStringLogicView(const obelisk_rt_arg_v1 &argument,
   // participates in an integral format conversion.
   for (uint64_t index = 0; index != size; ++index) {
     uint64_t bit = (size - index - 1) * 8;
-    storage[bit / 64] |=
-        uint64_t{static_cast<unsigned char>(bytes[index])} << (bit % 64);
+    storage[bit / 64] |= uint64_t{static_cast<unsigned char>(bytes[index])}
+                         << (bit % 64);
   }
   view = {width, false, storage.data(), nullptr};
   return true;
@@ -556,8 +568,8 @@ obelisk_rt_status formatOverriddenTime(std::string &output, long double ticks,
                                        int32_t precisionExponent,
                                        const TimeOverride &timeFormat) {
   long double scaled =
-      ticks * std::pow(10.0L, static_cast<long double>(
-                                  precisionExponent - timeFormat.units));
+      ticks * std::pow(10.0L, static_cast<long double>(precisionExponent -
+                                                       timeFormat.units));
   char buffer[512];
   int length =
       std::snprintf(buffer, sizeof(buffer), "%.*Lf",
@@ -573,7 +585,44 @@ obelisk_rt_status formatOverriddenTime(std::string &output, long double ticks,
   return OBELISK_RT_OK;
 }
 
-obelisk_rt_status formatArgument(std::string &output,
+std::string strengthName(unsigned magnitude) {
+  static constexpr std::string_view names[] = {"",   "Sm", "Me", "We",
+                                               "La", "Pu", "St", "Su"};
+  return magnitude < std::size(names) ? std::string(names[magnitude]) : "";
+}
+
+std::string formatStrengthRange(uint16_t strengths) {
+  strengths &= (uint16_t{1} << 15) - 1;
+  if (strengths == 0)
+    return {};
+  int low = -7;
+  while (low <= 7 && (strengths & (uint16_t{1} << (low + 7))) == 0)
+    ++low;
+  int high = 7;
+  while (high >= -7 && (strengths & (uint16_t{1} << (high + 7))) == 0)
+    --high;
+  if (low == 0 && high == 0)
+    return "HiZ";
+  if (low == high) {
+    unsigned magnitude = static_cast<unsigned>(std::abs(low));
+    return strengthName(magnitude) + (low < 0 ? "0" : "1");
+  }
+  if (low < 0 && high == 0)
+    return strengthName(static_cast<unsigned>(-low)) + "L";
+  if (low == 0 && high > 0)
+    return strengthName(static_cast<unsigned>(high)) + "H";
+  if (low < 0 && high > 0) {
+    if (-low == high)
+      return strengthName(static_cast<unsigned>(high)) + "X";
+    return std::to_string(-low) + std::to_string(high) + "X";
+  }
+  if (high < 0)
+    return std::to_string(-low) + std::to_string(-high) + "0";
+  return std::to_string(high) + std::to_string(low) + "1";
+}
+
+obelisk_rt_status formatArgument(obelisk_rt_context *context,
+                                 std::string &output,
                                  const obelisk_rt_arg_v1 &argument,
                                  char specifier, const FormatOptions &options,
                                  const obelisk_rt_format_env_v1 *environment,
@@ -609,8 +658,7 @@ obelisk_rt_status formatArgument(std::string &output,
           rounded >
               static_cast<long double>(std::numeric_limits<int64_t>::max()))
         return OBELISK_RT_ARGUMENT_MISMATCH;
-      uint64_t integer =
-          static_cast<uint64_t>(static_cast<int64_t>(rounded));
+      uint64_t integer = static_cast<uint64_t>(static_cast<int64_t>(rounded));
       view = LogicView{64, true, &integer, nullptr};
       // IEEE 1800-2017 21.2.1.3 takes the default field width from the size
       // of the operand, and Table 21-3 covers a real only under %e, %f, and
@@ -622,6 +670,34 @@ obelisk_rt_status formatArgument(std::string &output,
       return formatInteger(output, view, spec, realOptions);
     }
     return formatInteger(output, view, spec, options);
+  case 'v': {
+    uint16_t strengths = 0;
+    if (argument.kind == OBELISK_RT_ARG_NET) {
+      if (!context || !getLogicView(argument, view) || view.width != 1)
+        return OBELISK_RT_ARGUMENT_MISMATCH;
+      const auto *net =
+          static_cast<const obelisk_rt_net_arg_v1 *>(argument.data);
+      obelisk_rt_status status =
+          obelisk_rt_design_net_strength(context, net->handle, &strengths,
+                                         net->native_state != 0);
+      if (status != OBELISK_RT_OK)
+        return status;
+    } else {
+      if (!getLogicView(argument, view) || view.width != 1)
+        return OBELISK_RT_ARGUMENT_MISMATCH;
+      if (!unknownBit(view, 0))
+        strengths = uint16_t{1} << (valueBit(view, 0) ? 7 + 6 : 7 - 6);
+      else if (valueBit(view, 0))
+        strengths = uint16_t{1} << 7;
+      else
+        strengths = static_cast<uint16_t>(((uint16_t{1} << 13) - 1) << 1);
+    }
+    std::string rendered = formatStrengthRange(strengths);
+    if (rendered.empty())
+      return OBELISK_RT_INVALID_ARGUMENT;
+    output += rendered;
+    return OBELISK_RT_OK;
+  }
   case 'c': {
     if (!getLogicView(argument, view) &&
         !getStringLogicView(argument, stringLogic, view))
@@ -673,7 +749,8 @@ obelisk_rt_status formatArgument(std::string &output,
     }
     if (!getLogicView(argument, view))
       return OBELISK_RT_ARGUMENT_MISMATCH;
-    return formatStringValue(output, logicToString(view, options.zero), options);
+    return formatStringValue(output, logicToString(view, options.zero),
+                             options);
   case 'e':
   case 'f':
   case 'g': {
@@ -841,14 +918,13 @@ bool parseUnsigned(std::string_view format, size_t &position,
   return true;
 }
 
-obelisk_rt_status formatSequence(std::string &output, std::string_view format,
-                                 const obelisk_rt_arg_v1 *arguments,
-                                 uint64_t argumentCount,
-                                 uint64_t &argumentIndex,
-                                 const obelisk_rt_format_env_v1 *environment,
-                                 const TimeOverride &timeFormat,
-                                 std::string &error,
-                                 std::vector<std::string> *warnings = nullptr) {
+obelisk_rt_status
+formatSequence(obelisk_rt_context *context, std::string &output,
+               std::string_view format, const obelisk_rt_arg_v1 *arguments,
+               uint64_t argumentCount, uint64_t &argumentIndex,
+               const obelisk_rt_format_env_v1 *environment,
+               const TimeOverride &timeFormat, std::string &error,
+               std::vector<std::string> *warnings = nullptr) {
   for (size_t position = 0; position < format.size();) {
     if (format[position] != '%') {
       output.push_back(format[position++]);
@@ -910,7 +986,7 @@ obelisk_rt_status formatSequence(std::string &output, std::string_view format,
     bool widthAllowed = integer || floating || spec == 's' || spec == 't';
     bool nonConsuming = spec == 'm' || spec == 'l';
     bool recognized = widthAllowed || nonConsuming || spec == 'c' ||
-                      spec == 'u' || spec == 'z' || spec == 'p';
+                      spec == 'v' || spec == 'u' || spec == 'z' || spec == 'p';
     if (!recognized) {
       error =
           "unknown format specifier at byte " + std::to_string(formatOffset);
@@ -967,8 +1043,8 @@ obelisk_rt_status formatSequence(std::string &output, std::string_view format,
       continue;
     }
     obelisk_rt_status status =
-        formatArgument(output, arguments[argumentIndex++], specifier, options,
-                       environment, timeFormat);
+        formatArgument(context, output, arguments[argumentIndex++], specifier,
+                       options, environment, timeFormat);
     if (status != OBELISK_RT_OK) {
       error = status == OBELISK_RT_ARGUMENT_MISMATCH
                   ? "argument type does not match format specifier"
@@ -985,6 +1061,7 @@ char defaultSpecifier(const obelisk_rt_arg_v1 &argument,
   case OBELISK_RT_ARG_LOGIC:
   case OBELISK_RT_ARG_TIME:
   case OBELISK_RT_ARG_ENUM:
+  case OBELISK_RT_ARG_NET:
     return radix == OBELISK_RT_RADIX_BINARY  ? 'b'
            : radix == OBELISK_RT_RADIX_OCTAL ? 'o'
            : radix == OBELISK_RT_RADIX_HEX   ? 'h'
@@ -1005,13 +1082,12 @@ char defaultSpecifier(const obelisk_rt_arg_v1 &argument,
   }
 }
 
-obelisk_rt_status buildDisplay(std::string &output, obelisk_rt_radix radix,
-                               const obelisk_rt_arg_v1 *items,
-                               uint64_t itemCount,
-                               const obelisk_rt_format_env_v1 *environment,
-                               const TimeOverride &timeFormat,
-                               std::string &error,
-                               std::vector<std::string> &warnings) {
+obelisk_rt_status
+buildDisplay(obelisk_rt_context *context, std::string &output,
+             obelisk_rt_radix radix, const obelisk_rt_arg_v1 *items,
+             uint64_t itemCount, const obelisk_rt_format_env_v1 *environment,
+             const TimeOverride &timeFormat, std::string &error,
+             std::vector<std::string> &warnings) {
   if (radix != OBELISK_RT_RADIX_BINARY && radix != OBELISK_RT_RADIX_OCTAL &&
       radix != OBELISK_RT_RADIX_DECIMAL && radix != OBELISK_RT_RADIX_HEX) {
     error = "invalid default display radix";
@@ -1045,8 +1121,8 @@ obelisk_rt_status buildDisplay(std::string &output, obelisk_rt_radix radix,
         return OBELISK_RT_INVALID_ARGUMENT;
       }
       obelisk_rt_status status = formatSequence(
-          output, std::string_view(bytes, static_cast<size_t>(size)), items,
-          itemCount, index, environment, timeFormat, error, &warnings);
+          context, output, std::string_view(bytes, static_cast<size_t>(size)),
+          items, itemCount, index, environment, timeFormat, error, &warnings);
       if (status != OBELISK_RT_OK)
         return status;
       if ((item.flags & OBELISK_RT_ARG_DESIGNATED_FORMAT) != 0) {
@@ -1062,8 +1138,8 @@ obelisk_rt_status buildDisplay(std::string &output, obelisk_rt_radix radix,
       error = "display item has no default scalar format";
       return OBELISK_RT_ARGUMENT_MISMATCH;
     }
-    obelisk_rt_status status =
-        formatArgument(output, item, specifier, {}, environment, timeFormat);
+    obelisk_rt_status status = formatArgument(context, output, item, specifier,
+                                              {}, environment, timeFormat);
     if (status != OBELISK_RT_OK) {
       error = "failed to format display item";
       return status;
@@ -1101,8 +1177,8 @@ obelisk_rt_v1_format(obelisk_rt_context *context, const char *format,
     uint64_t index = 0;
     TimeOverride timeFormat = snapshotTimeFormat(context);
     obelisk_rt_status status = formatSequence(
-        output, std::string_view(format ? format : "", formatSize), arguments,
-        argumentCount, index, environment, timeFormat, error);
+        context, output, std::string_view(format ? format : "", formatSize),
+        arguments, argumentCount, index, environment, timeFormat, error);
     if (status == OBELISK_RT_OK && index != argumentCount) {
       status = OBELISK_RT_ARGUMENT_MISMATCH;
       error = "too many arguments for format string";
@@ -1150,8 +1226,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_string_output_format(
     std::vector<std::string> warnings;
     TimeOverride timeFormat = snapshotTimeFormat(context);
     obelisk_rt_status status =
-        buildDisplay(output, defaultRadix, items, itemCount, environment,
-                     timeFormat, error, warnings);
+        buildDisplay(context, output, defaultRadix, items, itemCount,
+                     environment, timeFormat, error, warnings);
     if (status != OBELISK_RT_OK) {
       setLastError(context, std::move(error));
       return status;
@@ -1178,8 +1254,7 @@ obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
       // A monitor callback is the only display executed by the registered
       // monitor process. Suppress it while monitoring is disabled without
       // stealing a bit from the descriptor: all 30 MCD bits are public ABI.
-      if (!context->monitorEnabled &&
-          context->activeLogicalProcessToken != 0 &&
+      if (!context->monitorEnabled && context->activeLogicalProcessToken != 0 &&
           context->activeLogicalProcessToken ==
               context->monitorLogicalProcessToken)
         return OBELISK_RT_OK;
@@ -1189,8 +1264,8 @@ obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
     std::vector<std::string> warnings;
     TimeOverride timeFormat = snapshotTimeFormat(context);
     obelisk_rt_status status =
-        buildDisplay(output, defaultRadix, items, itemCount, environment,
-                     timeFormat, error, warnings);
+        buildDisplay(context, output, defaultRadix, items, itemCount,
+                     environment, timeFormat, error, warnings);
     if (status != OBELISK_RT_OK) {
       setLastError(context, std::move(error));
       return status;
@@ -1211,9 +1286,10 @@ obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
       // report, so they are held at zero while rendering what the report is
       // compared against.
       std::string report = output;
-      if (std::any_of(items, items + itemCount, [](const obelisk_rt_arg_v1 &item) {
-            return item.kind == OBELISK_RT_ARG_TIME;
-          })) {
+      if (std::any_of(items, items + itemCount,
+                      [](const obelisk_rt_arg_v1 &item) {
+                        return item.kind == OBELISK_RT_ARG_TIME;
+                      })) {
         static const uint64_t frozenTime = 0;
         std::vector<obelisk_rt_arg_v1> untimed(items, items + itemCount);
         for (obelisk_rt_arg_v1 &item : untimed)
@@ -1222,8 +1298,8 @@ obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
         std::string keyError;
         std::vector<std::string> keyWarnings;
         std::string keyed;
-        if (buildDisplay(keyed, defaultRadix, untimed.data(), untimed.size(),
-                         environment, timeFormat, keyError,
+        if (buildDisplay(context, keyed, defaultRadix, untimed.data(),
+                         untimed.size(), environment, timeFormat, keyError,
                          keyWarnings) == OBELISK_RT_OK)
           report = std::move(keyed);
       }

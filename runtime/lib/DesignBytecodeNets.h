@@ -17,6 +17,10 @@ obelisk_rt_status obelisk_rt_count_design_drivers(
     uint32_t *outTotal, uint32_t *outZero, uint32_t *outOne,
     uint32_t *outUnknown, bool useNativeState) noexcept;
 
+obelisk_rt_status obelisk_rt_design_net_strength(
+    obelisk_rt_context *context, uint64_t netHandle,
+    uint16_t *outStrengths, bool useNativeState) noexcept;
+
 namespace obelisk::designbytecode {
 
 using obelisk::runtime::rangesOverlap;

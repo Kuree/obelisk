@@ -99,9 +99,9 @@ LogicalResult UnitLowering::emitTerminationDiagnostic(StringRef name,
     // rather than selecting a rendered message keeps the diagnostic free of
     // managed string state, which would push the whole design out of native
     // scheduling for the sake of a message that usually is not printed.
-    Value zero = arith::ConstantOp::create(
-        builder, location, verbosity.getType(),
-        builder.getZeroAttr(verbosity.getType()));
+    Value zero =
+        arith::ConstantOp::create(builder, location, verbosity.getType(),
+                                  builder.getZeroAttr(verbosity.getType()));
     Value wanted = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::ne, verbosity, zero);
     Block *report = addBlock();
@@ -139,11 +139,10 @@ LogicalResult UnitLowering::emitTerminationDiagnostic(StringRef name,
       builder, location, builder.getI32Type(),
       builder.getI32IntegerAttr(static_cast<int32_t>(0x80000002u)));
   Value text = sim::SimBytesConstantOp::create(builder, location, format);
-  sim::SimDisplayOp::create(builder, location, context, descriptor,
-                            ValueRange{text, *time}, /*newline=*/false, 10,
-                            builder.getDenseI32ArrayAttr({0, 0}), lexicalScope,
-                            StringAttr{}, timeMultiplier,
-                            designTimePrecisionExponent());
+  sim::SimDisplayOp::create(
+      builder, location, context, descriptor, ValueRange{text, *time},
+      /*newline=*/false, 10, builder.getDenseI32ArrayAttr({0, 0}), lexicalScope,
+      StringAttr{}, timeMultiplier, designTimePrecisionExponent());
   if (merge) {
     cf::BranchOp::create(builder, location, merge, ValueRange{});
     setCurrent(merge);
@@ -270,10 +269,9 @@ FailureOr<Value> UnitLowering::lowerEnumFormatName(Value receiver,
       !sim::getPackedScalarType(receiver.getType()))
     return failure();
   Type stringType = sim::StringType::get(function.getContext());
-  Value result = sim::SimStringLiteralOp::create(
-      builder, location, stringType, builder.getStringAttr(""));
-  for (auto [valueAttribute, nameAttribute] :
-       llvm::zip_equal(values, names)) {
+  Value result = sim::SimStringLiteralOp::create(builder, location, stringType,
+                                                 builder.getStringAttr(""));
+  for (auto [valueAttribute, nameAttribute] : llvm::zip_equal(values, names)) {
     auto frozen = dyn_cast<sim::FrozenConstantAttr>(valueAttribute);
     auto spelling = dyn_cast<StringAttr>(nameAttribute);
     FailureOr<Value> member =
@@ -282,9 +280,9 @@ FailureOr<Value> UnitLowering::lowerEnumFormatName(Value receiver,
             : FailureOr<Value>(failure());
     if (failed(member) || !spelling)
       return failure();
-    FailureOr<Value> equal = conditionalEqual(
-        receiver, *member, receiver.getType(), location,
-        /*caseEquality=*/true);
+    FailureOr<Value> equal =
+        conditionalEqual(receiver, *member, receiver.getType(), location,
+                         /*caseEquality=*/true);
     if (failed(equal))
       return failure();
     Value candidate = sim::SimStringLiteralOp::create(builder, location,
@@ -356,8 +354,8 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
         literal && (isFormat || interpretLiteralsAsFormats)) {
       output.items.push_back(sim::SimBytesConstantOp::create(
           builder, getSemanticLocation(literal), literal.getConstantValue()));
-      output.flags.push_back(
-          isFormat ? OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT : 0);
+      output.flags.push_back(isFormat ? OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT
+                                      : 0);
       continue;
     }
 
@@ -457,8 +455,7 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
       output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING);
     } else if (auto enumValues =
                    child->getAttrOfType<ArrayAttr>(enumFormatValuesAttrName)) {
-      auto enumNames =
-          child->getAttrOfType<ArrayAttr>(enumFormatNamesAttrName);
+      auto enumNames = child->getAttrOfType<ArrayAttr>(enumFormatNamesAttrName);
       FailureOr<Value> scalar =
           toPackedScalar(*value, getSemanticLocation(child));
       FailureOr<Value> name =
@@ -482,8 +479,15 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
       if (failed(scalar))
         return failure();
       output.items.push_back(*scalar);
-      output.flags.push_back(isSignedNode(child) ? OBELISK_RT_OUTPUT_ITEM_SIGNED
-                                                 : 0);
+      int32_t flags = isSignedNode(child) ? OBELISK_RT_OUTPUT_ITEM_SIGNED : 0;
+      // Preserve the identity of a direct net read for IEEE 1800-2017 %v.
+      // Arithmetic derived from a net is a value, not a net, and therefore
+      // intentionally keeps the ordinary packed-argument representation.
+      if (auto read = (*value).getDefiningOp<sim::SimNetReadOp>()) {
+        output.items.push_back(read.getNet());
+        flags |= OBELISK_RT_OUTPUT_ITEM_NET;
+      }
+      output.flags.push_back(flags);
     }
   }
   return output;
@@ -531,8 +535,8 @@ UnitLowering::lowerStringFormatSystemCall(semantic::SVCallExpressionOp op) {
     return result;
 
   Operation *destinationNode = children.front();
-  if (auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(
-          destinationNode)) {
+  if (auto assignment =
+          dyn_cast<semantic::SVAssignmentExpressionOp>(destinationNode)) {
     SmallVector<Operation *> assignmentChildren = getChildren(assignment);
     if (assignmentChildren.empty())
       return failure();
@@ -897,16 +901,16 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
     if (auto design = function->getParentOfType<sim::SimDesignOp>()) {
       if (IntegerAttr precisionFs = design.getTimePrecisionFsAttr()) {
         int32_t exponent = -15;
-        for (uint64_t scale = precisionFs.getValue().getZExtValue();
-             scale > 1; scale /= 10)
+        for (uint64_t scale = precisionFs.getValue().getZExtValue(); scale > 1;
+             scale /= 10)
           ++exponent;
         timePrecision = builder.getI32IntegerAttr(exponent);
       }
     }
     if (display->stringOutput) {
       Operation *destinationNode = children.front();
-      if (auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(
-              destinationNode)) {
+      if (auto assignment =
+              dyn_cast<semantic::SVAssignmentExpressionOp>(destinationNode)) {
         SmallVector<Operation *> assignmentChildren = getChildren(assignment);
         if (!assignmentChildren.empty())
           destinationNode = assignmentChildren.front();
@@ -953,8 +957,8 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
           bytes.push_back(sim::SimStringGetcOp::create(
               builder, location, elementType, result, position));
         }
-        converted = sim::SimAggregateConstructOp::create(
-                        builder, location, destinationType, bytes)
+        converted = sim::SimAggregateConstructOp::create(builder, location,
+                                                         destinationType, bytes)
                         .getResult();
       } else {
         converted = convert(result, destinationType, false, location);
