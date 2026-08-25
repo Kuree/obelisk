@@ -120,9 +120,15 @@ def y : JoinedOrSeparate<["-"], "y">, Group<Compilation_Group>,
 def Y : JoinedOrSeparate<["-"], "Y">, Group<Compilation_Group>,
   MetaVarName<"<extension>">,
   HelpText<"Add a module library filename extension">;
-def l : JoinedOrSeparate<["-"], "l">, Group<Compilation_Group>,
+def libext_PLUS : Joined<["+"], "libext+">, Alias<Y>,
+  Flags<[HelpHidden]>;
+def v : JoinedOrSeparate<["-"], "v">, Group<Compilation_Group>,
   MetaVarName<"<file>">,
   HelpText<"Add a SystemVerilog library file">;
+def l : JoinedOrSeparate<["-"], "l">, Alias<v>, Flags<[HelpHidden]>;
+def libmap : JoinedOrSeparate<["--"], "libmap">, Group<Compilation_Group>,
+  MetaVarName<"<file>">,
+  HelpText<"Read SystemVerilog library declarations from a library map">;
 def single_unit : Flag<["--"], "single-unit">, Group<Compilation_Group>,
   HelpText<"Treat all primary sources as one compilation unit">;
 def libraries_inherit_macros :

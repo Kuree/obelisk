@@ -1,0 +1,6 @@
+module library_choice;
+  second_extension second_extension();
+endmodule
+
+module second_extension;
+endmodule

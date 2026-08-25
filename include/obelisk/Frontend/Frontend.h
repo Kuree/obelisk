@@ -31,6 +31,16 @@ enum class MinTypMax : uint8_t {
   Max,
 };
 
+enum class LibraryInputKind : uint8_t {
+  File,
+  Map,
+};
+
+struct LibraryInput {
+  LibraryInputKind kind;
+  std::string path;
+};
+
 /// Obelisk-owned, typed configuration for the slang driver. This is the public
 /// frontend contract; no third-party driver option type crosses this boundary.
 struct FrontendOptions {
@@ -43,7 +53,7 @@ struct FrontendOptions {
   std::vector<std::string> undefines;
   std::vector<std::string> libDirs;
   std::vector<std::string> libExts;
-  std::vector<std::string> libraryFiles;
+  std::vector<LibraryInput> libraryInputs;
   std::vector<std::string> topModules;
   std::vector<std::string> paramOverrides;
   std::vector<std::string> warningOptions;

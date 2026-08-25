@@ -4295,7 +4295,11 @@ buildSlangArguments(ArrayRef<std::string> inputs,
   appendValues(result, "-U", options.undefines);
   appendValues(result, "-y", options.libDirs);
   appendValues(result, "-Y", options.libExts);
-  appendValues(result, "-v", options.libraryFiles);
+  for (const LibraryInput &input : options.libraryInputs) {
+    result.emplace_back(input.kind == LibraryInputKind::File ? "-v"
+                                                             : "--libmap");
+    result.push_back(input.path);
+  }
   appendValues(result, "--top", options.topModules);
   appendValues(result, "-G", options.paramOverrides);
   // IEEE 1800-2017 11.5.1 and 7.4.6 define what an out-of-range select reads

@@ -1,0 +1,2 @@
+library wildcard_library ../mapped/*.sv;
+library exact_library ../mapped/mapped.sv -incdir ../include;

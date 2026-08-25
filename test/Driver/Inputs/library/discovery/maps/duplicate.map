@@ -1,0 +1,2 @@
+library duplicate_a ../mapped/mapped.sv;
+library duplicate_b ../mapped/mapped.sv;

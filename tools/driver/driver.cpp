@@ -435,8 +435,42 @@ buildFrontendOptions(const InputArgList &args, bool &valid) {
   options.defines = args.getAllArgValues(OPT_D);
   options.undefines = args.getAllArgValues(OPT_U);
   options.libDirs = args.getAllArgValues(OPT_y);
-  options.libExts = args.getAllArgValues(OPT_Y);
-  options.libraryFiles = args.getAllArgValues(OPT_l);
+  for (Arg *arg : args.filtered(OPT_Y)) {
+    arg->claim();
+    StringRef value = arg->getValue();
+
+    // The conventional +libext+ spelling carries an ordered '+'-separated
+    // list in its joined value. Keep that order when translating to slang's
+    // canonical one-extension-per-argument form. A plain -Y value remains a
+    // single extension, even if a platform permits '+' in a filename suffix.
+    const Arg *alias = arg->getAlias();
+    bool isPlusList = alias && alias->getSpelling() == "+libext+";
+    SmallVector<StringRef> extensions;
+    if (isPlusList)
+      value.split(extensions, '+', /*MaxSplit=*/-1, /*KeepEmpty=*/true);
+    else
+      extensions.push_back(value);
+
+    for (StringRef extension : extensions) {
+      if (extension.empty()) {
+        emitDriverError(Twine("empty module library extension in '") +
+                        (isPlusList ? alias->getAsString(args)
+                                    : arg->getAsString(args)) +
+                        "'");
+        valid = false;
+        continue;
+      }
+      options.libExts.emplace_back(extension);
+    }
+  }
+  for (Arg *arg : args.filtered(OPT_v, OPT_libmap)) {
+    arg->claim();
+    options.libraryInputs.push_back(
+        {arg->getOption().matches(OPT_v)
+             ? obelisk::frontend::LibraryInputKind::File
+             : obelisk::frontend::LibraryInputKind::Map,
+         arg->getValue()});
+  }
   options.topModules = args.getAllArgValues(OPT_top_EQ);
   options.paramOverrides = args.getAllArgValues(OPT_G);
   options.warningOptions = args.getAllArgValues(OPT_W);

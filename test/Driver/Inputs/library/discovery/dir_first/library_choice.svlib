@@ -1,0 +1,6 @@
+module library_choice;
+  first_directory first_directory();
+endmodule
+
+module first_directory;
+endmodule
