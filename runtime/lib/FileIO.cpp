@@ -95,6 +95,10 @@ bool scanSpace(int character) {
 bool scanDigit(int character, uint32_t radix) {
   if (character == '_')
     return true;
+  if (radix != 10 &&
+      (character == 'x' || character == 'X' || character == 'z' ||
+       character == 'Z' || character == '?'))
+    return true;
   uint32_t value = static_cast<unsigned char>(character);
   uint32_t digit = value >= '0' && value <= '9'   ? value - '0'
                    : value >= 'a' && value <= 'f' ? value - 'a' + 10
@@ -239,18 +243,30 @@ ScanResult scanFileField(FileEntry &entry, const char *prefix,
     return ScanResult::Mismatch;
   }
 
-  if (character == '+' || character == '-') {
+  bool real = letter == 'e' || letter == 'f' || letter == 'g' || letter == 't';
+  if ((real || letter == 'd') &&
+      (character == '+' || character == '-')) {
     field.push_back(static_cast<char>(character));
     character = readFieldCharacter();
   }
-  bool real = letter == 'e' || letter == 'f' || letter == 'g' || letter == 't';
   uint32_t radix = letter == 'b'   ? 2
                    : letter == 'o' ? 8
                    : letter == 'd' ? 10
                                    : 16;
   bool haveDigit = false;
   bool havePoint = false;
-  while (character != EOF) {
+  bool wholeUnknown = false;
+  // Decimal accepts one whole-value X/Z/? spelling, rather than unknown
+  // digits mixed into an otherwise decimal number (Table 21-8).
+  if (letter == 'd' && field.empty() &&
+      (character == 'x' || character == 'X' || character == 'z' ||
+       character == 'Z' || character == '?')) {
+    field.push_back(static_cast<char>(character));
+    haveDigit = true;
+    wholeUnknown = true;
+    character = readFieldCharacter();
+  }
+  while (!wholeUnknown && character != EOF) {
     if (scanDigit(character, real ? 10 : radix)) {
       field.push_back(static_cast<char>(character));
       haveDigit |= character != '_';

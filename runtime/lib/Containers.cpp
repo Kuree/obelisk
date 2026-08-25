@@ -1782,9 +1782,19 @@ uint64_t scanFieldExtent(const StringView &view, uint64_t &index,
     index += 3;
     return 3;
   }
-  if (index < limit && (view.bytes[index] == '+' || view.bytes[index] == '-'))
+  bool real = letter == 'e' || letter == 'f' || letter == 'g' || letter == 't';
+  if (index < limit && (real || letter == 'd') &&
+      (view.bytes[index] == '+' || view.bytes[index] == '-'))
     ++index;
-  if (letter == 'e' || letter == 'f' || letter == 'g' || letter == 't') {
+  // Decimal represents an unknown whole value with exactly one X/Z/? field;
+  // unlike the power-of-two formats, it does not admit unknown digits mixed
+  // with known digits.
+  if (letter == 'd' && index == start && index < limit &&
+      (view.bytes[index] == 'x' || view.bytes[index] == 'X' ||
+       view.bytes[index] == 'z' || view.bytes[index] == 'Z' ||
+       view.bytes[index] == '?')) {
+    ++index;
+  } else if (real) {
     while (index < limit &&
            (scanDigit(view.bytes[index], 10) || view.bytes[index] == '.'))
       ++index;
@@ -1805,8 +1815,13 @@ uint64_t scanFieldExtent(const StringView &view, uint64_t &index,
                      : letter == 'o' ? 8
                      : letter == 'd' ? 10
                                      : 16;
-    while (index < limit && scanDigit(view.bytes[index], radix))
+    bool haveDigit = false;
+    while (index < limit && scanDigit(view.bytes[index], radix)) {
+      haveDigit |= view.bytes[index] != '_';
       ++index;
+    }
+    if (!haveDigit)
+      index = start;
   }
   // A lone sign is not a field.
   return index == start || (index == start + 1 && (view.bytes[start] == '+' ||

@@ -521,10 +521,19 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
       else if (radix == kRealRadix)
         parsed = sim::SimStringParseRealOp::create(builder, location,
                                                    builder.getF64Type(), field);
-      else
+      else {
+        std::optional<unsigned> width =
+            sim::getPackedWidth(destination->type);
+        if (!width || *width == 0) {
+          emitError(location) << name << " %" << conversion.specifier
+                              << " destination has no packed width";
+          return failure();
+        }
         parsed = sim::SimStringParseLogicOp::create(
-            builder, location, sim::LogicType::get(function.getContext(), 64),
+            builder, location,
+            sim::LogicType::get(function.getContext(), *width),
             field, radix);
+      }
       FailureOr<Value> value =
           parsed.getType() == destination->type
               ? FailureOr<Value>(parsed)

@@ -896,29 +896,44 @@ public:
   LogicalResult
   matchAndRewrite(sim::SimStringParseLogicOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    Type i64 = rewriter.getI64Type();
-    Value valueOutput = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
-    Value unknownOutput = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+    SmallVector<Type> types;
+    if (failed(getTypeConverter()->convertType(op.getResult().getType(),
+                                               types)) ||
+        types.size() != 2 || types[0] != types[1] ||
+        adaptor.getInput().size() != 1)
+      return failure();
+    auto plane = dyn_cast<IntegerType>(types.front());
+    if (!plane)
+      return failure();
+    uint64_t byteCount = (static_cast<uint64_t>(plane.getWidth()) + 7) / 8;
+    Value valueOutput = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
+    Value unknownOutput = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
     for (Value output : {valueOutput, unknownOutput})
       LLVM::StoreOp::create(rewriter, op.getLoc(),
-                            LLVM::ZeroOp::create(rewriter, op.getLoc(), i64),
-                            output, 8);
+                            LLVM::ZeroOp::create(rewriter, op.getLoc(), plane),
+                            output, 1);
+    Type i64 = rewriter.getI64Type();
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_string_parse_logic"),
+                               "obelisk_rt_v1_plusarg_parse_logic"),
             ValueRange{adaptor.getInput().front(),
                        llvmConstant(rewriter, op.getLoc(),
                                     rewriter.getI32Type(), op.getRadix()),
-                       valueOutput, unknownOutput})
+                       llvmConstant(rewriter, op.getLoc(), i64,
+                                    plane.getWidth()),
+                       valueOutput,
+                       llvmConstant(rewriter, op.getLoc(), i64, byteCount),
+                       unknownOutput,
+                       llvmConstant(rewriter, op.getLoc(), i64, byteCount)})
             .getResult();
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     (void)lane;
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     SmallVector<Value> result{
-        LLVM::LoadOp::create(rewriter, op.getLoc(), i64, valueOutput, 8),
-        LLVM::LoadOp::create(rewriter, op.getLoc(), i64, unknownOutput, 8)};
+        LLVM::LoadOp::create(rewriter, op.getLoc(), plane, valueOutput, 1),
+        LLVM::LoadOp::create(rewriter, op.getLoc(), plane, unknownOutput, 1)};
     rewriter.replaceOpWithMultiple(op, ArrayRef<SmallVector<Value>>{result});
     return success();
   }

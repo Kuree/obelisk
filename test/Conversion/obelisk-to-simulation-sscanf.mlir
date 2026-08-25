@@ -9,7 +9,7 @@
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
 // CHECK: %[[FIELD0:.*]], %[[CURSOR0:.*]], %[[OK0:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = "", specifier = 100 : i32, width = 0 : i64}
 // CHECK: arith.cmpi ne, %[[OK0]]
-// CHECK: obelisk_sim.string.parse_logic %[[FIELD0]] radix = 10 : <64>
+// CHECK: obelisk_sim.string.parse_logic %[[FIELD0]] radix = 10 : <32>
 // CHECK: cf.cond_br
 // CHECK: %[[FIELD1:.*]], %[[CURSOR1:.*]], %[[OK1:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = " ", specifier = 102 : i32, width = 0 : i64}
 // CHECK: obelisk_sim.string.parse_real %[[FIELD1]]
@@ -28,9 +28,8 @@
 // CHECK: %[[SCALED_TIME:.*]] = obelisk_sim.time.scan_scale {{.*}}, %[[TIME_REAL]] time_multiplier = 1 time_precision = -9
 // CHECK: obelisk_sim.ref.store %[[SCALED_TIME]]
 // CHECK: %[[STRENGTH_FIELD:.*]], %[[STRENGTH_CURSOR:.*]], %[[STRENGTH_OK:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = "", specifier = 86 : i32, width = 0 : i64}
-// CHECK: %[[STRENGTH:.*]] = obelisk_sim.string.parse_logic %[[STRENGTH_FIELD]] radix = 2 : <64>
-// CHECK: %[[STRENGTH_DEST:.*]] = obelisk_sim.logic.resize %[[STRENGTH]]
-// CHECK: obelisk_sim.ref.store %[[STRENGTH_DEST]]
+// CHECK: %[[STRENGTH:.*]] = obelisk_sim.string.parse_logic %[[STRENGTH_FIELD]] radix = 2 : <1>
+// CHECK: obelisk_sim.ref.store %[[STRENGTH]]
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

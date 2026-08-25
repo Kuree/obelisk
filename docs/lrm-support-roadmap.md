@@ -1102,6 +1102,20 @@ byte-identical generated IR and no VCD state, hierarchy is resolved once,
 and steady-state change emission remains buffered O(changes) after compact,
 preplanned range differences.
 
+L19's ninth closure tranche completes assigned numeric formatted input for
+literal `$sscanf` and `$fscanf` formats. Binary, octal, hexadecimal, and `%x`
+fields accept the complete Table 21-8 X/Z/? alphabet, while decimal accepts
+its single whole-value X/Z/? spelling; the file scanner now consumes and
+leaves offending characters identically to the string scanner. Each field is
+parsed directly at its destination's packed width, removing the former
+64-bit truncation and accidental sign extension at bits 63 through 65.
+Power-of-two conversion directly places each digit in O(input digits plus
+destination words), and decimal retains bounded word-wise
+multiply-and-accumulate. A 4096-bit destination remains one scan operation and
+one parse operation in native and bytecode IR. Dynamic scan format
+expressions, variable-size `$fread` destinations, and the remaining thinly
+tested EOF/error corners remain explicit L19 residuals.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -1298,7 +1312,10 @@ one commit.
     associative addresses. Fixed, dynamic, queue, multidimensional, and
     associative targets share extent-independent generated loops; empty
     dynamic and queue reads remain no-ops rather than resizing or rejecting
-    their omitted range.
+    their omitted range. Assigned numeric scans with literal formats preserve
+    exact destination width and the full Table 21-8 X/Z/? alphabet. Dynamic
+    `$sscanf`/`$fscanf` format expressions, variable-size `$fread`
+    destinations, and residual EOF/error-position combinations remain.
 
 ### Randomization and `std`
 

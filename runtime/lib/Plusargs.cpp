@@ -197,13 +197,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
   while (begin != size && scanSpace(bytes[begin]))
     ++begin;
   bool negative = false;
+  bool hadSign = false;
   if (begin != size && (bytes[begin] == '+' || bytes[begin] == '-')) {
+    hadSign = true;
     negative = bytes[begin] == '-';
     ++begin;
   }
 
   uint64_t digitCount = 0;
   bool hasUnknown = false;
+  char decimalUnknown = 0;
   bool valid = true;
   for (uint64_t index = begin; index != size; ++index) {
     unsigned char character = static_cast<unsigned char>(bytes[index]);
@@ -216,8 +219,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
         : character >= 'a' && character <= 'f' ? character - 'a' + 10
         : character >= 'A' && character <= 'F' ? character - 'A' + 10
                                                 : UINT32_MAX;
-    if ((isX || isZ) && radix != 10) {
-      hasUnknown = true;
+    if (isX || isZ) {
+      if (radix != 10) {
+        hasUnknown = true;
+      } else if (digitCount == 0 && index + 1 == size && !hadSign) {
+        decimalUnknown = static_cast<char>(character);
+      } else {
+        valid = false;
+        break;
+      }
     } else if (digit >= radix) {
       valid = false;
       break;
@@ -233,7 +243,54 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
   if (digitCount == 0)
     return OBELISK_RT_OK;
 
-  if (radix == 10) {
+  if (decimalUnknown) {
+    bool highImpedance = decimalUnknown == 'z' || decimalUnknown == 'Z' ||
+                         decimalUnknown == '?';
+    std::memset(valueBytes, highImpedance ? 0xff : 0,
+                static_cast<size_t>(byteCount));
+    std::memset(unknownBytes, 0xff, static_cast<size_t>(byteCount));
+    if ((bitWidth & 7) != 0) {
+      uint8_t mask =
+          static_cast<uint8_t>((UINT32_C(1) << (bitWidth & 7)) - 1);
+      valueBytes[byteCount - 1] &= mask;
+      unknownBytes[byteCount - 1] &= mask;
+    }
+    return OBELISK_RT_OK;
+  }
+
+  // Preserve the common scalar path: a native accumulator avoids walking up
+  // to eight destination bytes for every decimal digit or expanding every
+  // power-of-two digit into individual bits. Wider values use the linear
+  // direct-placement / word-wise paths below.
+  if (bitWidth <= 64) {
+    uint64_t scalarValue = 0;
+    uint64_t scalarUnknown = 0;
+    for (uint64_t index = begin; index != size; ++index) {
+      unsigned char character = static_cast<unsigned char>(bytes[index]);
+      if (character == '_')
+        continue;
+      bool isX = character == 'x' || character == 'X';
+      bool isZ = character == 'z' || character == 'Z' || character == '?';
+      uint32_t digit =
+          character >= '0' && character <= '9'   ? character - '0'
+          : character >= 'a' && character <= 'f' ? character - 'a' + 10
+                                                  : character - 'A' + 10;
+      scalarValue *= radix;
+      scalarUnknown *= radix;
+      if (isX || isZ) {
+        scalarUnknown += radix - 1;
+        if (isZ)
+          scalarValue += radix - 1;
+      } else {
+        scalarValue += digit;
+      }
+    }
+    for (uint64_t byte = 0; byte != byteCount; ++byte) {
+      valueBytes[byte] = static_cast<uint8_t>(scalarValue >> (byte * 8));
+      unknownBytes[byte] =
+          static_cast<uint8_t>(scalarUnknown >> (byte * 8));
+    }
+  } else if (radix == 10) {
     for (uint64_t index = begin; index != size; ++index) {
       unsigned char character = static_cast<unsigned char>(bytes[index]);
       if (character == '_')

@@ -1211,8 +1211,9 @@ def SimStringParseIntegerOp : SimOp<"string.parse_integer", [Pure]> {
 def SimStringParseLogicOp : SimOp<"string.parse_logic", [Pure]> {
   let summary = "parse a managed string into four-state integral data";
   let description = [{
-    Parses up to 64 bits while preserving x, z, and ? digits in separate value
-    and unknown planes. The result type must be `!obelisk_sim.logic<64>`.
+    Parses at the result's exact width while preserving x, z, and ? digits in
+    separate value and unknown planes. Power-of-two radices place digits
+    directly; decimal uses bounded word-wise multiply and accumulate.
   }];
   let arguments = (ins SimStringType:$input, I32Attr:$radix);
   let results = (outs SimLogicType:$result);

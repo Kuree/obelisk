@@ -173,7 +173,7 @@ Encoder::encodeStringOperation(FunctionPlan &plan, Operation *operation) {
   }
   if (auto op = dyn_cast<sim::SimStringParseLogicOp>(operation)) {
     uint32_t radix = emitU64Constant(plan, op.getRadix());
-    return emitIntrinsicRegisters(plan, kIntrinsicStringParseLogic,
+    return emitIntrinsicRegisters(plan, kIntrinsicPlusargParseLogic,
                                   {reg(plan, op.getInput()), radix},
                                   {reg(plan, op.getResult())});
   }

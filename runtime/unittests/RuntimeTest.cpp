@@ -1800,6 +1800,56 @@ TEST_F(RuntimeTest, HierarchyScanMatchesPrefixWithoutConsumingAField) {
   EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
 }
 
+TEST_F(RuntimeTest, FileScanAcceptsFourStateNumericFieldsExactly) {
+  TempDirectory temporary;
+  std::filesystem::path path = temporary.file("four-state-scan.txt");
+  { std::ofstream(path, std::ios::binary) << "1x?zQ ?R +7"; }
+  uint32_t descriptor = open(path, "rb");
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+
+  auto expectField = [&](uint32_t specifier, std::string_view prefix,
+                         std::string_view expected) {
+    obelisk_rt_string_v1 field = 0;
+    uint32_t ok = 0;
+    uint32_t scanEOF = 1;
+    ASSERT_EQ(obelisk_rt_v1_file_scan_field(
+                  context, lane, descriptor, 1, prefix.data(), prefix.size(),
+                  specifier, 0, &field, &ok, &scanEOF),
+              OBELISK_RT_OK);
+    EXPECT_EQ(ok, 1u);
+    EXPECT_EQ(scanEOF, 0u);
+    char scratch[8]{};
+    const char *bytes = nullptr;
+    uint64_t size = 0;
+    ASSERT_EQ(obelisk_rt_v1_string_view(field, scratch, &bytes, &size),
+              OBELISK_RT_OK);
+    EXPECT_EQ(std::string_view(bytes, size), expected);
+  };
+
+  expectField('h', "", "1x?z");
+  uint8_t byte = 0;
+  ASSERT_EQ(obelisk_rt_v1_file_getc(context, descriptor, &byte),
+            OBELISK_RT_OK);
+  EXPECT_EQ(byte, 'Q');
+  expectField('d', " ", "?");
+  ASSERT_EQ(obelisk_rt_v1_file_getc(context, descriptor, &byte),
+            OBELISK_RT_OK);
+  EXPECT_EQ(byte, 'R');
+  // A sign belongs to decimal, but Table 21-8 does not make it part of a
+  // power-of-two field. The signed decimal field is consumed in full.
+  expectField('d', " ", "+7");
+  int64_t offset = -1;
+  ASSERT_EQ(obelisk_rt_v1_file_tell(context, descriptor, &offset),
+            OBELISK_RT_OK);
+  EXPECT_EQ(offset, 11);
+
+  EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+}
+
 TEST_F(RuntimeTest, ReadMemTokenizerPreservesFourStateWordsAndAddresses) {
   TempDirectory temporary;
   std::filesystem::path path = temporary.file("memory.hex");
@@ -3956,6 +4006,34 @@ TEST_F(ManagedHeapTest, PlusargConversionsAreStrictWideAndFourState) {
   EXPECT_TRUE(std::equal(value.begin(), value.end(), wideExpected.begin()));
   EXPECT_TRUE(std::all_of(unknown.begin(), unknown.end(),
                           [](uint8_t byte) { return byte == 0; }));
+
+  // Boundary widths are written directly, without a fixed 64-bit staging
+  // value that would truncate bit 64 or sign-extend bit 63.
+  parse("7fffffffffffffff", 16, 63, value, unknown);
+  EXPECT_EQ(value, (std::vector<uint8_t>{0xff, 0xff, 0xff, 0xff, 0xff,
+                                         0xff, 0xff, 0x7f}));
+  EXPECT_TRUE(std::all_of(unknown.begin(), unknown.end(),
+                          [](uint8_t byte) { return byte == 0; }));
+  parse("ffffffffffffffff", 16, 64, value, unknown);
+  EXPECT_EQ(value, (std::vector<uint8_t>(8, 0xff)));
+  parse("1ffffffffffffffff", 16, 65, value, unknown);
+  EXPECT_EQ(value, (std::vector<uint8_t>{0xff, 0xff, 0xff, 0xff, 0xff,
+                                         0xff, 0xff, 0xff, 0x01}));
+  parse("ffffffffffffffffffffffffffffffff", 16, 128, value, unknown);
+  EXPECT_EQ(value, (std::vector<uint8_t>(16, 0xff)));
+
+  parse("1x?z", 16, 65, value, unknown);
+  EXPECT_EQ(value, (std::vector<uint8_t>{0xff, 0x10, 0, 0, 0, 0, 0, 0, 0}));
+  EXPECT_EQ(unknown,
+            (std::vector<uint8_t>{0xff, 0x0f, 0, 0, 0, 0, 0, 0, 0}));
+  parse("x", 10, 65, value, unknown);
+  EXPECT_EQ(value, (std::vector<uint8_t>(9, 0)));
+  EXPECT_EQ(unknown, (std::vector<uint8_t>{0xff, 0xff, 0xff, 0xff, 0xff,
+                                           0xff, 0xff, 0xff, 0x01}));
+  parse("?", 10, 65, value, unknown);
+  EXPECT_EQ(value, (std::vector<uint8_t>{0xff, 0xff, 0xff, 0xff, 0xff,
+                                         0xff, 0xff, 0xff, 0x01}));
+  EXPECT_EQ(unknown, value);
 
   parse("10xz", 2, 8, value, unknown);
   EXPECT_EQ(value, (std::vector<uint8_t>{0x09}));
