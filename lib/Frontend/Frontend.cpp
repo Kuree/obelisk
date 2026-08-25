@@ -1742,6 +1742,10 @@ private:
           builder.getI32IntegerAttr(static_cast<int32_t>(node.edgeIdentifier)));
       attrs.set("timing_state_dependent",
                 builder.getBoolAttr(node.isStateDependent));
+      if (node.getConditionExpr())
+        attrs.set("timing_condition", builder.getUnitAttr());
+      else if (node.isStateDependent)
+        attrs.set("timing_ifnone", builder.getUnitAttr());
 
       struct DirectTimingTerminal {
         std::string path;
@@ -1871,8 +1875,7 @@ private:
           shapeSupported &&
           node.edgePolarity == TimingPath::Polarity::Unknown &&
           node.edgeIdentifier == slang::ast::EdgeKind::None &&
-          !node.getEdgeSourceExpr() && !node.getConditionExpr() &&
-          !node.isStateDependent && outputs.size() == 1 && staticDelays &&
+          !node.getEdgeSourceExpr() && outputs.size() == 1 && staticDelays &&
           delays.size() == node.getDelays().size() && delays.size() >= 1 &&
           delays.size() <= 3;
       if (supportedCandidate)
@@ -3675,6 +3678,14 @@ private:
                     field->getInitializer())
               initializer->visit(*this);
       }
+    } else if constexpr (std::same_as<T, slang::ast::TimingPathSymbol>) {
+      // Slang intentionally treats specify-path expressions as resolved
+      // metadata rather than ordinary symbol children. Keep the condition in
+      // semantic IR so conditional module paths can evaluate it at each
+      // source transition. An ifnone declaration has no expression.
+      this->visitDefault(node);
+      if (const slang::ast::Expression *condition = node.getConditionExpr())
+        condition->visit(*this);
     } else if constexpr (std::same_as<T, slang::ast::ClockVarSymbol>) {
       this->visitDefault(node);
       if (node.inputSkew.delay)

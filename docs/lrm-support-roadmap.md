@@ -698,6 +698,32 @@ The focused two-buffer O3 case compiles in 0.13 seconds at 81 MB RSS for
 native and 0.04 seconds at 74 MB RSS for bytecode, then simulates below 0.01
 seconds at 4 MB RSS in either tier.
 
+G4's fifth closure tranche executes `if` and `ifnone` module-path
+declarations for the existing whole-terminal parallel and full-path subset,
+including all supported polarities and one/two/three-value static delays.
+Preparation outlines each condition into a frozen truth evaluator and groups
+`ifnone` with every conditional path having the same exact source-terminal
+list and destination. Conditions are sampled only when that source
+relationship transitions; a condition-only change neither wakes the path
+actor nor cancels an already pending inertial update. Four-state truth
+conversion treats X and Z as not true, so `ifnone` applies only when no grouped
+`if` condition is true. When multiple conditions are true, statically
+unrolled selection chooses the shortest applicable delay before reusing the
+single existing inertial driver site.
+
+Distinct paths sharing a source also share one design-lifetime snapshot, and
+condition calls, group reductions, and delay selection are straight-line IR;
+the runtime contains no path-table scan or new scheduler dispatch.
+Hand-authored MLIR covers lowering and native/bytecode execution at O0 and O3,
+including condition-only changes, pending-update preservation, overlapping
+true conditions, X/Z truth conversion, `ifnone`, and inertial pulse rejection.
+SystemVerilog is restricted to frontend preservation and diagnostics. The
+exact external `pr1877743` source is not counted as a conformance pass because
+it also contains a multi-terminal parallel path outside this subset and
+condition operators rejected by the pinned Slang frontend; no local frontend
+patch is carried. The focused 14-test specify regression completes in under
+one second with all tests passing.
+
 The lexical-time audit now preserves the enclosing compilation-unit, package,
 class, or module time scope when `$printtimescale`, `$timeunit`, or
 `$timeprecision` appears inside a subroutine. Four upstream `br1003` cases now
@@ -821,7 +847,7 @@ and 73.183 seconds compile / 0.019 seconds simulate for native.
 | 27 Generate constructs | Partial | Loop/conditional generation and ordinary external names elaborate. External tests still expose generate-scope and parameter-binding corner cases. |
 | 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, strength-aware scalar-net `%v`, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, exact undelayed resolved-net source-strength forwarding, and `tran`/`rtran`/`tranif0`/`tranif1`/`rtranif0`/`rtranif1` channels with exact four-state connectivity and resistive strength reduction execute. Controlled pass devices support their standard static turn-on/turn-off/high-impedance delays with keyed inertial cancellation. Complete strength-preserving delayed MOS topology and forced-native large gate-netlist coalescing. |
 | 29 User-defined primitives | Missing | UDP declarations and ports are imported, but table rows and sequential state semantics are not preserved, and an instance currently reaches the built-in-primitive diagnostic. |
-| 30 Specify blocks | Partial | Specparams and specify blocks are imported. Unconditional whole-terminal parallel and full multi-source paths with unknown, positive, or negative polarity, one/two/three static delays, and one destination driver execute through compact inertial drivers in both tiers; overlapping paths with distinct whole sources use precomputed path-sensitive arbitration, and equal-delay paths may cross a proven static combinational source closure. Complete partial-select mapping, conditions, edge/data-source forms, six/twelve-transition delays, the remaining general path-to-driver mappings, pulse controls and limits, and `showcancelled`/`noshowcancelled`. Unsupported forms receive targeted Clause 30 diagnostics instead of being silently erased. |
+| 30 Specify blocks | Partial | Specparams and specify blocks are imported. Whole-terminal parallel and full multi-source paths, including `if`/`ifnone`, unknown/positive/negative polarity, one/two/three static delays, and one destination driver execute through compact inertial drivers in both tiers; overlapping paths use precomputed path-sensitive arbitration, and equal-delay paths may cross a proven static combinational source closure. Complete partial-select mapping, edge/data-source forms, six/twelve-transition delays, the remaining general path-to-driver mappings, pulse controls and limits, and `showcancelled`/`noshowcancelled`. Unsupported forms receive targeted Clause 30 diagnostics instead of being silently erased. |
 | 31 Timing checks | Semantic only | System timing-check nodes are imported and now receive a targeted Clause 31 diagnostic instead of being silently erased. G5 implements all stability-window and clock/control checks, edge and condition forms, notifiers, vectors, negative checks, and violation scheduling. |
 | 32 SDF backannotation | Missing | `$sdf_annotate`, SDF parsing/mapping, multiple annotation, pulse limits, and delay replacement are absent. |
 | 33 Configuring a design | Partial | A focused probe proves basic `design`, `default liblist`, `instance ... use`, and selecting a config as a top affect elaboration. Complete library-map files, cell/config forms, nested rules, diagnostics, and binding-report behavior; also close driver module-library lookup compatibility. |
@@ -1035,10 +1061,12 @@ one commit.
 39. **G4 — Specify paths and pulse behavior (30).** Unconditional
     whole-terminal parallel and full multi-source paths with static
     one/two/three-value delay selection, all three path polarities, and one
-    destination driver execute.
-    Complete partial-select mapping, six/twelve-transition delays, conditions,
-    edge polarity/data sources, path-sensitive selection, pulse filtering and
-    limits, and cancellation display controls.
+    destination driver execute. State-dependent `if`/`ifnone` paths execute
+    for that same subset with source-transition sampling and precomputed
+    shortest-delay arbitration.
+    Complete partial-select mapping, six/twelve-transition delays, edge
+    polarity/data sources, the remaining general path-to-driver mappings,
+    pulse filtering and limits, and cancellation display controls.
 40. **G5 — System timing checks (31).** Implement every standard timing check,
     conditioned/edge events, notifiers, vector expansion, negative checks, and
     violation scheduling.

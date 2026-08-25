@@ -1135,9 +1135,9 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
       FailureOr<Value> scalar = toPackedScalar(value, location);
       if (failed(scalar))
         return failure();
-      Value totalWidth = arith::ConstantOp::create(
-          builder, location, builder.getI64Type(),
-          builder.getI64IntegerAttr(*sourceWidth));
+      Value totalWidth =
+          arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                    builder.getI64IntegerAttr(*sourceWidth));
       return materializeDynamicBitStreamTarget(Value{}, totalWidth, targetType,
                                                location, *scalar);
     }
@@ -3505,9 +3505,17 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                       entryKind == sim::EntryKind::PortOutput;
 
   struct TimingPathRuleState {
-    Value input;
-    Value snapshot;
+    struct Source {
+      Value input;
+      Value snapshot;
+      std::string snapshotPath;
+    };
+    SmallVector<Source, 2> sources;
     std::array<int64_t, 3> delays;
+    int32_t conditionKind = 0;
+    int32_t conditionGroup = 0;
+    FlatSymbolRefAttr conditionEvaluator;
+    SmallVector<Value, 4> conditionCaptures;
   };
   SmallVector<TimingPathRuleState, 4> timingPathRules;
   auto readTimingPathInput = [&](Value input) -> Value {
@@ -3527,36 +3535,82 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   };
   if (auto rules =
           function->getAttrOfType<ArrayAttr>("obelisk_sim.timing_path_rules")) {
-    if (entryKind != sim::EntryKind::Continuous || rules.size() < 2)
-      return function.emitError("invalid overlapping timing path actor");
+    if (entryKind != sim::EntryKind::Continuous || rules.empty())
+      return function.emitError("invalid timing path actor");
     for (Attribute attr : rules) {
       auto rule = dyn_cast<DictionaryAttr>(attr);
-      auto inputPath = rule ? rule.getAs<StringAttr>("input") : StringAttr{};
-      auto snapshotPath =
-          rule ? rule.getAs<StringAttr>("snapshot") : StringAttr{};
       auto polarity =
           rule ? rule.getAs<IntegerAttr>("polarity") : IntegerAttr{};
       auto delays =
           rule ? rule.getAs<DenseI64ArrayAttr>("delays") : DenseI64ArrayAttr{};
-      Value input = inputPath ? values.lookup(inputPath.getValue()) : Value{};
-      Value snapshot =
-          snapshotPath ? values.lookup(snapshotPath.getValue()) : Value{};
-      Value current = input ? readTimingPathInput(input) : Value{};
-      if (!inputPath || !polarity || polarity.getInt() < 0 ||
+      if (!rule || !polarity || polarity.getInt() < 0 ||
           polarity.getInt() > 2 || !delays || delays.empty() ||
-          delays.size() > 3 || !current || !snapshot ||
-          !isa<sim::RefType>(snapshot.getType()) ||
-          cast<sim::RefType>(snapshot.getType()).getElementType() !=
-              current.getType() ||
-          !isa<IntegerType, sim::LogicType>(current.getType()))
+          delays.size() > 3)
         return function.emitError("invalid frozen overlapping timing path");
-      ArrayRef<int64_t> values = delays.asArrayRef();
-      int64_t rise = values[0];
-      int64_t fall = values.size() == 1 ? rise : values[1];
-      int64_t turnoff = values.size() == 1   ? rise
-                        : values.size() == 2 ? std::min(rise, fall)
-                                             : values[2];
-      timingPathRules.push_back({input, snapshot, {rise, fall, turnoff}});
+      SmallVector<StringAttr> inputPaths;
+      SmallVector<StringAttr> snapshotPaths;
+      if (auto input = rule.getAs<StringAttr>("input"))
+        inputPaths.push_back(input);
+      if (auto snapshot = rule.getAs<StringAttr>("snapshot"))
+        snapshotPaths.push_back(snapshot);
+      if (auto inputs = rule.getAs<ArrayAttr>("inputs"))
+        for (Attribute input : inputs)
+          if (auto path = dyn_cast<StringAttr>(input))
+            inputPaths.push_back(path);
+      if (auto snapshots = rule.getAs<ArrayAttr>("snapshots"))
+        for (Attribute snapshot : snapshots)
+          if (auto path = dyn_cast<StringAttr>(snapshot))
+            snapshotPaths.push_back(path);
+      if (inputPaths.empty() || inputPaths.size() != snapshotPaths.size())
+        return function.emitError("invalid frozen timing path terminals");
+      TimingPathRuleState state;
+      for (auto [inputPath, snapshotPath] :
+           llvm::zip_equal(inputPaths, snapshotPaths)) {
+        Value input = values.lookup(inputPath.getValue());
+        Value snapshot = values.lookup(snapshotPath.getValue());
+        Value current = input ? readTimingPathInput(input) : Value{};
+        if (!current || !snapshot || !isa<sim::RefType>(snapshot.getType()) ||
+            cast<sim::RefType>(snapshot.getType()).getElementType() !=
+                current.getType() ||
+            !isa<IntegerType, sim::LogicType>(current.getType()))
+          return function.emitError("invalid frozen timing path source");
+        state.sources.push_back(
+            {input, snapshot, snapshotPath.getValue().str()});
+      }
+      ArrayRef<int64_t> delayValues = delays.asArrayRef();
+      int64_t rise = delayValues[0];
+      int64_t fall = delayValues.size() == 1 ? rise : delayValues[1];
+      int64_t turnoff = delayValues.size() == 1   ? rise
+                        : delayValues.size() == 2 ? std::min(rise, fall)
+                                                  : delayValues[2];
+      state.delays = {rise, fall, turnoff};
+      if (auto kind = rule.getAs<IntegerAttr>("condition_kind"))
+        state.conditionKind = static_cast<int32_t>(kind.getInt());
+      if (auto group = rule.getAs<IntegerAttr>("condition_group"))
+        state.conditionGroup = static_cast<int32_t>(group.getInt());
+      if (state.conditionKind < 0 || state.conditionKind > 2 ||
+          state.conditionGroup < 0)
+        return function.emitError("invalid frozen timing path condition");
+      if (state.conditionKind == 1) {
+        state.conditionEvaluator =
+            rule.getAs<FlatSymbolRefAttr>("condition_evaluator");
+        auto captures = rule.getAs<ArrayAttr>("condition_captures");
+        if (!state.conditionEvaluator || !captures)
+          return function.emitError(
+              "conditional timing path has no evaluator ABI");
+        for (Attribute captureAttr : captures) {
+          auto capturePath = dyn_cast<StringAttr>(captureAttr);
+          Value capture =
+              capturePath ? values.lookup(capturePath.getValue()) : Value{};
+          if (!capture && capturePath)
+            capture = lvalues.lookup(capturePath.getValue());
+          if (!capture)
+            return function.emitError(
+                "conditional timing path capture no longer resolves");
+          state.conditionCaptures.push_back(capture);
+        }
+      }
+      timingPathRules.push_back(std::move(state));
     }
   }
 
@@ -3580,22 +3634,71 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   }
   if (!timingPathRules.empty()) {
     SmallVector<Value, 4> changed;
+    llvm::StringMap<Value> changedSnapshots;
     for (TimingPathRuleState &rule : timingPathRules) {
-      Value current = readTimingPathInput(rule.input);
-      Value previous = sim::SimRefLoadOp::create(
-          builder, function.getLoc(), current.getType(), rule.snapshot);
-      Value differs;
-      if (isa<sim::LogicType>(current.getType()))
-        differs = sim::SimLogicCompareOp::create(
-            builder, function.getLoc(), builder.getI1Type(),
-            sim::CompareKind::CaseNe, current, previous);
-      else
-        differs = arith::CmpIOp::create(builder, function.getLoc(),
-                                        arith::CmpIPredicate::ne, current,
-                                        previous);
-      changed.push_back(differs);
-      sim::SimRefStoreOp::create(builder, function.getLoc(), current,
-                                 rule.snapshot);
+      Value ruleChanged = arith::ConstantOp::create(builder, function.getLoc(),
+                                                    builder.getI1Type(),
+                                                    builder.getBoolAttr(false));
+      for (const TimingPathRuleState::Source &source : rule.sources) {
+        Value differs = changedSnapshots.lookup(source.snapshotPath);
+        if (!differs) {
+          Value current = readTimingPathInput(source.input);
+          Value previous = sim::SimRefLoadOp::create(
+              builder, function.getLoc(), current.getType(), source.snapshot);
+          if (isa<sim::LogicType>(current.getType()))
+            differs = sim::SimLogicCompareOp::create(
+                builder, function.getLoc(), builder.getI1Type(),
+                sim::CompareKind::CaseNe, current, previous);
+          else
+            differs = arith::CmpIOp::create(builder, function.getLoc(),
+                                            arith::CmpIPredicate::ne, current,
+                                            previous);
+          sim::SimRefStoreOp::create(builder, function.getLoc(), current,
+                                     source.snapshot);
+          changedSnapshots[source.snapshotPath] = differs;
+        }
+        ruleChanged = arith::OrIOp::create(builder, function.getLoc(),
+                                           ruleChanged, differs);
+      }
+      changed.push_back(ruleChanged);
+    }
+
+    SmallVector<Value, 4> conditions;
+    llvm::DenseMap<int32_t, Value> anyConditional;
+    Value knownTrue = arith::ConstantOp::create(builder, function.getLoc(),
+                                                builder.getI1Type(),
+                                                builder.getBoolAttr(true));
+    for (TimingPathRuleState &rule : timingPathRules) {
+      Value condition = knownTrue;
+      if (rule.conditionKind == 1) {
+        SmallVector<Value, 5> operands{
+            function.getBody().front().getArgument(0)};
+        llvm::append_range(operands, rule.conditionCaptures);
+        condition = sim::SimCallOp::create(builder, function.getLoc(),
+                                           TypeRange{builder.getI1Type()},
+                                           rule.conditionEvaluator, operands,
+                                           ArrayAttr{}, ArrayAttr{})
+                        .getResult(0);
+        Value previous = anyConditional.lookup(rule.conditionGroup);
+        anyConditional[rule.conditionGroup] =
+            previous ? arith::OrIOp::create(builder, function.getLoc(),
+                                            previous, condition)
+                     : condition;
+      }
+      conditions.push_back(condition);
+    }
+
+    SmallVector<Value, 4> applicable;
+    for (auto [index, rule] : llvm::enumerate(timingPathRules)) {
+      Value condition = conditions[index];
+      if (rule.conditionKind == 2) {
+        Value any = anyConditional.lookup(rule.conditionGroup);
+        condition = any ? arith::XOrIOp::create(builder, function.getLoc(), any,
+                                                knownTrue)
+                        : knownTrue;
+      }
+      applicable.push_back(arith::AndIOp::create(builder, function.getLoc(),
+                                                 changed[index], condition));
     }
     std::array<Value, 3> selected;
     for (unsigned transition = 0; transition != selected.size(); ++transition) {
@@ -3606,18 +3709,17 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         return timingPathRules[lhs].delays[transition] >
                timingPathRules[rhs].delays[transition];
       });
-      int64_t fallback = timingPathRules[order.front()].delays[transition];
       Value selectedTicks = arith::ConstantOp::create(
           builder, function.getLoc(), builder.getI64Type(),
-          builder.getI64IntegerAttr(fallback));
-      for (unsigned index : ArrayRef<unsigned>(order).drop_front()) {
+          builder.getI64IntegerAttr(0));
+      for (unsigned index : order) {
         Value delayTicks = arith::ConstantOp::create(
             builder, function.getLoc(), builder.getI64Type(),
             builder.getI64IntegerAttr(
                 timingPathRules[index].delays[transition]));
-        selectedTicks = arith::SelectOp::create(
-            builder, function.getLoc(), changed[index], delayTicks,
-            selectedTicks);
+        selectedTicks = arith::SelectOp::create(builder, function.getLoc(),
+                                                applicable[index], delayTicks,
+                                                selectedTicks);
       }
       selected[transition] = sim::SimTimeScaleOp::create(
           builder, function.getLoc(), sim::TimeType::get(function.getContext()),

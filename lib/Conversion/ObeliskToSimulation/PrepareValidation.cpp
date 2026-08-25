@@ -189,11 +189,12 @@ FailureOr<ValidatedSemanticDesign> validateSemanticDesign(ModuleOp module) {
         emitError(getSemanticLocation(op))
             << "IEEE 1800-2017 Clause 30 specify timing paths are not "
                "executable yet for this form (supported subset: "
-               "unconditional whole-terminal parallel or full paths with "
+               "whole-terminal parallel or full paths, including if/ifnone, "
+               "with "
                "unknown, positive, or negative polarity, one to three static "
                "delays, and one destination driver actor; "
-               "overlapping paths require one distinct whole source per "
-               "path and exact driver dependencies)";
+               "unconditional overlapping paths require one distinct whole "
+               "source per path and exact driver dependencies)";
         invalid = true;
       }
       return;

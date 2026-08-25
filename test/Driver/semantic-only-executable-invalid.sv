@@ -22,5 +22,4 @@ endmodule
 
 // CHECK: error: IEEE 1800-2017 Clause 17 checker instances are retained in semantic IR but are not executable yet
 // CHECK: error: IEEE 1800-2017 Clause 30 specify pulse controls are retained in semantic IR but are not executable yet
-// CHECK: error: IEEE 1800-2017 Clause 30 specify timing paths are not executable yet for this form
 // CHECK: error: IEEE 1800-2017 Clause 31 system timing checks are retained in semantic IR but are not executable yet

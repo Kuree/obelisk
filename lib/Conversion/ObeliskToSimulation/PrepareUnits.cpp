@@ -579,6 +579,29 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
     });
   }
 
+  // A specify condition is not part of an executable driver actor in the
+  // semantic tree, but it is evaluated synchronously when that path's source
+  // changes. Outline it with the same compact truth-evaluator ABI used by
+  // event iff expressions. ifnone paths intentionally have no evaluator.
+  semanticRoot->walk([&](semantic::SVTimingPathSymbolOp path) {
+    if (!path->hasAttr("obelisk.simple_timing_path") ||
+        !path->hasAttr("timing_condition"))
+      return;
+    SmallVector<Operation *> children = getChildren(path);
+    if (children.size() != 1) {
+      emitError(getSemanticLocation(path))
+          << "conditional specify path has no unique frozen condition";
+      invalid = true;
+      return;
+    }
+    uint64_t nodeID = path.getNodeId();
+    std::string hierarchy =
+        (getHierarchyName(path) + ".$timing_path." + Twine(nodeID)).str();
+    observerCandidates.push_back({children.front(), ObserverResult::Truth,
+                                  "specify_condition", nodeID,
+                                  std::move(hierarchy)});
+  });
+
   llvm::DenseSet<Operation *> outlinedObservers;
   for (ObserverCandidate &candidate : observerCandidates) {
     if (!outlinedObservers.insert(candidate.expression).second)

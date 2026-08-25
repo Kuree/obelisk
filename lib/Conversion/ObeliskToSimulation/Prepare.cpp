@@ -1605,17 +1605,19 @@ void ObeliskSimPreparePass::runOnOperation() {
   ContinuousDriverMap &continuousDrivers = *preparedNetTopology;
 
   // IEEE 1800-2017 Clause 30 module paths delay changes produced by a path's
-  // source before publishing them at its destination. The common
-  // unconditional whole-terminal, single-driver case is exactly an inertial
-  // delay on the already isolated continuous driver, so reuse that compact
-  // machinery instead of installing a runtime path interpreter. More general
-  // paths are rejected during validation and remain separate roadmap work.
+  // source before publishing them at its destination. Unconditional paths
+  // with one effective tuple are exactly an inertial delay on the already
+  // isolated continuous driver. Conditional and overlapping paths instead
+  // freeze a small rule set that lowering expands into straight-line selects;
+  // the scheduler never interprets or scans a path table.
   struct SimpleTimingPath {
     semantic::SVTimingPathSymbolOp declaration;
     SmallVector<std::string, 2> inputs;
     uint64_t outputWidth;
     int32_t polarity;
     SmallVector<int64_t, 3> delays;
+    Operation *condition = nullptr;
+    bool ifnone = false;
   };
   llvm::StringMap<SmallVector<SimpleTimingPath, 2>> simpleTimingPaths;
   semanticRoot->walk([&](semantic::SVTimingPathSymbolOp path) {
@@ -1646,10 +1648,21 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       inputPaths.push_back(input.getValue().str());
     }
+    SmallVector<Operation *> children = getChildren(path);
+    bool conditional = path->hasAttr("timing_condition");
+    bool ifnone = path->hasAttr("timing_ifnone");
+    if ((conditional && (ifnone || children.size() != 1)) ||
+        (!conditional && !children.empty())) {
+      emitError(getSemanticLocation(path))
+          << "simple conditional specify path has malformed condition data";
+      invalid = true;
+      return;
+    }
     simpleTimingPaths[output.getValue()].push_back(
         {path, inputPaths, static_cast<uint64_t>(outputWidth.getInt()),
          static_cast<int32_t>(polarity.getInt()),
-         SmallVector<int64_t, 3>(delays.asArrayRef())});
+         SmallVector<int64_t, 3>(delays.asArrayRef()),
+         conditional ? children.front() : nullptr, ifnone});
   });
 
   auto getDriverDependencyRoots = [&](Operation *unit) {
@@ -1793,7 +1806,10 @@ void ObeliskSimPreparePass::runOnOperation() {
         llvm::all_of(paths, [&](const SimpleTimingPath &candidate) {
           return candidate.delays == path.delays;
         });
-    if (!exactInputs && identicalDelays) {
+    bool hasStateDependent = llvm::any_of(paths, [](const SimpleTimingPath &p) {
+      return p.condition || p.ifnone;
+    });
+    if (!exactInputs && identicalDelays && !hasStateDependent) {
       // When every applicable path has the same tuple, delay selection is
       // independent of which source was most recent. Prove that the declared
       // terminals are exactly the transitive combinational leaves and attach
@@ -1844,69 +1860,125 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       continue;
     }
-    if (paths.size() == 1 || identicalDelays) {
+    if (!hasStateDependent && (paths.size() == 1 || identicalDelays)) {
       matchedUnit->setAttr("delay_fs",
                            builder.getDenseI64ArrayAttr(path.delays));
       continue;
     }
 
-    // Each overlapping rule gets one direct source snapshot. The lowered
-    // actor compares those snapshots with statically unrolled operations and
-    // selects the shortest delay among simultaneously changing sources; no
-    // path table is scanned by the scheduler or runtime.
+    // Freeze a direct source snapshot inventory. Conditional paths can share
+    // sources and full paths can name several sources, so snapshots are
+    // allocated once per distinct input instead of once per declaration.
+    // The lowered actor shares each comparison across all matching rules.
     SmallVector<Attribute> frozenRules;
     llvm::StringSet<> distinctInputs;
-    for (auto [index, candidate] : llvm::enumerate(paths)) {
-      if (candidate.inputs.size() != 1 ||
-          !distinctInputs.insert(candidate.inputs.front()).second) {
-        emitError(getSemanticLocation(candidate.declaration))
-            << "overlapping specify paths require one distinct whole source "
-               "terminal per path";
-        invalid = true;
-        break;
+    if (!hasStateDependent)
+      for (const SimpleTimingPath &candidate : paths)
+        if (candidate.inputs.size() != 1 ||
+            !distinctInputs.insert(candidate.inputs.front()).second) {
+          emitError(getSemanticLocation(candidate.declaration))
+              << "overlapping specify paths require one distinct whole source "
+                 "terminal per path";
+          invalid = true;
+          break;
+        }
+    if (invalid)
+      continue;
+
+    llvm::StringMap<std::string> snapshots;
+    for (const SimpleTimingPath &candidate : paths) {
+      for (const std::string &input : candidate.inputs) {
+        if (snapshots.count(input))
+          continue;
+        auto inputDescriptor = descriptors.find(input);
+        Type snapshotType =
+            inputDescriptor == descriptors.end()
+                ? Type{}
+                : sim::getPackedScalarType(inputDescriptor->second.type);
+        std::string snapshotPath =
+            (output + ".$timing_path_snapshot_" + Twine(snapshots.size()))
+                .str();
+        if (!snapshotType || descriptors.count(snapshotPath)) {
+          emitError(getSemanticLocation(candidate.declaration))
+              << "specify path source has no unique packed snapshot";
+          invalid = true;
+          break;
+        }
+        if (nextStorageId == UINT64_MAX) {
+          emitError(getSemanticLocation(candidate.declaration))
+              << "timing path snapshots exceed the storage descriptor space";
+          invalid = true;
+          break;
+        }
+        uint64_t snapshotId = nextStorageId++;
+        uint64_t scopeId = getScopeId(matchedUnit);
+        DescriptorInfo snapshot{DescriptorInfo::Kind::Storage, snapshotId,
+                                scopeId, snapshotType,
+                                sim::NetResolutionKind::Wire};
+        snapshot.rootType = snapshotType;
+        descriptors[snapshotPath] = snapshot;
+        sim::SimStorageDeclOp::create(
+            builder, getSemanticLocation(candidate.declaration), snapshotId,
+            scopeId, snapshotType, sim::Lifetime::Design,
+            builder.getStringAttr(snapshotPath),
+            builder.getStringAttr("__obelisk_timing_path_snapshot"),
+            sim::ComputeObservabilityKindAttr{});
+        snapshots.try_emplace(input, std::move(snapshotPath));
       }
-      auto inputDescriptor = descriptors.find(candidate.inputs.front());
-      Type snapshotType =
-          inputDescriptor == descriptors.end()
-              ? Type{}
-              : sim::getPackedScalarType(inputDescriptor->second.type);
-      std::string snapshotPath =
-          (output + ".$timing_path_snapshot_" + Twine(index)).str();
-      if (!snapshotType || descriptors.count(snapshotPath)) {
-        emitError(getSemanticLocation(candidate.declaration))
-            << "overlapping specify path source has no unique packed "
-               "snapshot";
-        invalid = true;
+      if (invalid)
         break;
+    }
+    if (invalid)
+      continue;
+
+    // ifnone is local to paths with the same source and destination. Freeze a
+    // stable integer group so lowering can OR the ordinary if predicates once
+    // and apply the fallback without string comparisons at runtime.
+    llvm::StringMap<int32_t> groups;
+    for (const SimpleTimingPath &candidate : paths) {
+      std::string groupKey;
+      for (const std::string &input : candidate.inputs) {
+        groupKey += Twine(input.size()).str();
+        groupKey.push_back(':');
+        groupKey += input;
+        groupKey.push_back(';');
       }
-      if (nextStorageId == UINT64_MAX) {
-        emitError(getSemanticLocation(candidate.declaration))
-            << "timing path snapshots exceed the storage descriptor space";
-        invalid = true;
-        break;
+      auto [group, inserted] =
+          groups.try_emplace(groupKey, static_cast<int32_t>(groups.size()));
+      (void)inserted;
+      SmallVector<Attribute> inputAttrs;
+      SmallVector<Attribute> snapshotAttrs;
+      for (const std::string &input : candidate.inputs) {
+        inputAttrs.push_back(builder.getStringAttr(input));
+        snapshotAttrs.push_back(builder.getStringAttr(snapshots.lookup(input)));
       }
-      uint64_t snapshotId = nextStorageId++;
-      uint64_t scopeId = getScopeId(matchedUnit);
-      DescriptorInfo snapshot{DescriptorInfo::Kind::Storage, snapshotId,
-                              scopeId, snapshotType,
-                              sim::NetResolutionKind::Wire};
-      snapshot.rootType = snapshotType;
-      descriptors[snapshotPath] = snapshot;
-      sim::SimStorageDeclOp::create(
-          builder, getSemanticLocation(candidate.declaration), snapshotId,
-          scopeId, snapshotType, sim::Lifetime::Design,
-          builder.getStringAttr(snapshotPath),
-          builder.getStringAttr("__obelisk_timing_path_snapshot"),
-          sim::ComputeObservabilityKindAttr{});
-      frozenRules.push_back(builder.getDictionaryAttr({
-          builder.getNamedAttr("input",
-                               builder.getStringAttr(candidate.inputs.front())),
-          builder.getNamedAttr("snapshot", builder.getStringAttr(snapshotPath)),
+      SmallVector<NamedAttribute> attrs{
+          builder.getNamedAttr("inputs", builder.getArrayAttr(inputAttrs)),
+          builder.getNamedAttr("snapshots",
+                               builder.getArrayAttr(snapshotAttrs)),
           builder.getNamedAttr("polarity",
                                builder.getI32IntegerAttr(candidate.polarity)),
           builder.getNamedAttr("delay_fs",
                                builder.getDenseI64ArrayAttr(candidate.delays)),
-      }));
+          builder.getNamedAttr("condition_kind", builder.getI32IntegerAttr(
+                                                     candidate.condition ? 1
+                                                     : candidate.ifnone  ? 2
+                                                                         : 0)),
+          builder.getNamedAttr("condition_group",
+                               builder.getI32IntegerAttr(group->second)),
+      };
+      if (candidate.condition) {
+        auto nodeID =
+            candidate.condition->getAttrOfType<IntegerAttr>("node_id");
+        if (!nodeID) {
+          emitError(getSemanticLocation(candidate.declaration))
+              << "conditional specify path condition has no stable node ID";
+          invalid = true;
+          break;
+        }
+        attrs.push_back(builder.getNamedAttr("condition_node_id", nodeID));
+      }
+      frozenRules.push_back(builder.getDictionaryAttr(attrs));
     }
     if (!invalid)
       matchedUnit->setAttr("obelisk.timing_path_rules",
@@ -6146,25 +6218,70 @@ void ObeliskSimPreparePass::runOnOperation() {
   auto &observerReadLocals = preparedCaptures->observerReadLocals;
   auto &indirectRefTasks = preparedCaptures->indirectRefTasks;
 
+  llvm::DenseMap<uint64_t, Operation *> timingConditions;
+  semanticRoot->walk([&](Operation *nested) {
+    auto nodeID = nested->getAttrOfType<IntegerAttr>("node_id");
+    if (nodeID && nested->hasAttr("obelisk_sim.observer"))
+      timingConditions.try_emplace(nodeID.getValue().getZExtValue(), nested);
+  });
+
   for (PreparedUnit &unit : units) {
-    auto rules = unit.source->getAttrOfType<ArrayAttr>(
-        "obelisk.timing_path_rules");
+    auto rules =
+        unit.source->getAttrOfType<ArrayAttr>("obelisk.timing_path_rules");
     if (!rules)
       continue;
+    llvm::StringSet<> existingCaptures;
+    for (const auto &capture : unitCaptures[unit.source])
+      existingCaptures.insert(capture.first);
     for (Attribute attr : rules) {
       auto rule = dyn_cast<DictionaryAttr>(attr);
-      auto snapshot =
-          rule ? rule.getAs<StringAttr>("snapshot") : StringAttr{};
-      auto found = snapshot ? descriptors.find(snapshot.getValue())
-                            : descriptors.end();
-      if (!snapshot || found == descriptors.end()) {
+      SmallVector<StringAttr> snapshots;
+      if (auto array = rule ? rule.getAs<ArrayAttr>("snapshots") : ArrayAttr{})
+        for (Attribute snapshot : array)
+          if (auto path = dyn_cast<StringAttr>(snapshot))
+            snapshots.push_back(path);
+      if (auto legacy =
+              rule ? rule.getAs<StringAttr>("snapshot") : StringAttr{})
+        snapshots.push_back(legacy);
+      if (!rule || snapshots.empty()) {
         emitError(getSemanticLocation(unit.source))
-            << "timing path snapshot no longer resolves";
+            << "timing path has no frozen source snapshots";
         invalid = true;
         continue;
       }
-      unitCaptures[unit.source].push_back(
-          {snapshot.getValue().str(), found->second});
+      for (StringAttr snapshot : snapshots) {
+        auto found = descriptors.find(snapshot.getValue());
+        if (found == descriptors.end()) {
+          emitError(getSemanticLocation(unit.source))
+              << "timing path snapshot no longer resolves";
+          invalid = true;
+          continue;
+        }
+        if (existingCaptures.insert(snapshot.getValue()).second)
+          unitCaptures[unit.source].push_back(
+              {snapshot.getValue().str(), found->second});
+      }
+      auto conditionNode = rule.getAs<IntegerAttr>("condition_node_id");
+      if (!conditionNode)
+        continue;
+      auto condition =
+          timingConditions.find(conditionNode.getValue().getZExtValue());
+      if (condition == timingConditions.end()) {
+        emitError(getSemanticLocation(unit.source))
+            << "timing path condition evaluator no longer resolves";
+        invalid = true;
+        continue;
+      }
+      if (!observerLocalCaptures[condition->second].empty() ||
+          !observerValueCaptures[condition->second].empty()) {
+        emitError(getSemanticLocation(condition->second))
+            << "specify path condition cannot capture an automatic local";
+        invalid = true;
+        continue;
+      }
+      for (const auto &capture : unitCaptures[condition->second])
+        if (existingCaptures.insert(capture.first).second)
+          unitCaptures[unit.source].push_back(capture);
     }
   }
   if (invalid)
@@ -6219,6 +6336,52 @@ void ObeliskSimPreparePass::runOnOperation() {
     unit.source->setAttr(observerDependenciesAttrName,
                          builder.getArrayAttr(dependencies));
   }
+
+  // Resolve the condition-node identities only after capture analysis has
+  // frozen each outlined evaluator ABI. Copy that immutable ABI into the
+  // driver rule so per-unit lowering needs no semantic-tree lookup.
+  for (PreparedUnit &unit : units) {
+    auto rules =
+        unit.source->getAttrOfType<ArrayAttr>("obelisk.timing_path_rules");
+    if (!rules)
+      continue;
+    SmallVector<Attribute> frozen;
+    for (Attribute attr : rules) {
+      auto rule = dyn_cast<DictionaryAttr>(attr);
+      if (!rule) {
+        invalid = true;
+        break;
+      }
+      NamedAttrList fields(rule.getValue());
+      if (auto conditionNode = rule.getAs<IntegerAttr>("condition_node_id")) {
+        auto condition =
+            timingConditions.find(conditionNode.getValue().getZExtValue());
+        auto evaluator =
+            condition == timingConditions.end()
+                ? FlatSymbolRefAttr{}
+                : condition->second->getAttrOfType<FlatSymbolRefAttr>(
+                      "obelisk_sim.observer");
+        auto captures = condition == timingConditions.end()
+                            ? ArrayAttr{}
+                            : condition->second->getAttrOfType<ArrayAttr>(
+                                  observerCapturesAttrName);
+        if (!evaluator || !captures) {
+          emitError(getSemanticLocation(unit.source))
+              << "timing path condition has no frozen evaluator ABI";
+          invalid = true;
+          break;
+        }
+        fields.set("condition_evaluator", evaluator);
+        fields.set("condition_captures", captures);
+      }
+      frozen.push_back(builder.getDictionaryAttr(fields));
+    }
+    if (!invalid)
+      unit.source->setAttr("obelisk.timing_path_rules",
+                           builder.getArrayAttr(frozen));
+  }
+  if (invalid)
+    return abort();
 
   auto freezeRandomizeHookCaptures =
       [&](semantic::SVCallExpressionOp call) -> LogicalResult {
@@ -7051,15 +7214,21 @@ void ObeliskSimPreparePass::runOnOperation() {
       for (Attribute attr : rules) {
         auto rule = dyn_cast<DictionaryAttr>(attr);
         auto input = rule ? rule.getAs<StringAttr>("input") : StringAttr{};
+        auto inputs = rule ? rule.getAs<ArrayAttr>("inputs") : ArrayAttr{};
         auto snapshot =
             rule ? rule.getAs<StringAttr>("snapshot") : StringAttr{};
+        auto snapshots =
+            rule ? rule.getAs<ArrayAttr>("snapshots") : ArrayAttr{};
         auto polarity =
             rule ? rule.getAs<IntegerAttr>("polarity") : IntegerAttr{};
         auto delays = rule ? rule.getAs<DenseI64ArrayAttr>("delay_fs")
                            : DenseI64ArrayAttr{};
-        if (!input || !snapshot || !polarity || polarity.getInt() < 0 ||
-            polarity.getInt() > 2 || !delays || delays.empty() ||
-            delays.size() > 3) {
+        bool legacyTerminals = input && snapshot && !inputs && !snapshots;
+        bool arrayTerminals = inputs && snapshots && !inputs.empty() &&
+                              inputs.size() == snapshots.size();
+        if ((!legacyTerminals && !arrayTerminals) || !polarity ||
+            polarity.getInt() < 0 || polarity.getInt() > 2 || !delays ||
+            delays.empty() || delays.size() > 3) {
           rulesInvalid = true;
           break;
         }
@@ -7075,12 +7244,29 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
         if (rulesInvalid)
           break;
-        tickRules.push_back(builder.getDictionaryAttr({
-            builder.getNamedAttr("input", input),
-            builder.getNamedAttr("snapshot", snapshot),
-            builder.getNamedAttr("polarity", polarity),
-            builder.getNamedAttr("delays", builder.getDenseI64ArrayAttr(ticks)),
-        }));
+        SmallVector<NamedAttribute> fields;
+        if (legacyTerminals) {
+          fields.push_back(builder.getNamedAttr("input", input));
+          fields.push_back(builder.getNamedAttr("snapshot", snapshot));
+        } else {
+          fields.push_back(builder.getNamedAttr("inputs", inputs));
+          fields.push_back(builder.getNamedAttr("snapshots", snapshots));
+        }
+        fields.push_back(builder.getNamedAttr("polarity", polarity));
+        fields.push_back(builder.getNamedAttr(
+            "delays", builder.getDenseI64ArrayAttr(ticks)));
+        for (StringRef name :
+             {"condition_kind", "condition_group", "condition_node_id"})
+          if (auto value = rule.getAs<IntegerAttr>(name))
+            fields.push_back(builder.getNamedAttr(name, value));
+        if (auto evaluator =
+                rule.getAs<FlatSymbolRefAttr>("condition_evaluator"))
+          fields.push_back(
+              builder.getNamedAttr("condition_evaluator", evaluator));
+        if (auto captures = rule.getAs<ArrayAttr>("condition_captures"))
+          fields.push_back(
+              builder.getNamedAttr("condition_captures", captures));
+        tickRules.push_back(builder.getDictionaryAttr(fields));
       }
       if (rulesInvalid) {
         emitError(getSemanticLocation(unit.source))
