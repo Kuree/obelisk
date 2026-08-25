@@ -465,7 +465,12 @@ ivtest cases: 1856 positive and 371 expected-error passes, 209 compile failures,
 233 run failures, and 6 suite skips. The leading implementation clusters are
 49 gate primitives, 43 unclassified long-tail cases, 40 specify cases, 17
 frontend parse/name cases, 10 timescale cases, 8 delayed continuous-assignment
-cases, 7 port-connection cases, and 6 procedural assign/force/release cases.
+cases, and 7 port-connection cases. The apparent six-case procedural
+assign/force/release cluster consists entirely of variable bit/part-select
+extensions that IEEE 1800-2017 10.6.1 and 10.6.2 explicitly prohibit; the
+audit now reports those mandatory diagnostics as strictness rather than missing
+language features. The one legal whole-variable force case from the original
+cluster passes in both execution tiers.
 Harness-only missing inputs and excluded features are not implementation work.
 
 L12's nineteenth closure tranche fixes the standard time-zero evaluation of an

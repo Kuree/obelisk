@@ -119,9 +119,17 @@ RULES: list[tuple[str, str, str]] = [
     (r"node do_while_loop|do_while_loop", "do-while loop", "IEEE 1800 Ch. 12"),
     (r"for_loop \(expected condition", "for loop (general form)", "IEEE 1800 Ch. 12"),
     (r"forever_loop", "forever loop", "IEEE 1800 Ch. 12"),
+    # IEEE 1800-2017 10.6.1 and 10.6.2 explicitly prohibit variable bit- and
+    # part-selects in procedural continuous assignments and force/release.
+    # Some legacy ivtest cases expect the Verilog compatibility extension, so
+    # keep their mandatory frontend diagnostics out of the missing-feature
+    # bucket.
+    (r"lvalue of (?:force/release|procedural assign/deassign) must be",
+     "Illegal procedural override lvalue", "Strictness"),
     (r"obelisk\.sv\.statement\.procedural_assign"
      r"|(?:signal-dependent )?force and procedural assign"
-     r"|lvalue of (?:force/release|procedural assign/deassign)",
+     r"|only constant built-in net bit and part selects are supported for "
+     r"(?:force|release)",
      "procedural assign / force / release", "IEEE 1800 Ch. 10"),
     (r"assignment destination is not a reference or driver"
      r"|variable declaration has no reference binding"

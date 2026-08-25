@@ -71,6 +71,27 @@ class ClassifyLineTest(unittest.TestCase):
                 self.assertIsNotNone(hit)
                 self.assertEqual(hit[1], expected)
 
+    def test_illegal_procedural_override_lvalues_are_not_feature_gaps(self):
+        diagnostics = (
+            ("error: lvalue of procedural assign/deassign must be a variable "
+             "or concatenation of variables -- bit-selects, part-selects, "
+             "and references to nets are disallowed"),
+            ("error: lvalue of force/release must be a net, a variable, a "
+             "constant select of a net, or a concatenation of these"),
+        )
+        for line in diagnostics:
+            with self.subTest(line=line):
+                hit = classify.classify_line(line)
+                self.assertEqual(hit,
+                                 ("Illegal procedural override lvalue",
+                                  "Strictness"))
+
+    def test_missing_override_lowering_remains_a_feature_gap(self):
+        line = ("error: unsupported semantic construct in the first simulation "
+                "slice: obelisk.sv.statement.procedural_assign")
+        self.assertEqual(self.classify(line),
+                         "procedural assign / force / release")
+
 
 class AreaTest(unittest.TestCase):
     def test_templated_feature_keeps_its_rule_area(self):

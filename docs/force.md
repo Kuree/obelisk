@@ -1,18 +1,25 @@
 # Procedural force and assign
 
-Obelisk supports constant-foldable right-hand sides for these initial language
+Obelisk supports continuously reevaluated right-hand sides for these language
 forms:
 
-- whole statically allocated packed variables with `force`/`release`
-- whole statically allocated packed variables with procedural
-  `assign`/`deassign`
+- whole statically allocated variables with `force`/`release`
+- whole statically allocated variables with procedural `assign`/`deassign`
 - whole built-in nets and constant built-in net bit/part selects with
   `force`/`release`
+- legal concatenations of those targets
 
-Automatic variables, class properties, unpacked or managed values,
-concatenations, dynamic selects, and user-defined net types are rejected.
-Signal-dependent right-hand sides are diagnosed instead of being approximated
-with a statement-time snapshot.
+Fixed unpacked aggregates, whole dynamic containers, strings, class handles,
+and the implemented class-property compatibility surface use the same override
+machinery. Signal-dependent right-hand sides are observed by exact dependency;
+the runtime does not poll them.
+
+IEEE 1800-2017 10.6.1 explicitly prohibits bit- and part-selects of variables
+for procedural `assign`/`deassign`, and 10.6.2 likewise prohibits them for
+`force`/`release`. Automatic variables, nonconstant net selects, and
+user-defined nettypes are also rejected. A few legacy ivtest cases expect a
+variable-select extension; their diagnostics are conformance evidence, not
+missing-feature evidence.
 
 Force has priority over procedural assign. Assign always updates its shadow
 value, including while force owns the published bits; releasing the force then
