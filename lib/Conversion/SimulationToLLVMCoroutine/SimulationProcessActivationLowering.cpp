@@ -38,8 +38,9 @@ makeProcessActivationHelper(ModuleOp module, sim::SimFuncOp function,
   for (BlockArgument argument : function.getBody().front().getArguments())
     arguments.push_back(convertProcessType(argument.getType(), context));
   ArrayRef<int64_t> transferredReferences;
-  if (auto references = function->getAttrOfType<DenseI64ArrayAttr>(
-          nativeTransferredReferencesAttr))
+  if (auto references =
+          function->getAttrOfType<DenseI64ArrayAttr>(
+              nativeTransferredReferencesAttr))
     transferredReferences = references.asArrayRef();
   std::string checkedHelperName =
       (function.getSymName() + ".__obelisk_activate_checked").str();
@@ -78,7 +79,8 @@ makeProcessActivationHelper(ModuleOp module, sim::SimFuncOp function,
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
           SymbolRefAttr::get(
-              context, "obelisk_rt_v1_process_instance_create_for_context"),
+              context,
+              "obelisk_rt_v1_process_instance_create_for_context"),
           ValueRange{entry->getArgument(0), descriptor, outInstance})
           .getResult();
   Value succeeded =
@@ -152,8 +154,8 @@ makeProcessActivationHelper(ModuleOp module, sim::SimFuncOp function,
 
   builder.setInsertionPointToStart(wrapperFailed);
   for (int64_t index : transferredReferences) {
-    if (index < 0 ||
-        static_cast<uint64_t>(index) >= wrapperEntry->getNumArguments())
+    if (index < 0 || static_cast<uint64_t>(index) >=
+                         wrapperEntry->getNumArguments())
       return helper.emitError("has an invalid transferred-reference index");
     LLVM::CallOp::create(
         builder, location, TypeRange{i32},
@@ -338,17 +340,25 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
     return helper.emitError(
         "priority signal resume is reserved for internal concurrent "
         "cancellation or abort observers");
-  uint32_t scheduleFlags =
-      OBELISK_RT_SCHEDULE_HOME(homeRegion) |
-      (entryKind == sim::EntryKind::Final ? OBELISK_RT_SCHEDULE_FINAL : 0) |
-      (entryKind == sim::EntryKind::Initial ? OBELISK_RT_SCHEDULE_INITIAL : 0) |
-      (startup ? OBELISK_RT_SCHEDULE_STARTUP : 0) |
-      (function->hasAttr("obelisk_sim.detached_controls")
-           ? OBELISK_RT_SCHEDULE_DETACHED_CONTROLS
-           : 0) |
-      (prioritySignalResume ? OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL : 0) |
-      (entryKind == sim::EntryKind::RootInitializer ? OBELISK_RT_SCHEDULE_ROOT
-                                                    : 0);
+  uint32_t scheduleFlags = OBELISK_RT_SCHEDULE_HOME(homeRegion) |
+                           (entryKind == sim::EntryKind::Final
+                                ? OBELISK_RT_SCHEDULE_FINAL
+                                : 0) |
+                           (entryKind == sim::EntryKind::Initial
+                                ? OBELISK_RT_SCHEDULE_INITIAL
+                                : 0) |
+                           (startup
+                                ? OBELISK_RT_SCHEDULE_STARTUP
+                                : 0) |
+                           (function->hasAttr("obelisk_sim.detached_controls")
+                                ? OBELISK_RT_SCHEDULE_DETACHED_CONTROLS
+                                : 0) |
+                           (prioritySignalResume
+                                ? OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL
+                                : 0) |
+                           (entryKind == sim::EntryKind::RootInitializer
+                                ? OBELISK_RT_SCHEDULE_ROOT
+                                : 0);
   Value null = LLVM::ZeroOp::create(builder, location, pointer);
   Value continuationAddress = null;
   Value rankAddress = null;
@@ -429,10 +439,10 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
           SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_process_token"),
           ValueRange{entry->getArgument(0), instance})
           .getResult();
-  Value logicalToken =
-      arith::OrIOp::create(builder, location, token,
-                           llvmConstant(builder, location, i64,
-                                        OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG));
+  Value logicalToken = arith::OrIOp::create(
+      builder, location, token,
+      llvmConstant(builder, location, i64,
+                   OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG));
   if (auto owner = function->getAttrOfType<IntegerAttr>(
           "obelisk_sim.program_owner_id")) {
     Value registerStatus =
@@ -451,9 +461,9 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
   }
   LLVM::ReturnOp::create(builder, location, logicalToken);
 
-  getOrDeclareLLVMFunction(module,
-                           "obelisk_rt_v1_process_instance_create_for_context",
-                           i32, {pointer, pointer, pointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_process_instance_create_for_context", i32,
+      {pointer, pointer, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_add_planned", i32,
                            {pointer, pointer, i32, i32, pointer, pointer, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_prime", i32,

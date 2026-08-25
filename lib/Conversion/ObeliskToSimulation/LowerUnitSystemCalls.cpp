@@ -1329,14 +1329,14 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
   }
 
   // The whole of IEEE 1800-2017 Table 20-4.
-  bool realMath =
-      llvm::StringSwitch<bool>(name)
-          .Cases({"$ceil",  "$floor", "$sqrt",  "$exp",  "$ln",   "$log10",
-                  "$pow",   "$atan2", "$hypot", "$sin",  "$cos",  "$tan",
-                  "$asin",  "$acos",  "$atan",  "$sinh", "$cosh", "$tanh",
-                  "$asinh", "$acosh", "$atanh"},
-                 true)
-          .Default(false);
+  bool realMath = llvm::StringSwitch<bool>(name)
+                      .Cases({"$ceil", "$floor", "$sqrt", "$exp", "$ln",
+                              "$log10", "$pow", "$atan2", "$hypot", "$sin",
+                              "$cos", "$tan", "$asin", "$acos", "$atan",
+                              "$sinh", "$cosh", "$tanh", "$asinh", "$acosh",
+                              "$atanh"},
+                             true)
+                      .Default(false);
   if (realMath)
     return lowerRealMathSystemCall(op);
 
@@ -1480,8 +1480,8 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     if (failed(rounded))
       return failure();
     if (name == "$stime")
-      rounded =
-          arith::TruncIOp::create(builder, location, i32, *rounded).getResult();
+      rounded = arith::TruncIOp::create(builder, location, i32, *rounded)
+                    .getResult();
     return convertResult(*rounded);
   }
 
@@ -1571,14 +1571,14 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
   if (fileCall)
     return lowerFileSystemCall(op);
 
-  bool dumpCall =
-      llvm::StringSwitch<bool>(name)
-          .Cases({"$dumpfile", "$dumpvars", "$dumpoff", "$dumpon", "$dumpall",
-                  "$dumpflush", "$dumplimit", "$dumpports", "$dumpportsoff",
-                  "$dumpportson", "$dumpportsall", "$dumpportsflush",
-                  "$dumpportslimit"},
-                 true)
-          .Default(false);
+  bool dumpCall = llvm::StringSwitch<bool>(name)
+                      .Cases({"$dumpfile", "$dumpvars", "$dumpoff", "$dumpon",
+                              "$dumpall", "$dumpflush", "$dumplimit",
+                              "$dumpports", "$dumpportsoff", "$dumpportson",
+                              "$dumpportsall", "$dumpportsflush",
+                              "$dumpportslimit"},
+                             true)
+                      .Default(false);
   if (dumpCall)
     return lowerDumpSystemCall(op);
 

@@ -3772,12 +3772,10 @@ obelisk_rt_status obelisk_rt_v1_plusarg_value(obelisk_rt_context *context,
                                               uint32_t *out_found);
 // Parse a runtime $value$plusargs format. `out_conversion` is zero for string,
 // one for real, or the integral radix. Invalid formats report no match.
-obelisk_rt_status obelisk_rt_v1_plusarg_scan(obelisk_rt_context *context,
-                                             obelisk_rt_gc_lane_v1 *lane,
-                                             obelisk_rt_string_v1 format,
-                                             obelisk_rt_string_v1 *out_tail,
-                                             uint32_t *out_conversion,
-                                             uint32_t *out_found);
+obelisk_rt_status obelisk_rt_v1_plusarg_scan(
+    obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
+    obelisk_rt_string_v1 format, obelisk_rt_string_v1 *out_tail,
+    uint32_t *out_conversion, uint32_t *out_found);
 
 // Execute a host command and return its normalized exit status. A process
 // terminated by a signal reports 128 plus the signal number.

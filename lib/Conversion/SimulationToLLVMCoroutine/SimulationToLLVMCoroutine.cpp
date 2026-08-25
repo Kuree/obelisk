@@ -81,8 +81,8 @@ public:
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     auto type = cast<IntegerType>(op.getType());
-    Value one = arith::ConstantOp::create(rewriter, loc, type,
-                                          rewriter.getIntegerAttr(type, 1));
+    Value one = arith::ConstantOp::create(
+        rewriter, loc, type, rewriter.getIntegerAttr(type, 1));
     SmallVector<Type> loopTypes{type, type, type};
     SmallVector<Value> initial{one, op.getLhs(), op.getRhs()};
     auto loop = scf::WhileOp::create(
@@ -97,20 +97,21 @@ public:
         [&](OpBuilder &nested, Location nestedLoc, ValueRange arguments) {
           Value lowBit = arguments[2];
           if (type.getWidth() != 1)
-            lowBit = arith::TruncIOp::create(nested, nestedLoc,
-                                             nested.getI1Type(), lowBit);
-          Value multiplied = arith::MulIOp::create(nested, nestedLoc,
-                                                   arguments[0], arguments[1]);
-          Value selected = arith::SelectOp::create(nested, nestedLoc, lowBit,
-                                                   multiplied, arguments[0]);
-          Value squared = arith::MulIOp::create(nested, nestedLoc, arguments[1],
-                                                arguments[1]);
-          Value one = arith::ConstantOp::create(nested, nestedLoc, type,
-                                                nested.getIntegerAttr(type, 1));
-          Value remaining =
-              arith::ShRUIOp::create(nested, nestedLoc, arguments[2], one);
-          scf::YieldOp::create(nested, nestedLoc,
-                               ValueRange{selected, squared, remaining});
+            lowBit = arith::TruncIOp::create(
+                nested, nestedLoc, nested.getI1Type(), lowBit);
+          Value multiplied = arith::MulIOp::create(
+              nested, nestedLoc, arguments[0], arguments[1]);
+          Value selected = arith::SelectOp::create(
+              nested, nestedLoc, lowBit, multiplied, arguments[0]);
+          Value squared = arith::MulIOp::create(
+              nested, nestedLoc, arguments[1], arguments[1]);
+          Value one = arith::ConstantOp::create(
+              nested, nestedLoc, type, nested.getIntegerAttr(type, 1));
+          Value remaining = arith::ShRUIOp::create(
+              nested, nestedLoc, arguments[2], one);
+          scf::YieldOp::create(
+              nested, nestedLoc,
+              ValueRange{selected, squared, remaining});
         });
     if (!loop || loop->getNumResults() != loopTypes.size())
       return rewriter.notifyMatchFailure(op,
@@ -341,10 +342,10 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       // predecessor and are still analyzed normally.
       llvm::SmallPtrSet<Block *, 4> coldCheckpointBlocks;
       source.walk([&](Operation *operation) {
-        if (isa<sim::SimFinishOp, sim::SimProgramExitOp, sim::SimStopOp,
-                sim::SimFatalOp, sim::SimErrorOp,
-                sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
-                sim::SimDisplayOp>(operation))
+        if (isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
+                sim::SimProgramExitOp,
+                sim::SimErrorOp, sim::SimTerminationRequestedOp,
+                sim::SimStatusCheckOp, sim::SimDisplayOp>(operation))
           coldCheckpointBlocks.insert(operation->getBlock());
       });
       source.walk([&](Operation *operation) {
@@ -354,10 +355,10 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
           checkpointSafe = false;
           return;
         }
-        if (isa<sim::SimFinishOp, sim::SimProgramExitOp, sim::SimStopOp,
-                sim::SimFatalOp, sim::SimErrorOp,
-                sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
-                sim::SimDisplayOp>(operation)) {
+        if (isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
+                sim::SimProgramExitOp,
+                sim::SimErrorOp, sim::SimTerminationRequestedOp,
+                sim::SimStatusCheckOp, sim::SimDisplayOp>(operation)) {
           // These operations are cold checkpoint exits.  They do not create
           // or consume persistent four-state data in the generated body, so
           // the surrounding module-instance logic can still have a two-state
@@ -767,9 +768,10 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       }
       if (isa<sim::SimRefLoadOp, sim::SimNetReadOp, sim::SimReturnOp,
               sim::SimNBAEnqueueOp, sim::SimDisplayOp, sim::SimFinishOp,
-              sim::SimProgramExitOp, sim::SimStopOp, sim::SimFatalOp,
-              sim::SimErrorOp, sim::SimTerminationRequestedOp,
-              sim::SimStatusCheckOp, cf::BranchOp, cf::CondBranchOp>(operation))
+              sim::SimStopOp, sim::SimFatalOp, sim::SimErrorOp,
+              sim::SimProgramExitOp,
+              sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
+              cf::BranchOp, cf::CondBranchOp>(operation))
         return;
       if (isa<sim::SimCallOp>(operation) || !isMemoryEffectFree(operation)) {
         supported = false;
@@ -819,10 +821,10 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     llvm::SmallPtrSet<Block *, 4> checkpointBlocks;
     llvm::MapVector<Block *, Location> checkpoints;
     probe.walk([&](Operation *operation) {
-      if (isa<sim::SimDisplayOp, sim::SimFinishOp, sim::SimProgramExitOp,
-              sim::SimStopOp, sim::SimFatalOp, sim::SimErrorOp,
-              sim::SimTerminationRequestedOp, sim::SimStatusCheckOp>(
-              operation)) {
+      if (isa<sim::SimDisplayOp, sim::SimFinishOp, sim::SimStopOp,
+              sim::SimProgramExitOp,
+              sim::SimFatalOp, sim::SimErrorOp, sim::SimTerminationRequestedOp,
+              sim::SimStatusCheckOp>(operation)) {
         Block *block = operation->getBlock();
         checkpoints.try_emplace(block, operation->getLoc());
       }
@@ -4456,7 +4458,8 @@ public:
     RewritePatternSet integerPowerPatterns(&getContext());
     integerPowerPatterns.add<ExpandIntegerPower>(&getContext());
     GreedyRewriteConfig integerPowerConfig;
-    integerPowerConfig.setStrictness(GreedyRewriteStrictness::ExistingOps)
+    integerPowerConfig
+        .setStrictness(GreedyRewriteStrictness::ExistingOps)
         .setRegionSimplificationLevel(GreedySimplifyRegionLevel::Disabled)
         .enableFolding(false)
         .enableConstantCSE(false);
@@ -4486,7 +4489,8 @@ public:
     // module-wide conversion driver otherwise walks thousands of cold UVM
     // methods serially and dominates -O3 compile time.
     SmallVector<SmallVector<Operation *>> functionBodies;
-    Dialect *llvmDialect = getContext().getLoadedDialect<LLVM::LLVMDialect>();
+    Dialect *llvmDialect =
+        getContext().getLoadedDialect<LLVM::LLVMDialect>();
     module.walk([&](FunctionOpInterface function) {
       if (function.isExternal())
         return;

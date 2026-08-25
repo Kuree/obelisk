@@ -226,11 +226,10 @@ makePlainNativeWrappers(ModuleOp module, func::FuncOp body, StringRef baseName,
   return success();
 }
 
-LogicalResult
-makeDirectFragmentWrapper(ModuleOp module, sim::SimFuncOp body,
-                          sim::SimFuncOp actor, StringRef wrapperName,
-                          uint32_t actorSlot, uint32_t continuation,
-                          const SimulationProcessFrameAnalysis &analysis) {
+LogicalResult makeDirectFragmentWrapper(
+    ModuleOp module, sim::SimFuncOp body, sim::SimFuncOp actor,
+    StringRef wrapperName, uint32_t actorSlot, uint32_t continuation,
+    const SimulationProcessFrameAnalysis &analysis) {
   OpBuilder builder(module.getContext());
   builder.setInsertionPointToEnd(module.getBody());
   Location location = body.getLoc();
@@ -271,8 +270,9 @@ makeDirectFragmentWrapper(ModuleOp module, sim::SimFuncOp body,
       mayTerminate |=
           operation->getName().getDialectNamespace() == "obelisk_rt";
       mayTerminate |=
-          isa<sim::SimFinishOp, sim::SimProgramExitOp, sim::SimStopOp,
-              sim::SimFatalOp, sim::SimErrorOp, sim::SimTerminationRequestedOp,
+          isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
+              sim::SimProgramExitOp,
+              sim::SimErrorOp, sim::SimTerminationRequestedOp,
               sim::SimStatusCheckOp, sim::SimDisplayOp, sim::SimFileOpenMCDOp,
               sim::SimFileOpenOp, sim::SimFileCloseOp, sim::SimFileFlushOp,
               sim::SimFileGetcOp, sim::SimFileUngetcOp, sim::SimFileGetlineOp,
@@ -320,8 +320,9 @@ makeDirectFragmentWrapper(ModuleOp module, sim::SimFuncOp body,
     call->setAttr("obelisk.eval.direct_call", builder.getUnitAttr());
     LLVM::ReturnOp::create(
         builder, location,
-        returnsStatus ? call.getResult(0)
-                      : llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        returnsStatus
+            ? call.getResult(0)
+            : llvmConstant(builder, location, i32, OBELISK_RT_OK));
     return success();
   }
   Block *invoke = new Block;
@@ -333,8 +334,8 @@ makeDirectFragmentWrapper(ModuleOp module, sim::SimFuncOp body,
   Value enterStatus =
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
-          SymbolRefAttr::get(context,
-                             "obelisk_rt_v1_scheduler_direct_fragment_enter"),
+          SymbolRefAttr::get(
+              context, "obelisk_rt_v1_scheduler_direct_fragment_enter"),
           ValueRange{entry->getArgument(0),
                      llvmConstant(builder, location, i32, actorSlot),
                      llvmConstant(builder, location, i32, continuation),
@@ -352,8 +353,8 @@ makeDirectFragmentWrapper(ModuleOp module, sim::SimFuncOp body,
   builder.setInsertionPointToStart(invoke);
   Value instance =
       LLVM::LoadOp::create(builder, location, pointer, instanceAddress, 8);
-  Value currentContext = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                   "__obelisk_current_context");
+  Value currentContext = LLVM::AddressOfOp::create(
+      builder, location, pointer, "__obelisk_current_context");
   LLVM::StoreOp::create(builder, location, entry->getArgument(0),
                         currentContext, 8);
   Value frame =
@@ -369,8 +370,9 @@ makeDirectFragmentWrapper(ModuleOp module, sim::SimFuncOp body,
     }
     if (physicalArgument >= actorEntry.getNumArguments())
       return actor.emitError("direct fragment capture layout is truncated");
-    Type valueType = convertProcessType(
-        actorEntry.getArgument(physicalArgument++).getType(), context);
+    Type valueType =
+        convertProcessType(actorEntry.getArgument(physicalArgument++).getType(),
+                           context);
     arguments.push_back(loadAt(builder, location, frame, slot.valueOffset,
                                valueType, slot.alignment));
     if (slot.hasSecondaryStorage()) {
@@ -431,8 +433,8 @@ makeDirectFragmentWrapper(ModuleOp module, sim::SimFuncOp body,
   Value leaveStatus =
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
-          SymbolRefAttr::get(context,
-                             "obelisk_rt_v1_scheduler_direct_fragment_leave"),
+          SymbolRefAttr::get(
+              context, "obelisk_rt_v1_scheduler_direct_fragment_leave"),
           ValueRange{entry->getArgument(0),
                      llvmConstant(builder, location, i32, actorSlot)})
           .getResult();

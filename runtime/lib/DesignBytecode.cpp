@@ -1803,8 +1803,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                       sizeof(managed));
         else if (previous != managed) {
           uint64_t changedHandle =
-              automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                              static_cast<uint32_t>(start)
+              automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                                    static_cast<uint32_t>(start)
               : boundedStatic ? encodeStaticHandle(staticID, start)
                               : static_cast<uint64_t>(start);
           if (changedHandle == UINT64_MAX)
@@ -2081,8 +2081,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             if (!local && !realValue && !equalStringContents)
               transitions.push_back(
                   {bitIndex,
-                   automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                                   static_cast<uint32_t>(absolute)
+                   automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                                         static_cast<uint32_t>(absolute)
                    : boundedStatic ? encodeStaticHandle(staticID, coordinate)
                                    : absolute,
                    oldValue, oldUnknown, newValue, newUnknown});
@@ -2105,8 +2105,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           }
           if (changed) {
             uint64_t realHandle =
-                automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                                static_cast<uint32_t>(start)
+                automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                                      static_cast<uint32_t>(start)
                 : boundedStatic ? encodeStaticHandle(staticID, start)
                                 : static_cast<uint64_t>(start);
             if (!obelisk_rt_publish_signal_occurrence_unlocked(
