@@ -836,6 +836,24 @@ TEST(VCD, VectorsDropRedundantLeadingCharacters) {
   EXPECT_NE(text.find("b10000000 " + data), std::string::npos);
 }
 
+TEST(VCD, VectorsKeepKnownZeroBeforeUnknownOrHighImpedance) {
+  Fixture fixture;
+  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
+  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  // 0X10 must not shorten to X10: the latter left-extends with X, not zero.
+  fixture.setBits(kCountBit, 4, 0x2, 0x4);
+  fixture.advanceTo(10);
+  // The same rule applies to Z left-extension.
+  fixture.setBits(kCountBit, 4, 0x6, 0x4);
+  fixture.advanceTo(20);
+  std::string text = fixture.read();
+
+  EXPECT_EQ(valueRecords(text, identifierFor(text, "count")),
+            (std::vector<std::string>{"b0x10", "b0z10"}));
+}
+
 TEST(VCD, ScopeSelectionRestrictsTheTracedSet) {
   Fixture fixture;
   ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
@@ -934,7 +952,76 @@ TEST(VCD, DumpAllEmitsEverySelectedVariable) {
 
   std::string clk = identifierFor(text, "clk");
   EXPECT_EQ(valueRecords(text, clk), (std::vector<std::string>{"0", "0"}));
-  EXPECT_NE(text.find("#10\n"), std::string::npos);
+  size_t checkpoint = text.find("$dumpall\n");
+  ASSERT_NE(checkpoint, std::string::npos);
+  EXPECT_NE(text.find("0" + clk + "\n", checkpoint), std::string::npos);
+  EXPECT_NE(text.find("$end\n", checkpoint), std::string::npos);
+}
+
+TEST(VCD, DumpAllUpdatesTheActiveShadowWithoutDuplicateSlotRecords) {
+  Fixture fixture;
+  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
+  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  fixture.setBits(kClkBit, 1, 0, 0);
+  fixture.advanceTo(10);
+  fixture.setBits(kClkBit, 1, 1, 0);
+  ASSERT_EQ(obelisk_rt_v1_dump_all(fixture.context), OBELISK_RT_OK);
+  fixture.advanceTo(20);
+  std::string text = fixture.read();
+
+  EXPECT_EQ(valueRecords(text, identifierFor(text, "clk")),
+            (std::vector<std::string>{"0", "1"}));
+  EXPECT_EQ(countOccurrences(text, "$dumpall\n"), 1u);
+}
+
+TEST(VCD, DumpAllRemainsObservableWhileOrdinaryDumpingIsOff) {
+  Fixture fixture;
+  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
+  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  fixture.setBits(kClkBit, 1, 0, 0);
+  fixture.advanceTo(10);
+  ASSERT_EQ(obelisk_rt_v1_dump_control(fixture.context, 0), OBELISK_RT_OK);
+  fixture.setBits(kClkBit, 1, 1, 0);
+  ASSERT_EQ(obelisk_rt_v1_dump_all(fixture.context), OBELISK_RT_OK);
+  fixture.advanceTo(20);
+  ASSERT_EQ(obelisk_rt_v1_dump_control(fixture.context, 1), OBELISK_RT_OK);
+  std::string text = fixture.read();
+
+  EXPECT_EQ(valueRecords(text, identifierFor(text, "clk")),
+            (std::vector<std::string>{"0", "x", "1", "1"}));
+  size_t off = text.find("$dumpoff\n");
+  size_t all = text.find("$dumpall\n", off);
+  size_t on = text.find("$dumpon\n", all);
+  ASSERT_NE(off, std::string::npos);
+  ASSERT_NE(all, std::string::npos);
+  ASSERT_NE(on, std::string::npos);
+  EXPECT_LT(off, all);
+  EXPECT_LT(all, on);
+}
+
+TEST(VCD, DumpAllDoesNotConsumeThePendingEndOfSlotInitialSample) {
+  Fixture fixture;
+  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
+  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  fixture.setBits(kClkBit, 1, 0, 0);
+  ASSERT_EQ(obelisk_rt_v1_dump_all(fixture.context), OBELISK_RT_OK);
+  fixture.setBits(kClkBit, 1, 1, 0);
+  fixture.advanceTo(10);
+  std::string text = fixture.read();
+
+  std::string clk = identifierFor(text, "clk");
+  EXPECT_EQ(valueRecords(text, clk), (std::vector<std::string>{"0", "1"}));
+  size_t all = text.find("$dumpall\n");
+  size_t initial = text.find("$dumpvars\n", all);
+  ASSERT_NE(all, std::string::npos);
+  ASSERT_NE(initial, std::string::npos);
+  EXPECT_LT(all, initial);
 }
 
 TEST(VCD, DumpLimitStopsWriting) {
@@ -949,8 +1036,58 @@ TEST(VCD, DumpLimitStopsWriting) {
   fixture.advanceTo(20);
   std::string text = fixture.read();
 
-  EXPECT_LE(text.size(), 64u);
+  size_t comment = text.find("$comment dump limit of 64 bytes reached $end");
+  ASSERT_NE(comment, std::string::npos);
+  EXPECT_LE(comment, 65u);
   EXPECT_EQ(text.find("$enddefinitions"), std::string::npos);
+  EXPECT_FALSE(obelisk_rt_dump_active_unlocked(fixture.context));
+}
+
+TEST(VCD, ExactAndZeroDumpLimitsStopWithOneComment) {
+  Fixture exact;
+  ASSERT_EQ(exact.create(), OBELISK_RT_OK);
+  ASSERT_EQ(exact.openDump(), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dump_vars(exact.context, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  exact.advanceTo(10);
+  ASSERT_EQ(obelisk_rt_v1_dump_flush(exact.context), OBELISK_RT_OK);
+  std::ifstream exactFile(exact.path, std::ios::binary | std::ios::ate);
+  ASSERT_TRUE(exactFile.good());
+  uint64_t written = static_cast<uint64_t>(exactFile.tellg());
+  ASSERT_NE(written, 0u);
+  ASSERT_EQ(obelisk_rt_v1_dump_limit(exact.context, written), OBELISK_RT_OK);
+  std::string exactText = exact.read();
+  EXPECT_EQ(countOccurrences(exactText, "$comment dump limit of "), 1u);
+  EXPECT_FALSE(obelisk_rt_dump_active_unlocked(exact.context));
+
+  Fixture zero;
+  ASSERT_EQ(zero.create(), OBELISK_RT_OK);
+  ASSERT_EQ(zero.openDump(), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dump_limit(zero.context, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dump_vars(zero.context, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  std::string zeroText = zero.read();
+  EXPECT_NE(zeroText.find("$comment dump limit of 0 bytes reached $end"),
+            std::string::npos);
+  EXPECT_EQ(zeroText.find("$enddefinitions"), std::string::npos);
+  EXPECT_FALSE(obelisk_rt_dump_active_unlocked(zero.context));
+}
+
+TEST(VCD, HeaderLimitClosesImmediatelyAndDoesNotRetryPerSlot) {
+  Fixture fixture;
+  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
+  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dump_limit(fixture.context, 8), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  fixture.advanceTo(10);
+  fixture.setBits(kClkBit, 1, 1, 0);
+  fixture.advanceTo(20);
+  std::string text = fixture.read();
+
+  EXPECT_EQ(countOccurrences(text, "$comment dump limit of 8 bytes reached"),
+            1u);
+  EXPECT_FALSE(obelisk_rt_dump_active_unlocked(fixture.context));
 }
 
 TEST(VCD, SelectingAMissingScopeIsRejected) {
@@ -972,9 +1109,11 @@ TEST(VCD, SelectingAMissingScopeIsRejected) {
 TEST(VCD, DumpingWithoutAnOpenFileIsInert) {
   Fixture fixture;
   ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
+  ASSERT_EQ(fixture.context->vcdState, nullptr);
   EXPECT_EQ(obelisk_rt_dump_slot_unlocked(fixture.context), OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_dump_all(fixture.context), OBELISK_RT_OK);
   EXPECT_FALSE(obelisk_rt_dump_active_unlocked(fixture.context));
+  EXPECT_EQ(fixture.context->vcdState, nullptr);
 }
 
 } // namespace

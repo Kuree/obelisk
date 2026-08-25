@@ -3303,8 +3303,8 @@ obelisk_rt_status obelisk_rt_v1_dump_all(obelisk_rt_context *context);
 // re-emits every current value.
 obelisk_rt_status obelisk_rt_v1_dump_control(obelisk_rt_context *context,
                                              uint32_t enabled);
-// `$dumplimit`. Zero removes the limit. Once the written size reaches the
-// limit the file is closed and no further records are produced.
+// `$dumplimit`. Zero is a zero-byte maximum. Once the written size reaches the
+// limit, a limit comment is appended and the file is closed.
 obelisk_rt_status obelisk_rt_v1_dump_limit(obelisk_rt_context *context,
                                            uint64_t bytes);
 obelisk_rt_status obelisk_rt_v1_dump_flush(obelisk_rt_context *context);

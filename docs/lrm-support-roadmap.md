@@ -1087,6 +1087,21 @@ words), and one 4096-bit parse remains one Simulation operation and one native
 or bytecode runtime intrinsic rather than width-expanded IR. Focused native,
 bytecode, runtime, and scaling evidence is recorded by the tranche tests.
 
+L19's eighth closure tranche completes the remaining ordinary four-state VCD
+control and encoding semantics from 21.7. `$dumpall` emits the required
+simulation-command checkpoint even while ordinary dumping is suspended and
+does not consume a pending end-of-slot `$dumpvars` sample. `$dumplimit` treats
+zero as a zero-byte maximum, stops at an exact or would-exceed boundary,
+appends the required limit comment, and closes even when the boundary is met
+while writing the header. Short vector records retain a known leading zero
+before X or Z, preserving the left-extension rules in Tables 21-9 and 21-10.
+The existing fixed-unpacked-array expansion remains as a compatible extension;
+Clause 21.7.2.1 does not require memories in ordinary VCD. All changes stay in
+the lazily allocated runtime writer: designs without a dump task retain
+byte-identical generated IR and no VCD state, hierarchy is resolved once,
+and steady-state change emission remains buffered O(changes) after compact,
+preplanned range differences.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |

@@ -319,6 +319,7 @@ struct VCDTraceState {
   std::vector<uint8_t> shadowUnknown;
 
   uint64_t maxExpandedElements = kDefaultMaxExpandedElements;
+  bool limitSet = false;
   uint64_t limitBytes = 0;
   uint64_t writtenBytes = 0;
   bool limitReached = false;
@@ -336,6 +337,13 @@ struct EVCDTraceState {
 
 namespace {
 
+bool limitEnabled(const VCDTraceState &state) { return state.limitSet; }
+
+// EVCD retains its existing Annex-I convention that a zero limit disables
+// limiting. Ordinary Clause-21 VCD instead tracks whether $dumplimit was
+// called, so `$dumplimit(0)` is the normative zero-byte maximum.
+bool limitEnabled(const EVCDSession &state) { return state.limitBytes != 0; }
+
 template <typename State>
 void appendRaw(State &state, const char *data, size_t size) {
   if (!state.file)
@@ -351,8 +359,9 @@ template <typename State>
 void append(State &state, std::string_view text) {
   if (state.limitReached)
     return;
-  if (state.limitBytes != 0 &&
-      state.writtenBytes + text.size() > state.limitBytes) {
+  if (limitEnabled(state) &&
+      (state.writtenBytes >= state.limitBytes ||
+       text.size() > state.limitBytes - state.writtenBytes)) {
     state.limitReached = true;
     return;
   }
@@ -398,6 +407,21 @@ void closeFile(State &state) {
   }
   std::fclose(state.file);
   state.file = nullptr;
+}
+
+// The limit comment is expressly outside the limited waveform payload: IEEE
+// 21.7.1.5 requires it after dumping reaches the requested maximum. Use the
+// raw buffered path so the limiter cannot suppress its own diagnostic.
+void finishLimit(VCDTraceState &state) {
+  if (!state.file || !state.limitSet ||
+      (!state.limitReached && state.writtenBytes < state.limitBytes))
+    return;
+  state.limitReached = true;
+  std::string comment = "\n$comment dump limit of " +
+                        std::to_string(state.limitBytes) +
+                        " bytes reached $end\n";
+  appendRaw(state, comment.data(), comment.size());
+  closeFile(state);
 }
 
 template <typename State>
@@ -904,9 +928,11 @@ void emitValue(VCDTraceState &state, const TraceVariable &variable,
   if (lead != '1') {
     while (first + 1 < bits.size() && bits[first + 1] == lead)
       ++first;
-    if (lead == '0')
-      while (first + 1 < bits.size() && bits[first] == '0')
-        ++first;
+    // A known zero before X/Z is not redundant: dropping it would make the
+    // shorter value left-extend with X/Z instead of zero (Table 21-10's
+    // `0X10` case). The last leading zero may be dropped only before a one.
+    if (lead == '0' && first + 1 < bits.size() && bits[first + 1] == '1')
+      ++first;
   }
   append(state, "b");
   append(state, std::string_view(bits).substr(first));
@@ -934,6 +960,44 @@ void emitAllX(VCDTraceState &state) {
     append(state, state.codeText[variable.code]);
     append(state, "\n");
   }
+}
+
+void updateShadow(VCDTraceState &state, const uint8_t *valuePlane,
+                  const uint8_t *unknownPlane) {
+  for (const TraceRange &range : state.ranges) {
+    size_t length = static_cast<size_t>(range.byteEnd - range.byteBegin);
+    std::memcpy(state.shadowValue.data() + range.byteBegin,
+                valuePlane + range.byteBegin, length);
+    std::memcpy(state.shadowUnknown.data() + range.byteBegin,
+                unknownPlane + range.byteBegin, length);
+  }
+}
+
+// Emit an explicit simulation-command checkpoint. This is separate from the
+// settled-slot differencer: `$dumpall` is observable even while ordinary
+// dumping is off, and a call before the pending initial sample must not consume
+// that end-of-slot `$dumpvars` sample.
+obelisk_rt_status emitDumpAll(obelisk_rt_context *context,
+                              VCDTraceState &state) {
+  if (!state.file || !state.planBuilt)
+    return OBELISK_RT_OK;
+  finishLimit(state);
+  if (!state.file)
+    return OBELISK_RT_OK;
+  const uint8_t *valuePlane = nullptr;
+  const uint8_t *unknownPlane = nullptr;
+  obelisk_rt_status status = dumpPlanes(context, valuePlane, unknownPlane);
+  if (status != OBELISK_RT_OK)
+    return status;
+  emitTime(state, context->schedulerTime);
+  append(state, "$dumpall\n");
+  for (const TraceVariable &variable : state.variables)
+    emitValue(state, variable, valuePlane, unknownPlane);
+  append(state, "$end\n");
+  if (!state.pendingInitial)
+    updateShadow(state, valuePlane, unknownPlane);
+  finishLimit(state);
+  return OBELISK_RT_OK;
 }
 
 } // namespace
@@ -1042,13 +1106,16 @@ obelisk_rt_status buildPlan(obelisk_rt_context *context, VCDTraceState &state) {
   buildRanges(state, context->execution->state_bit_count);
   state.planBuilt = true;
   state.pendingInitial = true;
+  finishLimit(state);
   return OBELISK_RT_OK;
 }
 
 // Difference the traced windows against the shadow and emit what moved.
-obelisk_rt_status emitSlot(obelisk_rt_context *context, VCDTraceState &state,
-                           bool forceAll) {
-  if (!state.file || state.limitReached || !state.planBuilt)
+obelisk_rt_status emitSlot(obelisk_rt_context *context, VCDTraceState &state) {
+  if (!state.file || !state.planBuilt)
+    return OBELISK_RT_OK;
+  finishLimit(state);
+  if (!state.file)
     return OBELISK_RT_OK;
   const uint8_t *valuePlane = nullptr;
   const uint8_t *unknownPlane = nullptr;
@@ -1064,14 +1131,9 @@ obelisk_rt_status emitSlot(obelisk_rt_context *context, VCDTraceState &state,
     for (const TraceVariable &variable : state.variables)
       emitValue(state, variable, valuePlane, unknownPlane);
     append(state, "$end\n");
-    for (const TraceRange &range : state.ranges) {
-      size_t length = static_cast<size_t>(range.byteEnd - range.byteBegin);
-      std::memcpy(state.shadowValue.data() + range.byteBegin,
-                  valuePlane + range.byteBegin, length);
-      std::memcpy(state.shadowUnknown.data() + range.byteBegin,
-                  unknownPlane + range.byteBegin, length);
-    }
+    updateShadow(state, valuePlane, unknownPlane);
     state.pendingInitial = false;
+    finishLimit(state);
     return OBELISK_RT_OK;
   }
 
@@ -1082,18 +1144,17 @@ obelisk_rt_status emitSlot(obelisk_rt_context *context, VCDTraceState &state,
     size_t length = static_cast<size_t>(range.byteEnd - range.byteBegin);
     if (length == 0)
       continue;
-    bool moved = forceAll ||
-                 std::memcmp(state.shadowValue.data() + range.byteBegin,
-                             valuePlane + range.byteBegin, length) != 0 ||
-                 std::memcmp(state.shadowUnknown.data() + range.byteBegin,
-                             unknownPlane + range.byteBegin, length) != 0;
+    bool moved =
+        std::memcmp(state.shadowValue.data() + range.byteBegin,
+                    valuePlane + range.byteBegin, length) != 0 ||
+        std::memcmp(state.shadowUnknown.data() + range.byteBegin,
+                    unknownPlane + range.byteBegin, length) != 0;
     if (!moved)
       continue;
     for (uint32_t index = range.firstVariable; index != range.lastVariable;
          ++index) {
       const TraceVariable &variable = state.variables[index];
-      if (!forceAll &&
-          bitRangeEqual(state.shadowValue.data(), valuePlane,
+      if (bitRangeEqual(state.shadowValue.data(), valuePlane,
                         variable.sourceBit, variable.width) &&
           (!variable.fourState ||
            bitRangeEqual(state.shadowUnknown.data(), unknownPlane,
@@ -1107,8 +1168,7 @@ obelisk_rt_status emitSlot(obelisk_rt_context *context, VCDTraceState &state,
     std::memcpy(state.shadowUnknown.data() + range.byteBegin,
                 unknownPlane + range.byteBegin, length);
   }
-  if (state.limitReached)
-    closeFile(state);
+  finishLimit(state);
   return OBELISK_RT_OK;
 }
 
@@ -1433,7 +1493,7 @@ obelisk_rt_status obelisk_rt_dump_slot_unlocked(obelisk_rt_context *context) {
       }
     }
     if (state->planBuilt) {
-      obelisk_rt_status status = emitSlot(context, *state, false);
+      obelisk_rt_status status = emitSlot(context, *state);
       if (status != OBELISK_RT_OK)
         return status;
     }
@@ -1480,7 +1540,7 @@ void obelisk_rt_dump_destroy(obelisk_rt_context *context) noexcept {
           !state->selections.empty())
         (void)buildPlan(context, *state);
       if (state->file && state->planBuilt)
-        (void)emitSlot(context, *state, false);
+        (void)emitSlot(context, *state);
     } catch (...) {
       // Teardown must not propagate; the file is still closed below.
     }
@@ -1521,9 +1581,12 @@ obelisk_rt_v1_dump_open(obelisk_rt_context *context, const uint8_t *path,
     // unspecified; reject it rather than silently splitting the waveform.
     if (state->planBuilt)
       return OBELISK_RT_INVALID_LIFECYCLE;
-    return openFile(context, *state,
-                    std::string(reinterpret_cast<const char *>(path),
-                                static_cast<size_t>(pathSize)));
+    status = openFile(context, *state,
+                      std::string(reinterpret_cast<const char *>(path),
+                                  static_cast<size_t>(pathSize)));
+    if (status == OBELISK_RT_OK)
+      finishLimit(*state);
+    return status;
   } catch (const std::bad_alloc &) {
     return OBELISK_RT_OUT_OF_MEMORY;
   } catch (...) {
@@ -1589,10 +1652,11 @@ obelisk_rt_v1_dump_vars(obelisk_rt_context *context, uint64_t levels,
     // because a VCD header is complete before the first value record.
     if (state->planBuilt)
       return OBELISK_RT_OK;
-    if (!state->file) {
+    if (!state->file && !state->limitReached) {
       status = openFile(context, *state, "dump.vcd");
       if (status != OBELISK_RT_OK)
         return status;
+      finishLimit(*state);
     }
     TraceSelection selection;
     selection.levels = levels;
@@ -1622,7 +1686,7 @@ obelisk_rt_v1_dump_all(obelisk_rt_context *context) {
     obelisk_rt_status status = buildPlan(context, *state);
     if (status != OBELISK_RT_OK)
       return status;
-    return emitSlot(context, *state, true);
+    return emitDumpAll(context, *state);
   } catch (const std::bad_alloc &) {
     return OBELISK_RT_OUT_OF_MEMORY;
   } catch (...) {
@@ -1648,15 +1712,18 @@ obelisk_rt_v1_dump_control(obelisk_rt_context *context, uint32_t enabled) {
     if (wanted == state->enabled)
       return OBELISK_RT_OK;
     // Settle the slot under the previous mode before switching.
-    status = emitSlot(context, *state, false);
+    status = emitSlot(context, *state);
     if (status != OBELISK_RT_OK)
       return status;
+    if (!state->file)
+      return OBELISK_RT_OK;
     state->enabled = wanted;
     emitTime(*state, context->schedulerTime);
     if (!wanted) {
       append(*state, "$dumpoff\n");
       emitAllX(*state);
       append(*state, "$end\n");
+      finishLimit(*state);
       return OBELISK_RT_OK;
     }
     const uint8_t *valuePlane = nullptr;
@@ -1668,13 +1735,8 @@ obelisk_rt_v1_dump_control(obelisk_rt_context *context, uint32_t enabled) {
     for (const TraceVariable &variable : state->variables)
       emitValue(*state, variable, valuePlane, unknownPlane);
     append(*state, "$end\n");
-    for (const TraceRange &range : state->ranges) {
-      size_t length = static_cast<size_t>(range.byteEnd - range.byteBegin);
-      std::memcpy(state->shadowValue.data() + range.byteBegin,
-                  valuePlane + range.byteBegin, length);
-      std::memcpy(state->shadowUnknown.data() + range.byteBegin,
-                  unknownPlane + range.byteBegin, length);
-    }
+    updateShadow(*state, valuePlane, unknownPlane);
+    finishLimit(*state);
     return OBELISK_RT_OK;
   } catch (const std::bad_alloc &) {
     return OBELISK_RT_OUT_OF_MEMORY;
@@ -1694,7 +1756,11 @@ obelisk_rt_v1_dump_limit(obelisk_rt_context *context, uint64_t bytes) {
     obelisk_rt_status status = ensureState(context, state);
     if (status != OBELISK_RT_OK)
       return status;
+    state->limitSet = true;
     state->limitBytes = bytes;
+    if (state->file && state->writtenBytes >= bytes)
+      state->limitReached = true;
+    finishLimit(*state);
     return OBELISK_RT_OK;
   } catch (...) {
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -1729,7 +1795,7 @@ obelisk_rt_v1_dump_close(obelisk_rt_context *context) {
     if (!state)
       return OBELISK_RT_OK;
     if (state->file && state->planBuilt)
-      (void)emitSlot(context, *state, false);
+      (void)emitSlot(context, *state);
     closeFile(*state);
     return OBELISK_RT_OK;
   } catch (...) {
