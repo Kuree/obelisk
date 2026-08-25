@@ -1318,8 +1318,8 @@ one commit.
     declarations, strengths, static one/two-value inertial delays, Z-to-X
     normalization, wildcards, first-match ordering, and missing-row X execute
     in native and bytecode tiers.
-38. **G3 — Sequential UDPs (29.5-29.10), semantic surface completed;
-    forced-native scaling pending.** State, initialization, level/edge and
+38. **G3 — Sequential UDPs (29.5-29.10), completed.** State, initialization,
+    level/edge and
     mixed tables, source-order dominance within each row class, required
     level-over-edge dominance, instances and arrays, strengths, and legal
     static delays execute exactly in native and bytecode tiers. The default
