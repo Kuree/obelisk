@@ -10,18 +10,89 @@
 
 #include "RuntimeInternal.h"
 
+#include <charconv>
+#include <cstring>
 #include <string>
 #include <string_view>
 
 namespace {
 
+obelisk_rt_status buildPlusargIndex(obelisk_rt_context *context) {
+  if (context->plusargIndexBuilt)
+    return OBELISK_RT_OK;
+  if (context->plusargs.empty()) {
+    context->plusargIndexBuilt = true;
+    return OBELISK_RT_OK;
+  }
+  if (context->plusargs.size() > UINT32_MAX)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  size_t characterCount = 0;
+  for (const std::string &argument : context->plusargs) {
+    if (argument.size() > UINT32_MAX ||
+        characterCount > UINT32_MAX - argument.size())
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    characterCount += argument.size();
+  }
+  if (characterCount == UINT32_MAX)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+
+  std::vector<PlusargIndexNode> nodes;
+  std::vector<PlusargIndexEdge> edges;
+  nodes.reserve(characterCount + 1);
+  edges.reserve(characterCount);
+  nodes.emplace_back();
+  for (uint32_t argumentIndex = 0;
+       argumentIndex != static_cast<uint32_t>(context->plusargs.size());
+       ++argumentIndex) {
+    const std::string &argument = context->plusargs[argumentIndex];
+    uint32_t node = 0;
+    if (nodes[node].firstArgument == UINT32_MAX)
+      nodes[node].firstArgument = argumentIndex;
+    for (unsigned char character : argument) {
+      uint32_t edge = nodes[node].firstEdge;
+      while (edge != UINT32_MAX && edges[edge].character != character)
+        edge = edges[edge].nextEdge;
+      if (edge == UINT32_MAX) {
+        uint32_t child = static_cast<uint32_t>(nodes.size());
+        nodes.emplace_back();
+        edge = static_cast<uint32_t>(edges.size());
+        edges.push_back(
+            {child, nodes[node].firstEdge, static_cast<uint8_t>(character)});
+        nodes[node].firstEdge = edge;
+      }
+      node = edges[edge].nextNode;
+      if (nodes[node].firstArgument == UINT32_MAX)
+        nodes[node].firstArgument = argumentIndex;
+    }
+  }
+  context->plusargIndexNodes.swap(nodes);
+  context->plusargIndexEdges.swap(edges);
+  context->plusargIndexBuilt = true;
+  return OBELISK_RT_OK;
+}
+
 // The matched argument, or nullptr when no plusarg starts with `prefix`.
-const std::string *findPlusarg(obelisk_rt_context *context,
-                               std::string_view prefix) {
-  for (const std::string &argument : context->plusargs)
-    if (std::string_view(argument).substr(0, prefix.size()) == prefix)
-      return &argument;
-  return nullptr;
+obelisk_rt_status findPlusarg(obelisk_rt_context *context,
+                              std::string_view prefix,
+                              const std::string *&match) {
+  match = nullptr;
+  obelisk_rt_status status = buildPlusargIndex(context);
+  if (status != OBELISK_RT_OK || context->plusargIndexNodes.empty())
+    return status;
+  uint32_t node = 0;
+  for (unsigned char character : prefix) {
+    uint32_t edge = context->plusargIndexNodes[node].firstEdge;
+    while (edge != UINT32_MAX &&
+           context->plusargIndexEdges[edge].character != character)
+      edge = context->plusargIndexEdges[edge].nextEdge;
+    if (edge == UINT32_MAX)
+      return OBELISK_RT_OK;
+    node = context->plusargIndexEdges[edge].nextNode;
+  }
+  uint32_t argument = context->plusargIndexNodes[node].firstArgument;
+  if (argument != UINT32_MAX)
+    match = &context->plusargs[argument];
+  return OBELISK_RT_OK;
 }
 
 bool splitValueFormat(std::string_view format, std::string &prefix,
@@ -80,7 +151,187 @@ bool splitValueFormat(std::string_view format, std::string &prefix,
   return true;
 }
 
+bool scanSpace(char character) {
+  return character == ' ' || character == '\t' || character == '\n' ||
+         character == '\r' || character == '\f' || character == '\v';
+}
+
+void fillUnknown(uint8_t *value, uint8_t *unknown, uint64_t byteCount,
+                 uint64_t bitWidth) {
+  std::memset(value, 0, static_cast<size_t>(byteCount));
+  std::memset(unknown, 0xff, static_cast<size_t>(byteCount));
+  if ((bitWidth & 7) != 0)
+    unknown[byteCount - 1] =
+        static_cast<uint8_t>((UINT32_C(1) << (bitWidth & 7)) - 1);
+}
+
+void setPlaneBit(uint8_t *plane, uint64_t bit) {
+  plane[bit / 8] |= static_cast<uint8_t>(UINT32_C(1) << (bit % 8));
+}
+
 } // namespace
+
+extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
+    obelisk_rt_string_v1 string, uint32_t radix, uint64_t bitWidth,
+    void *value, uint64_t valueSize, void *unknown, uint64_t unknownSize) {
+  if (!value || !unknown || bitWidth == 0 || bitWidth > UINT64_MAX - 7 ||
+      (radix != 2 && radix != 8 && radix != 10 && radix != 16))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  uint64_t byteCount = (bitWidth + 7) / 8;
+  if (byteCount > valueSize || byteCount > unknownSize ||
+      byteCount > SIZE_MAX)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  auto *valueBytes = static_cast<uint8_t *>(value);
+  auto *unknownBytes = static_cast<uint8_t *>(unknown);
+  std::memset(valueBytes, 0, static_cast<size_t>(byteCount));
+  std::memset(unknownBytes, 0, static_cast<size_t>(byteCount));
+
+  char scratch[8] = {};
+  const char *bytes = nullptr;
+  uint64_t size = 0;
+  obelisk_rt_status status =
+      obelisk_rt_v1_string_view(string, scratch, &bytes, &size);
+  if (status != OBELISK_RT_OK)
+    return status;
+  uint64_t begin = 0;
+  while (begin != size && scanSpace(bytes[begin]))
+    ++begin;
+  bool negative = false;
+  if (begin != size && (bytes[begin] == '+' || bytes[begin] == '-')) {
+    negative = bytes[begin] == '-';
+    ++begin;
+  }
+
+  uint64_t digitCount = 0;
+  bool hasUnknown = false;
+  bool valid = true;
+  for (uint64_t index = begin; index != size; ++index) {
+    unsigned char character = static_cast<unsigned char>(bytes[index]);
+    if (character == '_')
+      continue;
+    bool isX = character == 'x' || character == 'X';
+    bool isZ = character == 'z' || character == 'Z' || character == '?';
+    uint32_t digit =
+        character >= '0' && character <= '9'   ? character - '0'
+        : character >= 'a' && character <= 'f' ? character - 'a' + 10
+        : character >= 'A' && character <= 'F' ? character - 'A' + 10
+                                                : UINT32_MAX;
+    if ((isX || isZ) && radix != 10) {
+      hasUnknown = true;
+    } else if (digit >= radix) {
+      valid = false;
+      break;
+    }
+    ++digitCount;
+  }
+  // A genuinely empty remainder is the one special zero-valued case in
+  // 21.6. Signs, separators, or whitespace without a digit are malformed.
+  if (!valid || (digitCount == 0 && size != 0)) {
+    fillUnknown(valueBytes, unknownBytes, byteCount, bitWidth);
+    return OBELISK_RT_OK;
+  }
+  if (digitCount == 0)
+    return OBELISK_RT_OK;
+
+  if (radix == 10) {
+    for (uint64_t index = begin; index != size; ++index) {
+      unsigned char character = static_cast<unsigned char>(bytes[index]);
+      if (character == '_')
+        continue;
+      uint32_t carry = character - '0';
+      for (uint64_t byte = 0; byte != byteCount; ++byte) {
+        uint32_t accumulated =
+            static_cast<uint32_t>(valueBytes[byte]) * 10 + carry;
+        valueBytes[byte] = static_cast<uint8_t>(accumulated);
+        carry = accumulated >> 8;
+      }
+    }
+  } else {
+    unsigned digitBits = radix == 2 ? 1 : radix == 8 ? 3 : 4;
+    uint64_t ordinal = 0;
+    for (uint64_t index = size; index != begin;) {
+      unsigned char character = static_cast<unsigned char>(bytes[--index]);
+      if (character == '_')
+        continue;
+      bool isX = character == 'x' || character == 'X';
+      bool isZ = character == 'z' || character == 'Z' || character == '?';
+      uint32_t digit =
+          character >= '0' && character <= '9'   ? character - '0'
+          : character >= 'a' && character <= 'f' ? character - 'a' + 10
+                                                  : character - 'A' + 10;
+      if (ordinal <= (bitWidth - 1) / digitBits) {
+        uint64_t base = ordinal * digitBits;
+        for (unsigned bit = 0; bit != digitBits && base + bit < bitWidth;
+             ++bit) {
+          if (isX || isZ)
+            setPlaneBit(unknownBytes, base + bit);
+          if (isZ || (!isX && ((digit >> bit) & 1) != 0))
+            setPlaneBit(valueBytes, base + bit);
+        }
+      }
+      ++ordinal;
+    }
+  }
+
+  if (negative) {
+    if (hasUnknown) {
+      fillUnknown(valueBytes, unknownBytes, byteCount, bitWidth);
+      return OBELISK_RT_OK;
+    }
+    uint32_t carry = 1;
+    for (uint64_t byte = 0; byte != byteCount; ++byte) {
+      uint32_t complemented = static_cast<uint8_t>(~valueBytes[byte]) + carry;
+      valueBytes[byte] = static_cast<uint8_t>(complemented);
+      carry = complemented >> 8;
+    }
+  }
+  if ((bitWidth & 7) != 0) {
+    uint8_t mask =
+        static_cast<uint8_t>((UINT32_C(1) << (bitWidth & 7)) - 1);
+    valueBytes[byteCount - 1] &= mask;
+    unknownBytes[byteCount - 1] &= mask;
+  }
+  return OBELISK_RT_OK;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_real(
+    obelisk_rt_string_v1 string, double *outValue) {
+  if (!outValue)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outValue = 0.0;
+  char scratch[8] = {};
+  const char *bytes = nullptr;
+  uint64_t size = 0;
+  obelisk_rt_status status =
+      obelisk_rt_v1_string_view(string, scratch, &bytes, &size);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (size == 0)
+    return OBELISK_RT_OK;
+  if (size > SIZE_MAX)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  try {
+    std::string spelling;
+    spelling.reserve(static_cast<size_t>(size));
+    for (uint64_t index = 0; index != size; ++index)
+      if (bytes[index] != '_')
+        spelling.push_back(bytes[index]);
+    const char *begin = spelling.data();
+    const char *end = begin + spelling.size();
+    while (begin != end && scanSpace(*begin))
+      ++begin;
+    if (begin != end && *begin == '+')
+      ++begin;
+    double value = 0.0;
+    auto parsed =
+        std::from_chars(begin, end, value, std::chars_format::general);
+    if (parsed.ec == std::errc{} && parsed.ptr == end)
+      *outValue = value;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  }
+}
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_plusarg_test(obelisk_rt_context *context,
@@ -97,9 +348,11 @@ obelisk_rt_v1_plusarg_test(obelisk_rt_context *context,
     return status;
   return guarded(context, [&] {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    *outFound =
-        findPlusarg(context, std::string_view(bytes, size)) ? 1u : 0u;
-    return OBELISK_RT_OK;
+    const std::string *match = nullptr;
+    obelisk_rt_status findStatus =
+        findPlusarg(context, std::string_view(bytes, size), match);
+    *outFound = match ? 1u : 0u;
+    return findStatus;
   });
 }
 
@@ -121,8 +374,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_value(
   std::string tail;
   status = guarded(context, [&] {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    const std::string *match =
-        findPlusarg(context, std::string_view(bytes, size));
+    const std::string *match = nullptr;
+    obelisk_rt_status findStatus =
+        findPlusarg(context, std::string_view(bytes, size), match);
+    if (findStatus != OBELISK_RT_OK)
+      return findStatus;
     if (!match)
       return OBELISK_RT_OK;
     tail = match->substr(static_cast<size_t>(size));
@@ -157,7 +413,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_scan(
   std::string tail;
   status = guarded(context, [&] {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    const std::string *match = findPlusarg(context, prefix);
+    const std::string *match = nullptr;
+    obelisk_rt_status findStatus = findPlusarg(context, prefix, match);
+    if (findStatus != OBELISK_RT_OK)
+      return findStatus;
     if (!match)
       return OBELISK_RT_OK;
     tail = match->substr(prefix.size());

@@ -2250,6 +2250,19 @@ def SimPlusargScanOp : SimFileOp<"plusarg.scan",
   }];
 }
 
+def SimPlusargParseLogicOp : SimOp<"plusarg.parse_logic", [Pure]> {
+  let summary = "strictly parse one integral $value$plusargs remainder";
+  let arguments = (ins SimStringType:$input, I32Attr:$radix);
+  let results = (outs SimLogicType:$result);
+  let hasVerifier = 1;
+}
+
+def SimPlusargParseRealOp : SimOp<"plusarg.parse_real", [Pure]> {
+  let summary = "strictly parse one real $value$plusargs remainder";
+  let arguments = (ins SimStringType:$input);
+  let results = (outs F64:$result);
+}
+
 def SimSystemOp : SimFileOp<"system",
     (ins SimContextType:$context, SimStringType:$command),
     (outs I32:$result),

@@ -4062,6 +4062,34 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     status = sentinel(1, conversion);
     return status == OBELISK_RT_OK ? sentinel(2, found) : status;
   }
+  case OBELISK_RT_INTRINSIC_V1_PLUSARG_PARSE_LOGIC: {
+    obelisk_rt_string_v1 input = 0;
+    auto radix = scalar(1);
+    if (!readString(inputRegister(0), input) || !radix)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Layout output = layoutAt(image, frame.function, outputRegister(0));
+    if (output.kind != OBELISK_RT_DBREG_LOGIC || output.width == 0 ||
+        output.size % 2 != 0)
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t planeSize = output.size / 2;
+    // The bytecode register layout rounds each plane up for alignment. Keep
+    // those non-value padding bytes deterministic as other logic intrinsics
+    // do; the strict parser itself writes exactly ceil(width / 8) bytes.
+    std::memset(frame.data + output.offset, 0, output.size);
+    return obelisk_rt_v1_plusarg_parse_logic(
+        input, static_cast<uint32_t>(*radix), output.width,
+        frame.data + output.offset, planeSize,
+        frame.data + output.offset + planeSize, planeSize);
+  }
+  case OBELISK_RT_INTRINSIC_V1_PLUSARG_PARSE_REAL: {
+    obelisk_rt_string_v1 input = 0;
+    if (!readString(inputRegister(0), input))
+      return OBELISK_RT_INVALID_BYTECODE;
+    double result = 0.0;
+    obelisk_rt_status status =
+        obelisk_rt_v1_plusarg_parse_real(input, &result);
+    return status == OBELISK_RT_OK ? writeReal(0, result) : status;
+  }
   case OBELISK_RT_INTRINSIC_V1_SYSTEM: {
     obelisk_rt_string_v1 command = 0;
     if (!readString(inputRegister(0), command))

@@ -130,4 +130,4 @@ module {
 // CHECK-LABEL: obelisk_sim.func private @unit_0
 // CHECK: %[[PREFIX:.*]] = obelisk_sim.string.literal "N="
 // CHECK: %[[TAIL:.*]], %[[FOUND:.*]] = obelisk_sim.plusarg.value %{{.*}}, %[[PREFIX]]
-// CHECK: obelisk_sim.string.parse_logic %[[TAIL]] radix = 10 : <64>
+// CHECK: obelisk_sim.plusarg.parse_logic %[[TAIL]] {radix = 10 : i32} : (!obelisk_sim.string) -> !obelisk_sim.logic<32>

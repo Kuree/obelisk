@@ -177,8 +177,17 @@ Encoder::encodeStringOperation(FunctionPlan &plan, Operation *operation) {
                                   {reg(plan, op.getInput()), radix},
                                   {reg(plan, op.getResult())});
   }
+  if (auto op = dyn_cast<sim::SimPlusargParseLogicOp>(operation)) {
+    uint32_t radix = emitU64Constant(plan, op.getRadix());
+    return emitIntrinsicRegisters(plan, kIntrinsicPlusargParseLogic,
+                                  {reg(plan, op.getInput()), radix},
+                                  {reg(plan, op.getResult())});
+  }
   if (auto op = dyn_cast<sim::SimStringParseRealOp>(operation))
     return emitIntrinsic(plan, kIntrinsicStringParseReal, {op.getInput()},
+                         {op.getResult()});
+  if (auto op = dyn_cast<sim::SimPlusargParseRealOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicPlusargParseReal, {op.getInput()},
                          {op.getResult()});
   if (auto op = dyn_cast<sim::SimStringFormatIntegerOp>(operation)) {
     uint32_t radix = emitU64Constant(plan, op.getRadix());

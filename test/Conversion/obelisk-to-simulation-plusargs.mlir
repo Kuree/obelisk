@@ -9,7 +9,7 @@
 // CHECK: obelisk_sim.plusarg.test
 // CHECK: %[[PREFIX:.*]] = obelisk_sim.string.literal "SEED="
 // CHECK: %[[TAIL:.*]], %[[FOUND:.*]] = obelisk_sim.plusarg.value {{.*}}, %[[PREFIX]]
-// CHECK: %[[PARSED:.*]] = obelisk_sim.string.parse_logic %[[TAIL]] radix = 10 : <64>
+// CHECK: %[[PARSED:.*]] = obelisk_sim.plusarg.parse_logic %[[TAIL]] {radix = 10 : i32} : (!obelisk_sim.string) -> !obelisk_sim.logic<32>
 // CHECK: %[[CURRENT:.*]] = obelisk_sim.ref.load
 // CHECK: %[[MATCHED:.*]] = arith.cmpi ne, %[[FOUND]]
 // CHECK: arith.select %[[MATCHED]], {{.*}}, %[[CURRENT]]

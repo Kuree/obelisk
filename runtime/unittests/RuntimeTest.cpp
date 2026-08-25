@@ -5,6 +5,7 @@
 
 #include "gtest/gtest.h"
 
+#include "../lib/RuntimeInternal.h"
 #include "../lib/StrengthFormat.h"
 
 #include <algorithm>
@@ -3830,6 +3831,186 @@ protected:
   obelisk_rt_context *context = nullptr;
   obelisk_rt_gc_lane_v1 *lane = nullptr;
 };
+
+TEST_F(ManagedHeapTest, PlusargsPreservePrefixOrderAndReplaceTheirIndex) {
+  const char *arguments[] = {"sim", "+ABfirst", "+Asecond", "+",
+                             "+ABthird", "+case"};
+  ASSERT_EQ(obelisk_rt_v1_context_configure_argv(
+                context, static_cast<int>(std::size(arguments)), arguments),
+            OBELISK_RT_OK);
+
+  auto query = [&](std::string_view prefix, std::string &tail,
+                   uint32_t &found) {
+    obelisk_rt_string_v1 prefixString = 0;
+    EXPECT_EQ(obelisk_rt_v1_string_create(lane, prefix.data(), prefix.size(),
+                                          &prefixString),
+              OBELISK_RT_OK);
+    obelisk_rt_string_v1 result = 0;
+    EXPECT_EQ(obelisk_rt_v1_plusarg_value(context, lane, prefixString, &result,
+                                          &found),
+              OBELISK_RT_OK);
+    char scratch[8] = {};
+    const char *bytes = nullptr;
+    uint64_t size = 0;
+    EXPECT_EQ(obelisk_rt_v1_string_view(result, scratch, &bytes, &size),
+              OBELISK_RT_OK);
+    tail.assign(bytes ? bytes : "", static_cast<size_t>(size));
+  };
+
+  std::string tail;
+  uint32_t found = 0;
+  query("A", tail, found);
+  EXPECT_EQ(found, 1u);
+  EXPECT_EQ(tail, "Bfirst");
+  query("AB", tail, found);
+  EXPECT_EQ(found, 1u);
+  EXPECT_EQ(tail, "first");
+  query("", tail, found);
+  EXPECT_EQ(found, 1u);
+  EXPECT_EQ(tail, "ABfirst");
+  query("CASE", tail, found);
+  EXPECT_EQ(found, 0u);
+  EXPECT_TRUE(tail.empty());
+
+  const char *replacement[] = {"sim", "+NEW=value"};
+  ASSERT_EQ(obelisk_rt_v1_context_configure_argv(
+                context, static_cast<int>(std::size(replacement)), replacement),
+            OBELISK_RT_OK);
+  query("A", tail, found);
+  EXPECT_EQ(found, 0u);
+  query("NEW=", tail, found);
+  EXPECT_EQ(found, 1u);
+  EXPECT_EQ(tail, "value");
+
+  const char *invalid[] = {"sim", "+BROKEN", "--seed=not-a-number"};
+  EXPECT_EQ(obelisk_rt_v1_context_configure_argv(
+                context, static_cast<int>(std::size(invalid)), invalid),
+            OBELISK_RT_INVALID_ARGUMENT);
+  query("NEW=", tail, found);
+  EXPECT_EQ(found, 1u);
+  EXPECT_EQ(tail, "value");
+}
+
+TEST_F(ManagedHeapTest, PlusargIndexIsLazyAndEmptyWithoutArguments) {
+  std::vector<std::string> storage;
+  storage.reserve(4097);
+  storage.emplace_back("sim");
+  for (unsigned index = 0; index != 4096; ++index)
+    storage.push_back("+ARG" + std::to_string(index) + "=value");
+  std::vector<const char *> arguments;
+  arguments.reserve(storage.size());
+  for (const std::string &argument : storage)
+    arguments.push_back(argument.c_str());
+  ASSERT_EQ(obelisk_rt_v1_context_configure_argv(
+                context, static_cast<int>(arguments.size()), arguments.data()),
+            OBELISK_RT_OK);
+  EXPECT_FALSE(context->plusargIndexBuilt);
+  EXPECT_TRUE(context->plusargIndexNodes.empty());
+  EXPECT_TRUE(context->plusargIndexEdges.empty());
+
+  obelisk_rt_string_v1 prefix = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "ARG4095=", 8, &prefix),
+            OBELISK_RT_OK);
+  uint32_t found = 0;
+  ASSERT_EQ(obelisk_rt_v1_plusarg_test(context, prefix, &found),
+            OBELISK_RT_OK);
+  EXPECT_EQ(found, 1u);
+  EXPECT_TRUE(context->plusargIndexBuilt);
+  EXPECT_FALSE(context->plusargIndexNodes.empty());
+
+  const char *empty[] = {"sim"};
+  ASSERT_EQ(obelisk_rt_v1_context_configure_argv(context, 1, empty),
+            OBELISK_RT_OK);
+  EXPECT_FALSE(context->plusargIndexBuilt);
+  EXPECT_TRUE(context->plusargIndexNodes.empty());
+  ASSERT_EQ(obelisk_rt_v1_plusarg_test(context, prefix, &found),
+            OBELISK_RT_OK);
+  EXPECT_EQ(found, 0u);
+  EXPECT_TRUE(context->plusargIndexBuilt);
+  EXPECT_TRUE(context->plusargIndexNodes.empty());
+  EXPECT_TRUE(context->plusargIndexEdges.empty());
+}
+
+TEST_F(ManagedHeapTest, PlusargConversionsAreStrictWideAndFourState) {
+  auto parse = [&](std::string_view spelling, uint32_t radix,
+                   uint64_t width, std::vector<uint8_t> &value,
+                   std::vector<uint8_t> &unknown) {
+    obelisk_rt_string_v1 string = 0;
+    EXPECT_EQ(obelisk_rt_v1_string_create(lane, spelling.data(),
+                                          spelling.size(), &string),
+              OBELISK_RT_OK);
+    uint64_t bytes = (width + 7) / 8;
+    value.assign(static_cast<size_t>(bytes), 0xcc);
+    unknown.assign(static_cast<size_t>(bytes), 0xcc);
+    EXPECT_EQ(obelisk_rt_v1_plusarg_parse_logic(
+                  string, radix, width, value.data(), value.size(),
+                  unknown.data(), unknown.size()),
+              OBELISK_RT_OK);
+  };
+
+  std::vector<uint8_t> value, unknown;
+  parse("123456789abcdef0123456789abcdef0", 16, 129, value, unknown);
+  const std::array<uint8_t, 17> wideExpected{
+      0xf0, 0xde, 0xbc, 0x9a, 0x78, 0x56, 0x34, 0x12, 0xf0,
+      0xde, 0xbc, 0x9a, 0x78, 0x56, 0x34, 0x12, 0x00};
+  EXPECT_TRUE(std::equal(value.begin(), value.end(), wideExpected.begin()));
+  EXPECT_TRUE(std::all_of(unknown.begin(), unknown.end(),
+                          [](uint8_t byte) { return byte == 0; }));
+
+  parse("10xz", 2, 8, value, unknown);
+  EXPECT_EQ(value, (std::vector<uint8_t>{0x09}));
+  EXPECT_EQ(unknown, (std::vector<uint8_t>{0x03}));
+  parse(" \t+12", 10, 8, value, unknown);
+  EXPECT_EQ(value, (std::vector<uint8_t>{12}));
+  EXPECT_EQ(unknown, (std::vector<uint8_t>{0}));
+  parse("12 ", 10, 8, value, unknown);
+  EXPECT_EQ(value, (std::vector<uint8_t>{0}));
+  EXPECT_EQ(unknown, (std::vector<uint8_t>{0xff}));
+  // The conversion already supplies the radix. Verilog-style base prefixes
+  // are not stripped: x remains a legal unknown hexadecimal digit, while b
+  // is illegal in a binary field and poisons the complete conversion.
+  parse("0x12", 16, 16, value, unknown);
+  EXPECT_EQ(value, (std::vector<uint8_t>{0x12, 0x00}));
+  EXPECT_EQ(unknown, (std::vector<uint8_t>{0x00, 0x0f}));
+  parse("0b10", 2, 8, value, unknown);
+  EXPECT_EQ(value, (std::vector<uint8_t>{0}));
+  EXPECT_EQ(unknown, (std::vector<uint8_t>{0xff}));
+  parse("12junk", 10, 37, value, unknown);
+  EXPECT_EQ(value, (std::vector<uint8_t>(5, 0)));
+  EXPECT_EQ(unknown, (std::vector<uint8_t>{0xff, 0xff, 0xff, 0xff, 0x1f}));
+  parse("-1", 10, 129, value, unknown);
+  EXPECT_EQ(value, (std::vector<uint8_t>{
+                       0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                       0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01}));
+  EXPECT_TRUE(std::all_of(unknown.begin(), unknown.end(),
+                          [](uint8_t byte) { return byte == 0; }));
+
+  std::string scale(1024, 'a');
+  parse(scale, 16, 4096, value, unknown);
+  EXPECT_EQ(value.size(), 512u);
+  EXPECT_TRUE(std::all_of(value.begin(), value.end(),
+                          [](uint8_t byte) { return byte == 0xaa; }));
+  EXPECT_TRUE(std::all_of(unknown.begin(), unknown.end(),
+                          [](uint8_t byte) { return byte == 0; }));
+
+  obelisk_rt_string_v1 realString = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "1.25junk", 8, &realString),
+            OBELISK_RT_OK);
+  double real = 7.0;
+  EXPECT_EQ(obelisk_rt_v1_plusarg_parse_real(realString, &real),
+            OBELISK_RT_OK);
+  EXPECT_EQ(real, 0.0);
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, " \t+1.25e+2", 10, &realString),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_plusarg_parse_real(realString, &real),
+            OBELISK_RT_OK);
+  EXPECT_EQ(real, 125.0);
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "1.25e", 5, &realString),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_plusarg_parse_real(realString, &real),
+            OBELISK_RT_OK);
+  EXPECT_EQ(real, 0.0);
+}
 
 TEST_F(ManagedHeapTest, NarrowBitInsertPreservesPackedStorageAndHandles) {
   obelisk_rt_object_v1 *object = nullptr;

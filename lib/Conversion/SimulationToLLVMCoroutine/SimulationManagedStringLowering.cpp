@@ -924,6 +924,57 @@ public:
   }
 };
 
+class PlusargParseLogicConversion final
+    : public OpConversionPattern<sim::SimPlusargParseLogicOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimPlusargParseLogicOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    SmallVector<Type> types;
+    if (failed(getTypeConverter()->convertType(op.getResult().getType(),
+                                               types)) ||
+        types.size() != 2 || types[0] != types[1] ||
+        adaptor.getInput().size() != 1)
+      return failure();
+    auto plane = dyn_cast<IntegerType>(types.front());
+    if (!plane)
+      return failure();
+    uint64_t byteCount = (static_cast<uint64_t>(plane.getWidth()) + 7) / 8;
+    Value valueOutput = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
+    Value unknownOutput = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
+    for (Value output : {valueOutput, unknownOutput})
+      LLVM::StoreOp::create(
+          rewriter, op.getLoc(),
+          LLVM::ZeroOp::create(rewriter, op.getLoc(), plane), output, 1);
+    Type i64 = rewriter.getI64Type();
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_plusarg_parse_logic"),
+            ValueRange{adaptor.getInput().front(),
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI32Type(), op.getRadix()),
+                       llvmConstant(rewriter, op.getLoc(), i64,
+                                    plane.getWidth()),
+                       valueOutput,
+                       llvmConstant(rewriter, op.getLoc(), i64, byteCount),
+                       unknownOutput,
+                       llvmConstant(rewriter, op.getLoc(), i64, byteCount)})
+            .getResult();
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    SmallVector<Value> result{
+        LLVM::LoadOp::create(rewriter, op.getLoc(), plane, valueOutput, 1),
+        LLVM::LoadOp::create(rewriter, op.getLoc(), plane, unknownOutput, 1)};
+    rewriter.replaceOpWithMultiple(op, ArrayRef<SmallVector<Value>>{result});
+    return success();
+  }
+};
+
 } // namespace
 
 void populateManagedStringToLLVMConversionPatterns(RewritePatternSet &patterns,
@@ -938,10 +989,10 @@ void populateManagedStringToLLVMConversionPatterns(RewritePatternSet &patterns,
       FileScanFieldConversion,
       RawScanConversion<sim::SimFileScanRawOp, true, false>,
       RawScanConversion<sim::SimFileSkipRawOp, true, true>,
-      StringParseLogicConversion, PlusargTestConversion, PlusargValueConversion,
-      PlusargScanConversion, SystemConversion, StringDumpOpenConversion,
-      StringDumpPortsConversion, StringDumpPortsControlConversion>(converter,
-                                                                   context);
+      StringParseLogicConversion, PlusargParseLogicConversion,
+      PlusargTestConversion, PlusargValueConversion, PlusargScanConversion,
+      SystemConversion, StringDumpOpenConversion, StringDumpPortsConversion,
+      StringDumpPortsControlConversion>(converter, context);
   patterns.add<StringFileOpenConversion<sim::SimFileOpenStringMCDOp>,
                StringFileOpenConversion<sim::SimFileOpenStringOp>>(converter,
                                                                    context);
@@ -965,6 +1016,8 @@ void populateManagedStringToLLVMConversionPatterns(RewritePatternSet &patterns,
       converter, context, "obelisk_rt_v1_string_parse_integer");
   patterns.add<StringParseConversion<sim::SimStringParseRealOp>>(
       converter, context, "obelisk_rt_v1_string_parse_real");
+  patterns.add<StringParseConversion<sim::SimPlusargParseRealOp>>(
+      converter, context, "obelisk_rt_v1_plusarg_parse_real");
 }
 
 } // namespace obelisk::detail

@@ -1026,6 +1026,21 @@ struct StochasticQueueState {
   std::vector<StochasticQueueEntry> entries;
 };
 
+// Compact prefix trie for Clause 21.6 plusargs. Nodes and edges live in two
+// contiguous vectors so startup performs no allocation per character. Every
+// node records the earliest argv entry reaching that prefix, which makes both
+// plusarg queries O(prefix length) without losing command-line order.
+struct PlusargIndexNode {
+  uint32_t firstArgument = UINT32_MAX;
+  uint32_t firstEdge = UINT32_MAX;
+};
+
+struct PlusargIndexEdge {
+  uint32_t nextNode = UINT32_MAX;
+  uint32_t nextEdge = UINT32_MAX;
+  uint8_t character = 0;
+};
+
 struct obelisk_rt_context {
   // Mutable state is guarded separately from logical execution. Evaluator
   // callbacks release `mutex` while arbitrary user code runs, but retain the
@@ -1046,6 +1061,9 @@ struct obelisk_rt_context {
   // the order they were given. $test$plusargs and $value$plusargs match
   // against these.
   std::vector<std::string> plusargs;
+  std::vector<PlusargIndexNode> plusargIndexNodes;
+  std::vector<PlusargIndexEdge> plusargIndexEdges;
+  bool plusargIndexBuilt = false;
   // $timeformat override for %t. Until one is executed the format env's own
   // width, multiplier, and suffix govern, which is the design-precision
   // integer form IEEE specifies as the default.

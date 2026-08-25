@@ -1046,6 +1046,10 @@ LogicalResult SimStringParseLogicOp::verify() {
   return verifyStringRadix(getOperation(), getRadix());
 }
 
+LogicalResult SimPlusargParseLogicOp::verify() {
+  return verifyStringRadix(getOperation(), getRadix());
+}
+
 LogicalResult SimStringFormatIntegerOp::verify() {
   return verifyStringRadix(getOperation(), getRadix());
 }

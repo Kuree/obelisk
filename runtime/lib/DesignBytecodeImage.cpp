@@ -1314,6 +1314,15 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_PLUSARG_SCAN:
     return site.inputCount == 1 && site.outputCount == 3 && string(input(0)) &&
            string(output(0)) && bits(output(1), 32) && bits(output(2), 32);
+  case OBELISK_RT_INTRINSIC_V1_PLUSARG_PARSE_LOGIC:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 1 && string(input(0)) && bits(input(1), 64) &&
+           output(0) && output(0)->kind == OBELISK_RT_DBREG_LOGIC &&
+           output(0)->width != 0;
+  case OBELISK_RT_INTRINSIC_V1_PLUSARG_PARSE_REAL:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 1 && string(input(0)) && output(0) &&
+           output(0)->kind == OBELISK_RT_DBREG_REAL64;
   case OBELISK_RT_INTRINSIC_V1_SYSTEM:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && string(input(0)) && bits(output(0), 32);

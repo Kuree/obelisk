@@ -845,34 +845,65 @@ obelisk_rt_v1_context_configure_argv(obelisk_rt_context *context, int argc,
                                      const char *const *argv) {
   if (!context || argc < 0 || (argc != 0 && !argv))
     return OBELISK_RT_INVALID_ARGUMENT;
-  for (int index = 1; index < argc; ++index) {
+  for (int index = 1; index < argc; ++index)
     if (!argv[index])
       return OBELISK_RT_INVALID_ARGUMENT;
-    std::string_view argument(argv[index]);
-    if (!argument.empty() && argument.front() == '+') {
-      context->plusargs.emplace_back(argument.substr(1));
-      continue;
-    }
-    constexpr std::string_view prefix = "--seed=";
-    if (argument.substr(0, prefix.size()) != prefix)
-      continue;
-    std::string_view digits = argument.substr(prefix.size());
-    if (digits.empty())
-      return OBELISK_RT_INVALID_ARGUMENT;
-    uint64_t seed = 0;
-    for (char digit : digits) {
-      if (digit < '0' || digit > '9')
+
+  return guarded(context, [&] {
+    std::vector<std::string> plusargs;
+    std::vector<PlusargIndexNode> nodes;
+    std::vector<PlusargIndexEdge> edges;
+    size_t plusargCount = 0;
+    bool haveSeed = false;
+    uint64_t configuredSeed = 0;
+
+    // Validate and size the replacement before touching the live context.
+    for (int index = 1; index < argc; ++index) {
+      std::string_view argument(argv[index]);
+      if (!argument.empty() && argument.front() == '+') {
+        ++plusargCount;
+        continue;
+      }
+      constexpr std::string_view prefix = "--seed=";
+      if (argument.substr(0, prefix.size()) != prefix)
+        continue;
+      std::string_view digits = argument.substr(prefix.size());
+      if (digits.empty())
         return OBELISK_RT_INVALID_ARGUMENT;
-      uint64_t value = static_cast<uint64_t>(digit - '0');
-      if (seed > (UINT64_MAX - value) / 10)
-        return OBELISK_RT_INVALID_ARGUMENT;
-      seed = seed * 10 + value;
+      uint64_t seed = 0;
+      for (char digit : digits) {
+        if (digit < '0' || digit > '9')
+          return OBELISK_RT_INVALID_ARGUMENT;
+        uint64_t value = static_cast<uint64_t>(digit - '0');
+        if (seed > (UINT64_MAX - value) / 10)
+          return OBELISK_RT_INVALID_ARGUMENT;
+        seed = seed * 10 + value;
+      }
+      configuredSeed = seed;
+      haveSeed = true;
     }
-    obelisk_rt_status status = obelisk_rt_v1_context_seed(context, seed);
-    if (status != OBELISK_RT_OK)
-      return status;
-  }
-  return OBELISK_RT_OK;
+    plusargs.reserve(plusargCount);
+
+    for (int index = 1; index < argc; ++index) {
+      std::string_view argument(argv[index]);
+      if (argument.empty() || argument.front() != '+')
+        continue;
+      plusargs.emplace_back(argument.substr(1));
+    }
+
+    if (haveSeed) {
+      obelisk_rt_status status =
+          obelisk_rt_v1_context_seed(context, configuredSeed);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    context->plusargs.swap(plusargs);
+    context->plusargIndexNodes.swap(nodes);
+    context->plusargIndexEdges.swap(edges);
+    context->plusargIndexBuilt = false;
+    return OBELISK_RT_OK;
+  });
 }
 
 extern "C" uint32_t obelisk_rt_v1_import_id(const uint8_t *symbol,

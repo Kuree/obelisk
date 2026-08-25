@@ -1482,6 +1482,11 @@ ABI_FUNCTION(obelisk_rt_v1_string_parse_logic,
                                    uint64_t *));
 ABI_FUNCTION(obelisk_rt_v1_string_parse_real,
              obelisk_rt_status (*)(obelisk_rt_string_v1, double *));
+ABI_FUNCTION(obelisk_rt_v1_plusarg_parse_logic,
+             obelisk_rt_status (*)(obelisk_rt_string_v1, uint32_t, uint64_t,
+                                   void *, uint64_t, void *, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_plusarg_parse_real,
+             obelisk_rt_status (*)(obelisk_rt_string_v1, double *));
 ABI_FUNCTION(obelisk_rt_v1_string_format_integer,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *, uint64_t, uint32_t,
                                    uint32_t, obelisk_rt_string_v1 *));

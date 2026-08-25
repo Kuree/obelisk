@@ -65,6 +65,10 @@ constexpr uint32_t kIntrinsicPlusargValue =
     OBELISK_RT_INTRINSIC_V1_PLUSARG_VALUE;
 constexpr uint32_t kIntrinsicPlusargScan =
     OBELISK_RT_INTRINSIC_V1_PLUSARG_SCAN;
+constexpr uint32_t kIntrinsicPlusargParseLogic =
+    OBELISK_RT_INTRINSIC_V1_PLUSARG_PARSE_LOGIC;
+constexpr uint32_t kIntrinsicPlusargParseReal =
+    OBELISK_RT_INTRINSIC_V1_PLUSARG_PARSE_REAL;
 constexpr uint32_t kIntrinsicSystem = OBELISK_RT_INTRINSIC_V1_SYSTEM;
 constexpr uint32_t kIntrinsicFileClose = OBELISK_RT_INTRINSIC_V1_FILE_CLOSE;
 constexpr uint32_t kIntrinsicFileFlush = OBELISK_RT_INTRINSIC_V1_FILE_FLUSH;

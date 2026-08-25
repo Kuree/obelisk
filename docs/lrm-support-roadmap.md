@@ -1072,6 +1072,21 @@ one compile-time-specialized reader at entry, so ordinary readable scans keep
 direct `fgetc`/`ungetc` calls in their loops with no virtual dispatch or added
 allocation. Native and bytecode execution match at O0 and O3.
 
+L19's seventh closure tranche completes the shared Clause 21.6 plusarg query
+and conversion path. Command-line order, duplicate and empty prefixes, case,
+literal percent signs, empty values, and every standard conversion family now
+agree for literal and runtime formats. Integral conversion is width-exact and
+four-state, including X/Z, sign, truncation, zero extension, and malformed
+complete tails; real conversion likewise rejects a malformed or surplus tail
+instead of silently accepting its numeric prefix. A lazy compact prefix trie
+records the earliest argv entry at every prefix, so repeated queries do not
+rescan argv. Designs that never query plusargs retain the previous argv-copy
+setup and allocate/build no trie; a query with no plusargs builds no vectors.
+Power-of-two conversion places bits directly in O(input digits + destination
+words), and one 4096-bit parse remains one Simulation operation and one native
+or bytecode runtime intrinsic rather than width-expanded IR. Focused native,
+bytecode, runtime, and scaling evidence is recorded by the tranche tests.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |

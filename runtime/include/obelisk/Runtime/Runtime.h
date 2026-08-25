@@ -881,6 +881,8 @@ enum {
   OBELISK_RT_INTRINSIC_V1_FILE_READMEM_TOKEN = UINT32_C(0x00010113),
   OBELISK_RT_INTRINSIC_V1_PLUSARG_SCAN = UINT32_C(0x00010114),
   OBELISK_RT_INTRINSIC_V1_SYSTEM = UINT32_C(0x00010115),
+  OBELISK_RT_INTRINSIC_V1_PLUSARG_PARSE_LOGIC = UINT32_C(0x00010116),
+  OBELISK_RT_INTRINSIC_V1_PLUSARG_PARSE_REAL = UINT32_C(0x00010117),
   OBELISK_RT_INTRINSIC_V1_SPAWN = UINT32_C(0x00010200),
   OBELISK_RT_INTRINSIC_V1_NBA = UINT32_C(0x00010201),
   // Statically planned NBA. The final i64 input is the NBASiteAttr identity;
@@ -3904,6 +3906,14 @@ obelisk_rt_status obelisk_rt_v1_plusarg_scan(obelisk_rt_context *context,
                                              obelisk_rt_string_v1 *out_tail,
                                              uint32_t *out_conversion,
                                              uint32_t *out_found);
+// Strict Clause 21.6 conversions. Unlike the general string conversion
+// helpers, every non-leading character must belong to the selected field;
+// malformed integral input produces an all-X result at the exact width.
+obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
+    obelisk_rt_string_v1 string, uint32_t radix, uint64_t bit_width,
+    void *value, uint64_t value_size, void *unknown, uint64_t unknown_size);
+obelisk_rt_status obelisk_rt_v1_plusarg_parse_real(
+    obelisk_rt_string_v1 string, double *out_value);
 
 // Execute a host command and return its normalized exit status. A process
 // terminated by a signal reports 128 plus the signal number.

@@ -201,12 +201,17 @@ UnitLowering::lowerPlusargSystemCall(semantic::SVCallExpressionOp op) {
     if (radix == kStringRadix)
       parsed = tail;
     else if (radix == kRealRadix)
-      parsed = sim::SimStringParseRealOp::create(
+      parsed = sim::SimPlusargParseRealOp::create(
           builder, location, builder.getF64Type(), tail);
-    else
-      parsed = sim::SimStringParseLogicOp::create(
-          builder, location,
-          sim::LogicType::get(function.getContext(), 64), tail, radix);
+    else {
+      unsigned width = 64;
+      if (Type scalar = sim::getPackedScalarType(destinationType))
+        if (std::optional<unsigned> packedWidth = sim::getPackedWidth(scalar))
+          width = *packedWidth;
+      parsed = sim::SimPlusargParseLogicOp::create(
+          builder, location, sim::LogicType::get(function.getContext(), width),
+          tail, radix);
+    }
     return convert(parsed, destinationType, radix != kStringRadix, location);
   };
 
@@ -224,6 +229,16 @@ UnitLowering::lowerPlusargSystemCall(semantic::SVCallExpressionOp op) {
   } else if (isa<FloatType>(destinationType)) {
     converted = parseAndConvert(kRealRadix);
     validConversion = kindIs(kRealRadix);
+    for (unsigned radix : {2u, 8u, 10u, 16u}) {
+      FailureOr<Value> candidate = parseAndConvert(radix);
+      if (failed(candidate))
+        return failure();
+      converted = arith::SelectOp::create(builder, location, kindIs(radix),
+                                          *candidate, *converted)
+                      .getResult();
+      validConversion = arith::OrIOp::create(builder, location,
+                                             validConversion, kindIs(radix));
+    }
   } else if (isa<sim::StringType>(destinationType)) {
     converted = parseAndConvert(kStringRadix);
     validConversion = kindIs(kStringRadix);
