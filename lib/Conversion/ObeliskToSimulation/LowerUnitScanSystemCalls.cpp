@@ -76,7 +76,7 @@ splitScanFormat(StringRef format, std::string &unsupported) {
       }
       specifier = format[index];
     }
-    if (!StringRef("bBoOdDhHxXeEfFgGsScCmMtT").contains(specifier)) {
+    if (!StringRef("bBoOdDhHxXeEfFgGsScCmMtTvV").contains(specifier)) {
       unsupported =
           format.substr(conversionStart, index - conversionStart + 1).str();
       return std::nullopt;
@@ -117,6 +117,9 @@ unsigned scanRadix(char specifier) {
   case 't':
   case 'T':
     return kRealRadix;
+  case 'v':
+  case 'V':
+    return 2;
   default:
     return kTextRadix;
   }

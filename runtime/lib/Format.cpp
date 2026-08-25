@@ -585,42 +585,6 @@ obelisk_rt_status formatOverriddenTime(std::string &output, long double ticks,
   return OBELISK_RT_OK;
 }
 
-std::string strengthName(unsigned magnitude) {
-  static constexpr std::string_view names[] = {"",   "Sm", "Me", "We",
-                                               "La", "Pu", "St", "Su"};
-  return magnitude < std::size(names) ? std::string(names[magnitude]) : "";
-}
-
-std::string formatStrengthRange(uint16_t strengths) {
-  strengths &= (uint16_t{1} << 15) - 1;
-  if (strengths == 0)
-    return {};
-  int low = -7;
-  while (low <= 7 && (strengths & (uint16_t{1} << (low + 7))) == 0)
-    ++low;
-  int high = 7;
-  while (high >= -7 && (strengths & (uint16_t{1} << (high + 7))) == 0)
-    --high;
-  if (low == 0 && high == 0)
-    return "HiZ";
-  if (low == high) {
-    unsigned magnitude = static_cast<unsigned>(std::abs(low));
-    return strengthName(magnitude) + (low < 0 ? "0" : "1");
-  }
-  if (low < 0 && high == 0)
-    return strengthName(static_cast<unsigned>(-low)) + "L";
-  if (low == 0 && high > 0)
-    return strengthName(static_cast<unsigned>(high)) + "H";
-  if (low < 0 && high > 0) {
-    if (-low == high)
-      return strengthName(static_cast<unsigned>(high)) + "X";
-    return std::to_string(-low) + std::to_string(high) + "X";
-  }
-  if (high < 0)
-    return std::to_string(-low) + std::to_string(-high) + "0";
-  return std::to_string(high) + std::to_string(low) + "1";
-}
-
 obelisk_rt_status formatArgument(obelisk_rt_context *context,
                                  std::string &output,
                                  const obelisk_rt_arg_v1 &argument,
@@ -692,7 +656,7 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
       else
         strengths = static_cast<uint16_t>(((uint16_t{1} << 13) - 1) << 1);
     }
-    std::string rendered = formatStrengthRange(strengths);
+    std::string rendered = obelisk_rt_format_strength_range(strengths);
     if (rendered.empty())
       return OBELISK_RT_INVALID_ARGUMENT;
     output += rendered;

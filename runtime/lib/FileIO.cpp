@@ -185,6 +185,26 @@ ScanResult scanFileField(FILE *stream, const char *prefix, uint64_t prefixSize,
                                                            : ScanResult::Match;
   }
 
+  if (letter == 'v') {
+    field.push_back(static_cast<char>(character));
+    for (unsigned index = 1; index != 3; ++index) {
+      character = readFieldCharacter();
+      if (character == EOF)
+        break;
+      field.push_back(static_cast<char>(character));
+    }
+    char logic = 0;
+    if (obelisk_rt_parse_strength_field(field.data(), field.size(), logic)) {
+      field.assign(1, logic);
+      return ScanResult::Match;
+    }
+    for (auto iterator = field.rbegin(); iterator != field.rend(); ++iterator)
+      if (std::ungetc(static_cast<unsigned char>(*iterator), stream) == EOF)
+        return ScanResult::Error;
+    field.clear();
+    return ScanResult::Mismatch;
+  }
+
   if (character == '+' || character == '-') {
     field.push_back(static_cast<char>(character));
     character = readFieldCharacter();

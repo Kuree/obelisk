@@ -12,6 +12,7 @@
 // whitespace prefix must therefore begin at the byte after that character.
 // CHECK: 61:62:6364:1:3:6:1:1:1
 // CHECK-NEXT: 01xz
+// CHECK-NEXT: 0:0x:1:0z:3:7:11:15
 // CHECK-NEXT: 4:1:4:1:51:5:1
 // CHECK-NEXT: 0:1
 // CHECK-NEXT: 1.10:1.30:-1.30:1.25:1300.00
@@ -75,6 +76,44 @@ module attributes {
       obelisk_sim.display %ctx to %stdout(%logic_format, %logic)
           newline = true radix = 10 flags = [0, 0] :
           !obelisk_sim.bytes, !obelisk_sim.logic<64>
+
+      // Table 21-6 mnemonic and digit-pair examples normalize to their
+      // four-state logic component while each conversion consumes exactly
+      // three bytes. Uppercase %V has identical scan-field semantics.
+      %strength_input = obelisk_sim.string.literal "520 65X PuH HiZ"
+      %range_field, %range_cursor, %range_ok =
+          obelisk_sim.string.scan_field %strength_input, %zero
+          {prefix = "", specifier = 118 : i32, width = 0 : i64} :
+          (!obelisk_sim.string, i32) -> (!obelisk_sim.string, i32, i32)
+      %range = obelisk_sim.string.parse_logic %range_field radix = 2 :
+          !obelisk_sim.logic<64>
+      %unequal_field, %unequal_cursor, %unequal_ok =
+          obelisk_sim.string.scan_field %strength_input, %range_cursor
+          {prefix = " ", specifier = 86 : i32, width = 3 : i64} :
+          (!obelisk_sim.string, i32) -> (!obelisk_sim.string, i32, i32)
+      %unequal = obelisk_sim.string.parse_logic %unequal_field radix = 2 :
+          !obelisk_sim.logic<64>
+      %high_field, %high_cursor, %high_ok =
+          obelisk_sim.string.scan_field %strength_input, %unequal_cursor
+          {prefix = " ", specifier = 118 : i32, width = 0 : i64} :
+          (!obelisk_sim.string, i32) -> (!obelisk_sim.string, i32, i32)
+      %high = obelisk_sim.string.parse_logic %high_field radix = 2 :
+          !obelisk_sim.logic<64>
+      %impedance_field, %impedance_cursor, %impedance_ok =
+          obelisk_sim.string.scan_field %strength_input, %high_cursor
+          {prefix = " ", specifier = 118 : i32, width = 0 : i64} :
+          (!obelisk_sim.string, i32) -> (!obelisk_sim.string, i32, i32)
+      %impedance = obelisk_sim.string.parse_logic %impedance_field radix = 2 :
+          !obelisk_sim.logic<64>
+      %strength_format = obelisk_sim.bytes.constant
+          "%0b:%0b:%0b:%0b:%0d:%0d:%0d:%0d"
+      obelisk_sim.display %ctx to %stdout(
+          %strength_format, %range, %unequal, %high, %impedance,
+          %range_cursor, %unequal_cursor, %high_cursor, %impedance_cursor)
+          newline = true radix = 10 flags = [0, 0, 0, 0, 0, 0, 0, 0, 0] :
+          !obelisk_sim.bytes, !obelisk_sim.logic<64>,
+          !obelisk_sim.logic<64>, !obelisk_sim.logic<64>,
+          !obelisk_sim.logic<64>, i32, i32, i32, i32
 
       // %m matches its literal prefix but consumes no field bytes. The next
       // %c therefore reads Q at the cursor immediately after "tag=".

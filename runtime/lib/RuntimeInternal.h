@@ -5,6 +5,7 @@
 #define OBELISK_RUNTIME_LIB_RUNTIMEINTERNAL_H
 
 #include "DesignBytecodeImage.h"
+#include "StrengthFormat.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include <algorithm>

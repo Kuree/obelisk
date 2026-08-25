@@ -5,6 +5,8 @@
 
 #include "gtest/gtest.h"
 
+#include "../lib/StrengthFormat.h"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -20,6 +22,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -1486,6 +1489,40 @@ TEST_F(RuntimeTest, FormatsDefaultScalarStrengths) {
       "%v|%v|%v|%v", {zero.arg(), one.arg(), unknown.arg(), highz.arg()});
   EXPECT_EQ(status, OBELISK_RT_OK);
   EXPECT_EQ(output, "St0|St1|StX|HiZ");
+}
+
+TEST_F(RuntimeTest, StrengthInputAcceptsEveryCanonicalOutputField) {
+  std::unordered_set<std::string> emittedFields;
+  for (uint32_t strengths = 1; strengths != (uint32_t{1} << 15);
+       ++strengths) {
+    std::string field =
+        obelisk_rt_format_strength_range(static_cast<uint16_t>(strengths));
+    ASSERT_EQ(field.size(), 3u);
+    char logic = 0;
+    ASSERT_TRUE(
+        obelisk_rt_parse_strength_field(field.data(), field.size(), logic))
+        << field;
+    char expected = field[2] == 'L' ? '0' : field[2] == 'H' ? '1' : field[2];
+    EXPECT_EQ(logic, expected) << field;
+    emittedFields.insert(field);
+  }
+
+  // Conversely, every alphanumeric three-byte spelling accepted by the
+  // scanner must be one the canonical formatter can emit. This rejects case
+  // variants, equal strength pairs, ranges through level zero, and impossible
+  // combinations such as Hi0 or StZ.
+  constexpr std::string_view alphabet =
+      "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+  constexpr std::string_view components = "01XZLH";
+  for (char first : alphabet)
+    for (char second : alphabet)
+      for (char component : components) {
+        std::string field{first, second, component};
+        char logic = 0;
+        bool accepted =
+            obelisk_rt_parse_strength_field(field.data(), field.size(), logic);
+        EXPECT_EQ(accepted, emittedFields.count(field) != 0) << field;
+      }
 }
 
 // IEEE 1800-2017 21.2.1.7: a singular value that is not a packed structure,

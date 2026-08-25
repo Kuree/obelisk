@@ -1774,6 +1774,14 @@ uint64_t scanFieldExtent(const StringView &view, uint64_t &index,
       ++index;
     return index - start;
   }
+  if (letter == 'v') {
+    char logic = 0;
+    if (limit - index < 3 ||
+        !obelisk_rt_parse_strength_field(view.bytes + index, 3, logic))
+      return 0;
+    index += 3;
+    return 3;
+  }
   if (index < limit && (view.bytes[index] == '+' || view.bytes[index] == '-'))
     ++index;
   if (letter == 'e' || letter == 'f' || letter == 'g' || letter == 't') {
@@ -1848,7 +1856,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_string_scan_field(
   uint64_t extent = scanFieldExtent(view, index, specifier, width);
   if (extent == 0)
     return OBELISK_RT_OK;
-  status = createString(lane, view.bytes + index - extent, extent, outField);
+  if (letter == 'v') {
+    char logic = 0;
+    if (!obelisk_rt_parse_strength_field(view.bytes + index - extent, extent,
+                                         logic))
+      return OBELISK_RT_OK;
+    status = createString(lane, &logic, 1, outField);
+  } else {
+    status = createString(lane, view.bytes + index - extent, extent, outField);
+  }
   if (status != OBELISK_RT_OK)
     return status;
   *outCursor = static_cast<uint32_t>(index);
