@@ -9,6 +9,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -1451,6 +1452,29 @@ TEST_F(RuntimeTest, FormatsRemainingScalarFormsAndEmptyStrings) {
   auto [timeStatus, timeOutput] = format("[%t]", {timeArg(time)});
   EXPECT_EQ(timeStatus, OBELISK_RT_OK);
   EXPECT_EQ(timeOutput, "[" + std::string(18, ' ') + "10]");
+}
+
+TEST_F(RuntimeTest, ScalesTimeInputThroughCurrentTimeFormat) {
+  // Default input units are design precision (100 ps here), rounded to zero
+  // fractional digits, then converted to the caller's 1 ns unit.
+  EXPECT_DOUBLE_EQ(obelisk_rt_v1_time_scan_scale(context, 10.5, 10, -10),
+                   1.1);
+
+  ASSERT_EQ(obelisk_rt_v1_time_format(context, -9, 1, nullptr, 0, 0),
+            OBELISK_RT_OK);
+  EXPECT_DOUBLE_EQ(obelisk_rt_v1_time_scan_scale(context, 1.25, 10, -10),
+                   1.3);
+  EXPECT_DOUBLE_EQ(obelisk_rt_v1_time_scan_scale(context, -1.25, 10, -10),
+                   -1.3);
+
+  // Changing the design-global state takes effect at the next scan. Picosecond
+  // input is finer than the same caller's 1 ns time unit.
+  ASSERT_EQ(obelisk_rt_v1_time_format(context, -12, 0, nullptr, 0, 0),
+            OBELISK_RT_OK);
+  EXPECT_DOUBLE_EQ(obelisk_rt_v1_time_scan_scale(context, 1250.0, 10, -10),
+                   1.25);
+  EXPECT_TRUE(std::isinf(obelisk_rt_v1_time_scan_scale(
+      context, std::numeric_limits<double>::infinity(), 10, -10)));
 }
 
 TEST_F(RuntimeTest, FormatsDefaultScalarStrengths) {

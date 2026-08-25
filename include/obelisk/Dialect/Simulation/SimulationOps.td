@@ -2007,6 +2007,27 @@ def SimTimeFormatOp : SimOp<"time.format", [
                        I32:$width);
 }
 
+def SimTimeScanScaleOp : SimOp<"time.scan_scale", [
+  MemoryEffects<[MemRead<SimIOResource>]>
+]> {
+  let summary = "scale a %t input field through the current time format";
+  let description = [{
+    `time_multiplier` is the invoking scope's time unit in design-precision
+    ticks. `time_precision` is the decimal exponent in seconds of one such
+    tick. The design-wide `$timeformat` state selects the input unit and
+    decimal rounding; without an override, design-precision units and zero
+    fractional digits apply.
+  }];
+  let arguments = (ins SimContextType:$context, F64:$input,
+                       I64Attr:$time_multiplier,
+                       I32Attr:$time_precision);
+  let results = (outs F64:$result);
+  let assemblyFormat = [{
+    $context `,` $input `time_multiplier` `=` $time_multiplier
+    `time_precision` `=` $time_precision attr-dict
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Waveform dumping
 //

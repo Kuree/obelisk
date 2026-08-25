@@ -73,6 +73,10 @@ LLVM::LLVMFunctionType getFunctionType(runtime::RuntimeCall call,
   case runtime::RuntimeSignature::TimeFormat:
     arguments = {abi.pointer, abi.i32, abi.i32, abi.pointer, abi.i64, abi.i32};
     break;
+  case runtime::RuntimeSignature::TimeScanScale:
+    result = Float64Type::get(abi.i64.getContext());
+    arguments = {abi.pointer, result, abi.i64, abi.i32};
+    break;
   case runtime::RuntimeSignature::DumpOpen:
     arguments = {abi.pointer, abi.pointer, abi.i64};
     break;
@@ -1010,6 +1014,9 @@ public:
       return replaceStatus({operands[0], operands[1], operands[2], suffixData,
                             suffixSize, operands[4]});
     }
+    case runtime::RuntimeCall::TimeScanScale:
+      rewriter.replaceOp(operation, emitCall(operands).getResult());
+      return success();
     case runtime::RuntimeCall::DumpOpen: {
       auto [pathData, pathSize] = span(operands[1]);
       return replaceStatus({operands[0], pathData, pathSize});

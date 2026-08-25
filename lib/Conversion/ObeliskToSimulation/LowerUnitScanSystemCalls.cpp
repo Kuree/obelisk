@@ -76,7 +76,7 @@ splitScanFormat(StringRef format, std::string &unsupported) {
       }
       specifier = format[index];
     }
-    if (!StringRef("bBoOdDhHxXeEfFgGsScCmM").contains(specifier)) {
+    if (!StringRef("bBoOdDhHxXeEfFgGsScCmMtT").contains(specifier)) {
       unsupported =
           format.substr(conversionStart, index - conversionStart + 1).str();
       return std::nullopt;
@@ -114,6 +114,8 @@ unsigned scanRadix(char specifier) {
   case 'F':
   case 'g':
   case 'G':
+  case 't':
+  case 'T':
     return kRealRadix;
   default:
     return kTextRadix;
@@ -217,6 +219,9 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
   if (!hierarchy)
     hierarchy =
         function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+  IntegerAttr timeMultiplier =
+      function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+  IntegerAttr timePrecision = designTimePrecisionExponent();
   size_t destinationIndex = 0;
   for (const ScanConversion &conversion : *conversions) {
     std::optional<CapturedLValue> destination;
@@ -286,6 +291,17 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
         }
         parsed = sim::SimStringLiteralOp::create(builder, location, stringType,
                                                  hierarchy);
+      } else if (conversion.specifier == 't' || conversion.specifier == 'T') {
+        if (!timeMultiplier || !timePrecision) {
+          emitError(location) << name << " %t conversion has no frozen time "
+                                         "scale";
+          return failure();
+        }
+        Value real = sim::SimStringParseRealOp::create(
+            builder, location, builder.getF64Type(), field);
+        parsed = sim::SimTimeScanScaleOp::create(
+            builder, location, builder.getF64Type(), context, real,
+            timeMultiplier, timePrecision);
       } else if (radix == kTextRadix)
         parsed = field;
       else if (radix == kRealRadix)

@@ -953,6 +953,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_MOS_DRIVE_DELAYED = UINT32_C(0x0001023f),
   OBELISK_RT_INTRINSIC_V1_LOGIC_CASE_DIFFERENCE_MASK = UINT32_C(0x00010240),
   OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_DRIVER = UINT32_C(0x00010241),
+  OBELISK_RT_INTRINSIC_V1_TIME_SCAN_SCALE = UINT32_C(0x00010242),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -3756,6 +3757,14 @@ obelisk_rt_status
 obelisk_rt_v1_time_format(obelisk_rt_context *context, int32_t units,
                           uint32_t fraction_digits, const char *suffix,
                           uint64_t suffix_size, uint32_t width);
+// IEEE 1800-2017 21.3.4.3 `%t` input conversion. `time_multiplier` is the
+// caller's time unit in design-precision ticks and `time_precision` is the
+// decimal exponent in seconds of one such tick. The current `$timeformat`
+// supplies the input units and decimal rounding; the inactive default is zero
+// fractional digits in design-precision units.
+double obelisk_rt_v1_time_scan_scale(obelisk_rt_context *context, double value,
+                                     uint64_t time_multiplier,
+                                     int32_t time_precision);
 obelisk_rt_status
 obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
                       uint32_t append_newline, obelisk_rt_radix default_radix,

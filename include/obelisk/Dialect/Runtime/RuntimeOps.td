@@ -290,6 +290,14 @@ def RTTimeFormatOp : RTOp<"time.format", [
   let results = (outs RTStatusType:$status);
 }
 
+def RTTimeScanScaleOp : RTOp<"time.scan_scale", [
+  MemoryEffects<[MemRead<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, F64:$input,
+                       I64:$time_multiplier, I32:$time_precision);
+  let results = (outs F64:$result);
+}
+
 // Waveform services. Collection itself is a scheduler-driven difference over
 // the canonical state planes; these calls only configure and gate it.
 def RTDumpOpenOp : RTOp<"dump.open", [

@@ -115,6 +115,12 @@ func.func @runtime_calls(
       (!obelisk_rt.context) -> !obelisk_rt.status
   %termination_requested = obelisk_rt.termination.requested %ctx :
       (!obelisk_rt.context) -> i1
+  %time_input = arith.constant 1.25 : f64
+  %time_multiplier = arith.constant 1000 : i64
+  %time_precision = arith.constant -12 : i32
+  %scaled_time = obelisk_rt.time.scan_scale %ctx, %time_input,
+      %time_multiplier, %time_precision :
+      (!obelisk_rt.context, f64, i64, i32) -> f64
 
   // CHECK: obelisk_rt.format
   %format_status, %formatted = obelisk_rt.format %ctx, %bytes, %args, %env :

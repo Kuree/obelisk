@@ -174,6 +174,17 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         plan, kIntrinsicTimeFormat,
         {op.getUnits(), op.getFractionDigits(), op.getSuffix(), op.getWidth()},
         {});
+  if (auto op = dyn_cast<sim::SimTimeScanScaleOp>(operation)) {
+    uint32_t multiplier = emitU64Constant(plan, op.getTimeMultiplier());
+    uint32_t precision =
+        emitU64Constant(plan, static_cast<uint64_t>(op.getTimePrecision()));
+    if (multiplier == kInvalidRegister || precision == kInvalidRegister)
+      return op.emitOpError("cannot allocate time scan scale operands");
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicTimeScanScale,
+        {reg(plan, op.getInput()), multiplier, precision},
+        {reg(plan, op.getResult())});
+  }
   if (auto op = dyn_cast<sim::SimPlusargTestOp>(operation))
     return emitIntrinsic(plan, kIntrinsicPlusargTest, {op.getName()},
                          {op.getFound()});

@@ -3847,6 +3847,15 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         reinterpret_cast<const char *>(suffix->data), suffix->size,
         static_cast<uint32_t>(*width));
   }
+  case OBELISK_RT_INTRINSIC_V1_TIME_SCAN_SCALE: {
+    auto input = realInput(0);
+    auto multiplier = scalar(1), precision = scalar(2);
+    if (!input || !multiplier || !precision || *multiplier == 0)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return writeReal(0, obelisk_rt_v1_time_scan_scale(
+                            context, *input, *multiplier,
+                            static_cast<int32_t>(*precision)));
+  }
   case OBELISK_RT_INTRINSIC_V1_PLUSARG_TEST: {
     obelisk_rt_string_v1 name = 0;
     if (!readString(inputRegister(0), name))

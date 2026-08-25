@@ -1210,6 +1210,42 @@ obelisk_rt_v1_time_format(obelisk_rt_context *context, int32_t units,
   });
 }
 
+extern "C" double
+obelisk_rt_v1_time_scan_scale(obelisk_rt_context *context, double value,
+                              uint64_t timeMultiplier,
+                              int32_t timePrecision) {
+  if (!context || timeMultiplier == 0 || !std::isfinite(value))
+    return value;
+
+  int32_t units = timePrecision;
+  uint32_t fractionDigits = 0;
+  try {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    if (context->timeFormat.active) {
+      units = context->timeFormat.units;
+      fractionDigits = context->timeFormat.fractionDigits;
+    }
+  } catch (...) {
+    return value;
+  }
+
+  // Table 21-8 first rounds in the unit and decimal precision selected by
+  // $timeformat, then returns the value in the invoking scope's time unit.
+  // Long double keeps every supported decimal precision and exponent bounded
+  // without generated-code expansion or a text-formatting round trip.
+  long double decimalScale =
+      std::pow(10.0L, static_cast<long double>(fractionDigits));
+  long double rounded =
+      std::round(static_cast<long double>(value) * decimalScale) /
+      decimalScale;
+  long double designTicks =
+      rounded *
+      std::pow(10.0L, static_cast<long double>(units) -
+                          static_cast<long double>(timePrecision));
+  return static_cast<double>(designTicks /
+                             static_cast<long double>(timeMultiplier));
+}
+
 extern "C" obelisk_rt_status obelisk_rt_v1_string_output_format(
     obelisk_rt_context *context, obelisk_rt_radix defaultRadix,
     const obelisk_rt_arg_v1 *items, uint64_t itemCount,

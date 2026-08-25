@@ -8,6 +8,9 @@ module {
     %text = obelisk_sim.bytes.constant "%m %l value=%0h"
     %path = obelisk_sim.bytes.constant "input.bin"
     %mode = obelisk_sim.bytes.constant "rb"
+    %time_input = arith.constant 1.25 : f64
+    %scaled_time = obelisk_sim.time.scan_scale %ctx, %time_input
+        time_multiplier = 1000 time_precision = -12
     obelisk_sim.display %ctx to %fd_bits(%text, %value) newline = true
         radix = 16 flags = [0, 2, 1]
         {library_cell = "work.io", scope = "top.io.named",
@@ -96,6 +99,10 @@ module {
 // CHECK: %[[TEXT:.*]] = obelisk_rt.bytes.constant "%m %l value=%0h"
 // CHECK: %[[PATH:.*]] = obelisk_rt.bytes.constant "input.bin"
 // CHECK: %[[MODE:.*]] = obelisk_rt.bytes.constant "rb"
+// CHECK: %[[TIME_INPUT:.*]] = arith.constant 1.250000e+00 : f64
+// CHECK: %[[TIME_MULTIPLIER:.*]] = arith.constant 1000 : i64
+// CHECK: %[[TIME_PRECISION:.*]] = arith.constant -12 : i32
+// CHECK: obelisk_rt.time.scan_scale {{.*}}, %[[TIME_INPUT]], %[[TIME_MULTIPLIER]], %[[TIME_PRECISION]]
 // CHECK: obelisk_sim.context.runtime
 // CHECK: obelisk_rt.file_descriptor.from_bits
 // CHECK: obelisk_rt.argument.bytes %[[TEXT]] {is_format_string = true}

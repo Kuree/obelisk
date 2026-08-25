@@ -1776,7 +1776,7 @@ uint64_t scanFieldExtent(const StringView &view, uint64_t &index,
   }
   if (index < limit && (view.bytes[index] == '+' || view.bytes[index] == '-'))
     ++index;
-  if (letter == 'e' || letter == 'f' || letter == 'g') {
+  if (letter == 'e' || letter == 'f' || letter == 'g' || letter == 't') {
     while (index < limit &&
            (scanDigit(view.bytes[index], 10) || view.bytes[index] == '.'))
       ++index;

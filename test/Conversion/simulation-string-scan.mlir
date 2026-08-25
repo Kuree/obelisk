@@ -14,6 +14,7 @@
 // CHECK-NEXT: 01xz
 // CHECK-NEXT: 4:1:4:1:51:5:1
 // CHECK-NEXT: 0:1
+// CHECK-NEXT: 1.10:1.30:-1.30:1.25:1300.00
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -112,6 +113,45 @@ module attributes {
           %empty_format, %empty_cursor, %empty_ok)
           newline = true radix = 10 flags = [0, 0, 0] :
           !obelisk_sim.bytes, i32, i32
+
+      // A %t field is parsed as a real before this O(1) scaling operation.
+      // The first value observes the inactive default; later values prove
+      // design-global $timeformat changes and units on both sides of the
+      // caller's 1 ns unit (10 design ticks at 100 ps precision).
+      %default_input = arith.constant 10.5 : f64
+      %default_time = obelisk_sim.time.scan_scale %ctx, %default_input
+          time_multiplier = 10 time_precision = -10
+      %units_ns = arith.constant -9 : i32
+      %one_digit = arith.constant 1 : i32
+      %empty_suffix = obelisk_sim.bytes.constant ""
+      %width = arith.constant 0 : i32
+      "obelisk_sim.time.format"(%ctx, %units_ns, %one_digit, %empty_suffix,
+          %width) : (!obelisk_sim.context, i32, i32, !obelisk_sim.bytes, i32) -> ()
+      %positive_input = arith.constant 1.25 : f64
+      %negative_input = arith.constant -1.25 : f64
+      %positive_time = obelisk_sim.time.scan_scale %ctx, %positive_input
+          time_multiplier = 10 time_precision = -10
+      %negative_time = obelisk_sim.time.scan_scale %ctx, %negative_input
+          time_multiplier = 10 time_precision = -10
+      %units_ps = arith.constant -12 : i32
+      %zero_digits = arith.constant 0 : i32
+      "obelisk_sim.time.format"(%ctx, %units_ps, %zero_digits, %empty_suffix,
+          %width) : (!obelisk_sim.context, i32, i32, !obelisk_sim.bytes, i32) -> ()
+      %fine_input = arith.constant 1250.0 : f64
+      %fine_time = obelisk_sim.time.scan_scale %ctx, %fine_input
+          time_multiplier = 10 time_precision = -10
+      %units_us = arith.constant -6 : i32
+      "obelisk_sim.time.format"(%ctx, %units_us, %one_digit, %empty_suffix,
+          %width) : (!obelisk_sim.context, i32, i32, !obelisk_sim.bytes, i32) -> ()
+      %coarse_time = obelisk_sim.time.scan_scale %ctx, %positive_input
+          time_multiplier = 10 time_precision = -10
+      %time_format = obelisk_sim.bytes.constant
+          "%.2f:%.2f:%.2f:%.2f:%.2f"
+      obelisk_sim.display %ctx to %stdout(
+          %time_format, %default_time, %positive_time, %negative_time,
+          %fine_time, %coarse_time)
+          newline = true radix = 10 flags = [0, 4, 4, 4, 4, 4] :
+          !obelisk_sim.bytes, f64, f64, f64, f64, f64
       obelisk_sim.return
     }
   }

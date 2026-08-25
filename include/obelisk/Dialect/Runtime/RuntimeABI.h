@@ -33,6 +33,7 @@ enum class RuntimeSignature {
   StringOutputFormat,
   Display,
   TimeFormat,
+  TimeScanScale,
   DumpOpen,
   DumpVars,
   DumpContext,

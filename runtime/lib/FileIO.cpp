@@ -189,7 +189,8 @@ ScanResult scanFileField(FILE *stream, const char *prefix, uint64_t prefixSize,
     field.push_back(static_cast<char>(character));
     character = readFieldCharacter();
   }
-  bool real = letter == 'e' || letter == 'f' || letter == 'g';
+  bool real =
+      letter == 'e' || letter == 'f' || letter == 'g' || letter == 't';
   uint32_t radix = letter == 'b'   ? 2
                    : letter == 'o' ? 8
                    : letter == 'd' ? 10

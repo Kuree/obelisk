@@ -290,6 +290,27 @@ public:
   }
 };
 
+class TimeScanScaleConversion final
+    : public SimIOConversion<sim::SimTimeScanScaleOp> {
+public:
+  using SimIOConversion::SimIOConversion;
+
+  LogicalResult
+  matchAndRewrite(sim::SimTimeScanScaleOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value multiplier = iConstant(rewriter, loc, rewriter.getI64Type(),
+                                 op.getTimeMultiplier());
+    Value precision = iConstant(rewriter, loc, rewriter.getI32Type(),
+                                op.getTimePrecision());
+    rewriter.replaceOpWithNewOp<runtime::RTTimeScanScaleOp>(
+        op, rewriter.getF64Type(),
+        runtimeContext(rewriter, loc, adaptor.getContext().front()),
+        adaptor.getInput().front(), multiplier, precision);
+    return success();
+  }
+};
+
 class DisplayConversion final : public SimIOConversion<sim::SimDisplayOp> {
 public:
   using SimIOConversion::SimIOConversion;
@@ -767,7 +788,8 @@ public:
 
     ConversionTarget target(context);
     target.addIllegalOp<
-        sim::SimBytesConstantOp, sim::SimTimeFormatOp, sim::SimFinishOp,
+        sim::SimBytesConstantOp, sim::SimTimeFormatOp,
+        sim::SimTimeScanScaleOp, sim::SimFinishOp,
         sim::SimProgramExitOp, sim::SimStopOp, sim::SimFatalOp, sim::SimErrorOp,
         sim::SimTerminationRequestedOp, sim::SimTimeNowOp, sim::SimDisplayOp,
         sim::SimStringOutputFormatOp, sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
@@ -798,7 +820,8 @@ public:
 void populateSimulationToRuntimePatterns(const TypeConverter &converter,
                                          RewritePatternSet &patterns) {
   MLIRContext *context = patterns.getContext();
-  patterns.add<BytesConstantConversion, TimeFormatConversion, DisplayConversion,
+  patterns.add<BytesConstantConversion, TimeFormatConversion,
+               TimeScanScaleConversion, DisplayConversion,
                StringOutputFormatConversion, GetcConversion, UngetcConversion,
                GetlineConversion, ReadPackedConversion, ReadMemTokenConversion,
                EofConversion, SeekConversion, TellConversion>(converter,
