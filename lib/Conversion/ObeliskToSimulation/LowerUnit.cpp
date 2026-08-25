@@ -2162,7 +2162,9 @@ LogicalResult UnitLowering::lowerSequence(ArrayRef<Operation *> operations) {
 }
 
 LogicalResult UnitLowering::lowerPrimitive(StringRef name,
-                                           ArrayRef<Operation *> operations) {
+                                           ArrayRef<Operation *> operations,
+                                           Value previousUdpInputs,
+                                           Value *nextUdpInputs) {
   Location location = function.getLoc();
   if (auto ids = function->getAttrOfType<DenseI64ArrayAttr>(
           "obelisk_sim.mos_topology_ids")) {
@@ -2377,11 +2379,10 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
         static_cast<int64_t>(tableInputs.size()) != tableOutputs.size() ||
         static_cast<int64_t>(tableInputs.size()) != tableEdges.size())
       return function.emitError("malformed frozen UDP declaration metadata");
-    if (sequential.getValue() || edgeSensitive.getValue())
-      return function.emitError(
-          "sequential user-defined primitive reached combinational lowering");
+    bool isSequential = sequential.getValue();
     ArrayRef<int64_t> directions = portDirections.asArrayRef();
-    if (directions.front() != 1 ||
+    int64_t expectedOutputDirection = isSequential ? 2 : 1;
+    if (directions.front() != expectedOutputDirection ||
         !llvm::all_of(directions.drop_front(),
                       [](int64_t direction) { return direction == 0; }) ||
         !llvm::all_of(portNames, [](Attribute name) {
@@ -2389,14 +2390,13 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
           return string && !string.getValue().empty();
         }))
       return function.emitError(
-          "combinational UDP ports must be one output followed by inputs");
+          "UDP ports must be one output followed by inputs");
     if (outputs.size() != 1 || logicType.getWidth() != 1)
-      return function.emitError(
-          "combinational UDP requires one scalar four-state output");
+      return function.emitError("UDP requires one scalar four-state output");
     unsigned inputCount = portNames.size() - 1;
     if (inputs.size() != inputCount)
       return function.emitError(
-          "combinational UDP connection count does not match its ports");
+          "UDP connection count does not match its ports");
 
     SmallVector<Value> loweredInputs;
     loweredInputs.reserve(inputs.size());
@@ -2415,22 +2415,24 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
     auto packedPlaneType = IntegerType::get(function.getContext(), inputCount);
     APInt allBits = APInt::getAllOnes(inputCount);
     APInt noBits = APInt::getZero(inputCount);
-    auto logicConstant = [&](const APInt &data, const APInt &unknown) -> Value {
+    auto packedConstant = [&](const APInt &data,
+                              const APInt &unknown) -> Value {
       return sim::SimLogicConstantOp::create(
           builder, location, packedType,
           builder.getIntegerAttr(packedPlaneType, data),
           builder.getIntegerAttr(packedPlaneType, unknown));
     };
-    Value allOnes = logicConstant(allBits, noBits);
-    // IEEE 1800-2017 29.4: a Z on a UDP input is treated as X.  The gate
-    // truth-table identity `value & '1` performs exactly that canonicalization
-    // while preserving ordinary 0, 1, and X inputs.
+    Value allOnes = packedConstant(allBits, noBits);
+    // IEEE 1800-2017 29.4 and 29.6: Z on a UDP input is observed as X.
     Value normalized = sim::SimLogicBinaryOp::create(
         builder, location, packedType, sim::BinaryKind::And, packed, allOnes);
+    if (nextUdpInputs)
+      *nextUdpInputs = normalized;
+
     auto scalarPlaneType = IntegerType::get(function.getContext(), 1);
     auto scalarConstant = [&](char value) -> Value {
-      APInt data(1, value == '1');
-      APInt unknown(1, value == 'x');
+      APInt data(1, value == '1' || value == 'z');
+      APInt unknown(1, value == 'x' || value == 'z');
       return sim::SimLogicConstantOp::create(
           builder, location, logicType,
           builder.getIntegerAttr(scalarPlaneType, data),
@@ -2439,28 +2441,64 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
     Value outputZero = scalarConstant('0');
     Value outputOne = scalarConstant('1');
     Value outputX = scalarConstant('x');
-    result = outputX;
+    Value currentState;
+    if (isSequential) {
+      if (!previousUdpInputs || previousUdpInputs.getType() != packedType ||
+          !nextUdpInputs)
+        return function.emitError(
+            "sequential UDP has no persistent previous-input state");
+      FailureOr<CapturedLValue> output =
+          captureLValue(outputs.front(), location);
+      if (failed(output) || output->kind != CapturedLValue::Kind::Reference ||
+          !isa<sim::DriverType>(output->reference.getType()))
+        return function.emitError(
+            "sequential UDP output is not a first-class net driver");
+      Value rawState = sim::SimDriverReadOp::create(
+          builder, location, logicType, output->reference);
+      Value initialState = outputX;
+      if (auto spelling = udp.getAs<StringAttr>("init_value")) {
+        FailureOr<ParsedConstant> parsed =
+            parseSVInteger(spelling.getValue(), 1, location);
+        if (failed(parsed))
+          return failure();
+        // A UDP declaration initializer is restricted to 0, 1, or X.  Z is
+        // reserved here as the raw-driver uninitialized sentinel.
+        if (!(parsed->value & parsed->unknown).isZero())
+          return function.emitError(
+              "sequential UDP initial value must be 0, 1, or x");
+        initialState = sim::SimLogicConstantOp::create(
+            builder, location, logicType,
+            builder.getIntegerAttr(scalarPlaneType, parsed->value),
+            builder.getIntegerAttr(scalarPlaneType, parsed->unknown));
+      }
+      Value rawZ = scalarConstant('z');
+      Value uninitialized = sim::SimLogicCompareOp::create(
+          builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
+          rawState, rawZ);
+      currentState = arith::SelectOp::create(builder, location, uninitialized,
+                                             initialState, rawState);
+      // Publishing the selected value on every activation is a no-op after
+      // initialization.  On the first activation it makes the declaration
+      // initializer visible immediately, independently of propagation delay.
+      sim::SimDriverDriveChangedOp::create(builder, location, output->reference,
+                                           currentState);
+    }
+
     Value knownTrue = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(true));
-    Value selfDifference;
-    ArrayRef<int64_t> states = tableStates.asArrayRef();
-    ArrayRef<int64_t> tableOutputValues = tableOutputs.asArrayRef();
-    ArrayRef<int64_t> edges = tableEdges.asArrayRef();
-    for (int64_t rowIndex = static_cast<int64_t>(tableInputs.size()) - 1;
-         rowIndex >= 0; --rowIndex) {
-      auto row = dyn_cast<StringAttr>(tableInputs[rowIndex]);
-      int64_t outputValue = tableOutputValues[rowIndex];
-      char output = static_cast<char>(outputValue);
-      if (!row || row.getValue().size() != inputCount ||
-          states[rowIndex] != 0 || edges[rowIndex] != 0 ||
-          (outputValue != '0' && outputValue != '1' && outputValue != 'x'))
-        return function.emitError("malformed combinational UDP table row");
-      APInt exactMask(inputCount, 0);
-      APInt knownMask(inputCount, 0);
-      APInt patternData(inputCount, 0);
-      APInt patternUnknown(inputCount, 0);
-      for (auto [inputIndex, symbol] : llvm::enumerate(row.getValue())) {
-        unsigned bit = inputCount - 1 - inputIndex;
+    auto matchPattern = [&](Value value, ArrayRef<char> symbols,
+                            Value &selfDifference) -> FailureOr<Value> {
+      auto valueType = cast<sim::LogicType>(value.getType());
+      unsigned width = valueType.getWidth();
+      if (symbols.size() != width)
+        return failure();
+      auto planeType = IntegerType::get(function.getContext(), width);
+      APInt exactMask(width, 0);
+      APInt knownMask(width, 0);
+      APInt patternData(width, 0);
+      APInt patternUnknown(width, 0);
+      for (auto [index, symbol] : llvm::enumerate(symbols)) {
+        unsigned bit = width - 1 - index;
         switch (symbol) {
         case '0':
           exactMask.setBit(bit);
@@ -2479,17 +2517,21 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
         case '?':
           break;
         default:
-          return function.emitError(
-              "invalid symbol in frozen combinational UDP table");
+          return failure();
         }
       }
+      auto constant = [&](const APInt &data, const APInt &unknown) -> Value {
+        return sim::SimLogicConstantOp::create(
+            builder, location, valueType,
+            builder.getIntegerAttr(planeType, data),
+            builder.getIntegerAttr(planeType, unknown));
+      };
       Value matches = knownTrue;
       if (!exactMask.isZero()) {
-        Value mask = logicConstant(exactMask, noBits);
+        Value mask = constant(exactMask, APInt::getZero(width));
         Value masked = sim::SimLogicBinaryOp::create(
-            builder, location, packedType, sim::BinaryKind::And, normalized,
-            mask);
-        Value pattern = logicConstant(patternData, patternUnknown);
+            builder, location, valueType, sim::BinaryKind::And, value, mask);
+        Value pattern = constant(patternData, patternUnknown);
         matches = sim::SimLogicCompareOp::create(
             builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
             masked, pattern);
@@ -2497,25 +2539,236 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
       if (!knownMask.isZero()) {
         if (!selfDifference)
           selfDifference = sim::SimLogicBinaryOp::create(
-              builder, location, packedType, sim::BinaryKind::Xor, normalized,
-              normalized);
-        Value mask = logicConstant(knownMask, noBits);
+              builder, location, valueType, sim::BinaryKind::Xor, value, value);
+        Value mask = constant(knownMask, APInt::getZero(width));
         Value maskedDifference = sim::SimLogicBinaryOp::create(
-            builder, location, packedType, sim::BinaryKind::And, selfDifference,
+            builder, location, valueType, sim::BinaryKind::And, selfDifference,
             mask);
         Value known = sim::SimLogicCompareOp::create(
             builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
-            maskedDifference, logicConstant(noBits, noBits));
+            maskedDifference,
+            constant(APInt::getZero(width), APInt::getZero(width)));
         matches = exactMask.isZero() ? known
                                      : Value(arith::AndIOp::create(
                                            builder, location, matches, known));
       }
+      return matches;
+    };
+
+    Value currentWord = normalized;
+    if (isSequential) {
+      auto stateType =
+          sim::LogicType::get(function.getContext(), inputCount + 1);
+      currentWord = sim::SimLogicConcatOp::create(
+          builder, location, stateType, ValueRange{normalized, currentState});
+    }
+    if (isSequential) {
+      Value inputChanged = sim::SimLogicCompareOp::create(
+          builder, location, builder.getI1Type(), sim::CompareKind::CaseNe,
+          previousUdpInputs, normalized);
+      result = arith::SelectOp::create(builder, location, inputChanged, outputX,
+                                       currentState);
+    } else {
+      result = outputX;
+    }
+    struct CompiledUdpRow {
+      Value matches;
+      Value output;
+      bool edge;
+    };
+    SmallVector<CompiledUdpRow> compiledRows;
+    Value currentDifference;
+    Value previousDifference;
+    Value edgeCurrentDifference;
+    ArrayRef<int64_t> states = tableStates.asArrayRef();
+    ArrayRef<int64_t> tableOutputValues = tableOutputs.asArrayRef();
+    ArrayRef<int64_t> edges = tableEdges.asArrayRef();
+    bool sawEdge = false;
+    for (int64_t rowIndex = static_cast<int64_t>(tableInputs.size()) - 1;
+         rowIndex >= 0; --rowIndex) {
+      auto row = dyn_cast<StringAttr>(tableInputs[rowIndex]);
+      int64_t stateValue = states[rowIndex];
+      int64_t outputValue = tableOutputValues[rowIndex];
+      char state = static_cast<char>(stateValue);
+      char output = static_cast<char>(outputValue);
+      bool rowHasEdge = edges[rowIndex] != 0;
+      if (!row ||
+          (isSequential
+               ? (stateValue != '0' && stateValue != '1' && stateValue != 'x' &&
+                  stateValue != '?' && stateValue != 'b')
+               : stateValue != 0) ||
+          (outputValue != '0' && outputValue != '1' && outputValue != 'x' &&
+           (isSequential ? outputValue != '-' : true)) ||
+          (edges[rowIndex] != 0 && edges[rowIndex] != 1))
+        return function.emitError("malformed UDP table row");
+
+      enum class EdgeKind {
+        None,
+        Explicit,
+        Rise,
+        Fall,
+        Positive,
+        Negative,
+        Any
+      };
+      EdgeKind edgeKind = EdgeKind::None;
+      unsigned edgeInput = 0;
+      SmallVector<char> currentSymbols;
+      SmallVector<char> previousSymbols(inputCount, '?');
+      StringRef text = row.getValue();
+      for (size_t cursor = 0; cursor < text.size();) {
+        if (currentSymbols.size() >= inputCount)
+          return function.emitError("malformed UDP input row encoding");
+        char symbol = text[cursor++];
+        if (symbol == '(') {
+          if (edgeKind != EdgeKind::None || cursor + 2 >= text.size() ||
+              text[cursor + 2] != ')')
+            return function.emitError("malformed UDP edge row encoding");
+          char previous = text[cursor];
+          char current = text[cursor + 1];
+          auto validLevel = [](char value) {
+            return value == '0' || value == '1' || value == 'x' ||
+                   value == '?' || value == 'b';
+          };
+          if (!validLevel(previous) || !validLevel(current))
+            return function.emitError("malformed UDP edge endpoint");
+          cursor += 3;
+          edgeKind = EdgeKind::Explicit;
+          edgeInput = currentSymbols.size();
+          previousSymbols[edgeInput] = previous;
+          currentSymbols.push_back(current);
+          continue;
+        }
+        EdgeKind parsedEdge = symbol == 'r'   ? EdgeKind::Rise
+                              : symbol == 'f' ? EdgeKind::Fall
+                              : symbol == 'p' ? EdgeKind::Positive
+                              : symbol == 'n' ? EdgeKind::Negative
+                              : symbol == '*' ? EdgeKind::Any
+                                              : EdgeKind::None;
+        if (parsedEdge != EdgeKind::None) {
+          if (edgeKind != EdgeKind::None)
+            return function.emitError("UDP row contains multiple edges");
+          edgeKind = parsedEdge;
+          edgeInput = currentSymbols.size();
+          currentSymbols.push_back('?');
+          continue;
+        }
+        if (symbol != '0' && symbol != '1' && symbol != 'x' && symbol != '?' &&
+            symbol != 'b')
+          return function.emitError("invalid symbol in frozen UDP table");
+        currentSymbols.push_back(symbol);
+      }
+      if (currentSymbols.size() != inputCount ||
+          rowHasEdge != (edgeKind != EdgeKind::None))
+        return function.emitError("malformed UDP table edge metadata");
+      sawEdge |= rowHasEdge;
+      if (isSequential)
+        currentSymbols.push_back(state);
+      FailureOr<Value> base =
+          matchPattern(currentWord, currentSymbols, currentDifference);
+      if (failed(base))
+        return function.emitError("malformed UDP current-state pattern");
+      Value matches = *base;
+      if (edgeKind == EdgeKind::Explicit) {
+        FailureOr<Value> previous = matchPattern(
+            previousUdpInputs, previousSymbols, previousDifference);
+        if (failed(previous))
+          return function.emitError("malformed UDP previous-input pattern");
+        matches = arith::AndIOp::create(builder, location, matches, *previous);
+        // Parenthesized endpoints denote a transition, even when either
+        // endpoint is a set-valued `?` or `b`.  Match the two level sets
+        // directly, then remove their unchanged intersection.
+        APInt edgeMask(inputCount, 0);
+        edgeMask.setBit(inputCount - 1 - edgeInput);
+        Value mask = packedConstant(edgeMask, noBits);
+        Value oldBit = sim::SimLogicBinaryOp::create(
+            builder, location, packedType, sim::BinaryKind::And,
+            previousUdpInputs, mask);
+        Value newBit = sim::SimLogicBinaryOp::create(
+            builder, location, packedType, sim::BinaryKind::And, normalized,
+            mask);
+        Value changed = sim::SimLogicCompareOp::create(
+            builder, location, builder.getI1Type(), sim::CompareKind::CaseNe,
+            oldBit, newBit);
+        matches = arith::AndIOp::create(builder, location, matches, changed);
+      } else if (edgeKind != EdgeKind::None) {
+        auto matchPair = [&](char previous, char current) -> FailureOr<Value> {
+          SmallVector<char> previousPattern(inputCount, '?');
+          SmallVector<char> currentPattern(inputCount, '?');
+          previousPattern[edgeInput] = previous;
+          currentPattern[edgeInput] = current;
+          FailureOr<Value> previousMatch = matchPattern(
+              previousUdpInputs, previousPattern, previousDifference);
+          FailureOr<Value> currentMatch =
+              matchPattern(normalized, currentPattern, edgeCurrentDifference);
+          if (failed(previousMatch) || failed(currentMatch))
+            return failure();
+          return arith::AndIOp::create(builder, location, *previousMatch,
+                                       *currentMatch)
+              .getResult();
+        };
+        Value edgeMatches;
+        auto includePair = [&](char previous, char current) -> LogicalResult {
+          FailureOr<Value> pair = matchPair(previous, current);
+          if (failed(pair))
+            return failure();
+          edgeMatches = edgeMatches
+                            ? Value(arith::OrIOp::create(builder, location,
+                                                         edgeMatches, *pair))
+                            : *pair;
+          return success();
+        };
+        if (edgeKind == EdgeKind::Any) {
+          APInt edgeMask(inputCount, 0);
+          edgeMask.setBit(inputCount - 1 - edgeInput);
+          Value mask = packedConstant(edgeMask, noBits);
+          Value previous = sim::SimLogicBinaryOp::create(
+              builder, location, packedType, sim::BinaryKind::And,
+              previousUdpInputs, mask);
+          Value current = sim::SimLogicBinaryOp::create(
+              builder, location, packedType, sim::BinaryKind::And, normalized,
+              mask);
+          edgeMatches = sim::SimLogicCompareOp::create(
+              builder, location, builder.getI1Type(), sim::CompareKind::CaseNe,
+              previous, current);
+        } else {
+          if (edgeKind == EdgeKind::Rise || edgeKind == EdgeKind::Positive)
+            if (failed(includePair('0', '1')))
+              return failure();
+          if (edgeKind == EdgeKind::Fall || edgeKind == EdgeKind::Negative)
+            if (failed(includePair('1', '0')))
+              return failure();
+          if (edgeKind == EdgeKind::Positive) {
+            if (failed(includePair('0', 'x')) || failed(includePair('x', '1')))
+              return failure();
+          }
+          if (edgeKind == EdgeKind::Negative) {
+            if (failed(includePair('1', 'x')) || failed(includePair('x', '0')))
+              return failure();
+          }
+        }
+        if (!edgeMatches)
+          return function.emitError("malformed UDP symbolic edge");
+        matches =
+            arith::AndIOp::create(builder, location, matches, edgeMatches);
+      }
       Value rowOutput = output == '0'   ? outputZero
                         : output == '1' ? outputOne
-                                        : outputX;
-      result = arith::SelectOp::create(builder, location, matches, rowOutput,
-                                       result);
+                        : output == 'x' ? outputX
+                                        : currentState;
+      compiledRows.push_back({matches, rowOutput, rowHasEdge});
     }
+    if (edgeSensitive.getValue() != sawEdge)
+      return function.emitError("malformed UDP declaration edge metadata");
+    // Rows were compiled from last to first. Apply edge rows in that order so
+    // earlier source rows win within the edge class, then apply all level rows
+    // the same way. IEEE 1800-2017 29.9 gives an applicable level-sensitive
+    // row priority over every edge-sensitive row regardless of source order.
+    for (bool edge : {true, false})
+      for (const CompiledUdpRow &row : compiledRows)
+        if (row.edge == edge)
+          result = arith::SelectOp::create(builder, location, row.matches,
+                                           row.output, result);
     // This compile-time inventory is deliberately absent from the finalized
     // hot function; only the compact lookup SSA above survives downstream.
     function->removeAttr(udpMetadataAttrName);
@@ -3905,9 +4158,32 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   }
 
   Block *loopHeader = nullptr;
+  Value previousUdpInputs;
   if (loopsForever) {
     loopHeader = addBlock();
-    emitBranch(loopHeader);
+    auto udp = function->getAttrOfType<DictionaryAttr>(udpMetadataAttrName);
+    auto sequentialUdp =
+        udp ? udp.getAs<BoolAttr>("is_sequential") : BoolAttr{};
+    if (sequentialUdp && sequentialUdp.getValue()) {
+      auto ports = udp.getAs<ArrayAttr>("port_names");
+      if (!ports || ports.size() < 2)
+        return function.emitError(
+            "sequential UDP has malformed frozen port metadata");
+      unsigned inputCount = ports.size() - 1;
+      auto previousType =
+          sim::LogicType::get(function.getContext(), inputCount);
+      auto planeType = IntegerType::get(function.getContext(), inputCount);
+      Value initialPrevious = sim::SimLogicConstantOp::create(
+          builder, function.getLoc(), previousType,
+          builder.getIntegerAttr(planeType, APInt::getZero(inputCount)),
+          builder.getIntegerAttr(planeType, APInt::getAllOnes(inputCount)));
+      previousUdpInputs =
+          loopHeader->addArgument(previousType, function.getLoc());
+      cf::BranchOp::create(builder, function.getLoc(), loopHeader,
+                           ValueRange{initialPrevious});
+    } else {
+      emitBranch(loopHeader);
+    }
     setCurrent(loopHeader);
   }
   auto buildTimingPathPlan =
@@ -4211,8 +4487,10 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   if (hasImplicitSensitivity)
     observedDependencies = &implicitProcessDependencies;
   LogicalResult lowered = success();
+  Value nextUdpInputs;
   if (primitive) {
-    lowered = lowerPrimitive(primitive.getValue(), roots);
+    lowered = lowerPrimitive(primitive.getValue(), roots, previousUdpInputs,
+                             previousUdpInputs ? &nextUdpInputs : nullptr);
   } else {
     lowered = lowerSequence(roots);
   }
@@ -4426,16 +4704,20 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   }
   if (sensitivity.size() == 1) {
     sim::SimSuspendChangeOp::create(
-        builder, function.getLoc(), sensitivity.front(), ValueRange{},
+        builder, function.getLoc(), sensitivity.front(),
+        nextUdpInputs ? ValueRange{nextUdpInputs} : ValueRange{},
         sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, loopHeader);
     return success();
   }
   SmallVector<int32_t> edges(sensitivity.size(),
                              static_cast<int32_t>(sim::EdgeKind::Change));
-  sim::SimSuspendAnyOp::create(
-      builder, function.getLoc(), sensitivity.getArrayRef(),
-      builder.getDenseI32ArrayAttr(edges), sim::ContinuationSiteAttr{},
-      sim::EventRegionAttr{}, loopHeader);
+  SmallVector<Value> waitValues(sensitivity.getArrayRef());
+  if (nextUdpInputs)
+    waitValues.push_back(nextUdpInputs);
+  sim::SimSuspendAnyOp::create(builder, function.getLoc(), waitValues,
+                               builder.getDenseI32ArrayAttr(edges),
+                               sim::ContinuationSiteAttr{},
+                               sim::EventRegionAttr{}, loopHeader);
   return success();
 }
 

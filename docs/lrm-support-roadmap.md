@@ -948,7 +948,7 @@ under L19.
 
 | Clause | Level | Executable evidence and remaining work |
 | --- | --- | --- |
-| 3 Design and verification building blocks | Partial | Modules, programs, interfaces, packages, ordinary hierarchy, and basic configuration selection elaborate. Compilation-unit, package, module, directive, and command-line time-unit/precision precedence executes across the full legal 1 fs through 100 s scale range. Checker bodies are semantic only; combinational UDPs execute and sequential UDPs remain under Clause 29. |
+| 3 Design and verification building blocks | Partial | Modules, programs, interfaces, packages, ordinary hierarchy, and basic configuration selection elaborate. Compilation-unit, package, module, directive, and command-line time-unit/precision precedence executes across the full legal 1 fs through 100 s scale range. Checker bodies are semantic only; combinational and sequential UDPs execute under Clause 29. |
 | 4 Scheduling semantics | Partial | Active, Inactive, NBA, Observed, Reactive, Re-Inactive, Re-NBA, Postponed, and the Preponed snapshot hook execute through one native/bytecode scheduler. Remaining language gaps are attached to the timed constructs below. PLI callback regions are excluded with VPI. |
 | 5 Lexical conventions | Partial | Slang supplies the lexer, preprocessor-facing tokens, literals, attributes, keywords, and identifiers. A source-level `XFAIL` records the upstream multiline `` `timescale`` bug without a local frontend patch. Keep this clause under differential testing, especially revision switches and literal corner cases. |
 | 6 Data types | Partial | Packed 2/4-state values, real/realtime variables and nets, strings, chandles, events, enums, typedefs, parameters, static timing/delay `specparam` expressions, casts, strengths, common net kinds, user-defined nettypes/resolution functions, typed/heterogeneous fixed-array `interconnect`, and trireg charge strength/retention/decay/sharing execute. Remaining gaps are tracked by the operator, aggregate, and container chunks below. |
@@ -974,7 +974,7 @@ under L19.
 | 26 Packages | Partial | Packages, imports/exports, scope lookup, and the implemented `std` package surface, including R1 `std::randomize`, execute. Complete the remaining normative Annex G behavior through the randomization and system-task chunks. |
 | 27 Generate constructs | Partial | Loop/conditional generation and ordinary external names elaborate. External tests still expose generate-scope and parameter-binding corner cases. |
 | 28 Gate/switch modeling | Executable for the audited surface | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, strength-aware scalar-net `%v`, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, exact strength-preserving resolved-net source forwarding with immediate or inertial MOS/CMOS delays, and `tran`/`rtran`/`tranif0`/`tranif1`/`rtranif0`/`rtranif1` channels with exact four-state connectivity and resistive strength reduction execute. Controlled pass devices support their standard static turn-on/turn-off/high-impedance delays with keyed inertial cancellation. Forced-native primitive actors form bounded same-scope kernels while cycles remain under the convergence scheduler, and statically addressed driver publication lowers only the exact affected connectivity components. |
-| 29 User-defined primitives | Partial | Combinational UDP declarations preserve their validated port and ordered truth-table metadata and execute exact four-state matching, including Z-to-X input normalization, `?`/`b` symbols, source-order first match, missing-row X, ANSI/non-ANSI declarations, instances and arrays, strengths, and static one/two-value inertial delays in both tiers. Sequential state, initialization, and edge tables remain under G3; their metadata is retained and receives a targeted diagnostic rather than being silently lowered. |
+| 29 User-defined primitives | Executable for the audited surface | Combinational and sequential UDP declarations preserve their validated port and ordered truth-table metadata and compile to exact four-state matching in both tiers. This includes Z-to-X input normalization, level and edge symbols, explicit transition pairs with wildcards, source-order dominance within each row class, level-over-edge dominance, missing-row X, sequential state hold and initialization, ANSI/non-ANSI declarations, instances and arrays, strengths, and legal static one/two-value inertial delays. Continue differential closure for residual declaration and scheduler corner cases. |
 | 30 Specify blocks | Partial | Specparams and specify blocks are imported. Whole and fixed packed-select parallel/full multi-source paths, including `if`/`ifnone`, unknown/positive/negative polarity, all standard static one/two/three/six/twelve transition-delay tuples, and statically disjoint ordinary destination driver spans execute through compact inertial drivers in both tiers; overlapping paths arbitrate independently per selected destination bit and four-state transition class, and equal-delay paths may cross a proven static combinational source closure. Complete edge/data-source forms, atomic masked path delays for the complementary strength banks of `bufif`/`notif`, pulse controls and limits, and `showcancelled`/`noshowcancelled`. Unsupported forms receive targeted Clause 30 diagnostics instead of being silently erased. |
 | 31 Timing checks | Semantic only | System timing-check nodes are imported and now receive a targeted Clause 31 diagnostic instead of being silently erased. G5 implements all stability-window and clock/control checks, edge and condition forms, notifiers, vectors, negative checks, and violation scheduling. |
 | 32 SDF backannotation | Missing | `$sdf_annotate`, SDF parsing/mapping, multiple annotation, pulse limits, and delay replacement are absent. |
@@ -1193,8 +1193,22 @@ one commit.
     declarations, strengths, static one/two-value inertial delays, Z-to-X
     normalization, wildcards, first-match ordering, and missing-row X execute
     in native and bytecode tiers.
-38. **G3 — Sequential UDPs (29.5-29.10).** Add state, initialization,
-    level/edge tables, mixed descriptions, dominance, and scheduling.
+38. **G3 — Sequential UDPs (29.5-29.10), semantic surface completed;
+    forced-native scaling pending.** State, initialization, level/edge and
+    mixed tables, source-order dominance within each row class, required
+    level-over-edge dominance, instances and arrays, strengths, and legal
+    static delays execute exactly in native and bytecode tiers. The default
+    auto path remains
+    bounded for large arrays: 256 and 1024 toggle UDPs compile at O3 in 0.71
+    seconds / 170 MB and 3.44 seconds / 471 MB, then simulate 1000 cycles in
+    2.34 seconds / 7 MB and 20.53 seconds / 18 MB. Their loop-carried previous
+    inputs currently exclude straight-line primitive coalescing. Forced-native
+    Generic O0 for even the smaller three-row form at 256 instances takes
+    68.50 seconds / 13.26 GB to compile and 11.82 seconds / 113 MB to simulate;
+    1024 is deliberately not attempted because that measured backend growth
+    is already OOM-unsafe.
+    Compact stateful-cohort lowering of this forced tier remains a performance
+    item, not a sequential-UDP semantic gap.
 39. **G4 — Specify paths and pulse behavior (30).** Unconditional
     whole-terminal and fixed packed-select parallel/full multi-source paths
     with all static one/two/three/six/twelve-value transition-delay forms, all

@@ -15,6 +15,8 @@ module {
     obelisk_sim.code_unit.decl 9000011 in 0 initial hierarchy "test.threading.observer_lifetime.9000011"
     obelisk_sim.code_unit.decl 9000012 in 0 initial hierarchy "test.threading.observer_nondominating_capture.9000012"
     obelisk_sim.code_unit.decl 9000013 in 0 always hierarchy "test.threading.loop_constant_expression.9000013"
+    obelisk_sim.code_unit.decl 9000014 in 0 always hierarchy "test.threading.self_loop_next.9000014"
+    obelisk_sim.code_unit.decl 9000015 in 0 always hierarchy "test.threading.self_loop_side_next.9000015"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
     obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>> design
@@ -158,6 +160,50 @@ module {
     ^header:
       obelisk_sim.ref.store %live to %ref : !obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>
       obelisk_sim.suspend.change %ref to ^header : !obelisk_sim.ref<!obelisk_sim.logic<8>>
+    }
+
+    // Explicit self-loop state distinguishes the previous iteration's block
+    // argument from a fresh value computed in the current iteration. The
+    // header dominates the side block, but threading must not rewrite that
+    // side block's current-value consumer back to the previous value.
+    // CHECK-LABEL: obelisk_sim.func @self_loop_next
+    // CHECK: ^[[SELF_HEADER:.*]](%[[PREVIOUS:.*]]: !obelisk_sim.logic<8>):
+    // CHECK: %[[NEXT:.*]] = obelisk_sim.ref.load
+    // CHECK: cf.br ^[[SELF_SIDE:.*]]
+    // CHECK: ^[[SELF_SIDE]]:
+    // CHECK: obelisk_sim.logic.binary xor %[[NEXT]], %[[NEXT]]
+    // CHECK: obelisk_sim.suspend.change %{{.*}} to ^[[SELF_HEADER]](%[[NEXT]] : !obelisk_sim.logic<8>)
+    obelisk_sim.func @self_loop_next(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %ref: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {entry_kind = 3 : i32, code_unit_id = 9000014 : i64} {
+      %initial = obelisk_sim.logic.constant 0 : i8, -1 : i8 : !obelisk_sim.logic<8>
+      cf.br ^header(%initial : !obelisk_sim.logic<8>)
+    ^header(%previous: !obelisk_sim.logic<8>):
+      %next = obelisk_sim.ref.load %ref : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
+      cf.br ^side
+    ^side:
+      %current = obelisk_sim.logic.binary xor %next, %next : !obelisk_sim.logic<8>
+      obelisk_sim.ref.store %current to %ref : !obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      obelisk_sim.suspend.change %ref to ^header(%next : !obelisk_sim.logic<8>) : !obelisk_sim.ref<!obelisk_sim.logic<8>>
+    }
+
+    // The freshly forwarded value can also be defined in a side block inside
+    // the loop. It remains distinct from the header's previous-state argument.
+    // CHECK-LABEL: obelisk_sim.func @self_loop_side_next
+    // CHECK: ^[[SIDE_HEADER:.*]](%[[SIDE_PREVIOUS:.*]]: !obelisk_sim.logic<8>):
+    // CHECK: cf.br ^[[SIDE_BODY:.*]]
+    // CHECK: ^[[SIDE_BODY]]:
+    // CHECK: %[[SIDE_NEXT:.*]] = obelisk_sim.ref.load
+    // CHECK: obelisk_sim.logic.binary xor %[[SIDE_NEXT]], %[[SIDE_NEXT]]
+    // CHECK: obelisk_sim.suspend.change %{{.*}} to ^[[SIDE_HEADER]](%[[SIDE_NEXT]] : !obelisk_sim.logic<8>)
+    obelisk_sim.func @self_loop_side_next(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %ref: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {entry_kind = 3 : i32, code_unit_id = 9000015 : i64} {
+      %initial = obelisk_sim.logic.constant 0 : i8, -1 : i8 : !obelisk_sim.logic<8>
+      cf.br ^header(%initial : !obelisk_sim.logic<8>)
+    ^header(%previous: !obelisk_sim.logic<8>):
+      cf.br ^side
+    ^side:
+      %next = obelisk_sim.ref.load %ref : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
+      %current = obelisk_sim.logic.binary xor %next, %next : !obelisk_sim.logic<8>
+      obelisk_sim.ref.store %current to %ref : !obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      obelisk_sim.suspend.change %ref to ^header(%next : !obelisk_sim.logic<8>) : !obelisk_sim.ref<!obelisk_sim.logic<8>>
     }
 
     // Constants are rematerialized in the continuation instead of consuming

@@ -347,7 +347,9 @@ private:
   lowerSequence(::mlir::ArrayRef<::mlir::Operation *> operations);
   ::mlir::LogicalResult
   lowerPrimitive(::mlir::StringRef name,
-                 ::mlir::ArrayRef<::mlir::Operation *> operations);
+                 ::mlir::ArrayRef<::mlir::Operation *> operations,
+                 ::mlir::Value previousUdpInputs = {},
+                 ::mlir::Value *nextUdpInputs = nullptr);
   ::mlir::LogicalResult
   lowerImmediateAssertion(semantic::SVImmediateAssertionStatementOp op);
   ::mlir::LogicalResult

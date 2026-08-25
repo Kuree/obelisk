@@ -1105,10 +1105,6 @@ void ObeliskSimPreparePass::runOnOperation() {
               << "user-defined primitive is missing validated declaration "
                  "metadata";
           invalid = true;
-        } else if (sequential.getValue() || edgeSensitive.getValue()) {
-          emitError(getSemanticLocation(unit))
-              << "sequential user-defined primitives are not supported yet";
-          invalid = true;
         }
         if (auto delays = primitive.getDelayFs();
             delays && delays->size() > 2) {

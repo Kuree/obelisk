@@ -254,15 +254,37 @@ public:
       }
       for (auto [value, argument] : llvm::zip_equal(
                forwarded, continuation->getArguments().drop_front(produced))) {
-        Value root = threadedRoots.lookup(value);
+        bool loopBackedge =
+            dominance.dominates(continuation, suspension->getBlock());
+        auto previousArgument = dyn_cast<BlockArgument>(value);
+        bool freshLoopState =
+            loopBackedge &&
+            !(previousArgument &&
+              previousArgument.getOwner() == continuation) &&
+            dominance.dominates(continuation, value.getParentBlock());
+        // On a loop backedge the incoming value is this iteration's freshly
+        // computed state while the block argument is the previous iteration's
+        // state.  They are deliberately distinct roots until the suspension
+        // occurs; equating them here would leak the previous state into side
+        // blocks that execute before the suspension.
+        Value root =
+            freshLoopState ? Value(argument) : threadedRoots.lookup(value);
         if (!root)
           root = value;
         markSuspensionReentry(suspension, continuation, root);
         threadedValues[continuation].try_emplace(root, argument);
         threadedRoots.try_emplace(argument, root);
-        value.replaceUsesWithIf(argument, [&](OpOperand &use) {
-          return dominance.dominates(continuation, use.getOwner()->getBlock());
-        });
+        // A self-loop can deliberately forward a value computed in its body
+        // as the next iteration's state.  Its header dominates both the uses
+        // of the freshly computed value in this iteration (including side
+        // blocks) and the resume edge.  Explicit SSA already distinguishes
+        // those uses from the previous-state block argument, so there is
+        // nothing to rewrite for this shape.
+        if (!freshLoopState)
+          value.replaceUsesWithIf(argument, [&](OpOperand &use) {
+            return dominance.dominates(continuation,
+                                       use.getOwner()->getBlock());
+          });
       }
     }
 

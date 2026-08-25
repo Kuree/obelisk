@@ -9,7 +9,7 @@ module {
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
     obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design
     obelisk_sim.driver.decl 0 in 0 drives 0 : !obelisk_sim.logic<1> design
-    // CHECK: error: combinational UDP ports must be one output followed by inputs
+    // CHECK: error: UDP ports must be one output followed by inputs
     obelisk_sim.func @bad(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %out: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 0 : i64},
@@ -46,7 +46,7 @@ module {
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
     obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design
     obelisk_sim.driver.decl 0 in 0 drives 0 : !obelisk_sim.logic<1> design
-    // CHECK: error: sequential user-defined primitive reached combinational lowering
+    // CHECK: error: sequential UDP initial value must be 0, 1, or x
     obelisk_sim.func @seq(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %out: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 0 : i64},
@@ -54,7 +54,7 @@ module {
         attributes {entry_kind = 7 : i32, code_unit_id = 2 : i64,
                     obelisk_sim.primitive_name = "seq",
                     obelisk_sim.udp_metadata = {
-                      init_value = "1'd0", is_edge_sensitive = false,
+                      init_value = "1'bz", is_edge_sensitive = false,
                       is_sequential = true, name = "seq",
                       port_directions = array<i64: 2, 0>,
                       port_names = ["out", "in"], table_edges = array<i64: 0>,
@@ -84,7 +84,7 @@ module {
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
     obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design
     obelisk_sim.driver.decl 0 in 0 drives 0 : !obelisk_sim.logic<1> design
-    // CHECK: error: malformed combinational UDP table row
+    // CHECK: error: malformed UDP table row
     obelisk_sim.func @row(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %out: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 0 : i64},
