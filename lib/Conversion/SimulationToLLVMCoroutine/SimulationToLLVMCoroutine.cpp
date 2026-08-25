@@ -1204,6 +1204,12 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
   // scheduler like the runtime calls rejected below.
   constexpr StringLiteral prioritySignalQuery =
       "obelisk_rt_v1_scheduler_priority_signal_pending";
+  // Pure Table 28-8 strength combination takes only value arguments and has
+  // no scheduler/context edge. Gate-region eval bodies may therefore retain
+  // it just like an ordinary outlined arithmetic helper; ThinLTO can inline
+  // the small resolver in production builds.
+  constexpr StringLiteral strengthResolveQuery =
+      "obelisk_rt_v1_strength_resolve_kind";
   SmallVector<LLVM::LLVMFuncOp> pending;
   llvm::SmallPtrSet<Operation *, 32> visited;
   for (LLVM::LLVMFuncOp function : module.getOps<LLVM::LLVMFuncOp>()) {
@@ -1219,7 +1225,7 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
       SmallVector<FlatSymbolRefAttr> targets;
       if (std::optional<StringRef> callee = call.getCallee()) {
         if (callee->starts_with("obelisk_rt_")) {
-          if (*callee == prioritySignalQuery)
+          if (*callee == prioritySignalQuery || *callee == strengthResolveQuery)
             return WalkResult::advance();
           call.emitError("generated eval hot closure calls runtime symbol ")
               << *callee << " in " << function.getSymName();

@@ -350,7 +350,11 @@ def ObeliskSimFuseComputeFragmentsPass
   ];
   let options = [
     Option<"bodyFusion", "body-fusion", "bool", "false",
-           "Plan candidates for physical process-body fusion instead of AOT dispatch batches">
+           "Plan candidates for physical process-body fusion instead of AOT dispatch batches">,
+    Option<"primitiveOnly", "primitive-only", "bool", "false",
+           "Restrict physical body fusion to continuous built-in primitive actors">,
+    Option<"maxStraightLineMembers", "max-straight-line-members", "uint32_t", "16",
+           "Maximum number of continuous actors in one i64-mask region kernel">
   ];
 }
 

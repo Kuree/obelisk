@@ -269,6 +269,26 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   graphOptions.vpi = vpiMode.str();
   designManager.addPass(
       createObeliskSimBuildComputeGraphPass(std::move(graphOptions)));
+  // Forced-native generated gate cohorts must not materialize one LLVM
+  // coroutine per primitive.  This is a structural compile-space bound rather
+  // than an optimization-level choice, so form fixed i64-mask kernels even at
+  // O0.  The default auto policy marks large primitive fragments bytecode;
+  // the native-tier filter in the fusion planner deliberately leaves those
+  // compact actors unchanged.
+  {
+    ObeliskSimFuseComputeFragmentsPassOptions primitiveFusionOptions;
+    primitiveFusionOptions.bodyFusion = true;
+    primitiveFusionOptions.primitiveOnly = true;
+    primitiveFusionOptions.maxStraightLineMembers = 16;
+    designManager.addPass(createObeliskSimFuseComputeFragmentsPass(
+        std::move(primitiveFusionOptions)));
+    designManager.addPass(createObeliskSimMaterializeComputeFusionPass());
+    ObeliskSimBuildComputeGraphPassOptions primitiveGraphOptions;
+    primitiveGraphOptions.workers = workers;
+    primitiveGraphOptions.vpi = vpiMode.str();
+    designManager.addPass(createObeliskSimBuildCurrentComputeGraphPass(
+        std::move(primitiveGraphOptions)));
+  }
   if (optLevel > 0) {
     ObeliskSimFuseComputeFragmentsPassOptions bodyFusionOptions;
     bodyFusionOptions.bodyFusion = true;

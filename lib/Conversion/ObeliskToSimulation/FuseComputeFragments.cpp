@@ -76,12 +76,24 @@ bool isStraightLineContinuous(sim::SimFuncOp function) {
 
 void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
+  if (bodyFusion &&
+      (maxStraightLineMembers < 2 || maxStraightLineMembers > 64)) {
+    design.emitOpError(
+        "straight-line fusion member limit must be between 2 and 64");
+    return signalPassFailure();
+  }
   ModuleOp module = design->getParentOfType<ModuleOp>();
+  // The default auto request has its own large-primitive bytecode guard.
+  // Preserve that representation instead of rewriting those actors before
+  // the graph's final tier partition is selected. Explicit native execution
+  // and scheduler requests do not carry this marker.
+  if (primitiveOnly &&
+      module->hasAttr("obelisk.native_scheduler.auto_requested"))
+    return;
   auto scheduler = module->getAttrOfType<sim::NativeSchedulerModeAttr>(
       "obelisk.native_scheduler");
-  bool evalBodyFusion =
-      bodyFusion && scheduler &&
-      scheduler.getValue() == sim::NativeSchedulerMode::Eval;
+  bool evalBodyFusion = bodyFusion && scheduler &&
+                        scheduler.getValue() == sim::NativeSchedulerMode::Eval;
   StringRef metadataName = bodyFusion ? sim::metadata::staticBodyFusion
                                       : sim::metadata::staticFusion;
   design->removeAttr(metadataName);
@@ -90,6 +102,25 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
     return;
 
   ArrayAttr nodes = graph.getNodes();
+  // Partition planning may assign different blocks of one process body to
+  // different tiers. Physical body fusion removes the entire original
+  // function, so primitive-only fusion is legal only when every fragment of
+  // that actor remains native. In particular, preserve the auto policy's
+  // bytecode demotion even when a small entry fragment was promoted.
+  DenseMap<Operation *, bool> entirelyNative;
+  for (Attribute attribute : nodes) {
+    auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
+    if (!fragment)
+      continue;
+    sim::SimFuncOp function =
+        design.lookupSymbol<sim::SimFuncOp>(fragment.getFunction().getValue());
+    if (!function)
+      continue;
+    auto entry =
+        entirelyNative.try_emplace(function.getOperation(), true).first;
+    if (fragment.getTier() != sim::ComputeTierKind::Native)
+      entry->second = false;
+  }
   llvm::SmallDenseSet<int64_t> acyclicActive;
   DenseMap<int64_t, uint32_t> scheduleOrder;
   DenseMap<int64_t, int64_t> resumeTargets;
@@ -142,7 +173,8 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
   for (sim::SimCodeUnitDeclOp declaration :
        design.getBody().front().getOps<sim::SimCodeUnitDeclOp>())
     codeUnitScopes.try_emplace(declaration.getId(), declaration.getScopeId());
-  auto getInstanceScope = [&](sim::SimFuncOp function) -> std::optional<uint64_t> {
+  auto getInstanceScope =
+      [&](sim::SimFuncOp function) -> std::optional<uint64_t> {
     std::optional<uint64_t> codeUnit = function.getCodeUnitId();
     if (!codeUnit)
       return std::nullopt;
@@ -186,6 +218,17 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
 
     sim::SimFuncOp function =
         design.lookupSymbol<sim::SimFuncOp>(fragment.getFunction().getValue());
+    if (primitiveOnly &&
+        (!function || function.getEntryKind() != sim::EntryKind::Continuous ||
+         !function->hasAttr("obelisk_sim.primitive_name") ||
+         !entirelyNative.lookup(function.getOperation())))
+      continue;
+    // Straight-line continuous actors have their own union-wait kernel
+    // planner below.  Emitting them here as well when several share an exact
+    // sensitivity would create overlapping fusion records for one actor.
+    if (bodyFusion && primitiveOnly &&
+        function.getEntryKind() == sim::EntryKind::Continuous)
+      continue;
     if (!function || (bodyFusion && !isComputeBodyFusionEligible(function))) {
       if (function)
         ++rejectedActors;
@@ -283,19 +326,29 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
       sim::SimFuncOp function = design.lookupSymbol<sim::SimFuncOp>(
           fragment.getFunction().getValue());
       if (!isStraightLineContinuous(function) ||
+          (primitiveOnly &&
+           (!function->hasAttr("obelisk_sim.primitive_name") ||
+            !entirelyNative.lookup(function.getOperation()))) ||
           !seen.insert(function.getOperation()).second)
         continue;
       std::optional<uint64_t> instanceScope = getInstanceScope(function);
-      if (evalBodyFusion && !instanceScope) {
+      if ((evalBodyFusion || primitiveOnly) && !instanceScope) {
         ++rejectedActors;
         continue;
       }
       auto resume = resumeTargets.find(static_cast<int64_t>(index));
+      // Primitive cohorts may share a conservative convergence group solely
+      // because bit-sliced drivers touch one packed descriptor. The generated
+      // kernel propagates exact forward sensitivity edges through its dirty
+      // mask; materialization rejects every backward edge, and therefore any
+      // internal cycle, while cross-chunk edges remain visible to the outer
+      // convergence schedule. Keep the older acyclic-only profitability rule
+      // for general actors.
       if (resume == resumeTargets.end() ||
-          !acyclicActive.contains(resume->second))
+          (!primitiveOnly && !acyclicActive.contains(resume->second)))
         continue;
-      continuousByScope[evalBodyFusion ? *instanceScope : 0].push_back(
-          static_cast<int64_t>(index));
+      continuousByScope[evalBodyFusion || primitiveOnly ? *instanceScope : 0]
+          .push_back(static_cast<int64_t>(index));
     }
     for (auto &[scope, continuous] : continuousByScope) {
       (void)scope;
@@ -303,10 +356,17 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
         return std::tie(scheduleOrder[resumeTargets.lookup(lhs)], lhs) <
                std::tie(scheduleOrder[resumeTargets.lookup(rhs)], rhs);
       });
-      if (continuous.size() >= 2) {
+      for (size_t offset = 0; offset < continuous.size();
+           offset += maxStraightLineMembers) {
+        ArrayRef<int64_t> chunk =
+            ArrayRef<int64_t>(continuous)
+                .slice(offset, std::min<size_t>(maxStraightLineMembers,
+                                                continuous.size() - offset));
+        if (chunk.size() < 2)
+          continue;
         fusions.push_back(sim::ComputeFusionAttr::get(
             design.getContext(), id++,
-            DenseI64ArrayAttr::get(design.getContext(), continuous)));
+            DenseI64ArrayAttr::get(design.getContext(), chunk)));
         ++plannedFusions;
       }
     }

@@ -108,7 +108,7 @@ bool isComputeBodyFusionEligibleImpl(
     // process-independent, while finish/fatal/stop and dynamic control are not.
     if (isa<cf::BranchOp, cf::CondBranchOp, sim::SimReturnOp,
             sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
-            sim::SimTerminationRequestedOp>(operation)) {
+            sim::SimSuspendAnyOp, sim::SimTerminationRequestedOp>(operation)) {
       eligible = hasOnlyStaticDigitalValues(operation) &&
                  hasConcreteHandleValues(operation, provenance);
       return;

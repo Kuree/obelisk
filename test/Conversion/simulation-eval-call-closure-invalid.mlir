@@ -18,6 +18,24 @@ module attributes {
 
 // -----
 
+// Strength resolution is a context-free truth-table helper. Generated gate
+// kernels may call it without opening a scheduler or runtime-state edge.
+module attributes {
+  llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
+  llvm.target_triple = "x86_64-unknown-linux-gnu",
+  obelisk.eval.generated
+} {
+  llvm.func @obelisk_rt_v1_strength_resolve_kind(i16, i16, i32) -> i16
+  llvm.func @__obelisk_eval_gate_kernel(%lhs: i16, %rhs: i16, %kind: i32)
+      attributes {obelisk.eval.call_closure_root} {
+    %resolved = llvm.call @obelisk_rt_v1_strength_resolve_kind(
+        %lhs, %rhs, %kind) : (i16, i16, i32) -> i16
+    llvm.return
+  }
+}
+
+// -----
+
 // Checkpoint proof admits only the cold synchronization ABI, never scheduler
 // mutation or re-entry.
 module attributes {

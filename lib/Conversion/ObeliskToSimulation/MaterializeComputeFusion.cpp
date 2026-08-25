@@ -36,6 +36,26 @@ bool useEvalBodyFusion(sim::SimDesignOp design) {
   return scheduler && scheduler.getValue() == sim::NativeSchedulerMode::Eval;
 }
 
+bool isPrimitiveContinuousFusion(sim::SimDesignOp design,
+                                 sim::ComputeFusionAttr fusion,
+                                 sim::ComputeGraphAttr graph) {
+  if (!fusion || !graph || fusion.getFragments().empty())
+    return false;
+  for (int64_t member : fusion.getFragments().asArrayRef()) {
+    if (member < 0 || static_cast<uint64_t>(member) >= graph.getNodes().size())
+      return false;
+    auto fragment = dyn_cast<sim::ComputeFragmentAttr>(
+        graph.getNodes()[static_cast<size_t>(member)]);
+    sim::SimFuncOp function = fragment ? design.lookupSymbol<sim::SimFuncOp>(
+                                             fragment.getFunction().getValue())
+                                       : sim::SimFuncOp{};
+    if (!function || function.getEntryKind() != sim::EntryKind::Continuous ||
+        !function->hasAttr("obelisk_sim.primitive_name"))
+      return false;
+  }
+  return true;
+}
+
 class ObeliskSimMaterializeComputeFusionPass final
     : public impl::ObeliskSimMaterializeComputeFusionPassBase<
           ObeliskSimMaterializeComputeFusionPass> {
@@ -1170,6 +1190,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
   kernel.getBody().push_back(wait);
 
   SmallVector<std::unique_ptr<IRMapping>> mappings;
+  llvm::SmallDenseSet<Operation *> hoistedWatchOps;
   builder.setInsertionPointToStart(&entry);
   for (Candidate &candidate : candidates) {
     auto mapping = std::make_unique<IRMapping>();
@@ -1182,6 +1203,31 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       builder.clone(operation, *mapping);
     mappings.push_back(std::move(mapping));
   }
+  // A frontend primitive commonly watches a statically selected bit of a
+  // packed capture.  The selected handle is defined in the activation block,
+  // not the entry preamble, but the union wait and its snapshots need that
+  // handle outside the conditional member body. Hoist only pure speculatable
+  // expression trees; descriptor views meet this contract and remain stable
+  // for the lifetime of the spawned kernel.
+  auto mapWatchHandle = [&](Value value, IRMapping &mapping,
+                            auto &mapWatchHandle) -> Value {
+    if (Value mapped = mapping.lookupOrNull(value))
+      return mapped;
+    auto argument = dyn_cast<BlockArgument>(value);
+    if (argument)
+      return {};
+    Operation *definition = value.getDefiningOp();
+    if (!definition || !isMemoryEffectFree(definition) ||
+        !isSpeculatable(definition))
+      return {};
+    for (Value operand : definition->getOperands())
+      if (!mapWatchHandle(operand, mapping, mapWatchHandle))
+        return {};
+    Operation *cloned = builder.clone(*definition, mapping);
+    hoistedWatchOps.insert(definition);
+    unsigned result = cast<OpResult>(value).getResultNumber();
+    return cloned->getResult(result);
+  };
   struct Watch {
     Value handle;
     BlockArgument previous;
@@ -1216,14 +1262,21 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
        llvm::enumerate(llvm::zip_equal(candidates, mappings))) {
     auto &[candidate, mapping] = pair;
     SmallVector<Value> handles;
-    if (auto change = dyn_cast<sim::SimSuspendChangeOp>(candidate.suspend))
-      handles.push_back(mapping->lookup(change.getWatched()));
-    else
-      llvm::append_range(
-          handles,
-          llvm::map_range(
-              cast<sim::SimSuspendAnyOp>(candidate.suspend).getWatched(),
-              [&](Value value) { return mapping->lookup(value); }));
+    if (auto change = dyn_cast<sim::SimSuspendChangeOp>(candidate.suspend)) {
+      Value handle =
+          mapWatchHandle(change.getWatched(), *mapping, mapWatchHandle);
+      if (!handle)
+        return bail();
+      handles.push_back(handle);
+    } else {
+      for (Value watched :
+           cast<sim::SimSuspendAnyOp>(candidate.suspend).getWatched()) {
+        Value handle = mapWatchHandle(watched, *mapping, mapWatchHandle);
+        if (!handle)
+          return bail();
+        handles.push_back(handle);
+      }
+    }
     for (Value handle : handles) {
       Value snapshot = loadWatched(builder, kernel.getLoc(), handle);
       if (!snapshot)
@@ -1319,6 +1372,8 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
         arith::ConstantOp::create(builder, kernel.getLoc(), builder.getI1Type(),
                                   builder.getBoolAttr(false));
     for (Operation &operation : candidate.body->without_terminator()) {
+      if (hoistedWatchOps.contains(&operation))
+        continue;
       if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation)) {
         auto replacement = sim::SimDriverDriveChangedOp::create(
             builder, drive.getLoc(), mapping->lookup(drive.getDriver()),
@@ -2073,15 +2128,19 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
     auto fusion = dyn_cast<sim::ComputeFusionAttr>(attribute);
     if (!fusion)
       continue;
+    bool primitiveContinuous =
+        isPrimitiveContinuousFusion(design, fusion, graph);
     FailureOr<sim::SimFuncOp> fused = materializeFusion(
         design, fusion, graph, scheduleOrder, spawnsByCallee, removedPolls,
         convertedNBAs, sharedConditions, promotedStores);
     // The model-wide eval coordinator already owns a fine dirty bit for each
-    // original activation. Replacing several of those bodies with a second
-    // snapshot-and-mask dispatcher adds redundant work to the hot loop and
-    // obscures the original fragment ownership. Keep straight-line region
-    // fusion for the actor scheduler, where it removes dispatch overhead.
-    if (failed(fused) && !evalScheduler)
+    // ordinary activation, so keep its general straight-line region fusion in
+    // the actor scheduler.  A primitive-only cohort is different: replacing
+    // a bounded cohort of independent coroutines and eval bodies with one
+    // exact union-wait kernel is the forced-native compile-space bound. Its
+    // typed source owners preserve the original fine identities for eval
+    // handoff.
+    if (failed(fused) && (!evalScheduler || primitiveContinuous))
       fused =
           materializeStraightLineKernel(design, fusion, graph, spawnsByCallee);
     changed |= succeeded(fused);

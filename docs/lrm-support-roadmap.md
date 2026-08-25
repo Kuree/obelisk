@@ -439,8 +439,10 @@ behavior. A 512-device design with 10,000 timed input transitions now compiles
 through the default native command in 0.64 seconds at 174 MB RSS and simulates
 in 0.05 seconds.
 Before the bounded tier choice, the same compile was stopped after 62 seconds
-and peaked at 24.2 GB RSS. Forced-native large-cohort code coalescing remains
-separate work rather than a cost paid by the normal build path. The UVM smoke
+and peaked at 24.2 GB RSS. Forced-native large-cohort code coalescing was left
+as separate work rather than a cost paid by the normal build path; the bounded
+kernel tranche below removes the per-instance coroutine count, but not yet the
+remaining nonlinear native-backend cost. The UVM smoke
 ran in 34.297 seconds compile / 0.178 seconds simulate for bytecode and 71.687
 seconds compile / 0.019 seconds simulate for native, with zero UVM errors or
 fatals and both compile times within the 10% gate. The full regression suite
@@ -597,9 +599,9 @@ an ordered topology-event commit node. The exact upstream `pr2941939` and
 stress with 2,001 transitions compiles 128 / 512 independently controlled
 switches in 0.58 / 2.62 seconds at O3 and simulates in 0.35 / 4.66 seconds;
 memory stays at 4 / 7 MB. The remaining nonlinear device-count cost is the
-already-recorded per-instance actor scheduling/coalescing boundary, not a
-pending-event or topology-device scan. Exact MOS source-strength forwarding
-and forced-native large gate-netlist coalescing still keep G1 partial.
+already-recorded forced-native primitive-kernel backend boundary, not a
+pending-event or topology-device scan. A compact forced-native backend for
+large fused gate kernels still keeps G1 partial.
 
 G1's seventh closure tranche forwards the exact resolved source strength of
 undelayed `nmos`, `pmos`, `cmos`, `rnmos`, `rpmos`, and `rcmos` devices. A
@@ -624,7 +626,31 @@ ordered events instead of recursing synchronously. Native and bytecode
 execution match at O0 and O3 for initial X conduction, source/control changes
 while pending, cancellation, force/release, resistive reduction, downstream
 propagation, and one-way isolation. Only forced-native large gate-netlist
-coalescing remains before G1 is complete.
+backend scaling remains before G1 is complete.
+
+G1's ninth closure tranche bounds forced-native primitive process growth at
+every optimization level. Same-scope native continuous primitives are formed
+into at most 16-member union-wait kernels; selected packed handles are hoisted
+once, exact forward dependencies propagate through a bounded dirty mask, and
+one-member tails and cross-kernel dependencies remain ordinary scheduler
+actors. A backward dependency or real cycle rejects fusion, preserving the
+outer convergence scheduler and its nonconvergence behavior. The default auto
+policy is unchanged and still demotes large primitive cohorts to bytecode.
+Hand-authored Simulation-MLIR tests cover chunk boundaries, tails, duplicate
+sensitivity, different scopes, a runnable cyclic nonfusion case, O3 planner
+reentry, and matching native/bytecode transitions; the generated AND cohort
+also runs under Generic O0, AOT O3, Eval O3, and bytecode O0/O3.
+
+This removes the original per-instance coroutine explosion but does not close
+the backend scaling item. For N=128, a forced-native Generic O0 compile with
+16-member kernels takes 16.32 seconds / 1.96 GB RSS (the earlier 64-member run
+took 23.55 seconds / 2.25 GB); tuning runs with 32-member kernels took 42.12
+seconds / 3.61 GB for AOT O3 and 118.79 seconds / 4.55 GB for Eval O3. At
+N=512, emission through Simulation IR takes 0.43 seconds / 117 MB and produces
+16 kernels, no primitive actor bodies, and 2.7 MB of linear IR, but the later
+native path still takes 266.15 seconds / 25.81 GB RSS. Compact lowering of the
+fused dirty-mask kernels through the LLVM backend therefore remains required
+before forced-native large gate netlists, and G1, are performance-complete.
 
 G4's first closure tranche executes unconditional scalar parallel specify
 paths with one, two, or three static delay values, including specparam and
@@ -857,7 +883,7 @@ and 73.183 seconds compile / 0.019 seconds simulate for native.
 | 25 Interfaces | Partial | Interfaces, modports, parameterization, interface tasks/functions, interface arrays, virtual-interface handles, calls, containers, and clocking-block access execute. Complete the residual virtual-interface clock/event/formal cases and inherit specify support from Clause 30. |
 | 26 Packages | Partial | Packages, imports/exports, scope lookup, and the implemented `std` package surface, including R1 `std::randomize`, execute. Complete the remaining normative Annex G behavior through the randomization and system-task chunks. |
 | 27 Generate constructs | Partial | Loop/conditional generation and ordinary external names elaborate. External tests still expose generate-scope and parameter-binding corner cases. |
-| 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, strength-aware scalar-net `%v`, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, exact strength-preserving resolved-net source forwarding with immediate or inertial MOS/CMOS delays, and `tran`/`rtran`/`tranif0`/`tranif1`/`rtranif0`/`rtranif1` channels with exact four-state connectivity and resistive strength reduction execute. Controlled pass devices support their standard static turn-on/turn-off/high-impedance delays with keyed inertial cancellation. Complete forced-native large gate-netlist coalescing. |
+| 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, strength-aware scalar-net `%v`, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, exact strength-preserving resolved-net source forwarding with immediate or inertial MOS/CMOS delays, and `tran`/`rtran`/`tranif0`/`tranif1`/`rtranif0`/`rtranif1` channels with exact four-state connectivity and resistive strength reduction execute. Controlled pass devices support their standard static turn-on/turn-off/high-impedance delays with keyed inertial cancellation. Forced-native primitive actors form bounded same-scope kernels while cycles remain under the convergence scheduler, but compact LLVM lowering is still needed for large fused kernels. Complete that forced-native backend scaling work. |
 | 29 User-defined primitives | Missing | UDP declarations and ports are imported, but table rows and sequential state semantics are not preserved, and an instance currently reaches the built-in-primitive diagnostic. |
 | 30 Specify blocks | Partial | Specparams and specify blocks are imported. Whole-terminal parallel and full multi-source paths, including `if`/`ifnone`, unknown/positive/negative polarity, one/two/three static delays, and one destination driver execute through compact inertial drivers in both tiers; overlapping paths use precomputed path-sensitive arbitration, and equal-delay paths may cross a proven static combinational source closure. Complete partial-select mapping, edge/data-source forms, six/twelve-transition delays, the remaining general path-to-driver mappings, pulse controls and limits, and `showcancelled`/`noshowcancelled`. Unsupported forms receive targeted Clause 30 diagnostics instead of being silently erased. |
 | 31 Timing checks | Semantic only | System timing-check nodes are imported and now receive a targeted Clause 31 diagnostic instead of being silently erased. G5 implements all stability-window and clock/control checks, edge and condition forms, notifiers, vectors, negative checks, and violation scheduling. |
@@ -1063,8 +1089,10 @@ one commit.
     four-state-controlled tran/rtran propagation with chained exact resistive
     strength reduction are complete; controlled pass devices also implement
     their standard static delays, and exact immediate or delayed MOS
-    source-strength forwarding executes. Implement forced-native gate-fragment
-    coalescing.
+    source-strength forwarding executes. Forced-native primitive actors form
+    bounded same-scope kernels without hiding cyclic convergence, but their
+    LLVM backend path remains nonlinear on large cohorts. Implement compact
+    lowering for those fused gate kernels.
 37. **G2 — Combinational UDPs (29.3-29.4, 29.8).** Preserve truth-table rows
     in semantic IR and compile exact four-state matching, instances, arrays,
     strengths, and delays.
