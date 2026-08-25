@@ -184,6 +184,16 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
          reg(plan, op.getSecond())},
         {reg(plan, op.getResult()), reg(plan, op.getNextSeed())});
   }
+  if (auto op = dyn_cast<sim::SimStochasticQueueOp>(operation)) {
+    uint32_t action = emitU64Constant(plan, op.getAction());
+    uint32_t unitScale = emitU64Constant(plan, op.getUnitScale());
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicStochasticQueue,
+        {action, reg(plan, op.getId()), reg(plan, op.getFirst()),
+         reg(plan, op.getSecond()), unitScale},
+        {reg(plan, op.getPrimary()), reg(plan, op.getSecondary()),
+         reg(plan, op.getStatus())});
+  }
   if (auto op = dyn_cast<sim::SimRandomCycleNextOp>(operation)) {
     uint32_t width = emitU64Constant(plan, op.getWidth());
     return emitIntrinsicRegisters(

@@ -240,6 +240,7 @@ native_members = [
     "RandSolveWide.o",
     "Runtime.o",
     "Sampled.o",
+    "StochasticQueue.o",
     "System.o",
     "VCD.o",
     "VPI.o",

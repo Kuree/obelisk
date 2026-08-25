@@ -24,6 +24,8 @@ def SimProcessResource : Resource<"::obelisk::sim::ProcessResource">;
 def SimHeapResource : Resource<"::obelisk::sim::HeapResource">;
 def SimIOResource : Resource<"::obelisk::sim::IOResource">;
 def SimRNGResource : Resource<"::obelisk::sim::RNGResource">;
+def SimStochasticQueueResource
+    : Resource<"::obelisk::sim::StochasticQueueResource">;
 def SimCoverageResource : Resource<"::obelisk::sim::CoverageResource">;
 def SimExternalResource : Resource<"::obelisk::sim::ExternalResource">;
 // Descriptor declarations populate the design inventory. Modelling that as a
@@ -839,6 +841,28 @@ def SimRandomDistributionOp : SimOp<"random.distribution", [
   let arguments = (ins SimContextType:$context, I32Attr:$distribution,
                        I32:$seed, I32:$first, I32:$second);
   let results = (outs I32:$result, I32:$next_seed);
+}
+
+def SimStochasticQueueOp : SimOp<"stochastic_queue", [
+    MemoryEffects<[MemRead<SimStochasticQueueResource>,
+                   MemWrite<SimStochasticQueueResource>,
+                   MemRead<SimSchedulerResource>]>
+  ]> {
+  let summary = "execute one IEEE 1800-2017 20.16 queue operation";
+  let description = [{
+    `action` selects initialize, add, remove, full, or exam. The three inputs
+    are exact 32-bit four-state values. Two 64-bit four-state results carry
+    remove's job/information pair, full's Boolean result, or exam's statistic;
+    unused results are X. `unit_scale` is the number of design-precision ticks
+    per calling-scope time unit and governs time-statistic rounding. `status`
+    is the queue-operation status from Table 20-11, not a runtime ABI status.
+  }];
+  let arguments = (ins SimContextType:$context, I32Attr:$action,
+                       SimLogicType:$id, SimLogicType:$first,
+                       SimLogicType:$second, I64Attr:$unit_scale);
+  let results = (outs SimLogicType:$primary, SimLogicType:$secondary,
+                      I32:$status);
+  let hasVerifier = 1;
 }
 
 def SimRandomCycleNextOp : SimOp<"random.cycle_next", [Pure]> {

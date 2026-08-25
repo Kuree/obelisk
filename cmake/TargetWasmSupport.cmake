@@ -94,7 +94,7 @@ foreach(source ABI Bytecode Containers Coverage DesignBytecode
                ProcessAllocation ProcessAOT ProcessNativeState ProcessNBA
                ProcessObservers ProcessSignals
                ProcessState ProcessTransitions ProcessValidation Random RandSolve RandSolveWide
-               Runtime Sampled System VCD VPI)
+               Runtime Sampled StochasticQueue System VCD VPI)
   set(object "${_obelisk_target_runtime_dir}/${source}.o")
   list(APPEND _obelisk_target_runtime_objects "${object}")
   add_custom_command(

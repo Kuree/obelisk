@@ -1091,6 +1091,55 @@ public:
   }
 };
 
+class StochasticQueueConversion final
+    : public OpConversionPattern<sim::SimStochasticQueueOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimStochasticQueueOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getContext().size() != 1 || adaptor.getId().size() != 2 ||
+        adaptor.getFirst().size() != 2 || adaptor.getSecond().size() != 2)
+      return failure();
+    Type i32 = rewriter.getI32Type();
+    Type i64 = rewriter.getI64Type();
+    Value context = adaptor.getContext().front();
+    Value primaryValue = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+    Value primaryUnknown = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+    Value secondaryValue = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+    Value secondaryUnknown = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+    Value queueStatus = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+    Value runtimeStatus =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_stochastic_queue"),
+            ValueRange{
+                context,
+                llvmConstant(rewriter, op.getLoc(), i32, op.getAction()),
+                adaptor.getId()[0], adaptor.getId()[1], adaptor.getFirst()[0],
+                adaptor.getFirst()[1], adaptor.getSecond()[0],
+                adaptor.getSecond()[1],
+                llvmConstant(rewriter, op.getLoc(), i64, op.getUnitScale()),
+                primaryValue, primaryUnknown, secondaryValue, secondaryUnknown,
+                queueStatus})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, runtimeStatus);
+    SmallVector<SmallVector<Value>> replacements;
+    replacements.push_back(
+        {LLVM::LoadOp::create(rewriter, op.getLoc(), i64, primaryValue, 8),
+         LLVM::LoadOp::create(rewriter, op.getLoc(), i64, primaryUnknown, 8)});
+    replacements.push_back(
+        {LLVM::LoadOp::create(rewriter, op.getLoc(), i64, secondaryValue, 8),
+         LLVM::LoadOp::create(rewriter, op.getLoc(), i64, secondaryUnknown,
+                              8)});
+    replacements.push_back(
+        {LLVM::LoadOp::create(rewriter, op.getLoc(), i32, queueStatus, 4)});
+    rewriter.replaceOpWithMultiple(op, std::move(replacements));
+    return success();
+  }
+};
+
 class RandomCycleNextConversion final
     : public OpConversionPattern<sim::SimRandomCycleNextOp> {
 public:
@@ -1506,7 +1555,8 @@ void populateManagedContainerToLLVMConversionPatterns(
       ContainerReadConversion, ContainerWriteConversion, RandomNextConversion,
       RandomStateConversion, RandomSetStateConversion, RandomSeedConversion,
       RandomBoundedConversion, RandomDistributionConversion,
-      RandomCycleNextConversion, RandomSolveConversion>(converter, context);
+      StochasticQueueConversion, RandomCycleNextConversion,
+      RandomSolveConversion>(converter, context);
   patterns.add<ContainerImportFixedConversion, ContainerExportFixedConversion>(
       converter, context, dataLayout);
   patterns.add<RandomSolveWideConversion, SampledReadConversion,

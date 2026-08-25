@@ -826,6 +826,33 @@ enum {
   OBELISK_RT_DB_CMP_CASEXZ_EQ = 15
 };
 
+// IEEE 1800-2017 20.16 stochastic queue manager. The first seven status
+// values are the standard Table 20-11 values. The final two make otherwise
+// unspecified invalid-statistic and not-yet-available-statistic results
+// deterministic while preserving the standard values verbatim.
+typedef uint32_t obelisk_rt_stochastic_queue_action_v1;
+enum {
+  OBELISK_RT_STOCHASTIC_QUEUE_INITIALIZE = 0,
+  OBELISK_RT_STOCHASTIC_QUEUE_ADD = 1,
+  OBELISK_RT_STOCHASTIC_QUEUE_REMOVE = 2,
+  OBELISK_RT_STOCHASTIC_QUEUE_FULL = 3,
+  OBELISK_RT_STOCHASTIC_QUEUE_EXAM = 4
+};
+
+typedef uint32_t obelisk_rt_stochastic_queue_status_v1;
+enum {
+  OBELISK_RT_STOCHASTIC_QUEUE_OK = 0,
+  OBELISK_RT_STOCHASTIC_QUEUE_FULL_STATUS = 1,
+  OBELISK_RT_STOCHASTIC_QUEUE_UNDEFINED_ID = 2,
+  OBELISK_RT_STOCHASTIC_QUEUE_EMPTY = 3,
+  OBELISK_RT_STOCHASTIC_QUEUE_UNSUPPORTED_TYPE = 4,
+  OBELISK_RT_STOCHASTIC_QUEUE_INVALID_LENGTH = 5,
+  OBELISK_RT_STOCHASTIC_QUEUE_DUPLICATE_ID = 6,
+  OBELISK_RT_STOCHASTIC_QUEUE_OUT_OF_MEMORY = 7,
+  OBELISK_RT_STOCHASTIC_QUEUE_UNDEFINED_STATISTIC = 8,
+  OBELISK_RT_STOCHASTIC_QUEUE_NO_STATISTICS = 10
+};
+
 typedef uint32_t obelisk_rt_intrinsic_id;
 enum {
   OBELISK_RT_INTRINSIC_V1_FORMAT = UINT32_C(0x00010001),
@@ -1015,6 +1042,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_EVENT_CREATE = UINT32_C(0x0001045b),
   OBELISK_RT_INTRINSIC_V1_STRING_PARSE_LOGIC = UINT32_C(0x0001045c),
   OBELISK_RT_INTRINSIC_V1_CONTAINER_SWAP = UINT32_C(0x0001045d),
+  OBELISK_RT_INTRINSIC_V1_STOCHASTIC_QUEUE = UINT32_C(0x00010463),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -3553,6 +3581,21 @@ obelisk_rt_v1_random_distribution(obelisk_rt_context *context,
                                   obelisk_rt_distribution distribution,
                                   int32_t seed, int32_t first, int32_t second,
                                   int32_t *out_value, int32_t *out_next_seed);
+
+// IEEE 1800-2017 20.16 queue manager. `id`, `first`, and `second` use the
+// standard two-plane 32-bit representation so job and information identifiers
+// retain X/Z exactly. Results are 64-bit logic values: REMOVE uses their low
+// 32 bits, FULL returns 0/1, and EXAM can return a full simulation-time value.
+// `unit_scale` is the number of design-precision ticks in the calling scope's
+// time unit and controls the rounding of time statistics.
+obelisk_rt_status obelisk_rt_v1_stochastic_queue(
+    obelisk_rt_context *context,
+    obelisk_rt_stochastic_queue_action_v1 action, uint32_t id_value,
+    uint32_t id_unknown, uint32_t first_value, uint32_t first_unknown,
+    uint32_t second_value, uint32_t second_unknown, uint64_t unit_scale,
+    uint64_t *out_primary_value, uint64_t *out_primary_unknown,
+    uint64_t *out_secondary_value, uint64_t *out_secondary_unknown,
+    obelisk_rt_stochastic_queue_status_v1 *out_queue_status);
 // Advance a keyed randc permutation over exactly 2^width values. Widths 1..32
 // are supported. The caller owns key/position storage and explicitly rekeys
 // whenever the returned position wraps to zero.

@@ -623,6 +623,117 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return convertResult(draw.getResult());
   }
 
+  std::optional<uint32_t> queueAction =
+      llvm::StringSwitch<std::optional<uint32_t>>(name)
+          .Case("$q_initialize", OBELISK_RT_STOCHASTIC_QUEUE_INITIALIZE)
+          .Case("$q_add", OBELISK_RT_STOCHASTIC_QUEUE_ADD)
+          .Case("$q_remove", OBELISK_RT_STOCHASTIC_QUEUE_REMOVE)
+          .Case("$q_full", OBELISK_RT_STOCHASTIC_QUEUE_FULL)
+          .Case("$q_exam", OBELISK_RT_STOCHASTIC_QUEUE_EXAM)
+          .Default(std::nullopt);
+  if (queueAction) {
+    size_t expected = name == "$q_full" ? 2 : 4;
+    if (children.size() != expected) {
+      emitError(location) << name << " requires exactly " << expected
+                          << " arguments";
+      return failure();
+    }
+
+    Type logic32 = sim::LogicType::get(function.getContext(), 32);
+    Type logic64 = sim::LogicType::get(function.getContext(), 64);
+    auto lowerLogic32 = [&](Operation *child) -> FailureOr<Value> {
+      FailureOr<Value> value = lowerExpression(child);
+      if (failed(value))
+        return failure();
+      return convert(*value, logic32, isSignedNode(child),
+                     getSemanticLocation(child));
+    };
+    auto outputTarget = [&](Operation *actual) -> Operation * {
+      auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(actual);
+      if (!assignment)
+        return actual;
+      SmallVector<Operation *> outputChildren = getChildren(assignment);
+      if (outputChildren.size() != 2)
+        return actual;
+      Operation *placeholder = outputChildren[1];
+      while (isa<semantic::SVConversionExpressionOp>(placeholder)) {
+        SmallVector<Operation *> converted = getChildren(placeholder);
+        if (converted.size() != 1)
+          break;
+        placeholder = converted.front();
+      }
+      return isa<semantic::SVEmptyArgumentExpressionOp>(placeholder)
+                 ? outputChildren.front()
+                 : actual;
+    };
+    auto storeOutput = [&](Operation *actual, Value value,
+                           bool sourceSigned = false) -> LogicalResult {
+      Operation *target = outputTarget(actual);
+      FailureOr<Value> destination = lowerExpression(target, true);
+      Type destinationType = succeeded(destination)
+                                 ? getReferenceElementType(*destination)
+                                 : Type{};
+      if (!destinationType) {
+        emitError(getSemanticLocation(target))
+            << name << " output argument must be a writable variable";
+        return failure();
+      }
+      FailureOr<Value> converted =
+          convert(value, destinationType, sourceSigned, location);
+      if (failed(converted))
+        return failure();
+      return storeReference(*destination, *converted, location);
+    };
+
+    FailureOr<Value> id = lowerLogic32(children[0]);
+    if (failed(id))
+      return failure();
+    auto plane = builder.getI32Type();
+    Value zero = sim::SimLogicConstantOp::create(
+        builder, location, logic32, builder.getIntegerAttr(plane, 0),
+        builder.getIntegerAttr(plane, 0));
+    Value first = zero;
+    Value second = zero;
+    if (*queueAction == OBELISK_RT_STOCHASTIC_QUEUE_INITIALIZE ||
+        *queueAction == OBELISK_RT_STOCHASTIC_QUEUE_ADD) {
+      FailureOr<Value> loweredFirst = lowerLogic32(children[1]);
+      FailureOr<Value> loweredSecond = lowerLogic32(children[2]);
+      if (failed(loweredFirst) || failed(loweredSecond))
+        return failure();
+      first = *loweredFirst;
+      second = *loweredSecond;
+    } else if (*queueAction == OBELISK_RT_STOCHASTIC_QUEUE_EXAM) {
+      FailureOr<Value> loweredCode = lowerLogic32(children[1]);
+      if (failed(loweredCode))
+        return failure();
+      first = *loweredCode;
+    }
+
+    auto scale = function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+    if (!scale || !scale.getValue().isStrictlyPositive()) {
+      function.emitError("code unit has no valid frozen time scale");
+      return failure();
+    }
+    auto queue = sim::SimStochasticQueueOp::create(
+        builder, location, TypeRange{logic64, logic64, i32}, context,
+        *queueAction, *id, first, second, scale.getValue().getZExtValue());
+
+    size_t statusIndex = name == "$q_full" ? 1 : 3;
+    if (*queueAction == OBELISK_RT_STOCHASTIC_QUEUE_REMOVE) {
+      if (failed(storeOutput(children[1], queue.getPrimary())) ||
+          failed(storeOutput(children[2], queue.getSecondary())))
+        return failure();
+    } else if (*queueAction == OBELISK_RT_STOCHASTIC_QUEUE_EXAM) {
+      if (failed(storeOutput(children[2], queue.getPrimary())))
+        return failure();
+    }
+    if (failed(storeOutput(children[statusIndex], queue.getStatus())))
+      return failure();
+    if (*queueAction == OBELISK_RT_STOCHASTIC_QUEUE_FULL)
+      return convertResult(queue.getPrimary());
+    return dummyTaskResult();
+  }
+
   auto sampledValue = [&](Operation *expression) -> FailureOr<Value> {
     if (!isAddressableExpression(expression)) {
       emitError(getSemanticLocation(expression))

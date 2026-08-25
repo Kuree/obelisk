@@ -34,6 +34,7 @@ add_library(obelisk_rt STATIC
   lib/Runtime.cpp
   lib/Sampled.cpp
   lib/System.cpp
+  lib/StochasticQueue.cpp
   lib/VCD.cpp
   lib/VPI.cpp
 )

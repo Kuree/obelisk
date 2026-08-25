@@ -3884,6 +3884,56 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     status = sentinel(1, kind);
     return status == OBELISK_RT_OK ? sentinel(2, address) : status;
   }
+  case OBELISK_RT_INTRINSIC_V1_STOCHASTIC_QUEUE: {
+    auto action = scalar(0), unitScale = scalar(4);
+    Layout idLayout = layoutAt(image, frame.function, inputRegister(1));
+    Layout firstLayout = layoutAt(image, frame.function, inputRegister(2));
+    Layout secondLayout = layoutAt(image, frame.function, inputRegister(3));
+    Layout primaryLayout = layoutAt(image, frame.function, outputRegister(0));
+    Layout secondaryLayout = layoutAt(image, frame.function, outputRegister(1));
+    if (!action || !unitScale || *action > OBELISK_RT_STOCHASTIC_QUEUE_EXAM ||
+        *unitScale == 0 ||
+        (idLayout.kind != OBELISK_RT_DBREG_BITS &&
+         idLayout.kind != OBELISK_RT_DBREG_LOGIC) ||
+        idLayout.width != 32 ||
+        (firstLayout.kind != OBELISK_RT_DBREG_BITS &&
+         firstLayout.kind != OBELISK_RT_DBREG_LOGIC) ||
+        firstLayout.width != 32 ||
+        (secondLayout.kind != OBELISK_RT_DBREG_BITS &&
+         secondLayout.kind != OBELISK_RT_DBREG_LOGIC) ||
+        secondLayout.width != 32 ||
+        primaryLayout.kind != OBELISK_RT_DBREG_LOGIC ||
+        primaryLayout.width != 64 ||
+        secondaryLayout.kind != OBELISK_RT_DBREG_LOGIC ||
+        secondaryLayout.width != 64)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Logic id = readLogic(frame.data, idLayout);
+    Logic first = readLogic(frame.data, firstLayout);
+    Logic second = readLogic(frame.data, secondLayout);
+    uint64_t primaryValue = 0, primaryUnknown = 0;
+    uint64_t secondaryValue = 0, secondaryUnknown = 0;
+    obelisk_rt_stochastic_queue_status_v1 queueStatus = 0;
+    obelisk_rt_status status = obelisk_rt_v1_stochastic_queue(
+        context, static_cast<uint32_t>(*action),
+        static_cast<uint32_t>(id.value[0]),
+        static_cast<uint32_t>(id.unknown[0]),
+        static_cast<uint32_t>(first.value[0]),
+        static_cast<uint32_t>(first.unknown[0]),
+        static_cast<uint32_t>(second.value[0]),
+        static_cast<uint32_t>(second.unknown[0]), *unitScale, &primaryValue,
+        &primaryUnknown, &secondaryValue, &secondaryUnknown, &queueStatus);
+    if (status != OBELISK_RT_OK)
+      return status;
+    Logic primary{64, true, LimbVector(1), LimbVector(1)};
+    primary.value[0] = primaryValue;
+    primary.unknown[0] = primaryUnknown;
+    Logic secondary{64, true, LimbVector(1), LimbVector(1)};
+    secondary.value[0] = secondaryValue;
+    secondary.unknown[0] = secondaryUnknown;
+    writeLogic(frame.data, primaryLayout, primary);
+    writeLogic(frame.data, secondaryLayout, secondary);
+    return sentinel(2, queueStatus);
+  }
   case OBELISK_RT_INTRINSIC_V1_FILE_EOF: {
     auto descriptor = scalar(0);
     if (!descriptor || *descriptor > UINT32_MAX)

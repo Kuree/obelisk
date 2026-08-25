@@ -263,6 +263,8 @@ constexpr uint32_t kIntrinsicRandomBounded =
     OBELISK_RT_INTRINSIC_V1_RANDOM_BOUNDED;
 constexpr uint32_t kIntrinsicRandomDistribution =
     OBELISK_RT_INTRINSIC_V1_RANDOM_DISTRIBUTION;
+constexpr uint32_t kIntrinsicStochasticQueue =
+    OBELISK_RT_INTRINSIC_V1_STOCHASTIC_QUEUE;
 constexpr uint32_t kIntrinsicRandomSolve = OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE;
 constexpr uint32_t kIntrinsicRandomSolveState =
     OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE_STATE;

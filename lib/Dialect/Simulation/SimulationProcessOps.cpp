@@ -924,6 +924,24 @@ LogicalResult SimClockedSampleReadOp::verify() {
   return success();
 }
 
+LogicalResult SimStochasticQueueOp::verify() {
+  if (getAction() > 4)
+    return emitOpError(
+        "action must select initialize, add, remove, full, or exam");
+  if (getUnitScale() == 0)
+    return emitOpError("unit_scale must be positive");
+  if (cast<LogicType>(getId().getType()).getWidth() != 32)
+    return emitOpError("id must be !obelisk_sim.logic<32>");
+  if (cast<LogicType>(getFirst().getType()).getWidth() != 32)
+    return emitOpError("first must be !obelisk_sim.logic<32>");
+  if (cast<LogicType>(getSecond().getType()).getWidth() != 32)
+    return emitOpError("second must be !obelisk_sim.logic<32>");
+  if (cast<LogicType>(getPrimary().getType()).getWidth() != 64 ||
+      cast<LogicType>(getSecondary().getType()).getWidth() != 64)
+    return emitOpError("primary and secondary must be !obelisk_sim.logic<64>");
+  return success();
+}
+
 LogicalResult SimDeferredEnqueueOp::verify() {
   if (failed(verifyPositive(*this, getIdAttr(), "deferred assertion site ID")))
     return failure();

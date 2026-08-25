@@ -857,6 +857,29 @@ struct SampledHistoryState {
   std::vector<uint8_t> unknown;
 };
 
+struct StochasticQueueEntry {
+  uint32_t jobValue = 0;
+  uint32_t jobUnknown = 0;
+  uint32_t informValue = 0;
+  uint32_t informUnknown = 0;
+  uint64_t addTime = 0;
+};
+
+struct StochasticQueueState {
+  uint32_t type = 0;
+  uint64_t maximumLength = 0;
+  uint64_t head = 0;
+  uint64_t count = 0;
+  uint64_t maximumCount = 0;
+  uint64_t numberOfAdds = 0;
+  uint64_t firstAddTime = 0;
+  uint64_t latestAddTime = 0;
+  uint64_t shortestWait = UINT64_MAX;
+  bool haveShortestWait = false;
+  unsigned __int128 completedWait = 0;
+  std::vector<StochasticQueueEntry> entries;
+};
+
 struct obelisk_rt_context {
   // Mutable state is guarded separately from logical execution. Evaluator
   // callbacks release `mutex` while arbitrary user code runs, but retain the
@@ -888,6 +911,10 @@ struct obelisk_rt_context {
     uint32_t width = 20;
     std::string suffix;
   } timeFormat;
+  // Clause 20.16 queues are design-global and keyed by their explicit q_id.
+  // Ordinary designs pay only for the empty map; successful initialization
+  // allocates the fixed-capacity ring once, so add/remove remain O(1).
+  std::unordered_map<int32_t, StochasticQueueState> stochasticQueues;
   std::shared_ptr<const uint8_t> errorLifetime;
   std::vector<ScheduledProcess> scheduledProcesses;
   const obelisk_rt_native_schedule_plan *nativeSchedulePlan = nullptr;

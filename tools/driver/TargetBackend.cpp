@@ -458,6 +458,66 @@ LogicalResult addMinimalMain(ModuleOp module) {
   return success();
 }
 
+static bool literalFormatMayReadNetStrength(StringRef format) {
+  size_t offset = 0;
+  while ((offset = format.find('%', offset)) != StringRef::npos) {
+    ++offset;
+    if (offset == format.size())
+      return false;
+    if (format[offset] == '%') {
+      ++offset;
+      continue;
+    }
+    for (; offset != format.size(); ++offset) {
+      char character = format[offset];
+      if (character == 'v' || character == 'V')
+        return true;
+      if (llvm::isAlpha(character)) {
+        ++offset;
+        break;
+      }
+    }
+  }
+  return false;
+}
+
+static bool formattedOutputMayReadNetStrength(ValueRange items,
+                                              ArrayRef<int32_t> itemFlags,
+                                              bool literalBytesAreFormats) {
+  if (!llvm::any_of(itemFlags, [](int32_t flags) {
+        return (flags & OBELISK_RT_OUTPUT_ITEM_NET) != 0;
+      }))
+    return false;
+
+  unsigned itemIndex = 0;
+  for (int32_t flags : itemFlags) {
+    if ((flags & OBELISK_RT_OUTPUT_ITEM_OMITTED) != 0)
+      continue;
+    if (itemIndex == items.size())
+      return true;
+    mlir::Value item = items[itemIndex++];
+    if ((flags & (OBELISK_RT_OUTPUT_ITEM_ENUM |
+                  OBELISK_RT_OUTPUT_ITEM_NET)) != 0) {
+      if (itemIndex == items.size())
+        return true;
+      ++itemIndex;
+      continue;
+    }
+    bool explicitFormat =
+        (flags & (OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT |
+                  OBELISK_RT_OUTPUT_ITEM_FORMAT)) != 0;
+    if (isa<obelisk::sim::StringType>(item.getType()) && explicitFormat)
+      return true;
+    if (!isa<obelisk::sim::BytesType>(item.getType()) ||
+        (!literalBytesAreFormats && !explicitFormat))
+      continue;
+    auto constant = item.getDefiningOp<obelisk::sim::SimBytesConstantOp>();
+    if (!constant || literalFormatMayReadNetStrength(constant.getValue()))
+      return true;
+  }
+  return false;
+}
+
 LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
                           StringRef triple, bool bytecode, StringRef vpi,
                           obelisk::sim::NativeSchedulerMode nativeScheduler,
@@ -534,16 +594,12 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
     needsNetDriverTopology |=
         mlir::isa<obelisk::sim::SimNetCountDriversOp>(operation);
     if (auto display = mlir::dyn_cast<obelisk::sim::SimDisplayOp>(operation))
-      needsNetDriverTopology |= llvm::any_of(
-          display.getItemFlags(), [](int32_t flags) {
-            return (flags & OBELISK_RT_OUTPUT_ITEM_NET) != 0;
-          });
+      needsNetDriverTopology |= formattedOutputMayReadNetStrength(
+          display.getItems(), display.getItemFlags(), true);
     if (auto format =
             mlir::dyn_cast<obelisk::sim::SimStringOutputFormatOp>(operation))
-      needsNetDriverTopology |= llvm::any_of(
-          format.getItemFlags(), [](int32_t flags) {
-            return (flags & OBELISK_RT_OUTPUT_ITEM_NET) != 0;
-          });
+      needsNetDriverTopology |= formattedOutputMayReadNetStrength(
+          format.getItems(), format.getItemFlags(), false);
   });
   // The query reads raw driver contributions through the runtime. Bind the
   // generated native planes even when no force/VPI feature otherwise needs
