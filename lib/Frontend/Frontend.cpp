@@ -1334,6 +1334,26 @@ private:
     }
   }
 
+  const slang::ast::ClockingBlockSymbol *
+  getGlobalClocking(const slang::ast::CallExpression &call) {
+    if (!call.isSystemCall() || call.getSubroutineName() != "$global_clock")
+      return nullptr;
+    const auto *system =
+        std::get_if<slang::ast::CallExpression::SystemCallInfo>(
+            &call.subroutine);
+    if (!system || !system->scope)
+      return nullptr;
+    const slang::ast::Scope *scope = system->scope;
+    while (scope) {
+      for (const auto &clocking :
+           scope->membersOfType<slang::ast::ClockingBlockSymbol>())
+        if (clocking.isGlobal)
+          return &clocking;
+      scope = scope->asSymbol().getHierarchicalParent();
+    }
+    return nullptr;
+  }
+
   bool requiresClockingEventMonitor(
       const slang::ast::ClockingBlockSymbol &clocking) const {
     const slang::ast::TimingControl &control = clocking.getEvent();
@@ -2239,6 +2259,9 @@ private:
       SET_OP_ATTR(HasIteratorExpression, builder.getBoolAttr(false));
       SET_OP_ATTR(HasInlineConstraints, builder.getBoolAttr(false));
       SET_OP_ATTR(ConstraintRestrictions, builder.getArrayAttr({}));
+      if (const slang::ast::ClockingBlockSymbol *clocking =
+              getGlobalClocking(node))
+        addStaticClockingEvent(attrs, *clocking);
       SmallVector<int64_t> defaultedArguments;
       defaultedArguments.reserve(node.arguments().size());
       const slang::ast::SubroutineSymbol *calledSubroutine = nullptr;
@@ -3583,6 +3606,19 @@ private:
           clocking =
               &node.member.template as<slang::ast::ClockingBlockSymbol>();
         }
+        if (const auto *event =
+                clocking->getEvent()
+                    .template as_if<slang::ast::SignalEventControl>();
+            event && event->iffCondition &&
+            !requiresClockingEventMonitor(*clocking)) {
+          event->expr.visit(*this);
+          event->iffCondition->visit(*this);
+        }
+      }
+    } else if constexpr (std::same_as<T, slang::ast::CallExpression>) {
+      this->visitDefault(node);
+      if (const slang::ast::ClockingBlockSymbol *clocking =
+              getGlobalClocking(node)) {
         if (const auto *event =
                 clocking->getEvent()
                     .template as_if<slang::ast::SignalEventControl>();

@@ -361,13 +361,11 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
           return;
         reference = instance.getReferencedSymbol();
         path = instance.getReferencedPath();
-      } else if (auto clocking =
-                     dyn_cast<semantic::SVArbitrarySymbolExpressionOp>(nested);
-                 clocking && clocking->hasAttr(clockingBlockEventAttrName)) {
+      } else if (nested->hasAttr(clockingBlockEventAttrName)) {
         auto eventPath =
-            clocking->getAttrOfType<StringAttr>(clockingEventPathAttrName);
+            nested->getAttrOfType<StringAttr>(clockingEventPathAttrName);
         reference =
-            clocking->getAttrOfType<SymbolRefAttr>(clockingEventSymbolAttrName);
+            nested->getAttrOfType<SymbolRefAttr>(clockingEventSymbolAttrName);
         if (!eventPath || !reference)
           return;
         path = eventPath.getValue();

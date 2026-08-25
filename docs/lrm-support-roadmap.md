@@ -746,7 +746,7 @@ and 73.183 seconds compile / 0.019 seconds simulate for native.
 | 11 Operators and expressions | Partial | Legal equality, ordering, logical operations, concatenation, replication, streaming and bit-stream casts, and packed selection execute for strings, containers, unpacked aggregates, handles, and arbitrary-width packed values. This includes packed-to-queue/dynamic-array casts, handle wildcard identity equality, two-state XNOR, compact integral power, constant ordinary part-selects, dynamic indexed part-selects with partial out-of-range behavior, dynamic string replication, and fixed/dynamic unpacked concatenation with per-element conversion. Ordinary part-select bounds must be constant and strings are not sliceable, so those former diagnostic branches are not missing language features. Public `--timing=min|typ|max` selects constant and dynamic expressions. Remaining expression work is tracked by references, randomization, assertions, and the differential long tail. |
 | 12 Procedural statements | Partial | Conditional, ordinary/pattern case, loops, jumps, `randcase`, and most `randsequence` forms execute. Recursive randsequence productions and value-returning productions still require activation frames and expression-valued production calls. |
 | 13 Tasks and functions | Executable for the audited non-DPI surface | Static/automatic, recursive, virtual, class/interface, timed task, value/output/inout/ref, default argument, and cancellation behavior execute. Continue differential closure for unusual aggregate and hierarchical formal cases; DPI is tracked separately in Clause 35. |
-| 14 Clocking blocks | Partial | Input/output skews, `#1step`, synchronous drives, event lists and `iff`, cycle delays, defaults, and virtual-interface clocking handles execute. Global clocking and the remaining assertion clock-inference, clock-formal, and multi-clock composition cases remain. |
+| 14 Clocking blocks | Partial | Input/output skews, `#1step`, synchronous drives, event lists and `iff`, cycle delays, defaults, virtual-interface clocking handles, and hierarchically resolved global clocking through `$global_clock` execute. The remaining virtual-interface clock-event/formal and assertion clock-inference, clock-formal, and multi-clock composition cases remain. |
 | 15 Interprocess synchronization | Executable for the audited surface | Semaphores; typed and default untyped mailboxes; heterogeneous untyped payloads with exact per-message type checks; named-event creation/alias/null, blocking and nonblocking trigger, `.triggered`, and `wait_order` execute in both tiers. Typed-mismatch `get`/`try_get`/`peek` behavior follows 15.4.3-15.4.9. Continue differential testing of scheduling corner cases. |
 | 16 Assertions | Partial | Immediate/deferred assertions and a substantial compiled concurrent subset execute. The authoritative fine-grained boundary is `docs/sva-lrm-support.md`; the implementation plan below covers accounting, full temporal composition, clocks, locals/match items, sampled values, controls, and `expect`. |
 | 17 Checkers | Semantic only | Declarations, ports, resolved instances, identities, cloned bodies, clocks/disables, properties, procedures, and expressions are retained. Executable instances now receive a targeted Clause 17 diagnostic instead of being silently erased; A9 implements checker procedures, free variables, inferred clocks, assertions, hierarchy, and runtime behavior. Covergroups in checkers are excluded with coverage. |
@@ -880,9 +880,12 @@ one commit.
 15. **L15 — Program control (24.7), completed.** `$exit` follows dynamic
     program-thread ancestry, terminates all roots and descendants of that
     program instance, and waits for every other program before finalization.
-16. **L16 — Global and residual clocking (14).** Implement global clocking,
-    remaining virtual-interface clock events, clock arguments, and inferred
-    clock contexts shared with SVA.
+16. **L16 — Global and residual clocking (14).** Global clocking declarations
+    and procedural or assertion `$global_clock` event references execute with
+    the effective declaration selected by hierarchical lookup, including
+    distinct bindings of a reused child beneath different subsystem clocks.
+    Implement the remaining virtual-interface clock events, clock arguments,
+    and inferred clock contexts shared with SVA.
 17. **L17 — Normative utility calls (20.16-20.18).** `$system` and the five
     `$q_*` stochastic-queue calls are complete, including FIFO/LIFO ordering,
     four-state identifiers, all six scheduler-time statistics, scope-unit

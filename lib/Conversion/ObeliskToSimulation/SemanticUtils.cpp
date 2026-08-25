@@ -195,6 +195,8 @@ std::optional<bool> foldConstantTruth(Value value) {
 }
 
 bool isAddressableExpression(Operation *operation) {
+  if (operation->hasAttr(clockingBlockEventAttrName))
+    return operation->hasAttr(clockingEventPathAttrName);
   if (isa<semantic::SVNamedValueExpressionOp,
           semantic::SVHierarchicalValueExpressionOp>(operation))
     return true;

@@ -1942,21 +1942,20 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
     }
     return lowerLiteral(op);
   }
+  if (op->hasAttr(clockingBlockEventAttrName)) {
+    auto path = op->getAttrOfType<StringAttr>(clockingEventPathAttrName);
+    if (!path) {
+      emitError(getSemanticLocation(op))
+          << "clocking block has no directly addressable event signal";
+      return failure();
+    }
+    return lowerReferencedValue(op, path.getValue(), lvalue);
+  }
   if (op->hasAttr(clockingVariableAttrName))
     return lowerStaticClockingVariable(op, lvalue);
   if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(op))
     return lowerNamedValue(named, lvalue);
   if (auto interface = dyn_cast<semantic::SVArbitrarySymbolExpressionOp>(op)) {
-    if (interface->hasAttr(clockingBlockEventAttrName)) {
-      auto path =
-          interface->getAttrOfType<StringAttr>(clockingEventPathAttrName);
-      if (!path) {
-        emitError(getSemanticLocation(op))
-            << "clocking block has no directly addressable event signal";
-        return failure();
-      }
-      return lowerReferencedValue(op, path.getValue(), lvalue);
-    }
     if (lvalue) {
       emitError(getSemanticLocation(op))
           << "an interface instance is not an assignable value";

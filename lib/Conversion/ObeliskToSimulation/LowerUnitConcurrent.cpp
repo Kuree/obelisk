@@ -843,26 +843,34 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
 static bool areEquivalentDirectClocks(Operation *left, Operation *right) {
   auto lhs = dyn_cast_or_null<semantic::SVSignalEventControlOp>(left);
   auto rhs = dyn_cast_or_null<semantic::SVSignalEventControlOp>(right);
-  if (!lhs || !rhs || lhs.getHasIff() || rhs.getHasIff() ||
-      lhs.getEdgeKind() != rhs.getEdgeKind())
+  if (!lhs || !rhs || lhs.getHasIff() || rhs.getHasIff())
     return false;
   SmallVector<Operation *> lhsChildren = getChildren(lhs);
   SmallVector<Operation *> rhsChildren = getChildren(rhs);
   if (lhsChildren.size() != 1 || rhsChildren.size() != 1)
     return false;
+  auto effectiveEdge = [](semantic::SVSignalEventControlOp event,
+                          Operation *expression) {
+    if (auto edge = expression->getAttrOfType<semantic::EdgeKindAttr>(
+            clockingEventEdgeAttrName))
+      return edge.getValue();
+    return event.getEdgeKind();
+  };
+  if (effectiveEdge(lhs, lhsChildren.front()) !=
+      effectiveEdge(rhs, rhsChildren.front()))
+    return false;
   // A member clock may have the same leaf path through two different dynamic
   // receivers (for example vif0.clk and vif1.clk). This initial multi-clock
   // slice deliberately accepts only statically identified storage, where an
   // exact semantic symbol is sufficient to prove clock identity.
-  if (!isa<semantic::SVNamedValueExpressionOp,
-           semantic::SVHierarchicalValueExpressionOp>(lhsChildren.front()) ||
-      !isa<semantic::SVNamedValueExpressionOp,
-           semantic::SVHierarchicalValueExpressionOp>(rhsChildren.front()))
-    return false;
-  auto lhsSymbol =
-      lhsChildren.front()->getAttrOfType<SymbolRefAttr>("referenced_symbol");
-  auto rhsSymbol =
-      rhsChildren.front()->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+  auto identity = [](Operation *expression) {
+    if (auto symbol = expression->getAttrOfType<SymbolRefAttr>(
+            clockingEventSymbolAttrName))
+      return symbol;
+    return expression->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+  };
+  auto lhsSymbol = identity(lhsChildren.front());
+  auto rhsSymbol = identity(rhsChildren.front());
   return lhsSymbol && rhsSymbol && lhsSymbol == rhsSymbol;
 }
 
@@ -871,11 +879,10 @@ static bool isStaticDirectClock(Operation *operation) {
   if (!event || event.getHasIff())
     return false;
   SmallVector<Operation *> children = getChildren(event);
-  return children.size() == 1 &&
-         isa<semantic::SVNamedValueExpressionOp,
-             semantic::SVHierarchicalValueExpressionOp>(children.front()) &&
-         children.front()->hasAttr("referenced_symbol") &&
-         isAddressableExpression(children.front());
+  if (children.size() != 1 || !isAddressableExpression(children.front()))
+    return false;
+  return children.front()->hasAttr("referenced_symbol") ||
+         children.front()->hasAttr(clockingEventSymbolAttrName);
 }
 
 /// Return the substituted body of a nonrecursive assertion invocation. The
