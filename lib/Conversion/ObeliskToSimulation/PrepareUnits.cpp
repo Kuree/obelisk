@@ -588,7 +588,9 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
         !path->hasAttr("timing_condition"))
       return;
     SmallVector<Operation *> children = getChildren(path);
-    if (children.size() != 1) {
+    size_t expectedChildren =
+        path->hasAttr("timing_edge_sensitive") ? 2 : 1;
+    if (children.size() != expectedChildren) {
       emitError(getSemanticLocation(path))
           << "conditional specify path has no unique frozen condition";
       invalid = true;

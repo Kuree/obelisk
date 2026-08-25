@@ -596,6 +596,15 @@ private:
   struct TimingPathMaskedPlan {
     ::mlir::Value coverageMask;
     ::mlir::SmallVector<TimingPathDelayGroup, 4> groups;
+    /// Every rule uses one delay for all destination transition classes. The
+    /// write site can therefore pass the selected mask to all runtime banks
+    /// without materializing twelve wide symbol-transition masks.
+    bool transitionIndependent = false;
+    /// Qualification state for edge rules in this driver-local plan. The
+    /// lvalue write consumes only bits that actually make a destination
+    /// transition, leaving unmatched bits available to a later zero-time
+    /// derived update in the same scheduler epoch.
+    ::mlir::SmallVector<::mlir::Value, 2> edgePending;
   };
   /// Packed per-destination-bit applicability for a partial or overlapping
   /// path set. Distinct static delays are grouped once, with independently

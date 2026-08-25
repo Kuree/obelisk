@@ -1632,6 +1632,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     uint64_t rootWidth = 0;
     uint64_t low = 0;
     uint64_t width = 0;
+    uint64_t lsb = 0;
 
     bool isWhole() const { return low == 0 && width == rootWidth; }
   };
@@ -1641,6 +1642,9 @@ void ObeliskSimPreparePass::runOnOperation() {
     TimingTerminal output;
     bool full = false;
     int32_t polarity;
+    bool edgeSensitive = false;
+    int32_t edgeIdentifier = 0;
+    int32_t edgePolarity = 0;
     SmallVector<int64_t, 12> delays;
     Operation *condition = nullptr;
     bool ifnone = false;
@@ -1652,9 +1656,21 @@ void ObeliskSimPreparePass::runOnOperation() {
     auto inputs = path->getAttrOfType<ArrayAttr>("timing_input_terminals");
     auto output = path->getAttrOfType<DictionaryAttr>("timing_output_terminal");
     auto polarity = path->getAttrOfType<IntegerAttr>("timing_polarity");
+    auto edgeIdentifier =
+        path->getAttrOfType<IntegerAttr>("timing_edge_identifier");
+    auto edgePolarity =
+        path->getAttrOfType<IntegerAttr>("timing_edge_polarity");
+    bool edgeSensitive = path->hasAttr("timing_edge_sensitive");
+    int64_t edgeIdentifierValue = edgeIdentifier ? edgeIdentifier.getInt() : 0;
+    int64_t edgePolarityValue = edgePolarity ? edgePolarity.getInt() : 0;
     auto delays = path->getAttrOfType<DenseI64ArrayAttr>("timing_delay_fs");
     if (!inputs || inputs.empty() || !output || !polarity || polarity.getInt() < 0 ||
-        polarity.getInt() > 2 || !delays ||
+        polarity.getInt() > 2 || edgeIdentifierValue < 0 ||
+        edgeIdentifierValue > 3 || edgePolarityValue < 0 ||
+        edgePolarityValue > 2 ||
+        (!edgeSensitive &&
+         (edgeIdentifierValue != 0 || edgePolarityValue != 0)) ||
+        !delays ||
         (delays.size() != 1 && delays.size() != 2 && delays.size() != 3 &&
          delays.size() != 6 && delays.size() != 12)) {
       emitError(getSemanticLocation(path))
@@ -1671,18 +1687,28 @@ void ObeliskSimPreparePass::runOnOperation() {
       auto low = terminal ? terminal.getAs<IntegerAttr>("low") : IntegerAttr{};
       auto width =
           terminal ? terminal.getAs<IntegerAttr>("width") : IntegerAttr{};
+      auto lsb = terminal ? terminal.getAs<IntegerAttr>("lsb") : IntegerAttr{};
       if (!terminalPath || !rootWidth || rootWidth.getInt() <= 0 || !low ||
           low.getInt() < 0 || !width || width.getInt() <= 0 ||
+          (edgeSensitive && (!lsb || lsb.getInt() < 0)) ||
           static_cast<uint64_t>(low.getInt()) >=
               static_cast<uint64_t>(rootWidth.getInt()) ||
           static_cast<uint64_t>(width.getInt()) >
               static_cast<uint64_t>(rootWidth.getInt()) -
                   static_cast<uint64_t>(low.getInt()))
         return std::nullopt;
+      uint64_t lsbValue = lsb ? static_cast<uint64_t>(lsb.getInt())
+                              : static_cast<uint64_t>(low.getInt());
+      if (lsbValue < static_cast<uint64_t>(low.getInt()) ||
+          lsbValue >=
+              static_cast<uint64_t>(low.getInt()) +
+                  static_cast<uint64_t>(width.getInt()))
+        return std::nullopt;
       return TimingTerminal{terminalPath.getValue().str(),
                             static_cast<uint64_t>(rootWidth.getInt()),
                             static_cast<uint64_t>(low.getInt()),
-                            static_cast<uint64_t>(width.getInt())};
+                            static_cast<uint64_t>(width.getInt()),
+                            lsbValue};
     };
     SmallVector<TimingTerminal, 2> inputPaths;
     for (Attribute attr : inputs) {
@@ -1705,8 +1731,10 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVector<Operation *> children = getChildren(path);
     bool conditional = path->hasAttr("timing_condition");
     bool ifnone = path->hasAttr("timing_ifnone");
-    if ((conditional && (ifnone || children.size() != 1)) ||
-        (!conditional && !children.empty())) {
+    size_t expectedChildren = static_cast<size_t>(conditional) +
+                              static_cast<size_t>(edgeSensitive);
+    if ((conditional && ifnone) || (edgeSensitive && ifnone) ||
+        children.size() != expectedChildren) {
       emitError(getSemanticLocation(path))
           << "simple conditional specify path has malformed condition data";
       invalid = true;
@@ -1724,6 +1752,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     simpleTimingPaths[outputTerminal->path].push_back(
         {path, inputPaths, *outputTerminal, full,
          static_cast<int32_t>(polarity.getInt()),
+         edgeSensitive, static_cast<int32_t>(edgeIdentifierValue),
+         static_cast<int32_t>(edgePolarityValue),
          SmallVector<int64_t, 12>(delays.asArrayRef()),
          conditional ? children.front() : nullptr, ifnone});
   });
@@ -1811,6 +1841,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       continue;
     }
+    bool hasEdgeSensitive = llvm::any_of(paths, [](const SimpleTimingPath &p) {
+      return p.edgeSensitive;
+    });
 
     SmallVector<TimingDriverSpan> spans;
     for (auto &drivers : continuousDrivers) {
@@ -1856,8 +1889,14 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (invalid)
       continue;
     if (spans.empty()) {
-      emitError(getSemanticLocation(path.declaration))
-          << "simple specify path output has no continuous driver";
+      if (hasEdgeSensitive)
+        emitError(getSemanticLocation(path.declaration))
+            << "edge-sensitive specify path output has no executable "
+               "continuous driver; direct procedural destinations are not "
+               "supported yet";
+      else
+        emitError(getSemanticLocation(path.declaration))
+            << "simple specify path output has no continuous driver";
       invalid = true;
       continue;
     }
@@ -1903,10 +1942,14 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (invalid)
       continue;
 
-    llvm::StringSet<> declaredInputs;
+    llvm::StringSet<> driverInputs;
+    bool hasSimplePath = false;
     for (const SimpleTimingPath &candidate : paths)
-      for (const TimingTerminal &input : candidate.inputs)
-        declaredInputs.insert(input.path);
+      if (!candidate.edgeSensitive) {
+        hasSimplePath = true;
+        for (const TimingTerminal &input : candidate.inputs)
+          driverInputs.insert(input.path);
+      }
     bool identicalDelays =
         llvm::all_of(paths, [&](const SimpleTimingPath &candidate) {
           return candidate.delays == path.delays;
@@ -1915,6 +1958,12 @@ void ObeliskSimPreparePass::runOnOperation() {
       return p.condition || p.ifnone;
     });
     auto hasExactInputs = [&](Operation *unit, bool allowTransitive) {
+      // Clause 30.4.3 explicitly makes an edge path's arbitrary data-source
+      // expression irrelevant to propagation and events. Its functional
+      // destination actor therefore needs no dependency relationship to the
+      // path source or the preserved metadata expression.
+      if (!hasSimplePath)
+        return true;
       llvm::StringSet<> referencedPaths;
       for (Operation *root : getDriverDependencyRoots(unit))
         root->walk([&](Operation *nested) {
@@ -1922,9 +1971,9 @@ void ObeliskSimPreparePass::runOnOperation() {
                   nested->getAttrOfType<StringAttr>("referenced_path"))
             referencedPaths.insert(referenced.getValue());
         });
-      bool exact = referencedPaths.size() == declaredInputs.size();
+      bool exact = referencedPaths.size() == driverInputs.size();
       if (exact)
-        for (StringRef input : declaredInputs.keys())
+        for (StringRef input : driverInputs.keys())
           exact &= referencedPaths.contains(input);
       if (exact || !allowTransitive)
         return exact;
@@ -1943,7 +1992,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             if (!referenced)
               return;
             StringRef referencedPath = referenced.getValue();
-            if (declaredInputs.contains(referencedPath)) {
+            if (driverInputs.contains(referencedPath)) {
               transitiveInputs.insert(referencedPath);
               return;
             }
@@ -1956,11 +2005,62 @@ void ObeliskSimPreparePass::runOnOperation() {
         activeDrivers.erase(driverUnit);
         return valid;
       };
-      exact = collect(unit) && transitiveInputs.size() == declaredInputs.size();
+      exact = collect(unit) && transitiveInputs.size() == driverInputs.size();
       if (exact)
-        for (StringRef input : declaredInputs.keys())
+        for (StringRef input : driverInputs.keys())
           exact &= transitiveInputs.contains(input);
       return exact;
+    };
+    auto hasDelayedEdgeDependency = [&](Operation *unit) {
+      auto isLiteralZeroDelay = [&](Operation *operation) {
+        auto delay = dyn_cast<semantic::SVDelayControlOp>(operation);
+        SmallVector<Operation *> children =
+            delay ? getChildren(delay) : SmallVector<Operation *>{};
+        auto literal = children.size() == 1
+                           ? dyn_cast<semantic::SVIntegerLiteralOp>(
+                                 children.front())
+                           : semantic::SVIntegerLiteralOp{};
+        if (!literal)
+          return false;
+        FailureOr<ParsedConstant> value =
+            parseSVInteger(literal.getConstantValue(), 64,
+                           getSemanticLocation(literal));
+        return succeeded(value) && value->unknown.isZero() &&
+               value->value.isZero();
+      };
+      llvm::StringSet<> referencedPaths;
+      for (Operation *root : getDriverDependencyRoots(unit))
+        root->walk([&](Operation *nested) {
+          if (auto referenced =
+                  nested->getAttrOfType<StringAttr>("referenced_path"))
+            referencedPaths.insert(referenced.getValue());
+        });
+      for (StringRef referenced : referencedPaths.keys()) {
+        auto descriptor = descriptors.find(referenced);
+        if (descriptor != descriptors.end() && descriptor->second.delayedNet)
+          return true;
+      }
+      for (Operation *source : sourceUnits) {
+        if (!isa<semantic::SVProceduralBlockSymbolOp>(source))
+          continue;
+        bool touchesDependency = false;
+        bool containsDelay = false;
+        source->walk([&](Operation *nested) {
+          if (auto referenced =
+                  nested->getAttrOfType<StringAttr>("referenced_path"))
+            touchesDependency |=
+                referencedPaths.contains(referenced.getValue());
+          containsDelay |=
+              (isa<semantic::SVDelayControlOp>(nested) &&
+               !isLiteralZeroDelay(nested)) ||
+              isa<semantic::SVDelay3ControlOp,
+                  semantic::SVOneStepDelayControlOp,
+                  semantic::SVCycleDelayControlOp>(nested);
+        });
+        if (touchesDependency && containsDelay)
+          return true;
+      }
+      return false;
     };
 
     bool allWholeTerminals = llvm::all_of(paths, [](const SimpleTimingPath &p) {
@@ -1981,7 +2081,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     if (spans.size() == 1 && spans.front().low == 0 &&
         spans.front().width == path.output.rootWidth && allWholeTerminals &&
-        !hasStateDependent && path.delays.size() <= 3 &&
+        !hasStateDependent && !hasEdgeSensitive && path.delays.size() <= 3 &&
         (paths.size() == 1 || identicalDelays) &&
         hasExactInputs(spans.front().unit,
                        identicalDelays && !hasStateDependent)) {
@@ -2003,6 +2103,14 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (!span.nodeID) {
         emitError(getSemanticLocation(path.declaration))
             << "split specify path driver has no stable lvalue identity";
+        invalid = true;
+        break;
+      }
+      if (hasEdgeSensitive && hasDelayedEdgeDependency(span.unit)) {
+        emitError(getSemanticLocation(path.declaration))
+            << "edge-sensitive specify path has an internally delayed "
+               "destination dependency; same-time path qualification cannot "
+               "be paired safely";
         invalid = true;
         break;
       }
@@ -2074,6 +2182,9 @@ void ObeliskSimPreparePass::runOnOperation() {
         groupKey += output;
         groupKey.push_back(';');
         groupKey += candidate.full ? "F;" : "P;";
+        groupKey += candidate.edgeSensitive
+                        ? ("E" + Twine(candidate.edgeIdentifier) + ";").str()
+                        : "S;";
         for (const TimingTerminal &input : candidate.inputs) {
           groupKey += Twine(input.path.size()).str();
           groupKey.push_back(':');
@@ -2092,10 +2203,11 @@ void ObeliskSimPreparePass::runOnOperation() {
         SmallVector<Attribute> snapshotAttrs;
         SmallVector<int64_t> inputLows;
         SmallVector<int64_t> inputWidths;
+        SmallVector<int64_t> inputLsbs;
         for (const TimingTerminal &input : candidate.inputs) {
           uint64_t inputLow = input.low;
           uint64_t inputWidth = input.width;
-          if (!candidate.full) {
+          if (!candidate.full && !candidate.edgeSensitive) {
             inputLow += intersectionLow - candidate.output.low;
             inputWidth = intersectionWidth;
           }
@@ -2104,6 +2216,55 @@ void ObeliskSimPreparePass::runOnOperation() {
               builder.getStringAttr(snapshots.lookup(input.path)));
           inputLows.push_back(static_cast<int64_t>(inputLow));
           inputWidths.push_back(static_cast<int64_t>(inputWidth));
+          inputLsbs.push_back(static_cast<int64_t>(input.lsb));
+        }
+        StringAttr edgePendingPath;
+        StringAttr edgeEpochPath;
+        if (candidate.edgeSensitive) {
+          if (span.width > UINT32_MAX) {
+            emitError(getSemanticLocation(candidate.declaration))
+                << "edge-sensitive specify path destination is too wide for "
+                   "packed qualification state";
+            invalid = true;
+            break;
+          }
+          uint64_t stateIndex = frozenTimingRules[span.unit].size();
+          std::string prefix =
+              (output + ".$timing_path_edge_" + Twine(*span.nodeID) + "_" +
+               Twine(stateIndex))
+                  .str();
+          auto addEdgeState = [&](StringRef suffix, Type type,
+                                  StringRef debugName) -> StringAttr {
+            std::string statePath = (Twine(prefix) + suffix).str();
+            if (descriptors.count(statePath) || nextStorageId == UINT64_MAX)
+              return {};
+            uint64_t id = nextStorageId++;
+            uint64_t scopeId = getScopeId(span.unit);
+            DescriptorInfo descriptor{DescriptorInfo::Kind::Storage, id,
+                                      scopeId, type,
+                                      sim::NetResolutionKind::Wire};
+            descriptor.rootType = type;
+            descriptors[statePath] = descriptor;
+            sim::SimStorageDeclOp::create(
+                builder, getSemanticLocation(candidate.declaration), id,
+                scopeId, type, sim::Lifetime::Design,
+                builder.getStringAttr(statePath),
+                builder.getStringAttr(debugName),
+                sim::ComputeObservabilityKindAttr{});
+            return builder.getStringAttr(statePath);
+          };
+          edgePendingPath = addEdgeState(
+              ".$pending", builder.getIntegerType(span.width),
+              "__obelisk_timing_path_edge_pending");
+          edgeEpochPath = addEdgeState(".$epoch", builder.getI64Type(),
+                                       "__obelisk_timing_path_edge_epoch");
+          if (!edgePendingPath || !edgeEpochPath) {
+            emitError(getSemanticLocation(candidate.declaration))
+                << "edge-sensitive specify path has no unique qualification "
+                   "state";
+            invalid = true;
+            break;
+          }
         }
         SmallVector<NamedAttribute> attrs{
             builder.getNamedAttr("inputs", builder.getArrayAttr(inputAttrs)),
@@ -2113,6 +2274,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                                  builder.getDenseI64ArrayAttr(inputLows)),
             builder.getNamedAttr("input_widths",
                                  builder.getDenseI64ArrayAttr(inputWidths)),
+            builder.getNamedAttr("input_lsbs",
+                                 builder.getDenseI64ArrayAttr(inputLsbs)),
             builder.getNamedAttr(
                 "output_low",
                 builder.getI64IntegerAttr(intersectionLow - span.low)),
@@ -2126,6 +2289,14 @@ void ObeliskSimPreparePass::runOnOperation() {
                                  builder.getBoolAttr(candidate.full)),
             builder.getNamedAttr("polarity",
                                  builder.getI32IntegerAttr(candidate.polarity)),
+            builder.getNamedAttr("edge_sensitive",
+                                 builder.getBoolAttr(candidate.edgeSensitive)),
+            builder.getNamedAttr(
+                "edge_identifier",
+                builder.getI32IntegerAttr(candidate.edgeIdentifier)),
+            builder.getNamedAttr(
+                "edge_polarity",
+                builder.getI32IntegerAttr(candidate.edgePolarity)),
             builder.getNamedAttr(
                 "delay_fs", builder.getDenseI64ArrayAttr(candidate.delays)),
             builder.getNamedAttr(
@@ -2136,6 +2307,11 @@ void ObeliskSimPreparePass::runOnOperation() {
             builder.getNamedAttr("condition_group",
                                  builder.getI32IntegerAttr(group->second)),
         };
+        if (candidate.edgeSensitive) {
+          attrs.push_back(
+              builder.getNamedAttr("edge_pending", edgePendingPath));
+          attrs.push_back(builder.getNamedAttr("edge_epoch", edgeEpochPath));
+        }
         if (candidate.condition) {
           auto nodeID =
               candidate.condition->getAttrOfType<IntegerAttr>("node_id");
@@ -6408,6 +6584,13 @@ void ObeliskSimPreparePass::runOnOperation() {
       existingCaptures.insert(capture.first);
     for (Attribute attr : rules) {
       auto rule = dyn_cast<DictionaryAttr>(attr);
+      SmallVector<StringAttr> inputs;
+      if (auto array = rule ? rule.getAs<ArrayAttr>("inputs") : ArrayAttr{})
+        for (Attribute input : array)
+          if (auto path = dyn_cast<StringAttr>(input))
+            inputs.push_back(path);
+      if (auto legacy = rule ? rule.getAs<StringAttr>("input") : StringAttr{})
+        inputs.push_back(legacy);
       SmallVector<StringAttr> snapshots;
       if (auto array = rule ? rule.getAs<ArrayAttr>("snapshots") : ArrayAttr{})
         for (Attribute snapshot : array)
@@ -6416,12 +6599,47 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (auto legacy =
               rule ? rule.getAs<StringAttr>("snapshot") : StringAttr{})
         snapshots.push_back(legacy);
-      if (!rule || snapshots.empty()) {
+      if (!rule || inputs.empty() || snapshots.empty() ||
+          inputs.size() != snapshots.size()) {
         emitError(getSemanticLocation(unit.source))
             << "timing path has no frozen source snapshots";
         invalid = true;
         continue;
       }
+      bool edgeSensitive = false;
+      if (auto edge = rule.getAs<BoolAttr>("edge_sensitive"))
+        edgeSensitive = edge.getValue();
+      if (edgeSensitive)
+        for (StringAttr input : inputs) {
+          auto found = descriptors.find(input.getValue());
+          if (found == descriptors.end()) {
+            emitError(getSemanticLocation(unit.source))
+                << "edge-sensitive timing path source no longer resolves";
+            invalid = true;
+            continue;
+          }
+          if (existingCaptures.insert(input.getValue()).second)
+            unitCaptures[unit.source].push_back(
+                {input.getValue().str(), found->second});
+          unitReadCaptures[unit.source].insert(input.getValue());
+        }
+      if (edgeSensitive)
+        for (StringRef name : {"edge_pending", "edge_epoch"}) {
+          auto state = rule.getAs<StringAttr>(name);
+          auto found = state ? descriptors.find(state.getValue())
+                             : descriptors.end();
+          if (!state || found == descriptors.end()) {
+            emitError(getSemanticLocation(unit.source))
+                << "edge-sensitive timing path qualification state no longer "
+                   "resolves";
+            invalid = true;
+            continue;
+          }
+          if (existingCaptures.insert(state.getValue()).second)
+            unitCaptures[unit.source].push_back(
+                {state.getValue().str(), found->second});
+          unitWrittenCaptures[unit.source].insert(state.getValue());
+        }
       for (StringAttr snapshot : snapshots) {
         auto found = descriptors.find(snapshot.getValue());
         if (found == descriptors.end()) {
@@ -7399,6 +7617,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                               : DenseI64ArrayAttr{};
         auto inputWidths = rule ? rule.getAs<DenseI64ArrayAttr>("input_widths")
                                 : DenseI64ArrayAttr{};
+        auto inputLsbs = rule ? rule.getAs<DenseI64ArrayAttr>("input_lsbs")
+                              : DenseI64ArrayAttr{};
         auto outputLow =
             rule ? rule.getAs<IntegerAttr>("output_low") : IntegerAttr{};
         auto outputWidth =
@@ -7411,13 +7631,33 @@ void ObeliskSimPreparePass::runOnOperation() {
             rule ? rule.getAs<BoolAttr>("connection_full") : BoolAttr{};
         auto polarity =
             rule ? rule.getAs<IntegerAttr>("polarity") : IntegerAttr{};
+        auto edgeSensitive =
+            rule ? rule.getAs<BoolAttr>("edge_sensitive") : BoolAttr{};
+        auto edgeIdentifier =
+            rule ? rule.getAs<IntegerAttr>("edge_identifier") : IntegerAttr{};
+        auto edgePolarity =
+            rule ? rule.getAs<IntegerAttr>("edge_polarity") : IntegerAttr{};
+        auto edgePending =
+            rule ? rule.getAs<StringAttr>("edge_pending") : StringAttr{};
+        auto edgeEpoch =
+            rule ? rule.getAs<StringAttr>("edge_epoch") : StringAttr{};
         auto delays = rule ? rule.getAs<DenseI64ArrayAttr>("delay_fs")
                            : DenseI64ArrayAttr{};
+        bool edgeSensitiveValue = edgeSensitive && edgeSensitive.getValue();
+        int64_t edgeIdentifierValue =
+            edgeIdentifier ? edgeIdentifier.getInt() : 0;
+        int64_t edgePolarityValue = edgePolarity ? edgePolarity.getInt() : 0;
         bool legacyTerminals = input && snapshot && !inputs && !snapshots;
         bool arrayTerminals = inputs && snapshots && !inputs.empty() &&
                               inputs.size() == snapshots.size();
         if ((!legacyTerminals && !arrayTerminals) || !polarity ||
-            polarity.getInt() < 0 || polarity.getInt() > 2 || !delays ||
+            polarity.getInt() < 0 || polarity.getInt() > 2 ||
+            edgeIdentifierValue < 0 || edgeIdentifierValue > 3 ||
+            edgePolarityValue < 0 || edgePolarityValue > 2 ||
+            (!edgeSensitiveValue &&
+             (edgeIdentifierValue != 0 || edgePolarityValue != 0)) ||
+            (edgeSensitiveValue && (!edgePending || !edgeEpoch)) ||
+            !delays ||
             (delays.size() != 1 && delays.size() != 2 &&
              delays.size() != 3 && delays.size() != 6 &&
              delays.size() != 12) ||
@@ -7425,6 +7665,9 @@ void ObeliskSimPreparePass::runOnOperation() {
              (!inputLows || !inputWidths ||
               static_cast<size_t>(inputLows.size()) != inputs.size() ||
               static_cast<size_t>(inputWidths.size()) != inputs.size() ||
+              (edgeSensitiveValue &&
+               (!inputLsbs ||
+                static_cast<size_t>(inputLsbs.size()) != inputs.size())) ||
               !outputLow ||
               !outputWidth || !outputRootWidth || !connectionFull))) {
           rulesInvalid = true;
@@ -7451,6 +7694,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           fields.push_back(builder.getNamedAttr("snapshots", snapshots));
           fields.push_back(builder.getNamedAttr("input_lows", inputLows));
           fields.push_back(builder.getNamedAttr("input_widths", inputWidths));
+          if (inputLsbs)
+            fields.push_back(builder.getNamedAttr("input_lsbs", inputLsbs));
           fields.push_back(builder.getNamedAttr("output_low", outputLow));
           fields.push_back(builder.getNamedAttr("output_width", outputWidth));
           fields.push_back(
@@ -7462,6 +7707,17 @@ void ObeliskSimPreparePass::runOnOperation() {
                 builder.getNamedAttr("driver_node_id", driverNodeID));
         }
         fields.push_back(builder.getNamedAttr("polarity", polarity));
+        fields.push_back(builder.getNamedAttr(
+            "edge_sensitive", builder.getBoolAttr(edgeSensitiveValue)));
+        fields.push_back(builder.getNamedAttr(
+            "edge_identifier",
+            builder.getI32IntegerAttr(edgeIdentifierValue)));
+        fields.push_back(builder.getNamedAttr(
+            "edge_polarity", builder.getI32IntegerAttr(edgePolarityValue)));
+        if (edgeSensitiveValue) {
+          fields.push_back(builder.getNamedAttr("edge_pending", edgePending));
+          fields.push_back(builder.getNamedAttr("edge_epoch", edgeEpoch));
+        }
         fields.push_back(builder.getNamedAttr(
             "delays", builder.getDenseI64ArrayAttr(ticks)));
         for (StringRef name :

@@ -3955,11 +3955,17 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       std::string snapshotPath;
       uint64_t low = 0;
       uint64_t width = 0;
+      uint64_t lsb = 0;
     };
     SmallVector<Source, 2> sources;
     std::array<int64_t, 12> delays;
     std::array<int64_t, 3> legacyDelays;
     unsigned delayCount = 0;
+    bool edgeSensitive = false;
+    int32_t edgeIdentifier = 0;
+    int32_t edgePolarity = 0;
+    Value edgePending;
+    Value edgeEpoch;
     int32_t conditionKind = 0;
     int32_t conditionGroup = 0;
     FlatSymbolRefAttr conditionEvaluator;
@@ -3973,6 +3979,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   };
   SmallVector<TimingPathRuleState, 4> allTimingPathRules;
   auto readTimingPathInput = [&](Value input) -> Value {
+    recordSensitivity(input);
     Value current;
     if (auto ref = dyn_cast<sim::RefType>(input.getType()))
       current = sim::SimRefLoadOp::create(builder, function.getLoc(),
@@ -3997,10 +4004,23 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
           rule ? rule.getAs<IntegerAttr>("polarity") : IntegerAttr{};
       auto delays =
           rule ? rule.getAs<DenseI64ArrayAttr>("delays") : DenseI64ArrayAttr{};
+      auto edgeSensitive =
+          rule ? rule.getAs<BoolAttr>("edge_sensitive") : BoolAttr{};
+      auto edgeIdentifier =
+          rule ? rule.getAs<IntegerAttr>("edge_identifier") : IntegerAttr{};
+      auto edgePolarity =
+          rule ? rule.getAs<IntegerAttr>("edge_polarity") : IntegerAttr{};
+      int64_t edgeIdentifierValue =
+          edgeIdentifier ? edgeIdentifier.getInt() : 0;
+      int64_t edgePolarityValue = edgePolarity ? edgePolarity.getInt() : 0;
       if (!rule || !polarity || polarity.getInt() < 0 ||
           polarity.getInt() > 2 || !delays ||
           (delays.size() != 1 && delays.size() != 2 && delays.size() != 3 &&
            delays.size() != 6 && delays.size() != 12) ||
+          edgeIdentifierValue < 0 || edgeIdentifierValue > 3 ||
+          edgePolarityValue < 0 || edgePolarityValue > 2 ||
+          (!(edgeSensitive && edgeSensitive.getValue()) &&
+           (edgeIdentifierValue != 0 || edgePolarityValue != 0)) ||
           llvm::any_of(delays.asArrayRef(),
                        [](int64_t delay) { return delay < 0; }))
         return function.emitError("invalid frozen overlapping timing path");
@@ -4008,6 +4028,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       SmallVector<StringAttr> snapshotPaths;
       SmallVector<int64_t> inputLows;
       SmallVector<int64_t> inputWidths;
+      SmallVector<int64_t> inputLsbs;
       if (auto input = rule.getAs<StringAttr>("input"))
         inputPaths.push_back(input);
       if (auto snapshot = rule.getAs<StringAttr>("snapshot"))
@@ -4024,14 +4045,22 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         llvm::append_range(inputLows, lows.asArrayRef());
       if (auto widths = rule.getAs<DenseI64ArrayAttr>("input_widths"))
         llvm::append_range(inputWidths, widths.asArrayRef());
+      if (auto lsbs = rule.getAs<DenseI64ArrayAttr>("input_lsbs"))
+        llvm::append_range(inputLsbs, lsbs.asArrayRef());
       if (inputPaths.empty() || inputPaths.size() != snapshotPaths.size())
         return function.emitError("invalid frozen timing path terminals");
       TimingPathRuleState state;
+      state.edgeSensitive = edgeSensitive && edgeSensitive.getValue();
+      state.edgeIdentifier = static_cast<int32_t>(edgeIdentifierValue);
+      state.edgePolarity = static_cast<int32_t>(edgePolarityValue);
       state.masked = !inputLows.empty() || rule.get("output_low") ||
                      rule.get("output_width");
       if (state.masked && (inputLows.size() != inputPaths.size() ||
                            inputWidths.size() != inputPaths.size()))
         return function.emitError("invalid frozen timing path selections");
+      if (state.edgeSensitive && inputLsbs.size() != inputPaths.size())
+        return function.emitError(
+            "edge-sensitive timing path has no frozen LSB mapping");
       if (state.masked) {
         auto outputLow = rule.getAs<IntegerAttr>("output_low");
         auto outputWidth = rule.getAs<IntegerAttr>("output_width");
@@ -4068,6 +4097,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
           return function.emitError("invalid frozen timing path source");
         uint64_t low = 0;
         uint64_t width = sim::getPackedWidth(current.getType()).value_or(0);
+        uint64_t lsb = 0;
         if (state.masked) {
           if (inputLows[index] < 0 || inputWidths[index] <= 0)
             return function.emitError("invalid timing path source selection");
@@ -4077,11 +4107,42 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
               sim::getPackedWidth(current.getType());
           if (!rootWidth || low >= *rootWidth || width > *rootWidth - low)
             return function.emitError("timing path source is out of bounds");
+          if (state.edgeSensitive) {
+            if (inputLsbs[index] < 0)
+              return function.emitError("invalid timing path source LSB");
+            lsb = static_cast<uint64_t>(inputLsbs[index]);
+            if (lsb < low || lsb >= low + width)
+              return function.emitError("timing path source LSB is out of bounds");
+          }
         }
         state.sources.push_back(
-            {input, snapshot, snapshotPath.getValue().str(), low, width});
+            {input, snapshot, snapshotPath.getValue().str(), low, width, lsb});
       }
-      if (state.masked && !state.full &&
+      if (state.edgeSensitive && !state.masked)
+        return function.emitError(
+            "edge-sensitive timing path requires packed terminal metadata");
+      if (state.edgeSensitive) {
+        auto pendingPath = rule.getAs<StringAttr>("edge_pending");
+        auto epochPath = rule.getAs<StringAttr>("edge_epoch");
+        state.edgePending =
+            pendingPath ? values.lookup(pendingPath.getValue()) : Value{};
+        state.edgeEpoch =
+            epochPath ? values.lookup(epochPath.getValue()) : Value{};
+        sim::RefType pendingRef =
+            state.edgePending
+                ? dyn_cast<sim::RefType>(state.edgePending.getType())
+                : sim::RefType{};
+        sim::RefType epochRef =
+            state.edgeEpoch ? dyn_cast<sim::RefType>(state.edgeEpoch.getType())
+                            : sim::RefType{};
+        if (!pendingRef ||
+            pendingRef.getElementType() !=
+                builder.getIntegerType(state.outputRootWidth) ||
+            !epochRef || epochRef.getElementType() != builder.getI64Type())
+          return function.emitError(
+              "invalid edge-sensitive timing path qualification state");
+      }
+      if (state.masked && !state.full && !state.edgeSensitive &&
           (state.sources.size() != 1 ||
            state.sources.front().width != state.outputWidth))
         return function.emitError("parallel timing path widths do not match");
@@ -4191,7 +4252,14 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
           std::optional<uint64_t> driverNodeID) -> LogicalResult {
     SmallVector<Value, 4> changed;
     SmallVector<Value, 4> changedMasks;
-    llvm::StringMap<std::pair<Value, Value>> changedSnapshots;
+    struct SourceTransition {
+      Value current;
+      Value previous;
+      Value differs;
+      Value differenceMask;
+    };
+    llvm::StringMap<SourceTransition> changedSnapshots;
+    llvm::StringMap<std::pair<Value, Value>> edgeTransitions;
     bool maskedRules = timingPathRules.front().masked;
     if (llvm::any_of(timingPathRules, [&](const TimingPathRuleState &rule) {
           return rule.masked != maskedRules ||
@@ -4245,11 +4313,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       Value ruleMask = maskedRules ? integerZero(destinationMaskType) : Value{};
       for (const TimingPathRuleState::Source &source : rule.sources) {
         auto cached = changedSnapshots.find(source.snapshotPath);
-        Value differs =
-            cached == changedSnapshots.end() ? Value{} : cached->second.first;
-        Value differenceMask =
-            cached == changedSnapshots.end() ? Value{} : cached->second.second;
-        if (!differs) {
+        if (cached == changedSnapshots.end()) {
           Value current = readTimingPathInput(source.input);
           Value previous = sim::SimRefLoadOp::create(
               builder, function.getLoc(), current.getType(), source.snapshot);
@@ -4258,6 +4322,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
           if (!sourceRootWidth)
             return function.emitError("timing path source has no packed width");
           IntegerType sourceMaskType = builder.getIntegerType(*sourceRootWidth);
+          Value differs;
+          Value differenceMask;
           if (isa<sim::LogicType>(current.getType()) && maskedRules) {
             differenceMask = sim::SimLogicCaseDifferenceMaskOp::create(
                 builder, function.getLoc(), sourceMaskType, current, previous);
@@ -4278,15 +4344,100 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
           }
           sim::SimRefStoreOp::create(builder, function.getLoc(), current,
                                      source.snapshot);
-          changedSnapshots[source.snapshotPath] = {differs, differenceMask};
+          auto inserted = changedSnapshots.try_emplace(
+              source.snapshotPath,
+              SourceTransition{current, previous, differs, differenceMask});
+          cached = inserted.first;
         }
-        Value terminalChanged = differs;
+        SourceTransition &transition = cached->second;
+        Value terminalChanged = transition.differs;
         if (maskedRules) {
-          Value selected = selectBits(differenceMask, source.low, source.width);
+          Value selected;
+          if (rule.edgeSensitive && rule.edgeIdentifier != 0) {
+            std::string edgeKey =
+                (source.snapshotPath + ":" + Twine(source.lsb)).str();
+            auto edge = edgeTransitions.find(edgeKey);
+            if (edge == edgeTransitions.end()) {
+              Value posedge;
+              Value negedge;
+              if (isa<sim::LogicType>(transition.current.getType())) {
+                Type bitType = sim::LogicType::get(function.getContext(), 1);
+                Value previousBit = sim::SimLogicExtractOp::create(
+                    builder, function.getLoc(), bitType, transition.previous,
+                    source.lsb);
+                Value currentBit = sim::SimLogicExtractOp::create(
+                    builder, function.getLoc(), bitType, transition.current,
+                    source.lsb);
+                auto symbol = [&](Value value, bool one) {
+                  Value constant = sim::SimLogicConstantOp::create(
+                      builder, function.getLoc(), bitType,
+                      builder.getIntegerAttr(builder.getI1Type(), one),
+                      builder.getIntegerAttr(builder.getI1Type(), 0));
+                  return Value(sim::SimLogicCompareOp::create(
+                      builder, function.getLoc(), builder.getI1Type(),
+                      sim::CompareKind::CaseEq, value, constant));
+                };
+                Value oldZero = symbol(previousBit, false);
+                Value oldOne = symbol(previousBit, true);
+                Value newZero = symbol(currentBit, false);
+                Value newOne = symbol(currentBit, true);
+                Value one = arith::ConstantOp::create(
+                    builder, function.getLoc(), builder.getI1Type(),
+                    builder.getBoolAttr(true));
+                Value oldKnown = arith::OrIOp::create(
+                    builder, function.getLoc(), oldZero, oldOne);
+                Value oldUnknown = arith::XOrIOp::create(
+                    builder, function.getLoc(), oldKnown, one);
+                Value notNewZero = arith::XOrIOp::create(
+                    builder, function.getLoc(), newZero, one);
+                Value notNewOne = arith::XOrIOp::create(
+                    builder, function.getLoc(), newOne, one);
+                Value zeroToNonzero = arith::AndIOp::create(
+                    builder, function.getLoc(), oldZero, notNewZero);
+                Value unknownToOne = arith::AndIOp::create(
+                    builder, function.getLoc(), oldUnknown, newOne);
+                posedge = arith::OrIOp::create(
+                    builder, function.getLoc(), zeroToNonzero, unknownToOne);
+                Value oneToNonone = arith::AndIOp::create(
+                    builder, function.getLoc(), oldOne, notNewOne);
+                Value unknownToZero = arith::AndIOp::create(
+                    builder, function.getLoc(), oldUnknown, newZero);
+                negedge = arith::OrIOp::create(
+                    builder, function.getLoc(), oneToNonone, unknownToZero);
+              } else {
+                Value previousBit =
+                    selectBits(transition.previous, source.lsb, 1);
+                Value currentBit =
+                    selectBits(transition.current, source.lsb, 1);
+                Value one = arith::ConstantOp::create(
+                    builder, function.getLoc(), builder.getI1Type(),
+                    builder.getBoolAttr(true));
+                Value invertedPrevious = arith::XOrIOp::create(
+                    builder, function.getLoc(), previousBit, one);
+                Value invertedCurrent = arith::XOrIOp::create(
+                    builder, function.getLoc(), currentBit, one);
+                posedge = arith::AndIOp::create(
+                    builder, function.getLoc(), invertedPrevious, currentBit);
+                negedge = arith::AndIOp::create(
+                    builder, function.getLoc(), previousBit, invertedCurrent);
+              }
+              edge = edgeTransitions.try_emplace(edgeKey, posedge, negedge).first;
+            }
+            selected = edge->second.first;
+            if (rule.edgeIdentifier == 2)
+              selected = edge->second.second;
+            else if (rule.edgeIdentifier == 3)
+              selected = arith::OrIOp::create(builder, function.getLoc(),
+                                              edge->second.first,
+                                              edge->second.second);
+          } else {
+            selected = selectBits(transition.differenceMask, source.low,
+                                  source.width);
+          }
           terminalChanged = arith::CmpIOp::create(
               builder, function.getLoc(), arith::CmpIPredicate::ne, selected,
               integerZero(cast<IntegerType>(selected.getType())));
-          if (rule.full) {
+          if (rule.full || rule.edgeSensitive) {
             APInt bits = APInt::getBitsSet(rule.outputRootWidth, rule.outputLow,
                                            rule.outputLow + rule.outputWidth);
             Value destination = arith::ConstantOp::create(
@@ -4336,6 +4487,14 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
 
     SmallVector<Value, 4> applicable;
     SmallVector<Value, 4> applicableMasks;
+    Value schedulerNow;
+    if (maskedRules &&
+        llvm::any_of(timingPathRules, [](const TimingPathRuleState &rule) {
+          return rule.edgeSensitive;
+        }))
+      schedulerNow = sim::SimTimeNowOp::create(
+          builder, function.getLoc(), builder.getI64Type(),
+          function.getBody().front().getArgument(0));
     for (auto [index, rule] : llvm::enumerate(timingPathRules)) {
       Value condition = conditions[index];
       if (rule.conditionKind == 2) {
@@ -4344,19 +4503,55 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                                                 knownTrue)
                         : knownTrue;
       }
-      applicable.push_back(arith::AndIOp::create(builder, function.getLoc(),
-                                                 changed[index], condition));
-      if (maskedRules)
-        applicableMasks.push_back(arith::SelectOp::create(
+      Value applicableMask;
+      if (maskedRules) {
+        applicableMask = arith::SelectOp::create(
             builder, function.getLoc(), condition, changedMasks[index],
-            integerZero(destinationMaskType)));
+            integerZero(destinationMaskType));
+        if (rule.edgeSensitive) {
+          Value pending = sim::SimRefLoadOp::create(
+              builder, function.getLoc(), destinationMaskType,
+              rule.edgePending);
+          Value epoch = sim::SimRefLoadOp::create(
+              builder, function.getLoc(), builder.getI64Type(),
+              rule.edgeEpoch);
+          Value sameEpoch = arith::CmpIOp::create(
+              builder, function.getLoc(), arith::CmpIPredicate::eq, epoch,
+              schedulerNow);
+          pending = arith::SelectOp::create(
+              builder, function.getLoc(), sameEpoch, pending,
+              integerZero(destinationMaskType));
+          applicableMask = arith::OrIOp::create(
+              builder, function.getLoc(), pending, applicableMask);
+          sim::SimRefStoreOp::create(builder, function.getLoc(),
+                                     applicableMask, rule.edgePending);
+          sim::SimRefStoreOp::create(builder, function.getLoc(), schedulerNow,
+                                     rule.edgeEpoch);
+        }
+        applicableMasks.push_back(applicableMask);
+      }
+      if (maskedRules) {
+        applicable.push_back(arith::CmpIOp::create(
+            builder, function.getLoc(), arith::CmpIPredicate::ne,
+            applicableMask, integerZero(destinationMaskType)));
+      } else {
+        applicable.push_back(arith::AndIOp::create(
+            builder, function.getLoc(), changed[index], condition));
+      }
     }
     if (maskedRules) {
       TimingPathMaskedPlan plan;
+      plan.transitionIndependent =
+          llvm::all_of(timingPathRules, [](const TimingPathRuleState &rule) {
+            return llvm::all_equal(rule.delays);
+          });
       plan.coverageMask = integerZero(destinationMaskType);
-      for (Value mask : applicableMasks)
+      for (auto [rule, mask] : llvm::zip(timingPathRules, applicableMasks)) {
         plan.coverageMask = arith::OrIOp::create(builder, function.getLoc(),
                                                  plan.coverageMask, mask);
+        if (rule.edgeSensitive)
+          plan.edgePending.push_back(rule.edgePending);
+      }
       SmallVector<int64_t, 12> distinctDelays;
       for (const TimingPathRuleState &rule : timingPathRules)
         llvm::append_range(distinctDelays, rule.delays);
@@ -4375,7 +4570,9 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
             sim::TimeType::get(function.getContext()), ticks,
             builder.getI64IntegerAttr(1), builder.getBoolAttr(false));
       }
-      for (unsigned transition = 0; transition != 12; ++transition) {
+      unsigned transitionCount = plan.transitionIndependent ? 1 : 12;
+      for (unsigned transition = 0; transition != transitionCount;
+           ++transition) {
         SmallVector<unsigned, 4> order;
         for (unsigned index = 0; index != timingPathRules.size(); ++index)
           order.push_back(index);
@@ -4405,6 +4602,11 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                                          applicableMasks[index]);
         }
       }
+      if (plan.transitionIndependent)
+        for (TimingPathDelayGroup &group : plan.groups)
+          for (unsigned transition = 1; transition != group.masks.size();
+               ++transition)
+            group.masks[transition] = group.masks.front();
       if (driverNodeID)
         timingPathMaskedPlans.try_emplace(*driverNodeID, std::move(plan));
       else

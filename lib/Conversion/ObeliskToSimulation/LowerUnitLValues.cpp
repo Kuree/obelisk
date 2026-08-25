@@ -1017,6 +1017,41 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         Value onesMask = arith::ConstantOp::create(
             builder, location, maskType,
             builder.getIntegerAttr(maskType, ones));
+        auto consumeEdgePending = [&](Value consumed) {
+          if (maskedPlan->edgePending.empty())
+            return;
+          Value retainedMask = arith::XOrIOp::create(
+              builder, location, consumed, onesMask);
+          for (Value pendingRef : maskedPlan->edgePending) {
+            Value pending = sim::SimRefLoadOp::create(
+                builder, location, maskType, pendingRef);
+            Value retained = arith::AndIOp::create(
+                builder, location, pending, retainedMask);
+            sim::SimRefStoreOp::create(builder, location, retained,
+                                       pendingRef);
+          }
+        };
+        if (maskedPlan->transitionIndependent) {
+          Value consumed = sim::SimLogicCaseDifferenceMaskOp::create(
+              builder, location, maskType, *previousLogic, *publishedLogic);
+          consumeEdgePending(consumed);
+          for (auto [index, group] :
+               llvm::enumerate(maskedPlan->groups)) {
+            Value mask = group.masks.front();
+            auto drive = sim::SimDriverDriveInertialPathOp::create(
+                builder, location, destination.reference, published,
+                maskedPlan->coverageMask, mask, mask, mask, group.delay,
+                group.delay, group.delay, codeUnitID,
+                builder.getI32IntegerAttr(component),
+                builder.getI32IntegerAttr(static_cast<uint32_t>(index)),
+                builder.getI32IntegerAttr(groupCount),
+                builder.getBoolAttr(deferDriverResolution || userRaw));
+            if (userRaw)
+              drive->setAttr("obelisk_sim.user_net_raw_drive",
+                             builder.getUnitAttr());
+          }
+          return success();
+        }
         std::array<Value, 4> previousSymbols;
         std::array<Value, 4> publishedSymbols;
         for (unsigned symbol = 0; symbol != 3; ++symbol) {
@@ -1052,6 +1087,13 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
           transitionMasks[transition] = arith::AndIOp::create(
               builder, location, previousSymbols[fromSymbols[transition]],
               publishedSymbols[toSymbols[transition]]);
+        if (!maskedPlan->edgePending.empty()) {
+          Value consumed = zeroMask;
+          for (Value transition : transitionMasks)
+            consumed = arith::OrIOp::create(builder, location, consumed,
+                                            transition);
+          consumeEdgePending(consumed);
+        }
         for (auto [index, group] :
              llvm::enumerate(maskedPlan->groups)) {
           std::array<Value, 3> runtimeMasks{zeroMask, zeroMask, zeroMask};

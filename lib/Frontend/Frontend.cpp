@@ -1745,6 +1745,9 @@ private:
       attrs.set(
           "timing_edge_identifier",
           builder.getI32IntegerAttr(static_cast<int32_t>(node.edgeIdentifier)));
+      const slang::ast::Expression *edgeSource = node.getEdgeSourceExpr();
+      if (edgeSource)
+        attrs.set("timing_edge_sensitive", builder.getUnitAttr());
       attrs.set("timing_state_dependent",
                 builder.getBoolAttr(node.isStateDependent));
       if (node.getConditionExpr())
@@ -1757,6 +1760,7 @@ private:
         uint64_t rootWidth;
         uint64_t low;
         uint64_t width;
+        uint64_t lsb;
       };
       slang::ast::EvalContext terminalEvalContext(node);
       auto directStaticTerminal = [&](const slang::ast::Expression *expression)
@@ -1771,17 +1775,18 @@ private:
           return std::nullopt;
         uint64_t width = expression->type->getBitWidth();
         uint64_t rootWidth = value->getType().getBitWidth();
-        if (width == 0 || rootWidth == 0 || width > rootWidth)
+        if (width == 0 || rootWidth == 0 || width > rootWidth ||
+            !value->getType().hasFixedRange())
           return std::nullopt;
         uint64_t low = 0;
+        uint64_t lsb = 0;
         if (expression->kind == slang::ast::ExpressionKind::ElementSelect ||
             expression->kind == slang::ast::ExpressionKind::RangeSelect) {
-          // Slang normalizes a packed selector into physical bit offsets from
-          // the right hand end of the declared range. This is precisely the
-          // positional ordering used by parallel module paths: physical bit
-          // k of the source selection maps to physical bit k of the
-          // destination selection even when their declared ranges run in
-          // opposite directions.
+          // Slang normalizes a packed selector into physical offsets from the
+          // right-hand end of the declared root range. Preserve the normalized
+          // right bound separately: Clause 30.4.3 samples that semantic LSB,
+          // which is not necessarily the low storage offset for an ascending
+          // or reversed selected descriptor.
           std::optional<slang::ConstantRange> selected =
               expression->evalSelector(terminalEvalContext,
                                        /*enforceBounds=*/false);
@@ -1789,12 +1794,14 @@ private:
               selected->fullWidth() != width)
             return std::nullopt;
           low = static_cast<uint64_t>(selected->lower());
+          lsb = static_cast<uint64_t>(selected->right);
           if (low > rootWidth || width > rootWidth - low)
             return std::nullopt;
         } else if (width != rootWidth) {
           return std::nullopt;
         }
-        return DirectTimingTerminal{getSymbolPath(*symbol), rootWidth, low, width};
+        return DirectTimingTerminal{getSymbolPath(*symbol), rootWidth, low,
+                                    width, lsb};
       };
 
       auto inputs = node.getInputs();
@@ -1824,6 +1831,8 @@ private:
                                  builder.getI64IntegerAttr(terminal->low)),
             builder.getNamedAttr("width",
                                  builder.getI64IntegerAttr(terminal->width)),
+            builder.getNamedAttr("lsb",
+                                 builder.getI64IntegerAttr(terminal->lsb)),
         }));
       }
       if (inputPaths.size() == inputs.size()) {
@@ -1853,6 +1862,8 @@ private:
                                      builder.getI64IntegerAttr(output->low)),
                 builder.getNamedAttr("width",
                                      builder.getI64IntegerAttr(output->width)),
+                builder.getNamedAttr("lsb",
+                                     builder.getI64IntegerAttr(output->lsb)),
             }));
       }
 
@@ -1924,10 +1935,11 @@ private:
       // is selected. All three legal simple-path polarities can therefore use
       // the same frozen driver-delay representation.
       bool supportedCandidate =
-          shapeSupported &&
-          node.edgePolarity == TimingPath::Polarity::Unknown &&
-          node.edgeIdentifier == slang::ast::EdgeKind::None &&
-          !node.getEdgeSourceExpr() && outputs.size() == 1 && staticDelays &&
+          shapeSupported && outputs.size() == 1 && staticDelays &&
+          (!edgeSource || !node.isStateDependent || node.getConditionExpr()) &&
+          (edgeSource ||
+           (node.edgePolarity == TimingPath::Polarity::Unknown &&
+            node.edgeIdentifier == slang::ast::EdgeKind::None)) &&
           delays.size() == node.getDelays().size() &&
           (delays.size() == 1 || delays.size() == 2 || delays.size() == 3 ||
            delays.size() == 6 || delays.size() == 12);
@@ -3793,12 +3805,14 @@ private:
       }
     } else if constexpr (std::same_as<T, slang::ast::TimingPathSymbol>) {
       // Slang intentionally treats specify-path expressions as resolved
-      // metadata rather than ordinary symbol children. Keep the condition in
-      // semantic IR so conditional module paths can evaluate it at each
-      // source transition. An ifnone declaration has no expression.
+      // metadata rather than ordinary symbol children. Keep the condition and
+      // edge-path data source in semantic IR. The latter is analysis metadata
+      // only under Clause 30.4.3 and is never evaluated by simulation.
       this->visitDefault(node);
       if (const slang::ast::Expression *condition = node.getConditionExpr())
         condition->visit(*this);
+      if (const slang::ast::Expression *edgeSource = node.getEdgeSourceExpr())
+        edgeSource->visit(*this);
     } else if constexpr (std::same_as<T, slang::ast::ClockVarSymbol>) {
       this->visitDefault(node);
       if (node.inputSkew.delay)
