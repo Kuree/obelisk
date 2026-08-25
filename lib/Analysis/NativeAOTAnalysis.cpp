@@ -355,6 +355,12 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       // in the compact generic scheduler until the AOT graph has an explicit
       // bootstrap edge for the post-evaluation wait continuation.
       rejectPlan("delayed continuous assignment requires generic ordering");
+    } else if (isa<sim::SimPassSwitchControlDelayedOp>(operation)) {
+      // A delayed control publication changes frozen connectivity from a
+      // runtime calendar event. The generic scheduler owns that topology
+      // barrier and its ordered net notifications; generated AOT plans do not
+      // yet contain an equivalent topology-event commit node.
+      rejectPlan("delayed pass-switch control requires generic ordering");
     } else if (isa<sim::SimOverrideOp, sim::SimReleaseOverrideOp>(operation)) {
       requireBytecodeFragment(operation, "force/release state is present");
       excludeBytecodeActor(operation);

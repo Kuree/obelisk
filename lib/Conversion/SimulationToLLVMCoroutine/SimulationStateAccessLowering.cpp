@@ -521,6 +521,52 @@ public:
   }
 };
 
+class PassSwitchControlDelayedConversion final
+    : public OpConversionPattern<sim::SimPassSwitchControlDelayedOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimPassSwitchControlDelayedOp op,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getControl().empty() || adaptor.getTurnOnDelay().size() != 1 ||
+        adaptor.getTurnOffDelay().size() != 1 ||
+        adaptor.getUnknownDelay().size() != 1 ||
+        op.getPassSwitchId() > UINT32_MAX)
+      return failure();
+    Location location = op.getLoc();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i32 = rewriter.getI32Type();
+    Value contextAddress = LLVM::AddressOfOp::create(
+        rewriter, location, pointer, "__obelisk_current_context");
+    Value context =
+        LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
+    auto extend = [&](Value value) -> Value {
+      return LLVM::ZExtOp::create(rewriter, location, i32, value);
+    };
+    Value unknown = adaptor.getControl().size() == 2
+                        ? extend(adaptor.getControl()[1])
+                        : llvmConstant(rewriter, location, i32, 0);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_pass_switch_control_delayed"),
+            ValueRange{
+                context,
+                llvmConstant(rewriter, location, i32, op.getPassSwitchId()),
+                extend(adaptor.getControl().front()), unknown,
+                adaptor.getTurnOnDelay().front(),
+                adaptor.getTurnOffDelay().front(),
+                adaptor.getUnknownDelay().front()})
+            .getResult();
+    reportRuntimeControlStatus(rewriter, location, context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 } // namespace
 
 void populateStateReadWriteToLLVMConversionPatterns(
@@ -534,8 +580,8 @@ void populateStateReadWriteToLLVMConversionPatterns(
       converter, patterns.getContext(), stateBitCount, directLayout,
       experimentalTwoState);
   patterns.add<NetCountDriversConversion>(converter, patterns.getContext());
-  patterns.add<PassSwitchControlConversion>(converter,
-                                            patterns.getContext());
+  patterns.add<PassSwitchControlConversion, PassSwitchControlDelayedConversion>(
+      converter, patterns.getContext());
 }
 
 } // namespace obelisk::detail

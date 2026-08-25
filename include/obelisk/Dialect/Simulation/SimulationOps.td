@@ -199,6 +199,25 @@ def SimPassSwitchControlOp : SimOp<"net.pass.control", [
   let hasVerifier = 1;
 }
 
+def SimPassSwitchControlDelayedOp : SimOp<"net.pass.control_delayed", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimNetResource>]>
+  ]> {
+  let summary = "inertially publish a delayed four-state pass-switch enable";
+  let description = [{
+    Schedules one frozen controlled pass-switch run. A known active control
+    uses `turn_on_delay`, a known inactive control uses `turn_off_delay`, and
+    x/z uses `unknown_delay`. Re-evaluation of the same pass-switch ID rejects
+    an older pending pulse before its delayed topology state matures.
+  }];
+  let arguments = (ins SimLogic1Type:$control, SimTimeType:$turn_on_delay,
+                       SimTimeType:$turn_off_delay, SimTimeType:$unknown_delay,
+                       I64Attr:$pass_switch_id);
+  let assemblyFormat = [{$pass_switch_id `=` $control `after` `[` $turn_on_delay
+    `,` $turn_off_delay `,` $unknown_delay `]` attr-dict `:`
+    qualified(type($control))}];
+  let hasVerifier = 1;
+}
+
 def SimDriverDeclOp : SimOp<"driver.decl", [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
   let summary = "immutable static net-driver descriptor";
   let arguments = (ins I64Attr:$id, I64Attr:$scope_id, I64Attr:$net_id,

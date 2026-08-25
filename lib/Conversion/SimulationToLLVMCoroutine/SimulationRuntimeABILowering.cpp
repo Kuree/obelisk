@@ -89,6 +89,13 @@ void declareNativeRuntimeABI(ModuleOp module) {
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32),
        IntegerType::get(context, 32), IntegerType::get(context, 32)});
   getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_pass_switch_control_delayed",
+      IntegerType::get(context, 32),
+      {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32),
+       IntegerType::get(context, 32), IntegerType::get(context, 32),
+       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       IntegerType::get(context, 64)});
+  getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_scheduler_nba", IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),

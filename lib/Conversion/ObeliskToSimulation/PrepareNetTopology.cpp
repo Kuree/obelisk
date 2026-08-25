@@ -727,11 +727,19 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       executableUnits.push_back(unit);
       continue;
     }
-    if (primitive.getDelayFs()) {
-      emitError(getSemanticLocation(unit))
-          << "delayed tran-family primitives are not yet supported";
-      invalid = true;
-      continue;
+    if (auto delays = primitive.getDelayFs()) {
+      if (!controlled) {
+        emitError(getSemanticLocation(unit))
+            << "tran and rtran primitives cannot have delays";
+        invalid = true;
+        continue;
+      }
+      if (delays->empty() || delays->size() > 2) {
+        emitError(getSemanticLocation(unit))
+            << "controlled pass-switch delay must contain one or two values";
+        invalid = true;
+        continue;
+      }
     }
     SmallVector<Operation *> roots = getChildren(unit);
     SmallVector<NetRun> terminals[2];

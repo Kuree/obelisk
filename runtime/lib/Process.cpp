@@ -2183,6 +2183,7 @@ obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context,
   if (!context->scheduledManagedNBAs.empty() ||
       !context->scheduledDesignNBAs.empty() ||
       !context->scheduledDesignEvents.empty() ||
+      !context->scheduledPassSwitchEvents.empty() ||
       (!allowRuntimeTasks && !context->scheduledDesignTasks.empty()) ||
       context->nativeScheduleExternalWritePending)
     return OBELISK_RT_TIER_UNAVAILABLE;
@@ -2319,6 +2320,11 @@ uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
   considerBarrier(context->scheduledManagedNBAs);
   considerBarrier(context->scheduledDesignNBAs);
   considerBarrier(context->scheduledDesignEvents);
+  if (!context->scheduledPassSwitchEvents.empty() &&
+      context->scheduledPassSwitchEvents.begin()->first.first <=
+          context->schedulerTime)
+    barrierRegion = std::min(
+        barrierRegion, static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE));
   if (context->staticNBAAccumulatorsPending)
     for (const StaticNBAAccumulator &accumulator :
          context->staticNBAAccumulators)
@@ -3540,7 +3546,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           return staticNBAStatus;
         if (context->scheduledManagedNBAs.empty() &&
             context->scheduledDesignNBAs.empty() &&
-            context->scheduledDesignEvents.empty()) {
+            context->scheduledDesignEvents.empty() &&
+            context->scheduledPassSwitchEvents.empty()) {
           size_t retained = 0;
           for (size_t index = 0;; ++index) {
             if (index == context->scheduledNBAs.size()) {
@@ -3613,6 +3620,13 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                 eventIndex = index;
               }
             }
+            uint64_t passSequence = UINT64_MAX;
+            if (barrierRegion == OBELISK_RT_REGION_ACTIVE &&
+                !context->scheduledPassSwitchEvents.empty()) {
+              const auto &next = *context->scheduledPassSwitchEvents.begin();
+              if (next.first.first <= context->schedulerTime)
+                passSequence = next.first.second;
+            }
             uint64_t designSequence = UINT64_MAX;
             size_t designIndex = 0;
             for (size_t index = 0; index != context->scheduledDesignNBAs.size();
@@ -3639,9 +3653,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                 managedIndex = index;
               }
             }
-            uint64_t sequence =
-                std::min(std::min(nativeSequence, managedSequence),
-                         std::min(eventSequence, designSequence));
+            uint64_t sequence = std::min(
+                std::min(nativeSequence, managedSequence),
+                std::min(std::min(eventSequence, passSequence), designSequence));
             if (sequence == UINT64_MAX) {
               bool hadDelayedPublications = !delayedNetPublications.empty();
               if (!flushDelayedNetPublications())
@@ -3686,6 +3700,24 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                   context->scheduledManagedNBAs.begin() + managedIndex);
               if (status != OBELISK_RT_OK)
                 return status;
+            } else if (sequence == passSequence) {
+              auto scheduled = context->scheduledPassSwitchEvents.begin();
+              ScheduledPassSwitchEvent event = scheduled->second;
+              auto pending = context->delayedPassSwitchPending.find(
+                  event.passSwitchID);
+              if (pending == context->delayedPassSwitchPending.end() ||
+                  pending->second.event != scheduled ||
+                  pending->second.state != event.state)
+                return OBELISK_RT_INVALID_DESIGN;
+              context->scheduledPassSwitchEvents.erase(scheduled);
+              context->delayedPassSwitchPending.erase(pending);
+              bool switchChanged = false;
+              obelisk_rt_status status =
+                  obelisk::designbytecode::applyPassSwitchControl(
+                      context, event.passSwitchID, event.state, switchChanged);
+              if (status != OBELISK_RT_OK)
+                return status;
+              changed |= switchChanged;
             } else if (sequence == eventSequence) {
               uint64_t stableID =
                   context->scheduledDesignEvents[eventIndex].stableID;
@@ -3803,6 +3835,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         for (const ScheduledDesignEvent &event : context->scheduledDesignEvents)
           if (event.dueTime > context->schedulerTime)
             considerTime(event.dueTime);
+        if (!context->scheduledPassSwitchEvents.empty())
+          considerTime(
+              context->scheduledPassSwitchEvents.begin()->first.first);
         if (nextTime) {
           obelisk_rt_dump_slot_unlocked(context);
           context->schedulerTime = *nextTime;

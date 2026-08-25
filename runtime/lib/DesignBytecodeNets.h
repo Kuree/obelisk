@@ -52,6 +52,9 @@ bool resolveDrivenNets(const Image &image, obelisk_rt_context *context,
 bool resolveDrivenNets(const Image &image, obelisk_rt_context *context,
                        int64_t changedBegin, int64_t changedEnd, bool &changed,
                        bool useNativeState);
+obelisk_rt_status applyPassSwitchControl(obelisk_rt_context *context,
+                                         uint32_t passSwitchID,
+                                         uint8_t nextState, bool &changed);
 
 } // namespace obelisk::designbytecode
 

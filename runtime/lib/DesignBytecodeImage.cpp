@@ -383,6 +383,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       signature.id != OBELISK_RT_INTRINSIC_V1_REAL_TO_INTEGER &&
       signature.id != OBELISK_RT_INTRINSIC_V1_REAL_COMPARE &&
       signature.id != OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL &&
+      signature.id != OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL_DELAYED &&
       signature.flags != 0)
     return false;
   auto input = [&](uint32_t index) -> std::optional<Layout> {
@@ -529,6 +530,9 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL:
     return site.inputCount == 1 && site.outputCount == 0 &&
            bits(input(0), 1);
+  case OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL_DELAYED:
+    return site.inputCount == 4 && site.outputCount == 0 && bits(input(0), 1) &&
+           bits(input(1), 64) && bits(input(2), 64) && bits(input(3), 64);
   case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC:
     if (signature.flags != 0 || site.inputCount == 0 || site.outputCount != 1 ||
         (!numeric(input(0)) && !floating(input(0)) && !managed(input(0)) &&

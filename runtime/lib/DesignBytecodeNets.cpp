@@ -364,9 +364,17 @@ NetAliasCache *getNetAliasCache(const Image &image,
         size_t forward = static_cast<size_t>(lhs) * roots.size() + rhs;
         size_t reverse = static_cast<size_t>(rhs) * roots.size() + lhs;
         if (edge.controlled) {
-          cache.controlledPassStates.try_emplace(edge.passSwitchId, 0);
+          // State 3 is an initialization sentinel: the precomputed matrices
+          // already model the IEEE x-control topology, but the roots have not
+          // necessarily been resolved through it yet.
+          cache.controlledPassStates.try_emplace(edge.passSwitchId, 3);
           cache.controlledPassEdges[edge.passSwitchId].push_back(
               {component, lhs, rhs, edge.resistive});
+          auto &possible = edge.resistive
+                               ? passComponent.possibleResistive
+                               : passComponent.possibleNonresistive;
+          ++possible[forward];
+          ++possible[reverse];
           continue;
         }
         auto &definite = edge.resistive
@@ -1322,6 +1330,84 @@ obelisk_rt_v1_net_count_drivers(obelisk_rt_context *context, uint64_t netHandle,
                                          true);
 }
 
+namespace obelisk::designbytecode {
+
+obelisk_rt_status
+applyPassSwitchControl(obelisk_rt_context *context, uint32_t passSwitchId,
+                       uint8_t nextState, bool &changed) {
+  if (!context || !context->designBytecodeImageValidated ||
+      passSwitchId == UINT32_MAX || nextState > 2)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  NetAliasCache *cache =
+      getNetAliasCache(context->designBytecodeImage, context);
+  if (!cache)
+    return OBELISK_RT_INVALID_DESIGN;
+  uint32_t encodedId = passSwitchId + 1;
+  auto edges = cache->controlledPassEdges.find(encodedId);
+  auto state = cache->controlledPassStates.find(encodedId);
+  if (edges == cache->controlledPassEdges.end() ||
+      state == cache->controlledPassStates.end())
+    return OBELISK_RT_INVALID_DESIGN;
+  uint8_t previousState = state->second;
+  if (previousState > 3)
+    return OBELISK_RT_INVALID_DESIGN;
+  if (previousState == nextState)
+    return OBELISK_RT_OK;
+  std::unordered_set<uint64_t> affectedComponents;
+  for (const NetControlledPassEdge &edge : edges->second) {
+    auto component = cache->passComponents.find(edge.component);
+    if (component == cache->passComponents.end())
+      return OBELISK_RT_INVALID_DESIGN;
+    NetPassComponent &pass = component->second;
+    size_t count = pass.roots.size();
+    if (edge.lhs >= count || edge.rhs >= count)
+      return OBELISK_RT_INVALID_DESIGN;
+    size_t forward = static_cast<size_t>(edge.lhs) * count + edge.rhs;
+    size_t reverse = static_cast<size_t>(edge.rhs) * count + edge.lhs;
+    auto adjust = [&](std::vector<uint32_t> &counts, bool add) {
+      if (add) {
+        ++counts[forward];
+        ++counts[reverse];
+      } else {
+        --counts[forward];
+        --counts[reverse];
+      }
+    };
+    auto &definite = edge.resistive ? pass.definiteResistive
+                                    : pass.definiteNonresistive;
+    auto &possible = edge.resistive ? pass.possibleResistive
+                                    : pass.possibleNonresistive;
+    if (previousState != 3 || nextState != 2) {
+      uint8_t effectivePrevious = previousState == 3 ? 2 : previousState;
+      if (effectivePrevious == 1)
+        adjust(definite, false);
+      if (effectivePrevious != 0)
+        adjust(possible, false);
+      if (nextState == 1)
+        adjust(definite, true);
+      if (nextState != 0)
+        adjust(possible, true);
+    }
+    affectedComponents.insert(edge.component);
+  }
+  state->second = nextState;
+  std::vector<uint64_t> roots;
+  for (uint64_t componentId : affectedComponents) {
+    NetPassComponent &component = cache->passComponents.at(componentId);
+    if (!rebuildPassComponent(component))
+      return OBELISK_RT_INVALID_DESIGN;
+    roots.insert(roots.end(), component.roots.begin(), component.roots.end());
+  }
+  if (!resolveNetRoots(*cache, context, std::move(roots), changed,
+                       context->nativeStateValue != nullptr))
+    return context->schedulerStatus == OBELISK_RT_OK
+               ? OBELISK_RT_INVALID_DESIGN
+               : context->schedulerStatus;
+  return OBELISK_RT_OK;
+}
+
+} // namespace obelisk::designbytecode
+
 extern "C" obelisk_rt_status obelisk_rt_v1_pass_switch_control(
     obelisk_rt_context *context, uint32_t passSwitchId, uint32_t value,
     uint32_t unknown) {
@@ -1331,73 +1417,113 @@ extern "C" obelisk_rt_status obelisk_rt_v1_pass_switch_control(
   try {
     ContextTransaction transaction(context);
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
-    Image image;
-    if (!loadValidatedImage(entry, context, image))
+    obelisk::designbytecode::Image image;
+    if (!obelisk::designbytecode::loadValidatedImage(entry, context, image))
       return OBELISK_RT_INVALID_BYTECODE;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    NetAliasCache *cache = getNetAliasCache(image, context);
+    bool changed = false;
+    obelisk_rt_status status = obelisk::designbytecode::applyPassSwitchControl(
+        context, passSwitchId, unknown ? 2 : static_cast<uint8_t>(value),
+        changed);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (changed && ++context->schedulerEpoch == 0)
+      context->schedulerEpoch = 1;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_BYTECODE;
+  }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_pass_switch_control_delayed(
+    obelisk_rt_context *context, uint32_t passSwitchId, uint32_t value,
+    uint32_t unknown, uint64_t turnOnDelay, uint64_t turnOffDelay,
+    uint64_t unknownDelay) {
+  if (!context || !context->execution || value > 1 || unknown > 1 ||
+      passSwitchId == UINT32_MAX)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  try {
+    ContextTransaction transaction(context);
+    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    obelisk::designbytecode::Image image;
+    if (!obelisk::designbytecode::loadValidatedImage(entry, context, image))
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    NetAliasCache *cache =
+        obelisk::designbytecode::getNetAliasCache(image, context);
     if (!cache)
       return OBELISK_RT_INVALID_DESIGN;
     uint32_t encodedId = passSwitchId + 1;
-    auto edges = cache->controlledPassEdges.find(encodedId);
-    auto state = cache->controlledPassStates.find(encodedId);
-    if (edges == cache->controlledPassEdges.end() ||
-        state == cache->controlledPassStates.end())
+    auto current = cache->controlledPassStates.find(encodedId);
+    if (current == cache->controlledPassStates.end() ||
+        cache->controlledPassEdges.find(encodedId) ==
+            cache->controlledPassEdges.end())
       return OBELISK_RT_INVALID_DESIGN;
+    if (current->second == 3) {
+      bool initialized = false;
+      obelisk_rt_status status =
+          obelisk::designbytecode::applyPassSwitchControl(
+              context, passSwitchId, 2, initialized);
+      if (status != OBELISK_RT_OK)
+        return status;
+      if (initialized && ++context->schedulerEpoch == 0)
+        context->schedulerEpoch = 1;
+    }
     uint8_t nextState = unknown ? 2 : static_cast<uint8_t>(value);
-    uint8_t previousState = state->second;
-    if (previousState == nextState)
+    auto pending = context->delayedPassSwitchPending.find(passSwitchId);
+    if (pending != context->delayedPassSwitchPending.end() &&
+        pending->second.state == nextState)
       return OBELISK_RT_OK;
-    std::unordered_set<uint64_t> affectedComponents;
-    for (const NetControlledPassEdge &edge : edges->second) {
-      auto component = cache->passComponents.find(edge.component);
-      if (component == cache->passComponents.end())
+    if (pending != context->delayedPassSwitchPending.end()) {
+      auto scheduled = pending->second.event;
+      if (scheduled == context->scheduledPassSwitchEvents.end() ||
+          scheduled->second.passSwitchID != passSwitchId)
         return OBELISK_RT_INVALID_DESIGN;
-      NetPassComponent &pass = component->second;
-      size_t count = pass.roots.size();
-      if (edge.lhs >= count || edge.rhs >= count)
-        return OBELISK_RT_INVALID_DESIGN;
-      size_t forward = static_cast<size_t>(edge.lhs) * count + edge.rhs;
-      size_t reverse = static_cast<size_t>(edge.rhs) * count + edge.lhs;
-      auto adjust = [&](std::vector<uint32_t> &counts, bool add) {
-        if (add) {
-          ++counts[forward];
-          ++counts[reverse];
-        } else {
-          --counts[forward];
-          --counts[reverse];
-        }
-      };
-      auto &definite = edge.resistive ? pass.definiteResistive
-                                      : pass.definiteNonresistive;
-      auto &possible = edge.resistive ? pass.possibleResistive
-                                      : pass.possibleNonresistive;
-      if (previousState == 1)
-        adjust(definite, false);
-      if (previousState != 0)
-        adjust(possible, false);
-      if (nextState == 1)
-        adjust(definite, true);
-      if (nextState != 0)
-        adjust(possible, true);
-      affectedComponents.insert(edge.component);
+      context->scheduledPassSwitchEvents.erase(scheduled);
+      context->delayedPassSwitchPending.erase(pending);
     }
-    state->second = nextState;
-    std::vector<uint64_t> roots;
-    for (uint64_t componentId : affectedComponents) {
-      NetPassComponent &component = cache->passComponents.at(componentId);
-      if (!rebuildPassComponent(component))
-        return OBELISK_RT_INVALID_DESIGN;
-      roots.insert(roots.end(), component.roots.begin(), component.roots.end());
+    if (current->second == nextState)
+      return OBELISK_RT_OK;
+    uint64_t delay = nextState == 1   ? turnOnDelay
+                     : nextState == 0 ? turnOffDelay
+                                      : unknownDelay;
+    if (delay == 0) {
+      bool changed = false;
+      obelisk_rt_status status =
+          obelisk::designbytecode::applyPassSwitchControl(context, passSwitchId,
+                                                          nextState, changed);
+      if (status != OBELISK_RT_OK)
+        return status;
+      if (changed && ++context->schedulerEpoch == 0)
+        context->schedulerEpoch = 1;
+      return OBELISK_RT_OK;
     }
-    bool changed = false;
-    if (!resolveNetRoots(*cache, context, std::move(roots), changed,
-                         context->nativeStateValue != nullptr))
-      return context->schedulerStatus == OBELISK_RT_OK
-                 ? OBELISK_RT_INVALID_DESIGN
-                 : context->schedulerStatus;
-    if (changed && ++context->schedulerEpoch == 0)
-      context->schedulerEpoch = 1;
+    if (context->nextSchedulerSequence == 0 ||
+        context->nextSchedulerSequence == UINT64_MAX)
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    uint64_t sequence = context->nextSchedulerSequence++;
+    uint64_t dueTime = delay > UINT64_MAX - context->schedulerTime
+                           ? UINT64_MAX
+                           : context->schedulerTime + delay;
+    std::pair<uint64_t, uint64_t> key{dueTime, sequence};
+    auto scheduled = context->scheduledPassSwitchEvents.emplace(
+        key, ScheduledPassSwitchEvent{passSwitchId, nextState});
+    if (!scheduled.second)
+      return OBELISK_RT_INVALID_DESIGN;
+    try {
+      if (!context->delayedPassSwitchPending
+               .emplace(passSwitchId,
+                        DelayedPassSwitchPending{scheduled.first, nextState})
+               .second) {
+        context->scheduledPassSwitchEvents.erase(scheduled.first);
+        return OBELISK_RT_INVALID_DESIGN;
+      }
+    } catch (...) {
+      context->scheduledPassSwitchEvents.erase(scheduled.first);
+      throw;
+    }
     return OBELISK_RT_OK;
   } catch (const std::bad_alloc &) {
     return OBELISK_RT_OUT_OF_MEMORY;

@@ -2192,8 +2192,32 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
     if (name.ends_with("0"))
       activeHigh = sim::SimLogicUnaryOp::create(
           builder, location, controlType, sim::UnaryKind::BitNot, activeHigh);
-    for (int64_t id : ids.asArrayRef())
-      sim::SimPassSwitchControlOp::create(builder, location, activeHigh, id);
+    auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
+        "obelisk_sim.propagation_delays");
+    if (delays && (delays.empty() || delays.size() > 2))
+      return function.emitError(
+          "controlled pass-switch delay must contain one or two values");
+    if (delays) {
+      ArrayRef<int64_t> values = delays.asArrayRef();
+      int64_t turnOn = values[0];
+      int64_t turnOff = values.size() == 1 ? turnOn : values[1];
+      int64_t unknown = std::min(turnOn, turnOff);
+      auto timeConstant = [&](int64_t ticks) {
+        return sim::SimTimeConstantOp::create(
+            builder, location, sim::TimeType::get(function.getContext()),
+            builder.getI64IntegerAttr(ticks));
+      };
+      Value turnOnValue = timeConstant(turnOn);
+      Value turnOffValue = timeConstant(turnOff);
+      Value unknownValue = timeConstant(unknown);
+      for (int64_t id : ids.asArrayRef())
+        sim::SimPassSwitchControlDelayedOp::create(
+            builder, location, activeHigh, turnOnValue, turnOffValue,
+            unknownValue, id);
+    } else {
+      for (int64_t id : ids.asArrayRef())
+        sim::SimPassSwitchControlOp::create(builder, location, activeHigh, id);
+    }
     return success();
   }
   SmallVector<Operation *> outputs;

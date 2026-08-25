@@ -1767,6 +1767,10 @@ LogicalResult SimPassSwitchControlOp::verify() {
   return verifyNonnegative(*this, getPassSwitchIdAttr(), "pass-switch ID");
 }
 
+LogicalResult SimPassSwitchControlDelayedOp::verify() {
+  return verifyNonnegative(*this, getPassSwitchIdAttr(), "pass-switch ID");
+}
+
 LogicalResult SimDriverDriveInertialStrengthPairOp::verify() {
   Type lowType = getLowDriver().getType().getElementType();
   Type highType = getHighDriver().getType().getElementType();

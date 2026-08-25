@@ -12,6 +12,8 @@ module tranif_source_semantics(
   rtranif0 rt0(left[2], right[2], control);
   rtranif1 rt1[0:0](left[3], right[3], control);
   tranif1 vector_controls[3:0](left, right, controls);
+  tranif1 #(3) delayed_one(left[0], right[0], control);
+  rtranif0 #(5, 7) delayed_two(left[1], right[1], control);
 endmodule
 
 // CHECK: slang.symbol.primitive_instance
@@ -27,3 +29,7 @@ endmodule
 // CHECK: slang.symbol.primitive_instance
 // CHECK-SAME: primitive_name = "tranif1"
 // CHECK: slang.expression.element_select
+// CHECK: slang.symbol.primitive_instance attributes {delay_fs = array<i64: 3000000>
+// CHECK-SAME: primitive_name = "tranif1"
+// CHECK: slang.symbol.primitive_instance attributes {delay_fs = array<i64: 5000000, 7000000>
+// CHECK-SAME: primitive_name = "rtranif0"

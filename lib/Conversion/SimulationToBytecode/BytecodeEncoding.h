@@ -101,6 +101,8 @@ constexpr uint32_t kIntrinsicNetCountDrivers =
     OBELISK_RT_INTRINSIC_V1_NET_COUNT_DRIVERS;
 constexpr uint32_t kIntrinsicPassSwitchControl =
     OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL;
+constexpr uint32_t kIntrinsicPassSwitchControlDelayed =
+    OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL_DELAYED;
 constexpr uint32_t kIntrinsicStateAlloc = OBELISK_RT_INTRINSIC_V1_STATE_ALLOC;
 constexpr uint32_t kIntrinsicStateAllocTyped =
     OBELISK_RT_INTRINSIC_V1_STATE_ALLOC_TYPED;

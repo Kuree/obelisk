@@ -573,6 +573,19 @@ struct ScheduledDesignEvent {
   uint32_t retainedAutomaticID = 0;
 };
 
+struct ScheduledPassSwitchEvent {
+  uint32_t passSwitchID = UINT32_MAX;
+  uint8_t state = 0;
+};
+
+using ScheduledPassSwitchEvents =
+    std::map<std::pair<uint64_t, uint64_t>, ScheduledPassSwitchEvent>;
+
+struct DelayedPassSwitchPending {
+  ScheduledPassSwitchEvents::iterator event;
+  uint8_t state = 0;
+};
+
 struct DesignActivation {
   uint32_t function = 0;
   uint32_t continuation = 0;
@@ -1037,6 +1050,9 @@ struct obelisk_rt_context {
   std::vector<ScheduledManagedNBA> scheduledManagedNBAs;
   std::vector<ScheduledDesignNBA> scheduledDesignNBAs;
   std::vector<ScheduledDesignEvent> scheduledDesignEvents;
+  ScheduledPassSwitchEvents scheduledPassSwitchEvents;
+  std::unordered_map<uint32_t, DelayedPassSwitchPending>
+      delayedPassSwitchPending;
   std::vector<ScheduledDesignTask> scheduledDesignTasks;
   std::unordered_map<uint64_t, size_t> scheduledDesignTaskIndices;
   std::unordered_set<uint64_t> designPollCandidates;
