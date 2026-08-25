@@ -624,9 +624,10 @@ enabled as language support. Most residual cases are mandatory declaration
 order and grammar diagnostics, undefined or implementation-specific compiler
 directives, malformed upstream negative probes, misspelled identifiers, or
 harness inputs that omit their companion source or macro definitions. The
-remaining genuine cases stay attached to their owning features: the isolated
-multiline lexical-time directive case, protected envelopes, port declarations,
-assignment-pattern context, and interface method export.
+remaining genuine cases stay attached to their owning features: protected
+envelopes, port declarations, assignment-pattern context, and interface method
+export. The isolated multiline lexical-time directive case is now executable:
+comments and newlines may separate every token of the Clause 22.7 token grammar.
 
 ## Clause ledger
 

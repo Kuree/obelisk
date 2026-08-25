@@ -2,6 +2,35 @@ if(NOT DEFINED SOURCE_DIR)
   message(FATAL_ERROR "SOURCE_DIR is required")
 endif()
 
+# IEEE 1800-2017 22.7 gives `timescale a token grammar rather than a
+# line-oriented argument. Comments are whitespace under 5.4, so the integer,
+# unit suffix, slash, and precision may occur on separate source lines. Slang
+# v11 accepts whitespace between an integer and its suffix only when both are
+# on one line, incorrectly terminating this otherwise legal directive.
+set(preprocessor_source "${SOURCE_DIR}/source/parsing/Preprocessor.cpp")
+file(READ "${preprocessor_source}" contents)
+
+set(old_code [[
+        auto suffix = peek();
+        if (suffix.kind != TokenKind::Identifier || !suffix.isOnSameLine()) {
+]])
+set(new_code [[
+        auto suffix = peek();
+        if (suffix.kind != TokenKind::Identifier) {
+]])
+
+string(FIND "${contents}" "${new_code}" patched_at)
+if(patched_at EQUAL -1)
+  string(FIND "${contents}" "${old_code}" unpatched_at)
+  if(unpatched_at EQUAL -1)
+    message(FATAL_ERROR
+      "Slang's timescale specifier parser no longer matches the expected source")
+  endif()
+
+  string(REPLACE "${old_code}" "${new_code}" contents "${contents}")
+  file(WRITE "${preprocessor_source}" "${contents}")
+endif()
+
 set(expression_source "${SOURCE_DIR}/source/ast/Expression.cpp")
 file(READ "${expression_source}" contents)
 
