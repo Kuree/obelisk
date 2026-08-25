@@ -98,6 +98,26 @@ static bool isConditionalGate(Operation *unit) {
                   name.getValue() == "notif0" || name.getValue() == "notif1");
 }
 
+static bool isControlledPassSwitch(Operation *unit) {
+  auto primitive = dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(unit);
+  auto name = primitive ? primitive->getAttrOfType<StringAttr>("primitive_name")
+                        : StringAttr{};
+  return name && (name.getValue() == "tranif0" ||
+                  name.getValue() == "tranif1" ||
+                  name.getValue() == "rtranif0" ||
+                  name.getValue() == "rtranif1");
+}
+
+static bool isPassSwitch(Operation *unit) {
+  auto primitive = dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(unit);
+  auto name = primitive ? primitive->getAttrOfType<StringAttr>("primitive_name")
+                        : StringAttr{};
+  return name &&
+         (name.getValue() == "tran" || name.getValue() == "rtran" ||
+          name.getValue() == "tranif0" || name.getValue() == "tranif1" ||
+          name.getValue() == "rtranif0" || name.getValue() == "rtranif1");
+}
+
 static Operation *peelClockingOutputSelects(Operation *destination) {
   while (isa<semantic::SVElementSelectExpressionOp,
              semantic::SVRangeSelectExpressionOp>(destination)) {
@@ -651,11 +671,47 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     sourceUnits.push_back(connection);
   }
 
-  // IEEE 1800-2017 28.8 and 28.12: an unconditional tran/rtran channel is
+  // IEEE 1800-2017 28.8 and 28.12: a tran-family channel is
   // electrical topology, not two continuously evaluated feedback processes.
   // Preserve the terminal nets as distinct nodes so terminal-local strength
   // and driver introspection remain observable.
   uint64_t nextPassSwitchId = 0;
+  llvm::DenseMap<Operation *, SmallVector<Operation *>> passArrayMembers;
+  for (Operation *unit : sourceUnits)
+    if (isPassSwitch(unit))
+      if (Operation *parent = unit->getParentOp();
+          isa_and_nonnull<semantic::SVInstanceArraySymbolOp>(parent))
+        passArrayMembers[parent].push_back(unit);
+  llvm::DenseMap<Operation *, uint64_t> sharedArrayControlGroups;
+  std::set<
+      std::tuple<Operation *, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t>>
+      sharedArrayEdges;
+  auto totalRunWidth = [](ArrayRef<NetRun> runs) {
+    uint64_t width = 0;
+    for (const NetRun &run : runs)
+      width += run.width;
+    return width;
+  };
+  auto sliceRuns = [](ArrayRef<NetRun> runs, uint64_t low, uint64_t width,
+                      SmallVectorImpl<NetRun> &result) {
+    uint64_t cursor = 0;
+    for (const NetRun &run : runs) {
+      if (width == 0)
+        break;
+      if (cursor + run.width <= low) {
+        cursor += run.width;
+        continue;
+      }
+      uint64_t inside = low > cursor ? low - cursor : 0;
+      uint64_t selected = std::min(width, run.width - inside);
+      result.push_back({run.descriptor, run.offset + inside, selected, run.path,
+                        run.nodeId});
+      low += selected;
+      width -= selected;
+      cursor += run.width;
+    }
+    return width == 0;
+  };
   SmallVector<Operation *> executableUnits;
   executableUnits.reserve(sourceUnits.size());
   for (Operation *unit : sourceUnits) {
@@ -663,23 +719,27 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     auto name = primitive
                     ? primitive->getAttrOfType<StringAttr>("primitive_name")
                     : StringAttr{};
-    bool resistive = name && name.getValue() == "rtran";
-    if (!name || (name.getValue() != "tran" && !resistive)) {
+    bool controlled = isControlledPassSwitch(unit);
+    bool resistive = name && (name.getValue() == "rtran" ||
+                              name.getValue() == "rtranif0" ||
+                              name.getValue() == "rtranif1");
+    if (!name || (name.getValue() != "tran" && !resistive && !controlled)) {
       executableUnits.push_back(unit);
       continue;
     }
     if (primitive.getDelayFs()) {
       emitError(getSemanticLocation(unit))
-          << "tran and rtran primitives shall not have delays";
+          << "delayed tran-family primitives are not yet supported";
       invalid = true;
       continue;
     }
     SmallVector<Operation *> roots = getChildren(unit);
     SmallVector<NetRun> terminals[2];
     bool invalidTerminal = false;
-    if (roots.size() != 2) {
+    if (roots.size() != (controlled ? 3u : 2u)) {
       emitError(getSemanticLocation(unit))
-          << "tran/rtran primitive requires exactly two terminals";
+          << "tran-family primitive requires two terminals"
+          << (controlled ? " and one control" : "");
       invalid = true;
       continue;
     }
@@ -699,19 +759,102 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     }
     if (invalidTerminal)
       continue;
+
+    // IEEE 1800-2017 28.2 primitive arrays arrive from Slang as one elaborated
+    // child per element, with vector terminals and vector controls already
+    // reduced to constant element selects.  Preserve every child edge (a
+    // scalar terminal may intentionally make parallel devices), but publish a
+    // shared unsliced scalar control as one frozen runtime group and one
+    // executable process.
+    ArrayRef<Operation *> arrayMembers;
+    size_t arrayOrdinal = 0;
+    Operation *arrayParent = nullptr;
+    if (Operation *parent = unit->getParentOp()) {
+      auto array = passArrayMembers.find(parent);
+      if (array != passArrayMembers.end()) {
+        arrayParent = parent;
+        arrayMembers = array->second;
+        auto member = llvm::find(arrayMembers, unit);
+        if (member != arrayMembers.end())
+          arrayOrdinal = static_cast<size_t>(member - arrayMembers.begin());
+      }
+    }
+    bool sharedArrayControl =
+        controlled && arrayParent &&
+        !isa<semantic::SVElementSelectExpressionOp,
+             semantic::SVRangeSelectExpressionOp>(roots[2]);
+
+    // Some Slang primitive-array forms expose an already-selected scalar
+    // terminal on each child, while controlled forms can retain the complete
+    // vector expression.  Normalize the latter to this child's distributed
+    // slice.  A scalar remains repeated on every array element.
+    if (!arrayMembers.empty()) {
+      for (unsigned terminal = 0; terminal != 2; ++terminal) {
+        uint64_t width = totalRunWidth(terminals[terminal]);
+        if (width == 1)
+          continue;
+        if (width % arrayMembers.size() != 0) {
+          emitError(getSemanticLocation(roots[terminal]))
+              << "tran/rtran terminal width is not divisible by its "
+                 "instance-array size";
+          invalid = true;
+          invalidTerminal = true;
+          break;
+        }
+        uint64_t elementWidth = width / arrayMembers.size();
+        SmallVector<NetRun> selected;
+        if (!sliceRuns(terminals[terminal], arrayOrdinal * elementWidth,
+                       elementWidth, selected)) {
+          emitError(getSemanticLocation(roots[terminal]))
+              << "could not distribute tran/rtran array terminal";
+          invalid = true;
+          invalidTerminal = true;
+          break;
+        }
+        terminals[terminal] = std::move(selected);
+      }
+      if (invalidTerminal)
+        continue;
+    }
+    std::optional<uint64_t> controlGroup;
+    if (sharedArrayControl)
+      if (auto group = sharedArrayControlGroups.find(arrayParent);
+          group != sharedArrayControlGroups.end())
+        controlGroup = group->second;
+
     size_t lhsIndex = 0, rhsIndex = 0;
     uint64_t lhsConsumed = 0, rhsConsumed = 0;
+    SmallVector<int64_t> passSwitchIds;
     while (lhsIndex != terminals[0].size() && rhsIndex != terminals[1].size()) {
       const NetRun &lhs = terminals[0][lhsIndex];
       const NetRun &rhs = terminals[1][rhsIndex];
       uint64_t width =
           std::min(lhs.width - lhsConsumed, rhs.width - rhsConsumed);
+      if (sharedArrayControl) {
+        auto edge = std::make_tuple(arrayParent, lhs.descriptor.id,
+                                    lhs.offset + lhsConsumed, rhs.descriptor.id,
+                                    rhs.offset + rhsConsumed, width);
+        if (!sharedArrayEdges.insert(edge).second)
+          // Parallel scalar-terminal array elements must retain distinct
+          // pass IDs for validation and driver introspection.  Their one
+          // executable control process publishes each ID; the common vector
+          // case still takes the single grouped fast path.
+          controlGroup.reset();
+      }
+      uint64_t passSwitchId = nextPassSwitchId++;
+      if (!controlGroup)
+        controlGroup = passSwitchId;
       auto pass = sim::SimPassSwitchDeclOp::create(
-          builder, getSemanticLocation(unit), nextPassSwitchId++,
-          scopes.lookup(unit), lhs.descriptor.id, lhs.offset + lhsConsumed,
-          rhs.descriptor.id, rhs.offset + rhsConsumed, width, false);
+          builder, getSemanticLocation(unit), passSwitchId, scopes.lookup(unit),
+          lhs.descriptor.id, lhs.offset + lhsConsumed, rhs.descriptor.id,
+          rhs.offset + rhsConsumed, width, false);
       if (resistive)
         pass->setAttr("resistive", builder.getBoolAttr(true));
+      if (controlled) {
+        pass->setAttr("controlled", builder.getBoolAttr(true));
+        pass->setAttr("control_group",
+                      builder.getI64IntegerAttr(*controlGroup));
+      }
       lhsConsumed += width;
       rhsConsumed += width;
       if (lhsConsumed == lhs.width) {
@@ -727,6 +870,32 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       emitError(getSemanticLocation(unit))
           << "tran/rtran terminals have incompatible widths";
       invalid = true;
+    }
+    if (controlled) {
+      if (controlGroup) {
+        if (sharedArrayControl)
+          sharedArrayControlGroups.try_emplace(arrayParent, *controlGroup);
+        passSwitchIds.push_back(static_cast<int64_t>(*controlGroup));
+      }
+      if (sharedArrayControl) {
+        Operation *representative = arrayMembers.front();
+        SmallVector<int64_t> representativeIds;
+        if (auto existing = representative->getAttrOfType<DenseI64ArrayAttr>(
+                "obelisk_sim.pass_switch_ids"))
+          llvm::append_range(representativeIds, existing.asArrayRef());
+        for (int64_t id : passSwitchIds)
+          if (!llvm::is_contained(representativeIds, id))
+            representativeIds.push_back(id);
+        representative->setAttr(
+            "obelisk_sim.pass_switch_ids",
+            builder.getDenseI64ArrayAttr(representativeIds));
+        if (arrayOrdinal == 0)
+          executableUnits.push_back(representative);
+      } else {
+        unit->setAttr("obelisk_sim.pass_switch_ids",
+                      builder.getDenseI64ArrayAttr(passSwitchIds));
+        executableUnits.push_back(unit);
+      }
     }
   }
   sourceUnits.clear();
@@ -900,6 +1069,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     }
   };
   for (Operation *unit : sourceUnits) {
+    if (isControlledPassSwitch(unit))
+      continue;
     bool continuous =
         isa<semantic::SVContinuousAssignSymbolOp,
             semantic::SVPrimitiveInstanceSymbolOp, semantic::SVNetSymbolOp>(

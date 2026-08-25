@@ -3442,6 +3442,18 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     }
     return OBELISK_RT_OK;
   }
+  case OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL: {
+    Layout input = layoutAt(image, frame.function, inputRegister(0));
+    Logic control = readLogic(frame.data, input);
+    if (control.width != 1 || control.value.empty())
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint32_t value = static_cast<uint32_t>(control.value[0] & 1);
+    uint32_t unknown = control.fourState && !control.unknown.empty()
+                           ? static_cast<uint32_t>(control.unknown[0] & 1)
+                           : 0;
+    return obelisk_rt_v1_pass_switch_control(context, signature.flags, value,
+                                             unknown);
+  }
   case OBELISK_RT_INTRINSIC_V1_TIME_NOW:
     return sentinel(0, obelisk_rt_v1_scheduler_time(context));
   case OBELISK_RT_INTRINSIC_V1_SAMPLED_READ: {

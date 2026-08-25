@@ -232,7 +232,8 @@ SmallVector<uint8_t> serializeBytecodeImage(
     output.push_back(
         (connection.rhsReversed ? 1 : 0) | (connection.hasDominance ? 2 : 0) |
         (connection.rhsDominates ? 4 : 0) | (connection.passSwitchId ? 8 : 0) |
-        (connection.passResistive ? 16 : 0));
+        (connection.passResistive ? 16 : 0) |
+        (connection.passControlled ? 32 : 0));
     output.push_back(0);
     append32(output, connection.passSwitchId);
   }

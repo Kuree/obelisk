@@ -565,10 +565,23 @@ bytecode / 0.16 seconds native and simulates in 2.26 / 2.20 seconds, without a
 per-device topology scan during resolution. The real-UVM smoke compiles in
 40.663 seconds bytecode / 107.816 seconds native and simulates in 0.182 / 0.020
 seconds, with zero UVM errors or fatals in both tiers.
-Controlled `tranif0`, `tranif1`, `rtranif0`, and `rtranif1` remain the next G1
-tranche because their four-state controls require scheduler-visible dynamic
-channel enablement; unlike `rtran`, those controlled primitives may also carry
-static turn-on, turn-off, and high-impedance delays.
+G1's fifth closure tranche implements controlled `tranif0`, `tranif1`,
+`rtranif0`, and `rtranif1` channels from 28.8 and 28.12.2. Controls are
+normalized to active high without losing X/Z: a known active value enables the
+definite topology, a known inactive value disables it, and X or Z contributes
+the standard possible connection and exact L/H strength range. Definite and
+possible nonresistive/resistive closures are precomputed per frozen component;
+ordinary driver changes use direct matrix lookups and never scan devices.
+Bidirectional propagation, mixed controlled/resistive chains, packed reversed
+mapping, and primitive arrays share the native/bytecode representation.
+Elaborated arrays retain their standard bit distribution, while devices driven
+by one scalar control share a compact control group: one scheduled process and
+one runtime update adjust every affected component before resolving it once.
+All four upstream strength matrices match their complete oracles at O0 and O3
+in both tiers. A 512-device array with 10,000 control transitions compiles at
+O3 in 0.10 seconds / 76 MB bytecode and 0.14 seconds / 83 MB native, then
+simulates in 1.83 / 1.77 seconds. Static turn-on, turn-off, and high-impedance
+delays on pass devices remain the G1 boundary and are diagnosed explicitly.
 
 G4's first closure tranche executes unconditional scalar parallel specify
 paths with one, two, or three static delay values, including specparam and
@@ -747,7 +760,7 @@ and 73.183 seconds compile / 0.019 seconds simulate for native.
 | 25 Interfaces | Partial | Interfaces, modports, parameterization, interface tasks/functions, interface arrays, virtual-interface handles, calls, containers, and clocking-block access execute. Complete the residual virtual-interface clock/event/formal cases and inherit specify support from Clause 30. |
 | 26 Packages | Partial | Packages, imports/exports, scope lookup, and the implemented `std` package surface, including R1 `std::randomize`, execute. Complete the remaining normative Annex G behavior through the randomization and system-task chunks. |
 | 27 Generate constructs | Partial | Loop/conditional generation and ordinary external names elaborate. External tests still expose generate-scope and parameter-binding corner cases. |
-| 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, strength-aware scalar-net `%v`, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, and static unconditional `tran`/`rtran` channels with exact resistive strength reduction execute. Complete delayed and controlled pass devices and forced-native large gate-netlist coalescing. |
+| 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, strength-aware scalar-net `%v`, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, and `tran`/`rtran`/`tranif0`/`tranif1`/`rtranif0`/`rtranif1` channels with exact four-state connectivity and resistive strength reduction execute. Complete delayed pass devices, exact MOS source-strength forwarding, and forced-native large gate-netlist coalescing. |
 | 29 User-defined primitives | Missing | UDP declarations and ports are imported, but table rows and sequential state semantics are not preserved, and an instance currently reaches the built-in-primitive diagnostic. |
 | 30 Specify blocks | Partial | Specparams and specify blocks are imported. Unconditional whole-terminal parallel and full multi-source paths with one/two/three static delays and one destination driver execute through compact inertial drivers in both tiers; overlapping paths with distinct whole sources use precomputed path-sensitive arbitration. Complete partial-select mapping, polarity, conditions, edge/data-source forms, six/twelve-transition delays, the remaining general path-to-driver mappings, pulse controls and limits, and `showcancelled`/`noshowcancelled`. Unsupported forms receive targeted Clause 30 diagnostics instead of being silently erased. |
 | 31 Timing checks | Semantic only | System timing-check nodes are imported and now receive a targeted Clause 31 diagnostic instead of being silently erased. G5 implements all stability-window and clock/control checks, edge and condition forms, notifiers, vectors, negative checks, and violation scheduling. |
@@ -942,11 +955,10 @@ one commit.
 ### Gates, timing, SDF, and protected source
 
 36. **G1 — MOS/pass/CMOS devices (28.7-28.9, 28.13-28.14).** MOS/CMOS truth
-    tables, arrays, the first resistive reduction, exact strength-aware scalar
-    `%v`, and static unconditional `tran` propagation with chained strength
-    reduction are complete. Implement controlled-tran and resistive variants,
-    exact MOS source-strength forwarding, and forced-native gate-fragment
-    coalescing.
+    tables, arrays, exact strength-aware scalar `%v`, and unconditional and
+    four-state-controlled tran/rtran propagation with chained exact resistive
+    strength reduction are complete. Implement delayed pass devices, exact MOS
+    source-strength forwarding, and forced-native gate-fragment coalescing.
 37. **G2 — Combinational UDPs (29.3-29.4, 29.8).** Preserve truth-table rows
     in semantic IR and compile exact four-state matching, instances, arrays,
     strengths, and delays.

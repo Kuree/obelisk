@@ -170,7 +170,7 @@ def SimPassSwitchDeclOp : SimOp<"net.pass.decl", [
   ]> {
   let summary = "static bidirectional pass-switch connection run";
   let description = [{
-    Records an unconditional `tran` or `rtran` channel without collapsing the
+    Records a `tran`, `rtran`, `tranif`, or `rtranif` channel without collapsing the
     terminal nets into one declaration. The runtime resolves the electrically
     connected component together while retaining terminal-local strength and
     one logical switch contribution at each endpoint for driver introspection.
@@ -182,6 +182,20 @@ def SimPassSwitchDeclOp : SimOp<"net.pass.decl", [
   let assemblyFormat = [{$id `in` $scope_id $lhs_net_id `[` $lhs_offset `]`
     `to` $rhs_net_id `[` $rhs_offset `]` `width` $width
     `reversed` `=` $rhs_reversed attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimPassSwitchControlOp : SimOp<"net.pass.control", [
+    MemoryEffects<[MemWrite<SimNetResource>]>
+  ]> {
+  let summary = "publish the four-state enable of a controlled pass switch";
+  let description = [{
+    Updates one frozen pass-switch run. The control is normalized to active
+    high: 1 enables the channel, 0 disables it, and x/z makes connectivity
+    uncertain according to IEEE 1800-2017 28.12.2.
+  }];
+  let arguments = (ins SimLogic1Type:$control, I64Attr:$pass_switch_id);
+  let assemblyFormat = "$pass_switch_id `=` $control attr-dict `:` qualified(type($control))";
   let hasVerifier = 1;
 }
 

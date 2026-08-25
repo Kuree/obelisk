@@ -208,6 +208,17 @@ LogicalResult SimPassSwitchDeclOp::verify() {
   if (Attribute resistive = (*this)->getAttr("resistive");
       resistive && !isa<BoolAttr>(resistive))
     return emitOpError("resistive attribute must be boolean");
+  if (Attribute controlled = (*this)->getAttr("controlled");
+      controlled && !isa<BoolAttr>(controlled))
+    return emitOpError("controlled attribute must be boolean");
+  if (Attribute group = (*this)->getAttr("control_group")) {
+    auto integer = dyn_cast<IntegerAttr>(group);
+    if (!integer || integer.getValue().isNegative())
+      return emitOpError("control_group attribute must be nonnegative integer");
+    auto controlled = (*this)->getAttrOfType<BoolAttr>("controlled");
+    if (!controlled || !controlled.getValue())
+      return emitOpError("control_group requires controlled = true");
+  }
   return success();
 }
 

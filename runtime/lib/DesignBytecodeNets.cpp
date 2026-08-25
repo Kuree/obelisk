@@ -149,6 +149,56 @@ bool appendSignalEvent(obelisk_rt_context *context, uint64_t bitOffset,
       evaluateComputedObservers);
 }
 
+static bool rebuildPassComponent(NetPassComponent &component) {
+  size_t count = component.roots.size();
+  if (count != 0 && count > SIZE_MAX / count)
+    return false;
+  size_t matrixSize = count * count;
+  if (component.definiteNonresistive.size() != matrixSize ||
+      component.definiteResistive.size() != matrixSize ||
+      component.possibleNonresistive.size() != matrixSize ||
+      component.possibleResistive.size() != matrixSize)
+    return false;
+  auto close = [&](const std::vector<uint32_t> &nonresistive,
+                   const std::vector<uint32_t> &resistive,
+                   std::vector<uint8_t> &result) {
+    result.assign(matrixSize, uint8_t{5});
+    for (size_t lhs = 0; lhs != count; ++lhs) {
+      result[lhs * count + lhs] = 0;
+      for (size_t rhs = 0; rhs != count; ++rhs) {
+        size_t slot = lhs * count + rhs;
+        if (nonresistive[slot] != 0)
+          result[slot] = 0;
+        else if (resistive[slot] != 0)
+          result[slot] = 1;
+      }
+    }
+    // Five is the unreachable sentinel; four resistive crossings already
+    // reach Table 28-8's fixed point. This dense closure is intentionally
+    // component-local and contains no device-list walk.
+    for (size_t through = 0; through != count; ++through)
+      for (size_t lhs = 0; lhs != count; ++lhs) {
+        uint8_t left = result[lhs * count + through];
+        if (left == 5)
+          continue;
+        for (size_t rhs = 0; rhs != count; ++rhs) {
+          uint8_t right = result[through * count + rhs];
+          if (right == 5)
+            continue;
+          uint8_t candidate =
+              static_cast<uint8_t>(std::min<unsigned>(4, left + right));
+          result[lhs * count + rhs] =
+              std::min(result[lhs * count + rhs], candidate);
+        }
+      }
+  };
+  close(component.definiteNonresistive, component.definiteResistive,
+        component.reductions);
+  close(component.possibleNonresistive, component.possibleResistive,
+        component.possibleReductions);
+  return true;
+}
+
 NetAliasCache *getNetAliasCache(const Image &image,
                                 obelisk_rt_context *context) {
   if (context->netAliases.execution == context->execution)
@@ -259,8 +309,11 @@ NetAliasCache *getNetAliasCache(const Image &image,
       uint64_t lhsRoot = cache.rootByBit.at(lhs);
       uint64_t rhsRoot = cache.rootByBit.at(rhs);
       bool resistive = (connection.flags & 16) != 0;
-      cache.passNeighbors[lhsRoot].push_back({rhsRoot, resistive});
-      cache.passNeighbors[rhsRoot].push_back({lhsRoot, resistive});
+      bool controlled = (connection.flags & 32) != 0;
+      cache.passNeighbors[lhsRoot].push_back(
+          {rhsRoot, connection.tailReserved, resistive, controlled});
+      cache.passNeighbors[rhsRoot].push_back(
+          {lhsRoot, connection.tailReserved, resistive, controlled});
     }
   }
   std::unordered_map<uint64_t, uint64_t> passParents;
@@ -294,38 +347,41 @@ NetAliasCache *getNetAliasCache(const Image &image,
     roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
     if (!roots.empty() && roots.size() > SIZE_MAX / roots.size())
       return nullptr;
-    passComponent.reductions.reserve(roots.size() * roots.size());
+    size_t matrixSize = roots.size() * roots.size();
+    passComponent.definiteNonresistive.assign(matrixSize, 0);
+    passComponent.definiteResistive.assign(matrixSize, 0);
+    passComponent.possibleNonresistive.assign(matrixSize, 0);
+    passComponent.possibleResistive.assign(matrixSize, 0);
     std::unordered_map<uint64_t, size_t> rootIndex;
     for (size_t index = 0; index != roots.size(); ++index)
       rootIndex.emplace(roots[index], index);
-    // Resolution is hot; topology is immutable. Precompute the least number
-    // of resistive crossings between every terminal pair once, with four as
-    // the saturated Table 28-8 reduction. Ordinary tran edges cost zero.
-    for (uint64_t target : roots) {
-      std::vector<uint8_t> reductions(roots.size(), uint8_t{5});
-      std::deque<uint64_t> worklist;
-      reductions[rootIndex.at(target)] = 0;
-      worklist.push_back(target);
-      while (!worklist.empty()) {
-        uint64_t current = worklist.front();
-        worklist.pop_front();
-        uint8_t currentReduction = reductions[rootIndex.at(current)];
-        for (const NetPassNeighbor &edge : cache.passNeighbors.at(current)) {
-          uint8_t candidate = static_cast<uint8_t>(
-              std::min<unsigned>(4, currentReduction + edge.resistive));
-          uint8_t &known = reductions[rootIndex.at(edge.root)];
-          if (candidate >= known)
-            continue;
-          known = candidate;
-          if (edge.resistive)
-            worklist.push_back(edge.root);
-          else
-            worklist.push_front(edge.root);
+    for (uint64_t lhsRoot : roots)
+      for (const NetPassNeighbor &edge : cache.passNeighbors.at(lhsRoot)) {
+        uint32_t lhs = static_cast<uint32_t>(rootIndex.at(lhsRoot));
+        uint32_t rhs = static_cast<uint32_t>(rootIndex.at(edge.root));
+        if (lhs >= rhs)
+          continue;
+        size_t forward = static_cast<size_t>(lhs) * roots.size() + rhs;
+        size_t reverse = static_cast<size_t>(rhs) * roots.size() + lhs;
+        if (edge.controlled) {
+          cache.controlledPassStates.try_emplace(edge.passSwitchId, 0);
+          cache.controlledPassEdges[edge.passSwitchId].push_back(
+              {component, lhs, rhs, edge.resistive});
+          continue;
         }
+        auto &definite = edge.resistive
+                             ? passComponent.definiteResistive
+                             : passComponent.definiteNonresistive;
+        auto &possible = edge.resistive
+                             ? passComponent.possibleResistive
+                             : passComponent.possibleNonresistive;
+        ++definite[forward];
+        ++definite[reverse];
+        ++possible[forward];
+        ++possible[reverse];
       }
-      passComponent.reductions.insert(passComponent.reductions.end(),
-                                      reductions.begin(), reductions.end());
-    }
+    if (!rebuildPassComponent(passComponent))
+      return nullptr;
   }
   for (const CaptureRecord &driver : drivers) {
     uint8_t strength0 = decodeDriverStrength(driver.argument, 3);
@@ -691,7 +747,10 @@ static bool computeResolvedStrengths(const NetAliasCache &cache,
   uint8_t resolution = cache.resolutionByRoot.at(root);
   auto component = cache.passComponentByRoot.find(root);
   resolvedStrengths = strengthBit(0);
-  auto accumulateRoot = [&](uint64_t sourceRoot, uint8_t resistiveEdges) {
+  auto accumulateRoot = [&](uint64_t sourceRoot, uint8_t resistiveEdges,
+                            uint8_t possibleResistiveEdges) {
+    if (possibleResistiveEdges == 5)
+      return true;
     bool remote = sourceRoot != root;
     auto sourceMembers = cache.members.find(sourceRoot);
     if (sourceMembers == cache.members.end())
@@ -706,16 +765,34 @@ static bool computeResolvedStrengths(const NetAliasCache &cache,
     if (forcedMember != sourceMembers->second.end()) {
       uint16_t strengths = driverStrengths(stateBit(false, *forcedMember),
                                            stateBit(true, *forcedMember), 7, 7);
-      if (remote)
-        strengths = propagateThroughPass(strengths, resistiveEdges);
+      if (remote) {
+        uint16_t possible =
+            propagateThroughPass(strengths, possibleResistiveEdges);
+        if (resistiveEdges == 5)
+          strengths = possible | strengthBit(0);
+        else {
+          strengths = propagateThroughPass(strengths, resistiveEdges);
+          if (possibleResistiveEdges < resistiveEdges)
+            strengths |= possible;
+        }
+      }
       resolvedStrengths =
           combineStrengthRanges(resolvedStrengths, strengths, resolution);
       return true;
     }
     uint16_t implicit =
         implicitNetStrength(cache.resolutionByRoot.at(sourceRoot));
-    if (remote)
-      implicit = propagateThroughPass(implicit, resistiveEdges);
+    if (remote) {
+      uint16_t possible =
+          propagateThroughPass(implicit, possibleResistiveEdges);
+      if (resistiveEdges == 5)
+        implicit = possible | strengthBit(0);
+      else {
+        implicit = propagateThroughPass(implicit, resistiveEdges);
+        if (possibleResistiveEdges < resistiveEdges)
+          implicit |= possible;
+      }
+    }
     resolvedStrengths =
         combineStrengthRanges(resolvedStrengths, implicit, resolution);
     auto componentDrivers = cache.driverBits.find(sourceRoot);
@@ -726,8 +803,17 @@ static bool computeResolvedStrengths(const NetAliasCache &cache,
       bool driverUnknown = stateBit(true, driver.valueOffset);
       uint16_t strengths = driverStrengths(driverValue, driverUnknown,
                                            driver.strength0, driver.strength1);
-      if (remote)
-        strengths = propagateThroughPass(strengths, resistiveEdges);
+      if (remote) {
+        uint16_t possible =
+            propagateThroughPass(strengths, possibleResistiveEdges);
+        if (resistiveEdges == 5)
+          strengths = possible | strengthBit(0);
+        else {
+          strengths = propagateThroughPass(strengths, resistiveEdges);
+          if (possibleResistiveEdges < resistiveEdges)
+            strengths |= possible;
+        }
+      }
       resolvedStrengths =
           combineStrengthRanges(resolvedStrengths, strengths, resolution);
     }
@@ -739,15 +825,19 @@ static bool computeResolvedStrengths(const NetAliasCache &cache,
     const std::vector<uint64_t> &roots = passComponent.roots;
     auto target = std::lower_bound(roots.begin(), roots.end(), root);
     if (target == roots.end() || *target != root ||
-        passComponent.reductions.size() != roots.size() * roots.size())
+        passComponent.reductions.size() != roots.size() * roots.size() ||
+        passComponent.possibleReductions.size() !=
+            roots.size() * roots.size())
       return false;
     size_t reductionOffset =
         static_cast<size_t>(target - roots.begin()) * roots.size();
     for (size_t index = 0; index != roots.size(); ++index)
-      if (!accumulateRoot(roots[index],
-                          passComponent.reductions[reductionOffset + index]))
+      if (!accumulateRoot(
+              roots[index], passComponent.reductions[reductionOffset + index],
+              passComponent
+                  .possibleReductions[reductionOffset + index]))
         return false;
-  } else if (!accumulateRoot(root, 0)) {
+  } else if (!accumulateRoot(root, 0, 0)) {
     return false;
   }
   return true;
@@ -1201,6 +1291,13 @@ obelisk_rt_status obelisk_rt_count_design_drivers(
     auto neighbors = cache->passNeighbors.find(root);
     if (neighbors != cache->passNeighbors.end())
       for (const NetPassNeighbor &neighbor : neighbors->second) {
+        if (neighbor.controlled) {
+          auto state = cache->controlledPassStates.find(neighbor.passSwitchId);
+          if (state == cache->controlledPassStates.end())
+            return OBELISK_RT_INVALID_DESIGN;
+          if (state->second == 0)
+            continue;
+        }
         auto neighborMembers = cache->members.find(neighbor.root);
         if (neighborMembers == cache->members.end() ||
             neighborMembers->second.empty())
@@ -1223,6 +1320,90 @@ obelisk_rt_v1_net_count_drivers(obelisk_rt_context *context, uint64_t netHandle,
   return obelisk_rt_count_design_drivers(context, netHandle, outForced,
                                          outTotal, outZero, outOne, outUnknown,
                                          true);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_pass_switch_control(
+    obelisk_rt_context *context, uint32_t passSwitchId, uint32_t value,
+    uint32_t unknown) {
+  if (!context || !context->execution || value > 1 || unknown > 1 ||
+      passSwitchId == UINT32_MAX)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  try {
+    ContextTransaction transaction(context);
+    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    Image image;
+    if (!loadValidatedImage(entry, context, image))
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    NetAliasCache *cache = getNetAliasCache(image, context);
+    if (!cache)
+      return OBELISK_RT_INVALID_DESIGN;
+    uint32_t encodedId = passSwitchId + 1;
+    auto edges = cache->controlledPassEdges.find(encodedId);
+    auto state = cache->controlledPassStates.find(encodedId);
+    if (edges == cache->controlledPassEdges.end() ||
+        state == cache->controlledPassStates.end())
+      return OBELISK_RT_INVALID_DESIGN;
+    uint8_t nextState = unknown ? 2 : static_cast<uint8_t>(value);
+    uint8_t previousState = state->second;
+    if (previousState == nextState)
+      return OBELISK_RT_OK;
+    std::unordered_set<uint64_t> affectedComponents;
+    for (const NetControlledPassEdge &edge : edges->second) {
+      auto component = cache->passComponents.find(edge.component);
+      if (component == cache->passComponents.end())
+        return OBELISK_RT_INVALID_DESIGN;
+      NetPassComponent &pass = component->second;
+      size_t count = pass.roots.size();
+      if (edge.lhs >= count || edge.rhs >= count)
+        return OBELISK_RT_INVALID_DESIGN;
+      size_t forward = static_cast<size_t>(edge.lhs) * count + edge.rhs;
+      size_t reverse = static_cast<size_t>(edge.rhs) * count + edge.lhs;
+      auto adjust = [&](std::vector<uint32_t> &counts, bool add) {
+        if (add) {
+          ++counts[forward];
+          ++counts[reverse];
+        } else {
+          --counts[forward];
+          --counts[reverse];
+        }
+      };
+      auto &definite = edge.resistive ? pass.definiteResistive
+                                      : pass.definiteNonresistive;
+      auto &possible = edge.resistive ? pass.possibleResistive
+                                      : pass.possibleNonresistive;
+      if (previousState == 1)
+        adjust(definite, false);
+      if (previousState != 0)
+        adjust(possible, false);
+      if (nextState == 1)
+        adjust(definite, true);
+      if (nextState != 0)
+        adjust(possible, true);
+      affectedComponents.insert(edge.component);
+    }
+    state->second = nextState;
+    std::vector<uint64_t> roots;
+    for (uint64_t componentId : affectedComponents) {
+      NetPassComponent &component = cache->passComponents.at(componentId);
+      if (!rebuildPassComponent(component))
+        return OBELISK_RT_INVALID_DESIGN;
+      roots.insert(roots.end(), component.roots.begin(), component.roots.end());
+    }
+    bool changed = false;
+    if (!resolveNetRoots(*cache, context, std::move(roots), changed,
+                         context->nativeStateValue != nullptr))
+      return context->schedulerStatus == OBELISK_RT_OK
+                 ? OBELISK_RT_INVALID_DESIGN
+                 : context->schedulerStatus;
+    if (changed && ++context->schedulerEpoch == 0)
+      context->schedulerEpoch = 1;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_BYTECODE;
+  }
 }
 
 extern "C" uint16_t obelisk_rt_v1_strength_resolve_kind(uint16_t lhs,

@@ -2164,6 +2164,39 @@ LogicalResult UnitLowering::lowerSequence(ArrayRef<Operation *> operations) {
 LogicalResult UnitLowering::lowerPrimitive(StringRef name,
                                            ArrayRef<Operation *> operations) {
   Location location = function.getLoc();
+  if (name == "tranif0" || name == "tranif1" || name == "rtranif0" ||
+      name == "rtranif1") {
+    if (operations.size() != 3)
+      return emitError(location) << "primitive '" << name
+                                 << "' requires two terminals and one control";
+    auto ids = function->getAttrOfType<DenseI64ArrayAttr>(
+        "obelisk_sim.pass_switch_ids");
+    if (!ids || ids.empty())
+      return emitError(location)
+             << "controlled pass primitive has no frozen topology IDs";
+    FailureOr<Value> lowered = lowerExpression(operations[2]);
+    if (failed(lowered))
+      return failure();
+    Location controlLocation = getSemanticLocation(operations[2]);
+    FailureOr<Value> scalar = toPackedScalar(*lowered, controlLocation);
+    if (failed(scalar))
+      return failure();
+    FailureOr<Value> control = toLogic(*scalar, controlLocation);
+    if (failed(control))
+      return failure();
+    Type controlType = sim::LogicType::get(function.getContext(), 1);
+    FailureOr<Value> converted = convert(
+        *control, controlType, isSignedNode(operations[2]), controlLocation);
+    if (failed(converted))
+      return failure();
+    Value activeHigh = *converted;
+    if (name.ends_with("0"))
+      activeHigh = sim::SimLogicUnaryOp::create(
+          builder, location, controlType, sim::UnaryKind::BitNot, activeHigh);
+    for (int64_t id : ids.asArrayRef())
+      sim::SimPassSwitchControlOp::create(builder, location, activeHigh, id);
+    return success();
+  }
   SmallVector<Operation *> outputs;
   size_t inputStart = 0;
   while (inputStart < operations.size()) {

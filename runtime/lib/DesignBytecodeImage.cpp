@@ -382,6 +382,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       signature.id != OBELISK_RT_INTRINSIC_V1_REAL_FROM_INTEGER &&
       signature.id != OBELISK_RT_INTRINSIC_V1_REAL_TO_INTEGER &&
       signature.id != OBELISK_RT_INTRINSIC_V1_REAL_COMPARE &&
+      signature.id != OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL &&
       signature.flags != 0)
     return false;
   auto input = [&](uint32_t index) -> std::optional<Layout> {
@@ -525,6 +526,9 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!twoStateBits(output(index), 32))
         return false;
     return true;
+  case OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL:
+    return site.inputCount == 1 && site.outputCount == 0 &&
+           bits(input(0), 1);
   case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC:
     if (signature.flags != 0 || site.inputCount == 0 || site.outputCount != 1 ||
         (!numeric(input(0)) && !floating(input(0)) && !managed(input(0)) &&
@@ -1883,11 +1887,13 @@ bool validateImage(const Image &image) {
     const CaptureRecord *rhs = containingNet(
         connection.rhsOffset, connection.width, (connection.flags & 1) != 0);
     bool resistivePass = (connection.flags & 16) != 0;
-    if (connection.width == 0 || (connection.flags & ~uint8_t{31}) != 0 ||
+    bool controlledPass = (connection.flags & 32) != 0;
+    if (connection.width == 0 || (connection.flags & ~uint8_t{63}) != 0 ||
         ((connection.flags & 2) == 0 && (connection.flags & 4) != 0) ||
         (passSwitch &&
          ((connection.flags & 6) != 0 || connection.tailReserved == 0)) ||
-        (!passSwitch && (connection.tailReserved != 0 || resistivePass)) ||
+        (!passSwitch &&
+         (connection.tailReserved != 0 || resistivePass || controlledPass)) ||
         connection.reserved != 0 || connection.lhsResolution > 9 ||
         connection.rhsResolution > 9 || !lhs || !rhs ||
         connection.lhsResolution != decodeNetResolution(lhs->argument) ||
@@ -1917,7 +1923,7 @@ bool validateImage(const Image &image) {
             "connectivity edge endpoints are not canonically ordered");
       scalarConnections.push_back({lhsBit, rhsBit, connection.lhsResolution,
                                    connection.rhsResolution,
-                                   static_cast<uint8_t>(connection.flags & 22),
+                                   static_cast<uint8_t>(connection.flags & 54),
                                    connection.tailReserved});
       if (!passSwitch) {
         uint64_t lhsRoot = findConnectivity(lhsBit);

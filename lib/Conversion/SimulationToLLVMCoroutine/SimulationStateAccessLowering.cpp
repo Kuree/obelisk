@@ -485,6 +485,42 @@ public:
   }
 };
 
+class PassSwitchControlConversion final
+    : public OpConversionPattern<sim::SimPassSwitchControlOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimPassSwitchControlOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getControl().empty() || adaptor.getControl().size() > 2 ||
+        op.getPassSwitchId() > UINT32_MAX)
+      return failure();
+    Location location = op.getLoc();
+    Type i32 = rewriter.getI32Type();
+    Value context = loadCurrentRuntimeContext(rewriter, location);
+    auto extend = [&](Value value) -> Value {
+      return LLVM::ZExtOp::create(rewriter, location, i32, value);
+    };
+    Value unknown =
+        adaptor.getControl().size() == 2
+            ? extend(adaptor.getControl()[1])
+            : llvmConstant(rewriter, location, i32, 0);
+    Value status = LLVM::CallOp::create(
+                       rewriter, location, TypeRange{i32},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_pass_switch_control"),
+                       ValueRange{context,
+                                  llvmConstant(rewriter, location, i32,
+                                               op.getPassSwitchId()),
+                                  extend(adaptor.getControl().front()), unknown})
+                       .getResult();
+    reportRuntimeControlStatus(rewriter, location, context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 } // namespace
 
 void populateStateReadWriteToLLVMConversionPatterns(
@@ -498,6 +534,8 @@ void populateStateReadWriteToLLVMConversionPatterns(
       converter, patterns.getContext(), stateBitCount, directLayout,
       experimentalTwoState);
   patterns.add<NetCountDriversConversion>(converter, patterns.getContext());
+  patterns.add<PassSwitchControlConversion>(converter,
+                                            patterns.getContext());
 }
 
 } // namespace obelisk::detail

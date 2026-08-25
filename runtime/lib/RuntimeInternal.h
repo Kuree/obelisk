@@ -785,12 +785,29 @@ struct NetStrengthDriverPairRange {
 
 struct NetPassNeighbor {
   uint64_t root = 0;
+  uint32_t passSwitchId = 0;
+  bool resistive = false;
+  bool controlled = false;
+};
+
+struct NetControlledPassEdge {
+  uint64_t component = 0;
+  uint32_t lhs = 0;
+  uint32_t rhs = 0;
   bool resistive = false;
 };
 
 struct NetPassComponent {
   std::vector<uint64_t> roots;
+  // Direct-edge reference counts make one controlled switch update O(1) per
+  // scalar edge even in the presence of parallel devices. Resolution reads
+  // only the two precomputed closures below.
+  std::vector<uint32_t> definiteNonresistive;
+  std::vector<uint32_t> definiteResistive;
+  std::vector<uint32_t> possibleNonresistive;
+  std::vector<uint32_t> possibleResistive;
   std::vector<uint8_t> reductions;
+  std::vector<uint8_t> possibleReductions;
 };
 
 struct NetAliasCache {
@@ -801,6 +818,9 @@ struct NetAliasCache {
   std::unordered_map<uint64_t, std::vector<NetPassNeighbor>> passNeighbors;
   std::unordered_map<uint64_t, uint64_t> passComponentByRoot;
   std::unordered_map<uint64_t, NetPassComponent> passComponents;
+  std::unordered_map<uint32_t, std::vector<NetControlledPassEdge>>
+      controlledPassEdges;
+  std::unordered_map<uint32_t, uint8_t> controlledPassStates;
   std::unordered_map<uint64_t, std::vector<uint64_t>>
       uniformDelayedRootsByRoot;
   std::unordered_map<uint64_t, uint8_t> resolutionByRoot;

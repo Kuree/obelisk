@@ -126,6 +126,12 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return emitIntrinsic(plan, kIntrinsicNetCountDrivers, {op.getNet()},
                          {op.getForced(), op.getTotal(), op.getZero(),
                           op.getOne(), op.getUnknown()});
+  if (auto op = dyn_cast<sim::SimPassSwitchControlOp>(operation)) {
+    if (op.getPassSwitchId() > UINT32_MAX)
+      return op.emitOpError("pass-switch ID exceeds bytecode range"), failure();
+    return emitIntrinsic(plan, kIntrinsicPassSwitchControl, {op.getControl()},
+                         {}, static_cast<uint32_t>(op.getPassSwitchId()));
+  }
   if (auto op = dyn_cast<sim::SimTimeNowOp>(operation))
     return emitIntrinsic(plan, kIntrinsicTimeNow, {}, {op.getResult()});
   if (auto op = dyn_cast<sim::SimStringOutputFormatOp>(operation))
