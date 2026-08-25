@@ -3704,7 +3704,9 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       uint64_t width = 0;
     };
     SmallVector<Source, 2> sources;
-    std::array<int64_t, 3> delays;
+    std::array<int64_t, 12> delays;
+    std::array<int64_t, 3> legacyDelays;
+    unsigned delayCount = 0;
     int32_t conditionKind = 0;
     int32_t conditionGroup = 0;
     FlatSymbolRefAttr conditionEvaluator;
@@ -3743,8 +3745,11 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       auto delays =
           rule ? rule.getAs<DenseI64ArrayAttr>("delays") : DenseI64ArrayAttr{};
       if (!rule || !polarity || polarity.getInt() < 0 ||
-          polarity.getInt() > 2 || !delays || delays.empty() ||
-          delays.size() > 3)
+          polarity.getInt() > 2 || !delays ||
+          (delays.size() != 1 && delays.size() != 2 && delays.size() != 3 &&
+           delays.size() != 6 && delays.size() != 12) ||
+          llvm::any_of(delays.asArrayRef(),
+                       [](int64_t delay) { return delay < 0; }))
         return function.emitError("invalid frozen overlapping timing path");
       SmallVector<StringAttr> inputPaths;
       SmallVector<StringAttr> snapshotPaths;
@@ -3828,12 +3833,35 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
            state.sources.front().width != state.outputWidth))
         return function.emitError("parallel timing path widths do not match");
       ArrayRef<int64_t> delayValues = delays.asArrayRef();
+      state.delayCount = delayValues.size();
       int64_t rise = delayValues[0];
       int64_t fall = delayValues.size() == 1 ? rise : delayValues[1];
       int64_t turnoff = delayValues.size() == 1   ? rise
                         : delayValues.size() == 2 ? std::min(rise, fall)
                                                   : delayValues[2];
-      state.delays = {rise, fall, turnoff};
+      state.legacyDelays = {rise, fall, turnoff};
+      if (delayValues.size() == 1) {
+        state.delays.fill(delayValues[0]);
+      } else if (delayValues.size() == 2) {
+        state.delays = {rise, fall, rise, rise, fall, fall,
+                        rise, rise, fall, fall,
+                        std::max(rise, fall), std::min(rise, fall)};
+      } else if (delayValues.size() == 3) {
+        int64_t z = delayValues[2];
+        state.delays = {rise, fall, z, rise, z, fall,
+                        std::min(rise, z), rise, std::min(fall, z), fall,
+                        z, std::min(rise, fall)};
+      } else if (delayValues.size() == 6) {
+        int64_t t01 = delayValues[0], t10 = delayValues[1];
+        int64_t t0z = delayValues[2], tz1 = delayValues[3];
+        int64_t t1z = delayValues[4], tz0 = delayValues[5];
+        state.delays = {t01, t10, t0z, tz1, t1z, tz0,
+                        std::min(t01, t0z), std::max(t01, tz1),
+                        std::min(t10, t1z), std::max(t10, tz0),
+                        std::max(t1z, t0z), std::min(tz1, tz0)};
+      } else {
+        llvm::copy(delayValues, state.delays.begin());
+      }
       if (auto kind = rule.getAs<IntegerAttr>("condition_kind"))
         state.conditionKind = static_cast<int32_t>(kind.getInt());
       if (auto group = rule.getAs<IntegerAttr>("condition_group"))
@@ -4053,18 +4081,25 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       for (Value mask : applicableMasks)
         plan.coverageMask = arith::OrIOp::create(builder, function.getLoc(),
                                                  plan.coverageMask, mask);
-      plan.groups.resize(timingPathRules.size());
-      for (auto [index, rule] : llvm::enumerate(timingPathRules))
-        for (unsigned transition = 0; transition != 3; ++transition) {
-          Value ticks = arith::ConstantOp::create(
-              builder, function.getLoc(), builder.getI64Type(),
-              builder.getI64IntegerAttr(rule.delays[transition]));
-          plan.groups[index].delays[transition] = sim::SimTimeScaleOp::create(
-              builder, function.getLoc(),
-              sim::TimeType::get(function.getContext()), ticks,
-              builder.getI64IntegerAttr(1), builder.getBoolAttr(false));
-        }
-      for (unsigned transition = 0; transition != 3; ++transition) {
+      SmallVector<int64_t, 12> distinctDelays;
+      for (const TimingPathRuleState &rule : timingPathRules)
+        llvm::append_range(distinctDelays, rule.delays);
+      llvm::sort(distinctDelays);
+      distinctDelays.erase(
+          std::unique(distinctDelays.begin(), distinctDelays.end()),
+          distinctDelays.end());
+      plan.groups.resize(distinctDelays.size());
+      for (auto [index, delay] : llvm::enumerate(distinctDelays)) {
+        plan.groups[index].masks.fill(integerZero(destinationMaskType));
+        Value ticks = arith::ConstantOp::create(
+            builder, function.getLoc(), builder.getI64Type(),
+            builder.getI64IntegerAttr(delay));
+        plan.groups[index].delay = sim::SimTimeScaleOp::create(
+            builder, function.getLoc(),
+            sim::TimeType::get(function.getContext()), ticks,
+            builder.getI64IntegerAttr(1), builder.getBoolAttr(false));
+      }
+      for (unsigned transition = 0; transition != 12; ++transition) {
         SmallVector<unsigned, 4> order;
         for (unsigned index = 0; index != timingPathRules.size(); ++index)
           order.push_back(index);
@@ -4083,7 +4118,13 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                       builder.getIntegerAttr(
                           destinationMaskType,
                           APInt::getAllOnes(destinationMaskType.getWidth())))));
-          plan.groups[index].masks[transition] = available;
+          unsigned group = static_cast<unsigned>(
+              llvm::lower_bound(distinctDelays,
+                                timingPathRules[index].delays[transition]) -
+              distinctDelays.begin());
+          plan.groups[group].masks[transition] = arith::OrIOp::create(
+              builder, function.getLoc(), plan.groups[group].masks[transition],
+              available);
           claimed = arith::OrIOp::create(builder, function.getLoc(), claimed,
                                          applicableMasks[index]);
         }
@@ -4093,6 +4134,11 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       else
         timingPathMaskedPlan = std::move(plan);
     } else {
+      if (llvm::any_of(timingPathRules, [](const TimingPathRuleState &rule) {
+            return rule.delayCount > 3;
+          }))
+        return function.emitError(
+            "six/twelve timing paths require packed destination metadata");
       std::array<Value, 3> selected;
       for (unsigned transition = 0; transition != selected.size();
            ++transition) {
@@ -4100,8 +4146,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         for (unsigned index = 0; index != timingPathRules.size(); ++index)
           order.push_back(index);
         llvm::sort(order, [&](unsigned lhs, unsigned rhs) {
-          return timingPathRules[lhs].delays[transition] >
-                 timingPathRules[rhs].delays[transition];
+          return timingPathRules[lhs].legacyDelays[transition] >
+                 timingPathRules[rhs].legacyDelays[transition];
         });
         Value selectedTicks = arith::ConstantOp::create(
             builder, function.getLoc(), builder.getI64Type(),
@@ -4110,7 +4156,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
           Value delayTicks = arith::ConstantOp::create(
               builder, function.getLoc(), builder.getI64Type(),
               builder.getI64IntegerAttr(
-                  timingPathRules[index].delays[transition]));
+                  timingPathRules[index].legacyDelays[transition]));
           selectedTicks = arith::SelectOp::create(builder, function.getLoc(),
                                                   applicable[index], delayTicks,
                                                   selectedTicks);

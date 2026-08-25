@@ -191,8 +191,9 @@ FailureOr<ValidatedSemanticDesign> validateSemanticDesign(ModuleOp module) {
                "executable yet for this form (supported subset: "
                "whole-terminal parallel or full paths, including if/ifnone, "
                "with "
-               "unknown, positive, or negative polarity, one to three static "
-               "delays, and statically disjoint destination driver spans; "
+               "unknown, positive, or negative polarity, static "
+               "one/two/three/six/twelve transition delays, and statically "
+               "disjoint destination driver spans; "
                "unconditional overlapping paths require one distinct whole "
                "source per path and exact driver dependencies)";
         invalid = true;

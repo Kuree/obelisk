@@ -51,7 +51,8 @@ module {
                        output_low = 0 : i64, output_width = 2 : i64,
                        output_root_width = 4 : i64,
                        connection_full = false,
-                       polarity = 1 : i32, delays = array<i64: 2, 5, 7>,
+                       polarity = 1 : i32,
+                       delays = array<i64: 1, 2, 3, 4, 5, 6>,
                        condition_kind = 1 : i32,
                        condition_evaluator = @condition,
                        condition_captures = ["top.condition"],
@@ -103,10 +104,8 @@ module {
 // CHECK: arith.trunci
 // CHECK: obelisk_sim.call @condition(%arg0, %arg4)
 // CHECK: arith.xori
+// CHECK: obelisk_sim.driver.read
 // CHECK: obelisk_sim.driver.drive_inertial_path
-// CHECK-SAME: group 0 of 3
-// CHECK: obelisk_sim.driver.drive_inertial_path
-// CHECK-SAME: group 1 of 3
-// CHECK: obelisk_sim.driver.drive_inertial_path
-// CHECK-SAME: group 2 of 3
+// CHECK-SAME: group 0 of 7
+// CHECK: obelisk_sim.driver.drive_inertial_path{{.*}}group 6 of 7
 // CHECK: obelisk_sim.suspend.change %arg2

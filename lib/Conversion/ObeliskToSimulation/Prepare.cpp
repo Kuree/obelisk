@@ -1645,7 +1645,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     TimingTerminal output;
     bool full = false;
     int32_t polarity;
-    SmallVector<int64_t, 3> delays;
+    SmallVector<int64_t, 12> delays;
     Operation *condition = nullptr;
     bool ifnone = false;
   };
@@ -1658,8 +1658,9 @@ void ObeliskSimPreparePass::runOnOperation() {
     auto polarity = path->getAttrOfType<IntegerAttr>("timing_polarity");
     auto delays = path->getAttrOfType<DenseI64ArrayAttr>("timing_delay_fs");
     if (!inputs || inputs.empty() || !output || !polarity || polarity.getInt() < 0 ||
-        polarity.getInt() > 2 || !delays || delays.empty() ||
-        delays.size() > 3) {
+        polarity.getInt() > 2 || !delays ||
+        (delays.size() != 1 && delays.size() != 2 && delays.size() != 3 &&
+         delays.size() != 6 && delays.size() != 12)) {
       emitError(getSemanticLocation(path))
           << "simple specify path is missing frozen terminal or delay data";
       invalid = true;
@@ -1727,7 +1728,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     simpleTimingPaths[outputTerminal->path].push_back(
         {path, inputPaths, *outputTerminal, full,
          static_cast<int32_t>(polarity.getInt()),
-         SmallVector<int64_t, 3>(delays.asArrayRef()),
+         SmallVector<int64_t, 12>(delays.asArrayRef()),
          conditional ? children.front() : nullptr, ifnone});
   });
 
@@ -1836,6 +1837,13 @@ void ObeliskSimPreparePass::runOnOperation() {
             equivalent.size() == 2 && equivalent[0]->strengthBank &&
             equivalent[1]->strengthBank &&
             equivalent[0]->strengthBank != equivalent[1]->strengthBank;
+        if (strengthPair) {
+          emitError(getSemanticLocation(path.declaration))
+              << "specify paths on conditional primitive strength pairs are "
+                 "not executable yet";
+          invalid = true;
+          break;
+        }
         if (equivalent.size() != 1 && !strengthPair) {
           emitError(getSemanticLocation(path.declaration))
               << "specify path destination has an ambiguous continuous "
@@ -1977,7 +1985,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     if (spans.size() == 1 && spans.front().low == 0 &&
         spans.front().width == path.output.rootWidth && allWholeTerminals &&
-        !hasStateDependent && (paths.size() == 1 || identicalDelays) &&
+        !hasStateDependent && path.delays.size() <= 3 &&
+        (paths.size() == 1 || identicalDelays) &&
         hasExactInputs(spans.front().unit,
                        identicalDelays && !hasStateDependent)) {
       spans.front().unit->setAttr("delay_fs",
@@ -7413,7 +7422,9 @@ void ObeliskSimPreparePass::runOnOperation() {
                               inputs.size() == snapshots.size();
         if ((!legacyTerminals && !arrayTerminals) || !polarity ||
             polarity.getInt() < 0 || polarity.getInt() > 2 || !delays ||
-            delays.empty() || delays.size() > 3 ||
+            (delays.size() != 1 && delays.size() != 2 &&
+             delays.size() != 3 && delays.size() != 6 &&
+             delays.size() != 12) ||
             (arrayTerminals &&
              (!inputLows || !inputWidths ||
               static_cast<size_t>(inputLows.size()) != inputs.size() ||
@@ -7423,7 +7434,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           rulesInvalid = true;
           break;
         }
-        SmallVector<int64_t, 3> ticks;
+        SmallVector<int64_t, 12> ticks;
         for (int64_t femtoseconds : delays.asArrayRef()) {
           if (femtoseconds < 0 ||
               static_cast<uint64_t>(femtoseconds) % designPrecisionFs != 0) {

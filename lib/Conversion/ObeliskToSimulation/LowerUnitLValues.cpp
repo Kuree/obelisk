@@ -981,19 +981,103 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         if (!codeUnitID || !drivenWidth || !maskType ||
             maskType.getWidth() != *drivenWidth ||
             maskedPlan->groups.empty() ||
+            maskedPlan->groups.size() > UINT32_MAX ||
             nextInertialDriveComponent > UINT32_MAX)
           return function.emitError("invalid masked timing path drive plan");
         uint32_t component =
             static_cast<uint32_t>(nextInertialDriveComponent++);
         uint32_t groupCount =
             static_cast<uint32_t>(maskedPlan->groups.size());
+        Value previous = sim::SimDriverReadOp::create(
+            builder, location, published.getType(), destination.reference);
+        auto logicType =
+            sim::LogicType::get(function.getContext(), *drivenWidth);
+        auto toLogic = [&](Value value) -> FailureOr<Value> {
+          if (!isa<IntegerType, sim::LogicType>(value.getType())) {
+            FailureOr<Value> scalar = toPackedScalar(value, location);
+            if (failed(scalar))
+              return failure();
+            value = *scalar;
+          }
+          if (isa<sim::LogicType>(value.getType()))
+            return value;
+          return Value(sim::SimLogicFromBitsOp::create(
+              builder, location, logicType, value));
+        };
+        FailureOr<Value> previousLogic = toLogic(previous);
+        FailureOr<Value> publishedLogic = toLogic(published);
+        if (failed(previousLogic) || failed(publishedLogic))
+          return function.emitError(
+              "timing path driver value is not a packed scalar");
+        APInt zero = APInt::getZero(*drivenWidth);
+        APInt ones = APInt::getAllOnes(*drivenWidth);
+        Value zeroMask = arith::ConstantOp::create(
+            builder, location, maskType,
+            builder.getIntegerAttr(maskType, zero));
+        Value onesMask = arith::ConstantOp::create(
+            builder, location, maskType,
+            builder.getIntegerAttr(maskType, ones));
+        std::array<Value, 4> previousSymbols;
+        std::array<Value, 4> publishedSymbols;
+        for (unsigned symbol = 0; symbol != 3; ++symbol) {
+          bool one = symbol == 1;
+          bool unknown = symbol == 2;
+          Value constant = sim::SimLogicConstantOp::create(
+              builder, location, logicType,
+              builder.getIntegerAttr(maskType, one ? ones : zero),
+              builder.getIntegerAttr(maskType, unknown ? ones : zero));
+          auto symbolMask = [&](Value value) -> Value {
+            Value difference = sim::SimLogicCaseDifferenceMaskOp::create(
+                builder, location, maskType, value, constant);
+            return arith::XOrIOp::create(builder, location, difference,
+                                         onesMask);
+          };
+          previousSymbols[symbol] = symbolMask(*previousLogic);
+          publishedSymbols[symbol] = symbolMask(*publishedLogic);
+        }
+        auto remainingSymbol = [&](const std::array<Value, 4> &symbols) {
+          Value used = arith::OrIOp::create(builder, location, symbols[0],
+                                            symbols[1]);
+          used = arith::OrIOp::create(builder, location, used, symbols[2]);
+          return arith::XOrIOp::create(builder, location, used, onesMask);
+        };
+        previousSymbols[3] = remainingSymbol(previousSymbols);
+        publishedSymbols[3] = remainingSymbol(publishedSymbols);
+        constexpr std::array<unsigned, 12> fromSymbols = {
+            0, 1, 0, 3, 1, 3, 0, 2, 1, 2, 2, 3};
+        constexpr std::array<unsigned, 12> toSymbols = {
+            1, 0, 3, 1, 3, 0, 2, 1, 2, 0, 3, 2};
+        std::array<Value, 12> transitionMasks;
+        for (unsigned transition = 0; transition != 12; ++transition)
+          transitionMasks[transition] = arith::AndIOp::create(
+              builder, location, previousSymbols[fromSymbols[transition]],
+              publishedSymbols[toSymbols[transition]]);
         for (auto [index, group] :
              llvm::enumerate(maskedPlan->groups)) {
+          std::array<Value, 3> runtimeMasks{zeroMask, zeroMask, zeroMask};
+          auto addTransition = [&](unsigned bank, unsigned transition) {
+            Value selected = arith::AndIOp::create(
+                builder, location, group.masks[transition],
+                transitionMasks[transition]);
+            runtimeMasks[bank] = arith::OrIOp::create(
+                builder, location, runtimeMasks[bank], selected);
+          };
+          for (unsigned transition : {0u, 3u, 7u})
+            addTransition(0, transition);
+          for (unsigned transition : {1u, 5u, 9u})
+            addTransition(1, transition);
+          for (unsigned transition : {2u, 4u, 10u})
+            addTransition(2, transition);
+          // The runtime's X-target branch accepts any of its three masks and
+          // selects the minimum candidate. Keep the exact X classes in one
+          // bank because this group already represents one distinct delay.
+          for (unsigned transition : {6u, 8u, 11u})
+            addTransition(0, transition);
           auto drive = sim::SimDriverDriveInertialPathOp::create(
               builder, location, destination.reference, published,
-              maskedPlan->coverageMask, group.masks[0],
-              group.masks[1], group.masks[2], group.delays[0], group.delays[1],
-              group.delays[2], codeUnitID, builder.getI32IntegerAttr(component),
+              maskedPlan->coverageMask, runtimeMasks[0], runtimeMasks[1],
+              runtimeMasks[2], group.delay, group.delay, group.delay,
+              codeUnitID, builder.getI32IntegerAttr(component),
               builder.getI32IntegerAttr(static_cast<uint32_t>(index)),
               builder.getI32IntegerAttr(groupCount),
               builder.getBoolAttr(deferDriverResolution || userRaw));

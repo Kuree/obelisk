@@ -588,16 +588,16 @@ private:
   bool deferDriverResolution = false;
   uint64_t nextInertialDriveComponent = 0;
   struct TimingPathDelayGroup {
-    std::array<::mlir::Value, 3> masks;
-    std::array<::mlir::Value, 3> delays;
+    std::array<::mlir::Value, 12> masks;
+    ::mlir::Value delay;
   };
   struct TimingPathMaskedPlan {
     ::mlir::Value coverageMask;
     ::mlir::SmallVector<TimingPathDelayGroup, 4> groups;
   };
   /// Packed per-destination-bit applicability for a partial or overlapping
-  /// path set. Delay groups are statically unrolled and their three masks are
-  /// disjoint independently for rise, fall, and turnoff.
+  /// path set. Distinct static delays are grouped once, with independently
+  /// disjoint masks for all twelve four-state transition classes.
   std::optional<TimingPathMaskedPlan> timingPathMaskedPlan;
   /// Driver actors can publish several disjoint lvalue leaves (for example a
   /// concatenation assignment).  A split specify destination selects its

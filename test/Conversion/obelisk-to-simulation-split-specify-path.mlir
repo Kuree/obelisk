@@ -86,7 +86,9 @@ module {
               hierarchical_name = "split_path", node_id = 28 : i64,
               obelisk.simple_timing_path, sym_name = "s10",
               timing_connection_full = false,
-              timing_delay_fs = array<i64: 2000000, 3000000>,
+              timing_delay_fs = array<i64: 1000000, 2000000, 3000000,
+                  4000000, 5000000, 6000000, 7000000, 8000000,
+                  9000000, 10000000, 11000000, 12000000>,
               timing_input_terminals = [{low = 0 : i64,
                 path = "split_path.source", root_width = 4 : i64,
                 width = 4 : i64}],
@@ -106,4 +108,7 @@ module {
 // CHECK-LABEL: obelisk_sim.func private @unit_0
 // CHECK: driver_node_id = 15 : i64{{.*}}input_lows = array<i64: 0>{{.*}}output_root_width = 2 : i64{{.*}}driver_node_id = 11 : i64{{.*}}input_lows = array<i64: 2>{{.*}}output_root_width = 2 : i64
 // CHECK-COUNT-2: obelisk_sim.logic.case_difference_mask
-// CHECK-COUNT-2: obelisk_sim.driver.drive_inertial_path
+// CHECK: obelisk_sim.driver.read
+// CHECK-COUNT-12: obelisk_sim.driver.drive_inertial_path
+// CHECK: obelisk_sim.driver.read
+// CHECK-COUNT-12: obelisk_sim.driver.drive_inertial_path

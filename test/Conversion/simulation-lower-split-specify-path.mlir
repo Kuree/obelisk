@@ -43,7 +43,8 @@ module {
                        output_root_width = 2 : i64,
                        driver_node_id = 2 : i64,
                        connection_full = false,
-                       polarity = 0 : i32, delays = array<i64: 2>,
+                       polarity = 0 : i32,
+                       delays = array<i64: 1, 2, 3, 4, 5, 6>,
                        condition_kind = 0 : i32,
                        condition_group = 0 : i32},
                       {inputs = ["top.source"],
@@ -54,7 +55,9 @@ module {
                        output_root_width = 2 : i64,
                        driver_node_id = 3 : i64,
                        connection_full = false,
-                       polarity = 0 : i32, delays = array<i64: 5>,
+                       polarity = 0 : i32,
+                       delays = array<i64: 12, 11, 10, 9, 8, 7,
+                                                   6, 5, 4, 3, 2, 1>,
                        condition_kind = 0 : i32,
                        condition_group = 1 : i32}],
                     obelisk_sim.bindings = [
@@ -85,9 +88,14 @@ module {
 }
 
 // One actor computes both change masks before publishing either leaf. Each
-// leaf selects only its own driver-local plan and delay bank.
+// leaf selects only its own driver-local plan. The six-value rule derives six
+// distinct static delays; the twelve-value rule retains all twelve.
 // CHECK-LABEL: obelisk_sim.func @path
 // CHECK-COUNT-2: obelisk_sim.logic.case_difference_mask
-// CHECK-DAG: after[%{{.*}}, %{{.*}}, %{{.*}}] site 9940001 : 0 group 0 of 1
-// CHECK-DAG: after[%{{.*}}, %{{.*}}, %{{.*}}] site 9940001 : 1 group 0 of 1
+// CHECK: obelisk_sim.driver.read
+// CHECK: site 9940001 : {{[01]}} group 0 of 12
+// CHECK: site 9940001 : {{[01]}} group 11 of 12
+// CHECK: obelisk_sim.driver.read
+// CHECK: site 9940001 : {{[01]}} group 0 of 6
+// CHECK: site 9940001 : {{[01]}} group 5 of 6
 // CHECK: obelisk_sim.suspend.change %arg3

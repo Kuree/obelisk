@@ -1861,7 +1861,7 @@ private:
         scale = scope->getTimeScale().value_or(slang::TimeScale{});
       uint64_t unitFs = getFemtoseconds(scale.base);
       uint64_t precisionFs = getFemtoseconds(scale.precision);
-      SmallVector<int64_t, 3> delays;
+      SmallVector<int64_t, 12> delays;
       bool staticDelays = unitFs != 0 && precisionFs != 0 &&
                           unitFs >= precisionFs && unitFs % precisionFs == 0;
       slang::ast::EvalContext evalContext(node);
@@ -1928,8 +1928,9 @@ private:
           node.edgePolarity == TimingPath::Polarity::Unknown &&
           node.edgeIdentifier == slang::ast::EdgeKind::None &&
           !node.getEdgeSourceExpr() && outputs.size() == 1 && staticDelays &&
-          delays.size() == node.getDelays().size() && delays.size() >= 1 &&
-          delays.size() <= 3;
+          delays.size() == node.getDelays().size() &&
+          (delays.size() == 1 || delays.size() == 2 || delays.size() == 3 ||
+           delays.size() == 6 || delays.size() == 12);
       if (supportedCandidate)
         attrs.set("obelisk.simple_timing_path", builder.getUnitAttr());
     }
