@@ -12,6 +12,16 @@ function(obelisk_write_if_different path new_contents)
   endif()
 endfunction()
 
+# Slang's version probe walks upward looking for `.git` before it invokes Git,
+# so an archive extracted below Obelisk's repository incorrectly adopts the
+# Obelisk commit. Bound that filesystem search at the fetched release root. The
+# sentinel has no HEAD, which is the same metadata state as the release archive
+# extracted outside a repository: v11.0 reports patch 0 and hash 0. Explicit
+# source overrides do not request this and retain their own repository metadata.
+if(RELEASE_ARCHIVE)
+  file(MAKE_DIRECTORY "${SOURCE_DIR}/.git")
+endif()
+
 set(expression_source "${SOURCE_DIR}/source/ast/Expression.cpp")
 file(READ "${expression_source}" contents)
 

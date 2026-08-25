@@ -373,7 +373,7 @@ else()
     URL_HASH "SHA256=${OBELISK_SLANG_ARCHIVE_SHA256}"
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     PATCH_COMMAND
-      ${CMAKE_COMMAND} -DSOURCE_DIR=<SOURCE_DIR>
+      ${CMAKE_COMMAND} -DSOURCE_DIR=<SOURCE_DIR> -DRELEASE_ARCHIVE=ON
       -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchSlang.cmake"
   )
 endif()
@@ -386,32 +386,7 @@ set(SLANG_INCLUDE_PYLIB OFF CACHE BOOL "" FORCE)
 set(SLANG_INCLUDE_INSTALL OFF CACHE BOOL "" FORCE)
 set(SLANG_INCLUDE_BENCHMARKS OFF CACHE BOOL "" FORCE)
 set(SLANG_USE_MIMALLOC OFF CACHE BOOL "" FORCE)
-
-# The fetched release archive lives below Obelisk's repository. Slang's
-# version probe otherwise walks through the archive root, finds Obelisk's .git,
-# and embeds the changing Obelisk commit in VersionInfo.cpp. Stop Git's search
-# at FetchContent's base for the archive path. An explicit source override may
-# be a real slang checkout, so leave its repository discovery intact.
-set(_obelisk_had_git_ceiling_directories FALSE)
-if(NOT OBELISK_SLANG_SOURCE_DIR)
-  if(DEFINED ENV{GIT_CEILING_DIRECTORIES})
-    set(_obelisk_had_git_ceiling_directories TRUE)
-    set(_obelisk_saved_git_ceiling_directories
-      "$ENV{GIT_CEILING_DIRECTORIES}")
-  endif()
-  set(ENV{GIT_CEILING_DIRECTORIES} "${FETCHCONTENT_BASE_DIR}")
-endif()
 FetchContent_MakeAvailable(obelisk_slang)
-if(NOT OBELISK_SLANG_SOURCE_DIR)
-  if(_obelisk_had_git_ceiling_directories)
-    set(ENV{GIT_CEILING_DIRECTORIES}
-      "${_obelisk_saved_git_ceiling_directories}")
-  else()
-    unset(ENV{GIT_CEILING_DIRECTORIES})
-  endif()
-endif()
-unset(_obelisk_saved_git_ceiling_directories)
-unset(_obelisk_had_git_ceiling_directories)
 set(OBELISK_SLANG_SOURCE_DIR "${obelisk_slang_SOURCE_DIR}")
 set(OBELISK_SLANG_INCLUDE_DIR "${OBELISK_SLANG_SOURCE_DIR}/include")
 message(STATUS
