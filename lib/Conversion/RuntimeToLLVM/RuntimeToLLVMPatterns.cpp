@@ -960,6 +960,7 @@ public:
                                   abi.alignments.span);
     }
     case runtime::RuntimeCall::Finish:
+    case runtime::RuntimeCall::ProgramExit:
     case runtime::RuntimeCall::Stop:
     case runtime::RuntimeCall::Fatal:
     case runtime::RuntimeCall::Error:

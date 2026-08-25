@@ -379,6 +379,25 @@ public:
   }
 };
 
+class ProgramExitConversion final
+    : public SimIOConversion<sim::SimProgramExitOp> {
+public:
+  using SimIOConversion::SimIOConversion;
+
+  LogicalResult
+  matchAndRewrite(sim::SimProgramExitOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value context = runtimeContext(rewriter, loc, adaptor.getContext().front());
+    Value status = runtime::RTProgramExitOp::create(
+        rewriter, loc, runtime::StatusType::get(rewriter.getContext()),
+        context);
+    sim::SimStatusCheckOp::create(rewriter, loc, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 class ErrorConversion final : public SimIOConversion<sim::SimErrorOp> {
 public:
   using SimIOConversion::SimIOConversion;
@@ -749,7 +768,7 @@ public:
     ConversionTarget target(context);
     target.addIllegalOp<
         sim::SimBytesConstantOp, sim::SimTimeFormatOp, sim::SimFinishOp,
-        sim::SimStopOp, sim::SimFatalOp, sim::SimErrorOp,
+        sim::SimProgramExitOp, sim::SimStopOp, sim::SimFatalOp, sim::SimErrorOp,
         sim::SimTerminationRequestedOp, sim::SimTimeNowOp, sim::SimDisplayOp,
         sim::SimStringOutputFormatOp, sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
         sim::SimFileCloseOp, sim::SimFileFlushOp, sim::SimFileGetcOp,
@@ -788,6 +807,7 @@ void populateSimulationToRuntimePatterns(const TypeConverter &converter,
                TerminationConversion<sim::SimStopOp, runtime::RTStopOp>,
                TerminationConversion<sim::SimFatalOp, runtime::RTFatalOp>>(
       converter, context);
+  patterns.add<ProgramExitConversion>(converter, context);
   patterns.add<ErrorConversion, TerminationRequestedConversion,
                SchedulerTimeConversion>(converter, context);
   patterns.add<OpenConversion<sim::SimFileOpenMCDOp, runtime::RTFileOpenMCDOp>,

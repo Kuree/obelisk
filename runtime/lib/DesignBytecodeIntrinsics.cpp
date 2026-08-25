@@ -2016,6 +2016,14 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         (signature.flags & OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS) == 0
             ? context->activeLogicalProcessToken
             : 0;
+    task.programOwner = context->activeProgramOwner;
+    if (!task.programOwner &&
+        (signature.flags & OBELISK_RT_INTRINSIC_SPAWN_PROGRAM) != 0) {
+      auto owner = scalar(callee.argumentCount);
+      if (!owner || !*owner)
+        return OBELISK_RT_INVALID_BYTECODE;
+      task.programOwner = *owner;
+    }
     obelisk_rt_random_split_unlocked(context, task.random);
     task.function = function;
     task.startupProcess =
@@ -2114,7 +2122,15 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             obelisk_rt_register_unstarted_actor(
                 context, context->scheduledDesignTasks.back().phase,
                 scheduledID);
+          if (context->scheduledDesignTasks.back().programOwner)
+            obelisk_rt_program_register_unlocked(
+                context, scheduledID,
+                context->scheduledDesignTasks.back().programOwner);
         } catch (...) {
+          if (context->scheduledDesignTasks.back().programOwner)
+            obelisk_rt_program_complete_unlocked(
+                context, scheduledID,
+                context->scheduledDesignTasks.back().programOwner);
           context->scheduledDesignTaskIndices.erase(scheduledID);
           context->designPollCandidates.erase(scheduledID);
           obelisk_rt_unregister_unstarted_actor(
@@ -3401,6 +3417,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
   }
   case OBELISK_RT_INTRINSIC_V1_ERROR:
     return obelisk_rt_v1_scheduler_error(context);
+  case OBELISK_RT_INTRINSIC_V1_PROGRAM_EXIT:
+    return obelisk_rt_v1_scheduler_program_exit(context);
   case OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED:
     return sentinel(0, obelisk_rt_v1_scheduler_termination_requested(context));
   case OBELISK_RT_INTRINSIC_V1_NET_COUNT_DRIVERS: {

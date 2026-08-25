@@ -305,7 +305,7 @@ inline bool obelisk_rt_decode_schedule_flags(uint32_t flags, uint32_t &phase,
       OBELISK_RT_SCHEDULE_FINAL | OBELISK_RT_SCHEDULE_HOME_MASK |
       OBELISK_RT_SCHEDULE_INITIAL | OBELISK_RT_SCHEDULE_STARTUP |
       OBELISK_RT_SCHEDULE_DETACHED_CONTROLS |
-      OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL;
+      OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL | OBELISK_RT_SCHEDULE_ROOT;
   if ((flags & ~known) != 0)
     return false;
   phase = (flags & OBELISK_RT_SCHEDULE_FINAL) != 0 ? 1u : 0u;
@@ -357,6 +357,7 @@ struct ScheduledProcess {
   std::vector<uint64_t> controls;
   uint64_t token = 0;
   uint64_t parent = 0;
+  uint64_t programOwner = 0;
   uint64_t observedEpoch = 0;
   uint64_t wakeTime = 0;
   uint64_t waitOffset = 0;
@@ -389,6 +390,7 @@ struct ScheduledProcess {
   bool waitOrderFailed = false;
   bool initialProcess = false;
   bool startupProcess = false;
+  bool rootProcess = false;
   bool explicitlySuspended = false;
 };
 
@@ -584,6 +586,7 @@ struct DesignActivation {
 struct ScheduledDesignTask {
   uint64_t id = 0;
   uint64_t parent = 0;
+  uint64_t programOwner = 0;
   uint32_t function = 0;
   uint32_t continuation = 0;
   std::vector<DesignActivation> callers;
@@ -1005,6 +1008,7 @@ struct obelisk_rt_context {
   uint32_t activeHomeRegion = UINT32_MAX;
   uint32_t activeExecRegion = UINT32_MAX;
   uint64_t activeLogicalProcessToken = 0;
+  uint64_t activeProgramOwner = 0;
   bool controlEscapePending = false;
   // Bytecode tasks are removed from the scheduler vector while executing.
   // Preserve their logical parent so ancestor-directed process control can
@@ -1081,6 +1085,13 @@ struct obelisk_rt_context {
   uint64_t schedulerSlotProgress = 0;
   bool schedulerRunningFinals = false;
   bool schedulerFinishRequested = false;
+  // Program completion is event-driven: each owned logical process is
+  // registered once and removed once, so ordinary scheduler selection never
+  // scans for 24.7 completion.
+  std::unordered_map<uint64_t, std::unordered_set<uint64_t>> programProcesses;
+  uint64_t liveProgramInstances = 0;
+  bool programTrackingSeen = false;
+  bool programTrackingSealed = false;
   // Mirrored as a full word for generated code. The address is handed out
   // only while the native scheduler owns the context transaction.
   uint32_t nativePeriodicTerminationRequested = 0;
@@ -1520,6 +1531,14 @@ void obelisk_rt_release_control_unlocked(obelisk_rt_context *context,
                                          uint64_t control);
 void obelisk_rt_release_controls_unlocked(
     obelisk_rt_context *context, const std::vector<uint64_t> &controls);
+
+void obelisk_rt_program_register_unlocked(obelisk_rt_context *context,
+                                          uint64_t logicalProcess,
+                                          uint64_t programOwner);
+void obelisk_rt_program_complete_unlocked(obelisk_rt_context *context,
+                                          uint64_t logicalProcess,
+                                          uint64_t programOwner);
+void obelisk_rt_program_seal_unlocked(obelisk_rt_context *context);
 
 // A join_none branch may finish while processes spawned beneath it remain
 // live. Keep those descendants reachable from the surviving process tree so

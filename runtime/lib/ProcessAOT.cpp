@@ -587,6 +587,7 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
     context->activeHomeRegion = scheduled.homeRegion;
     context->activeExecRegion = scheduled.queuedRegion;
     context->activeLogicalProcessToken = kNativeLogicalProcessTag | token;
+    context->activeProgramOwner = scheduled.programOwner;
     context->activeLogicalProcessParent = scheduled.parent;
     context->activeWaitOrderFailed =
         resuming && scheduled.suspendKind == OBELISK_RT_SUSPEND_EVENT_ORDER &&
@@ -617,6 +618,7 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
   context->activeHomeRegion = UINT32_MAX;
   context->activeExecRegion = UINT32_MAX;
   context->activeLogicalProcessToken = 0;
+  context->activeProgramOwner = 0;
   context->activeLogicalProcessParent = 0;
   context->activeWaitOrderFailed = false;
   if (!actorValid)
@@ -712,6 +714,10 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
         nullptr);
     if (status != OBELISK_RT_OK)
       return status;
+    obelisk_rt_program_complete_unlocked(
+        context, kNativeLogicalProcessTag | token, scheduled.programOwner);
+    if (scheduled.rootProcess)
+      obelisk_rt_program_seal_unlocked(context);
     obelisk_rt_reparent_process_children_unlocked(
         context, kNativeLogicalProcessTag | token, scheduled.parent);
     context->terminatedNativeProcesses.insert(token, scheduled.random);
@@ -840,6 +846,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
     context->activeExecRegion = scheduled.queuedRegion;
     context->activeLogicalProcessToken =
         kNativeLogicalProcessTag | scheduled.token;
+    context->activeProgramOwner = scheduled.programOwner;
     context->activeLogicalProcessParent = scheduled.parent;
     context->activeWaitOrderFailed =
         resuming && scheduled.suspendKind == OBELISK_RT_SUSPEND_EVENT_ORDER &&
@@ -937,6 +944,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
     context->activeHomeRegion = UINT32_MAX;
     context->activeExecRegion = UINT32_MAX;
     context->activeLogicalProcessToken = 0;
+    context->activeProgramOwner = 0;
     context->activeLogicalProcessParent = 0;
     context->activeWaitOrderFailed = false;
     terminationRequested = context->schedulerFinishRequested;
@@ -1062,6 +1070,11 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
           nullptr);
       if (status != OBELISK_RT_OK)
         return status;
+      obelisk_rt_program_complete_unlocked(
+          context, kNativeLogicalProcessTag | scheduled.token,
+          scheduled.programOwner);
+      if (scheduled.rootProcess)
+        obelisk_rt_program_seal_unlocked(context);
       obelisk_rt_reparent_process_children_unlocked(
           context, kNativeLogicalProcessTag | scheduled.token,
           scheduled.parent);

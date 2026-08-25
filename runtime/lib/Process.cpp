@@ -854,6 +854,87 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_destroy(
   return OBELISK_RT_OK;
 }
 
+static void requestImplicitProgramFinishUnlocked(obelisk_rt_context *context) {
+  if (!context->programTrackingSeen || !context->programTrackingSealed ||
+      context->liveProgramInstances != 0)
+    return;
+  context->schedulerFinishRequested = true;
+  context->nativePeriodicTerminationRequested = 1;
+  context->schedulerFinishVerbosity = 0;
+}
+
+void obelisk_rt_program_register_unlocked(obelisk_rt_context *context,
+                                          uint64_t logicalProcess,
+                                          uint64_t programOwner) {
+  if (!context || !logicalProcess || !programOwner)
+    return;
+  auto [owner, insertedOwner] =
+      context->programProcesses.try_emplace(programOwner);
+  if (insertedOwner)
+    ++context->liveProgramInstances;
+  owner->second.insert(logicalProcess);
+  context->programTrackingSeen = true;
+}
+
+void obelisk_rt_program_complete_unlocked(obelisk_rt_context *context,
+                                          uint64_t logicalProcess,
+                                          uint64_t programOwner) {
+  if (!context || !logicalProcess || !programOwner)
+    return;
+  auto owner = context->programProcesses.find(programOwner);
+  if (owner == context->programProcesses.end() ||
+      owner->second.erase(logicalProcess) == 0)
+    return;
+  if (owner->second.empty()) {
+    context->programProcesses.erase(owner);
+    if (context->liveProgramInstances != 0)
+      --context->liveProgramInstances;
+  }
+  requestImplicitProgramFinishUnlocked(context);
+}
+
+void obelisk_rt_program_seal_unlocked(obelisk_rt_context *context) {
+  if (!context)
+    return;
+  context->programTrackingSealed = true;
+  requestImplicitProgramFinishUnlocked(context);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_program_register(obelisk_rt_context *context,
+                                         uint64_t logicalProcess,
+                                         uint64_t programOwner) {
+  if (!context || !logicalProcess || !programOwner)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
+  try {
+    ContextMutexLock lock(context);
+    bool native = (logicalProcess & OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG) != 0;
+    if (!native)
+      return OBELISK_RT_INVALID_HANDLE;
+    uint64_t token = logicalProcess & ~OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG;
+    auto indexed = context->scheduledProcessIndices.find(token);
+    if (indexed == context->scheduledProcessIndices.end() ||
+        indexed->second >= context->scheduledProcesses.size())
+      return OBELISK_RT_INVALID_HANDLE;
+    ScheduledProcess &process = context->scheduledProcesses[indexed->second];
+    if (!process.instance || process.token != token)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    // A dynamically spawned program-domain helper already inherited its
+    // caller's owner in scheduler_add. The generated root annotation is then
+    // redundant and must not replace that dynamic ancestry.
+    if (process.programOwner)
+      return OBELISK_RT_OK;
+    process.programOwner = programOwner;
+    obelisk_rt_program_register_unlocked(context, logicalProcess, programOwner);
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_scheduler_add(obelisk_rt_context *context,
                             obelisk_rt_process_instance_v1 *instance,
@@ -904,6 +985,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
     process.parent = (flags & OBELISK_RT_SCHEDULE_DETACHED_CONTROLS) == 0
                          ? context->activeLogicalProcessToken
                          : 0;
+    process.programOwner = context->activeProgramOwner;
     obelisk_rt_random_split_unlocked(context, process.random);
     if ((flags & OBELISK_RT_SCHEDULE_DETACHED_CONTROLS) == 0)
       process.controls = context->activeControls;
@@ -912,6 +994,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
     process.phase = phase;
     process.initialProcess = (flags & OBELISK_RT_SCHEDULE_INITIAL) != 0;
     process.startupProcess = (flags & OBELISK_RT_SCHEDULE_STARTUP) != 0;
+    process.rootProcess = (flags & OBELISK_RT_SCHEDULE_ROOT) != 0;
     process.urgent = process.startupProcess;
     process.prioritySignal = (flags & OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL) != 0;
     context->scheduledFinalProcessPresent |= phase == 1;
@@ -940,7 +1023,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
       if ((flags & OBELISK_RT_SCHEDULE_DETACHED_CONTROLS) == 0)
         obelisk_rt_register_unstarted_actor(context, phase,
                                             kNativeLogicalProcessTag | token);
+      if (context->scheduledProcesses.back().programOwner)
+        obelisk_rt_program_register_unlocked(
+            context, kNativeLogicalProcessTag | token,
+            context->scheduledProcesses.back().programOwner);
     } catch (...) {
+      if (context->scheduledProcesses.back().programOwner)
+        obelisk_rt_program_complete_unlocked(
+            context, kNativeLogicalProcessTag | token,
+            context->scheduledProcesses.back().programOwner);
       context->scheduledProcessIndices.erase(token);
       context->nativePollCandidates.erase(token);
       obelisk_rt_unregister_unstarted_actor(context, phase,
@@ -1499,6 +1590,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_enter(
   context->activeExecRegion = scheduled.queuedRegion;
   context->activeLogicalProcessToken =
       kNativeLogicalProcessTag | scheduled.token;
+  context->activeProgramOwner = scheduled.programOwner;
   context->controlEscapePending = false;
   context->activeLogicalProcessParent = scheduled.parent;
   context->activeWaitOrderFailed = false;
@@ -1531,6 +1623,7 @@ obelisk_rt_v1_scheduler_direct_fragment_leave(obelisk_rt_context *context,
   context->activeHomeRegion = UINT32_MAX;
   context->activeExecRegion = UINT32_MAX;
   context->activeLogicalProcessToken = 0;
+  context->activeProgramOwner = 0;
   context->controlEscapePending = false;
   context->activeLogicalProcessParent = 0;
   context->activeWaitOrderFailed = false;
@@ -1912,6 +2005,51 @@ obelisk_rt_v1_scheduler_finish(obelisk_rt_context *context,
     context->schedulerFinishRequested = true;
     context->nativePeriodicTerminationRequested = 1;
     context->schedulerFinishVerbosity = verbosity;
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_program_exit(obelisk_rt_context *context) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
+  try {
+    uint64_t owner = 0;
+    uint64_t current = 0;
+    std::vector<uint64_t> members;
+    {
+      ContextMutexLock lock(context);
+      owner = context->activeProgramOwner;
+      current = context->activeLogicalProcessToken;
+      if (!owner || !current) {
+        setLastErrorUnlocked(
+            context,
+            "$exit is only valid in a thread owned by a program instance");
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      }
+      auto found = context->programProcesses.find(owner);
+      if (found == context->programProcesses.end() ||
+          found->second.count(current) == 0)
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      members.reserve(found->second.size());
+      for (uint64_t member : found->second)
+        if (member != current)
+          members.push_back(member);
+      members.push_back(current);
+    }
+    for (uint64_t member : members) {
+      obelisk_rt_process_control_disposition disposition =
+          OBELISK_RT_PROCESS_CONTROL_CONTINUE;
+      obelisk_rt_status status = obelisk_rt_v1_process_control(
+          context, member, OBELISK_RT_PROCESS_CONTROL_KILL, &disposition);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
     return OBELISK_RT_OK;
   } catch (const std::bad_alloc &) {
     return OBELISK_RT_OUT_OF_MEMORY;
@@ -3707,6 +3845,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       context->activeLogicalProcessToken =
           kNativeLogicalProcessTag |
           context->scheduledProcesses[selectedIndex].token;
+      context->activeProgramOwner =
+          context->scheduledProcesses[selectedIndex].programOwner;
       context->controlEscapePending = false;
       context->activeLogicalProcessParent =
           context->scheduledProcesses[selectedIndex].parent;
@@ -3765,6 +3905,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       context->activeHomeRegion = UINT32_MAX;
       context->activeExecRegion = UINT32_MAX;
       context->activeLogicalProcessToken = 0;
+      context->activeProgramOwner = 0;
       context->controlEscapePending = false;
       context->activeLogicalProcessParent = 0;
       context->activeWaitOrderFailed = false;
@@ -3825,6 +3966,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           destroy = true;
         } else {
           uint64_t token = scheduled.token;
+          obelisk_rt_program_complete_unlocked(context,
+                                               kNativeLogicalProcessTag | token,
+                                               scheduled.programOwner);
+          if (scheduled.rootProcess)
+            obelisk_rt_program_seal_unlocked(context);
           obelisk_rt_reparent_process_children_unlocked(
               context, kNativeLogicalProcessTag | token, scheduled.parent);
           context->terminatedNativeProcesses.insert(token, scheduled.random);

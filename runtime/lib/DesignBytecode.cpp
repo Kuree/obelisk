@@ -1803,8 +1803,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                       sizeof(managed));
         else if (previous != managed) {
           uint64_t changedHandle =
-              automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                                    static_cast<uint32_t>(start)
+              automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                              static_cast<uint32_t>(start)
               : boundedStatic ? encodeStaticHandle(staticID, start)
                               : static_cast<uint64_t>(start);
           if (changedHandle == UINT64_MAX)
@@ -2081,8 +2081,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             if (!local && !realValue && !equalStringContents)
               transitions.push_back(
                   {bitIndex,
-                   automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                                         static_cast<uint32_t>(absolute)
+                   automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                                   static_cast<uint32_t>(absolute)
                    : boundedStatic ? encodeStaticHandle(staticID, coordinate)
                                    : absolute,
                    oldValue, oldUnknown, newValue, newUnknown});
@@ -2105,8 +2105,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           }
           if (changed) {
             uint64_t realHandle =
-                automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                                      static_cast<uint32_t>(start)
+                automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                                static_cast<uint32_t>(start)
                 : boundedStatic ? encodeStaticHandle(staticID, start)
                                 : static_cast<uint64_t>(start);
             if (!obelisk_rt_publish_signal_occurrence_unlocked(
@@ -3080,6 +3080,8 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
         context->terminatedNativeProcesses.insert(process.token,
                                                   process.random);
         context->killedNativeProcesses.insert(process.token);
+        obelisk_rt_program_complete_unlocked(context, token,
+                                             process.programOwner);
         if (!process.started)
           obelisk_rt_unregister_unstarted_actor(context, process.phase, token);
         obelisk_rt_flush_deferred_immediate_reports_unlocked(context, token);
@@ -3103,6 +3105,8 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
           continue;
         context->terminatedDesignTasks.insert(task.id, task.random);
         context->killedDesignTasks.insert(task.id);
+        obelisk_rt_program_complete_unlocked(context, task.id,
+                                             task.programOwner);
         if (!task.started)
           obelisk_rt_unregister_unstarted_actor(context, task.phase, task.id);
         obelisk_rt_flush_deferred_immediate_reports_unlocked(context, task.id);
@@ -4188,6 +4192,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       context->activeHomeRegion = UINT32_MAX;
       context->activeExecRegion = UINT32_MAX;
       context->activeLogicalProcessToken = 0;
+      context->activeProgramOwner = 0;
       context->controlEscapePending = false;
       context->activeLogicalProcessParent = 0;
       context->activeWaitOrderFailed = false;
@@ -4430,6 +4435,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       context->activeHomeRegion = task.homeRegion;
       context->activeExecRegion = task.queuedRegion;
       context->activeLogicalProcessToken = task.id;
+      context->activeProgramOwner = task.programOwner;
       context->controlEscapePending = false;
       context->activeLogicalProcessParent = task.parent;
       context->activeWaitOrderFailed =
@@ -4504,6 +4510,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       context->activeHomeRegion = UINT32_MAX;
       context->activeExecRegion = UINT32_MAX;
       context->activeLogicalProcessToken = 0;
+      context->activeProgramOwner = 0;
       context->controlEscapePending = false;
       context->activeLogicalProcessParent = 0;
       context->activeWaitOrderFailed = false;
@@ -4788,6 +4795,8 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
           task.queuedRegion = task.homeRegion;
           currentFrameReleased = false;
         } else {
+          obelisk_rt_program_complete_unlocked(context, task.id,
+                                               task.programOwner);
           obelisk_rt_reparent_process_children_unlocked(context, task.id,
                                                         task.parent);
           context->terminatedDesignTasks.insert(task.id, task.random);
@@ -4849,6 +4858,7 @@ obelisk_rt_status obelisk_rt_prime_design_task(obelisk_rt_context *context,
     obelisk_rt_context *context;
     obelisk_rt_process_instance_v1 *native = context->activeNativeProcess;
     uint64_t logical = context->activeLogicalProcessToken;
+    uint64_t programOwner = context->activeProgramOwner;
     uint64_t logicalParent = context->activeLogicalProcessParent;
     uint64_t design = context->activeDesignTaskID;
     ScheduledDesignTask *designTask = context->activeDesignTask;
@@ -4867,6 +4877,7 @@ obelisk_rt_status obelisk_rt_prime_design_task(obelisk_rt_context *context,
       context->activeControls = std::move(controls);
       context->activeNativeProcess = native;
       context->activeLogicalProcessToken = logical;
+      context->activeProgramOwner = programOwner;
       context->activeLogicalProcessParent = logicalParent;
       context->activeDesignTaskID = design;
       context->activeDesignTask = designTask;
@@ -4889,6 +4900,7 @@ obelisk_rt_status obelisk_rt_prime_design_task(obelisk_rt_context *context,
     // statement without yielding to unrelated work.
     context->activeNativeProcess = nullptr;
     context->activeLogicalProcessToken = 0;
+    context->activeProgramOwner = 0;
     context->activeLogicalProcessParent = 0;
     context->activeDesignTaskID = 0;
     context->activeDesignTask = nullptr;

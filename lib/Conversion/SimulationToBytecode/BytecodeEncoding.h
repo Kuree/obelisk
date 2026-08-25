@@ -19,6 +19,7 @@ constexpr uint32_t kIntrinsicStringOutputFormat =
     OBELISK_RT_INTRINSIC_V1_FORMAT;
 constexpr uint32_t kIntrinsicDisplay = OBELISK_RT_INTRINSIC_V1_DISPLAY;
 constexpr uint32_t kIntrinsicFinish = OBELISK_RT_INTRINSIC_V1_FINISH;
+constexpr uint32_t kIntrinsicProgramExit = OBELISK_RT_INTRINSIC_V1_PROGRAM_EXIT;
 constexpr uint32_t kIntrinsicStop = OBELISK_RT_INTRINSIC_V1_STOP;
 constexpr uint32_t kIntrinsicFatal = OBELISK_RT_INTRINSIC_V1_FATAL;
 constexpr uint32_t kIntrinsicError = OBELISK_RT_INTRINSIC_V1_ERROR;
@@ -60,8 +61,7 @@ constexpr uint32_t kIntrinsicTimeFormat = OBELISK_RT_INTRINSIC_V1_TIME_FORMAT;
 constexpr uint32_t kIntrinsicPlusargTest = OBELISK_RT_INTRINSIC_V1_PLUSARG_TEST;
 constexpr uint32_t kIntrinsicPlusargValue =
     OBELISK_RT_INTRINSIC_V1_PLUSARG_VALUE;
-constexpr uint32_t kIntrinsicPlusargScan =
-    OBELISK_RT_INTRINSIC_V1_PLUSARG_SCAN;
+constexpr uint32_t kIntrinsicPlusargScan = OBELISK_RT_INTRINSIC_V1_PLUSARG_SCAN;
 constexpr uint32_t kIntrinsicSystem = OBELISK_RT_INTRINSIC_V1_SYSTEM;
 constexpr uint32_t kIntrinsicFileClose = OBELISK_RT_INTRINSIC_V1_FILE_CLOSE;
 constexpr uint32_t kIntrinsicFileFlush = OBELISK_RT_INTRINSIC_V1_FILE_FLUSH;

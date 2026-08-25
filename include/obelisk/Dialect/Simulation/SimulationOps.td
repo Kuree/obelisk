@@ -1823,6 +1823,20 @@ def SimFinishOp : SimOp<"finish", [
   let assemblyFormat = "$context `,` $verbosity attr-dict";
 }
 
+def SimProgramExitOp : SimOp<"program.exit", [
+  MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimProcessResource>]>
+]> {
+  let summary = "terminate the current program instance";
+  let description = [{
+    Implements IEEE 1800-2017 24.7 `$exit`. The runtime identifies the
+    program instance from the current logical process, terminates every
+    process in that instance, and finishes the simulation only after every
+    program instance has completed.
+  }];
+  let arguments = (ins SimContextType:$context);
+  let assemblyFormat = "$context attr-dict";
+}
+
 def SimStopOp : SimOp<"stop", [
   MemoryEffects<[MemWrite<SimSchedulerResource>]>
 ]> {

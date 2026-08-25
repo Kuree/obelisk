@@ -11,29 +11,34 @@
 // RUN: diff -u %t.o0.native.out %t.o3.native.out
 // RUN: FileCheck %s < %t.o3.native.out
 
-module program_renba_top;
-  logic [3:0] value;
-  program_renba program_instance(value);
+module top;
+  natural_program p();
 
   initial begin
-    value = 0;
-    @(value);
-    $display("design-wake=%0d", value);
+    #10;
+    $display("module-must-not-run");
   end
+
+  final $display("natural-final");
 endmodule
 
-program program_renba(ref logic [3:0] value);
+program natural_program;
   initial begin
-    $display("program-before=%0d", value);
-    value <= 7;
-    #0;
-    $display("program-after-zero=%0d", value);
-    // Keep the program alive through the current slot's Re-NBA commit; an
-    // implicit 24.7 $exit at this point would correctly end the simulation.
     #1;
+    $display("first-root-%0t", $time);
+  end
+
+  initial begin
+    fork
+      begin
+        #4;
+        $display("detached-descendant-%0t", $time);
+      end
+    join_none
   end
 endprogram
 
-// CHECK: program-before=0
-// CHECK-NEXT: program-after-zero=0
-// CHECK-NEXT: design-wake=7
+// CHECK: first-root-1
+// CHECK-NEXT: detached-descendant-4
+// CHECK-NEXT: natural-final
+// CHECK-NOT: module-must-not-run

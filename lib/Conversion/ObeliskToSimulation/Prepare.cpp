@@ -7044,6 +7044,15 @@ void ObeliskSimPreparePass::runOnOperation() {
     // clocking block is declared lexically inside a program.
     bool programDomain =
         !clockingEventMonitor && isProgramCodeUnit(unit.source);
+    bool programProceduralRoot = unit.entryKind == sim::EntryKind::Initial ||
+                                 unit.entryKind == sim::EntryKind::Always ||
+                                 unit.entryKind == sim::EntryKind::AlwaysComb ||
+                                 unit.entryKind == sim::EntryKind::AlwaysFF ||
+                                 unit.entryKind == sim::EntryKind::AlwaysLatch;
+    if (programDomain && programProceduralRoot && !hierarchy.empty())
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.program_owner_id",
+          builder.getI64IntegerAttr(stableCodeUnitID(hierarchy))));
     // Final procedures are held in the runtime's end-of-simulation phase; the
     // compute graph independently places their executable fragment in its
     // postponed plan.  Their process ABI home must remain Active even when the

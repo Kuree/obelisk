@@ -457,13 +457,16 @@ bool validIntrinsic(const Image &image, const Function &function,
         (!twoStateBits(output(0), 64) && !handle(output(0))))
       return false;
     Function callee = functionAt(image, calleeIndex);
+    bool program = (signature.flags & OBELISK_RT_INTRINSIC_SPAWN_PROGRAM) != 0;
     if ((callee.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
-        site.inputCount != callee.argumentCount)
+        site.inputCount != callee.argumentCount + (program ? 1u : 0u))
       return false;
-    for (uint32_t index = 0; index != site.inputCount; ++index)
+    for (uint32_t index = 0; index != callee.argumentCount; ++index)
       if (!input(index) ||
           !compatible(*input(index), layoutAt(image, callee, index)))
         return false;
+    if (program && !twoStateBits(input(callee.argumentCount), 64))
+      return false;
     return true;
   }
   case OBELISK_RT_INTRINSIC_V1_NBA:
@@ -1139,6 +1142,7 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && bits(input(0), 32);
   case OBELISK_RT_INTRINSIC_V1_ERROR:
+  case OBELISK_RT_INTRINSIC_V1_PROGRAM_EXIT:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 0;
   case OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED:

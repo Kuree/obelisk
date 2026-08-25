@@ -67,7 +67,12 @@ endmodule
 program reactive_source(output udnt_types::resolved_real out);
   real value = 2.0;
   assign out = value;
-  initial #1 value = 4.0;
+  initial begin
+    #1 value = 4.0;
+    // The module-side checks finish at time 3. Keep this program instance
+    // alive until then instead of invoking its implicit 24.7 $exit at time 1.
+    #10;
+  end
 endprogram
 
 module native_user_defined_nettypes;

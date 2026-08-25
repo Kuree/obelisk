@@ -111,6 +111,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   }
   if (auto op = dyn_cast<sim::SimFinishOp>(operation))
     return emitIntrinsic(plan, kIntrinsicFinish, {op.getVerbosity()}, {});
+  if (isa<sim::SimProgramExitOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicProgramExit, {}, {});
   if (auto op = dyn_cast<sim::SimStopOp>(operation))
     return emitIntrinsic(plan, kIntrinsicStop, {op.getVerbosity()}, {});
   if (auto op = dyn_cast<sim::SimFatalOp>(operation))
@@ -238,15 +240,29 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
       return op.emitOpError(
           "priority signal resume is reserved for internal concurrent "
           "cancellation or abort observers");
+    auto programOwner = callee.function->getAttrOfType<IntegerAttr>(
+        "obelisk_sim.program_owner_id");
     uint32_t flags =
         found->second | (startup ? OBELISK_RT_INTRINSIC_SPAWN_STARTUP : 0) |
         (callee.function->hasAttr("obelisk_sim.detached_controls")
              ? OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS
              : 0) |
         (primeOnSpawn ? OBELISK_RT_INTRINSIC_SPAWN_PRIME : 0) |
-        (prioritySignalResume ? OBELISK_RT_INTRINSIC_SPAWN_PRIORITY_SIGNAL : 0);
-    return emitIntrinsic(plan, kIntrinsicSpawn, captures, {op.getProcess()},
-                         flags);
+        (prioritySignalResume ? OBELISK_RT_INTRINSIC_SPAWN_PRIORITY_SIGNAL
+                              : 0) |
+        (programOwner ? OBELISK_RT_INTRINSIC_SPAWN_PROGRAM : 0);
+    SmallVector<uint32_t> inputs;
+    llvm::transform(captures, std::back_inserter(inputs),
+                    [&](Value value) { return reg(plan, value); });
+    if (programOwner) {
+      uint32_t owner =
+          emitU64Constant(plan, programOwner.getValue().getZExtValue());
+      if (owner == kInvalidRegister)
+        return op.emitOpError("cannot encode program instance identity");
+      inputs.push_back(owner);
+    }
+    return emitIntrinsicRegisters(plan, kIntrinsicSpawn, inputs,
+                                  {reg(plan, op.getProcess())}, flags);
   }
   if (auto op = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
     SmallVector<Value> inputs{op.getValue(), op.getDestination()};
@@ -295,12 +311,10 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
             (op->hasAttr("obelisk_sim.user_net_raw_drive")
                  ? OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW
                  : 0) |
-            (op.getValue().getType().isF32()
-                 ? OBELISK_RT_INERTIAL_DRIVER_REAL32
-                 : 0) |
-            (op.getValue().getType().isF64()
-                 ? OBELISK_RT_INERTIAL_DRIVER_REAL64
-                 : 0));
+            (op.getValue().getType().isF32() ? OBELISK_RT_INERTIAL_DRIVER_REAL32
+                                             : 0) |
+            (op.getValue().getType().isF64() ? OBELISK_RT_INERTIAL_DRIVER_REAL64
+                                             : 0));
     if (codeUnit == kInvalidRegister || component == kInvalidRegister ||
         flags == kInvalidRegister)
       return op.emitOpError("cannot encode inertial driver identity");

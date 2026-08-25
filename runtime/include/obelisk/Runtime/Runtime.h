@@ -434,6 +434,7 @@ enum {
 // queued in the same event region. Unlike STARTUP, this does not change the
 // process's event region or make its initial activation urgent.
 #define OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL (UINT32_C(1) << 7)
+#define OBELISK_RT_SCHEDULE_ROOT (UINT32_C(1) << 8)
 
 // The bytecode SPAWN intrinsic uses its four high flag bits for scheduler
 // classifications and the remaining bits for the callee function index.
@@ -441,7 +442,8 @@ enum {
 #define OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS (UINT32_C(1) << 30)
 #define OBELISK_RT_INTRINSIC_SPAWN_PRIORITY_SIGNAL (UINT32_C(1) << 29)
 #define OBELISK_RT_INTRINSIC_SPAWN_PRIME (UINT32_C(1) << 28)
-#define OBELISK_RT_INTRINSIC_SPAWN_FUNCTION_MASK UINT32_C(0x0fffffff)
+#define OBELISK_RT_INTRINSIC_SPAWN_PROGRAM (UINT32_C(1) << 27)
+#define OBELISK_RT_INTRINSIC_SPAWN_FUNCTION_MASK UINT32_C(0x07ffffff)
 
 // Serialized design-bytecode function flags. Process functions encode their
 // canonical frame size shifted left by one. Bits 60-62 encode the executable
@@ -918,6 +920,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_CONTROL_BOUNDARY = UINT32_C(0x00010239),
   OBELISK_RT_INTRINSIC_V1_CONTROL_ESCAPE_PENDING = UINT32_C(0x0001023a),
   OBELISK_RT_INTRINSIC_V1_NET_COUNT_DRIVERS = UINT32_C(0x0001023b),
+  OBELISK_RT_INTRINSIC_V1_PROGRAM_EXIT = UINT32_C(0x0001023c),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -3123,6 +3126,16 @@ void obelisk_rt_v1_scheduler_notify(obelisk_rt_context *context);
 // implementation-defined and this runtime currently emits none.
 obelisk_rt_status obelisk_rt_v1_scheduler_finish(obelisk_rt_context *context,
                                                  uint32_t verbosity);
+// IEEE 1800-2017 24.7: terminate every logical process belonging to the
+// current program instance. Calling from a design-owned process is invalid.
+obelisk_rt_status
+obelisk_rt_v1_scheduler_program_exit(obelisk_rt_context *context);
+// Compiler-facing ownership hook for a newly scheduled program initial.
+// Descendant spawns inherit the current owner without another generated call.
+obelisk_rt_status
+obelisk_rt_v1_scheduler_program_register(obelisk_rt_context *context,
+                                         uint64_t logical_process,
+                                         uint64_t program_owner);
 // Batch-mode implementation of SystemVerilog's interactive suspension task.
 // With no debugger to resume the design, this requests the same orderly,
 // successful final-process phase as finish while retaining the distinct ABI
@@ -3759,10 +3772,12 @@ obelisk_rt_status obelisk_rt_v1_plusarg_value(obelisk_rt_context *context,
                                               uint32_t *out_found);
 // Parse a runtime $value$plusargs format. `out_conversion` is zero for string,
 // one for real, or the integral radix. Invalid formats report no match.
-obelisk_rt_status obelisk_rt_v1_plusarg_scan(
-    obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
-    obelisk_rt_string_v1 format, obelisk_rt_string_v1 *out_tail,
-    uint32_t *out_conversion, uint32_t *out_found);
+obelisk_rt_status obelisk_rt_v1_plusarg_scan(obelisk_rt_context *context,
+                                             obelisk_rt_gc_lane_v1 *lane,
+                                             obelisk_rt_string_v1 format,
+                                             obelisk_rt_string_v1 *out_tail,
+                                             uint32_t *out_conversion,
+                                             uint32_t *out_found);
 
 // Execute a host command and return its normalized exit status. A process
 // terminated by a signal reports 128 plus the signal number.
