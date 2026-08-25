@@ -533,6 +533,22 @@ bool validIntrinsic(const Image &image, const Function &function,
         return false;
     return true;
   }
+  case OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_STORAGE: {
+    auto value = input(0);
+    if (signature.flags != 0 || site.inputCount != 15 ||
+        site.outputCount != 0 || !numeric(value) || !handle(input(1)))
+      return false;
+    for (unsigned index = 2; index != 7; ++index) {
+      auto mask = input(index);
+      if (!mask || mask->kind != OBELISK_RT_DBREG_BITS ||
+          mask->width != value->width)
+        return false;
+    }
+    for (unsigned index = 7; index != 15; ++index)
+      if (!bits(input(index), 64))
+        return false;
+    return true;
+  }
   case OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER:
     return signature.flags <= 1 &&
            (site.inputCount == 1 || site.inputCount == 2) &&

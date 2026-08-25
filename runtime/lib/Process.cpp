@@ -3397,7 +3397,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         auto currentPathUpdate = [&](const ScheduledNBA &update) {
           if (!update.inertialPathDriver)
             return true;
-          auto pending = context->inertialPathPending.find(update.inertialSite);
+          auto pending =
+              context->inertialPathPending.find(update.inertialSite);
           return pending != context->inertialPathPending.end() &&
                  update.inertialPathBit < pending->second.width &&
                  update.inertialPathGeneration ==
@@ -3755,6 +3756,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                                            nativeIndex);
             } else if (sequence == pathSequence) {
               ScheduledNBA update = std::move(pathUpdate->second);
+              context->scheduledInertialPathNBAs.erase(pathUpdate);
+              if (update.execRegion != OBELISK_RT_REGION_ACTIVE) {
+                context->scheduledNBAs.push_back(std::move(update));
+                continue;
+              }
               bool pathCurrent = currentPathUpdate(update);
               if (pathCurrent)
                 completeInertial(update);
@@ -3762,7 +3768,6 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               if (pathCurrent)
                 applyNative(update);
               context->schedulerApplyingNativeUpdate = false;
-              context->scheduledInertialPathNBAs.erase(pathUpdate);
               if (context->schedulerStatus != OBELISK_RT_OK)
                 return context->schedulerStatus;
             } else if (sequence == managedSequence) {

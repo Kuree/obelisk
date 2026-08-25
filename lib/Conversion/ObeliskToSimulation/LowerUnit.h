@@ -20,6 +20,8 @@
 #include "llvm/ADT/StringSet.h"
 
 #include <array>
+#include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -604,6 +606,8 @@ private:
     /// write site can therefore pass the selected mask to all runtime banks
     /// without materializing twelve wide symbol-transition masks.
     bool transitionIndependent = false;
+    bool proceduralStorage = false;
+    uint64_t siteID = 0;
     /// Qualification state for edge rules in this driver-local plan. The
     /// lvalue write consumes only bits that actually make a destination
     /// transition, leaving unmatched bits available to a later zero-time
@@ -619,6 +623,10 @@ private:
   /// driver-local plan by the stable semantic lvalue node ID.
   ::llvm::DenseMap<uint64_t, TimingPathMaskedPlan> timingPathMaskedPlans;
   ::llvm::DenseSet<uint64_t> usedTimingPathMaskedPlans;
+  /// Procedural path qualification must execute after the outer event wait,
+  /// immediately before the assignment body that consumes it.
+  std::function<::mlir::LogicalResult()> prepareProceduralTimingPaths;
+  std::optional<::mlir::Value> proceduralTimingWriteMask;
   /// Per-activation rise, fall, and turnoff delays selected from statically
   /// frozen overlapping specify paths.
   std::optional<std::array<::mlir::Value, 3>> timingPathDelays;

@@ -753,6 +753,21 @@ LogicalResult SimDriverDriveInertialPathOp::verify() {
     return emitOpError("group index must be within a nonempty batch");
   return success();
 }
+
+LogicalResult SimRefStoreInertialPathOp::verify() {
+  std::optional<unsigned> width = getPackedWidth(getValue().getType());
+  auto sameWidth = [&](Value mask) {
+    auto type = dyn_cast<IntegerType>(mask.getType());
+    return width && type && type.getWidth() == *width;
+  };
+  if (!sameWidth(getWriteMask()) || !sameWidth(getActiveMask()) ||
+      !sameWidth(getRiseMask()) || !sameWidth(getFallMask()) ||
+      !sameWidth(getTurnoffMask()))
+    return emitOpError("all masks must match the packed stored width");
+  if (getGroupCount() == 0 || getGroup() >= getGroupCount())
+    return emitOpError("group index must be within a nonempty batch");
+  return success();
+}
 LogicalResult SimLogicShiftOp::verify() {
   if (!isa<IntegerType, LogicType>(getAmount().getType()))
     return emitOpError("shift amount must be an integer or four-state logic");

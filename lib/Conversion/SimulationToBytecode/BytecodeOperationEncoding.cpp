@@ -387,6 +387,26 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
          groupCount, flags},
         {});
   }
+  if (auto op = dyn_cast<sim::SimRefStoreInertialPathOp>(operation)) {
+    uint32_t siteID = emitU64Constant(plan, op.getSiteId());
+    uint32_t component = emitU64Constant(plan, op.getComponent());
+    uint32_t group = emitU64Constant(plan, op.getGroup());
+    uint32_t groupCount = emitU64Constant(plan, op.getGroupCount());
+    uint32_t nonblocking = emitU64Constant(plan, op.getNonblocking());
+    if (siteID == kInvalidRegister || component == kInvalidRegister ||
+        group == kInvalidRegister || groupCount == kInvalidRegister ||
+        nonblocking == kInvalidRegister)
+      return op.emitOpError("cannot encode inertial path storage identity");
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicInertialPathStorage,
+        {reg(plan, op.getValue()), reg(plan, op.getReference()),
+         reg(plan, op.getWriteMask()), reg(plan, op.getActiveMask()),
+         reg(plan, op.getRiseMask()), reg(plan, op.getFallMask()),
+         reg(plan, op.getTurnoffMask()), reg(plan, op.getRiseDelay()),
+         reg(plan, op.getFallDelay()), reg(plan, op.getTurnoffDelay()), siteID,
+         component, group, groupCount, nonblocking},
+        {});
+  }
   if (auto op =
           dyn_cast<sim::SimDriverDriveInertialStrengthPairOp>(operation)) {
     uint32_t codeUnit = emitU64Constant(plan, op.getCodeUnitId());

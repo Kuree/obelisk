@@ -1125,6 +1125,14 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
       [&](Operation *sampledClock) -> LogicalResult {
     Operation *savedClock = activeSampledClock;
     activeSampledClock = sampledClock;
+    if (prepareProceduralTimingPaths) {
+      auto prepare = std::move(prepareProceduralTimingPaths);
+      prepareProceduralTimingPaths = {};
+      if (failed(prepare())) {
+        activeSampledClock = savedClock;
+        return failure();
+      }
+    }
     LogicalResult result = lowerStatement(statement);
     activeSampledClock = savedClock;
     return result;

@@ -2379,6 +2379,72 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         *rise, *fall, *turnoff, packedValue.data(), packedUnknown.data(),
         masks[0].data(), masks[1].data(), masks[2].data(), masks[3].data());
   }
+  case OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_STORAGE: {
+    if (!context || !context->execution)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    auto rise = scalar(7);
+    auto fall = scalar(8);
+    auto turnoff = scalar(9);
+    auto siteID = scalar(10);
+    auto component = scalar(11);
+    auto group = scalar(12);
+    auto groupCount = scalar(13);
+    auto nonblocking = scalar(14);
+    if (!rise || !fall || !turnoff || !siteID || !component || !group ||
+        !groupCount || !nonblocking || *component > UINT32_MAX ||
+        *group > UINT32_MAX || *groupCount > UINT32_MAX || *nonblocking > 1)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Layout valueLayout = layoutAt(image, frame.function, inputRegister(0));
+    Logic value = readLogic(frame.data, valueLayout);
+    Layout destination = layoutAt(image, frame.function, inputRegister(1));
+    uint32_t kind = 0;
+    uint64_t objectBase = 0;
+    int64_t begin = 0, start = kInvalidHandleStart, end = 0;
+    const uint8_t *address = frame.data + destination.offset;
+    std::memcpy(&kind, address, 4);
+    std::memcpy(&objectBase, address + 8, 8);
+    std::memcpy(&start, address + 16, 8);
+    std::memcpy(&end, address + 24, 8);
+    uint32_t staticID = 0;
+    if (kind != OBELISK_RT_DESCRIPTOR_STORAGE ||
+        !decodeStaticHandle(objectBase, staticID, begin) || begin > end ||
+        start == kInvalidHandleStart || start < begin || start > end ||
+        end - start < static_cast<int64_t>(value.width))
+      return OBELISK_RT_INVALID_HANDLE;
+    uint64_t stable = encodeStaticHandle(staticID, start);
+    if (stable == UINT64_MAX)
+      return OBELISK_RT_INVALID_HANDLE;
+    size_t bytes = static_cast<size_t>((value.width + 7) / 8);
+    auto pack = [&](const Logic &logic) {
+      std::vector<uint8_t> packed(bytes, 0);
+      for (uint64_t bitIndex = 0; bitIndex != value.width; ++bitIndex)
+        if (bit(logic.value, bitIndex))
+          packed[static_cast<size_t>(bitIndex / 8)] |=
+              static_cast<uint8_t>(1u << (bitIndex % 8));
+      return packed;
+    };
+    std::vector<uint8_t> packedValue = pack(value);
+    std::vector<uint8_t> packedUnknown(bytes, 0);
+    if (value.fourState)
+      for (uint64_t bitIndex = 0; bitIndex != value.width; ++bitIndex)
+        if (bit(value.unknown, bitIndex))
+          packedUnknown[static_cast<size_t>(bitIndex / 8)] |=
+              static_cast<uint8_t>(1u << (bitIndex % 8));
+    std::array<std::vector<uint8_t>, 5> masks;
+    for (unsigned index = 0; index != masks.size(); ++index)
+      masks[index] =
+          pack(readLogic(frame.data, layoutAt(image, frame.function,
+                                              inputRegister(index + 2))));
+    return obelisk_rt_v1_scheduler_inertial_path_storage(
+        context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
+        reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
+        context->execution->state_bit_count, stable, value.width, *siteID,
+        static_cast<uint32_t>(*component), static_cast<uint32_t>(*group),
+        static_cast<uint32_t>(*groupCount),
+        static_cast<uint32_t>(*nonblocking), *rise, *fall, *turnoff,
+        packedValue.data(), packedUnknown.data(), masks[0].data(),
+        masks[1].data(), masks[2].data(), masks[3].data(), masks[4].data());
+  }
   case OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER_STRENGTH_PAIR: {
     if (!context || !context->execution)
       return OBELISK_RT_INVALID_ARGUMENT;

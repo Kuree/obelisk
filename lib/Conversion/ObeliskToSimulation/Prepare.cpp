@@ -1826,6 +1826,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     std::optional<uint64_t> nodeID;
     uint64_t low;
     uint64_t width;
+    bool procedural = false;
   };
   llvm::DenseMap<Operation *, SmallVector<Attribute>> frozenTimingRules;
   llvm::DenseMap<Operation *, llvm::StringMap<int32_t>> frozenTimingGroups;
@@ -1886,17 +1887,76 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (invalid)
         break;
     }
+    bool sawProceduralWriter = false;
+    bool sawContinuousStorageWriter = false;
+    if (hasEdgeSensitive) {
+      auto descriptor = descriptors.find(output);
+      bool directStorage = descriptor != descriptors.end() &&
+                           descriptor->second.kind ==
+                               DescriptorInfo::Kind::Storage;
+      for (Operation *source : sourceUnits) {
+        bool procedural = isa<semantic::SVProceduralBlockSymbolOp>(source);
+        bool continuous =
+            isa<semantic::SVContinuousAssignSymbolOp>(source);
+        if (!procedural && !continuous)
+          continue;
+        source->walk([&](Operation *nested) {
+          auto referenced =
+              nested->getAttrOfType<StringAttr>("referenced_path");
+          if (!isa<semantic::SVNamedValueExpressionOp,
+                   semantic::SVHierarchicalValueExpressionOp>(nested) ||
+              !referenced || referenced.getValue() != output ||
+              !isWrittenResolutionReference(nested))
+            return;
+          sawProceduralWriter |= procedural;
+          sawContinuousStorageWriter |= continuous && directStorage;
+          if (!procedural || !directStorage)
+            return;
+          auto nodeID = nested->getAttrOfType<IntegerAttr>("node_id");
+          if (!nodeID || nodeID.getInt() < 0)
+            return;
+          spans.push_back({source, nodeID.getValue().getZExtValue(), 0,
+                           path.output.rootWidth, true});
+        });
+      }
+      if (sawProceduralWriter &&
+          (sawContinuousStorageWriter || (!directStorage && !spans.empty()))) {
+        emitError(getSemanticLocation(path.declaration))
+            << "edge-sensitive specify path destination mixes continuous and "
+               "procedural writers";
+        invalid = true;
+      }
+    }
     if (invalid)
       continue;
     if (spans.empty()) {
       if (hasEdgeSensitive)
         emitError(getSemanticLocation(path.declaration))
             << "edge-sensitive specify path output has no executable "
-               "continuous driver; direct procedural destinations are not "
-               "supported yet";
+               "continuous driver or direct procedural writer";
       else
         emitError(getSemanticLocation(path.declaration))
             << "simple specify path output has no continuous driver";
+      invalid = true;
+      continue;
+    }
+
+    bool proceduralSpans = spans.front().procedural;
+    if (llvm::any_of(spans, [&](const TimingDriverSpan &span) {
+          return span.procedural != proceduralSpans;
+        })) {
+      emitError(getSemanticLocation(path.declaration))
+          << "edge-sensitive specify path destination mixes continuous and "
+             "procedural writers";
+      invalid = true;
+      continue;
+    }
+    if (proceduralSpans && llvm::any_of(paths, [](const SimpleTimingPath &p) {
+          return !p.edgeSensitive;
+        })) {
+      emitError(getSemanticLocation(path.declaration))
+          << "simple specify paths on direct procedural destinations are not "
+             "executable yet";
       invalid = true;
       continue;
     }
@@ -1905,6 +1965,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     // span endpoints instead of visiting individual bits, so wide packed
     // destinations remain compile-time constant work per driver span.
     for (const SimpleTimingPath &candidate : paths) {
+      if (proceduralSpans)
+        continue;
       uint64_t next = candidate.output.low;
       uint64_t end = next + candidate.output.width;
       while (next != end) {
@@ -2070,7 +2132,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     });
     bool hasExplicitDriverDelay = llvm::any_of(
         spans, [](const TimingDriverSpan &span) {
-          return span.unit->hasAttr("delay_fs");
+          return !span.procedural && span.unit->hasAttr("delay_fs");
         });
     if (hasExplicitDriverDelay) {
       emitError(getSemanticLocation(path.declaration))
@@ -2090,6 +2152,135 @@ void ObeliskSimPreparePass::runOnOperation() {
       continue;
     }
 
+    struct ProceduralWakeClassification {
+      int32_t kind = 0;
+      bool ambiguousSourceControl = false;
+    };
+    auto classifyProceduralWake = [&](const TimingDriverSpan &span,
+                                      const SimpleTimingPath &candidate) {
+      ProceduralWakeClassification result;
+      auto procedure = cast<semantic::SVProceduralBlockSymbolOp>(span.unit);
+      if (procedure.getProcedureKind() ==
+              semantic::SVProceduralBlockKind::AlwaysComb ||
+          procedure.getProcedureKind() ==
+              semantic::SVProceduralBlockKind::AlwaysLatch) {
+        // An implicit-sensitive process is sampled only when every path source
+        // is an actual dependency of the process. Otherwise a later,
+        // unrelated wake could compare against a stale source snapshot.
+        llvm::StringSet<> dependencies;
+        span.unit->walk([&](Operation *nested) {
+          if (auto referenced =
+                  nested->getAttrOfType<StringAttr>("referenced_path");
+              referenced && !isWrittenResolutionReference(nested))
+            dependencies.insert(referenced.getValue());
+        });
+        bool observesEverySource = llvm::all_of(
+            candidate.inputs, [&](const TimingTerminal &input) {
+              return dependencies.contains(input.path);
+            });
+        result.kind = observesEverySource ? 2 : 0;
+        return result;
+      }
+
+      std::function<Operation *(Operation *)> leadingStatement =
+          [&](Operation *statement) -> Operation * {
+        if (!isa<semantic::SVBlockStatementOp,
+                 semantic::SVStatementListOp>(statement))
+          return statement;
+        SmallVector<Operation *> children = getChildren(statement);
+        return children.empty() ? nullptr
+                                : leadingStatement(children.front());
+      };
+      SmallVector<Operation *> body = getChildren(span.unit);
+      Operation *leading =
+          body.empty() ? nullptr : leadingStatement(body.front());
+      SmallVector<Operation *> timedChildren =
+          leading ? getChildren(leading) : SmallVector<Operation *>{};
+      if (timedChildren.empty())
+        return result;
+      auto event =
+          dyn_cast<semantic::SVSignalEventControlOp>(timedChildren.front());
+      SmallVector<Operation *> eventChildren =
+          event ? getChildren(event) : SmallVector<Operation *>{};
+      Operation *primary = eventChildren.empty() ? nullptr
+                                                 : eventChildren.front();
+      auto directPath =
+          primary ? primary->getAttrOfType<StringAttr>("referenced_path")
+                  : StringAttr{};
+      bool directNamed =
+          isa_and_nonnull<semantic::SVNamedValueExpressionOp,
+                          semantic::SVHierarchicalValueExpressionOp>(primary);
+      int32_t eventEdge =
+          event ? static_cast<int32_t>(event.getEdgeKind()) : -1;
+      bool edgeMatches =
+          candidate.edgeIdentifier == 0 ||
+          candidate.edgeIdentifier == eventEdge ||
+          (candidate.edgeIdentifier == 3 &&
+           (eventEdge == 1 || eventEdge == 2 || eventEdge == 3));
+      bool exactWake = event && candidate.inputs.size() == 1 &&
+                       candidate.inputs.front().isWhole() && directNamed &&
+                       directPath &&
+                       directPath.getValue() == candidate.inputs.front().path &&
+                       edgeMatches;
+      result.kind = exactWake ? 1 : 0;
+      timedChildren.front()->walk([&](Operation *nested) {
+        auto referenced =
+            nested->getAttrOfType<StringAttr>("referenced_path");
+        if (referenced && candidate.inputs.size() == 1 &&
+            referenced.getValue() == candidate.inputs.front().path)
+          result.ambiguousSourceControl = true;
+      });
+      result.ambiguousSourceControl &= !exactWake;
+      return result;
+    };
+
+    // At least one direct writer must observe each edge path exactly. Other
+    // writers of the same storage are retained as explicit cancellation-only
+    // sites so an unqualified procedural write can override a pending path.
+    for (const SimpleTimingPath &candidate : paths) {
+      if (!candidate.edgeSensitive)
+        continue;
+      bool hasProceduralSpan = false;
+      bool hasQualifyingWake = false;
+      for (const TimingDriverSpan &span : spans) {
+        uint64_t begin = std::max(span.low, candidate.output.low);
+        uint64_t end = std::min(span.low + span.width,
+                                candidate.output.low + candidate.output.width);
+        if (begin >= end || !span.procedural)
+          continue;
+        auto procedure =
+            cast<semantic::SVProceduralBlockSymbolOp>(span.unit);
+        if (procedure.getProcedureKind() ==
+                semantic::SVProceduralBlockKind::Initial ||
+            procedure.getProcedureKind() ==
+                semantic::SVProceduralBlockKind::Final)
+          continue;
+        hasProceduralSpan = true;
+        ProceduralWakeClassification wake =
+            classifyProceduralWake(span, candidate);
+        if (wake.ambiguousSourceControl) {
+          emitError(getSemanticLocation(candidate.declaration))
+              << "edge-sensitive procedural specify path requires a direct "
+                 "single-source event control; derived and event-list "
+                 "controls are not executable yet";
+          invalid = true;
+          break;
+        }
+        hasQualifyingWake |= wake.kind == 1 || wake.kind == 2;
+      }
+      if (invalid)
+        break;
+      if (hasProceduralSpan && !hasQualifyingWake) {
+        emitError(getSemanticLocation(candidate.declaration))
+            << "edge-sensitive procedural specify path source is not "
+               "observed by a direct event control or implicit sensitivity";
+        invalid = true;
+        break;
+      }
+    }
+    if (invalid)
+      continue;
+
     llvm::DenseSet<Operation *> validatedUnits;
     for (const TimingDriverSpan &span : spans) {
       bool used = llvm::any_of(paths, [&](const SimpleTimingPath &candidate) {
@@ -2106,7 +2297,88 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         break;
       }
-      if (hasEdgeSensitive && hasDelayedEdgeDependency(span.unit)) {
+      if (span.procedural) {
+        bool delayed = false;
+        bool invalidWakeShape = false;
+        std::function<Operation *(Operation *)> leadingStatement =
+            [&](Operation *statement) -> Operation * {
+          if (!isa<semantic::SVBlockStatementOp,
+                   semantic::SVStatementListOp>(statement))
+            return statement;
+          SmallVector<Operation *> children = getChildren(statement);
+          return children.empty() ? nullptr
+                                  : leadingStatement(children.front());
+        };
+        SmallVector<Operation *> procedureChildren = getChildren(span.unit);
+        Operation *leading = procedureChildren.empty()
+                                 ? nullptr
+                                 : leadingStatement(procedureChildren.front());
+        auto procedure = cast<semantic::SVProceduralBlockSymbolOp>(span.unit);
+        if (procedure.getProcedureKind() ==
+                semantic::SVProceduralBlockKind::Initial ||
+            procedure.getProcedureKind() ==
+                semantic::SVProceduralBlockKind::Final) {
+          emitError(getSemanticLocation(path.declaration))
+              << "edge-sensitive specify path requires a recurring direct "
+                 "procedural destination writer";
+          invalid = true;
+          break;
+        }
+        bool implicit =
+            procedure.getProcedureKind() ==
+                semantic::SVProceduralBlockKind::AlwaysComb ||
+            procedure.getProcedureKind() ==
+                semantic::SVProceduralBlockKind::AlwaysLatch;
+        if (!implicit && !isa_and_nonnull<semantic::SVTimedStatementOp>(leading))
+          invalidWakeShape = true;
+        span.unit->walk([&](Operation *nested) {
+          if (isa<semantic::SVDelay3ControlOp,
+                  semantic::SVOneStepDelayControlOp,
+                  semantic::SVCycleDelayControlOp>(nested)) {
+            delayed = true;
+            return;
+          }
+          auto delay = dyn_cast<semantic::SVDelayControlOp>(nested);
+          if (!delay)
+            return;
+          SmallVector<Operation *> children = getChildren(delay);
+          auto spelling = children.size() == 1
+                              ? getConstantSpelling(children.front())
+                              : std::nullopt;
+          if (!spelling) {
+            delayed = true;
+            return;
+          }
+          FailureOr<ParsedConstant> value = parseSVInteger(
+              *spelling, 64, getSemanticLocation(delay));
+          delayed |= failed(value) || !value->unknown.isZero() ||
+                     !value->value.isZero();
+        });
+        span.unit->walk([&](semantic::SVTimedStatementOp timed) {
+          if (timed == leading)
+            return;
+          SmallVector<Operation *> children = getChildren(timed);
+          if (children.empty() ||
+              !isa<semantic::SVDelayControlOp>(children.front()))
+            invalidWakeShape = true;
+        });
+        if (invalidWakeShape) {
+          emitError(getSemanticLocation(path.declaration))
+              << "edge-sensitive procedural specify path requires one outer "
+                 "wake point; nested event controls are not executable yet";
+          invalid = true;
+          break;
+        }
+        if (delayed) {
+          emitError(getSemanticLocation(path.declaration))
+              << "edge-sensitive specify path has a delayed procedural "
+                 "destination dependency";
+          invalid = true;
+          break;
+        }
+      }
+      if (!span.procedural && hasEdgeSensitive &&
+          hasDelayedEdgeDependency(span.unit)) {
         emitError(getSemanticLocation(path.declaration))
             << "edge-sensitive specify path has an internally delayed "
                "destination dependency; same-time path qualification cannot "
@@ -2114,7 +2386,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         break;
       }
-      if (validatedUnits.insert(span.unit).second &&
+      if (!span.procedural && validatedUnits.insert(span.unit).second &&
           !hasExactInputs(span.unit, false)) {
         emitError(getSemanticLocation(path.declaration))
             << "simple specify path driver must depend only on its declared "
@@ -2311,6 +2583,22 @@ void ObeliskSimPreparePass::runOnOperation() {
           attrs.push_back(
               builder.getNamedAttr("edge_pending", edgePendingPath));
           attrs.push_back(builder.getNamedAttr("edge_epoch", edgeEpochPath));
+        }
+        if (span.procedural) {
+          auto descriptor = descriptors.find(output);
+          attrs.push_back(builder.getNamedAttr(
+              "procedural_storage", builder.getBoolAttr(true)));
+          attrs.push_back(builder.getNamedAttr(
+              "path_site_id",
+              builder.getI64IntegerAttr(descriptor->second.id)));
+          ProceduralWakeClassification wake =
+              classifyProceduralWake(span, candidate);
+          // Kind 3 is an explicit cancellation-only writer. It never performs
+          // snapshot-based edge qualification; the path-level validation above
+          // proves that another writer observes this source exactly.
+          int32_t wakeKind = wake.kind == 0 ? 3 : wake.kind;
+          attrs.push_back(builder.getNamedAttr(
+              "procedural_wake_kind", builder.getI32IntegerAttr(wakeKind)));
         }
         if (candidate.condition) {
           auto nodeID =
@@ -7627,6 +7915,13 @@ void ObeliskSimPreparePass::runOnOperation() {
             rule ? rule.getAs<IntegerAttr>("output_root_width") : IntegerAttr{};
         auto driverNodeID =
             rule ? rule.getAs<IntegerAttr>("driver_node_id") : IntegerAttr{};
+        auto proceduralStorage =
+            rule ? rule.getAs<BoolAttr>("procedural_storage") : BoolAttr{};
+        auto pathSiteID =
+            rule ? rule.getAs<IntegerAttr>("path_site_id") : IntegerAttr{};
+        auto proceduralWakeKind =
+            rule ? rule.getAs<IntegerAttr>("procedural_wake_kind")
+                 : IntegerAttr{};
         auto connectionFull =
             rule ? rule.getAs<BoolAttr>("connection_full") : BoolAttr{};
         auto polarity =
@@ -7705,6 +8000,14 @@ void ObeliskSimPreparePass::runOnOperation() {
           if (driverNodeID)
             fields.push_back(
                 builder.getNamedAttr("driver_node_id", driverNodeID));
+          if (proceduralStorage)
+            fields.push_back(builder.getNamedAttr("procedural_storage",
+                                                  proceduralStorage));
+          if (pathSiteID)
+            fields.push_back(builder.getNamedAttr("path_site_id", pathSiteID));
+          if (proceduralWakeKind)
+            fields.push_back(builder.getNamedAttr(
+                "procedural_wake_kind", proceduralWakeKind));
         }
         fields.push_back(builder.getNamedAttr("polarity", polarity));
         fields.push_back(builder.getNamedAttr(

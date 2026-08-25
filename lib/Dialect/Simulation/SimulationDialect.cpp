@@ -193,6 +193,7 @@ LogicalResult verifyPostponedReadOnly(SimFuncOp root) {
               SimReferencePathNBAEnqueueOp, SimArgumentRefStoreOp,
               SimRefStoreOp, SimDriverDriveOp, SimDriverDriveInertialOp,
               SimDriverDriveInertialPathOp,
+              SimRefStoreInertialPathOp,
               SimDriverDriveInertialStrengthPairOp, SimDriverDriveDelayedNetOp,
               SimDriverDriveChangedOp, SimMosDriveDelayedOp, SimNBAEnqueueOp,
               SimSpawnOp, SimEventTriggerOp, SimSuspendDelayOp, SimTaskCallOp,

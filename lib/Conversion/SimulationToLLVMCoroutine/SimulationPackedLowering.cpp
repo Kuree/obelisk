@@ -682,6 +682,7 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimNetCountDriversOp, sim::SimPassSwitchControlOp,
         sim::SimPassSwitchControlDelayedOp, sim::SimMosDriveDelayedOp,
         sim::SimDriverDriveInertialOp, sim::SimDriverDriveInertialPathOp,
+        sim::SimRefStoreInertialPathOp,
         sim::SimDriverDriveOp, sim::SimDriverDriveInertialStrengthPairOp,
         sim::SimDriverDriveDelayedNetOp, sim::SimDriverDriveChangedOp,
         sim::SimDriverExtractOp, sim::SimDriverDynExtractOp,

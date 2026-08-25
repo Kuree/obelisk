@@ -496,9 +496,11 @@ struct EventState {
 struct InertialDriverSite {
   uint64_t codeUnit = 0;
   uint32_t component = 0;
+  bool pathStorage = false;
 
   bool operator==(const InertialDriverSite &other) const {
-    return codeUnit == other.codeUnit && component == other.component;
+    return codeUnit == other.codeUnit && component == other.component &&
+           pathStorage == other.pathStorage;
   }
 };
 
@@ -507,6 +509,7 @@ struct InertialDriverSiteHash {
     uint64_t mixed = site.codeUnit ^
                      (uint64_t{site.component} + UINT64_C(0x9e3779b97f4a7c15) +
                       (site.codeUnit << 6) + (site.codeUnit >> 2));
+    mixed ^= uint64_t{site.pathStorage} * UINT64_C(0xd6e8feb86659fd93);
     return static_cast<size_t>(mixed);
   }
 };
@@ -581,7 +584,7 @@ struct ScheduledNBA {
   uint64_t inlineUnknown = 0;
   std::vector<uint8_t> value;
   std::vector<uint8_t> unknown;
-  InertialDriverSite inertialSite{UINT64_MAX, 0};
+  InertialDriverSite inertialSite{UINT64_MAX, 0, false};
   bool inertialDriverVector = false;
   bool inertialDriverInitialProjection = false;
   bool inertialPathDriver = false;

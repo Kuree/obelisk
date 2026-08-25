@@ -742,20 +742,22 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
+template <bool Storage>
+static obelisk_rt_status schedulerInertialPath(
     obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
     uint64_t codeUnit, uint32_t component, uint32_t group, uint32_t groupCount,
     uint32_t flags, uint64_t riseDelay, uint64_t fallDelay,
     uint64_t turnoffDelay, const uint8_t *value, const uint8_t *unknown,
-    const uint8_t *activeMask, const uint8_t *riseMask, const uint8_t *fallMask,
-    const uint8_t *turnoffMask) {
+    const uint8_t *writeMask, const uint8_t *activeMask,
+    const uint8_t *riseMask, const uint8_t *fallMask,
+    const uint8_t *turnoffMask, bool nonblocking) {
   if (!context || !context->execution || !valuePlane || bitWidth == 0 ||
       codeUnit == UINT64_MAX || groupCount == 0 || group >= groupCount ||
       (flags & ~(OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION |
                  OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW)) != 0 ||
       !value || (unknownPlane && !unknown) || !activeMask || !riseMask ||
-      !fallMask || !turnoffMask)
+      !fallMask || !turnoffMask || (Storage && !writeMask))
     return OBELISK_RT_INVALID_ARGUMENT;
   try {
     ContextTransaction transaction(context);
@@ -786,7 +788,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
     if (selectedHandle == UINT64_MAX)
       return OBELISK_RT_INVALID_HANDLE;
 
-    InertialDriverSite site{codeUnit, component};
+    InertialDriverSite site{codeUnit, component, Storage};
     InertialPathPending &pending = context->inertialPathPending[site];
     size_t bytes = static_cast<size_t>((bitWidth - 1) / 8 + 1);
     auto cancelScheduled = [&](uint64_t bit) {
@@ -836,11 +838,48 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
       return nativePlane && absolute < planeBitCount &&
              byteBit(nativePlane, absolute);
     };
+    auto commitImmediateStorage = [&](uint64_t bit, bool nextValue,
+                                      bool nextUnknown) {
+      uint64_t handle =
+          nativeHandleOffset(selectedHandle, static_cast<int64_t>(bit));
+      if (handle == UINT64_MAX)
+        return OBELISK_RT_INVALID_HANDLE;
+      uint8_t oldValue = currentBit(false, bit) ? 1 : 0;
+      uint8_t oldUnknown = currentBit(true, bit) ? 1 : 0;
+      uint8_t storedValue = nextValue ? 1 : 0;
+      uint8_t storedUnknown = nextUnknown ? 1 : 0;
+      uint8_t changed = 0;
+      obelisk_rt_status status = obelisk_rt_v1_native_state_store_plane(
+          context, valuePlane, planeBitCount, handle, 1, 0, &storedValue,
+          &changed);
+      if (status != OBELISK_RT_OK)
+        return status;
+      if (unknownPlane) {
+        status = obelisk_rt_v1_native_state_store_plane(
+            context, unknownPlane, planeBitCount, handle, 1, 1,
+            &storedUnknown, &changed);
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
+      uint8_t finalValue = currentBit(false, bit) ? 1 : 0;
+      uint8_t finalUnknown = currentBit(true, bit) ? 1 : 0;
+      if (oldValue != finalValue || oldUnknown != finalUnknown)
+        obelisk_rt_v1_scheduler_signal_transition(
+            context, handle, 1, &oldValue, &oldUnknown, &finalValue,
+            &finalUnknown);
+      return context->schedulerStatus;
+    };
     auto incrementGeneration = [&](uint64_t bit) {
       if (++pending.generation[static_cast<size_t>(bit)] == 0)
         pending.generation[static_cast<size_t>(bit)] = 1;
     };
     auto enqueue = [&](uint64_t bit, uint64_t delay) {
+      bool targetValue = byteBit(value, bit);
+      bool targetUnknown = unknownPlane && byteBit(unknown, bit);
+      if constexpr (Storage)
+        if (!nonblocking && delay == 0)
+          return commitImmediateStorage(bit, targetValue, targetUnknown) ==
+                 OBELISK_RT_OK;
       if (context->nextSchedulerSequence == 0 ||
           context->nextSchedulerSequence == UINT64_MAX)
         return false;
@@ -853,12 +892,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
       if (update.bitOffset == UINT64_MAX)
         return false;
       update.bitWidth = 1;
-      update.driver = true;
+      update.driver = !Storage;
       update.deferDriverResolution =
           (flags & OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION) != 0;
       update.publishDriverTransition =
           (flags & OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW) != 0;
-      update.execRegion = OBELISK_RT_REGION_ACTIVE;
+      update.execRegion = Storage && nonblocking ? OBELISK_RT_REGION_NBA
+                                                 : OBELISK_RT_REGION_ACTIVE;
       update.sequence = context->nextSchedulerSequence++;
       update.dueTime = delay > UINT64_MAX - context->schedulerTime
                            ? UINT64_MAX
@@ -869,8 +909,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
       update.inertialPathGeneration =
           pending.generation[static_cast<size_t>(bit)];
       update.inlinePacked = true;
-      update.inlineValue = byteBit(value, bit) ? 1 : 0;
-      update.inlineUnknown = unknownPlane && byteBit(unknown, bit) ? 1 : 0;
+      update.inlineValue = targetValue ? 1 : 0;
+      update.inlineUnknown = targetUnknown ? 1 : 0;
       auto key = std::make_pair(update.dueTime, update.sequence);
       if (!context->scheduledInertialPathNBAs.emplace(key, std::move(update))
                .second)
@@ -882,6 +922,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
 
     if (group == 0) {
       for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+        if (writeMask && !byteBit(writeMask, bit))
+          continue;
         bool targetValue = byteBit(value, bit);
         bool targetUnknown = unknownPlane && byteBit(unknown, bit);
         bool active = byteBit(activeMask, bit);
@@ -895,7 +937,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
         // update. Conversely, an applicable delayed path supersedes a pending
         // zero-delay outside-path update at the same scheduler time.
         bool pendingSame =
-            sameTarget && (pending.delayed[static_cast<size_t>(bit)] || !active);
+            sameTarget &&
+            (Storage
+                 ? active && pending.delayed[static_cast<size_t>(bit)]
+                 : pending.delayed[static_cast<size_t>(bit)] || !active);
         pending.needsSchedule[static_cast<size_t>(bit)] = 0;
         pending.candidateDelay[static_cast<size_t>(bit)] = UINT64_MAX;
         if (pendingSame)
@@ -914,8 +959,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
         pending.delayed[static_cast<size_t>(bit)] = active ? 1 : 0;
         if (active) {
           pending.needsSchedule[static_cast<size_t>(bit)] = 1;
-        } else if (!enqueue(bit, 0)) {
-          return OBELISK_RT_OUT_OF_RESOURCES;
+        } else {
+          if (!enqueue(bit, 0))
+            return OBELISK_RT_OUT_OF_RESOURCES;
+          if (Storage && !nonblocking) {
+            pending.valid[static_cast<size_t>(bit)] = 0;
+            pending.delayed[static_cast<size_t>(bit)] = 0;
+          }
         }
       }
     }
@@ -953,6 +1003,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
           return OBELISK_RT_INVALID_ARGUMENT;
         if (!enqueue(bit, delay))
           return OBELISK_RT_OUT_OF_RESOURCES;
+        if (Storage && !nonblocking && delay == 0) {
+          pending.valid[static_cast<size_t>(bit)] = 0;
+          pending.delayed[static_cast<size_t>(bit)] = 0;
+        }
         pending.needsSchedule[static_cast<size_t>(bit)] = 0;
       }
       pending.nextGroup = 0;
@@ -965,6 +1019,39 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
     return OBELISK_RT_INVALID_ARGUMENT;
   }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
+    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+    uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
+    uint64_t codeUnit, uint32_t component, uint32_t group, uint32_t groupCount,
+    uint32_t flags, uint64_t riseDelay, uint64_t fallDelay,
+    uint64_t turnoffDelay, const uint8_t *value, const uint8_t *unknown,
+    const uint8_t *activeMask, const uint8_t *riseMask, const uint8_t *fallMask,
+    const uint8_t *turnoffMask) {
+  return schedulerInertialPath<false>(
+      context, valuePlane, unknownPlane, planeBitCount, bitOffset, bitWidth,
+      codeUnit, component, group, groupCount, flags, riseDelay, fallDelay,
+      turnoffDelay, value, unknown, nullptr, activeMask, riseMask, fallMask,
+      turnoffMask, false);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_storage(
+    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+    uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
+    uint64_t siteID, uint32_t component, uint32_t group, uint32_t groupCount,
+    uint32_t nonblocking, uint64_t riseDelay, uint64_t fallDelay,
+    uint64_t turnoffDelay, const uint8_t *value, const uint8_t *unknown,
+    const uint8_t *writeMask, const uint8_t *activeMask,
+    const uint8_t *riseMask, const uint8_t *fallMask,
+    const uint8_t *turnoffMask) {
+  if (nonblocking > 1)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return schedulerInertialPath<true>(
+      context, valuePlane, unknownPlane, planeBitCount, bitOffset, bitWidth,
+      siteID, component, group, groupCount, 0, riseDelay, fallDelay,
+      turnoffDelay, value, unknown, writeMask, activeMask, riseMask, fallMask,
+      turnoffMask, nonblocking != 0);
 }
 
 extern "C" obelisk_rt_status

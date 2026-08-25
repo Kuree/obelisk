@@ -3974,6 +3974,9 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     uint64_t outputWidth = 0;
     uint64_t outputRootWidth = 0;
     std::optional<uint64_t> driverNodeID;
+    bool proceduralStorage = false;
+    int32_t proceduralWakeKind = 0;
+    uint64_t siteID = 0;
     bool full = false;
     bool masked = false;
   };
@@ -3996,7 +3999,12 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   };
   if (auto rules =
           function->getAttrOfType<ArrayAttr>("obelisk_sim.timing_path_rules")) {
-    if (entryKind != sim::EntryKind::Continuous || rules.empty())
+    bool proceduralActor = entryKind == sim::EntryKind::Always ||
+                           entryKind == sim::EntryKind::AlwaysComb ||
+                           entryKind == sim::EntryKind::AlwaysFF ||
+                           entryKind == sim::EntryKind::AlwaysLatch;
+    if ((entryKind != sim::EntryKind::Continuous && !proceduralActor) ||
+        rules.empty())
       return function.emitError("invalid timing path actor");
     for (Attribute attr : rules) {
       auto rule = dyn_cast<DictionaryAttr>(attr);
@@ -4050,6 +4058,22 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       if (inputPaths.empty() || inputPaths.size() != snapshotPaths.size())
         return function.emitError("invalid frozen timing path terminals");
       TimingPathRuleState state;
+      if (auto procedural = rule.getAs<BoolAttr>("procedural_storage"))
+        state.proceduralStorage = procedural.getValue();
+      if (auto wake = rule.getAs<IntegerAttr>("procedural_wake_kind"))
+        state.proceduralWakeKind = static_cast<int32_t>(wake.getInt());
+      if (auto site = rule.getAs<IntegerAttr>("path_site_id")) {
+        if (site.getInt() < 0)
+          return function.emitError("invalid procedural timing path site");
+        state.siteID = static_cast<uint64_t>(site.getInt());
+      }
+      if (state.proceduralStorage != proceduralActor ||
+          (state.proceduralStorage &&
+           (!rule.get("path_site_id") ||
+            !rule.get("procedural_wake_kind"))) ||
+          (state.proceduralStorage && state.proceduralWakeKind == 0) ||
+          state.proceduralWakeKind < 0 || state.proceduralWakeKind > 3)
+        return function.emitError("timing path actor kind does not match rule");
       state.edgeSensitive = edgeSensitive && edgeSensitive.getValue();
       state.edgeIdentifier = static_cast<int32_t>(edgeIdentifierValue);
       state.edgePolarity = static_cast<int32_t>(edgePolarityValue);
@@ -4353,7 +4377,15 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         Value terminalChanged = transition.differs;
         if (maskedRules) {
           Value selected;
-          if (rule.edgeSensitive && rule.edgeIdentifier != 0) {
+          if (rule.proceduralStorage && rule.proceduralWakeKind != 2) {
+            bool qualified = rule.proceduralWakeKind == 1;
+            terminalChanged = arith::ConstantOp::create(
+                builder, function.getLoc(), builder.getI1Type(),
+                builder.getBoolAttr(qualified));
+            selected = arith::ConstantOp::create(
+                builder, function.getLoc(), builder.getI1Type(),
+                builder.getBoolAttr(qualified));
+          } else if (rule.edgeSensitive && rule.edgeIdentifier != 0) {
             std::string edgeKey =
                 (source.snapshotPath + ":" + Twine(source.lsb)).str();
             auto edge = edgeTransitions.find(edgeKey);
@@ -4541,6 +4573,13 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     }
     if (maskedRules) {
       TimingPathMaskedPlan plan;
+      plan.proceduralStorage = timingPathRules.front().proceduralStorage;
+      plan.siteID = timingPathRules.front().siteID;
+      if (llvm::any_of(timingPathRules, [&](const TimingPathRuleState &rule) {
+            return rule.proceduralStorage != plan.proceduralStorage ||
+                   rule.siteID != plan.siteID;
+          }))
+        return function.emitError("mixed procedural timing path sites");
       plan.transitionIndependent =
           llvm::all_of(timingPathRules, [](const TimingPathRuleState &rule) {
             return llvm::all_equal(rule.delays);
@@ -4651,7 +4690,9 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     }
     return success();
   };
-  if (!allTimingPathRules.empty()) {
+  auto materializeTimingPathPlans = [&]() -> LogicalResult {
+    if (allTimingPathRules.empty())
+      return success();
     bool keyed = allTimingPathRules.front().driverNodeID.has_value();
     if (llvm::any_of(allTimingPathRules,
                      [&](const TimingPathRuleState &rule) {
@@ -4669,6 +4710,15 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         if (failed(buildTimingPathPlan(entry.second, entry.first)))
           return failure();
     }
+    return success();
+  };
+  if (!allTimingPathRules.empty() &&
+      allTimingPathRules.front().proceduralStorage &&
+      (entryKind == sim::EntryKind::Always ||
+       entryKind == sim::EntryKind::AlwaysFF)) {
+    prepareProceduralTimingPaths = materializeTimingPathPlans;
+  } else if (failed(materializeTimingPathPlans())) {
+    return failure();
   }
   auto primitive =
       function->getAttrOfType<StringAttr>("obelisk_sim.primitive_name");
@@ -4698,6 +4748,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   }
   observedWrites = savedWrites;
   observedDependencies = savedDependencies;
+  prepareProceduralTimingPaths = {};
   if (failed(lowered))
     return failure();
   if (usedTimingPathMaskedPlans.size() != timingPathMaskedPlans.size())

@@ -3164,6 +3164,41 @@ def SimDriverDriveInertialPathOp : SimOp<"driver.drive_inertial_path", [
   let hasVerifier = 1;
 }
 
+def SimRefStoreInertialPathOp : SimOp<"ref.store_inertial_path", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimStorageResource>]>,
+    SimRefElementMatches<"reference", "value">,
+    AllTypesMatch<["write_mask", "active_mask", "rise_mask", "fall_mask",
+                   "turnoff_mask"]>
+  ]> {
+  let summary = "schedule one packed procedural module-path write group";
+  let description = [{
+    `write_mask` identifies the bits written by this procedural assignment.
+    `active_mask` selects the written bits governed by a qualified module path;
+    uncovered bits retain ordinary blocking or NBA region semantics. Groups
+    with one shared site arbitrate and cancel through the same keyed per-bit
+    runtime state used by continuous module-path drivers.
+  }];
+  let arguments = (ins SimRefType:$reference, AnyType:$value,
+                       AnySignlessInteger:$write_mask,
+                       AnySignlessInteger:$active_mask,
+                       AnySignlessInteger:$rise_mask,
+                       AnySignlessInteger:$fall_mask,
+                       AnySignlessInteger:$turnoff_mask,
+                       SimTimeType:$rise_delay, SimTimeType:$fall_delay,
+                       SimTimeType:$turnoff_delay, I64Attr:$site_id,
+                       I32Attr:$component, I32Attr:$group,
+                       I32Attr:$group_count, BoolAttr:$nonblocking);
+  let assemblyFormat = [{
+    $value `to` $reference `write` $write_mask `active` $active_mask
+    `masks` `[` $rise_mask `,` $fall_mask `,` $turnoff_mask `]`
+    `after` `[` $rise_delay `,` $fall_delay `,` $turnoff_delay `]`
+    `site` $site_id `:` $component `group` $group `of` $group_count
+    `nonblocking` `=` $nonblocking attr-dict `:` qualified(type($reference))
+    `,` type($value) `,` type($write_mask)
+  }];
+  let hasVerifier = 1;
+}
+
 def SimDriverDriveInertialStrengthPairOp : SimOp<
     "driver.drive_inertial_strength_pair", [
       MemoryEffects<[MemWrite<SimSchedulerResource>,

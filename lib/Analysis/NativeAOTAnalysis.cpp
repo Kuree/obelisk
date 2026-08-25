@@ -343,6 +343,17 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       // Keep the scheduler fully runtime-owned until generated plans expose a
       // transactional actor-removal protocol.
       rejectPlan("dynamic override ownership requires generic ordering");
+    } else if (isa<sim::SimRefStoreInertialPathOp>(operation)) {
+      // This operation may either publish storage immediately or insert a
+      // keyed calendar transaction after per-bit path arbitration. The AOT
+      // compute graph has no node/effect encoding for that dynamic choice, so
+      // a generated ready-node closure could miss the storage notification or
+      // fail to hand the timed transaction back to the runtime scheduler.
+      // Keep only the containing procedural actor runtime-owned; unrelated
+      // actors remain eligible for the native AOT plan.
+      requireBytecodeFragment(operation,
+                              "procedural path scheduling is runtime-owned");
+      excludeBytecodeActor(operation);
     } else if (isa<sim::SimDriverDriveInertialOp,
                    sim::SimDriverDriveInertialPathOp,
                    sim::SimDriverDriveInertialStrengthPairOp>(operation) &&

@@ -489,6 +489,18 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
             isa<sim::RefType, sim::DriverType>(base->reference.getType()) &&
             !(reachesOutsideStorage &&
               isa<sim::RefType>(base->reference.getType()));
+        if (hasDirectView) {
+          Operation *root = base->semanticNode;
+          auto nodeID = root
+                            ? root->getAttrOfType<IntegerAttr>("node_id")
+                            : IntegerAttr{};
+          auto plan = nodeID ? timingPathMaskedPlans.find(
+                                   nodeID.getValue().getZExtValue())
+                             : timingPathMaskedPlans.end();
+          if (plan != timingPathMaskedPlans.end() &&
+              plan->second.proceduralStorage)
+            hasDirectView = false;
+        }
         if (!hasDirectView) {
           FailureOr<PackedSelectionAddress> address =
               lowerPackedSelectionAddress(destination, *baseType,
@@ -915,6 +927,160 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         sim::SimManagedStoreOp::create(builder, location, published,
                                        destination.reference);
     } else if (isa<sim::RefType>(referenceType)) {
+      TimingPathMaskedPlan *storagePlan = nullptr;
+      Operation *root = destination.semanticNode;
+      while (isa_and_nonnull<semantic::SVElementSelectExpressionOp,
+                             semantic::SVRangeSelectExpressionOp,
+                             semantic::SVMemberAccessExpressionOp>(root)) {
+        SmallVector<Operation *> children = getChildren(root);
+        if (children.empty())
+          break;
+        root = children.front();
+      }
+      if (auto nodeID = root ? root->getAttrOfType<IntegerAttr>("node_id")
+                             : IntegerAttr{}) {
+        auto found = timingPathMaskedPlans.find(
+            nodeID.getValue().getZExtValue());
+        if (found != timingPathMaskedPlans.end() &&
+            found->second.proceduralStorage) {
+          storagePlan = &found->second;
+          usedTimingPathMaskedPlans.insert(nodeID.getValue().getZExtValue());
+        }
+      }
+      if (storagePlan) {
+        std::optional<unsigned> width = sim::getPackedWidth(published.getType());
+        auto maskType = dyn_cast<IntegerType>(storagePlan->coverageMask.getType());
+        if (!width || !maskType || maskType.getWidth() != *width ||
+            storagePlan->groups.empty() ||
+            storagePlan->groups.size() > UINT32_MAX)
+          return function.emitError("invalid procedural timing path plan");
+        Value previous = sim::SimRefLoadOp::create(
+            builder, location, published.getType(), destination.reference);
+        auto logicType = sim::LogicType::get(function.getContext(), *width);
+        auto toLogic = [&](Value scalar) -> FailureOr<Value> {
+          if (!isa<IntegerType, sim::LogicType>(scalar.getType())) {
+            FailureOr<Value> packed = toPackedScalar(scalar, location);
+            if (failed(packed))
+              return failure();
+            scalar = *packed;
+          }
+          if (isa<sim::LogicType>(scalar.getType()))
+            return scalar;
+          return Value(sim::SimLogicFromBitsOp::create(
+              builder, location, logicType, scalar));
+        };
+        FailureOr<Value> previousLogic = toLogic(previous);
+        FailureOr<Value> publishedLogic = toLogic(published);
+        if (failed(previousLogic) || failed(publishedLogic))
+          return function.emitError(
+              "procedural timing path value is not a packed scalar");
+        APInt zero = APInt::getZero(*width);
+        APInt ones = APInt::getAllOnes(*width);
+        Value zeroMask = arith::ConstantOp::create(
+            builder, location, maskType, builder.getIntegerAttr(maskType, zero));
+        Value onesMask = arith::ConstantOp::create(
+            builder, location, maskType, builder.getIntegerAttr(maskType, ones));
+        Value writeMask = proceduralTimingWriteMask.value_or(onesMask);
+        auto consume = [&](Value changed) {
+          Value consumed = arith::AndIOp::create(builder, location, changed,
+                                                 writeMask);
+          Value retained = arith::XOrIOp::create(builder, location, consumed,
+                                                 onesMask);
+          for (Value pendingRef : storagePlan->edgePending) {
+            Value pending = sim::SimRefLoadOp::create(
+                builder, location, maskType, pendingRef);
+            pending = arith::AndIOp::create(builder, location, pending,
+                                            retained);
+            sim::SimRefStoreOp::create(builder, location, pending, pendingRef);
+          }
+        };
+        uint32_t groupCount = storagePlan->groups.size();
+        if (storagePlan->transitionIndependent) {
+          Value changed = sim::SimLogicCaseDifferenceMaskOp::create(
+              builder, location, maskType, *previousLogic, *publishedLogic);
+          consume(changed);
+          for (auto [index, group] : llvm::enumerate(storagePlan->groups)) {
+            Value active = group.masks.front();
+            sim::SimRefStoreInertialPathOp::create(
+                builder, location, destination.reference, published, writeMask,
+                storagePlan->coverageMask, active, active, active, group.delay,
+                group.delay, group.delay,
+                builder.getI64IntegerAttr(storagePlan->siteID),
+                builder.getI32IntegerAttr(0),
+                builder.getI32IntegerAttr(static_cast<uint32_t>(index)),
+                builder.getI32IntegerAttr(groupCount),
+                builder.getBoolAttr(nonblocking));
+          }
+          return success();
+        }
+        std::array<Value, 4> oldSymbols;
+        std::array<Value, 4> newSymbols;
+        for (unsigned symbol = 0; symbol != 3; ++symbol) {
+          bool one = symbol == 1;
+          bool unknown = symbol == 2;
+          Value constant = sim::SimLogicConstantOp::create(
+              builder, location, logicType,
+              builder.getIntegerAttr(maskType, one ? ones : zero),
+              builder.getIntegerAttr(maskType, unknown ? ones : zero));
+          auto equalMask = [&](Value value) -> Value {
+            Value difference = sim::SimLogicCaseDifferenceMaskOp::create(
+                builder, location, maskType, value, constant);
+            return arith::XOrIOp::create(builder, location, difference,
+                                         onesMask);
+          };
+          oldSymbols[symbol] = equalMask(*previousLogic);
+          newSymbols[symbol] = equalMask(*publishedLogic);
+        }
+        auto remaining = [&](const std::array<Value, 4> &symbols) {
+          Value used = arith::OrIOp::create(builder, location, symbols[0],
+                                            symbols[1]);
+          used = arith::OrIOp::create(builder, location, used, symbols[2]);
+          return Value(arith::XOrIOp::create(builder, location, used, onesMask));
+        };
+        oldSymbols[3] = remaining(oldSymbols);
+        newSymbols[3] = remaining(newSymbols);
+        constexpr std::array<unsigned, 12> from = {
+            0, 1, 0, 3, 1, 3, 0, 2, 1, 2, 2, 3};
+        constexpr std::array<unsigned, 12> to = {
+            1, 0, 3, 1, 3, 0, 2, 1, 2, 0, 3, 2};
+        std::array<Value, 12> transitions;
+        Value changed = zeroMask;
+        for (unsigned index = 0; index != 12; ++index) {
+          transitions[index] = arith::AndIOp::create(
+              builder, location, oldSymbols[from[index]], newSymbols[to[index]]);
+          changed = arith::OrIOp::create(builder, location, changed,
+                                         transitions[index]);
+        }
+        consume(changed);
+        for (auto [index, group] : llvm::enumerate(storagePlan->groups)) {
+          std::array<Value, 3> masks{zeroMask, zeroMask, zeroMask};
+          auto add = [&](unsigned bank, unsigned transition) {
+            Value selected = arith::AndIOp::create(
+                builder, location, group.masks[transition],
+                transitions[transition]);
+            masks[bank] = arith::OrIOp::create(builder, location, masks[bank],
+                                               selected);
+          };
+          for (unsigned transition : {0u, 3u, 7u})
+            add(0, transition);
+          for (unsigned transition : {1u, 5u, 9u})
+            add(1, transition);
+          for (unsigned transition : {2u, 4u, 10u})
+            add(2, transition);
+          for (unsigned transition : {6u, 8u, 11u})
+            add(0, transition);
+          sim::SimRefStoreInertialPathOp::create(
+              builder, location, destination.reference, published, writeMask,
+              storagePlan->coverageMask, masks[0], masks[1], masks[2],
+              group.delay, group.delay, group.delay,
+              builder.getI64IntegerAttr(storagePlan->siteID),
+              builder.getI32IntegerAttr(0),
+              builder.getI32IntegerAttr(static_cast<uint32_t>(index)),
+              builder.getI32IntegerAttr(groupCount),
+              builder.getBoolAttr(nonblocking));
+        }
+        return success();
+      }
       if (nonblocking)
         sim::SimNBAEnqueueOp::create(builder, location, published,
                                      destination.reference, delay,
@@ -1374,7 +1540,18 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
   case CapturedLValue::Kind::PackedValueSlice: {
     if (destination.children.size() != 1)
       return failure();
-    if (nonblocking) {
+    bool proceduralPath = false;
+    if (!destination.children.empty()) {
+      Operation *root = destination.children.front().semanticNode;
+      auto nodeID = root ? root->getAttrOfType<IntegerAttr>("node_id")
+                         : IntegerAttr{};
+      auto found = nodeID ? timingPathMaskedPlans.find(
+                                nodeID.getValue().getZExtValue())
+                          : timingPathMaskedPlans.end();
+      proceduralPath = found != timingPathMaskedPlans.end() &&
+                       found->second.proceduralStorage;
+    }
+    if (nonblocking && !proceduralPath) {
       emitError(location)
           << "nonblocking packed selection assignment requires a captured "
              "partial-update path";
@@ -1435,7 +1612,28 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
                                        isSignedNode(base.semanticNode));
     if (failed(rebuilt))
       return failure();
-    return writeCapturedLValue(base, *rebuilt, false, false, location);
+    std::optional<Value> savedMask = proceduralTimingWriteMask;
+    if (proceduralPath) {
+      if (destination.index || destination.padding)
+        return function.emitError(
+            "procedural timing path requires an in-range fixed selection");
+      std::optional<unsigned> baseWidth = sim::getPackedWidth(base.type);
+      std::optional<unsigned> selectedWidth =
+          sim::getPackedWidth(destination.type);
+      if (!baseWidth || !selectedWidth ||
+          destination.lowBit >= *baseWidth ||
+          *selectedWidth > *baseWidth - destination.lowBit)
+        return function.emitError("invalid procedural timing path selection");
+      auto maskType = builder.getIntegerType(*baseWidth);
+      APInt bits = APInt::getBitsSet(*baseWidth, destination.lowBit,
+                                    destination.lowBit + *selectedWidth);
+      proceduralTimingWriteMask = arith::ConstantOp::create(
+          builder, location, maskType, builder.getIntegerAttr(maskType, bits));
+    }
+    LogicalResult result = writeCapturedLValue(
+        base, *rebuilt, false, nonblocking, location, delay);
+    proceduralTimingWriteMask = savedMask;
+    return result;
   }
   case CapturedLValue::Kind::ContainerElement: {
     if (destination.children.size() != 1)

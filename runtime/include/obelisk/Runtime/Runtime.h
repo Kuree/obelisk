@@ -956,6 +956,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_TIME_SCAN_SCALE = UINT32_C(0x00010242),
   OBELISK_RT_INTRINSIC_V1_STRING_SCAN_RAW = UINT32_C(0x00010243),
   OBELISK_RT_INTRINSIC_V1_FILE_SCAN_RAW = UINT32_C(0x00010244),
+  OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_STORAGE = UINT32_C(0x00010245),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -2953,6 +2954,18 @@ obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
     const uint8_t *unknown, const uint8_t *active_mask,
     const uint8_t *rise_mask, const uint8_t *fall_mask,
     const uint8_t *turnoff_mask);
+// Schedule one masked procedural-storage module-path delay group. Bits outside
+// `write_mask` are untouched. Unqualified blocking bits publish before the
+// call returns; nonblocking bits retain the NBA region at their due time.
+obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_storage(
+    obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
+    uint64_t plane_bit_count, uint64_t bit_offset, uint64_t bit_width,
+    uint64_t site_id, uint32_t component, uint32_t group,
+    uint32_t group_count, uint32_t nonblocking, uint64_t rise_delay,
+    uint64_t fall_delay, uint64_t turnoff_delay, const uint8_t *value,
+    const uint8_t *unknown, const uint8_t *write_mask,
+    const uint8_t *active_mask, const uint8_t *rise_mask,
+    const uint8_t *fall_mask, const uint8_t *turnoff_mask);
 // Schedule the polarity-specific driver banks of one three-state primitive as
 // one inertial update. The transition planes carry the logical gate result
 // used for delay selection; both banks mature before the net is resolved.

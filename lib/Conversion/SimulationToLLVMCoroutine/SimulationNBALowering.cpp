@@ -196,6 +196,91 @@ private:
   uint64_t stateBitCount = 0;
 };
 
+class InertialPathStorageConversion final
+    : public OpConversionPattern<sim::SimRefStoreInertialPathOp> {
+public:
+  InertialPathStorageConversion(const TypeConverter &converter,
+                                MLIRContext *context, uint64_t stateBitCount)
+      : OpConversionPattern(converter, context), stateBitCount(stateBitCount) {}
+
+  LogicalResult
+  matchAndRewrite(sim::SimRefStoreInertialPathOp op,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getReference().size() != 1 || adaptor.getValue().empty() ||
+        adaptor.getWriteMask().size() != 1 ||
+        adaptor.getActiveMask().size() != 1 ||
+        adaptor.getRiseMask().size() != 1 ||
+        adaptor.getFallMask().size() != 1 ||
+        adaptor.getTurnoffMask().size() != 1 ||
+        adaptor.getRiseDelay().size() != 1 ||
+        adaptor.getFallDelay().size() != 1 ||
+        adaptor.getTurnoffDelay().size() != 1)
+      return failure();
+    std::optional<unsigned> width = nativeStateWidth(op.getValue().getType());
+    if (!width)
+      return failure();
+
+    Location location = op.getLoc();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i32 = rewriter.getI32Type();
+    Type i64 = rewriter.getI64Type();
+    Value contextAddress = LLVM::AddressOfOp::create(
+        rewriter, location, pointer, "__obelisk_current_context");
+    Value runtimeContext =
+        LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
+    auto savePlane = [&](Value value) {
+      Value address = entryAlloca(rewriter, location, value.getType(), 1, 1);
+      LLVM::StoreOp::create(rewriter, location, value, address, 1);
+      return address;
+    };
+    Value value = savePlane(adaptor.getValue().front());
+    Value unknown = LLVM::ZeroOp::create(rewriter, location, pointer);
+    Value unknownPlane = LLVM::ZeroOp::create(rewriter, location, pointer);
+    if (adaptor.getValue().size() == 2) {
+      unknown = savePlane(adaptor.getValue()[1]);
+      unknownPlane = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                               "__obelisk_state_unknown");
+    }
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_scheduler_inertial_path_storage"),
+            ValueRange{
+                runtimeContext,
+                LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                          "__obelisk_state_value"),
+                unknownPlane,
+                llvmConstant(rewriter, location, i64, stateBitCount),
+                adaptor.getReference().front(),
+                llvmConstant(rewriter, location, i64, *width),
+                llvmConstant(rewriter, location, i64, op.getSiteId()),
+                llvmConstant(rewriter, location, i32, op.getComponent()),
+                llvmConstant(rewriter, location, i32, op.getGroup()),
+                llvmConstant(rewriter, location, i32, op.getGroupCount()),
+                llvmConstant(rewriter, location, i32, op.getNonblocking()),
+                adaptor.getRiseDelay().front(),
+                adaptor.getFallDelay().front(),
+                adaptor.getTurnoffDelay().front(), value, unknown,
+                savePlane(adaptor.getWriteMask().front()),
+                savePlane(adaptor.getActiveMask().front()),
+                savePlane(adaptor.getRiseMask().front()),
+                savePlane(adaptor.getFallMask().front()),
+                savePlane(adaptor.getTurnoffMask().front())})
+            .getResult();
+    LLVM::CallOp::create(rewriter, location, TypeRange{},
+                         SymbolRefAttr::get(rewriter.getContext(),
+                                            "obelisk_rt_v1_scheduler_fail"),
+                         ValueRange{runtimeContext, status});
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  uint64_t stateBitCount = 0;
+};
+
 class InertialStrengthPairConversion final
     : public OpConversionPattern<sim::SimDriverDriveInertialStrengthPairOp> {
 public:
@@ -738,6 +823,9 @@ void populateNBAToLLVMConversionPatterns(RewritePatternSet &patterns,
                                          stateBitCount);
   patterns.add<InertialPathDriverConversion>(converter, patterns.getContext(),
                                              stateBitCount);
+  patterns.add<InertialPathStorageConversion>(converter,
+                                              patterns.getContext(),
+                                              stateBitCount);
   patterns.add<InertialStrengthPairConversion>(converter, patterns.getContext(),
                                                stateBitCount);
   patterns.add<ImmediateNBAConversion>(

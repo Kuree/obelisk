@@ -1223,6 +1223,10 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
         } else if (auto nba = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
           destination = nba.getDestination();
           value = nba.getValue();
+        } else if (auto store =
+                       dyn_cast<sim::SimRefStoreInertialPathOp>(operation)) {
+          destination = store.getReference();
+          value = store.getValue();
         } else if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation)) {
           destination = drive.getDriver();
           value = drive.getValue();
