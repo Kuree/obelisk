@@ -103,6 +103,9 @@ planTwoStateRegisters(sim::SimDesignOp design) {
           constrain(op.getResult(), op.getInput());
         } else if (auto op = dyn_cast<sim::SimLogicCompareOp>(operation)) {
           constrain(op.getLhs(), op.getRhs());
+        } else if (auto op =
+                       dyn_cast<sim::SimLogicCaseDifferenceMaskOp>(operation)) {
+          constrain(op.getLhs(), op.getRhs());
         } else if (auto op = dyn_cast<sim::SimLogicConcatOp>(operation)) {
           constrainResultTo(op.getResult(), op.getInputs());
         } else if (auto op = dyn_cast<sim::SimLogicReplicateOp>(operation)) {
@@ -114,13 +117,11 @@ planTwoStateRegisters(sim::SimDesignOp design) {
           force(op.getInput());
         } else if (auto op = dyn_cast<sim::SimLogicInsertOp>(operation)) {
           constrain(op.getResult(), op.getInput());
-        } else if (auto op =
-                       dyn_cast<sim::SimLogicDynInsertOp>(operation)) {
+        } else if (auto op = dyn_cast<sim::SimLogicDynInsertOp>(operation)) {
           constrain(op.getResult(), op.getInput());
           constrain(op.getResult(), op.getReplacement());
           force(op.getLowBit());
-        } else if (auto op =
-                       dyn_cast<sim::SimBitsDynInsertOp>(operation)) {
+        } else if (auto op = dyn_cast<sim::SimBitsDynInsertOp>(operation)) {
           constrain(op.getResult(), op.getInput());
           constrain(op.getResult(), op.getReplacement());
           force(op.getLowBit());

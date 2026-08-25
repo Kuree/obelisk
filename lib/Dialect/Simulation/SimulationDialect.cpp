@@ -192,6 +192,7 @@ LogicalResult verifyPostponedReadOnly(SimFuncOp root) {
       if (isa<SimManagedStoreOp, SimManagedNBAEnqueueOp,
               SimReferencePathNBAEnqueueOp, SimArgumentRefStoreOp,
               SimRefStoreOp, SimDriverDriveOp, SimDriverDriveInertialOp,
+              SimDriverDriveInertialPathOp,
               SimDriverDriveInertialStrengthPairOp, SimDriverDriveDelayedNetOp,
               SimDriverDriveChangedOp, SimMosDriveDelayedOp, SimNBAEnqueueOp,
               SimSpawnOp, SimEventTriggerOp, SimSuspendDelayOp, SimTaskCallOp,

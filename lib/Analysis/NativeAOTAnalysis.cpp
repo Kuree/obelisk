@@ -344,6 +344,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       // transactional actor-removal protocol.
       rejectPlan("dynamic override ownership requires generic ordering");
     } else if (isa<sim::SimDriverDriveInertialOp,
+                   sim::SimDriverDriveInertialPathOp,
                    sim::SimDriverDriveInertialStrengthPairOp>(operation) &&
                operation->getParentOfType<sim::SimFuncOp>().getEntryKind() ==
                    sim::EntryKind::Continuous) {

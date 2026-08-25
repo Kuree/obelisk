@@ -5,8 +5,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "SimulationVerifiers.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -14,12 +14,12 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/InliningUtils.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -178,8 +178,8 @@ static APInt dynamicInsertPlane(const APInt &input, const APInt &replacement,
   if (index.uge(input.getBitWidth()) || !index.isIntN(64))
     return result;
   uint64_t low = index.getZExtValue();
-  for (uint64_t replacementBit = 0;
-       replacementBit < replacement.getBitWidth(); ++replacementBit) {
+  for (uint64_t replacementBit = 0; replacementBit < replacement.getBitWidth();
+       ++replacementBit) {
     uint64_t inputBit = low + replacementBit;
     if (inputBit >= input.getBitWidth())
       break;
@@ -540,8 +540,8 @@ OpFoldResult SimLogicPowerOp::fold(FoldAdaptor adaptor) {
     if (!remaining.isZero())
       factor *= factor;
   }
-  return getLogicAttribute(
-      getContext(), {std::move(value), APInt::getZero(width)});
+  return getLogicAttribute(getContext(),
+                           {std::move(value), APInt::getZero(width)});
 }
 
 OpFoldResult SimLogicLogicalOp::fold(FoldAdaptor adaptor) {
@@ -732,6 +732,27 @@ LogicalResult SimLogicCompareOp::verify() {
     return emitOpError("comparison result logic width must be one");
   return success();
 }
+
+LogicalResult SimLogicCaseDifferenceMaskOp::verify() {
+  auto result = dyn_cast<IntegerType>(getResult().getType());
+  if (!result || result.getWidth() != getLhs().getType().getWidth())
+    return emitOpError("result width must match the logic operands");
+  return success();
+}
+
+LogicalResult SimDriverDriveInertialPathOp::verify() {
+  std::optional<unsigned> width = getPackedWidth(getValue().getType());
+  auto sameWidth = [&](Value mask) {
+    auto type = dyn_cast<IntegerType>(mask.getType());
+    return width && type && type.getWidth() == *width;
+  };
+  if (!sameWidth(getActiveMask()) || !sameWidth(getRiseMask()) ||
+      !sameWidth(getFallMask()) || !sameWidth(getTurnoffMask()))
+    return emitOpError("all masks must match the packed driven width");
+  if (getGroupCount() == 0 || getGroup() >= getGroupCount())
+    return emitOpError("group index must be within a nonempty batch");
+  return success();
+}
 LogicalResult SimLogicShiftOp::verify() {
   if (!isa<IntegerType, LogicType>(getAmount().getType()))
     return emitOpError("shift amount must be an integer or four-state logic");
@@ -861,8 +882,7 @@ OpFoldResult SimBitsDynInsertOp::fold(FoldAdaptor adaptor) {
   if (!index->value)
     return getInput();
   auto input = dyn_cast_or_null<IntegerAttr>(adaptor.getInput());
-  auto replacement =
-      dyn_cast_or_null<IntegerAttr>(adaptor.getReplacement());
+  auto replacement = dyn_cast_or_null<IntegerAttr>(adaptor.getReplacement());
   if (!input || !replacement)
     return {};
   APInt result = dynamicInsertPlane(input.getValue(), replacement.getValue(),
@@ -1359,8 +1379,7 @@ struct ConstantDynamicInsert final : OpRewritePattern<DynamicOp> {
     if (!index || !index->value)
       return failure();
     uint64_t low;
-    if (!isKnownInRangeIndex(*index->value,
-                             op.getInput().getType().getWidth(),
+    if (!isKnownInRangeIndex(*index->value, op.getInput().getType().getWidth(),
                              op.getReplacement().getType().getWidth(), low) ||
         low > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
       return failure();
@@ -1664,10 +1683,11 @@ static bool mayWriteMemory(Operation *op) {
 }
 
 // Read one element through the reference instead of loading the whole array
-// and selecting out of the loaded value, mirroring what SimplifyAggregateExtract
-// does for a constant ordinal. Without this a dynamically indexed read of a
-// large array becomes a multi-kilobit SSA value and a full-width shift, which
-// is quadratic to analyze and needlessly slow to run.
+// and selecting out of the loaded value, mirroring what
+// SimplifyAggregateExtract does for a constant ordinal. Without this a
+// dynamically indexed read of a large array becomes a multi-kilobit SSA value
+// and a full-width shift, which is quadratic to analyze and needlessly slow to
+// run.
 struct DynamicArrayExtractThroughReference final
     : OpRewritePattern<SimArrayDynExtractOp> {
   using OpRewritePattern::OpRewritePattern;
@@ -1829,8 +1849,8 @@ void SimArrayDynExtractOp::getCanonicalizationPatterns(
       context);
 }
 
-void SimArrayDynInsertOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                                     MLIRContext *context) {
+void SimArrayDynInsertOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
   results.add<ConstantArrayInsert>(context);
 }
 
@@ -1870,13 +1890,13 @@ void SimLogicBinaryOp::getCanonicalizationPatterns(RewritePatternSet &results,
   results.add<NormalizeBinaryConstant>(context);
 }
 
-void SimStringCompareOp::getCanonicalizationPatterns(
-    RewritePatternSet &results, MLIRContext *context) {
+void SimStringCompareOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                     MLIRContext *context) {
   results.add<FoldStringCompare>(context);
 }
 
-void SimStringLengthOp::getCanonicalizationPatterns(
-    RewritePatternSet &results, MLIRContext *context) {
+void SimStringLengthOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                    MLIRContext *context) {
   results.add<FoldStringLength>(context);
 }
 

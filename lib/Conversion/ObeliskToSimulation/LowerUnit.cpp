@@ -3538,6 +3538,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       Value input;
       Value snapshot;
       std::string snapshotPath;
+      uint64_t low = 0;
+      uint64_t width = 0;
     };
     SmallVector<Source, 2> sources;
     std::array<int64_t, 3> delays;
@@ -3545,6 +3547,11 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     int32_t conditionGroup = 0;
     FlatSymbolRefAttr conditionEvaluator;
     SmallVector<Value, 4> conditionCaptures;
+    uint64_t outputLow = 0;
+    uint64_t outputWidth = 0;
+    uint64_t outputRootWidth = 0;
+    bool full = false;
+    bool masked = false;
   };
   SmallVector<TimingPathRuleState, 4> timingPathRules;
   auto readTimingPathInput = [&](Value input) -> Value {
@@ -3578,6 +3585,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         return function.emitError("invalid frozen overlapping timing path");
       SmallVector<StringAttr> inputPaths;
       SmallVector<StringAttr> snapshotPaths;
+      SmallVector<int64_t> inputLows;
+      SmallVector<int64_t> inputWidths;
       if (auto input = rule.getAs<StringAttr>("input"))
         inputPaths.push_back(input);
       if (auto snapshot = rule.getAs<StringAttr>("snapshot"))
@@ -3590,11 +3599,38 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         for (Attribute snapshot : snapshots)
           if (auto path = dyn_cast<StringAttr>(snapshot))
             snapshotPaths.push_back(path);
+      if (auto lows = rule.getAs<DenseI64ArrayAttr>("input_lows"))
+        llvm::append_range(inputLows, lows.asArrayRef());
+      if (auto widths = rule.getAs<DenseI64ArrayAttr>("input_widths"))
+        llvm::append_range(inputWidths, widths.asArrayRef());
       if (inputPaths.empty() || inputPaths.size() != snapshotPaths.size())
         return function.emitError("invalid frozen timing path terminals");
       TimingPathRuleState state;
-      for (auto [inputPath, snapshotPath] :
-           llvm::zip_equal(inputPaths, snapshotPaths)) {
+      state.masked = !inputLows.empty() || rule.get("output_low") ||
+                     rule.get("output_width");
+      if (state.masked && (inputLows.size() != inputPaths.size() ||
+                           inputWidths.size() != inputPaths.size()))
+        return function.emitError("invalid frozen timing path selections");
+      if (state.masked) {
+        auto outputLow = rule.getAs<IntegerAttr>("output_low");
+        auto outputWidth = rule.getAs<IntegerAttr>("output_width");
+        auto outputRootWidth = rule.getAs<IntegerAttr>("output_root_width");
+        auto full = rule.getAs<BoolAttr>("connection_full");
+        if (!outputLow || outputLow.getInt() < 0 || !outputWidth ||
+            outputWidth.getInt() <= 0 || !outputRootWidth ||
+            outputRootWidth.getInt() <= 0 || !full)
+          return function.emitError("invalid frozen timing path destination");
+        state.outputLow = static_cast<uint64_t>(outputLow.getInt());
+        state.outputWidth = static_cast<uint64_t>(outputWidth.getInt());
+        state.outputRootWidth = static_cast<uint64_t>(outputRootWidth.getInt());
+        state.full = full.getValue();
+        if (state.outputLow >= state.outputRootWidth ||
+            state.outputWidth > state.outputRootWidth - state.outputLow)
+          return function.emitError("timing path destination is out of bounds");
+      }
+      for (size_t index = 0; index != inputPaths.size(); ++index) {
+        StringAttr inputPath = inputPaths[index];
+        StringAttr snapshotPath = snapshotPaths[index];
         Value input = values.lookup(inputPath.getValue());
         Value snapshot = values.lookup(snapshotPath.getValue());
         Value current = input ? readTimingPathInput(input) : Value{};
@@ -3603,9 +3639,25 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                 current.getType() ||
             !isa<IntegerType, sim::LogicType>(current.getType()))
           return function.emitError("invalid frozen timing path source");
+        uint64_t low = 0;
+        uint64_t width = sim::getPackedWidth(current.getType()).value_or(0);
+        if (state.masked) {
+          if (inputLows[index] < 0 || inputWidths[index] <= 0)
+            return function.emitError("invalid timing path source selection");
+          low = static_cast<uint64_t>(inputLows[index]);
+          width = static_cast<uint64_t>(inputWidths[index]);
+          std::optional<unsigned> rootWidth =
+              sim::getPackedWidth(current.getType());
+          if (!rootWidth || low >= *rootWidth || width > *rootWidth - low)
+            return function.emitError("timing path source is out of bounds");
+        }
         state.sources.push_back(
-            {input, snapshot, snapshotPath.getValue().str()});
+            {input, snapshot, snapshotPath.getValue().str(), low, width});
       }
+      if (state.masked && !state.full &&
+          (state.sources.size() != 1 ||
+           state.sources.front().width != state.outputWidth))
+        return function.emitError("parallel timing path widths do not match");
       ArrayRef<int64_t> delayValues = delays.asArrayRef();
       int64_t rise = delayValues[0];
       int64_t fall = delayValues.size() == 1 ? rise : delayValues[1];
@@ -3663,33 +3715,123 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   }
   if (!timingPathRules.empty()) {
     SmallVector<Value, 4> changed;
-    llvm::StringMap<Value> changedSnapshots;
+    SmallVector<Value, 4> changedMasks;
+    llvm::StringMap<std::pair<Value, Value>> changedSnapshots;
+    bool maskedRules = timingPathRules.front().masked;
+    if (llvm::any_of(timingPathRules, [&](const TimingPathRuleState &rule) {
+          return rule.masked != maskedRules ||
+                 (maskedRules && rule.outputRootWidth !=
+                                     timingPathRules.front().outputRootWidth);
+        }))
+      return function.emitError("incompatible timing path rule forms");
+    IntegerType destinationMaskType =
+        maskedRules
+            ? builder.getIntegerType(timingPathRules.front().outputRootWidth)
+            : IntegerType{};
+    auto integerZero = [&](IntegerType type) {
+      return arith::ConstantOp::create(builder, function.getLoc(), type,
+                                       builder.getIntegerAttr(type, 0));
+    };
+    auto selectBits = [&](Value mask, uint64_t low, uint64_t width) -> Value {
+      auto rootType = cast<IntegerType>(mask.getType());
+      Value selected = mask;
+      if (low != 0) {
+        Value amount =
+            arith::ConstantOp::create(builder, function.getLoc(), rootType,
+                                      builder.getIntegerAttr(rootType, low));
+        selected = arith::ShRUIOp::create(builder, function.getLoc(), selected,
+                                          amount);
+      }
+      if (width != rootType.getWidth())
+        selected =
+            arith::TruncIOp::create(builder, function.getLoc(),
+                                    builder.getIntegerType(width), selected);
+      return selected;
+    };
+    auto placeBits = [&](Value selected, uint64_t low) -> Value {
+      Value placed = selected;
+      if (cast<IntegerType>(placed.getType()).getWidth() !=
+          destinationMaskType.getWidth())
+        placed = arith::ExtUIOp::create(builder, function.getLoc(),
+                                        destinationMaskType, placed);
+      if (low != 0) {
+        Value amount = arith::ConstantOp::create(
+            builder, function.getLoc(), destinationMaskType,
+            builder.getIntegerAttr(destinationMaskType, low));
+        placed =
+            arith::ShLIOp::create(builder, function.getLoc(), placed, amount);
+      }
+      return placed;
+    };
     for (TimingPathRuleState &rule : timingPathRules) {
       Value ruleChanged = arith::ConstantOp::create(builder, function.getLoc(),
                                                     builder.getI1Type(),
                                                     builder.getBoolAttr(false));
+      Value ruleMask = maskedRules ? integerZero(destinationMaskType) : Value{};
       for (const TimingPathRuleState::Source &source : rule.sources) {
-        Value differs = changedSnapshots.lookup(source.snapshotPath);
+        auto cached = changedSnapshots.find(source.snapshotPath);
+        Value differs =
+            cached == changedSnapshots.end() ? Value{} : cached->second.first;
+        Value differenceMask =
+            cached == changedSnapshots.end() ? Value{} : cached->second.second;
         if (!differs) {
           Value current = readTimingPathInput(source.input);
           Value previous = sim::SimRefLoadOp::create(
               builder, function.getLoc(), current.getType(), source.snapshot);
-          if (isa<sim::LogicType>(current.getType()))
+          std::optional<unsigned> sourceRootWidth =
+              sim::getPackedWidth(current.getType());
+          if (!sourceRootWidth)
+            return function.emitError("timing path source has no packed width");
+          IntegerType sourceMaskType = builder.getIntegerType(*sourceRootWidth);
+          if (isa<sim::LogicType>(current.getType()) && maskedRules) {
+            differenceMask = sim::SimLogicCaseDifferenceMaskOp::create(
+                builder, function.getLoc(), sourceMaskType, current, previous);
+            differs = arith::CmpIOp::create(
+                builder, function.getLoc(), arith::CmpIPredicate::ne,
+                differenceMask, integerZero(sourceMaskType));
+          } else if (isa<sim::LogicType>(current.getType())) {
             differs = sim::SimLogicCompareOp::create(
                 builder, function.getLoc(), builder.getI1Type(),
                 sim::CompareKind::CaseNe, current, previous);
-          else
+          } else {
+            if (maskedRules)
+              differenceMask = arith::XOrIOp::create(
+                  builder, function.getLoc(), current, previous);
             differs = arith::CmpIOp::create(builder, function.getLoc(),
                                             arith::CmpIPredicate::ne, current,
                                             previous);
+          }
           sim::SimRefStoreOp::create(builder, function.getLoc(), current,
                                      source.snapshot);
-          changedSnapshots[source.snapshotPath] = differs;
+          changedSnapshots[source.snapshotPath] = {differs, differenceMask};
+        }
+        Value terminalChanged = differs;
+        if (maskedRules) {
+          Value selected = selectBits(differenceMask, source.low, source.width);
+          terminalChanged = arith::CmpIOp::create(
+              builder, function.getLoc(), arith::CmpIPredicate::ne, selected,
+              integerZero(cast<IntegerType>(selected.getType())));
+          if (rule.full) {
+            APInt bits = APInt::getBitsSet(rule.outputRootWidth, rule.outputLow,
+                                           rule.outputLow + rule.outputWidth);
+            Value destination = arith::ConstantOp::create(
+                builder, function.getLoc(), destinationMaskType,
+                builder.getIntegerAttr(destinationMaskType, bits));
+            selected = arith::SelectOp::create(
+                builder, function.getLoc(), terminalChanged, destination,
+                integerZero(destinationMaskType));
+          } else {
+            selected = placeBits(selected, rule.outputLow);
+          }
+          ruleMask = arith::OrIOp::create(builder, function.getLoc(), ruleMask,
+                                          selected);
         }
         ruleChanged = arith::OrIOp::create(builder, function.getLoc(),
-                                           ruleChanged, differs);
+                                           ruleChanged, terminalChanged);
       }
       changed.push_back(ruleChanged);
+      if (maskedRules)
+        changedMasks.push_back(ruleMask);
     }
 
     SmallVector<Value, 4> conditions;
@@ -3718,6 +3860,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     }
 
     SmallVector<Value, 4> applicable;
+    SmallVector<Value, 4> applicableMasks;
     for (auto [index, rule] : llvm::enumerate(timingPathRules)) {
       Value condition = conditions[index];
       if (rule.conditionKind == 2) {
@@ -3728,34 +3871,83 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       }
       applicable.push_back(arith::AndIOp::create(builder, function.getLoc(),
                                                  changed[index], condition));
+      if (maskedRules)
+        applicableMasks.push_back(arith::SelectOp::create(
+            builder, function.getLoc(), condition, changedMasks[index],
+            integerZero(destinationMaskType)));
     }
-    std::array<Value, 3> selected;
-    for (unsigned transition = 0; transition != selected.size(); ++transition) {
-      SmallVector<unsigned, 4> order;
-      for (unsigned index = 0; index != timingPathRules.size(); ++index)
-        order.push_back(index);
-      llvm::sort(order, [&](unsigned lhs, unsigned rhs) {
-        return timingPathRules[lhs].delays[transition] >
-               timingPathRules[rhs].delays[transition];
-      });
-      Value selectedTicks = arith::ConstantOp::create(
-          builder, function.getLoc(), builder.getI64Type(),
-          builder.getI64IntegerAttr(0));
-      for (unsigned index : order) {
-        Value delayTicks = arith::ConstantOp::create(
-            builder, function.getLoc(), builder.getI64Type(),
-            builder.getI64IntegerAttr(
-                timingPathRules[index].delays[transition]));
-        selectedTicks = arith::SelectOp::create(builder, function.getLoc(),
-                                                applicable[index], delayTicks,
-                                                selectedTicks);
+    if (maskedRules) {
+      TimingPathMaskedPlan plan;
+      plan.coverageMask = integerZero(destinationMaskType);
+      for (Value mask : applicableMasks)
+        plan.coverageMask = arith::OrIOp::create(builder, function.getLoc(),
+                                                 plan.coverageMask, mask);
+      plan.groups.resize(timingPathRules.size());
+      for (auto [index, rule] : llvm::enumerate(timingPathRules))
+        for (unsigned transition = 0; transition != 3; ++transition) {
+          Value ticks = arith::ConstantOp::create(
+              builder, function.getLoc(), builder.getI64Type(),
+              builder.getI64IntegerAttr(rule.delays[transition]));
+          plan.groups[index].delays[transition] = sim::SimTimeScaleOp::create(
+              builder, function.getLoc(),
+              sim::TimeType::get(function.getContext()), ticks,
+              builder.getI64IntegerAttr(1), builder.getBoolAttr(false));
+        }
+      for (unsigned transition = 0; transition != 3; ++transition) {
+        SmallVector<unsigned, 4> order;
+        for (unsigned index = 0; index != timingPathRules.size(); ++index)
+          order.push_back(index);
+        llvm::sort(order, [&](unsigned lhs, unsigned rhs) {
+          return timingPathRules[lhs].delays[transition] <
+                 timingPathRules[rhs].delays[transition];
+        });
+        Value claimed = integerZero(destinationMaskType);
+        for (unsigned index : order) {
+          Value available = arith::AndIOp::create(
+              builder, function.getLoc(), applicableMasks[index],
+              arith::XOrIOp::create(
+                  builder, function.getLoc(), claimed,
+                  arith::ConstantOp::create(
+                      builder, function.getLoc(), destinationMaskType,
+                      builder.getIntegerAttr(
+                          destinationMaskType,
+                          APInt::getAllOnes(destinationMaskType.getWidth())))));
+          plan.groups[index].masks[transition] = available;
+          claimed = arith::OrIOp::create(builder, function.getLoc(), claimed,
+                                         applicableMasks[index]);
+        }
       }
-      selected[transition] = sim::SimTimeScaleOp::create(
-          builder, function.getLoc(), sim::TimeType::get(function.getContext()),
-          selectedTicks, builder.getI64IntegerAttr(1),
-          builder.getBoolAttr(false));
+      timingPathMaskedPlan = std::move(plan);
+    } else {
+      std::array<Value, 3> selected;
+      for (unsigned transition = 0; transition != selected.size();
+           ++transition) {
+        SmallVector<unsigned, 4> order;
+        for (unsigned index = 0; index != timingPathRules.size(); ++index)
+          order.push_back(index);
+        llvm::sort(order, [&](unsigned lhs, unsigned rhs) {
+          return timingPathRules[lhs].delays[transition] >
+                 timingPathRules[rhs].delays[transition];
+        });
+        Value selectedTicks = arith::ConstantOp::create(
+            builder, function.getLoc(), builder.getI64Type(),
+            builder.getI64IntegerAttr(0));
+        for (unsigned index : order) {
+          Value delayTicks = arith::ConstantOp::create(
+              builder, function.getLoc(), builder.getI64Type(),
+              builder.getI64IntegerAttr(
+                  timingPathRules[index].delays[transition]));
+          selectedTicks = arith::SelectOp::create(builder, function.getLoc(),
+                                                  applicable[index], delayTicks,
+                                                  selectedTicks);
+        }
+        selected[transition] = sim::SimTimeScaleOp::create(
+            builder, function.getLoc(),
+            sim::TimeType::get(function.getContext()), selectedTicks,
+            builder.getI64IntegerAttr(1), builder.getBoolAttr(false));
+      }
+      timingPathDelays = selected;
     }
-    timingPathDelays = selected;
   }
   auto primitive =
       function->getAttrOfType<StringAttr>("obelisk_sim.primitive_name");

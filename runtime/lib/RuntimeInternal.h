@@ -468,6 +468,20 @@ struct InertialDriverPending {
   std::vector<uint8_t> secondUnknown;
 };
 
+struct InertialPathPending {
+  uint64_t destination = UINT64_MAX;
+  uint64_t width = 0;
+  uint32_t nextGroup = 0;
+  uint32_t groupCount = 0;
+  std::vector<uint64_t> generation;
+  std::vector<uint8_t> targetValue;
+  std::vector<uint8_t> targetUnknown;
+  std::vector<uint8_t> valid;
+  std::vector<uint8_t> delayed;
+  std::vector<uint8_t> needsSchedule;
+  std::vector<uint64_t> candidateDelay;
+};
+
 struct InertialNetPending {
   bool value = false;
   bool unknown = false;
@@ -514,6 +528,9 @@ struct ScheduledNBA {
   InertialDriverSite inertialSite{UINT64_MAX, 0};
   bool inertialDriverVector = false;
   bool inertialDriverInitialProjection = false;
+  bool inertialPathDriver = false;
+  uint64_t inertialPathBit = UINT64_MAX;
+  uint64_t inertialPathGeneration = 0;
   uint64_t inertialNetBit = UINT64_MAX;
   uint64_t inertialNetGroup = UINT64_MAX;
   uint64_t inertialNetCancelGroup = UINT64_MAX;
@@ -1074,6 +1091,9 @@ struct obelisk_rt_context {
   std::unordered_map<InertialDriverSite, InertialDriverPending,
                      InertialDriverSiteHash>
       inertialDriverPending;
+  std::unordered_map<InertialDriverSite, InertialPathPending,
+                     InertialDriverSiteHash>
+      inertialPathPending;
   std::unordered_map<uint64_t, InertialNetPending> inertialNetPending;
   bool schedulerApplyingNativeUpdate = false;
   std::vector<StaticNBAAccumulator> staticNBAAccumulators;

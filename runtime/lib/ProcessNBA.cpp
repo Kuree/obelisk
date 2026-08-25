@@ -496,8 +496,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
     if (boundedStatic && !state)
       return OBELISK_RT_INVALID_HANDLE;
     uint64_t availableWidth = boundedStatic ? state->bitWidth : planeBitCount;
-    __int128 firstWide =
-        std::max<__int128>(0, -static_cast<__int128>(offset));
+    __int128 firstWide = std::max<__int128>(0, -static_cast<__int128>(offset));
     __int128 lastWide = std::min<__int128>(
         bitWidth, static_cast<__int128>(availableWidth) - offset);
     if (firstWide >= lastWide) {
@@ -506,21 +505,19 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
     }
     uint64_t sourceFirst = static_cast<uint64_t>(firstWide);
     uint64_t selectedWidth = static_cast<uint64_t>(lastWide - firstWide);
-    bool realValue =
-        (flags & (OBELISK_RT_INERTIAL_DRIVER_REAL32 |
-                  OBELISK_RT_INERTIAL_DRIVER_REAL64)) != 0;
+    bool realValue = (flags & (OBELISK_RT_INERTIAL_DRIVER_REAL32 |
+                               OBELISK_RT_INERTIAL_DRIVER_REAL64)) != 0;
     // A real is one atomic user-defined-net value (6.6.7), never a clipped
     // packed slice. Continuous assignments to a UDNT also admit one delay
     // only (10.3.3), which the validation above preserves in this ABI.
     if (realValue && (sourceFirst != 0 || selectedWidth != bitWidth))
       return OBELISK_RT_INVALID_HANDLE;
-    __int128 selectedOffsetWide =
-        static_cast<__int128>(offset) + firstWide;
+    __int128 selectedOffsetWide = static_cast<__int128>(offset) + firstWide;
     if (selectedOffsetWide < 0 || selectedOffsetWide > INT64_MAX)
       return OBELISK_RT_INVALID_HANDLE;
     int64_t selectedOffset = static_cast<int64_t>(selectedOffsetWide);
-    uint64_t selectedHandle = nativeHandleOffset(
-        rootHandle, static_cast<int64_t>(sourceFirst));
+    uint64_t selectedHandle =
+        nativeHandleOffset(rootHandle, static_cast<int64_t>(sourceFirst));
     if (selectedHandle == UINT64_MAX)
       return OBELISK_RT_INVALID_HANDLE;
     uint64_t byteCount = (bitWidth - 1) / 8 + 1;
@@ -596,8 +593,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
           boundedStatic
               ? obelisk::designbytecode::encodeStaticHandle(
                     staticID,
-                    static_cast<int64_t>(static_cast<uint64_t>(offset) +
-                                         first))
+                    static_cast<int64_t>(static_cast<uint64_t>(offset) + first))
               : nativeHandleOffset(rootHandle, static_cast<int64_t>(first));
       update.bitWidth = width;
       update.driver = true;
@@ -605,11 +601,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
           (flags & OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION) != 0;
       update.publishDriverTransition =
           (flags & OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW) != 0;
-      update.realWidth =
-          (flags & OBELISK_RT_INERTIAL_DRIVER_REAL32) != 0
-              ? 32
-          : (flags & OBELISK_RT_INERTIAL_DRIVER_REAL64) != 0 ? 64
-                                                              : 0;
+      update.realWidth = (flags & OBELISK_RT_INERTIAL_DRIVER_REAL32) != 0   ? 32
+                         : (flags & OBELISK_RT_INERTIAL_DRIVER_REAL64) != 0 ? 64
+                                                                            : 0;
       update.execRegion = OBELISK_RT_REGION_ACTIVE;
       update.sequence = context->nextSchedulerSequence++;
       update.dueTime = delay > UINT64_MAX - context->schedulerTime
@@ -697,8 +691,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
                          : newHighZ              ? turnoffDelay
                          : oldNonzero && newZero ? fallDelay
                                                  : riseDelay;
-        if (!enqueue(0, bitWidth, delay,
-                     oldHighZ && !hasInitialProjection))
+        if (!enqueue(0, bitWidth, delay, oldHighZ && !hasInitialProjection))
           return OBELISK_RT_OUT_OF_RESOURCES;
         scheduled = 1;
       } else
@@ -711,11 +704,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
         scheduled += currentBit(false, bit) != newValue ||
                      currentBit(true, bit) != newUnknown;
       }
-      if (scheduled != 0 &&
-          (context->nextSchedulerSequence == 0 ||
-           static_cast<__uint128_t>(scheduled) >
-               static_cast<__uint128_t>(UINT64_MAX) -
-                   context->nextSchedulerSequence))
+      if (scheduled != 0 && (context->nextSchedulerSequence == 0 ||
+                             static_cast<__uint128_t>(scheduled) >
+                                 static_cast<__uint128_t>(UINT64_MAX) -
+                                     context->nextSchedulerSequence))
         return OBELISK_RT_OUT_OF_RESOURCES;
       for (uint64_t bit = 0; bit != bitWidth; ++bit) {
         bool newValue = sourceBit(targetValue, bit);
@@ -732,6 +724,211 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
           site,
           InertialDriverPending{bitOffset, bitWidth, std::move(targetValue),
                                 std::move(targetUnknown), scheduled});
+    return OBELISK_RT_OK;
+  } catch (const std::bad_alloc &) {
+    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
+    return OBELISK_RT_OUT_OF_MEMORY;
+  } catch (...) {
+    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
+    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+    uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
+    uint64_t codeUnit, uint32_t component, uint32_t group, uint32_t groupCount,
+    uint32_t flags, uint64_t riseDelay, uint64_t fallDelay,
+    uint64_t turnoffDelay, const uint8_t *value, const uint8_t *unknown,
+    const uint8_t *activeMask, const uint8_t *riseMask, const uint8_t *fallMask,
+    const uint8_t *turnoffMask) {
+  if (!context || !context->execution || !valuePlane || bitWidth == 0 ||
+      codeUnit == UINT64_MAX || groupCount == 0 || group >= groupCount ||
+      (flags & ~(OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION |
+                 OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW)) != 0 ||
+      !value || (unknownPlane && !unknown) || !activeMask || !riseMask ||
+      !fallMask || !turnoffMask)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  try {
+    ContextTransaction transaction(context);
+    ContextMutexLock lock(context);
+    if (!validInertialStatePlanesUnlocked(context, valuePlane, unknownPlane,
+                                          planeBitCount))
+      return OBELISK_RT_INVALID_HANDLE;
+
+    uint32_t staticID = 0;
+    int64_t offset = 0;
+    uint64_t rootHandle = bitOffset;
+    bool boundedStatic = decodeNativeStatic(bitOffset, staticID, offset);
+    if (!boundedStatic && !decodeNativeGlobal(bitOffset, offset))
+      return OBELISK_RT_INVALID_HANDLE;
+    const NativeStaticState *nativeState =
+        boundedStatic ? findNativeStaticState(context, staticID) : nullptr;
+    if (boundedStatic && !nativeState)
+      return OBELISK_RT_INVALID_HANDLE;
+    uint64_t availableWidth =
+        boundedStatic ? nativeState->bitWidth : planeBitCount;
+    if (offset < 0 || static_cast<uint64_t>(offset) > availableWidth ||
+        bitWidth > availableWidth - static_cast<uint64_t>(offset))
+      return OBELISK_RT_INVALID_HANDLE;
+    uint64_t selectedHandle =
+        boundedStatic
+            ? obelisk::designbytecode::encodeStaticHandle(staticID, offset)
+            : rootHandle;
+    if (selectedHandle == UINT64_MAX)
+      return OBELISK_RT_INVALID_HANDLE;
+
+    InertialDriverSite site{codeUnit, component};
+    InertialPathPending &pending = context->inertialPathPending[site];
+    size_t bytes = static_cast<size_t>((bitWidth - 1) / 8 + 1);
+    auto resetState = [&] {
+      pending = InertialPathPending{};
+      pending.destination = selectedHandle;
+      pending.width = bitWidth;
+      pending.generation.assign(static_cast<size_t>(bitWidth), 1);
+      pending.targetValue.assign(bytes, 0);
+      pending.targetUnknown.assign(bytes, 0);
+      pending.valid.assign(static_cast<size_t>(bitWidth), 0);
+      pending.delayed.assign(static_cast<size_t>(bitWidth), 0);
+      pending.needsSchedule.assign(static_cast<size_t>(bitWidth), 0);
+      pending.candidateDelay.assign(static_cast<size_t>(bitWidth), UINT64_MAX);
+    };
+    if (group == 0) {
+      if (pending.destination != selectedHandle || pending.width != bitWidth)
+        resetState();
+      pending.nextGroup = 0;
+      pending.groupCount = groupCount;
+    } else if (pending.destination != selectedHandle ||
+               pending.width != bitWidth || pending.groupCount != groupCount ||
+               pending.nextGroup != group)
+      return OBELISK_RT_INVALID_ARGUMENT;
+
+    auto currentBit = [&](bool unknownBit, uint64_t bit) {
+      uint64_t absolute = (boundedStatic ? nativeState->bitOffset : 0) +
+                          static_cast<uint64_t>(offset) + bit;
+      const std::vector<uint64_t> &plane =
+          unknownBit ? context->stateUnknown : context->stateValue;
+      if (absolute / 64 < plane.size())
+        return ((plane[absolute / 64] >> (absolute % 64)) & 1) != 0;
+      const uint8_t *nativePlane = unknownBit ? unknownPlane : valuePlane;
+      return nativePlane && absolute < planeBitCount &&
+             byteBit(nativePlane, absolute);
+    };
+    auto incrementGeneration = [&](uint64_t bit) {
+      if (++pending.generation[static_cast<size_t>(bit)] == 0)
+        pending.generation[static_cast<size_t>(bit)] = 1;
+    };
+    auto enqueue = [&](uint64_t bit, uint64_t delay) {
+      if (context->nextSchedulerSequence == 0 ||
+          context->nextSchedulerSequence == UINT64_MAX)
+        return false;
+      ScheduledNBA update;
+      update.valuePlane = valuePlane;
+      update.unknownPlane = unknownPlane;
+      update.planeBitCount = planeBitCount;
+      update.bitOffset =
+          nativeHandleOffset(selectedHandle, static_cast<int64_t>(bit));
+      if (update.bitOffset == UINT64_MAX)
+        return false;
+      update.bitWidth = 1;
+      update.driver = true;
+      update.deferDriverResolution =
+          (flags & OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION) != 0;
+      update.publishDriverTransition =
+          (flags & OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW) != 0;
+      update.execRegion = OBELISK_RT_REGION_ACTIVE;
+      update.sequence = context->nextSchedulerSequence++;
+      update.dueTime = delay > UINT64_MAX - context->schedulerTime
+                           ? UINT64_MAX
+                           : context->schedulerTime + delay;
+      update.inertialSite = site;
+      update.inertialPathDriver = true;
+      update.inertialPathBit = bit;
+      update.inertialPathGeneration =
+          pending.generation[static_cast<size_t>(bit)];
+      update.inlinePacked = true;
+      update.inlineValue = byteBit(value, bit) ? 1 : 0;
+      update.inlineUnknown = unknownPlane && byteBit(unknown, bit) ? 1 : 0;
+      context->scheduledNBAs.push_back(std::move(update));
+      return true;
+    };
+
+    if (group == 0) {
+      for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+        bool targetValue = byteBit(value, bit);
+        bool targetUnknown = unknownPlane && byteBit(unknown, bit);
+        bool active = byteBit(activeMask, bit);
+        bool sameTarget =
+            pending.valid[static_cast<size_t>(bit)] &&
+            byteBit(pending.targetValue.data(), bit) == targetValue &&
+            byteBit(pending.targetUnknown.data(), bit) == targetUnknown;
+        // An unrelated path activation still presents the whole driver value.
+        // Preserve a delayed bit whose target did not change instead of
+        // treating its absence from this activation's mask as an immediate
+        // update. Conversely, an applicable delayed path supersedes a pending
+        // zero-delay outside-path update at the same scheduler time.
+        bool pendingSame =
+            sameTarget && (pending.delayed[static_cast<size_t>(bit)] || !active);
+        pending.needsSchedule[static_cast<size_t>(bit)] = 0;
+        pending.candidateDelay[static_cast<size_t>(bit)] = UINT64_MAX;
+        if (pendingSame)
+          continue;
+        incrementGeneration(bit);
+        pending.valid[static_cast<size_t>(bit)] = 0;
+        pending.delayed[static_cast<size_t>(bit)] = 0;
+        setByteBit(pending.targetValue.data(), bit, targetValue);
+        setByteBit(pending.targetUnknown.data(), bit, targetUnknown);
+        bool changed = currentBit(false, bit) != targetValue ||
+                       currentBit(true, bit) != targetUnknown;
+        if (!changed)
+          continue;
+        pending.valid[static_cast<size_t>(bit)] = 1;
+        pending.delayed[static_cast<size_t>(bit)] = active ? 1 : 0;
+        if (active) {
+          pending.needsSchedule[static_cast<size_t>(bit)] = 1;
+        } else if (!enqueue(bit, 0)) {
+          return OBELISK_RT_OUT_OF_RESOURCES;
+        }
+      }
+    }
+
+    for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+      if (!pending.needsSchedule[static_cast<size_t>(bit)])
+        continue;
+      bool targetValue = byteBit(value, bit);
+      bool targetUnknown = unknownPlane && byteBit(unknown, bit);
+      uint64_t candidate = UINT64_MAX;
+      if (!targetUnknown && targetValue && byteBit(riseMask, bit))
+        candidate = riseDelay;
+      else if (!targetUnknown && !targetValue && byteBit(fallMask, bit))
+        candidate = fallDelay;
+      else if (targetUnknown && targetValue && byteBit(turnoffMask, bit))
+        candidate = turnoffDelay;
+      else if (targetUnknown) {
+        if (byteBit(riseMask, bit))
+          candidate = std::min(candidate, riseDelay);
+        if (byteBit(fallMask, bit))
+          candidate = std::min(candidate, fallDelay);
+        if (byteBit(turnoffMask, bit))
+          candidate = std::min(candidate, turnoffDelay);
+      }
+      pending.candidateDelay[static_cast<size_t>(bit)] =
+          std::min(pending.candidateDelay[static_cast<size_t>(bit)], candidate);
+    }
+    pending.nextGroup = group + 1;
+    if (group + 1 == groupCount) {
+      for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+        if (!pending.needsSchedule[static_cast<size_t>(bit)])
+          continue;
+        uint64_t delay = pending.candidateDelay[static_cast<size_t>(bit)];
+        if (delay == UINT64_MAX)
+          return OBELISK_RT_INVALID_ARGUMENT;
+        if (!enqueue(bit, delay))
+          return OBELISK_RT_OUT_OF_RESOURCES;
+        pending.needsSchedule[static_cast<size_t>(bit)] = 0;
+      }
+      pending.nextGroup = 0;
+    }
     return OBELISK_RT_OK;
   } catch (const std::bad_alloc &) {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
@@ -910,8 +1107,7 @@ obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
       update.unknownPlane = unknownPlane;
       update.planeBitCount = planeBitCount;
       update.bitOffset = obelisk::designbytecode::encodeStaticHandle(
-          selection.staticID,
-          selection.offset + static_cast<int64_t>(bit));
+          selection.staticID, selection.offset + static_cast<int64_t>(bit));
       update.bitWidth = 1;
       update.driver = true;
       update.deferDriverResolution = !final;
@@ -1158,10 +1354,9 @@ obelisk_rt_status materializeGeneratedNBAAccumulatorUnlocked(
     if (context->nextSchedulerSequence == 0)
       return OBELISK_RT_OUT_OF_RESOURCES;
     accumulator.valuePlane = plan->state_value;
-    accumulator.unknownPlane =
-        root.bit_width <= OBELISK_RT_SCALAR_NBA_MAX_BITS
-            ? plan->state_unknown
-            : nullptr;
+    accumulator.unknownPlane = root.bit_width <= OBELISK_RT_SCALAR_NBA_MAX_BITS
+                                   ? plan->state_unknown
+                                   : nullptr;
     accumulator.planeBitCount = plan->state_bit_count;
     accumulator.execRegion = execRegion;
     accumulator.sequence = context->nextSchedulerSequence++;
@@ -1569,7 +1764,8 @@ obelisk_rt_status tryCommitGeneratedNBAScalarUnlocked(
       root.generated_accumulator;
   if (!generated || !hasGeneratedNBAStages(*generated) || accumulator.valid ||
       context->staticNBASlowRoots[rootIndex] != 0 || root.bit_width > 64 ||
-      (!trustedStaticFanout && nativeStaticRootDirty(context, root.static_state)) ||
+      (!trustedStaticFanout &&
+       nativeStaticRootDirty(context, root.static_state)) ||
       generated->exec_region != barrierRegion ||
       (!trustedStaticFanout &&
        (activeNativeAOTContext != context || !canUseStaticAOTFanout(context))))
@@ -1590,28 +1786,25 @@ obelisk_rt_status tryCommitGeneratedNBAScalarUnlocked(
   uint64_t widthMask = packedWidthMask(root.bit_width);
   uint64_t writeMask = generated->write_mask[0] & widthMask;
   auto loadOverrideMask = [&](const std::vector<uint64_t> &plane) {
-    return plane.empty()
-               ? uint64_t{0}
-               : loadPackedBytes(
-                     reinterpret_cast<const uint8_t *>(plane.data()),
-                     stateOffset, root.bit_width);
+    return plane.empty() ? uint64_t{0}
+                         : loadPackedBytes(
+                               reinterpret_cast<const uint8_t *>(plane.data()),
+                               stateOffset, root.bit_width);
   };
   writeMask &= ~(loadOverrideMask(context->forceMask) |
                  loadOverrideMask(context->assignMask));
-  uint64_t oldValue = loadPackedBytes(plan->state_value, stateOffset,
-                                      root.bit_width);
-  uint64_t oldUnknown = loadPackedBytes(plan->state_unknown, stateOffset,
-                                        root.bit_width);
+  uint64_t oldValue =
+      loadPackedBytes(plan->state_value, stateOffset, root.bit_width);
+  uint64_t oldUnknown =
+      loadPackedBytes(plan->state_unknown, stateOffset, root.bit_width);
   uint64_t newValue =
       (oldValue & ~writeMask) | (generated->value[0] & writeMask);
   uint64_t newUnknown =
       (oldUnknown & ~writeMask) | (generated->unknown[0] & writeMask);
-  storePackedBytes(plan->state_value, stateOffset, root.bit_width,
-                   newValue);
+  storePackedBytes(plan->state_value, stateOffset, root.bit_width, newValue);
   storePackedBytes(plan->state_unknown, stateOffset, root.bit_width,
                    newUnknown);
-  bool rootChanged =
-      ((oldValue ^ newValue) | (oldUnknown ^ newUnknown)) != 0;
+  bool rootChanged = ((oldValue ^ newValue) | (oldUnknown ^ newUnknown)) != 0;
   changed |= rootChanged;
   context->signalDiagnostics.aotNBAStages += stageCount;
   generated->write_mask[0] = 0;
@@ -1619,9 +1812,9 @@ obelisk_rt_status tryCommitGeneratedNBAScalarUnlocked(
   ++context->signalDiagnostics.aotNBACommits;
   handled = true;
   if (rootChanged)
-    obelisk_rt_v1_scheduler_static_transition(
-        context, root.static_state, 0, root.bit_width, oldValue, oldUnknown,
-        newValue, newUnknown);
+    obelisk_rt_v1_scheduler_static_transition(context, root.static_state, 0,
+                                              root.bit_width, oldValue,
+                                              oldUnknown, newValue, newUnknown);
   return context->schedulerStatus;
 }
 
@@ -1911,8 +2104,8 @@ obelisk_rt_status commitStaticNBARootRangeUnlocked(obelisk_rt_context *context,
   bool trustedStaticFanout =
       activeNativeAOTContext == context && canUseStaticAOTFanout(context);
 #if defined(__x86_64__) || defined(_M_X64)
-  if (!indexed && tryCommitGeneratedNBA256BatchUnlocked(
-                      context, rootCount, barrierRegion, changed))
+  if (!indexed && tryCommitGeneratedNBA256BatchUnlocked(context, rootCount,
+                                                        barrierRegion, changed))
     return OBELISK_RT_OK;
 #endif
   auto commitRoot = [&](uint32_t root) -> obelisk_rt_status {
@@ -1925,9 +2118,9 @@ obelisk_rt_status commitStaticNBARootRangeUnlocked(obelisk_rt_context *context,
       return OBELISK_RT_INVALID_DESIGN;
     const obelisk_rt_static_nba_root &rootPlan =
         context->nativeScheduleNBARoots[root];
-    bool generatedPending = rootPlan.generated_accumulator &&
-                            hasGeneratedNBAStages(
-                                *rootPlan.generated_accumulator);
+    bool generatedPending =
+        rootPlan.generated_accumulator &&
+        hasGeneratedNBAStages(*rootPlan.generated_accumulator);
     bool accumulatorPending = context->staticNBAAccumulators[root].valid;
     if (!generatedPending && !accumulatorPending)
       return OBELISK_RT_OK;
@@ -1950,8 +2143,7 @@ obelisk_rt_status commitStaticNBARootRangeUnlocked(obelisk_rt_context *context,
   };
   if (!indexed) {
     for (uint32_t root = 0; root != rootCount; ++root)
-      if (obelisk_rt_status status = commitRoot(root);
-          status != OBELISK_RT_OK)
+      if (obelisk_rt_status status = commitRoot(root); status != OBELISK_RT_OK)
         return status;
     return OBELISK_RT_OK;
   }
@@ -1979,9 +2171,9 @@ obelisk_rt_status commitStaticNBARootRangeUnlocked(obelisk_rt_context *context,
           return status;
         const obelisk_rt_static_nba_root &rootPlan =
             context->nativeScheduleNBARoots[root];
-        bool generatedPending = rootPlan.generated_accumulator &&
-                                hasGeneratedNBAStages(
-                                    *rootPlan.generated_accumulator);
+        bool generatedPending =
+            rootPlan.generated_accumulator &&
+            hasGeneratedNBAStages(*rootPlan.generated_accumulator);
         bool accumulatorPending =
             root < context->staticNBAAccumulators.size() &&
             context->staticNBAAccumulators[root].valid;
@@ -2048,8 +2240,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_static_nba_commit_roots(
   return status;
 }
 
-extern "C" uint32_t obelisk_rt_v1_static_nba_direct_commit_guard(
-    obelisk_rt_context *context) {
+extern "C" uint32_t
+obelisk_rt_v1_static_nba_direct_commit_guard(obelisk_rt_context *context) {
   if (!context || activeNativeAOTContext != context ||
       lockedNativeAOTContext != context || !context->nativeSchedulePlan)
     return 0;
@@ -2062,8 +2254,9 @@ extern "C" uint32_t obelisk_rt_v1_static_nba_direct_commit_guard(
          (!plan->specialization_fast || *plan->specialization_fast != 0);
 }
 
-extern "C" void obelisk_rt_v1_static_nba_account_generated_commits(
-    obelisk_rt_context *context, uint32_t count) {
+extern "C" void
+obelisk_rt_v1_static_nba_account_generated_commits(obelisk_rt_context *context,
+                                                   uint32_t count) {
   if (!context || count == 0)
     return;
   context->signalDiagnostics.aotNBAStages += count;

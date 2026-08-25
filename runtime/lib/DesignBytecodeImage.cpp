@@ -508,6 +508,31 @@ bool validIntrinsic(const Image &image, const Function &function,
            bits(input(5), 64) && bits(input(6), 64) && bits(input(7), 64) &&
            bits(input(8), 64) && bits(input(9), 64);
   }
+  case OBELISK_RT_INTRINSIC_V1_LOGIC_CASE_DIFFERENCE_MASK: {
+    auto lhs = input(0);
+    auto rhs = input(1);
+    auto result = output(0);
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 1 && numeric(lhs) && numeric(rhs) &&
+           compatible(*lhs, *rhs) && result &&
+           result->kind == OBELISK_RT_DBREG_BITS && result->width == lhs->width;
+  }
+  case OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_DRIVER: {
+    auto value = input(0);
+    if (signature.flags != 0 || site.inputCount != 14 ||
+        site.outputCount != 0 || !numeric(value) || !handle(input(1)))
+      return false;
+    for (unsigned index = 2; index != 6; ++index) {
+      auto mask = input(index);
+      if (!mask || mask->kind != OBELISK_RT_DBREG_BITS ||
+          mask->width != value->width)
+        return false;
+    }
+    for (unsigned index = 6; index != 14; ++index)
+      if (!bits(input(index), 64))
+        return false;
+    return true;
+  }
   case OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER:
     return signature.flags <= 1 &&
            (site.inputCount == 1 || site.inputCount == 2) &&

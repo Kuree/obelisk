@@ -1610,10 +1610,19 @@ void ObeliskSimPreparePass::runOnOperation() {
   // isolated continuous driver. Conditional and overlapping paths instead
   // freeze a small rule set that lowering expands into straight-line selects;
   // the scheduler never interprets or scans a path table.
+  struct TimingTerminal {
+    std::string path;
+    uint64_t rootWidth = 0;
+    uint64_t low = 0;
+    uint64_t width = 0;
+
+    bool isWhole() const { return low == 0 && width == rootWidth; }
+  };
   struct SimpleTimingPath {
     semantic::SVTimingPathSymbolOp declaration;
-    SmallVector<std::string, 2> inputs;
-    uint64_t outputWidth;
+    SmallVector<TimingTerminal, 2> inputs;
+    TimingTerminal output;
+    bool full = false;
     int32_t polarity;
     SmallVector<int64_t, 3> delays;
     Operation *condition = nullptr;
@@ -1623,30 +1632,57 @@ void ObeliskSimPreparePass::runOnOperation() {
   semanticRoot->walk([&](semantic::SVTimingPathSymbolOp path) {
     if (!path->hasAttr("obelisk.simple_timing_path"))
       return;
-    auto inputs = path->getAttrOfType<ArrayAttr>("timing_input_paths");
-    auto output = path->getAttrOfType<StringAttr>("timing_output_path");
-    auto outputWidth = path->getAttrOfType<IntegerAttr>("timing_output_width");
+    auto inputs = path->getAttrOfType<ArrayAttr>("timing_input_terminals");
+    auto output = path->getAttrOfType<DictionaryAttr>("timing_output_terminal");
     auto polarity = path->getAttrOfType<IntegerAttr>("timing_polarity");
     auto delays = path->getAttrOfType<DenseI64ArrayAttr>("timing_delay_fs");
-    if (!inputs || inputs.empty() || !output || !outputWidth ||
-        outputWidth.getInt() <= 0 || !polarity || polarity.getInt() < 0 ||
-        polarity.getInt() > 2 || !delays || delays.empty() ||
-        delays.size() > 3) {
+    if (!inputs || inputs.empty() || !output || !polarity ||
+        polarity.getInt() < 0 || polarity.getInt() > 2 || !delays ||
+        delays.empty() || delays.size() > 3) {
       emitError(getSemanticLocation(path))
           << "simple specify path is missing frozen terminal or delay data";
       invalid = true;
       return;
     }
-    SmallVector<std::string, 2> inputPaths;
+    auto parseTerminal = [&](Attribute attr) -> std::optional<TimingTerminal> {
+      auto terminal = dyn_cast<DictionaryAttr>(attr);
+      auto terminalPath =
+          terminal ? terminal.getAs<StringAttr>("path") : StringAttr{};
+      auto rootWidth =
+          terminal ? terminal.getAs<IntegerAttr>("root_width") : IntegerAttr{};
+      auto low = terminal ? terminal.getAs<IntegerAttr>("low") : IntegerAttr{};
+      auto width =
+          terminal ? terminal.getAs<IntegerAttr>("width") : IntegerAttr{};
+      if (!terminalPath || !rootWidth || rootWidth.getInt() <= 0 || !low ||
+          low.getInt() < 0 || !width || width.getInt() <= 0 ||
+          static_cast<uint64_t>(low.getInt()) >=
+              static_cast<uint64_t>(rootWidth.getInt()) ||
+          static_cast<uint64_t>(width.getInt()) >
+              static_cast<uint64_t>(rootWidth.getInt()) -
+                  static_cast<uint64_t>(low.getInt()))
+        return std::nullopt;
+      return TimingTerminal{terminalPath.getValue().str(),
+                            static_cast<uint64_t>(rootWidth.getInt()),
+                            static_cast<uint64_t>(low.getInt()),
+                            static_cast<uint64_t>(width.getInt())};
+    };
+    SmallVector<TimingTerminal, 2> inputPaths;
     for (Attribute attr : inputs) {
-      auto input = dyn_cast<StringAttr>(attr);
+      std::optional<TimingTerminal> input = parseTerminal(attr);
       if (!input) {
         emitError(getSemanticLocation(path))
             << "simple specify path has malformed terminal data";
         invalid = true;
         return;
       }
-      inputPaths.push_back(input.getValue().str());
+      inputPaths.push_back(std::move(*input));
+    }
+    std::optional<TimingTerminal> outputTerminal = parseTerminal(output);
+    if (!outputTerminal) {
+      emitError(getSemanticLocation(path))
+          << "simple specify path has malformed output terminal data";
+      invalid = true;
+      return;
     }
     SmallVector<Operation *> children = getChildren(path);
     bool conditional = path->hasAttr("timing_condition");
@@ -1658,8 +1694,17 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       return;
     }
-    simpleTimingPaths[output.getValue()].push_back(
-        {path, inputPaths, static_cast<uint64_t>(outputWidth.getInt()),
+    auto connectionFull =
+        path->getAttrOfType<BoolAttr>("timing_connection_full");
+    if (!connectionFull) {
+      emitError(getSemanticLocation(path))
+          << "simple specify path has no frozen connection kind";
+      invalid = true;
+      return;
+    }
+    bool full = connectionFull.getValue();
+    simpleTimingPaths[outputTerminal->path].push_back(
+        {path, inputPaths, *outputTerminal, full,
          static_cast<int32_t>(polarity.getInt()),
          SmallVector<int64_t, 3>(delays.asArrayRef()),
          conditional ? children.front() : nullptr, ifnone});
@@ -1733,10 +1778,10 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVectorImpl<SimpleTimingPath> &paths = entry.getValue();
     SimpleTimingPath &path = paths.front();
     if (llvm::any_of(paths, [&](const SimpleTimingPath &candidate) {
-          return candidate.outputWidth != path.outputWidth;
+          return candidate.output.rootWidth != path.output.rootWidth;
         })) {
       emitError(getSemanticLocation(path.declaration))
-          << "specify paths to one output disagree on its whole width";
+          << "specify paths to one output disagree on its root width";
       invalid = true;
       continue;
     }
@@ -1750,7 +1795,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       bool wholeCoverage =
           llvm::all_of(drivers.second, [&](const DriverInfo &driver) {
             return driver.path == output && driver.drivenLow == 0 &&
-                   driver.drivenWidth == path.outputWidth;
+                   driver.drivenWidth == path.output.rootWidth;
           });
       bool strengthPair =
           drivers.second.size() == 2 && drivers.second[0].strengthBank &&
@@ -1796,8 +1841,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       });
     llvm::StringSet<> declaredInputs;
     for (const SimpleTimingPath &candidate : paths)
-      for (const std::string &input : candidate.inputs)
-        declaredInputs.insert(input);
+      for (const TimingTerminal &input : candidate.inputs)
+        declaredInputs.insert(input.path);
     bool exactInputs = referencedPaths.size() == declaredInputs.size();
     if (exactInputs)
       for (StringRef input : declaredInputs.keys())
@@ -1860,7 +1905,13 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       continue;
     }
-    if (!hasStateDependent && (paths.size() == 1 || identicalDelays)) {
+    bool allWholeTerminals = llvm::all_of(paths, [](const SimpleTimingPath &p) {
+      return p.output.isWhole() &&
+             llvm::all_of(p.inputs,
+                          [](const TimingTerminal &t) { return t.isWhole(); });
+    });
+    if (allWholeTerminals && !hasStateDependent &&
+        (paths.size() == 1 || identicalDelays)) {
       matchedUnit->setAttr("delay_fs",
                            builder.getDenseI64ArrayAttr(path.delays));
       continue;
@@ -1871,34 +1922,26 @@ void ObeliskSimPreparePass::runOnOperation() {
     // allocated once per distinct input instead of once per declaration.
     // The lowered actor shares each comparison across all matching rules.
     SmallVector<Attribute> frozenRules;
-    llvm::StringSet<> distinctInputs;
-    if (!hasStateDependent)
-      for (const SimpleTimingPath &candidate : paths)
-        if (candidate.inputs.size() != 1 ||
-            !distinctInputs.insert(candidate.inputs.front()).second) {
-          emitError(getSemanticLocation(candidate.declaration))
-              << "overlapping specify paths require one distinct whole source "
-                 "terminal per path";
-          invalid = true;
-          break;
-        }
-    if (invalid)
-      continue;
-
     llvm::StringMap<std::string> snapshots;
     for (const SimpleTimingPath &candidate : paths) {
-      for (const std::string &input : candidate.inputs) {
-        if (snapshots.count(input))
+      for (const TimingTerminal &input : candidate.inputs) {
+        if (snapshots.count(input.path))
           continue;
-        auto inputDescriptor = descriptors.find(input);
+        auto inputDescriptor = descriptors.find(input.path);
         Type snapshotType =
             inputDescriptor == descriptors.end()
                 ? Type{}
                 : sim::getPackedScalarType(inputDescriptor->second.type);
+        std::optional<unsigned> descriptorWidth =
+            inputDescriptor == descriptors.end()
+                ? std::nullopt
+                : sim::getPackedWidth(inputDescriptor->second.type);
         std::string snapshotPath =
             (output + ".$timing_path_snapshot_" + Twine(snapshots.size()))
                 .str();
-        if (!snapshotType || descriptors.count(snapshotPath)) {
+        if (!snapshotType || !descriptorWidth ||
+            *descriptorWidth != input.rootWidth ||
+            descriptors.count(snapshotPath)) {
           emitError(getSemanticLocation(candidate.declaration))
               << "specify path source has no unique packed snapshot";
           invalid = true;
@@ -1923,7 +1966,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             builder.getStringAttr(snapshotPath),
             builder.getStringAttr("__obelisk_timing_path_snapshot"),
             sim::ComputeObservabilityKindAttr{});
-        snapshots.try_emplace(input, std::move(snapshotPath));
+        snapshots.try_emplace(input.path, std::move(snapshotPath));
       }
       if (invalid)
         break;
@@ -1937,25 +1980,48 @@ void ObeliskSimPreparePass::runOnOperation() {
     llvm::StringMap<int32_t> groups;
     for (const SimpleTimingPath &candidate : paths) {
       std::string groupKey;
-      for (const std::string &input : candidate.inputs) {
-        groupKey += Twine(input.size()).str();
+      groupKey += candidate.full ? "F;" : "P;";
+      for (const TimingTerminal &input : candidate.inputs) {
+        groupKey += Twine(input.path.size()).str();
         groupKey.push_back(':');
-        groupKey += input;
-        groupKey.push_back(';');
+        groupKey += input.path;
+        groupKey +=
+            (":" + Twine(input.low) + ":" + Twine(input.width) + ";").str();
       }
+      groupKey += ("->" + Twine(candidate.output.low) + ":" +
+                   Twine(candidate.output.width))
+                      .str();
       auto [group, inserted] =
           groups.try_emplace(groupKey, static_cast<int32_t>(groups.size()));
       (void)inserted;
       SmallVector<Attribute> inputAttrs;
       SmallVector<Attribute> snapshotAttrs;
-      for (const std::string &input : candidate.inputs) {
-        inputAttrs.push_back(builder.getStringAttr(input));
-        snapshotAttrs.push_back(builder.getStringAttr(snapshots.lookup(input)));
+      SmallVector<int64_t> inputLows;
+      SmallVector<int64_t> inputWidths;
+      for (const TimingTerminal &input : candidate.inputs) {
+        inputAttrs.push_back(builder.getStringAttr(input.path));
+        snapshotAttrs.push_back(
+            builder.getStringAttr(snapshots.lookup(input.path)));
+        inputLows.push_back(static_cast<int64_t>(input.low));
+        inputWidths.push_back(static_cast<int64_t>(input.width));
       }
       SmallVector<NamedAttribute> attrs{
           builder.getNamedAttr("inputs", builder.getArrayAttr(inputAttrs)),
           builder.getNamedAttr("snapshots",
                                builder.getArrayAttr(snapshotAttrs)),
+          builder.getNamedAttr("input_lows",
+                               builder.getDenseI64ArrayAttr(inputLows)),
+          builder.getNamedAttr("input_widths",
+                               builder.getDenseI64ArrayAttr(inputWidths)),
+          builder.getNamedAttr("output_low",
+                               builder.getI64IntegerAttr(candidate.output.low)),
+          builder.getNamedAttr("output_width", builder.getI64IntegerAttr(
+                                                   candidate.output.width)),
+          builder.getNamedAttr(
+              "output_root_width",
+              builder.getI64IntegerAttr(candidate.output.rootWidth)),
+          builder.getNamedAttr("connection_full",
+                               builder.getBoolAttr(candidate.full)),
           builder.getNamedAttr("polarity",
                                builder.getI32IntegerAttr(candidate.polarity)),
           builder.getNamedAttr("delay_fs",
@@ -7219,6 +7285,18 @@ void ObeliskSimPreparePass::runOnOperation() {
             rule ? rule.getAs<StringAttr>("snapshot") : StringAttr{};
         auto snapshots =
             rule ? rule.getAs<ArrayAttr>("snapshots") : ArrayAttr{};
+        auto inputLows = rule ? rule.getAs<DenseI64ArrayAttr>("input_lows")
+                              : DenseI64ArrayAttr{};
+        auto inputWidths = rule ? rule.getAs<DenseI64ArrayAttr>("input_widths")
+                                : DenseI64ArrayAttr{};
+        auto outputLow =
+            rule ? rule.getAs<IntegerAttr>("output_low") : IntegerAttr{};
+        auto outputWidth =
+            rule ? rule.getAs<IntegerAttr>("output_width") : IntegerAttr{};
+        auto outputRootWidth =
+            rule ? rule.getAs<IntegerAttr>("output_root_width") : IntegerAttr{};
+        auto connectionFull =
+            rule ? rule.getAs<BoolAttr>("connection_full") : BoolAttr{};
         auto polarity =
             rule ? rule.getAs<IntegerAttr>("polarity") : IntegerAttr{};
         auto delays = rule ? rule.getAs<DenseI64ArrayAttr>("delay_fs")
@@ -7228,7 +7306,13 @@ void ObeliskSimPreparePass::runOnOperation() {
                               inputs.size() == snapshots.size();
         if ((!legacyTerminals && !arrayTerminals) || !polarity ||
             polarity.getInt() < 0 || polarity.getInt() > 2 || !delays ||
-            delays.empty() || delays.size() > 3) {
+            delays.empty() || delays.size() > 3 ||
+            (arrayTerminals &&
+             (!inputLows || !inputWidths ||
+              static_cast<size_t>(inputLows.size()) != inputs.size() ||
+              static_cast<size_t>(inputWidths.size()) != inputs.size() ||
+              !outputLow ||
+              !outputWidth || !outputRootWidth || !connectionFull))) {
           rulesInvalid = true;
           break;
         }
@@ -7251,6 +7335,14 @@ void ObeliskSimPreparePass::runOnOperation() {
         } else {
           fields.push_back(builder.getNamedAttr("inputs", inputs));
           fields.push_back(builder.getNamedAttr("snapshots", snapshots));
+          fields.push_back(builder.getNamedAttr("input_lows", inputLows));
+          fields.push_back(builder.getNamedAttr("input_widths", inputWidths));
+          fields.push_back(builder.getNamedAttr("output_low", outputLow));
+          fields.push_back(builder.getNamedAttr("output_width", outputWidth));
+          fields.push_back(
+              builder.getNamedAttr("output_root_width", outputRootWidth));
+          fields.push_back(
+              builder.getNamedAttr("connection_full", connectionFull));
         }
         fields.push_back(builder.getNamedAttr("polarity", polarity));
         fields.push_back(builder.getNamedAttr(
@@ -7439,12 +7531,12 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder.getNamedAttr("obelisk_sim.primitive_name", primitive));
     if (auto passSwitchIds = unit.source->getAttrOfType<DenseI64ArrayAttr>(
             "obelisk_sim.pass_switch_ids"))
-      functionAttrs.push_back(builder.getNamedAttr(
-          "obelisk_sim.pass_switch_ids", passSwitchIds));
+      functionAttrs.push_back(
+          builder.getNamedAttr("obelisk_sim.pass_switch_ids", passSwitchIds));
     if (auto mosTopologyIds = unit.source->getAttrOfType<DenseI64ArrayAttr>(
             "obelisk_sim.mos_topology_ids"))
-      functionAttrs.push_back(builder.getNamedAttr(
-          "obelisk_sim.mos_topology_ids", mosTopologyIds));
+      functionAttrs.push_back(
+          builder.getNamedAttr("obelisk_sim.mos_topology_ids", mosTopologyIds));
     if (unit.source->hasAttr(sequenceEndpointEventAttrName)) {
       functionAttrs.push_back(builder.getNamedAttr(
           sequenceEndpointMonitorAttrName, builder.getUnitAttr()));

@@ -93,9 +93,8 @@ bool drivesDelayedNet(sim::SimFuncOp function, Value driver) {
       continue;
     }
     auto argument = dyn_cast<BlockArgument>(driver);
-    return argument &&
-           static_cast<bool>(function.getArgAttrOfType<UnitAttr>(
-               argument.getArgNumber(), "obelisk_sim.delayed_net"));
+    return argument && static_cast<bool>(function.getArgAttrOfType<UnitAttr>(
+                           argument.getArgNumber(), "obelisk_sim.delayed_net"));
   }
   return false;
 }
@@ -481,9 +480,8 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
         // subreference describes it. IEEE 1800-2017 11.5.1 keeps only the bits
         // that are in range, which the read-modify-write path below does by
         // discarding the padding it wrote through.
-        bool reachesOutsideStorage =
-            *sim::getPackedWidth(*destinationType) >
-            *sim::getPackedWidth(*baseType);
+        bool reachesOutsideStorage = *sim::getPackedWidth(*destinationType) >
+                                     *sim::getPackedWidth(*baseType);
         bool hasDirectView =
             base->kind == CapturedLValue::Kind::Reference &&
             isa<sim::RefType, sim::DriverType>(base->reference.getType()) &&
@@ -703,9 +701,8 @@ UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
       return failure();
     FailureOr<Value> aggregate =
         loadCapturedLValue(destination.children.front(), location);
-    if (failed(aggregate) ||
-        sim::getAggregateElementType((*aggregate).getType(), 0) !=
-            destination.type)
+    if (failed(aggregate) || sim::getAggregateElementType(
+                                 (*aggregate).getType(), 0) != destination.type)
       return failure();
     return sim::SimArrayDynExtractOp::create(builder, location,
                                              destination.type, *aggregate,
@@ -948,6 +945,37 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
       bool userRaw = isUserNetDriver(destination.reference);
       auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
           "obelisk_sim.propagation_delays");
+      if (timingPathMaskedPlan) {
+        auto codeUnitID = function->getAttrOfType<IntegerAttr>("code_unit_id");
+        std::optional<unsigned> drivenWidth =
+            sim::getPackedWidth(published.getType());
+        auto maskType =
+            dyn_cast<IntegerType>(timingPathMaskedPlan->coverageMask.getType());
+        if (!codeUnitID || !drivenWidth || !maskType ||
+            maskType.getWidth() != *drivenWidth ||
+            timingPathMaskedPlan->groups.empty() ||
+            nextInertialDriveComponent > UINT32_MAX)
+          return function.emitError("invalid masked timing path drive plan");
+        uint32_t component =
+            static_cast<uint32_t>(nextInertialDriveComponent++);
+        uint32_t groupCount =
+            static_cast<uint32_t>(timingPathMaskedPlan->groups.size());
+        for (auto [index, group] :
+             llvm::enumerate(timingPathMaskedPlan->groups)) {
+          auto drive = sim::SimDriverDriveInertialPathOp::create(
+              builder, location, destination.reference, published,
+              timingPathMaskedPlan->coverageMask, group.masks[0],
+              group.masks[1], group.masks[2], group.delays[0], group.delays[1],
+              group.delays[2], codeUnitID, builder.getI32IntegerAttr(component),
+              builder.getI32IntegerAttr(static_cast<uint32_t>(index)),
+              builder.getI32IntegerAttr(groupCount),
+              builder.getBoolAttr(deferDriverResolution || userRaw));
+          if (userRaw)
+            drive->setAttr("obelisk_sim.user_net_raw_drive",
+                           builder.getUnitAttr());
+        }
+        return success();
+      }
       if (delays || timingPathDelays) {
         if (delays && (delays.empty() || delays.size() > 3))
           return function.emitError("invalid frozen propagation delays");
@@ -956,8 +984,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
               builder, location, sim::TimeType::get(function.getContext()),
               builder.getI64IntegerAttr(ticks));
         };
-        auto codeUnitID =
-            function->getAttrOfType<IntegerAttr>("code_unit_id");
+        auto codeUnitID = function->getAttrOfType<IntegerAttr>("code_unit_id");
         if (!codeUnitID)
           return function.emitError(
               "delayed drive has no stable code unit identity");
@@ -968,9 +995,8 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         if (!drivenWidth)
           return function.emitError(
               "delayed drive value has no fixed packed width");
-        bool vectorDelay =
-            !function->hasAttr("obelisk_sim.primitive_name") &&
-            *drivenWidth != 1;
+        bool vectorDelay = !function->hasAttr("obelisk_sim.primitive_name") &&
+                           *drivenWidth != 1;
         if (nextInertialDriveComponent > UINT32_MAX)
           return function.emitError("too many delayed drive sites");
         Value riseDelay;
@@ -984,11 +1010,9 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
           ArrayRef<int64_t> values = delays.asArrayRef();
           int64_t rise = values[0];
           int64_t fall = values.size() == 1 ? rise : values[1];
-          int64_t turnoff = values.size() == 1
-                                ? rise
-                                : values.size() == 2
-                                      ? std::min(rise, fall)
-                                      : values[2];
+          int64_t turnoff = values.size() == 1   ? rise
+                            : values.size() == 2 ? std::min(rise, fall)
+                                                 : values[2];
           riseDelay = timeConstant(rise);
           fallDelay = timeConstant(fall);
           turnoffDelay = timeConstant(turnoff);
@@ -1758,7 +1782,8 @@ void UnitLowering::appendCapturedValues(const CapturedLValue &destination,
     values.push_back(destination.index);
   } else if (destination.kind == CapturedLValue::Kind::StringCharacter ||
              destination.kind == CapturedLValue::Kind::PackedDynamicSlice ||
-             destination.kind == CapturedLValue::Kind::AggregateDynamicElement) {
+             destination.kind ==
+                 CapturedLValue::Kind::AggregateDynamicElement) {
     values.push_back(destination.index);
   } else if (destination.kind == CapturedLValue::Kind::PackedValueSlice &&
              destination.index) {
@@ -1795,7 +1820,8 @@ LogicalResult UnitLowering::replaceCapturedValues(CapturedLValue &destination,
     destination.index = values[next++];
   } else if (destination.kind == CapturedLValue::Kind::StringCharacter ||
              destination.kind == CapturedLValue::Kind::PackedDynamicSlice ||
-             destination.kind == CapturedLValue::Kind::AggregateDynamicElement) {
+             destination.kind ==
+                 CapturedLValue::Kind::AggregateDynamicElement) {
     if (next >= values.size())
       return failure();
     destination.index = values[next++];
@@ -2759,18 +2785,17 @@ FailureOr<Value> UnitLowering::unflattenBitStreamValue(Value packed,
       auto full = cast<IntegerType>(packed.getType());
       Value shifted = packed;
       if (highBit) {
-        Value amount =
-            arith::ConstantOp::create(builder, location, full,
-                                      builder.getIntegerAttr(full, highBit));
+        Value amount = arith::ConstantOp::create(
+            builder, location, full, builder.getIntegerAttr(full, highBit));
         shifted = arith::ShRUIOp::create(builder, location, packed, amount);
       }
-      window = *width == full.getWidth()
-                   ? shifted
-                   : arith::TruncIOp::create(
-                         builder, location,
-                         IntegerType::get(function.getContext(), *width),
-                         shifted)
-                         .getResult();
+      window =
+          *width == full.getWidth()
+              ? shifted
+              : arith::TruncIOp::create(
+                    builder, location,
+                    IntegerType::get(function.getContext(), *width), shifted)
+                    .getResult();
     }
     FailureOr<Value> converted = convert(window, scalarType, false, location);
     if (failed(converted))
@@ -2914,11 +2939,11 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
   // would hand a left-to-right stream the source's rightmost bits. Targets
   // that include a dynamic container consume the whole source (11.4.14.4's
   // greedy resize), so there is nothing to leave behind there.
-  bool everyTargetFixed = llvm::none_of(
-      infos, [](const TargetInfo &info) { return info.dynamic; });
-  FailureOr<Value> reordered = reorderBitStream(
-      *generic, destination.getSliceSize(), location,
-      everyTargetFixed ? i64Constant(fixedWidth) : Value{});
+  bool everyTargetFixed =
+      llvm::none_of(infos, [](const TargetInfo &info) { return info.dynamic; });
+  FailureOr<Value> reordered =
+      reorderBitStream(*generic, destination.getSliceSize(), location,
+                       everyTargetFixed ? i64Constant(fixedWidth) : Value{});
   if (failed(reordered))
     return failure();
 
@@ -3776,17 +3801,14 @@ UnitLowering::lowerPortConnection(semantic::SVPortConnectionOp op) {
           builder, location, destination, *converted,
           builder.getBoolAttr(userRaw));
       if (userRaw)
-        drive->setAttr("obelisk_sim.user_net_raw_drive",
-                       builder.getUnitAttr());
+        drive->setAttr("obelisk_sim.user_net_raw_drive", builder.getUnitAttr());
     } else {
-      auto drive =
-          sim::SimDriverDriveOp::create(builder, location, destination,
-                                        *converted);
+      auto drive = sim::SimDriverDriveOp::create(builder, location, destination,
+                                                 *converted);
       if (isUserNetDriver(destination)) {
         drive->setAttr("obelisk_sim.defer_net_resolution",
                        builder.getUnitAttr());
-        drive->setAttr("obelisk_sim.user_net_raw_drive",
-                       builder.getUnitAttr());
+        drive->setAttr("obelisk_sim.user_net_raw_drive", builder.getUnitAttr());
       }
     }
     return success();

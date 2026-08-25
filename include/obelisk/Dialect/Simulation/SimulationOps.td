@@ -3074,6 +3074,39 @@ def SimDriverDriveInertialOp : SimOp<"driver.drive_inertial", [
   }];
 }
 
+def SimDriverDriveInertialPathOp : SimOp<"driver.drive_inertial_path", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimNetResource>]>,
+    SimDriverElementMatches<"driver", "value">,
+    AllTypesMatch<["active_mask", "rise_mask", "fall_mask", "turnoff_mask"]>
+  ]> {
+  let summary = "schedule one packed module-path inertial delay group";
+  let description = [{
+    `active_mask` selects bits governed by a path on this activation. The
+    transition masks assign each active bit to this static delay group for
+    rise, fall, and turnoff independently. Groups with the same site execute
+    consecutively; group zero starts a keyed generation batch, avoiding any
+    scheduler-queue cancellation scan.
+  }];
+  let arguments = (ins SimDriverType:$driver, AnyType:$value,
+                       AnySignlessInteger:$active_mask,
+                       AnySignlessInteger:$rise_mask,
+                       AnySignlessInteger:$fall_mask,
+                       AnySignlessInteger:$turnoff_mask,
+                       SimTimeType:$rise_delay, SimTimeType:$fall_delay,
+                       SimTimeType:$turnoff_delay, I64Attr:$code_unit_id,
+                       I32Attr:$component, I32Attr:$group,
+                       I32Attr:$group_count,
+                       DefaultValuedAttr<BoolAttr, "false">:$defer_resolution);
+  let assemblyFormat = [{
+    $driver `=` $value `active` $active_mask `masks` `[` $rise_mask `,`
+    $fall_mask `,` $turnoff_mask `]` `after` `[` $rise_delay `,`
+    $fall_delay `,` $turnoff_delay `]` `site` $code_unit_id `:` $component
+    `group` $group `of` $group_count attr-dict `:` qualified(type($driver)) `,`
+    type($value) `,` type($active_mask)
+  }];
+  let hasVerifier = 1;
+}
+
 def SimDriverDriveInertialStrengthPairOp : SimOp<
     "driver.drive_inertial_strength_pair", [
       MemoryEffects<[MemWrite<SimSchedulerResource>,
@@ -3392,6 +3425,21 @@ def SimLogicCompareOp
   let hasVerifier = 1;
   let hasFolder = 1;
   let hasCanonicalizer = 1;
+}
+
+def SimLogicCaseDifferenceMaskOp
+    : SimOp<"logic.case_difference_mask", [Pure, SameTypeOperands]> {
+  let summary = "return one bit for every four-state symbol that changed";
+  let description = [{
+    Compares the value and unknown planes independently and returns their
+    bitwise union. Unlike `logic.compare case_ne`, the result retains the
+    position of every changed symbol, including X-to-Z and Z-to-X changes.
+  }];
+  let arguments = (ins SimLogicType:$lhs, SimLogicType:$rhs);
+  let results = (outs AnyInteger:$result);
+  let assemblyFormat =
+      "$lhs `,` $rhs attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
 }
 
 def SimLogicConcatOp : SimOp<"logic.concat", [Pure]> {

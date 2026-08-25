@@ -24,10 +24,9 @@ namespace {
 class InertialDriverConversion final
     : public OpConversionPattern<sim::SimDriverDriveInertialOp> {
 public:
-  InertialDriverConversion(const TypeConverter &converter,
-                           MLIRContext *context, uint64_t stateBitCount)
-      : OpConversionPattern(converter, context),
-        stateBitCount(stateBitCount) {}
+  InertialDriverConversion(const TypeConverter &converter, MLIRContext *context,
+                           uint64_t stateBitCount)
+      : OpConversionPattern(converter, context), stateBitCount(stateBitCount) {}
 
   LogicalResult
   matchAndRewrite(sim::SimDriverDriveInertialOp op, OneToNOpAdaptor adaptor,
@@ -59,8 +58,8 @@ public:
     Value unknownPlane = LLVM::ZeroOp::create(rewriter, location, pointer);
     if (adaptor.getValue().size() == 2) {
       unknown = savePlane(adaptor.getValue()[1]);
-      unknownPlane = LLVM::AddressOfOp::create(
-          rewriter, location, pointer, "__obelisk_state_unknown");
+      unknownPlane = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                               "__obelisk_state_unknown");
     }
     uint32_t flags = 0;
     if (op.getVectorDelay())
@@ -86,14 +85,100 @@ public:
                 llvmConstant(rewriter, location, i64, stateBitCount),
                 adaptor.getDriver().front(),
                 llvmConstant(rewriter, location, i64, *width),
-                llvmConstant(rewriter, location, i64,
-                             op.getCodeUnitId()),
-                llvmConstant(rewriter, location, i32,
-                             op.getComponent()),
+                llvmConstant(rewriter, location, i64, op.getCodeUnitId()),
+                llvmConstant(rewriter, location, i32, op.getComponent()),
+                llvmConstant(rewriter, location, i32, flags),
+                adaptor.getRiseDelay().front(), adaptor.getFallDelay().front(),
+                adaptor.getTurnoffDelay().front(), value, unknown})
+            .getResult();
+    LLVM::CallOp::create(rewriter, location, TypeRange{},
+                         SymbolRefAttr::get(rewriter.getContext(),
+                                            "obelisk_rt_v1_scheduler_fail"),
+                         ValueRange{runtimeContext, status});
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  uint64_t stateBitCount = 0;
+};
+
+class InertialPathDriverConversion final
+    : public OpConversionPattern<sim::SimDriverDriveInertialPathOp> {
+public:
+  InertialPathDriverConversion(const TypeConverter &converter,
+                               MLIRContext *context, uint64_t stateBitCount)
+      : OpConversionPattern(converter, context), stateBitCount(stateBitCount) {}
+
+  LogicalResult
+  matchAndRewrite(sim::SimDriverDriveInertialPathOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getDriver().size() != 1 || adaptor.getValue().empty() ||
+        adaptor.getActiveMask().size() != 1 ||
+        adaptor.getRiseMask().size() != 1 ||
+        adaptor.getFallMask().size() != 1 ||
+        adaptor.getTurnoffMask().size() != 1 ||
+        adaptor.getRiseDelay().size() != 1 ||
+        adaptor.getFallDelay().size() != 1 ||
+        adaptor.getTurnoffDelay().size() != 1)
+      return failure();
+    std::optional<unsigned> width = nativeStateWidth(op.getValue().getType());
+    if (!width)
+      return failure();
+
+    Location location = op.getLoc();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i32 = rewriter.getI32Type();
+    Type i64 = rewriter.getI64Type();
+    Value contextAddress = LLVM::AddressOfOp::create(
+        rewriter, location, pointer, "__obelisk_current_context");
+    Value runtimeContext =
+        LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
+    auto savePlane = [&](Value value) {
+      Value address = entryAlloca(rewriter, location, value.getType(), 1, 1);
+      LLVM::StoreOp::create(rewriter, location, value, address, 1);
+      return address;
+    };
+    Value value = savePlane(adaptor.getValue().front());
+    Value unknown = LLVM::ZeroOp::create(rewriter, location, pointer);
+    Value unknownPlane = LLVM::ZeroOp::create(rewriter, location, pointer);
+    if (adaptor.getValue().size() == 2) {
+      unknown = savePlane(adaptor.getValue()[1]);
+      unknownPlane = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                               "__obelisk_state_unknown");
+    }
+    uint32_t flags = 0;
+    if (op.getDeferResolution())
+      flags |= OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION;
+    if (op->hasAttr("obelisk_sim.user_net_raw_drive"))
+      flags |= OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_scheduler_inertial_path_driver"),
+            ValueRange{
+                runtimeContext,
+                LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                          "__obelisk_state_value"),
+                unknownPlane,
+                llvmConstant(rewriter, location, i64, stateBitCount),
+                adaptor.getDriver().front(),
+                llvmConstant(rewriter, location, i64, *width),
+                llvmConstant(rewriter, location, i64, op.getCodeUnitId()),
+                llvmConstant(rewriter, location, i32, op.getComponent()),
+                llvmConstant(rewriter, location, i32, op.getGroup()),
+                llvmConstant(rewriter, location, i32, op.getGroupCount()),
                 llvmConstant(rewriter, location, i32, flags),
                 adaptor.getRiseDelay().front(),
                 adaptor.getFallDelay().front(),
-                adaptor.getTurnoffDelay().front(), value, unknown})
+                adaptor.getTurnoffDelay().front(),
+                value,
+                unknown,
+                savePlane(adaptor.getActiveMask().front()),
+                savePlane(adaptor.getRiseMask().front()),
+                savePlane(adaptor.getFallMask().front()),
+                savePlane(adaptor.getTurnoffMask().front())})
             .getResult();
     LLVM::CallOp::create(rewriter, location, TypeRange{},
                          SymbolRefAttr::get(rewriter.getContext(),
@@ -285,32 +370,29 @@ public:
       bool directLaneStage = !generatedAccumulator.empty() && *width == 32 &&
                              adaptor.getValue().size() == 1 &&
                              (decoded.offset & 31) == 0;
-      bool directPartialScalarStage = !generatedAccumulator.empty() &&
-                                      rootWidth <= 64;
-      bool directGeneratedStage =
-          commitRegion != UINT32_MAX &&
-          (directPartialScalarStage || directLaneStage);
+      bool directPartialScalarStage =
+          !generatedAccumulator.empty() && rootWidth <= 64;
+      bool directGeneratedStage = commitRegion != UINT32_MAX &&
+                                  (directPartialScalarStage || directLaneStage);
       auto emitDirectGeneratedStage = [&] {
         bool fixedRegionEvalStage =
-            compactEvalMetadata && staticRoot->second <
-                               staticPlan->generatedCommitRegions.size() &&
+            compactEvalMetadata &&
+            staticRoot->second < staticPlan->generatedCommitRegions.size() &&
             staticPlan->generatedCommitRegions[staticRoot->second] !=
                 UINT32_MAX;
         bool fullRootEvalStage =
-            fixedRegionEvalStage && staticRoot->second <
-                                        staticPlan->generatedFullRootStages.size() &&
+            fixedRegionEvalStage &&
+            staticRoot->second < staticPlan->generatedFullRootStages.size() &&
             staticPlan->generatedFullRootStages[staticRoot->second];
         uint64_t fixedWriteMask =
-            staticRoot->second <
-                    staticPlan->generatedFixedWriteMasks.size()
+            staticRoot->second < staticPlan->generatedFixedWriteMasks.size()
                 ? staticPlan->generatedFixedWriteMasks[staticRoot->second]
                 : 0;
         Value base = LLVM::AddressOfOp::create(rewriter, location, pointer,
                                                generatedAccumulator);
         if (directPartialScalarStage) {
-          uint64_t sourceMask = *width == 64
-                                    ? UINT64_MAX
-                                    : (uint64_t{1} << *width) - 1;
+          uint64_t sourceMask =
+              *width == 64 ? UINT64_MAX : (uint64_t{1} << *width) - 1;
           uint64_t mask = sourceMask << decoded.offset;
           auto mergeField = [&](size_t fieldOffset, Value fieldValue) {
             Value address = byteGEP(rewriter, location, base, fieldOffset);
@@ -324,8 +406,8 @@ public:
                 llvmConstant(rewriter, location, i64, mask));
             Value merged = masked;
             if (!compactEvalMetadata || fixedWriteMask == 0) {
-              Value old = LLVM::LoadOp::create(rewriter, location, i64,
-                                                address, 8);
+              Value old =
+                  LLVM::LoadOp::create(rewriter, location, i64, address, 8);
               merged = arith::OrIOp::create(
                   rewriter, location,
                   arith::AndIOp::create(
@@ -335,21 +417,19 @@ public:
             }
             LLVM::StoreOp::create(rewriter, location, merged, address, 8);
           };
-          mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256,
-                              value),
+          mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256, value),
                      value);
           if (!inductiveTwoStateAccess)
-            mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256,
-                                unknown),
-                       unknown);
+            mergeField(
+                offsetof(obelisk_rt_generated_nba_accumulator_256, unknown),
+                unknown);
           if (!compactEvalMetadata ||
               (!fullRootEvalStage && fixedWriteMask == 0)) {
             Value maskAddress = byteGEP(
                 rewriter, location, base,
-                offsetof(obelisk_rt_generated_nba_accumulator_256,
-                         write_mask));
-            Value oldMask = LLVM::LoadOp::create(rewriter, location, i64,
-                                                  maskAddress, 8);
+                offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask));
+            Value oldMask =
+                LLVM::LoadOp::create(rewriter, location, i64, maskAddress, 8);
             LLVM::StoreOp::create(
                 rewriter, location,
                 arith::OrIOp::create(
@@ -381,13 +461,11 @@ public:
               4);
           if (!inductiveTwoStateAccess)
             LLVM::StoreOp::create(
-                rewriter, location,
-                llvmConstant(rewriter, location, i32, 0),
-                byteGEP(
-                    rewriter, location, base,
-                    offsetof(obelisk_rt_generated_nba_accumulator_256,
-                             unknown) +
-                        laneOffset),
+                rewriter, location, llvmConstant(rewriter, location, i32, 0),
+                byteGEP(rewriter, location, base,
+                        offsetof(obelisk_rt_generated_nba_accumulator_256,
+                                 unknown) +
+                            laneOffset),
                 4);
         }
         if (!fixedRegionEvalStage) {
@@ -406,8 +484,7 @@ public:
               4);
         }
         Value dirtyBase = LLVM::AddressOfOp::create(
-            rewriter, location, pointer,
-            "__obelisk_aot_nba_dirty_roots_v1");
+            rewriter, location, pointer, "__obelisk_aot_nba_dirty_roots_v1");
         Value dirtyWord = byteGEP(
             rewriter, location, dirtyBase,
             static_cast<uint64_t>(staticRoot->second / 64) * sizeof(uint64_t));
@@ -419,9 +496,9 @@ public:
                          uint64_t{1} << (staticRoot->second % 64)));
         LLVM::StoreOp::create(rewriter, location, marked, dirtyWord, 8);
         if (!compactEvalMetadata) {
-          Value summaryBase = LLVM::AddressOfOp::create(
-              rewriter, location, pointer,
-              "__obelisk_aot_nba_dirty_summary_v1");
+          Value summaryBase =
+              LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                        "__obelisk_aot_nba_dirty_summary_v1");
           uint32_t dirtyWordIndex = staticRoot->second / 64;
           Value summaryWord = byteGEP(
               rewriter, location, summaryBase,
@@ -647,6 +724,8 @@ void populateNBAToLLVMConversionPatterns(RewritePatternSet &patterns,
                                          bool guardedClaims, bool evalCeiling) {
   patterns.add<InertialDriverConversion>(converter, patterns.getContext(),
                                          stateBitCount);
+  patterns.add<InertialPathDriverConversion>(converter, patterns.getContext(),
+                                             stateBitCount);
   patterns.add<InertialStrengthPairConversion>(converter, patterns.getContext(),
                                                stateBitCount);
   patterns.add<ImmediateNBAConversion>(

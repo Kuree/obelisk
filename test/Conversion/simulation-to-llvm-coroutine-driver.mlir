@@ -20,6 +20,8 @@ module attributes {
     obelisk_sim.code_unit.decl 11 in 0 function hierarchy "driver_lowering.drive_delayed_trireg"
     obelisk_sim.code_unit.decl 12 in 0 function hierarchy "driver_lowering.drive_inertial_strength_pair"
     obelisk_sim.code_unit.decl 13 in 0 function hierarchy "driver_lowering.drive_inertial_real"
+    obelisk_sim.code_unit.decl 14 in 0 function hierarchy "driver_lowering.drive_inertial_path"
+    obelisk_sim.code_unit.decl 15 in 0 function hierarchy "driver_lowering.case_difference"
     obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<2> design
     obelisk_sim.driver.decl 0 in 0 drives 0 :
         !obelisk_sim.logic<2> design
@@ -167,6 +169,39 @@ module attributes {
           !obelisk_sim.driver<!obelisk_sim.logic<2>>,
           !obelisk_sim.logic<2>
       obelisk_sim.return
+    }
+
+    obelisk_sim.func @drive_inertial_path(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 14 : i64} {
+      %driver = obelisk_sim.context.driver %ctx[0] :
+          !obelisk_sim.driver<!obelisk_sim.logic<2>>
+      %value = obelisk_sim.logic.constant 1 : i2, 0 : i2 :
+          !obelisk_sim.logic<2>
+      %active = arith.constant 3 : i2
+      %rise_mask = arith.constant 1 : i2
+      %fall_mask = arith.constant 2 : i2
+      %turnoff_mask = arith.constant 3 : i2
+      %rise = obelisk_sim.time.constant 7
+      %fall = obelisk_sim.time.constant 11
+      %turnoff = obelisk_sim.time.constant 13
+      obelisk_sim.driver.drive_inertial_path %driver = %value
+          active %active masks [%rise_mask, %fall_mask, %turnoff_mask]
+          after [%rise, %fall, %turnoff] site 14 : 2 group 0 of 1
+          {defer_resolution = true} :
+          !obelisk_sim.driver<!obelisk_sim.logic<2>>,
+          !obelisk_sim.logic<2>, i2
+      obelisk_sim.return
+    }
+
+    obelisk_sim.func @case_difference(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %lhs: !obelisk_sim.logic<2> {obelisk_sim.capture_kind = 2 : i32},
+        %rhs: !obelisk_sim.logic<2> {obelisk_sim.capture_kind = 2 : i32})
+        -> i2 attributes {entry_kind = 8 : i32, code_unit_id = 15 : i64} {
+      %mask = obelisk_sim.logic.case_difference_mask %lhs, %rhs :
+          (!obelisk_sim.logic<2>, !obelisk_sim.logic<2>) -> i2
+      obelisk_sim.return %mask : i2
     }
 
     obelisk_sim.func @drive_inertial_strength_pair(
@@ -320,6 +355,17 @@ module attributes {
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
 // CHECK-NOT: obelisk_sim.driver.drive_inertial
 
+// CHECK-LABEL: llvm.func @drive_inertial_path
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_inertial_path_driver
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
+// CHECK-NOT: obelisk_sim.driver.drive_inertial_path
+
+// CHECK-LABEL: llvm.func @case_difference
+// CHECK: llvm.xor
+// CHECK: llvm.xor
+// CHECK: llvm.or
+// CHECK-NOT: obelisk_sim.logic.case_difference_mask
+
 // The two polarity banks of a delayed three-state primitive lower through one
 // atomic scheduler ABI call. Its separate logical transition planes select
 // the LRM rise/fall/turn-off/x delay.
@@ -379,5 +425,9 @@ module attributes {
 
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x00010236 inputs=8 outputs=0 flags=0
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x00010237 inputs=10 outputs=0 flags=0
+// BYTECODE: intrinsic {{[0-9]+}}: id=0x00010241 inputs=14 outputs=0 flags=0
+// BYTECODE: intrinsic {{[0-9]+}}: id=0x00010240 inputs=2 outputs=1 flags=0
 // BYTECODE: site {{[0-9]+}}: signature={{[0-9]+}} id=0x00010236 inputs={{\[[0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+\]}} outputs=[]
 // BYTECODE: site {{[0-9]+}}: signature={{[0-9]+}} id=0x00010237 inputs={{\[[0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+\]}} outputs=[]
+// BYTECODE: site {{[0-9]+}}: signature={{[0-9]+}} id=0x00010241 inputs={{\[[0-9, ]+\]}} outputs=[]
+// BYTECODE: site {{[0-9]+}}: signature={{[0-9]+}} id=0x00010240 inputs={{\[[0-9]+, [0-9]+\]}} outputs={{\[[0-9]+\]}}

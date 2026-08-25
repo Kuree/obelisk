@@ -951,6 +951,8 @@ enum {
   OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL = UINT32_C(0x0001023d),
   OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL_DELAYED = UINT32_C(0x0001023e),
   OBELISK_RT_INTRINSIC_V1_MOS_DRIVE_DELAYED = UINT32_C(0x0001023f),
+  OBELISK_RT_INTRINSIC_V1_LOGIC_CASE_DIFFERENCE_MASK = UINT32_C(0x00010240),
+  OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_DRIVER = UINT32_C(0x00010241),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -2928,6 +2930,18 @@ obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
     uint64_t code_unit, uint32_t component, uint32_t flags, uint64_t rise_delay,
     uint64_t fall_delay, uint64_t turnoff_delay, const uint8_t *value,
     const uint8_t *unknown);
+// Schedule one statically unrolled module-path delay group. Group zero starts
+// a new per-bit generation batch; stale queue entries are rejected by keyed
+// generation at maturity instead of being erased from the global queue.
+obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
+    obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
+    uint64_t plane_bit_count, uint64_t bit_offset, uint64_t bit_width,
+    uint64_t code_unit, uint32_t component, uint32_t group,
+    uint32_t group_count, uint32_t flags, uint64_t rise_delay,
+    uint64_t fall_delay, uint64_t turnoff_delay, const uint8_t *value,
+    const uint8_t *unknown, const uint8_t *active_mask,
+    const uint8_t *rise_mask, const uint8_t *fall_mask,
+    const uint8_t *turnoff_mask);
 // Schedule the polarity-specific driver banks of one three-state primitive as
 // one inertial update. The transition planes carry the logical gate result
 // used for delay selection; both banks mature before the net is resolved.

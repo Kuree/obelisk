@@ -561,6 +561,7 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
       hasDelayedNet |= static_cast<bool>(net.getPropagationDelays());
     hasInertialDriver |=
         mlir::isa<obelisk::sim::SimDriverDriveInertialOp,
+                  obelisk::sim::SimDriverDriveInertialPathOp,
                   obelisk::sim::SimDriverDriveInertialStrengthPairOp>(
             operation);
     hasPassSwitch |= mlir::isa<obelisk::sim::SimPassSwitchDeclOp>(operation);

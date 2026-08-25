@@ -3388,6 +3388,16 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             }
           }
         };
+        auto currentPathUpdate = [&](const ScheduledNBA &update) {
+          if (!update.inertialPathDriver)
+            return true;
+          auto pending = context->inertialPathPending.find(update.inertialSite);
+          return pending != context->inertialPathPending.end() &&
+                 update.inertialPathBit < pending->second.width &&
+                 update.inertialPathGeneration ==
+                     pending->second.generation[static_cast<size_t>(
+                         update.inertialPathBit)];
+        };
         auto completeInertial = [&](const ScheduledNBA &update) {
           if (update.inertialNetBit != UINT64_MAX) {
             auto pending =
@@ -3400,6 +3410,22 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           }
           if (update.inertialSite.codeUnit == UINT64_MAX)
             return;
+          if (update.inertialPathDriver) {
+            auto pending =
+                context->inertialPathPending.find(update.inertialSite);
+            if (pending != context->inertialPathPending.end() &&
+                update.inertialPathBit < pending->second.width &&
+                update.inertialPathGeneration ==
+                    pending->second.generation[static_cast<size_t>(
+                        update.inertialPathBit)])
+              pending->second
+                  .valid[static_cast<size_t>(update.inertialPathBit)] = 0;
+            if (pending != context->inertialPathPending.end() &&
+                update.inertialPathBit < pending->second.width)
+              pending->second
+                  .delayed[static_cast<size_t>(update.inertialPathBit)] = 0;
+            return;
+          }
           auto pending =
               context->inertialDriverPending.find(update.inertialSite);
           if (pending == context->inertialDriverPending.end())
@@ -3571,9 +3597,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               if (!prepareDelayedNetBatch(update))
                 return context->schedulerStatus;
               ScheduledNBA &current = context->scheduledNBAs[index];
-              completeInertial(current);
-              context->schedulerApplyingNativeUpdate = true;
-              applyNative(current);
+              bool pathCurrent = currentPathUpdate(current);
+              if (pathCurrent)
+                completeInertial(current);
+              context->schedulerApplyingNativeUpdate = pathCurrent;
+              if (pathCurrent)
+                applyNative(current);
               context->schedulerApplyingNativeUpdate = false;
               if (context->schedulerStatus != OBELISK_RT_OK)
                 return context->schedulerStatus;
@@ -3673,9 +3702,13 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             if (sequence == nativeSequence) {
               uint32_t retainedAutomaticID =
                   context->scheduledNBAs[nativeIndex].retainedAutomaticID;
-              completeInertial(context->scheduledNBAs[nativeIndex]);
-              context->schedulerApplyingNativeUpdate = true;
-              applyNative(context->scheduledNBAs[nativeIndex]);
+              bool pathCurrent =
+                  currentPathUpdate(context->scheduledNBAs[nativeIndex]);
+              if (pathCurrent)
+                completeInertial(context->scheduledNBAs[nativeIndex]);
+              context->schedulerApplyingNativeUpdate = pathCurrent;
+              if (pathCurrent)
+                applyNative(context->scheduledNBAs[nativeIndex]);
               context->schedulerApplyingNativeUpdate = false;
               if (context->schedulerStatus != OBELISK_RT_OK)
                 return context->schedulerStatus;

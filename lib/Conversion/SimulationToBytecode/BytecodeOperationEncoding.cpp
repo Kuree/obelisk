@@ -349,6 +349,32 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
          reg(plan, op.getTurnoffDelay()), codeUnit, component, flags},
         {});
   }
+  if (auto op = dyn_cast<sim::SimDriverDriveInertialPathOp>(operation)) {
+    uint32_t codeUnit = emitU64Constant(plan, op.getCodeUnitId());
+    uint32_t component = emitU64Constant(plan, op.getComponent());
+    uint32_t group = emitU64Constant(plan, op.getGroup());
+    uint32_t groupCount = emitU64Constant(plan, op.getGroupCount());
+    uint32_t flags =
+        emitU64Constant(plan, (op.getDeferResolution()
+                                   ? OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION
+                                   : 0) |
+                                  (op->hasAttr("obelisk_sim.user_net_raw_drive")
+                                       ? OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW
+                                       : 0));
+    if (codeUnit == kInvalidRegister || component == kInvalidRegister ||
+        group == kInvalidRegister || groupCount == kInvalidRegister ||
+        flags == kInvalidRegister)
+      return op.emitOpError("cannot encode inertial path identity");
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicInertialPathDriver,
+        {reg(plan, op.getValue()), reg(plan, op.getDriver()),
+         reg(plan, op.getActiveMask()), reg(plan, op.getRiseMask()),
+         reg(plan, op.getFallMask()), reg(plan, op.getTurnoffMask()),
+         reg(plan, op.getRiseDelay()), reg(plan, op.getFallDelay()),
+         reg(plan, op.getTurnoffDelay()), codeUnit, component, group,
+         groupCount, flags},
+        {});
+  }
   if (auto op =
           dyn_cast<sim::SimDriverDriveInertialStrengthPairOp>(operation)) {
     uint32_t codeUnit = emitU64Constant(plan, op.getCodeUnitId());
@@ -598,6 +624,9 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   }
   if (auto op = dyn_cast<sim::SimLogicCompareOp>(operation))
     return encodeLogicCompare(plan, op);
+  if (auto op = dyn_cast<sim::SimLogicCaseDifferenceMaskOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicLogicCaseDifferenceMask,
+                         {op.getLhs(), op.getRhs()}, {op.getResult()});
   if (auto op = dyn_cast<sim::SimLogicExtractOp>(operation)) {
     emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND, reg(plan, op.getResult()),
           reg(plan, op.getInput()), kInvalidRegister, 0, 0, op.getLowBit()});

@@ -16,15 +16,15 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include "slang/ast/ASTVisitor.h"
+#include "slang/analysis/AnalysisManager.h"
+#include "slang/analysis/ValueDriver.h"
 #include "slang/ast/ASTContext.h"
+#include "slang/ast/ASTVisitor.h"
 #include "slang/ast/EvalContext.h"
 #include "slang/ast/Lookup.h"
 #include "slang/ast/expressions/Operator.h"
 #include "slang/ast/symbols/VariableSymbols.h"
 #include "slang/ast/types/TypePrinter.h"
-#include "slang/analysis/AnalysisManager.h"
-#include "slang/analysis/ValueDriver.h"
 #include "slang/driver/Driver.h"
 #include "slang/numeric/Time.h"
 #include "slang/syntax/AllSyntax.h"
@@ -113,7 +113,8 @@ getEffectiveResolutionFunction(const slang::ast::NetType &netType) {
     return function;
   const auto *syntax = netType.getSyntax();
   const auto *scope = netType.getParentScope();
-  if (!syntax || !scope || syntax->kind != slang::syntax::SyntaxKind::NetTypeDeclaration)
+  if (!syntax || !scope ||
+      syntax->kind != slang::syntax::SyntaxKind::NetTypeDeclaration)
     return nullptr;
   const auto &declaration =
       syntax->as<slang::syntax::NetTypeDeclarationSyntax>();
@@ -121,12 +122,12 @@ getEffectiveResolutionFunction(const slang::ast::NetType &netType) {
       declaration.type->kind != slang::syntax::SyntaxKind::NamedType)
     return nullptr;
   const auto &named = declaration.type->as<slang::syntax::NamedTypeSyntax>();
-  slang::ast::ASTContext context(
-      *scope, slang::ast::LookupLocation::after(netType),
-      slang::ast::ASTFlags::AllowNetType);
+  slang::ast::ASTContext context(*scope,
+                                 slang::ast::LookupLocation::after(netType),
+                                 slang::ast::ASTFlags::AllowNetType);
   slang::ast::LookupResult result;
-  slang::ast::Lookup::name(*named.name, context,
-                           slang::ast::LookupFlags::Type, result);
+  slang::ast::Lookup::name(*named.name, context, slang::ast::LookupFlags::Type,
+                           result);
   if (!result.found || result.found == &netType ||
       result.found->kind != slang::ast::SymbolKind::NetType)
     return nullptr;
@@ -976,7 +977,6 @@ private:
     return static_cast<int64_t>(matchingTypeRepresentatives.size()) - 1;
   }
 
-
   /// slang represents code it deliberately never elaborates - the unselected
   /// arm of a generate condition, the body of an uninstantiated module, an
   /// unspecialized generic class - with Invalid* placeholders, and suppresses
@@ -1182,12 +1182,11 @@ private:
           std::string valueString = value.getValue().toString(
               std::numeric_limits<slang::bitwidth_t>::max(), true, true);
           stream << valueString.size() << ':' << valueString;
-        } else if (parameter->kind ==
-                   slang::ast::SymbolKind::TypeParameter) {
+        } else if (parameter->kind == slang::ast::SymbolKind::TypeParameter) {
           const auto &typeParameter =
               parameter->as<slang::ast::TypeParameterSymbol>();
-          appendStableTypeIdentity(stream,
-                                   typeParameter.targetType.getType(), active);
+          appendStableTypeIdentity(stream, typeParameter.targetType.getType(),
+                                   active);
         }
         stream << ']';
       }
@@ -1210,8 +1209,7 @@ private:
         std::string valueString = value.getValue().toString(
             std::numeric_limits<slang::bitwidth_t>::max(), true, true);
         stream << valueString.size() << ':' << valueString;
-      } else if (parameter->kind ==
-                 slang::ast::SymbolKind::TypeParameter) {
+      } else if (parameter->kind == slang::ast::SymbolKind::TypeParameter) {
         const auto &typeParameter =
             parameter->as<slang::ast::TypeParameterSymbol>();
         appendStableTypeIdentity(stream, typeParameter.targetType.getType(),
@@ -1363,29 +1361,26 @@ private:
     if (!event)
       return false;
     bool direct = event->expr.as_if<slang::ast::NamedValueExpression>() ||
-                  event->expr
-                      .as_if<slang::ast::HierarchicalValueExpression>();
+                  event->expr.as_if<slang::ast::HierarchicalValueExpression>();
     return !direct || event->iffCondition;
   }
 
   void addStaticClockingEventDescriptor(
-      NamedAttrList &attrs,
-      const slang::ast::ClockingBlockSymbol &clocking) {
+      NamedAttrList &attrs, const slang::ast::ClockingBlockSymbol &clocking) {
     if (requiresClockingEventMonitor(clocking)) {
       if (clocking.getEvent().as_if<slang::ast::EventListControl>())
         attrs.set("clocking_event_list", builder.getUnitAttr());
       attrs.set("clocking_event_monitor", builder.getUnitAttr());
       attrs.set("clocking_event_edge",
-                slangir::EdgeKindAttr::get(
-                    builder.getContext(), slangir::EdgeKind::None));
+                slangir::EdgeKindAttr::get(builder.getContext(),
+                                           slangir::EdgeKind::None));
       setSymbolReference(attrs, clocking,
                          builder.getStringAttr("clocking_event_symbol"),
                          builder.getStringAttr("clocking_event_path"));
       if (const auto *event =
               clocking.getEvent().as_if<slang::ast::SignalEventControl>()) {
         const slang::ast::Symbol *clockSymbol = nullptr;
-        if (auto *named =
-                event->expr.as_if<slang::ast::NamedValueExpression>())
+        if (auto *named = event->expr.as_if<slang::ast::NamedValueExpression>())
           clockSymbol = &named->symbol;
         else if (auto *hierarchical =
                      event->expr
@@ -1395,10 +1390,9 @@ private:
           attrs.set("clocking_event_raw_edge",
                     slangir::EdgeKindAttr::get(builder.getContext(),
                                                convertEnum(event->edge)));
-          setSymbolReference(
-              attrs, *clockSymbol,
-              builder.getStringAttr("clocking_event_raw_symbol"),
-              builder.getStringAttr("clocking_event_raw_path"));
+          setSymbolReference(attrs, *clockSymbol,
+                             builder.getStringAttr("clocking_event_raw_symbol"),
+                             builder.getStringAttr("clocking_event_raw_path"));
         }
       }
       return;
@@ -1426,24 +1420,20 @@ private:
   }
 
   void addVirtualClockingEventDescriptor(
-      NamedAttrList &attrs,
-      const slang::ast::ClockingBlockSymbol &clocking) {
+      NamedAttrList &attrs, const slang::ast::ClockingBlockSymbol &clocking) {
     if (requiresClockingEventMonitor(clocking)) {
       if (clocking.getEvent().as_if<slang::ast::EventListControl>())
-        attrs.set("virtual_interface_clock_event_list",
-                  builder.getUnitAttr());
-      attrs.set("virtual_interface_clock_event_monitor",
-                builder.getUnitAttr());
+        attrs.set("virtual_interface_clock_event_list", builder.getUnitAttr());
+      attrs.set("virtual_interface_clock_event_monitor", builder.getUnitAttr());
       attrs.set("virtual_interface_clock_event_edge",
-                slangir::EdgeKindAttr::get(
-                    builder.getContext(), slangir::EdgeKind::None));
+                slangir::EdgeKindAttr::get(builder.getContext(),
+                                           slangir::EdgeKind::None));
       attrs.set("virtual_interface_clock_member",
                 builder.getStringAttr(clocking.name));
       if (const auto *event =
               clocking.getEvent().as_if<slang::ast::SignalEventControl>()) {
         const slang::ast::Symbol *clockSymbol = nullptr;
-        if (auto *named =
-                event->expr.as_if<slang::ast::NamedValueExpression>())
+        if (auto *named = event->expr.as_if<slang::ast::NamedValueExpression>())
           clockSymbol = &named->symbol;
         else if (auto *hierarchical =
                      event->expr
@@ -1470,15 +1460,13 @@ private:
     if (auto *named = event->expr.as_if<slang::ast::NamedValueExpression>())
       clockSymbol = &named->symbol;
     else if (auto *hierarchical =
-                 event->expr
-                     .as_if<slang::ast::HierarchicalValueExpression>())
+                 event->expr.as_if<slang::ast::HierarchicalValueExpression>())
       clockSymbol = &hierarchical->symbol;
     if (clockSymbol)
       attrs.set("virtual_interface_clock_member",
                 builder.getStringAttr(clockSymbol->name));
     if (event->iffCondition)
-      attrs.set("virtual_interface_clock_event_has_iff",
-                builder.getUnitAttr());
+      attrs.set("virtual_interface_clock_event_has_iff", builder.getUnitAttr());
   }
 
   /// Freeze the directly addressable event selected by an ordinary clocking
@@ -1511,8 +1499,7 @@ private:
       attrs.set((prefix + "_one_step").str(), builder.getUnitAttr());
       return;
     }
-    if (const auto *delay =
-            skew.delay->as_if<slang::ast::DelayControl>()) {
+    if (const auto *delay = skew.delay->as_if<slang::ast::DelayControl>()) {
       slang::ast::EvalContext evalContext(clockVar);
       slang::ConstantValue value = delay->expr.eval(evalContext);
       if (value) {
@@ -1532,14 +1519,13 @@ private:
                   builder.getContext(), convertEnum(clockVar.direction)));
     const slang::ast::Expression *source = clockVar.getInitializer();
     const slang::ast::Symbol *sourceSymbol = nullptr;
-    if (auto *named =
-            source ? source->as_if<slang::ast::NamedValueExpression>()
-                   : nullptr)
+    if (auto *named = source ? source->as_if<slang::ast::NamedValueExpression>()
+                             : nullptr)
       sourceSymbol = &named->symbol;
     else if (auto *hierarchical =
-                 source ? source->as_if<
-                              slang::ast::HierarchicalValueExpression>()
-                        : nullptr)
+                 source
+                     ? source->as_if<slang::ast::HierarchicalValueExpression>()
+                     : nullptr)
       sourceSymbol = &hierarchical->symbol;
     if (sourceSymbol)
       setSymbolReference(attrs, *sourceSymbol,
@@ -1548,24 +1534,22 @@ private:
     else if (source && clockVar.direction != slang::ast::ArgumentDirection::Out)
       attrs.set("clocking_source_expression", builder.getUnitAttr());
 
-    const auto &clocking =
-        clockVar.getParentScope()
-            ->asSymbol()
-            .template as<slang::ast::ClockingBlockSymbol>();
+    const auto &clocking = clockVar.getParentScope()
+                               ->asSymbol()
+                               .template as<slang::ast::ClockingBlockSymbol>();
     addStaticClockingEventDescriptor(attrs, clocking);
-    slang::TimeScale scale = clockVar.getParentScope()
-                                 ->getTimeScale()
-                                 .value_or(slang::TimeScale{});
+    slang::TimeScale scale =
+        clockVar.getParentScope()->getTimeScale().value_or(slang::TimeScale{});
     attrs.set("clocking_time_unit_fs",
               builder.getI64IntegerAttr(getFemtoseconds(scale.base)));
     attrs.set("clocking_time_precision_fs",
               builder.getI64IntegerAttr(getFemtoseconds(scale.precision)));
-    slang::ast::ClockingSkew inputSkew =
-        clockVar.inputSkew.hasValue() ? clockVar.inputSkew
-                                      : clocking.getDefaultInputSkew();
-    slang::ast::ClockingSkew outputSkew =
-        clockVar.outputSkew.hasValue() ? clockVar.outputSkew
-                                       : clocking.getDefaultOutputSkew();
+    slang::ast::ClockingSkew inputSkew = clockVar.inputSkew.hasValue()
+                                             ? clockVar.inputSkew
+                                             : clocking.getDefaultInputSkew();
+    slang::ast::ClockingSkew outputSkew = clockVar.outputSkew.hasValue()
+                                              ? clockVar.outputSkew
+                                              : clocking.getDefaultOutputSkew();
     addStaticClockingSkew(attrs, "clocking_input_skew", inputSkew,
                           /*defaultOneStep=*/true, clockVar);
     addStaticClockingSkew(attrs, "clocking_output_skew", outputSkew,
@@ -1634,9 +1618,9 @@ private:
                 builder.getI64IntegerAttr(*repetition->range.max));
   }
 
-  bool addStaticPropagationDelay(
-      NamedAttrList &attrs, const slang::ast::TimingControl *control,
-      const slang::ast::Symbol &contextSymbol) {
+  bool addStaticPropagationDelay(NamedAttrList &attrs,
+                                 const slang::ast::TimingControl *control,
+                                 const slang::ast::Symbol &contextSymbol) {
     if (!control)
       return true;
     SmallVector<const slang::ast::Expression *, 3> expressions;
@@ -1749,9 +1733,12 @@ private:
 
       struct DirectTimingTerminal {
         std::string path;
+        uint64_t rootWidth;
+        uint64_t low;
         uint64_t width;
       };
-      auto directWholeTerminal = [&](const slang::ast::Expression *expression)
+      slang::ast::EvalContext terminalEvalContext(node);
+      auto directStaticTerminal = [&](const slang::ast::Expression *expression)
           -> std::optional<DirectTimingTerminal> {
         if (!expression || !expression->type)
           return std::nullopt;
@@ -1762,12 +1749,32 @@ private:
         if (!value)
           return std::nullopt;
         uint64_t width = expression->type->getBitWidth();
-        // A selected terminal is safe to collapse to its static symbol path
-        // only when it denotes the entire packed value. Partial selects need
-        // explicit bit mapping and remain outside this compact path form.
-        if (width == 0 || width != value->getType().getBitWidth())
+        uint64_t rootWidth = value->getType().getBitWidth();
+        if (width == 0 || rootWidth == 0 || width > rootWidth)
           return std::nullopt;
-        return DirectTimingTerminal{getSymbolPath(*symbol), width};
+        uint64_t low = 0;
+        if (expression->kind == slang::ast::ExpressionKind::ElementSelect ||
+            expression->kind == slang::ast::ExpressionKind::RangeSelect) {
+          // Slang normalizes a packed selector into physical bit offsets from
+          // the right hand end of the declared range. This is precisely the
+          // positional ordering used by parallel module paths: physical bit
+          // k of the source selection maps to physical bit k of the
+          // destination selection even when their declared ranges run in
+          // opposite directions.
+          std::optional<slang::ConstantRange> selected =
+              expression->evalSelector(terminalEvalContext,
+                                       /*enforceBounds=*/false);
+          if (!selected || selected->left < 0 || selected->right < 0 ||
+              selected->fullWidth() != width)
+            return std::nullopt;
+          low = static_cast<uint64_t>(selected->lower());
+          if (low > rootWidth || width > rootWidth - low)
+            return std::nullopt;
+        } else if (width != rootWidth) {
+          return std::nullopt;
+        }
+        return DirectTimingTerminal{getSymbolPath(*symbol), rootWidth, low,
+                                    width};
       };
 
       auto inputs = node.getInputs();
@@ -1777,31 +1784,56 @@ private:
                 builder.getI64IntegerAttr(outputs.size()));
       SmallVector<Attribute> inputPaths;
       SmallVector<int64_t> inputWidths;
+      SmallVector<Attribute> inputTerminals;
       for (const slang::ast::Expression *input : inputs) {
         std::optional<DirectTimingTerminal> terminal =
-            directWholeTerminal(input);
+            directStaticTerminal(input);
         if (!terminal) {
           inputPaths.clear();
           inputWidths.clear();
+          inputTerminals.clear();
           break;
         }
         inputPaths.push_back(builder.getStringAttr(terminal->path));
         inputWidths.push_back(terminal->width);
+        inputTerminals.push_back(builder.getDictionaryAttr({
+            builder.getNamedAttr("path", builder.getStringAttr(terminal->path)),
+            builder.getNamedAttr(
+                "root_width", builder.getI64IntegerAttr(terminal->rootWidth)),
+            builder.getNamedAttr("low",
+                                 builder.getI64IntegerAttr(terminal->low)),
+            builder.getNamedAttr("width",
+                                 builder.getI64IntegerAttr(terminal->width)),
+        }));
       }
       if (inputPaths.size() == inputs.size()) {
         attrs.set("timing_input_paths", builder.getArrayAttr(inputPaths));
         attrs.set("timing_input_widths",
                   builder.getDenseI64ArrayAttr(inputWidths));
+        attrs.set("timing_input_terminals",
+                  builder.getArrayAttr(inputTerminals));
         if (inputs.size() == 1)
           attrs.set("timing_input_path", cast<StringAttr>(inputPaths.front()));
       }
       std::optional<DirectTimingTerminal> output;
       if (outputs.size() == 1)
-        output = directWholeTerminal(outputs.front());
+        output = directStaticTerminal(outputs.front());
       if (output) {
         attrs.set("timing_output_path", builder.getStringAttr(output->path));
         attrs.set("timing_output_width",
                   builder.getI64IntegerAttr(output->width));
+        attrs.set(
+            "timing_output_terminal",
+            builder.getDictionaryAttr({
+                builder.getNamedAttr("path",
+                                     builder.getStringAttr(output->path)),
+                builder.getNamedAttr(
+                    "root_width", builder.getI64IntegerAttr(output->rootWidth)),
+                builder.getNamedAttr("low",
+                                     builder.getI64IntegerAttr(output->low)),
+                builder.getNamedAttr("width",
+                                     builder.getI64IntegerAttr(output->width)),
+            }));
       }
 
       slang::TimeScale scale;
@@ -1858,7 +1890,7 @@ private:
         attrs.set("timing_delay_fs", builder.getDenseI64ArrayAttr(delays));
 
       bool shapeSupported = false;
-      if (inputPaths.size() == inputs.size() && output) {
+      if (inputTerminals.size() == inputs.size() && output) {
         if (node.connectionKind == TimingPath::ConnectionKind::Parallel)
           shapeSupported =
               inputs.size() == 1 &&
@@ -2112,12 +2144,10 @@ private:
             node.member.template as<slang::ast::ClockVarSymbol>();
         if (const slang::ast::Expression *source = clockVar.getInitializer()) {
           const slang::ast::Symbol *sourceSymbol = nullptr;
-          if (auto *named =
-                  source->as_if<slang::ast::NamedValueExpression>())
+          if (auto *named = source->as_if<slang::ast::NamedValueExpression>())
             sourceSymbol = &named->symbol;
           else if (auto *hierarchical =
-                       source->as_if<
-                           slang::ast::HierarchicalValueExpression>())
+                       source->as_if<slang::ast::HierarchicalValueExpression>())
             sourceSymbol = &hierarchical->symbol;
           if (sourceSymbol)
             attrs.set("virtual_interface_clocking_signal_member",
@@ -2582,8 +2612,7 @@ private:
       SET_OP_ATTR(OperatorKind,
                   slangir::BinaryOperatorAttr::get(builder.getContext(),
                                                    convertEnum(node.op)));
-    } else if constexpr (std::same_as<T,
-                                     slang::ast::ConversionExpression>) {
+    } else if constexpr (std::same_as<T, slang::ast::ConversionExpression>) {
       attrs.set("is_implicit", builder.getBoolAttr(node.isImplicit()));
     } else if constexpr (std::same_as<T, slang::ast::AssignmentExpression>) {
       if (node.op)
@@ -3017,8 +3046,7 @@ private:
       SET_OP_ATTR(DataType,
                   TypeAttr::get(typeConverter.convert(node.getDataType())));
       SET_OP_ATTR(IsBuiltin, builder.getBoolAttr(node.isBuiltIn()));
-      if (const auto *resolutionFunction =
-              getEffectiveResolutionFunction(node))
+      if (const auto *resolutionFunction = getEffectiveResolutionFunction(node))
         setSymbolReference(
             attrs, *resolutionFunction,
             Op::getResolutionFunctionSymbolAttrName(operationName),
@@ -3552,10 +3580,9 @@ private:
         specializations.emplace_back(getStableSpecializationKey(classType),
                                      &classType);
       }
-      llvm::sort(specializations,
-                 [](const auto &lhs, const auto &rhs) {
-                   return lhs.first < rhs.first;
-                 });
+      llvm::sort(specializations, [](const auto &lhs, const auto &rhs) {
+        return lhs.first < rhs.first;
+      });
       for (const auto &entry : specializations)
         entry.second->visit(*this);
     } else if constexpr (std::same_as<T, slang::ast::ClassType>) {
@@ -3565,9 +3592,9 @@ private:
     } else if constexpr (std::same_as<T, slang::ast::InstanceSymbol>) {
       importPortConnections(node);
       node.body.visit(*this);
-    } else if constexpr (
-        std::same_as<T, slang::ast::NamedValueExpression> ||
-        std::same_as<T, slang::ast::HierarchicalValueExpression>) {
+    } else if constexpr (std::same_as<T, slang::ast::NamedValueExpression> ||
+                         std::same_as<
+                             T, slang::ast::HierarchicalValueExpression>) {
       this->visitDefault(node);
       if (node.symbol.kind == slang::ast::SymbolKind::ClockVar) {
         const auto &clockVar =
@@ -3579,10 +3606,10 @@ private:
                  ->template as_if<slang::ast::HierarchicalValueExpression>() &&
             clockVar.direction != slang::ast::ArgumentDirection::Out)
           source->visit(*this);
-        const auto &clocking = clockVar.getParentScope()
-                                   ->asSymbol()
-                                   .template as<
-                                       slang::ast::ClockingBlockSymbol>();
+        const auto &clocking =
+            clockVar.getParentScope()
+                ->asSymbol()
+                .template as<slang::ast::ClockingBlockSymbol>();
         if (const auto *event =
                 clocking.getEvent()
                     .template as_if<slang::ast::SignalEventControl>();
@@ -3636,8 +3663,8 @@ private:
           event->iffCondition->visit(*this);
         }
       }
-    } else if constexpr (std::same_as<
-                             T, slang::ast::ArbitrarySymbolExpression>) {
+    } else if constexpr (std::same_as<T,
+                                      slang::ast::ArbitrarySymbolExpression>) {
       this->visitDefault(node);
       if (node.symbol &&
           node.symbol->kind == slang::ast::SymbolKind::ClockingBlock) {
@@ -4000,10 +4027,9 @@ private:
     }
   }
 
-  bool isPortCoercedToInOut(
-      const slang::ast::InstanceSymbol &instance,
-      const slang::ast::PortConnection &connection,
-      const slang::ast::PortSymbol &port) const {
+  bool isPortCoercedToInOut(const slang::ast::InstanceSymbol &instance,
+                            const slang::ast::PortConnection &connection,
+                            const slang::ast::PortSymbol &port) const {
     using slang::analysis::DriverFlags;
     using slang::analysis::ValueDriver;
     using slang::ast::ArgumentDirection;
@@ -4175,8 +4201,8 @@ buildSlangArguments(ArrayRef<std::string> inputs,
   // and writes, so simulating one is conforming rather than an error. Slang
   // raises these to errors by default; put the downgrade ahead of the user's
   // own options so `-Werror=range-oob` still wins.
-  for (llvm::StringRef warning : {"index-oob", "range-oob", "range-width-oob",
-                                  "format-too-many-args"})
+  for (llvm::StringRef warning :
+       {"index-oob", "range-oob", "range-width-oob", "format-too-many-args"})
     result.emplace_back(("-Wno-error=" + warning).str());
   appendValues(result, "-W", options.warningOptions);
   appendValues(result, "--suppress-warnings", options.suppressWarningsPaths);
