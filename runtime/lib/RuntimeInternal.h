@@ -1220,6 +1220,11 @@ struct obelisk_rt_context {
   // Preserve their logical parent so ancestor-directed process control can
   // still identify that the active activation belongs to the target tree.
   uint64_t activeLogicalProcessParent = 0;
+  // Process tokens are never reused. Remember live logical processes known to
+  // have owned a child so the overwhelmingly common childless termination can
+  // skip a full native/design task scan. Natural termination erases the mark;
+  // any conservative stale-live mark only causes the old exact scan.
+  std::unordered_set<uint64_t> logicalProcessParentsWithChildren;
   // A bytecode design task is moved out of the scheduler vector while it
   // executes, so its lane-local stream cannot be rediscovered by token.
   obelisk_rt_random_state_v1 *activeRandom = nullptr;
@@ -1751,12 +1756,22 @@ void obelisk_rt_program_seal_unlocked(obelisk_rt_context *context);
 // a later wait fork or disable fork in the ancestor still sees them.
 inline void obelisk_rt_reparent_process_children_unlocked(
     obelisk_rt_context *context, uint64_t parent, uint64_t replacement) {
+  if (!context->logicalProcessParentsWithChildren.count(parent))
+    return;
+  bool reparented = false;
   for (ScheduledProcess &process : context->scheduledProcesses)
-    if (process.instance && process.parent == parent)
+    if (process.instance && process.parent == parent) {
       process.parent = replacement;
+      reparented = true;
+    }
   for (ScheduledDesignTask &task : context->scheduledDesignTasks)
-    if (!task.terminated && task.parent == parent)
+    if (!task.terminated && task.parent == parent) {
       task.parent = replacement;
+      reparented = true;
+    }
+  context->logicalProcessParentsWithChildren.erase(parent);
+  if (reparented && replacement != 0)
+    context->logicalProcessParentsWithChildren.insert(replacement);
 }
 
 obelisk_rt_status obelisk_rt_initialize_design_bytecode_image(

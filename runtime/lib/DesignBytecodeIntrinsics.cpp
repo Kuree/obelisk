@@ -2091,6 +2091,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         (signature.flags & OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS) == 0
             ? context->activeLogicalProcessToken
             : 0;
+    if (task.parent != 0)
+      context->logicalProcessParentsWithChildren.insert(task.parent);
     task.programOwner = context->activeProgramOwner;
     if (!task.programOwner &&
         (signature.flags & OBELISK_RT_INTRINSIC_SPAWN_PROGRAM) != 0) {

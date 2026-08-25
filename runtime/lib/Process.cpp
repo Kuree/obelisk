@@ -985,6 +985,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
     process.parent = (flags & OBELISK_RT_SCHEDULE_DETACHED_CONTROLS) == 0
                          ? context->activeLogicalProcessToken
                          : 0;
+    if (process.parent != 0)
+      context->logicalProcessParentsWithChildren.insert(process.parent);
     process.programOwner = context->activeProgramOwner;
     obelisk_rt_random_split_unlocked(context, process.random);
     if ((flags & OBELISK_RT_SCHEDULE_DETACHED_CONTROLS) == 0)
@@ -2477,6 +2479,87 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
     ++context->schedulerSlotProgress;
     return OBELISK_RT_OK;
   };
+  // A signal publication commonly makes a large cohort ready at once. The
+  // generic scheduler used to rescan the remaining unordered candidate set
+  // after every member, making one edge cost N + (N-1) + ... readiness tests.
+  // Cache signal-ready batches (plus a freshly spawned urgent child) in exact
+  // scheduler-key order. Any other readiness source or selection-generation
+  // change falls back to the fully general scan below.
+  struct CachedNativeReady {
+    uint64_t token = 0;
+    bool urgent = false;
+    size_t urgentDistance = 0;
+    uint32_t region = UINT32_MAX;
+    uint32_t rank = UINT32_MAX;
+    uint64_t insertionSequence = UINT64_MAX;
+  };
+  struct CachedNativeReadyLater {
+    bool operator()(const CachedNativeReady &lhs,
+                    const CachedNativeReady &rhs) const {
+      if (lhs.urgent != rhs.urgent)
+        return !lhs.urgent;
+      if (lhs.urgent) {
+        if (lhs.urgentDistance != rhs.urgentDistance)
+          return lhs.urgentDistance > rhs.urgentDistance;
+        return lhs.token > rhs.token;
+      }
+      return std::tuple{lhs.region, lhs.rank, lhs.insertionSequence,
+                        lhs.token} >
+             std::tuple{rhs.region, rhs.rank, rhs.insertionSequence, rhs.token};
+    }
+  };
+  // An initial publication batch is sorted once in later-first order and
+  // consumed from the back in O(1) per member. The common already-ordered
+  // process vector needs only a linear check and reversal. Rare incremental
+  // additions use a separate heap so task-call, continue, and spawned-child
+  // handling retain the fully general ordering contract.
+  std::vector<CachedNativeReady> cachedNativeReady;
+  std::vector<CachedNativeReady> cachedNativeDynamicReady;
+  std::vector<uint64_t> cachedNativeSlowCandidates;
+  CachedNativeReadyLater cachedNativeReadyLater;
+  auto pushCachedNativeReady = [&](const CachedNativeReady &ready) {
+    cachedNativeDynamicReady.push_back(ready);
+    std::push_heap(cachedNativeDynamicReady.begin(),
+                   cachedNativeDynamicReady.end(),
+                   cachedNativeReadyLater);
+  };
+  auto cachedNativeReadyEmpty = [&] {
+    return cachedNativeReady.empty() && cachedNativeDynamicReady.empty();
+  };
+  auto nextCachedNativeReady = [&]()
+      -> std::pair<CachedNativeReady, bool> {
+    bool dynamic =
+        cachedNativeReady.empty() ||
+        (!cachedNativeDynamicReady.empty() &&
+         cachedNativeReadyLater(cachedNativeReady.back(),
+                                cachedNativeDynamicReady.front()));
+    return {dynamic ? cachedNativeDynamicReady.front()
+                    : cachedNativeReady.back(),
+            dynamic};
+  };
+  auto popCachedNativeReady = [&](bool dynamic) {
+    if (!dynamic) {
+      cachedNativeReady.pop_back();
+      return;
+    }
+    std::pop_heap(cachedNativeDynamicReady.begin(),
+                  cachedNativeDynamicReady.end(), cachedNativeReadyLater);
+    cachedNativeDynamicReady.pop_back();
+  };
+  bool cachedNativeReadyValid = false;
+  uint64_t cachedNativeReadyGeneration = 0;
+  uint64_t cachedNativeReadyTime = 0;
+  bool cachedNativeReadyFinals = false;
+  size_t cachedNativeReadyProcessCount = 0;
+  uint64_t cachedNativeReadyLastToken = 0;
+  size_t cachedNativeUrgentCount = 0;
+  auto clearCachedNativeReady = [&] {
+    cachedNativeReady.clear();
+    cachedNativeDynamicReady.clear();
+    cachedNativeSlowCandidates.clear();
+    cachedNativeReadyValid = false;
+    cachedNativeUrgentCount = 0;
+  };
   for (;;) {
     {
       ContextMutexLock lock(context);
@@ -2573,6 +2656,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
     uint64_t nativeScanSelectionGeneration = 0;
     uint64_t nativeScanInsertionSequence = 0;
     uint32_t barrierRegion = UINT32_MAX;
+    std::optional<CachedNativeReady> cachedNativeSelection;
     {
       ContextMutexLock lock(context);
       if (context->scheduledProcessIndices.size() !=
@@ -2587,73 +2671,285 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           obelisk_rt_unstarted_actor_region(context, activePhase);
       size_t nativeUrgentDistance = SIZE_MAX;
       bool forcedNativeNode = context->nativeScheduleForcedSlot != UINT32_MAX;
-      auto considerNativeToken = [&](uint64_t token) {
+      auto classifyNativeToken =
+          [&](uint64_t token, bool &signalResume,
+              size_t &index) -> std::optional<CachedNativeReady> {
         auto indexed = context->scheduledProcessIndices.find(token);
         if (indexed == context->scheduledProcessIndices.end() ||
             indexed->second >= nativeScanProcessCount)
-          return;
-        size_t index = indexed->second;
+          return std::nullopt;
+        index = indexed->second;
         const ScheduledProcess &candidate = context->scheduledProcesses[index];
         if (context->signalDiagnosticsEnabled && !forcedNativeNode)
           ++context->signalDiagnostics.candidateScans;
         if (!candidate.instance ||
             candidate.phase != (context->schedulerRunningFinals ? 1u : 0u))
-          return;
+          return std::nullopt;
         bool runnable =
             nativeProcessReady(*context, candidate, forcedNativeNode);
-        bool signalResume =
+        signalResume =
             candidate.signalTriggered ||
             (candidate.signalLatch && candidate.signalLatch->triggered);
         if (runnable && candidate.queuedRegion >= unstartedActorRegion &&
             signalResume && !candidate.urgent && !candidate.prioritySignal)
           runnable = false;
-        if (runnable && candidate.urgent) {
-          size_t distance =
-              nativeScanProcessCount == 0
-                  ? 0
-                  : (index + nativeScanProcessCount -
-                     context->schedulerCursor % nativeScanProcessCount) %
-                        nativeScanProcessCount;
-          if (distance < nativeUrgentDistance) {
-            nativeUrgentDistance = distance;
+        if (!runnable)
+          return std::nullopt;
+        CachedNativeReady ready;
+        ready.token = candidate.token;
+        ready.urgent = candidate.urgent;
+        ready.urgentDistance =
+            nativeScanProcessCount == 0
+                ? 0
+                : (index + nativeScanProcessCount -
+                   context->schedulerCursor % nativeScanProcessCount) %
+                      nativeScanProcessCount;
+        if (candidate.prioritySignal && signalResume) {
+          ready.region = candidate.queuedRegion;
+          ready.rank = 0;
+          ready.insertionSequence = 0;
+        } else {
+          ready.region = candidate.queuedRegion;
+          ready.rank = candidate.scheduleRank;
+          ready.insertionSequence = candidate.insertionSequence;
+        }
+        return ready;
+      };
+      auto considerNativeReady = [&](const CachedNativeReady &ready,
+                                     size_t index) {
+        if (ready.urgent) {
+          if (ready.urgentDistance < nativeUrgentDistance) {
+            nativeUrgentDistance = ready.urgentDistance;
             nativeRegion = 0;
             nativeRank = 0;
             nativeInsertionSequence = 0;
             nativeCandidateIndex = index;
-            nativeCandidateToken = candidate.token;
+            nativeCandidateToken = ready.token;
           }
           return;
         }
         if (nativeUrgentDistance != SIZE_MAX)
           return;
         auto key =
-            candidate.prioritySignal && signalResume
-                ? std::tuple{candidate.queuedRegion, uint32_t{0}, uint64_t{0}}
-                : std::tuple{candidate.queuedRegion, candidate.scheduleRank,
-                             candidate.insertionSequence};
-        if (runnable && key < std::tuple{nativeRegion, nativeRank,
-                                         nativeInsertionSequence}) {
-          nativeRegion = std::get<0>(key);
-          nativeRank = std::get<1>(key);
-          nativeInsertionSequence = std::get<2>(key);
+            std::tuple{ready.region, ready.rank, ready.insertionSequence};
+        if (key <
+            std::tuple{nativeRegion, nativeRank, nativeInsertionSequence}) {
+          nativeRegion = ready.region;
+          nativeRank = ready.rank;
+          nativeInsertionSequence = ready.insertionSequence;
           nativeCandidateIndex = index;
-          nativeCandidateToken = candidate.token;
+          nativeCandidateToken = ready.token;
         }
       };
+      auto considerNativeToken = [&](uint64_t token) {
+        bool signalResume = false;
+        size_t index = SIZE_MAX;
+        if (auto ready = classifyNativeToken(token, signalResume, index))
+          considerNativeReady(*ready, index);
+      };
       if (forcedNativeNode) {
+        clearCachedNativeReady();
         uint32_t slot = context->nativeScheduleForcedSlot;
         if (slot >= context->nativeScheduleActorTokens.size() ||
             context->nativeScheduleActorTokens[slot] == 0)
           return OBELISK_RT_INVALID_LIFECYCLE;
         considerNativeToken(context->nativeScheduleActorTokens[slot]);
       } else if (context->nativeScheduleProcessFilterActive) {
+        clearCachedNativeReady();
         if (context->nativeScheduleForcedProcessToken != 0)
           considerNativeToken(context->nativeScheduleForcedProcessToken);
-      } else if (!context->nativeScheduleControlOnly) {
-        for (uint64_t token : context->nativePollCandidates)
-          considerNativeToken(token);
+      } else if (context->nativeScheduleControlOnly) {
+        clearCachedNativeReady();
+      } else {
+        bool cacheShapeValid =
+            cachedNativeReadyValid &&
+            cachedNativeReadyGeneration ==
+                context->schedulerSelectionGeneration &&
+            cachedNativeReadyTime == context->schedulerTime &&
+            cachedNativeReadyFinals == context->schedulerRunningFinals &&
+            nativeScanProcessCount >= cachedNativeReadyProcessCount &&
+            (cachedNativeReadyProcessCount == 0 ||
+             context->scheduledProcesses[cachedNativeReadyProcessCount - 1]
+                     .token == cachedNativeReadyLastToken);
+        if (!cacheShapeValid)
+          clearCachedNativeReady();
+
+        // A detached child is appended after its parent is selected. Admit
+        // one urgent startup incrementally; retain any less common appended
+        // shape in the small fallback list that is rescanned exactly.
+        if (cachedNativeReadyValid &&
+            nativeScanProcessCount > cachedNativeReadyProcessCount) {
+          bool appendedOrdinaryActor = false;
+          for (size_t index = cachedNativeReadyProcessCount;
+               index != nativeScanProcessCount; ++index) {
+            const ScheduledProcess &candidate =
+                context->scheduledProcesses[index];
+            if (!candidate.instance ||
+                !context->nativePollCandidates.count(candidate.token))
+              continue;
+            bool signalResume = false;
+            size_t classifiedIndex = SIZE_MAX;
+            auto ready = classifyNativeToken(candidate.token, signalResume,
+                                             classifiedIndex);
+            if (ready && !candidate.started && !ready->urgent) {
+              appendedOrdinaryActor = true;
+              break;
+            }
+            if (ready && !candidate.started &&
+                (!ready->urgent || cachedNativeUrgentCount == 0)) {
+              pushCachedNativeReady(*ready);
+              ++cachedNativeUrgentCount;
+            } else {
+              cachedNativeSlowCandidates.push_back(candidate.token);
+            }
+          }
+          // An ordinary newly spawned actor must take its initial activation
+          // ahead of existing same-region signal resumptions. Reclassify the
+          // whole set instead of dropping those temporarily blocked resumes
+          // from the cached heap.
+          if (appendedOrdinaryActor)
+            clearCachedNativeReady();
+          if (cachedNativeReadyValid) {
+            cachedNativeReadyProcessCount = nativeScanProcessCount;
+            cachedNativeReadyLastToken =
+                nativeScanProcessCount == 0
+                    ? 0
+                    : context->scheduledProcesses.back().token;
+          }
+        }
+
+        if (!cachedNativeReadyValid) {
+          // Preserve the old allocation-free scan for the overwhelmingly
+          // common small process set. The cache starts only when it can
+          // amortize heap construction over a substantial ready cohort.
+          constexpr size_t minCachedSignalCohort = 16;
+          if (context->nativePollCandidates.size() <= minCachedSignalCohort) {
+            for (uint64_t token : context->nativePollCandidates)
+              considerNativeToken(token);
+          } else {
+            std::vector<CachedNativeReady> batch;
+            for (const ScheduledProcess &candidate :
+                 context->scheduledProcesses) {
+              uint64_t token = candidate.token;
+              if (!candidate.instance ||
+                  !context->nativePollCandidates.count(token))
+                continue;
+              bool signalResume = false;
+              size_t index = SIZE_MAX;
+              auto ready = classifyNativeToken(token, signalResume, index);
+              if (ready)
+                considerNativeReady(*ready, index);
+              auto indexed = context->scheduledProcessIndices.find(token);
+              bool urgentStartup =
+                  ready && indexed != context->scheduledProcessIndices.end() &&
+                  ready->urgent &&
+                  !context->scheduledProcesses[indexed->second].started;
+              if (ready && (signalResume || urgentStartup))
+                batch.push_back(*ready);
+              else
+                cachedNativeSlowCandidates.push_back(token);
+            }
+            if (batch.size() > minCachedSignalCohort) {
+              nativeUrgentDistance = SIZE_MAX;
+              nativeRegion = UINT32_MAX;
+              nativeRank = UINT32_MAX;
+              nativeInsertionSequence = UINT64_MAX;
+              nativeCandidateIndex = SIZE_MAX;
+              nativeCandidateToken = 0;
+              bool alreadyEarlierFirst = std::is_sorted(
+                  batch.begin(), batch.end(),
+                  [&](const CachedNativeReady &lhs,
+                      const CachedNativeReady &rhs) {
+                    return cachedNativeReadyLater(rhs, lhs);
+                  });
+              if (alreadyEarlierFirst)
+                std::reverse(batch.begin(), batch.end());
+              else
+                std::sort(batch.begin(), batch.end(), cachedNativeReadyLater);
+              cachedNativeUrgentCount =
+                  static_cast<size_t>(std::count_if(
+                      batch.begin(), batch.end(),
+                      [](const CachedNativeReady &ready) {
+                        return ready.urgent;
+                      }));
+              cachedNativeReady = std::move(batch);
+              cachedNativeReadyValid = true;
+              cachedNativeReadyGeneration =
+                  context->schedulerSelectionGeneration;
+              cachedNativeReadyTime = context->schedulerTime;
+              cachedNativeReadyFinals = context->schedulerRunningFinals;
+              cachedNativeReadyProcessCount = nativeScanProcessCount;
+              cachedNativeReadyLastToken =
+                  nativeScanProcessCount == 0
+                      ? 0
+                      : context->scheduledProcesses.back().token;
+            }
+          }
+        }
+
+        if (cachedNativeReadyValid)
+          for (uint64_t token : cachedNativeSlowCandidates)
+            considerNativeToken(token);
+
+        while (cachedNativeReadyValid && !cachedNativeReadyEmpty()) {
+          auto [ready, dynamicReady] = nextCachedNativeReady();
+          auto indexed = context->scheduledProcessIndices.find(ready.token);
+          bool signalResume = false;
+          size_t index = SIZE_MAX;
+          auto current = classifyNativeToken(ready.token, signalResume, index);
+          bool same = indexed != context->scheduledProcessIndices.end() &&
+                      context->nativePollCandidates.count(ready.token) &&
+                      current && current->urgent == ready.urgent &&
+                      (ready.urgent ||
+                       (current->region == ready.region &&
+                        current->rank == ready.rank &&
+                        current->insertionSequence == ready.insertionSequence));
+          if (!same) {
+            popCachedNativeReady(dynamicReady);
+            cachedNativeUrgentCount -= ready.urgent;
+            // Cached signal/startup readiness is normally monotonic until
+            // selection. Preserve any live pollable token whose state was
+            // changed by a rarer reentrant operation in the exact slow set;
+            // it may become ready again without another generation change.
+            if (indexed != context->scheduledProcessIndices.end() &&
+                context->nativePollCandidates.count(ready.token) &&
+                indexed->second < context->scheduledProcesses.size() &&
+                context->scheduledProcesses[indexed->second].instance)
+              cachedNativeSlowCandidates.push_back(ready.token);
+            continue;
+          }
+          considerNativeReady(*current, index);
+          if (nativeCandidateToken != ready.token)
+            break;
+          popCachedNativeReady(dynamicReady);
+          cachedNativeUrgentCount -= ready.urgent;
+          cachedNativeSelection = ready;
+          nativeCandidateIndex = index;
+          nativeCandidateToken = ready.token;
+          nativeRegion = ready.urgent ? 0 : ready.region;
+          nativeRank = ready.urgent ? 0 : ready.rank;
+          nativeInsertionSequence = ready.urgent ? 0 : ready.insertionSequence;
+          break;
+        }
       }
       barrierRegion = nextDueNBABarrierRegionUnlocked(context);
+    }
+    bool cachedCandidateExpected =
+        cachedNativeSelection &&
+        (std::tuple{nativeRegion, nativeRank, nativeInsertionSequence} ==
+             std::tuple{uint32_t{0}, uint32_t{0}, uint64_t{0}} ||
+         std::tuple{nativeRegion, nativeRank, nativeInsertionSequence} <
+             std::tuple{barrierRegion, uint32_t{0}, uint64_t{0}});
+    if (cachedNativeSelection && !cachedCandidateExpected &&
+        cachedNativeReadyValid) {
+      pushCachedNativeReady(*cachedNativeSelection);
+      cachedNativeUrgentCount += cachedNativeSelection->urgent;
+      cachedNativeSelection.reset();
+      nativeCandidateIndex = SIZE_MAX;
+      nativeCandidateToken = 0;
+      nativeRegion = UINT32_MAX;
+      nativeRank = UINT32_MAX;
+      nativeInsertionSequence = UINT64_MAX;
     }
     uint32_t maximumRegion = nativeRegion;
     uint32_t maximumRank = nativeRank;
@@ -2671,6 +2967,10 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
     if (designStatus != OBELISK_RT_OK)
       return designStatus;
     if (designProgress) {
+      if (cachedNativeSelection && cachedNativeReadyValid) {
+        pushCachedNativeReady(*cachedNativeSelection);
+        cachedNativeUrgentCount += cachedNativeSelection->urgent;
+      }
       obelisk_rt_status status = recordSlotProgress();
       if (status != OBELISK_RT_OK)
         return status;
@@ -2773,6 +3073,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       if (selected) {
         ScheduledProcess &candidate =
             context->scheduledProcesses[selectedIndex];
+        if (cachedNativeSelection &&
+            candidate.token != cachedNativeSelection->token)
+          clearCachedNativeReady();
         selectedResuming = candidate.started &&
                            candidate.suspendKind != OBELISK_RT_SUSPEND_NONE;
         if (candidate.suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE) {
@@ -2783,6 +3086,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             context->schedulerStatus = status;
             return status;
           }
+          if (!acquired)
+            clearCachedNativeReady();
           if (!acquired)
             continue;
         }
@@ -2812,6 +3117,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         candidate.started = true;
         candidate.observedEpoch = context->schedulerEpoch;
       }
+      if (cachedNativeSelection && !selected)
+        clearCachedNativeReady();
       if (!selected && !context->schedulerRunningFinals &&
           barrierRegion != UINT32_MAX) {
         bool changed = false;
@@ -3705,11 +4012,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                 pathUpdate = candidate;
               }
             }
-            uint64_t sequence = std::min(
-                std::min(
-                std::min(nativeSequence, managedSequence),
-                         pathSequence),
-                std::min(std::min(eventSequence, passSequence), designSequence));
+            uint64_t sequence =
+                std::min(std::min(std::min(nativeSequence, managedSequence),
+                                  pathSequence),
+                         std::min(std::min(eventSequence, passSequence),
+                                  designSequence));
             if (sequence == UINT64_MAX) {
               bool hadDelayedPublications = !delayedNetPublications.empty();
               if (!flushDelayedNetPublications())
@@ -3921,8 +4228,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           if (!update.cancelled && update.dueTime > context->schedulerTime)
             considerTime(update.dueTime);
         if (!context->scheduledInertialPathNBAs.empty())
-          considerTime(
-              context->scheduledInertialPathNBAs.begin()->first.first);
+          considerTime(context->scheduledInertialPathNBAs.begin()->first.first);
         for (const ScheduledManagedNBA &update : context->scheduledManagedNBAs)
           if (update.dueTime > context->schedulerTime)
             considerTime(update.dueTime);
@@ -3930,8 +4236,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           if (event.dueTime > context->schedulerTime)
             considerTime(event.dueTime);
         if (!context->scheduledPassSwitchEvents.empty())
-          considerTime(
-              context->scheduledPassSwitchEvents.begin()->first.first);
+          considerTime(context->scheduledPassSwitchEvents.begin()->first.first);
         if (nextTime) {
           obelisk_rt_dump_slot_unlocked(context);
           context->schedulerTime = *nextTime;
@@ -4192,6 +4497,64 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         context->nativePollCandidates.insert(scheduled.token);
       else
         context->nativePollCandidates.erase(scheduled.token);
+      // The selected token was popped from the heap before execution and is
+      // therefore absent from both cached containers. A task call, caller
+      // return, continue action, or suspend can requeue that same token
+      // without changing the process vector or signal generation. Re-admit
+      // its finalized state once; mutations outside that narrow shape force
+      // an exact rebuild on the next iteration.
+      if (cachedNativeSelection &&
+          context->nativePollCandidates.count(scheduled.token)) {
+        bool exactProcessCount = context->scheduledProcesses.size() ==
+                                 cachedNativeReadyProcessCount;
+        bool cacheShapeStable =
+            cachedNativeReadyValid &&
+            cachedNativeReadyGeneration ==
+                context->schedulerSelectionGeneration &&
+            cachedNativeReadyTime == context->schedulerTime &&
+            cachedNativeReadyFinals == context->schedulerRunningFinals &&
+            exactProcessCount &&
+            (cachedNativeReadyProcessCount == 0 ||
+             context->scheduledProcesses[cachedNativeReadyProcessCount - 1]
+                     .token == cachedNativeReadyLastToken);
+        if (!cacheShapeStable) {
+          clearCachedNativeReady();
+        } else if (!scheduled.explicitlySuspended &&
+                   scheduled.suspendKind == OBELISK_RT_SUSPEND_NONE) {
+          // Urgent distances are relative to the cursor at cache creation.
+          // A requeued urgent token uses the post-selection cursor, so it is
+          // comparable only after every old-cursor urgent entry is gone.
+          if (scheduled.urgent && cachedNativeUrgentCount != 0) {
+            clearCachedNativeReady();
+          } else {
+            bool signalResume =
+                scheduled.signalTriggered ||
+                (scheduled.signalLatch && scheduled.signalLatch->triggered);
+            CachedNativeReady ready;
+            ready.token = scheduled.token;
+            ready.urgent = scheduled.urgent;
+            size_t processCount = context->scheduledProcesses.size();
+            ready.urgentDistance =
+                processCount == 0
+                    ? 0
+                    : (selectedIndex + processCount -
+                       context->schedulerCursor % processCount) %
+                          processCount;
+            ready.region = scheduled.queuedRegion;
+            if (scheduled.prioritySignal && signalResume) {
+              ready.rank = 0;
+              ready.insertionSequence = 0;
+            } else {
+              ready.rank = scheduled.scheduleRank;
+              ready.insertionSequence = scheduled.insertionSequence;
+            }
+            pushCachedNativeReady(ready);
+            cachedNativeUrgentCount += ready.urgent;
+          }
+        } else {
+          cachedNativeSlowCandidates.push_back(scheduled.token);
+        }
+      }
     }
     if (destroy) {
       status = obelisk_rt_v1_process_instance_destroy(selected);
@@ -4258,11 +4621,19 @@ obelisk_rt_v1_scheduler_prime(obelisk_rt_context *context,
     uint64_t token = 0;
     {
       ContextMutexLock lock(context);
-      auto found = std::find_if(context->scheduledProcesses.begin(),
-                                context->scheduledProcesses.end(),
-                                [&](const ScheduledProcess &entry) {
-                                  return entry.instance == instance;
-                                });
+      auto found = context->scheduledProcesses.end();
+      // prime_on_spawn is normally called immediately after appending the
+      // detached actor. Avoid rescanning every prior actor in a large spawn
+      // cohort, while retaining the exact general lookup for direct callers.
+      if (!context->scheduledProcesses.empty() &&
+          context->scheduledProcesses.back().instance == instance)
+        found = std::prev(context->scheduledProcesses.end());
+      else
+        found = std::find_if(context->scheduledProcesses.begin(),
+                             context->scheduledProcesses.end(),
+                             [&](const ScheduledProcess &entry) {
+                               return entry.instance == instance;
+                             });
       if (found == context->scheduledProcesses.end() || found->started) {
         return OBELISK_RT_INVALID_LIFECYCLE;
       }

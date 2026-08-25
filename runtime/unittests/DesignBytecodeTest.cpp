@@ -4251,15 +4251,11 @@ TEST(DesignBytecode, SpawnRetainsStableAutomaticHandlesAndReclaimsTaskState) {
             OBELISK_RT_OK);
   ASSERT_EQ(frameSize, 8u);
   std::memcpy(frame, &automatic, sizeof(automatic));
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
-  ASSERT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
-  ASSERT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_TRUE(context->scheduledProcesses.empty());
   EXPECT_TRUE(context->scheduledDesignTasks.empty());
+  EXPECT_TRUE(context->logicalProcessParentsWithChildren.empty());
   EXPECT_EQ(context->terminatedDesignTasks.rangeCount(), 1u);
   EXPECT_EQ(context->designTaskFrames.size(), 1u);
   std::array<uint8_t, 9> value{}, unknown{};

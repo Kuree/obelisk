@@ -3082,6 +3082,7 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
         context->killedNativeProcesses.insert(process.token);
         obelisk_rt_program_complete_unlocked(context, token,
                                              process.programOwner);
+        context->logicalProcessParentsWithChildren.erase(token);
         if (!process.started)
           obelisk_rt_unregister_unstarted_actor(context, process.phase, token);
         obelisk_rt_flush_deferred_immediate_reports_unlocked(context, token);
@@ -3107,6 +3108,7 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
         context->killedDesignTasks.insert(task.id);
         obelisk_rt_program_complete_unlocked(context, task.id,
                                              task.programOwner);
+        context->logicalProcessParentsWithChildren.erase(task.id);
         if (!task.started)
           obelisk_rt_unregister_unstarted_actor(context, task.phase, task.id);
         obelisk_rt_flush_deferred_immediate_reports_unlocked(context, task.id);
@@ -3403,6 +3405,7 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
         process.callerControlDepths.clear();
         obelisk_rt_unregister_signal_wait_unlocked(
             context, process.signalSubscriptions, process.token, false);
+        context->logicalProcessParentsWithChildren.erase(token);
         process.instance = nullptr;
         ++context->schedulerDeadProcessCount;
         context->schedulerCompactionPending = true;
@@ -3422,6 +3425,7 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
         task.callers.clear();
         obelisk_rt_unregister_signal_wait_unlocked(
             context, task.signalSubscriptions, task.id, true);
+        context->logicalProcessParentsWithChildren.erase(task.id);
         obelisk_rt_release_controls_unlocked(context, task.controls);
         task.controls.clear();
         task.terminated = true;
@@ -3977,6 +3981,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
         process.callerControlDepths.clear();
         obelisk_rt_unregister_signal_wait_unlocked(
             context, process.signalSubscriptions, process.token, false);
+        context->logicalProcessParentsWithChildren.erase(token);
         process.instance = nullptr;
         ++context->schedulerDeadProcessCount;
         context->schedulerCompactionPending = true;
@@ -4080,6 +4085,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
         task.callers.clear();
         obelisk_rt_unregister_signal_wait_unlocked(
             context, task.signalSubscriptions, task.id, true);
+        context->logicalProcessParentsWithChildren.erase(task.id);
         if (task.id == current) {
           obelisk_rt_release_controls_unlocked(context,
                                                context->activeControls);

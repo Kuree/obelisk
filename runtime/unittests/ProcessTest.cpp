@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <memory>
 #include <random>
 #include <string_view>
 #include <thread>
@@ -220,6 +221,24 @@ unsigned schedulerSelfTriggerCount;
 uint32_t schedulerSelfTriggerStaticState;
 unsigned schedulerDestroyCount;
 std::vector<uint64_t> schedulerOrder;
+uint64_t cachedCohortPrimarySignal;
+uint64_t cachedCohortSecondarySignal;
+uint64_t cachedCohortSecondaryID;
+uint64_t cachedCohortSpawnID;
+uint64_t cachedCohortPublishID;
+const obelisk_rt_process_descriptor_v1 *cachedCohortUrgentChild;
+const obelisk_rt_process_descriptor_v1 *cachedCohortOrdinaryChild;
+const obelisk_rt_process_descriptor_v1 *cachedCohortTaskCallee;
+uint64_t cachedCohortTaskCallID;
+bool cachedCohortTaskCalled;
+uint64_t cachedCohortContinueID;
+bool cachedCohortContinued;
+bool cachedCohortContinuePublishes;
+uint64_t cachedCohortFrontierID;
+bool cachedCohortFrontierSuspended;
+const uint8_t *cachedCohortNBAPlane;
+uint8_t cachedCohortNBAExpected;
+bool cachedCohortNBAVisible;
 unsigned schedulerCheckpointCount;
 unsigned generatedCheckpointCallbackCount;
 obelisk_rt_status invalidGeneratedCheckpointStatus;
@@ -583,6 +602,109 @@ obelisk_rt_status schedulerExecute(obelisk_rt_process_instance_v1 *instance) {
   *instance->action = {
       OBELISK_RT_FRAGMENT_SUSPEND,         schedulerWaitKind,   1,
       OBELISK_RT_ACTION_FRAME_WAIT_RECORD, schedulerWaitOffset, 48};
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status
+cachedSignalCohortExecute(obelisk_rt_process_instance_v1 *instance) {
+  if (!instance || !instance->context || !instance->action)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  instance->native_handle = instance;
+  uint64_t id = instance->descriptor->handle.id;
+  if (instance->continuation != 0) {
+    schedulerOrder.push_back(id);
+    if (cachedCohortNBAPlane &&
+        *cachedCohortNBAPlane != cachedCohortNBAExpected)
+      cachedCohortNBAVisible = false;
+    if (id == cachedCohortContinueID && !cachedCohortContinued) {
+      cachedCohortContinued = true;
+      if (cachedCohortContinuePublishes)
+        obelisk_rt_v1_scheduler_signal(instance->context,
+                                       cachedCohortSecondarySignal, 1,
+                                       OBELISK_RT_SIGNAL_CHANGE);
+      *instance->action = {OBELISK_RT_FRAGMENT_CONTINUE,
+                           OBELISK_RT_SUSPEND_NONE, 1, 0, 0, 0};
+      return OBELISK_RT_OK;
+    }
+    if (id == cachedCohortFrontierID && !cachedCohortFrontierSuspended) {
+      cachedCohortFrontierSuspended = true;
+      auto *wait =
+          reinterpret_cast<obelisk_rt_wait_record_v1 *>(instance->frame);
+      auto *entry = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
+      *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_FRONTIER, 0, 1, 0, 0};
+      *entry = {0, OBELISK_RT_WAIT_EDGE_NONE, 0};
+      *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
+                           OBELISK_RT_SUSPEND_FRONTIER,
+                           1,
+                           OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+                           0,
+                           48};
+      return OBELISK_RT_OK;
+    }
+    if (id == cachedCohortTaskCallID && !cachedCohortTaskCalled) {
+      if (!cachedCohortTaskCallee)
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      obelisk_rt_process_instance_v1 *callee = nullptr;
+      obelisk_rt_status status = obelisk_rt_v1_process_instance_create(
+          cachedCohortTaskCallee, &callee);
+      if (status != OBELISK_RT_OK)
+        return status;
+      cachedCohortTaskCalled = true;
+      *instance->action = {
+          OBELISK_RT_FRAGMENT_TASK_CALL,
+          OBELISK_RT_SUSPEND_NONE,
+          1,
+          0,
+          static_cast<uint64_t>(reinterpret_cast<uintptr_t>(callee)),
+          0};
+      return OBELISK_RT_OK;
+    }
+    if (id == cachedCohortSpawnID) {
+      if (!cachedCohortUrgentChild || !cachedCohortOrdinaryChild)
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      obelisk_rt_process_instance_v1 *ordinary = nullptr;
+      obelisk_rt_status status = obelisk_rt_v1_process_instance_create(
+          cachedCohortOrdinaryChild, &ordinary);
+      if (status != OBELISK_RT_OK)
+        return status;
+      status = obelisk_rt_v1_scheduler_add(instance->context, ordinary, 0);
+      if (status != OBELISK_RT_OK) {
+        obelisk_rt_v1_process_instance_destroy(ordinary);
+        return status;
+      }
+      obelisk_rt_process_instance_v1 *urgent = nullptr;
+      status = obelisk_rt_v1_process_instance_create(cachedCohortUrgentChild,
+                                                     &urgent);
+      if (status != OBELISK_RT_OK)
+        return status;
+      status = obelisk_rt_v1_scheduler_add(instance->context, urgent,
+                                           OBELISK_RT_SCHEDULE_STARTUP);
+      if (status != OBELISK_RT_OK) {
+        obelisk_rt_v1_process_instance_destroy(urgent);
+        return status;
+      }
+    }
+    if (id == cachedCohortPublishID)
+      obelisk_rt_v1_scheduler_signal(instance->context,
+                                     cachedCohortSecondarySignal, 1,
+                                     OBELISK_RT_SIGNAL_CHANGE);
+    *instance->action = {
+        OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+    return OBELISK_RT_OK;
+  }
+
+  auto *wait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(instance->frame);
+  auto *entry = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
+  *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_CHANGE, 0, 1, 0, 0};
+  *entry = {id == cachedCohortSecondaryID ? cachedCohortSecondarySignal
+                                          : cachedCohortPrimarySignal,
+            OBELISK_RT_WAIT_EDGE_CHANGE, 1};
+  *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
+                       OBELISK_RT_SUSPEND_CHANGE,
+                       1,
+                       OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+                       0,
+                       48};
   return OBELISK_RT_OK;
 }
 
@@ -1417,6 +1539,409 @@ TEST(Scheduler, SignalWaitsAreSelectiveAndEdgeAware) {
       context, 18, 1, OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_POSEDGE);
   EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
   EXPECT_EQ(schedulerResumeCount, 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, PrimeFindsTailAndNonTailActors) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture first(1);
+  SchedulerFixture second(2);
+  schedulerWaitKind = OBELISK_RT_SUSPEND_CHANGE;
+  schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_CHANGE;
+  schedulerWaitHandle = 700;
+  schedulerWaitWidth = 1;
+  obelisk_rt_process_instance_v1 *firstInstance =
+      makeSchedulerInstance(first);
+  obelisk_rt_process_instance_v1 *secondInstance =
+      makeSchedulerInstance(second);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, firstInstance, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, secondInstance, 0),
+            OBELISK_RT_OK);
+
+  ASSERT_EQ(obelisk_rt_v1_scheduler_prime(context, firstInstance),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_prime(context, secondInstance),
+            OBELISK_RT_OK);
+  EXPECT_TRUE(context->scheduledProcesses[0].started);
+  EXPECT_TRUE(context->scheduledProcesses[1].started);
+  EXPECT_EQ(context->scheduledProcesses[0].suspendKind,
+            OBELISK_RT_SUSPEND_CHANGE);
+  EXPECT_EQ(context->scheduledProcesses[1].suspendKind,
+            OBELISK_RT_SUSPEND_CHANGE);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, CachedSignalCohortPreservesOrderingChildrenAndCompaction) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  cachedCohortPrimarySignal = 710;
+  cachedCohortSecondarySignal = 711;
+  cachedCohortSecondaryID = 0;
+  cachedCohortSpawnID = 1;
+  cachedCohortPublishID = 0;
+  cachedCohortNBAPlane = nullptr;
+  cachedCohortNBAVisible = true;
+  schedulerOrder.clear();
+
+  SchedulerFixture ordinaryChild(101);
+  SchedulerFixture urgentChild(100);
+  cachedCohortOrdinaryChild = &ordinaryChild.descriptor;
+  cachedCohortUrgentChild = &urgentChild.descriptor;
+  std::vector<std::unique_ptr<SchedulerFixture>> fixtures;
+  for (uint64_t id = 1; id <= 20; ++id) {
+    fixtures.push_back(std::make_unique<SchedulerFixture>(id));
+    fixtures.back()->descriptor.native_execute = cachedSignalCohortExecute;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(
+                  context, makeSchedulerInstance(*fixtures.back()), 0,
+                  id == 1 ? 0 : static_cast<uint32_t>(id)),
+              OBELISK_RT_OK);
+  }
+  for (uint64_t id : {uint64_t{30}, uint64_t{31}}) {
+    fixtures.push_back(std::make_unique<SchedulerFixture>(id));
+    fixtures.back()->descriptor.native_execute = cachedSignalCohortExecute;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(
+                  context, makeSchedulerInstance(*fixtures.back()),
+                  OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL, 100),
+              OBELISK_RT_OK);
+  }
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_TRUE(schedulerOrder.empty());
+
+  obelisk_rt_v1_scheduler_signal(context, cachedCohortPrimarySignal, 1,
+                                 OBELISK_RT_SIGNAL_CHANGE);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  std::vector<uint64_t> expected{30, 31, 1, 100, 101};
+  for (uint64_t id = 2; id <= 20; ++id)
+    expected.push_back(id);
+  EXPECT_EQ(schedulerOrder, expected);
+  EXPECT_TRUE(context->scheduledProcesses.empty());
+  EXPECT_EQ(context->schedulerDeadProcessCount, 0u);
+  cachedCohortOrdinaryChild = nullptr;
+  cachedCohortUrgentChild = nullptr;
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, CachedEqualRankSignalCohortPreservesInsertionOrder) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  cachedCohortPrimarySignal = 715;
+  cachedCohortSecondarySignal = 716;
+  cachedCohortSecondaryID = 0;
+  cachedCohortSpawnID = 0;
+  cachedCohortPublishID = 0;
+  cachedCohortTaskCallID = 0;
+  cachedCohortContinueID = 0;
+  cachedCohortFrontierID = 0;
+  cachedCohortNBAPlane = nullptr;
+  schedulerOrder.clear();
+
+  std::vector<std::unique_ptr<SchedulerFixture>> fixtures;
+  for (uint64_t id = 1; id <= 17; ++id) {
+    fixtures.push_back(std::make_unique<SchedulerFixture>(id));
+    fixtures.back()->descriptor.native_execute = cachedSignalCohortExecute;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(
+                  context, makeSchedulerInstance(*fixtures.back()), 0, 0),
+              OBELISK_RT_OK);
+  }
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  obelisk_rt_v1_scheduler_signal(context, cachedCohortPrimarySignal, 1,
+                                 OBELISK_RT_SIGNAL_CHANGE);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+
+  std::vector<uint64_t> expected;
+  for (uint64_t id = 1; id <= 17; ++id)
+    expected.push_back(id);
+  EXPECT_EQ(schedulerOrder, expected);
+  EXPECT_TRUE(context->scheduledProcesses.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, CachedSignalCohortInvalidatesForNewPriorityPublication) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  cachedCohortPrimarySignal = 720;
+  cachedCohortSecondarySignal = 721;
+  cachedCohortSecondaryID = 40;
+  cachedCohortSpawnID = 0;
+  cachedCohortPublishID = 1;
+  cachedCohortUrgentChild = nullptr;
+  cachedCohortOrdinaryChild = nullptr;
+  cachedCohortNBAPlane = nullptr;
+  schedulerOrder.clear();
+
+  std::vector<std::unique_ptr<SchedulerFixture>> fixtures;
+  for (uint64_t id = 1; id <= 17; ++id) {
+    fixtures.push_back(std::make_unique<SchedulerFixture>(id));
+    fixtures.back()->descriptor.native_execute = cachedSignalCohortExecute;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(
+                  context, makeSchedulerInstance(*fixtures.back()), 0,
+                  static_cast<uint32_t>(id)),
+              OBELISK_RT_OK);
+  }
+  fixtures.push_back(std::make_unique<SchedulerFixture>(40));
+  fixtures.back()->descriptor.native_execute = cachedSignalCohortExecute;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(
+                context, makeSchedulerInstance(*fixtures.back()),
+                OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL, 100),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+
+  obelisk_rt_v1_scheduler_signal(context, cachedCohortPrimarySignal, 1,
+                                 OBELISK_RT_SIGNAL_CHANGE);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  std::vector<uint64_t> expected{1, 40};
+  for (uint64_t id = 2; id <= 17; ++id)
+    expected.push_back(id);
+  EXPECT_EQ(schedulerOrder, expected);
+  EXPECT_TRUE(context->scheduledProcesses.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, CachedReactiveSignalCohortYieldsToSameSlotNBA) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  cachedCohortPrimarySignal = 730;
+  cachedCohortSecondarySignal = 731;
+  cachedCohortSecondaryID = 0;
+  cachedCohortSpawnID = 0;
+  cachedCohortPublishID = 0;
+  cachedCohortUrgentChild = nullptr;
+  cachedCohortOrdinaryChild = nullptr;
+  uint8_t plane = 0;
+  uint8_t replacement = 0xa5;
+  cachedCohortNBAPlane = &plane;
+  cachedCohortNBAExpected = replacement;
+  cachedCohortNBAVisible = true;
+  schedulerOrder.clear();
+
+  std::vector<std::unique_ptr<SchedulerFixture>> fixtures;
+  for (uint64_t id = 1; id <= 17; ++id) {
+    fixtures.push_back(std::make_unique<SchedulerFixture>(id));
+    fixtures.back()->descriptor.native_execute = cachedSignalCohortExecute;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(
+                  context, makeSchedulerInstance(*fixtures.back()),
+                  OBELISK_RT_SCHEDULE_HOME(OBELISK_RT_REGION_REACTIVE),
+                  static_cast<uint32_t>(id)),
+              OBELISK_RT_OK);
+  }
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_nba(context, &plane, nullptr, 8, 0, 8, 0,
+                                        &replacement, nullptr),
+            OBELISK_RT_OK);
+  obelisk_rt_v1_scheduler_signal(context, cachedCohortPrimarySignal, 1,
+                                 OBELISK_RT_SIGNAL_CHANGE);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_TRUE(cachedCohortNBAVisible);
+  EXPECT_EQ(plane, replacement);
+  EXPECT_EQ(schedulerOrder.size(), 17u);
+  EXPECT_TRUE(context->scheduledProcesses.empty());
+  cachedCohortNBAPlane = nullptr;
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, CachedSignalCohortRequeuesUrgentTaskCallToken) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  cachedCohortPrimarySignal = 740;
+  cachedCohortSecondarySignal = 741;
+  cachedCohortSecondaryID = 0;
+  cachedCohortSpawnID = 0;
+  cachedCohortPublishID = 0;
+  cachedCohortUrgentChild = nullptr;
+  cachedCohortOrdinaryChild = nullptr;
+  cachedCohortTaskCallID = 1;
+  cachedCohortTaskCalled = false;
+  cachedCohortNBAPlane = nullptr;
+  schedulerOrder.clear();
+
+  SchedulerFixture callee(150);
+  cachedCohortTaskCallee = &callee.descriptor;
+  std::vector<std::unique_ptr<SchedulerFixture>> fixtures;
+  for (uint64_t id = 1; id <= 17; ++id) {
+    fixtures.push_back(std::make_unique<SchedulerFixture>(id));
+    fixtures.back()->descriptor.native_execute = cachedSignalCohortExecute;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(
+                  context, makeSchedulerInstance(*fixtures.back()), 0,
+                  static_cast<uint32_t>(id)),
+              OBELISK_RT_OK);
+  }
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  obelisk_rt_v1_scheduler_signal(context, cachedCohortPrimarySignal, 1,
+                                 OBELISK_RT_SIGNAL_CHANGE);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+
+  std::vector<uint64_t> expected{1, 150, 1};
+  for (uint64_t id = 2; id <= 17; ++id)
+    expected.push_back(id);
+  EXPECT_EQ(schedulerOrder, expected);
+  EXPECT_TRUE(context->scheduledProcesses.empty());
+  cachedCohortTaskCallee = nullptr;
+  cachedCohortTaskCallID = 0;
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, CachedUrgentRequeueRebuildsOldCursorDistances) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  cachedCohortSpawnID = 0;
+  cachedCohortPublishID = 0;
+  cachedCohortTaskCallID = 1;
+  cachedCohortTaskCalled = false;
+  cachedCohortContinueID = 0;
+  cachedCohortFrontierID = 0;
+  cachedCohortNBAPlane = nullptr;
+  schedulerDestroyCount = 0;
+  schedulerOrder.clear();
+
+  SchedulerFixture callee(150);
+  cachedCohortTaskCallee = &callee.descriptor;
+  std::vector<std::unique_ptr<SchedulerFixture>> fixtures;
+  for (uint64_t id = 1; id <= 17; ++id) {
+    fixtures.push_back(std::make_unique<SchedulerFixture>(id));
+    fixtures.back()->descriptor.native_execute = cachedSignalCohortExecute;
+    obelisk_rt_process_instance_v1 *instance =
+        makeSchedulerInstance(*fixtures.back());
+    ASSERT_NE(instance, nullptr);
+    instance->continuation = 1;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add(
+                  context, instance, OBELISK_RT_SCHEDULE_STARTUP),
+              OBELISK_RT_OK);
+  }
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+
+  std::vector<uint64_t> expected{1};
+  for (uint64_t id = 2; id <= 17; ++id)
+    expected.push_back(id);
+  expected.push_back(150);
+  expected.push_back(1);
+  EXPECT_EQ(schedulerOrder, expected);
+  EXPECT_EQ(schedulerDestroyCount, 18u);
+  EXPECT_TRUE(context->scheduledProcesses.empty());
+  cachedCohortTaskCallee = nullptr;
+  cachedCohortTaskCallID = 0;
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, CachedSignalCohortReadmitsSameTokenContinue) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  cachedCohortPrimarySignal = 750;
+  cachedCohortSecondarySignal = 751;
+  cachedCohortSecondaryID = 0;
+  cachedCohortSpawnID = 0;
+  cachedCohortPublishID = 0;
+  cachedCohortTaskCallID = 0;
+  cachedCohortContinueID = 1;
+  cachedCohortContinued = false;
+  cachedCohortContinuePublishes = false;
+  cachedCohortNBAPlane = nullptr;
+  schedulerOrder.clear();
+
+  std::vector<std::unique_ptr<SchedulerFixture>> fixtures;
+  for (uint64_t id = 1; id <= 17; ++id) {
+    fixtures.push_back(std::make_unique<SchedulerFixture>(id));
+    fixtures.back()->descriptor.native_execute = cachedSignalCohortExecute;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(
+                  context, makeSchedulerInstance(*fixtures.back()), 0,
+                  static_cast<uint32_t>(id)),
+              OBELISK_RT_OK);
+  }
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  obelisk_rt_v1_scheduler_signal(context, cachedCohortPrimarySignal, 1,
+                                 OBELISK_RT_SIGNAL_CHANGE);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+
+  std::vector<uint64_t> expected{1, 1};
+  for (uint64_t id = 2; id <= 17; ++id)
+    expected.push_back(id);
+  EXPECT_EQ(schedulerOrder, expected);
+  EXPECT_TRUE(context->scheduledProcesses.empty());
+  cachedCohortContinueID = 0;
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, CachedSameTokenPublicationInvalidatesBeforeContinue) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  cachedCohortPrimarySignal = 760;
+  cachedCohortSecondarySignal = 761;
+  cachedCohortSecondaryID = 40;
+  cachedCohortSpawnID = 0;
+  cachedCohortPublishID = 0;
+  cachedCohortTaskCallID = 0;
+  cachedCohortContinueID = 1;
+  cachedCohortContinued = false;
+  cachedCohortContinuePublishes = true;
+  cachedCohortNBAPlane = nullptr;
+  schedulerOrder.clear();
+
+  std::vector<std::unique_ptr<SchedulerFixture>> fixtures;
+  for (uint64_t id = 1; id <= 17; ++id) {
+    fixtures.push_back(std::make_unique<SchedulerFixture>(id));
+    fixtures.back()->descriptor.native_execute = cachedSignalCohortExecute;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(
+                  context, makeSchedulerInstance(*fixtures.back()), 0,
+                  static_cast<uint32_t>(id)),
+              OBELISK_RT_OK);
+  }
+  fixtures.push_back(std::make_unique<SchedulerFixture>(40));
+  fixtures.back()->descriptor.native_execute = cachedSignalCohortExecute;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(
+                context, makeSchedulerInstance(*fixtures.back()),
+                OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL, 100),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  obelisk_rt_v1_scheduler_signal(context, cachedCohortPrimarySignal, 1,
+                                 OBELISK_RT_SIGNAL_CHANGE);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+
+  std::vector<uint64_t> expected{1, 40, 1};
+  for (uint64_t id = 2; id <= 17; ++id)
+    expected.push_back(id);
+  EXPECT_EQ(schedulerOrder, expected);
+  EXPECT_TRUE(context->scheduledProcesses.empty());
+  cachedCohortContinueID = 0;
+  cachedCohortContinuePublishes = false;
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, CachedSameTokenWaitMovesToSlowUntilEpochReady) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  cachedCohortPrimarySignal = 770;
+  cachedCohortSecondarySignal = 771;
+  cachedCohortSecondaryID = 0;
+  cachedCohortSpawnID = 0;
+  cachedCohortPublishID = 0;
+  cachedCohortTaskCallID = 0;
+  cachedCohortContinueID = 0;
+  cachedCohortFrontierID = 1;
+  cachedCohortFrontierSuspended = false;
+  cachedCohortNBAPlane = nullptr;
+  schedulerOrder.clear();
+
+  std::vector<std::unique_ptr<SchedulerFixture>> fixtures;
+  for (uint64_t id = 1; id <= 17; ++id) {
+    fixtures.push_back(std::make_unique<SchedulerFixture>(id));
+    fixtures.back()->descriptor.native_execute = cachedSignalCohortExecute;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(
+                  context, makeSchedulerInstance(*fixtures.back()), 0,
+                  static_cast<uint32_t>(id)),
+              OBELISK_RT_OK);
+  }
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  obelisk_rt_v1_scheduler_signal(context, cachedCohortPrimarySignal, 1,
+                                 OBELISK_RT_SIGNAL_CHANGE);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+
+  std::vector<uint64_t> expected{1, 2, 1};
+  for (uint64_t id = 3; id <= 17; ++id)
+    expected.push_back(id);
+  EXPECT_EQ(schedulerOrder, expected);
+  EXPECT_TRUE(context->scheduledProcesses.empty());
+  cachedCohortFrontierID = 0;
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -3381,14 +3906,132 @@ TEST(Scheduler, TerminatedJoinNoneParentsPreserveDescendantAncestry) {
   designGrandchild.id = 7;
   designGrandchild.parent = tag | 4;
   context->scheduledDesignTasks.push_back(std::move(designGrandchild));
+  context->logicalProcessParentsWithChildren.insert(tag | 4);
 
   obelisk_rt_reparent_process_children_unlocked(context, tag | 4, tag | 2);
 
   EXPECT_EQ(context->scheduledProcesses[0].parent, tag | 1);
   EXPECT_EQ(context->scheduledProcesses[1].parent, tag | 2);
   EXPECT_EQ(context->scheduledDesignTasks[0].parent, tag | 2);
+  EXPECT_EQ(context->logicalProcessParentsWithChildren.count(tag | 4), 0u);
+  EXPECT_EQ(context->logicalProcessParentsWithChildren.count(tag | 2), 1u);
+  obelisk_rt_reparent_process_children_unlocked(context, tag | 2, 0);
+  EXPECT_EQ(context->scheduledProcesses[1].parent, 0u);
+  EXPECT_EQ(context->scheduledDesignTasks[0].parent, 0u);
+  EXPECT_TRUE(context->logicalProcessParentsWithChildren.empty());
   context->scheduledProcesses.clear();
   context->scheduledDesignTasks.clear();
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, NativeChildAttachIndexesAndReparentsActualProcess) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  constexpr uint64_t tag = OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+  context->activeLogicalProcessToken = tag | 41;
+  SchedulerFixture fixture(151);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(
+                context, makeSchedulerInstance(fixture), 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledProcesses.size(), 1u);
+  EXPECT_EQ(context->scheduledProcesses.front().parent, tag | 41);
+  EXPECT_EQ(context->logicalProcessParentsWithChildren.count(tag | 41), 1u);
+
+  obelisk_rt_reparent_process_children_unlocked(context, tag | 41, tag | 40);
+  EXPECT_EQ(context->scheduledProcesses.front().parent, tag | 40);
+  EXPECT_EQ(context->logicalProcessParentsWithChildren.count(tag | 41), 0u);
+  EXPECT_EQ(context->logicalProcessParentsWithChildren.count(tag | 40), 1u);
+  context->activeLogicalProcessToken = 0;
+  obelisk_rt_reparent_process_children_unlocked(context, tag | 40, 0);
+  EXPECT_TRUE(context->logicalProcessParentsWithChildren.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, DetachedChildlessTerminationDoesNotCreateParentIndex) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  constexpr uint64_t tag = OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+  context->activeLogicalProcessToken = tag | 99;
+  SchedulerFixture fixture(150);
+  schedulerDestroyCount = 0;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(
+                context, makeSchedulerInstance(fixture),
+                OBELISK_RT_SCHEDULE_STARTUP |
+                    OBELISK_RT_SCHEDULE_DETACHED_CONTROLS),
+            OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledProcesses.size(), 1u);
+  EXPECT_EQ(context->scheduledProcesses.front().parent, 0u);
+  EXPECT_TRUE(context->logicalProcessParentsWithChildren.empty());
+  context->activeLogicalProcessToken = 0;
+
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_TRUE(context->scheduledProcesses.empty());
+  EXPECT_TRUE(context->logicalProcessParentsWithChildren.empty());
+  EXPECT_EQ(schedulerDestroyCount, 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, ParentIndexStaysBoundedAcrossNaturalAndKilledChurn) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture urgentChild(160);
+  SchedulerFixture ordinaryChild(161);
+  cachedCohortUrgentChild = &urgentChild.descriptor;
+  cachedCohortOrdinaryChild = &ordinaryChild.descriptor;
+  cachedCohortSpawnID = 1;
+  cachedCohortTaskCallID = 0;
+  cachedCohortContinueID = 0;
+  cachedCohortFrontierID = 0;
+  cachedCohortPublishID = 0;
+  cachedCohortNBAPlane = nullptr;
+
+  for (unsigned iteration = 0; iteration != 16; ++iteration) {
+    SchedulerFixture parent(1);
+    parent.descriptor.native_execute = cachedSignalCohortExecute;
+    obelisk_rt_process_instance_v1 *instance = makeSchedulerInstance(parent);
+    ASSERT_NE(instance, nullptr);
+    instance->continuation = 1;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add(
+                  context, instance, OBELISK_RT_SCHEDULE_STARTUP),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+    EXPECT_TRUE(context->scheduledProcesses.empty());
+    EXPECT_TRUE(context->logicalProcessParentsWithChildren.empty());
+  }
+
+  constexpr uint64_t tag = OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+  for (unsigned iteration = 0; iteration != 16; ++iteration) {
+    context->activeLogicalProcessToken = tag | 900;
+    uint64_t activation = 0;
+    ASSERT_EQ(obelisk_rt_v1_control_enter(context, 901, &activation),
+              OBELISK_RT_OK);
+    context->activeLogicalProcessToken = 0;
+    SchedulerFixture parent(170);
+    SchedulerFixture child(171);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add(
+                  context, makeSchedulerInstance(parent), 0),
+              OBELISK_RT_OK);
+    ASSERT_FALSE(context->scheduledProcesses.empty());
+    uint64_t parentToken =
+        tag | context->scheduledProcesses.back().token;
+    context->activeLogicalProcessToken = parentToken;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add(
+                  context, makeSchedulerInstance(child), 0),
+              OBELISK_RT_OK);
+    EXPECT_EQ(context->logicalProcessParentsWithChildren.count(parentToken),
+              1u);
+
+    context->activeLogicalProcessToken = tag | 900;
+    ASSERT_EQ(obelisk_rt_v1_control_disable(context, 901, activation, 0),
+              OBELISK_RT_OK);
+    context->activeLogicalProcessToken = 0;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+    EXPECT_TRUE(context->scheduledProcesses.empty());
+    EXPECT_TRUE(context->logicalProcessParentsWithChildren.empty());
+  }
+  cachedCohortUrgentChild = nullptr;
+  cachedCohortOrdinaryChild = nullptr;
+  cachedCohortSpawnID = 0;
   obelisk_rt_v1_context_destroy(context);
 }
 
