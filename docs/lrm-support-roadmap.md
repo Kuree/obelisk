@@ -652,6 +652,18 @@ native path still takes 266.15 seconds / 25.81 GB RSS. Compact lowering of the
 fused dirty-mask kernels through the LLVM backend therefore remains required
 before forced-native large gate netlists, and G1, are performance-complete.
 
+G1's tenth closure tranche makes statically addressed native driver updates
+resolve and publish only the exact collapsed-net components touched by the
+declared driver range. Dynamic or unresolved handles retain the conservative
+whole-net fallback, while packed ranges, collapsed aliases, strengths,
+force/release, pass topology, and MOS source-strength forwarding preserve their
+existing semantics. The N=128 forced-native Generic O0 cohort now compiles in
+1.10 seconds / 134 MB RSS and produces a 4.3 MB executable. N=512 compiles in
+2.01 seconds / 529 MB for Generic O0, 3.32 seconds / 558 MB for AOT O3, and
+4.10 seconds / 699 MB for Eval O3; all modes simulate successfully. The
+Generic O0 binary is 10.8 MB instead of 450 MB. This closes the remaining G1
+compile-time and memory boundary.
+
 G4's first closure tranche executes unconditional scalar parallel specify
 paths with one, two, or three static delay values, including specparam and
 min/typ/max-selected values. Elaboration freezes path terminals and rounded
@@ -928,7 +940,7 @@ and 73.183 seconds compile / 0.019 seconds simulate for native.
 | 25 Interfaces | Partial | Interfaces, modports, parameterization, interface tasks/functions, interface arrays, virtual-interface handles, calls, containers, and clocking-block access execute. Complete the residual virtual-interface clock/event/formal cases and inherit specify support from Clause 30. |
 | 26 Packages | Partial | Packages, imports/exports, scope lookup, and the implemented `std` package surface, including R1 `std::randomize`, execute. Complete the remaining normative Annex G behavior through the randomization and system-task chunks. |
 | 27 Generate constructs | Partial | Loop/conditional generation and ordinary external names elaborate. External tests still expose generate-scope and parameter-binding corner cases. |
-| 28 Gate/switch modeling | Partial | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, strength-aware scalar-net `%v`, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, exact strength-preserving resolved-net source forwarding with immediate or inertial MOS/CMOS delays, and `tran`/`rtran`/`tranif0`/`tranif1`/`rtranif0`/`rtranif1` channels with exact four-state connectivity and resistive strength reduction execute. Controlled pass devices support their standard static turn-on/turn-off/high-impedance delays with keyed inertial cancellation. Forced-native primitive actors form bounded same-scope kernels while cycles remain under the convergence scheduler, but compact LLVM lowering is still needed for large fused kernels. Complete that forced-native backend scaling work. |
+| 28 Gate/switch modeling | Executable for the audited surface | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, strength-aware scalar-net `%v`, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, exact strength-preserving resolved-net source forwarding with immediate or inertial MOS/CMOS delays, and `tran`/`rtran`/`tranif0`/`tranif1`/`rtranif0`/`rtranif1` channels with exact four-state connectivity and resistive strength reduction execute. Controlled pass devices support their standard static turn-on/turn-off/high-impedance delays with keyed inertial cancellation. Forced-native primitive actors form bounded same-scope kernels while cycles remain under the convergence scheduler, and statically addressed driver publication lowers only the exact affected connectivity components. |
 | 29 User-defined primitives | Partial | Combinational UDP declarations preserve their validated port and ordered truth-table metadata and execute exact four-state matching, including Z-to-X input normalization, `?`/`b` symbols, source-order first match, missing-row X, ANSI/non-ANSI declarations, instances and arrays, strengths, and static one/two-value inertial delays in both tiers. Sequential state, initialization, and edge tables remain under G3; their metadata is retained and receives a targeted diagnostic rather than being silently lowered. |
 | 30 Specify blocks | Partial | Specparams and specify blocks are imported. Whole and fixed packed-select parallel/full multi-source paths, including `if`/`ifnone`, unknown/positive/negative polarity, one/two/three static delays, and one whole destination driver execute through compact inertial drivers in both tiers; overlapping paths arbitrate independently per selected destination bit, and equal-delay paths may cross a proven static combinational source closure. Complete edge/data-source forms, six/twelve-transition delays, split-driver path mappings, pulse controls and limits, and `showcancelled`/`noshowcancelled`. Unsupported forms receive targeted Clause 30 diagnostics instead of being silently erased. |
 | 31 Timing checks | Semantic only | System timing-check nodes are imported and now receive a targeted Clause 31 diagnostic instead of being silently erased. G5 implements all stability-window and clock/control checks, edge and condition forms, notifiers, vectors, negative checks, and violation scheduling. |
@@ -1129,15 +1141,16 @@ one commit.
 
 ### Gates, timing, SDF, and protected source
 
-36. **G1 — MOS/pass/CMOS devices (28.7-28.9, 28.13-28.14).** MOS/CMOS truth
+36. **G1 — MOS/pass/CMOS devices (28.7-28.9, 28.13-28.14), completed.** MOS/CMOS truth
     tables, arrays, exact strength-aware scalar `%v`, and unconditional and
     four-state-controlled tran/rtran propagation with chained exact resistive
     strength reduction are complete; controlled pass devices also implement
     their standard static delays, and exact immediate or delayed MOS
     source-strength forwarding executes. Forced-native primitive actors form
-    bounded same-scope kernels without hiding cyclic convergence, but their
-    LLVM backend path remains nonlinear on large cohorts. Implement compact
-    lowering for those fused gate kernels.
+    bounded same-scope kernels without hiding cyclic convergence, and their
+    statically addressed publications lower only the exact affected collapsed-
+    net components. Large forced-native cohorts therefore retain linear-sized
+    generated code and bounded compile memory.
 37. **G2 — Combinational UDPs (29.3-29.4, 29.8), completed.** Validated ports
     and ordered truth-table rows are frozen in semantic IR and compile to
     compact exact four-state matching. Instances and arrays, ANSI/non-ANSI
