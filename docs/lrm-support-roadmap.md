@@ -93,11 +93,13 @@ generic candidate scans, readiness calls, and AOT fallbacks at 0, 1024, and
 The bytecode direct-signal scheduler follow-up rejected an initial
 all-candidates-ready cache after an end-to-end `-O0` clocked design showed
 unchanged counters: the clock generator and control waiter remain slow poll
-candidates beside the large ready edge cohort. The final design allocates its
-runtime state only above 16 direct-ready tasks, caches their exact
-scheduler-key order, and rescans a separately validated slow-candidate set
-before every selection. It is not binary-size pay-for-play: common executables
-grow by about 20.5 KB because the scanner specializations remain linked.
+candidates beside the large ready edge cohort. The final design probes complete
+poll sets above 16 candidates, so even a rejected zero-ready shape may allocate
+its tail state and temporary build vectors once. An admitted shape caches the
+direct-ready scheduler-key order and rescans a separately validated
+slow-candidate set before every selection. It is not binary-size pay-for-play:
+common executables grow by roughly 21 KB of loaded text/data footprint (about
+23 KB on disk) because the scanner specializations remain linked.
 Priority-signal tasks stay in the exact slow scan because multiple simultaneous
 wakes intentionally share a key and preserve the unordered-set's first-equal
 selection. Membership, selection generation, time, process creation, Finals,
@@ -118,12 +120,21 @@ same-host UVM bytecode smoke passed with zero errors or fatals at 53.274/0.187
 seconds compile/simulate on current main and 57.320/0.196 seconds on the final
 runtime; the one-sample deltas remain below the 10% gate and the focused
 small-path runs isolate no measurable scheduler regression.
-The slow-dominant N=17/SLOW=1024/CYCLES=1001 case is deliberately suppressed;
-seven interleaved same-affinity runs had 0.20-second medians for both main and
-final, and both reported exactly 22,753,932 candidate scans and 137,137
-readiness calls. Slow membership validation is combined with that exact scan,
-including stale entries in the diagnostic count, so it cannot add a hidden
-second pass.
+The slow-dominant N=17/SLOW=1024/CYCLES=20001 case is deliberately suppressed;
+five interleaved and reversed same-affinity runs had 3.92-second main and
+3.88-second final medians, and both reported exactly 434,331,932 candidate
+scans and 2,740,137 readiness calls. Slow membership validation is combined
+with that exact scan, including stale entries in the diagnostic count, so it
+cannot add a hidden second pass. A genuine large-ready profitability rejection
+persists while the poll count stays at or below its rejected high-water mark;
+transient signal generations, time, phase, and per-wave poll shrink/regrowth
+therefore do not rebuild vectors. Zero-ready and startup shapes are re-probed
+after a generation change so they cannot hide a later admitted cohort.
+Candidate growth, process creation, and explicit control mutations also
+re-enable probing; missing a newly profitable same-size shape after a genuine
+rejection is the intentional conservative tradeoff and does not change
+exact-scan semantics. The ordinary and suppressed exact scan remains inline in
+`run_one`; only feature collection and cached slow scans are outlined.
 
 L4 is off the ordinary-net runtime hot path. Its required single UVM smoke ran
 in 34.590 seconds compile / 0.204 seconds simulate for bytecode and 74.951

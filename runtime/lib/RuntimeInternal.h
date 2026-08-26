@@ -797,9 +797,11 @@ struct DesignReadyCohortState {
   uint64_t selectionGeneration = 0;
   uint64_t schedulerTime = 0;
   uint64_t nextDesignTaskID = 0;
+  size_t suppressedCandidateHighWater = 0;
   bool runningFinals = false;
   bool valid = false;
   bool suppressed = false;
+  bool persistentSuppression = false;
 };
 
 struct SignalSubscriptionBucketKey {

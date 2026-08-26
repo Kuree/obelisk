@@ -4709,6 +4709,62 @@ TEST(DesignBytecode, SlowDominantDirectSignalSetStaysOnExactScan) {
   ASSERT_NE(context->designReadyCohort, nullptr);
   EXPECT_FALSE(context->designReadyCohort->valid);
   EXPECT_TRUE(context->designReadyCohort->suppressed);
+  EXPECT_TRUE(context->designReadyCohort->persistentSuppression);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode,
+     SlowDominantSuppressionSurvivesTransientSchedulerGenerations) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  addReadyTerminatingDesignTasks(context, 17, OBELISK_RT_REGION_ACTIVE);
+  addBlockedForeverDesignTasks(context, 1024);
+
+  bool progress = false;
+  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+                                           UINT64_MAX, &progress),
+            OBELISK_RT_OK);
+  ASSERT_TRUE(progress);
+  ASSERT_TRUE(context->designReadyCohort->suppressed);
+  EXPECT_EQ(context->designReadyCohort->suppressedCandidateHighWater, 1041u);
+  uint64_t rejectedGeneration = context->designReadyCohort->selectionGeneration;
+
+  // Signal publication, time advance, and phase changes affect readiness but
+  // cannot affect exact-scan semantics. Keep the negative admission result
+  // while the transient poll set only shrinks.
+  ++context->schedulerSelectionGeneration;
+  ++context->schedulerTime;
+  context->schedulerRunningFinals = true;
+  progress = true;
+  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+                                           UINT64_MAX, &progress),
+            OBELISK_RT_OK);
+  EXPECT_FALSE(progress);
+  EXPECT_TRUE(context->designReadyCohort->suppressed);
+  EXPECT_EQ(context->designReadyCohort->selectionGeneration,
+            rejectedGeneration);
+
+  context->schedulerRunningFinals = false;
+  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+                                           UINT64_MAX, &progress),
+            OBELISK_RT_OK);
+  ASSERT_TRUE(progress);
+  EXPECT_TRUE(context->designReadyCohort->suppressed);
+  EXPECT_EQ(context->designReadyCohort->selectionGeneration,
+            rejectedGeneration);
+
+  // Process creation is structural and makes the next call re-probe.
+  addBlockedForeverDesignTasks(context, 1);
+  uint64_t newNextTaskID = context->nextDesignTaskID;
+  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+                                           UINT64_MAX, &progress),
+            OBELISK_RT_OK);
+  ASSERT_TRUE(progress);
+  EXPECT_TRUE(context->designReadyCohort->suppressed);
+  EXPECT_EQ(context->designReadyCohort->nextDesignTaskID, newNextTaskID);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -4891,6 +4947,7 @@ TEST(DesignBytecode, DirectSignalCohortRevalidatesTimePhaseAndFinals) {
   EXPECT_EQ(context->terminatedDesignTasks.count(finalPhaseID), 1u);
   EXPECT_FALSE(context->designReadyCohort->valid);
   EXPECT_TRUE(context->designReadyCohort->suppressed);
+  EXPECT_FALSE(context->designReadyCohort->persistentSuppression);
   EXPECT_TRUE(context->designReadyCohort->runningFinals);
   obelisk_rt_v1_context_destroy(context);
 }
