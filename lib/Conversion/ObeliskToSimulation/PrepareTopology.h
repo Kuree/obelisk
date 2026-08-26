@@ -41,6 +41,7 @@ struct StaticStorageView {
   uint64_t packedOffset = 0;
   mlir::SmallVector<int64_t> indices;
   mlir::Type aggregateType;
+  bool identity = true;
 };
 
 struct PreparedPortAliases {

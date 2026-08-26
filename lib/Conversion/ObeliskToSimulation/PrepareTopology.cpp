@@ -55,6 +55,7 @@ FailureOr<StaticStorageView> getStaticStorageView(Operation *expression) {
   FailureOr<Type> resultType = getNormalizedSemanticType(expression);
   if (failed(base) || failed(resultType))
     return failure();
+  base->identity = false;
 
   if (auto member =
           dyn_cast<semantic::SVMemberAccessExpressionOp>(expression)) {
@@ -202,7 +203,62 @@ FailureOr<PreparedPortAliases>
 analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
   PreparedPortAliases result;
   bool invalid = false;
-  semanticRoot->walk([&](semantic::SVPortConnectionOp connection) {
+
+  // IEEE 1800-2017 10.10 net aliases are static topology, not executable
+  // connectivity.  Collapse direct whole-net aliases onto one descriptor so
+  // drivers, readers, and observers all use the same resolved net without
+  // adding any runtime propagation work.
+  llvm::StringMap<std::string> netAliasParents;
+  auto findNetAlias = [&](StringRef path) -> std::string {
+    SmallVector<std::string> chain;
+    std::string current = path.str();
+    while (true) {
+      auto [it, inserted] =
+          netAliasParents.try_emplace(current, current);
+      if (inserted || it->second == current)
+        break;
+      chain.push_back(current);
+      current = it->second;
+    }
+    for (StringRef member : chain)
+      netAliasParents[member] = current;
+    return current;
+  };
+  auto uniteNetAliases = [&](StringRef lhs, StringRef rhs) {
+    std::string lhsRoot = findNetAlias(lhs);
+    std::string rhsRoot = findNetAlias(rhs);
+    if (lhsRoot == rhsRoot)
+      return false;
+    netAliasParents[rhsRoot] = lhsRoot;
+    return true;
+  };
+  auto recordNetAlias = [&](semantic::SVNetAliasSymbolOp alias) {
+    SmallVector<Operation *> expressions = getChildren(alias);
+    if (expressions.size() < 2)
+      return;
+    SmallVector<std::string> paths;
+    for (Operation *expression : expressions) {
+      FailureOr<StaticStorageView> view = getStaticStorageView(expression);
+      if (failed(view) || !view->identity || view->offset != 0 ||
+          view->packedOffset != 0 || !view->indices.empty() ||
+          view->rootType != view->viewType)
+        return;
+      paths.push_back(view->path);
+    }
+    for (StringRef path : ArrayRef<std::string>(paths).drop_front())
+      uniteNetAliases(paths.front(), path);
+  };
+
+  // Fold alias collection into the existing port inventory walk so designs
+  // without alias statements do not pay for another full semantic-tree walk.
+  semanticRoot->walk([&](Operation *op) {
+    if (auto alias = dyn_cast<semantic::SVNetAliasSymbolOp>(op)) {
+      recordNetAlias(alias);
+      return;
+    }
+    auto connection = dyn_cast<semantic::SVPortConnectionOp>(op);
+    if (!connection)
+      return;
     if (isCompileTimeOnlyInstanceMember(connection))
       return;
     result.connections.push_back(connection);
@@ -230,6 +286,66 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
     result.aliases[internal] = view->path;
     result.refViews[internal] = *view;
   });
+  auto isWholeRefView = [](const StaticStorageView &view) {
+    return view.identity && view.offset == 0 && view.packedOffset == 0 &&
+           view.indices.empty() && view.rootType == view.viewType;
+  };
+
+  // A whole ref port may itself participate in a net-alias class in prepared
+  // MLIR.  Pull every transitive whole-view target into that class.  Selected
+  // or aggregate ref views remain directional aliases and are not collapsed.
+  llvm::StringSet<> flattenedTargets;
+  llvm::StringSet<> queuedAliases;
+  SmallVector<std::string> aliasWorklist;
+  for (const auto &entry : netAliasParents) {
+    queuedAliases.insert(entry.getKey());
+    aliasWorklist.push_back(entry.getKey().str());
+  }
+  while (!aliasWorklist.empty()) {
+    std::string formal = std::move(aliasWorklist.pop_back_val());
+    auto view = result.refViews.find(formal);
+    if (view == result.refViews.end() || !isWholeRefView(view->second))
+      continue;
+    flattenedTargets.insert(view->second.path);
+    uniteNetAliases(formal, view->second.path);
+    if (queuedAliases.insert(view->second.path).second)
+      aliasWorklist.push_back(view->second.path);
+  }
+
+  // Prefer a real flattened target over a formal alias as the descriptor
+  // owner.  Lexical selection makes two-port and repeated-alias groups stable
+  // regardless of StringMap iteration order.  A cyclic port-only graph has no
+  // terminal target and is left for the existing cyclic-port diagnostic.
+  llvm::StringMap<std::string> externalCanonicalByRoot;
+  llvm::StringSet<> rootsWithFlattenedTargets;
+  for (StringRef target : flattenedTargets.keys()) {
+    std::string root = findNetAlias(target);
+    rootsWithFlattenedTargets.insert(root);
+    if (result.aliases.count(target))
+      continue;
+    auto [it, inserted] = externalCanonicalByRoot.try_emplace(root,
+                                                              target.str());
+    if (!inserted && target < it->second)
+      it->second = target.str();
+  }
+  for (const auto &entry : netAliasParents) {
+    StringRef path = entry.getKey();
+    std::string root = findNetAlias(path);
+    auto external = externalCanonicalByRoot.find(root);
+    if (external == externalCanonicalByRoot.end()) {
+      if (rootsWithFlattenedTargets.count(root) || result.aliases.count(path))
+        continue;
+      if (path != root)
+        result.aliases[path] = root;
+      continue;
+    }
+    if (auto view = result.refViews.find(path);
+        view != result.refViews.end() && !isWholeRefView(view->second))
+      continue;
+    StringRef canonical = external->second;
+    if (path != canonical)
+      result.aliases[path] = canonical.str();
+  }
   semanticRoot->walk([&](semantic::SVModportPortSymbolOp port) {
     if (isCompileTimeOnlyInstanceMember(port))
       return;
