@@ -1438,6 +1438,27 @@ An ordinary declaration-initializer design has byte-identical Simulation IR
 against exact base `f1d041e9`, confirming structural pay-for-play on the
 no-feature path.
 
+L12's eleventh closure tranche implements IEEE 1800-2023 6.24.3 explicit
+bit-stream casts from dynamic arrays and queues of fixed packed elements into
+fixed packed values. Ordinal zero occupies the destination's most-significant
+bits, four-state data is preserved until the final target coercion, and X/Z
+bits become zero only for a two-state target. A runtime size mismatch is fatal;
+it is never padded or truncated. One feature-local bulk operation captures a
+coherent container-and-buffer snapshot and packs in linear time for native and
+bytecode execution. Native-only designs extract only the cold packing ABI,
+while bytecode designs select a separate weak-handler object; designs without
+these casts retain byte-identical generated IR and no bit-stream feature body
+or support object. The common bytecode dispatcher adds only one weak-null tail
+branch. Fixed unpacked, string, associative-array, acyclic all-bit-stream
+class/object, and nested dynamically sized bit-stream sources remain in the
+Clause 6/7/11 differential long tail.
+
+A 65,536-bit cast from 8,192 byte elements compiles in 0.70 seconds / 101 MB
+for generic native, 3.28 seconds / 112 MB for hybrid native, and 0.06 seconds /
+74 MB for bytecode, then simulates in at most 0.02 seconds while evaluating its
+source function once. An ordinary hierarchy fixture retains byte-identical
+Simulation, encoded-bytecode, and final LLVM IR against base `f6154368`.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -1450,7 +1471,7 @@ no-feature path.
 | 8 Classes | Partial | Construction, inheritance, polymorphism, virtual/interface methods, parameterized classes, copying, managed properties, garbage collection, and the UVM-used surface execute. Complete the residual class/type/operator/constructor long tail exposed by focused probes and the aggregate/reference gaps shared with Clauses 6, 7, and 11. |
 | 9 Processes | Partial | Structured procedures, all fork/join forms, `wait fork`, `disable fork`, timed and recursive tasks, `process` handles and control, automatic capture, and cancellation execute. Implicit event controls derive complete read dependencies, wait before their first execution, and permanently suspend when the controlled statement has no readable dependency. Edge controls and `iff` guards execute over static signals, computed expressions, and class properties without allowing a guard-only change to trigger the statement. Named-block disable exits the exact live target activation across process and task boundaries, cancels only its descendants, preserves outer task copy-out, suppresses abandoned inner copy-out, and supports concurrent and repeated activations in native and bytecode tiers. Nonrecursive function-call exits also execute; recursive zero-time function-call corner cases remain in the core long tail. |
 | 10 Assignment statements | Partial | Blocking/NBA assignment, intra-assignment timing, assignment patterns, queue/unpacked slice lvalues, net aliasing, static continuous-assignment delays including `specparam` expressions, strengths, and procedural force/assign execute for every legal target category: whole variables including fixed unpacked aggregates, dynamic arrays, queues, associative arrays, strings, class handles, and class properties; whole built-in nets and constant built-in-net selects; and legal concatenations. Signal-dependent RHS expressions reevaluate from exact scalar and managed-container dependencies; overlapping packed statements retain per-bit ownership through alias roots, managed values remain precisely rooted, and release/deassign retires detached evaluators. Clause 10.6 excludes automatic variables, variable selects, nonconstant net selects, and user-defined nettypes from these targets; those are tested diagnostics rather than implementation gaps. Continue differential closure for residual assignment corner cases. |
-| 11 Operators and expressions | Partial | Legal equality, ordering, logical operations, concatenation, replication, streaming and bit-stream casts, and packed selection execute for strings, containers, unpacked aggregates, handles, and arbitrary-width packed values. This includes packed-to-queue/dynamic-array casts, handle wildcard identity equality, two-state XNOR, compact integral power, constant ordinary part-selects, dynamic indexed part-selects with partial out-of-range behavior, dynamic string replication, and fixed/dynamic unpacked concatenation with per-element conversion. Ordinary part-select bounds must be constant and strings are not sliceable, so those former diagnostic branches are not missing language features. Public `--timing=min|typ|max` selects constant and dynamic expressions. Remaining expression work is tracked by references, randomization, assertions, and the differential long tail. |
+| 11 Operators and expressions | Partial | Legal equality, ordering, logical operations, concatenation, replication, streaming and bit-stream casts, and packed selection execute for strings, containers, unpacked aggregates, handles, and arbitrary-width packed values. This includes packed-to-queue/dynamic-array casts; exact-width dynamic-array/queue-to-packed explicit bit-stream casts with ordinal-zero-at-MSB ordering and final X/Z coercion; handle wildcard identity equality; two-state XNOR; compact integral power; constant ordinary part-selects; dynamic indexed part-selects with partial out-of-range behavior; dynamic string replication; and fixed/dynamic unpacked concatenation with per-element conversion. Fixed unpacked, string, associative-array, acyclic all-bit-stream class/object, and nested dynamically sized bit-stream sources remain differential residuals. Ordinary part-select bounds must be constant and strings are not sliceable, so those former diagnostic branches are not missing language features. Public `--timing=min|typ|max` selects constant and dynamic expressions. Remaining expression work is tracked by references, randomization, assertions, and the differential long tail. |
 | 12 Procedural statements | Partial | Conditional, ordinary/pattern case, loops, jumps, `randcase`, and most `randsequence` forms execute. Recursive randsequence productions and value-returning productions still require activation frames and expression-valued production calls. |
 | 13 Tasks and functions | Executable for the audited non-DPI surface | Static/automatic, recursive, virtual, class/interface, timed task, value/output/inout/ref, default argument, and cancellation behavior execute. Sole non-fork/join modport-exported implementations of interface extern methods use the same direct function/task ABI, including suspending copy-out and cancellation. Continue differential closure for unusual aggregate and hierarchical formal cases; DPI is tracked separately in Clause 35. |
 | 14 Clocking blocks | Partial | Input/output skews, `#1step`, synchronous drives, event lists and `iff`, cycle delays, defaults, virtual-interface clocking handles, and hierarchically resolved global clocking through `$global_clock` execute. Concurrent lowering accepts dynamically selected virtual-interface direct and clocking-block events, distinguishes handles that select the same static interface member, and carries event clocks through expanded property and sequence formals. Common Boolean maximal clocked subsequences compose through exact `##0` same-occurrence fusion and `##1` nearest-strictly-later handoffs, including leading `##1`, direct `iff`, and repeated same-time occurrences. One feature-local coordinator retains at most 64 frozen clocks and aggregate per-stage counts; ordinary single-clock assertions allocate no cohort state. The current Slang frontend rejects virtual-interface members in concurrent assertions and produces an invalid expanded AST for untyped formals carrying clock events; both source cases are recorded xfails without a Slang patch. General property algebra across maximal subsequences, computed/declared clocking-block `iff` descriptors, and remaining inferred-clock contexts remain. |
@@ -1577,7 +1598,10 @@ one commit.
 12. **L12 — Core frontend/lowering long-tail closure (5-13).** Reduce every
     remaining non-extension ivtest/Verilator core failure to a minimal clause
     test, then close declaration, conversion, lvalue, call, and pattern cases
-    not already named above.
+    not already named above. Dynamic-array/queue-to-fixed-packed explicit
+    bit-stream casts now execute through an exact-width, linear bulk path;
+    fixed unpacked, string, associative-array, acyclic all-bit-stream
+    class/object, and nested dynamic sources remain in this long tail.
 13. **L13 — Hierarchy, ports, and generate closure (23, 25, 27).** Fix the
     remaining legal port conversions/connections, hierarchical paths, upward
     lookup, generated scope naming, and parameter binding. Sole non-fork/join

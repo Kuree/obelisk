@@ -35,6 +35,15 @@ invokeDynamicScanIntrinsic(const Image &image, Frame &frame,
                            obelisk_rt_context *context, IntrinsicSite site,
                            uint32_t intrinsicId);
 
+#if defined(__clang__) || defined(__GNUC__)
+__attribute__((weak))
+#endif
+obelisk_rt_status invokeContainerBitstreamIntrinsic(const Image &image,
+                                                    Frame &frame,
+                                                    obelisk_rt_context *context,
+                                                    IntrinsicSite site,
+                                                    uint32_t intrinsicId);
+
 } // namespace obelisk::designbytecode
 
 #endif // OBELISK_RUNTIME_LIB_DESIGNBYTECODEEXECUTION_H

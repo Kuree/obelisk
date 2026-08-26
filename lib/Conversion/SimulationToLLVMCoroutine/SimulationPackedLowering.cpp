@@ -709,6 +709,7 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimContainerSizeOp, sim::SimContainerCreateLikeOp,
         sim::SimContainerCreateOp, sim::SimContainerCloneOp,
         sim::SimContainerImportFixedOp, sim::SimContainerExportFixedOp,
+        sim::SimContainerExportBitstreamOp,
         sim::SimContainerSwapOp, sim::SimContainerDeleteOp,
         sim::SimQueueDeleteOp, sim::SimQueueInsertOp, sim::SimContainerReadOp,
         sim::SimContainerWriteOp, sim::SimAssocCreateOp, sim::SimAssocReadOp,

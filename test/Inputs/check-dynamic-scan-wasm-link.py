@@ -39,6 +39,12 @@ for member in feature_members:
         raise SystemExit(f"no-feature wasm extracted {member}")
     if member not in yes_map:
         raise SystemExit(f"dynamic-scan wasm did not extract {member}")
+bitstream_members = ("ContainerBitstream.o", "ContainerBitstreamBytecode.o")
+for member in bitstream_members:
+    if member in no_map:
+        raise SystemExit(f"no-feature wasm extracted {member}")
+    if member in yes_map:
+        raise SystemExit(f"scan-only wasm extracted {member}")
 feature_body_symbols = (
     "obelisk_rt_v1_dynamic_scan_link_anchor",
     "obelisk_rt_dynamic_scan_plan",
@@ -49,5 +55,15 @@ for symbol in feature_body_symbols:
 for symbol in (*feature_body_symbols, "invokeDynamicScanIntrinsic"):
     if symbol not in yes_map:
         raise SystemExit(f"dynamic-scan wasm did not retain {symbol}")
+bitstream_symbols = (
+    "obelisk_rt_v1_container_export_bitstream",
+    "obelisk_rt_v1_container_bitstream_link_anchor",
+    "invokeContainerBitstreamIntrinsic",
+)
+for symbol in bitstream_symbols:
+    if symbol in no_map:
+        raise SystemExit(f"no-feature wasm retained {symbol}")
+    if symbol in yes_map:
+        raise SystemExit(f"scan-only wasm retained {symbol}")
 if code_size(yes_wasm) <= code_size(no_wasm):
     raise SystemExit("dynamic-scan wasm did not retain additional feature code")

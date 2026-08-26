@@ -728,6 +728,15 @@ def SimContainerExportFixedOp : SimOp<"container.export_fixed", [
   let hasVerifier = 1;
 }
 
+def SimContainerExportBitstreamOp : SimOp<"container.export_bitstream", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "pack a dynamic container into one fixed bit-stream value";
+  let arguments = (ins AnyType:$container);
+  let results = (outs AnyType:$result);
+  let hasVerifier = 1;
+}
+
 def SimContainerSwapOp : SimOp<"container.swap", [
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {

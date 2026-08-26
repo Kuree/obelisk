@@ -468,6 +468,9 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   convert(::mlir::Value value, ::mlir::Type targetType, bool sourceSigned,
           ::mlir::Location location, bool targetSigned = false);
+  ::mlir::FailureOr<::mlir::Value> convertSequentialContainerBitstream(
+      ::mlir::Value value, ::mlir::Type targetType, ::mlir::Type targetScalar,
+      ::mlir::Type sourceElement, ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value> toPackedScalar(::mlir::Value value,
                                                   ::mlir::Location location);
   /// Compare a floating-point selector against one `case` label or `inside`

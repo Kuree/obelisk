@@ -996,6 +996,7 @@ enum {
       UINT32_C(0x0001045e),
   OBELISK_RT_INTRINSIC_V1_CONTAINER_IMPORT_FIXED = UINT32_C(0x0001045f),
   OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_FIXED = UINT32_C(0x00010460),
+  OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM = UINT32_C(0x00010464),
   OBELISK_RT_INTRINSIC_V1_BOX_IS_TYPE = UINT32_C(0x00010417),
   OBELISK_RT_INTRINSIC_V1_STRING_LITERAL = UINT32_C(0x00010420),
   OBELISK_RT_INTRINSIC_V1_STRING_FROM_PACKED = UINT32_C(0x00010421),
@@ -2232,6 +2233,11 @@ obelisk_rt_status obelisk_rt_v1_container_export_fixed(
     obelisk_rt_object_v1 *container, void *out_value, void *out_unknown,
     uint64_t plane_size, uint64_t bit_width, uint32_t four_state,
     uint64_t element_span, uint64_t count);
+obelisk_rt_status obelisk_rt_v1_container_export_bitstream(
+    obelisk_rt_object_v1 *container, void *out_value, void *out_unknown,
+    uint64_t plane_size, uint64_t bit_width, uint32_t four_state,
+    uint64_t element_width, uint64_t count, uint64_t element_plane_size,
+    uint32_t element_four_state);
 obelisk_rt_status
 obelisk_rt_v1_container_delete(obelisk_rt_object_v1 *container);
 obelisk_rt_status obelisk_rt_v1_queue_push(obelisk_rt_gc_lane_v1 *lane,

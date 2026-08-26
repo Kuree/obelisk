@@ -4496,6 +4496,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_BYTECODE;
     return invokeDynamicScanIntrinsic(image, frame, context, site,
                                       signature.id);
+  case OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM:
+    if (!invokeContainerBitstreamIntrinsic)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return invokeContainerBitstreamIntrinsic(image, frame, context, site,
+                                             signature.id);
   default:
     return OBELISK_RT_INVALID_BYTECODE;
   }

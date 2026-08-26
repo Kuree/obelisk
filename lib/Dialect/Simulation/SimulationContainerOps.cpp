@@ -701,6 +701,24 @@ LogicalResult SimContainerExportFixedOp::verify() {
                                       getResult().getType(), getElementSpan());
 }
 
+LogicalResult SimContainerExportBitstreamOp::verify() {
+  Type element = getContainerElement(getContainer().getType());
+  Type elementScalar = getPackedScalarType(element);
+  Type resultScalar = getResult().getType();
+  std::optional<unsigned> elementWidth = getPackedWidth(elementScalar);
+  std::optional<unsigned> resultWidth = getPackedWidth(resultScalar);
+  if (!isa<DynamicArrayType, QueueType>(getContainer().getType()) ||
+      !elementScalar || !elementWidth || *elementWidth == 0)
+    return emitOpError(
+        "input must be a dynamic array or queue of fixed packed elements");
+  if (!isa<IntegerType, LogicType>(resultScalar) || !resultWidth ||
+      *resultWidth == 0 || *resultWidth % *elementWidth != 0)
+    return emitOpError(
+        "result must be a nonempty fixed bit-stream containing a whole "
+        "number of input elements");
+  return success();
+}
+
 LogicalResult SimContainerSwapOp::verify() {
   if (!isa<DynamicArrayType, QueueType>(getContainer().getType()))
     return emitOpError("operand must be a dynamic array or queue");

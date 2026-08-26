@@ -87,6 +87,34 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
              plan, sim::getAggregateNumElements(op.getResult().getType()))},
         {reg(plan, op.getResult())});
   }
+  if (auto op = dyn_cast<sim::SimContainerExportBitstreamOp>(operation)) {
+    FailureOr<ManagedValueStorage> storage =
+        getManagedValueStorage(op.getResult().getType(), dataLayout);
+    Type containerType = op.getContainer().getType();
+    Type element =
+        isa<sim::DynamicArrayType>(containerType)
+            ? cast<sim::DynamicArrayType>(containerType).getElementType()
+            : cast<sim::QueueType>(containerType).getElementType();
+    FailureOr<ManagedValueStorage> elementStorage =
+        getManagedValueStorage(element, dataLayout);
+    std::optional<uint32_t> width = simulationWidth(op.getResult().getType());
+    std::optional<uint32_t> elementWidth = simulationWidth(element);
+    if (failed(storage) || failed(elementStorage) || !width || !elementWidth ||
+        *elementWidth == 0 || *width % *elementWidth != 0)
+      return op.emitOpError("bit-stream export has no bytecode layout");
+    requiresContainerBitstreamFeature = true;
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicContainerExportBitstream,
+        {reg(plan, op.getContainer()),
+         emitU64Constant(plan, storage->planeSize),
+         emitU64Constant(plan, *width),
+         emitU64Constant(plan, storage->fourState),
+         emitU64Constant(plan, *elementWidth),
+         emitU64Constant(plan, *width / *elementWidth),
+         emitU64Constant(plan, elementStorage->planeSize),
+         emitU64Constant(plan, elementStorage->fourState)},
+        {reg(plan, op.getResult())});
+  }
   if (auto op = dyn_cast<sim::SimContainerSwapOp>(operation))
     return emitIntrinsic(plan, kIntrinsicContainerSwap,
                          {op.getContainer(), op.getLeft(), op.getRight()}, {});

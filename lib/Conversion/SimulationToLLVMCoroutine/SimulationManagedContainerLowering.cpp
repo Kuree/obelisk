@@ -319,6 +319,97 @@ private:
   const llvm::DataLayout &dataLayout;
 };
 
+class ContainerExportBitstreamConversion final
+    : public OpConversionPattern<sim::SimContainerExportBitstreamOp> {
+public:
+  ContainerExportBitstreamConversion(const TypeConverter &converter,
+                                     MLIRContext *context,
+                                     const llvm::DataLayout &dataLayout)
+      : OpConversionPattern(converter, context), dataLayout(dataLayout) {}
+
+  LogicalResult
+  matchAndRewrite(sim::SimContainerExportBitstreamOp op,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getContainer().size() != 1)
+      return failure();
+    SmallVector<Type> convertedTypes;
+    if (failed(getTypeConverter()->convertType(op.getResult().getType(),
+                                               convertedTypes)) ||
+        convertedTypes.empty() || convertedTypes.size() > 2)
+      return failure();
+    llvm::DataLayout local(dataLayout.getStringRepresentation());
+    llvm::LLVMContext llvmContext;
+    FailureOr<analysis::SimulationStorageProperties> storage =
+        analysis::getSimulationStorageProperties(op.getResult().getType(),
+                                                 local, llvmContext);
+    Type containerType = op.getContainer().getType();
+    Type element =
+        isa<sim::DynamicArrayType>(containerType)
+            ? cast<sim::DynamicArrayType>(containerType).getElementType()
+            : cast<sim::QueueType>(containerType).getElementType();
+    FailureOr<analysis::SimulationStorageProperties> elementStorage =
+        analysis::getSimulationStorageProperties(element, local, llvmContext);
+    std::optional<unsigned> elementWidth =
+        sim::getPackedWidth(sim::getPackedScalarType(element));
+    std::optional<unsigned> width =
+        sim::getPackedWidth(sim::getPackedScalarType(op.getResult().getType()));
+    if (failed(storage) || failed(elementStorage) || !elementWidth || !width ||
+        *elementWidth == 0 || *width % *elementWidth != 0 ||
+        convertedTypes.size() !=
+            analysis::getSimulationPhysicalStorageCount(*storage))
+      return failure();
+
+    Location location = op.getLoc();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i32 = rewriter.getI32Type();
+    Type i64 = rewriter.getI64Type();
+    SmallVector<Value> planes;
+    for (Type type : convertedTypes)
+      planes.push_back(
+          entryAlloca(rewriter, location, type, 1, storage->alignment));
+    Value unknown =
+        planes.size() == 2
+            ? planes[1]
+            : Value(LLVM::ZeroOp::create(rewriter, location, pointer));
+    auto [context, lane] = managedContextAndLane(rewriter, location);
+    (void)lane;
+    getOrDeclareLLVMFunction(
+        op->getParentOfType<ModuleOp>(),
+        "obelisk_rt_v1_container_export_bitstream", i32,
+        {pointer, pointer, pointer, i64, i64, i32, i64, i64, i64, i32});
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_container_export_bitstream"),
+            ValueRange{
+                managedObjectPointer(rewriter, location,
+                                     adaptor.getContainer().front()),
+                planes.front(), unknown,
+                llvmConstant(rewriter, location, i64, storage->size),
+                llvmConstant(rewriter, location, i64, *width),
+                llvmConstant(rewriter, location, i32, storage->fourState),
+                llvmConstant(rewriter, location, i64, *elementWidth),
+                llvmConstant(rewriter, location, i64, *width / *elementWidth),
+                llvmConstant(rewriter, location, i64, elementStorage->size),
+                llvmConstant(rewriter, location, i32,
+                             elementStorage->fourState)})
+            .getResult();
+    reportManagedStatus(rewriter, location, context, status);
+    SmallVector<Value> results;
+    for (auto [type, plane] : llvm::zip_equal(convertedTypes, planes))
+      results.push_back(LLVM::LoadOp::create(rewriter, location, type, plane,
+                                             storage->alignment));
+    SmallVector<ValueRange> replacements{ValueRange(results)};
+    rewriter.replaceOpWithMultiple(op, replacements);
+    return success();
+  }
+
+private:
+  const llvm::DataLayout &dataLayout;
+};
+
 class ContainerSwapConversion final
     : public OpConversionPattern<sim::SimContainerSwapOp> {
 public:
@@ -1559,6 +1650,8 @@ void populateManagedContainerToLLVMConversionPatterns(
       RandomSolveConversion>(converter, context);
   patterns.add<ContainerImportFixedConversion, ContainerExportFixedConversion>(
       converter, context, dataLayout);
+  patterns.add<ContainerExportBitstreamConversion>(converter, context,
+                                                   dataLayout);
   patterns.add<RandomSolveWideConversion, SampledReadConversion,
                SampledHistoryConversion, ClockedSampleUpdateConversion,
                ClockedSampleReadConversion>(converter, context);

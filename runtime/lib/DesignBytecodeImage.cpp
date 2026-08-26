@@ -878,6 +878,14 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!twoStateBits(input(index), 64))
         return false;
     return true;
+  case OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM:
+    if (signature.flags != 0 || site.inputCount != 8 || site.outputCount != 1 ||
+        !managed(input(0)) || !numeric(output(0)))
+      return false;
+    for (uint32_t index = 1; index != 8; ++index)
+      if (!twoStateBits(input(index), 64))
+        return false;
+    return true;
   case OBELISK_RT_INTRINSIC_V1_CONTAINER_SWAP:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 0 && managed(input(0)) &&

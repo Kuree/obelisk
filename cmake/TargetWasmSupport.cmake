@@ -98,7 +98,7 @@ set(_obelisk_target_runtime_common_sources
     ProcessTransitions ProcessValidation Random RandSolve RandSolveWide Runtime
     Sampled StochasticQueue System VCD VPI)
 set(_obelisk_target_runtime_cold_tail_sources
-    ScanFormat DynamicScanBytecode)
+    ScanFormat DynamicScanBytecode ContainerBitstream ContainerBitstreamBytecode)
 set(_obelisk_target_runtime_objects)
 foreach(source IN LISTS _obelisk_target_runtime_common_sources
                         _obelisk_target_runtime_cold_tail_sources)

@@ -49,6 +49,7 @@ struct EncodedSimulationDesign {
   uint64_t stateBitCount = 0;
   uint32_t executionFlags = 0;
   bool requiresDynamicScanFeature = false;
+  bool requiresContainerBitstreamFeature = false;
 };
 
 /// Encode without mutating the supplied design. This API accepts the closed,

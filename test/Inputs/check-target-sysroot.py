@@ -244,11 +244,12 @@ native_members = [
     "System.o",
     "VCD.o",
     "VPI.o",
-    # Dynamic formatted-scan services are deliberately the archive tail.  The
-    # wasm graph uses the same order when it cannot provide an ELF feature
-    # text section.
+    # Pay-for-play services are deliberately the archive tail. The wasm graph
+    # uses the same order when it cannot provide an ELF feature text section.
     "ScanFormat.o",
     "DynamicScanBytecode.o",
+    "ContainerBitstream.o",
+    "ContainerBitstreamBytecode.o",
 ]
 lto_members = [
     pathlib.Path(member).with_suffix(".bc").name for member in native_members

@@ -1,5 +1,6 @@
 //===- Containers.cpp - Managed strings and container storage -------------===//
 
+#include "ContainerStorageInternal.h"
 #include "RuntimeInternal.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -30,42 +31,15 @@ struct StringHeader {
 
 static_assert(sizeof(StringHeader) == 16);
 
-struct BufferHeader {
-  const void *descriptor;
-  uint64_t reserved;
-};
-
-struct ContainerHeader {
-  const void *descriptor;
-  obelisk_rt_container_kind_v1 kind;
-  uint32_t reserved;
-  const obelisk_rt_element_type_v1 *element;
-  obelisk_rt_object_v1 *buffer;
-  obelisk_rt_object_v1 *ordered;
-  obelisk_rt_object_v1 *defaultValue;
-  uint64_t size;
-  uint64_t capacity;
-  uint64_t head;
-  uint64_t bound;
-  uint64_t epoch;
-  obelisk_rt_assoc_key_kind_v1 keyKind;
-  uint32_t hasDefault;
-  uint64_t keyWidth;
-  obelisk_rt_object_v1 *referenceBuffer;
-  uint64_t referenceCount;
-  uint64_t referenceCapacity;
-};
+using obelisk::runtime_detail::BufferHeader;
+using obelisk::runtime_detail::ContainerHeader;
 
 struct SemaphoreHeader {
   const void *descriptor;
   int64_t keys;
 };
 
-static_assert(sizeof(BufferHeader) == 16);
-// Both headers embed object pointers, so their size follows the pointer
-// width. Nothing outside this file depends on either number; the
-// assertions guard against an unnoticed field being added.
-static_assert(sizeof(ContainerHeader) == (sizeof(void *) == 8 ? 128 : 112));
+// Guard the private semaphore storage against an unnoticed field being added.
 static_assert(sizeof(SemaphoreHeader) == 16);
 
 struct AssocSlot {

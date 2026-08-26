@@ -113,10 +113,18 @@ LogicalResult makeSchedulerMain(ModuleOp module,
       LLVM::LoadOp::create(builder, location, pointer, outContext, 8);
   bool requiresDynamicScanFeature =
       module->hasAttr("obelisk.feature.dynamic_scan");
+  bool requiresContainerBitstreamFeature =
+      module->hasAttr("obelisk.feature.container_bitstream");
   if (requiresDynamicScanFeature)
     LLVM::CallOp::create(
         builder, location, TypeRange{},
         SymbolRefAttr::get(context, "obelisk_rt_v1_dynamic_scan_link_anchor"),
+        ValueRange{});
+  if (requiresContainerBitstreamFeature)
+    LLVM::CallOp::create(
+        builder, location, TypeRange{},
+        SymbolRefAttr::get(context,
+                           "obelisk_rt_v1_container_bitstream_link_anchor"),
         ValueRange{});
   Value configureStatus =
       LLVM::CallOp::create(
@@ -353,6 +361,9 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   if (requiresDynamicScanFeature)
     getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dynamic_scan_link_anchor",
                              voidType, {});
+  if (requiresContainerBitstreamFeature)
+    getOrDeclareLLVMFunction(
+        module, "obelisk_rt_v1_container_bitstream_link_anchor", voidType, {});
   return success();
 }
 

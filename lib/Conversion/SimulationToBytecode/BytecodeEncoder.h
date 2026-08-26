@@ -223,6 +223,7 @@ private:
   llvm::SmallVector<IntrinsicSite> intrinsicSites;
   llvm::SmallVector<CaptureRecord> captureRecords;
   bool requiresDynamicScanFeature = false;
+  bool requiresContainerBitstreamFeature = false;
 };
 
 } // namespace obelisk::bytecode

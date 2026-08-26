@@ -52,8 +52,13 @@ expected_members = [pathlib.Path(item).name + ".o"
 if members != expected_members:
     raise SystemExit("built runtime archive does not preserve its declared "
                      "common/cold-tail grouping")
-if host_cold[:2] != ["lib/ScanFormat.cpp", "lib/DynamicScanBytecode.cpp"]:
-    raise SystemExit("dynamic scan services are not in the cold-tail group")
+if host_cold[:4] != [
+    "lib/ScanFormat.cpp",
+    "lib/DynamicScanBytecode.cpp",
+    "lib/ContainerBitstream.cpp",
+    "lib/ContainerBitstreamBytecode.cpp",
+]:
+    raise SystemExit("feature services are not in the cold-tail group")
 
 
 def member_layout(member):
@@ -96,6 +101,22 @@ for symbol in (
 ):
     require_feature_or_inlined(bytecode_layout, symbol)
 
+bitstream_layout = member_layout("ContainerBitstream.cpp.o")
+require_feature_symbol(
+    bitstream_layout, "obelisk_rt_v1_container_export_bitstream"
+)
+for symbol in ("copyBits", "packContainer", "packBuffer"):
+    require_feature_or_inlined(bitstream_layout, symbol)
+
+bitstream_bytecode_layout = member_layout("ContainerBitstreamBytecode.cpp.o")
+for symbol in (
+    "invokeContainerBitstreamIntrinsic",
+    "obelisk_rt_v1_container_bitstream_link_anchor",
+):
+    require_feature_symbol(bitstream_bytecode_layout, symbol)
+for symbol in ("readScalar", "readManaged"):
+    require_feature_or_inlined(bitstream_bytecode_layout, symbol)
+
 for member, symbol in (
     ("Containers.cpp.o", "obelisk_rt_v1_string_scan_dynamic"),
     ("FileIO.cpp.o", "obelisk_rt_v1_file_scan_dynamic"),
@@ -116,7 +137,14 @@ weak_handler = re.search(
     dispatcher_layout,
     re.DOTALL,
 )
-if not weak_handler:
+weak_bitstream_handler = re.search(
+    r"Symbol \{(?:(?!Symbol \{).)*Name: [^\n]*invokeContainerBitstreamIntrinsic"
+    r"[^\n]*\n(?:(?!Symbol \{).)*Binding: Weak\s*"
+    r"(?:(?!Symbol \{).)*Section: Undefined",
+    dispatcher_layout,
+    re.DOTALL,
+)
+if not weak_handler or not weak_bitstream_handler:
     raise SystemExit("common bytecode dispatcher has a strong feature edge")
 
 
@@ -124,8 +152,13 @@ for path in (source / "cmake/TargetNativeSupport.cmake",
              source / "cmake/TargetWasmSupport.cmake"):
     common = cmake_list(path, "_obelisk_target_runtime_common_sources")
     cold = cmake_list(path, "_obelisk_target_runtime_cold_tail_sources")
-    if cold[:2] != ["ScanFormat", "DynamicScanBytecode"]:
-        raise SystemExit(f"dynamic scan services are not cold-tail sources in {path}")
+    if cold[:4] != [
+        "ScanFormat",
+        "DynamicScanBytecode",
+        "ContainerBitstream",
+        "ContainerBitstreamBytecode",
+    ]:
+        raise SystemExit(f"feature services are not cold-tail sources in {path}")
     if set(common) & set(cold):
         raise SystemExit(f"common and cold-tail sources overlap in {path}")
     text = path.read_text()
@@ -153,6 +186,8 @@ if not re.search(
 dispatcher = (source / "runtime/lib/DesignBytecodeIntrinsics.cpp").read_text()
 if dispatcher.count("invokeDynamicScanIntrinsic") != 2:
     raise SystemExit("dynamic scan bytecode service leaked into the dispatcher")
+if dispatcher.count("invokeContainerBitstreamIntrinsic") != 2:
+    raise SystemExit("container bit-stream service leaked into the dispatcher")
 tail = re.search(
     r"case OBELISK_RT_INTRINSIC_V1_STRING_SCAN_DYNAMIC:\s*"
     r"case OBELISK_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC:\s*"
@@ -160,6 +195,11 @@ tail = re.search(
     r"if \(!invokeDynamicScanIntrinsic\)\s*"
     r"return OBELISK_RT_INVALID_BYTECODE;\s*"
     r"return invokeDynamicScanIntrinsic\(image, frame, context, site,\s*"
+    r"signature\.id\);\s*"
+    r"case OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM:\s*"
+    r"if \(!invokeContainerBitstreamIntrinsic\)\s*"
+    r"return OBELISK_RT_INVALID_BYTECODE;\s*"
+    r"return invokeContainerBitstreamIntrinsic\(image, frame, context, site,\s*"
     r"signature\.id\);\s*default:",
     dispatcher,
 )
@@ -181,6 +221,11 @@ feature_symbols = (
     "obelisk_rt_v1_string_scan_dynamic",
     "obelisk_rt_v1_file_scan_dynamic",
 )
+bitstream_symbols = (
+    "obelisk_rt_v1_container_bitstream_link_anchor",
+    "invokeContainerBitstreamIntrinsic",
+    "obelisk_rt_v1_container_export_bitstream",
+)
 for binary in no_feature_binaries:
     sections, symbols = linked_layout(binary)
     # The shared feature section may contain unrelated cold services (for
@@ -188,7 +233,7 @@ for binary in no_feature_binaries:
     # Dynamic-scan pay-for-play is therefore identified by its complete symbol
     # set rather than by requiring the process-wide feature section to be
     # absent.
-    for symbol in feature_symbols:
+    for symbol in feature_symbols + bitstream_symbols:
         if symbol in symbols:
             raise SystemExit(f"no-feature binary retained {symbol}: {binary}")
 

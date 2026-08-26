@@ -44,6 +44,8 @@ set(_obelisk_runtime_cold_tail_sources
   # the portable cold attribute in its single code section.
   lib/ScanFormat.cpp
   lib/DynamicScanBytecode.cpp
+  lib/ContainerBitstream.cpp
+  lib/ContainerBitstreamBytecode.cpp
 )
 add_library(obelisk_rt STATIC
   ${_obelisk_runtime_common_sources}
