@@ -1310,8 +1310,7 @@ public:
   NativeScheduleDesignTaskScope(obelisk_rt_context *context, uint64_t task)
       : context(context) {
     ContextMutexLock lock(context);
-    context->nativeScheduleDesignTaskFilterActive = true;
-    context->nativeScheduleForcedDesignTask = task;
+    obelisk_rt_set_design_task_filter_unlocked(context, true, task);
   }
 
   NativeScheduleDesignTaskScope(const NativeScheduleDesignTaskScope &) = delete;
@@ -1320,8 +1319,7 @@ public:
 
   ~NativeScheduleDesignTaskScope() {
     ContextMutexLock lock(context);
-    context->nativeScheduleDesignTaskFilterActive = false;
-    context->nativeScheduleForcedDesignTask = 0;
+    obelisk_rt_set_design_task_filter_unlocked(context, false, 0);
   }
 
 private:
@@ -3384,8 +3382,7 @@ void obelisk_rt_release_native_schedule_plan(
   context->nativeScheduleForcedProcessToken = 0;
   context->nativeScheduleStopAtCleanBoundary = false;
   context->nativeScheduleCleanBoundaryReached = false;
-  context->nativeScheduleDesignTaskFilterActive = false;
-  context->nativeScheduleForcedDesignTask = 0;
+  obelisk_rt_set_design_task_filter_unlocked(context, false, 0);
   context->nativePeriodicRuntimeDeadline = UINT64_MAX;
   context->nativePeriodicClockActorSlots.clear();
   context->nativeScheduleClockIngressPending = false;

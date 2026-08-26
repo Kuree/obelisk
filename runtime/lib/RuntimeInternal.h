@@ -1566,6 +1566,27 @@ struct obelisk_rt_context {
 };
 
 inline void
+obelisk_rt_invalidate_design_ready_cohort(obelisk_rt_context *context) {
+  if (!context || !context->designReadyCohort)
+    return;
+  context->designReadyCohort->valid = false;
+  context->designReadyCohort->suppressed = false;
+  context->designReadyCohort->persistentSuppression = false;
+}
+
+inline void
+obelisk_rt_set_design_task_filter_unlocked(obelisk_rt_context *context,
+                                           bool active, uint64_t forcedTask) {
+  if (!context)
+    return;
+  if (context->nativeScheduleDesignTaskFilterActive != active ||
+      context->nativeScheduleForcedDesignTask != forcedTask)
+    obelisk_rt_invalidate_design_ready_cohort(context);
+  context->nativeScheduleDesignTaskFilterActive = active;
+  context->nativeScheduleForcedDesignTask = forcedTask;
+}
+
+inline void
 obelisk_rt_sync_native_state_range_unlocked(obelisk_rt_context *context,
                                             uint64_t begin, uint64_t width) {
   if (!context || !context->nativeStateValue || !context->nativeStateUnknown ||

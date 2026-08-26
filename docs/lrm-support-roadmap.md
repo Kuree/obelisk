@@ -98,8 +98,9 @@ poll sets above 16 candidates, so even a rejected zero-ready shape may allocate
 its tail state and temporary build vectors once. An admitted shape caches the
 direct-ready scheduler-key order and rescans a separately validated
 slow-candidate set before every selection. It is not binary-size pay-for-play:
-common executables grow by roughly 21 KB of loaded text/data footprint (about
-23 KB on disk) because the scanner specializations remain linked.
+in the final pinned slow-dominant executable, common code grows by 32,757 bytes
+of loaded text/data/BSS footprint (34,824 bytes on disk) because the scanner
+specializations remain linked.
 Priority-signal tasks stay in the exact slow scan because multiple simultaneous
 wakes intentionally share a key and preserve the unordered-set's first-equal
 selection. Membership, selection generation, time, process creation, Finals,
@@ -121,20 +122,28 @@ seconds compile/simulate on current main and 57.320/0.196 seconds on the final
 runtime; the one-sample deltas remain below the 10% gate and the focused
 small-path runs isolate no measurable scheduler regression.
 The slow-dominant N=17/SLOW=1024/CYCLES=20001 case is deliberately suppressed;
-five interleaved and reversed same-affinity runs had 3.92-second main and
-3.88-second final medians, and both reported exactly 434,331,932 candidate
-scans and 2,740,137 readiness calls. Slow membership validation is combined
-with that exact scan, including stale entries in the diagnostic count, so it
-cannot add a hidden second pass. A genuine large-ready profitability rejection
-persists while the poll count stays at or below its rejected high-water mark;
-transient signal generations, time, phase, and per-wave poll shrink/regrowth
-therefore do not rebuild vectors. Zero-ready and startup shapes are re-probed
-after a generation change so they cannot hide a later admitted cohort.
-Candidate growth, process creation, and explicit control mutations also
-re-enable probing; missing a newly profitable same-size shape after a genuine
-rejection is the intentional conservative tradeoff and does not change
-exact-scan semantics. The ordinary and suppressed exact scan remains inline in
-`run_one`; only feature collection and cached slow scans are outlined.
+ten interleaved and reversed same-affinity runs ranged from 3.73-4.31 seconds
+on current main and 3.94-4.19 seconds on the final runtime, with respective
+3.895- and 4.005-second medians. The overlapping ranges and 2.8% median delta
+do not establish a wall-time change. Cachegrind instead counted fewer total
+instructions (505,386,637 versus 506,625,265) and fewer hot `run_one` I1 misses
+(109,413 versus 122,667) in the final runtime, while both versions reported
+exactly 434,331,932 candidate scans and 2,740,137 readiness calls. Slow
+membership validation is combined with that exact scan, including stale
+entries in the diagnostic count, so it cannot add a hidden second pass. A
+genuine large-ready profitability rejection persists while the poll count
+stays at or below its rejected high-water mark; transient signal generations,
+time, phase, and per-wave poll shrink/regrowth therefore do not rebuild
+vectors. Zero-ready and startup shapes are re-probed after a generation change
+so they cannot hide a later admitted cohort. Candidate growth, process
+creation, explicit control mutations, and entering or leaving a forced native
+task filter also re-enable probing; missing a newly profitable same-size shape
+after a genuine rejection is the intentional conservative tradeoff and does
+not change exact-scan semantics. The ordinary and suppressed exact scan remains
+inline in `run_one`; admitted or unsuppressed cohort work is dispatched to
+feature text. The final hot `run_one` symbol is 0x33d8 bytes versus 0x3823 on
+current main, so the ordinary scanner's text is smaller despite the linked
+feature code.
 
 L4 is off the ordinary-net runtime hot path. Its required single UVM smoke ran
 in 34.590 seconds compile / 0.204 seconds simulate for bytecode and 74.951

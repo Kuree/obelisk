@@ -2844,11 +2844,7 @@ bool designReadyCohortSuppressed(const obelisk_rt_context *context) {
 }
 
 void invalidateDesignReadyCohort(obelisk_rt_context *context) {
-  if (!context->designReadyCohort)
-    return;
-  context->designReadyCohort->valid = false;
-  context->designReadyCohort->suppressed = false;
-  context->designReadyCohort->persistentSuppression = false;
+  obelisk_rt_invalidate_design_ready_cohort(context);
 }
 
 void rebuildDesignSchedulerIndexUnlocked(obelisk_rt_context *context) {
@@ -4281,9 +4277,11 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
   }
 }
 
-obelisk_rt_status obelisk_rt_run_one_design_task(
-    obelisk_rt_context *context, uint32_t maximumRegion, uint32_t maximumRank,
-    uint64_t maximumInsertionSequence, bool *outProgress) noexcept {
+template <bool EnableReadyCohort>
+__attribute__((always_inline)) inline obelisk_rt_status
+runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
+                     uint32_t maximumRank, uint64_t maximumInsertionSequence,
+                     bool *outProgress) noexcept {
   if (!context || !outProgress)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outProgress = false;
@@ -4363,10 +4361,12 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
           obelisk_rt_unstarted_actor_region(context, activePhase);
       constexpr size_t minCachedDesignSignalCohort = 16;
       bool selectedFromReadyCohort = false;
-      DesignReadyCohortState *readyCohort = context->designReadyCohort.get();
+      DesignReadyCohortState *readyCohort =
+          EnableReadyCohort ? context->designReadyCohort.get() : nullptr;
       bool readyCohortFeatureActive =
-          readyCohort ||
-          context->designPollCandidates.size() > minCachedDesignSignalCohort;
+          EnableReadyCohort &&
+          (readyCohort ||
+           context->designPollCandidates.size() > minCachedDesignSignalCohort);
       bool readyCohortSuppressed =
           readyCohortFeatureActive && designReadyCohortSuppressed(context);
       if (readyCohortFeatureActive && readyCohort && !readyCohortSuppressed) {
@@ -5320,6 +5320,44 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
   }
 }
 
+OBELISK_RT_FEATURE_TEXT obelisk_rt_status runOneDesignTaskCohort(
+    obelisk_rt_context *context, uint32_t maximumRegion, uint32_t maximumRank,
+    uint64_t maximumInsertionSequence, bool *outProgress) noexcept {
+  return runOneDesignTaskImpl<true>(context, maximumRegion, maximumRank,
+                                     maximumInsertionSequence, outProgress);
+}
+
+obelisk_rt_status obelisk_rt_run_one_design_task(
+    obelisk_rt_context *context, uint32_t maximumRegion, uint32_t maximumRank,
+    uint64_t maximumInsertionSequence, bool *outProgress) noexcept {
+  bool enableReadyCohort = false;
+  if (context && !context->nativeScheduleDesignTaskFilterActive) {
+    DesignReadyCohortState *cohort = context->designReadyCohort.get();
+    if (!cohort)
+      enableReadyCohort = context->designPollCandidates.size() > 16;
+    else if (!cohort->suppressed)
+      enableReadyCohort = true;
+    else {
+      bool structuralChange =
+          cohort->nextDesignTaskID != context->nextDesignTaskID ||
+          context->designPollCandidates.size() >
+              cohort->suppressedCandidateHighWater;
+      bool transientReprobe =
+          !cohort->persistentSuppression &&
+          (cohort->selectionGeneration !=
+               context->schedulerSelectionGeneration ||
+           cohort->schedulerTime != context->schedulerTime ||
+           cohort->runningFinals != context->schedulerRunningFinals);
+      enableReadyCohort = structuralChange || transientReprobe;
+    }
+  }
+  if (enableReadyCohort)
+    return runOneDesignTaskCohort(context, maximumRegion, maximumRank,
+                                  maximumInsertionSequence, outProgress);
+  return runOneDesignTaskImpl<false>(context, maximumRegion, maximumRank,
+                                     maximumInsertionSequence, outProgress);
+}
+
 obelisk_rt_status obelisk_rt_prime_design_task(obelisk_rt_context *context,
                                                uint64_t taskID) noexcept {
   if (!context || taskID == 0)
@@ -5358,8 +5396,8 @@ obelisk_rt_status obelisk_rt_prime_design_task(obelisk_rt_context *context,
       context->designTaskExecuting = designExecuting;
       context->controlEscapePending = escapePending;
       context->activeRandom = random;
-      context->nativeScheduleDesignTaskFilterActive = designFilter;
-      context->nativeScheduleForcedDesignTask = forcedDesignTask;
+      obelisk_rt_set_design_task_filter_unlocked(context, designFilter,
+                                                 forcedDesignTask);
     }
   } activeState{context};
   try {
@@ -5381,8 +5419,7 @@ obelisk_rt_status obelisk_rt_prime_design_task(obelisk_rt_context *context,
     context->designTaskExecuting = false;
     context->controlEscapePending = false;
     context->activeRandom = nullptr;
-    context->nativeScheduleDesignTaskFilterActive = true;
-    context->nativeScheduleForcedDesignTask = taskID;
+    obelisk_rt_set_design_task_filter_unlocked(context, true, taskID);
 
     for (uint32_t step = 0; step != 1024; ++step) {
       bool progress = false;

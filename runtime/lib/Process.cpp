@@ -4639,8 +4639,8 @@ obelisk_rt_v1_scheduler_prime(obelisk_rt_context *context,
       context->designTaskExecuting = designExecuting;
       context->controlEscapePending = escapePending;
       context->activeRandom = random;
-      context->nativeScheduleDesignTaskFilterActive = designFilter;
-      context->nativeScheduleForcedDesignTask = forcedDesignTask;
+      obelisk_rt_set_design_task_filter_unlocked(context, designFilter,
+                                                 forcedDesignTask);
     }
   } activeState{context};
   try {

@@ -4768,6 +4768,41 @@ TEST(DesignBytecode,
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(DesignBytecode, DesignTaskFilterTransitionsInvalidateCohortState) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  addReadyTerminatingDesignTasks(context, 17, OBELISK_RT_REGION_ACTIVE);
+  addBlockedForeverDesignTasks(context, 1024);
+
+  bool progress = false;
+  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+                                           UINT64_MAX, &progress),
+            OBELISK_RT_OK);
+  ASSERT_TRUE(progress);
+  ASSERT_TRUE(context->designReadyCohort->suppressed);
+  ASSERT_TRUE(context->designReadyCohort->persistentSuppression);
+
+  uint64_t forcedTask = context->scheduledDesignTasks.front().id;
+  obelisk_rt_set_design_task_filter_unlocked(context, true, forcedTask);
+  EXPECT_TRUE(context->nativeScheduleDesignTaskFilterActive);
+  EXPECT_FALSE(context->designReadyCohort->valid);
+  EXPECT_FALSE(context->designReadyCohort->suppressed);
+
+  // Model state produced while a nested filtered handoff is active. Exiting
+  // the filter must discard it rather than reviving the old negative result.
+  context->designReadyCohort->suppressed = true;
+  context->designReadyCohort->persistentSuppression = true;
+  obelisk_rt_set_design_task_filter_unlocked(context, false, 0);
+  EXPECT_FALSE(context->nativeScheduleDesignTaskFilterActive);
+  EXPECT_FALSE(context->designReadyCohort->valid);
+  EXPECT_FALSE(context->designReadyCohort->suppressed);
+  EXPECT_FALSE(context->designReadyCohort->persistentSuppression);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(DesignBytecode, AllocatedCohortSuppressesAfterSlowDominantShrink) {
   Fixture fixture;
   obelisk_rt_context *context = nullptr;
