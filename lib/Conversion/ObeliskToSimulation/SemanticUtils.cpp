@@ -1347,9 +1347,8 @@ FailureOr<sim::FrozenConstantAttr> freezeSemanticConstant(Operation *symbol) {
     } else if (isa<FloatType>(normalizedType)) {
       double value = 0.0;
       StringRef spelling = text.trim();
-      if (spelling.getAsDouble(value) || !std::isfinite(value)) {
-        emitError(location)
-            << "real constant '" << spelling << "' is not finite";
+      if (spelling.getAsDouble(value)) {
+        emitError(location) << "invalid real constant '" << spelling << "'";
         return failure();
       }
       payload = builder.getFloatAttr(normalizedType, value);

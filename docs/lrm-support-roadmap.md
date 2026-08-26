@@ -1276,6 +1276,12 @@ dispatch only: ordinary integral enum normalization remains byte-identical,
 the minimal declaration-only semantic-MLIR test also passes bytecode encoding,
 and the current external `enum_base_time` case now passes.
 
+L12 also preserves elaborated IEEE non-finite `real` constants instead of
+rejecting their infinity and NaN bit patterns. Native and bytecode constant
+encoding already carry those bits exactly, so the change is confined to
+compile-time constant freezing and has no simulation-path cost; a minimal
+semantic-MLIR test covers both encodings.
+
 L14's configuration closure records the effective elaborated binding on only
 the affected Slang module and checker instance operations and exposes it
 through the opt-in, hierarchically sorted `-emit-bindings` report. Ordered
