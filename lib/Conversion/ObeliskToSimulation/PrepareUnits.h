@@ -31,15 +31,18 @@ struct PreparedUnit {
 
 struct PreparedVirtualInterfaceCallee {
   mlir::Operation *source;
+  mlir::Operation *dispatchSource;
   mlir::SymbolRefAttr interfaceIdentity;
   std::string method;
   std::string design;
+  bool externExport = false;
 };
 
 struct PreparedUnits {
   mlir::SmallVector<PreparedUnit> units;
   llvm::StringMap<mlir::Operation *> directCalleeSources;
   llvm::DenseMap<mlir::Operation *, std::string> directCalleeNames;
+  llvm::DenseMap<mlir::Operation *, mlir::Operation *> externCalleeTargets;
   llvm::DenseMap<mlir::Operation *, sim::SimCodeUnitDeclOp> declarations;
   mlir::SmallVector<PreparedVirtualInterfaceCallee> virtualInterfaceCallees;
   uint64_t rootID;
@@ -52,7 +55,7 @@ struct PreparedUnits {
 
   /// Resolve every elaborated implementation selected by a virtual-interface
   /// receiver. The returned units are ordered by scope ID by the caller.
-  mlir::SmallVector<mlir::Operation *>
+  mlir::SmallVector<const PreparedVirtualInterfaceCallee *>
   resolveVirtualInterfaceCallees(ir::SVCallExpressionOp call) const;
 };
 

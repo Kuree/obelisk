@@ -673,10 +673,10 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
           analysisUnits.resolveDirectCallee(call, semanticSymbols);
       if (target && targets.insert(target).second)
         callEdges[unit.source].push_back(target);
-      for (Operation *candidate :
+      for (const PreparedVirtualInterfaceCallee *candidate :
            analysisUnits.resolveVirtualInterfaceCallees(call))
-        if (targets.insert(candidate).second)
-          callEdges[unit.source].push_back(candidate);
+        if (targets.insert(candidate->source).second)
+          callEdges[unit.source].push_back(candidate->source);
       auto addRandomizeHook = [&](StringRef attrName) {
         auto reference = call->getAttrOfType<FlatSymbolRefAttr>(attrName);
         auto hook = reference
@@ -711,10 +711,10 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       Operation *target =
           analysisUnits.resolveDirectCallee(call, semanticSymbols);
       if (!target) {
-        SmallVector<Operation *> candidates =
+        SmallVector<const PreparedVirtualInterfaceCallee *> candidates =
             analysisUnits.resolveVirtualInterfaceCallees(call);
         if (!candidates.empty())
-          target = candidates.front();
+          target = candidates.front()->source;
       }
       auto task = dyn_cast_or_null<semantic::SVSubroutineSymbolOp>(target);
       if (!task ||

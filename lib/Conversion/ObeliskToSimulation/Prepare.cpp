@@ -7257,15 +7257,17 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
       return;
     }
-    SmallVector<Operation *> virtualTargets =
+    SmallVector<const PreparedVirtualInterfaceCallee *> virtualTargets =
         preparedUnits->resolveVirtualInterfaceCallees(call);
-    llvm::sort(virtualTargets, [&](Operation *lhs, Operation *rhs) {
-      return preparedUnits->declarations.lookup(lhs).getScopeId() <
-             preparedUnits->declarations.lookup(rhs).getScopeId();
+    llvm::sort(virtualTargets, [&](const auto *lhs, const auto *rhs) {
+      return preparedUnits->declarations.lookup(lhs->dispatchSource)
+                 .getScopeId() <
+             preparedUnits->declarations.lookup(rhs->dispatchSource)
+                 .getScopeId();
     });
     Operation *targetSource = resolveDirectCallee(call);
     if (!targetSource && !virtualTargets.empty())
-      targetSource = virtualTargets.front();
+      targetSource = virtualTargets.front()->source;
     if (!targetSource)
       return;
     auto target = directCalleeNames.find(targetSource);
@@ -7349,7 +7351,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                   builder.getArrayAttr(writtenCaptureAttributes(targetSource)));
     if (!virtualTargets.empty()) {
       SmallVector<Attribute> candidates;
-      for (Operation *candidate : virtualTargets) {
+      for (const PreparedVirtualInterfaceCallee *record : virtualTargets) {
+        Operation *candidate = record->source;
         SmallVector<Attribute> captures;
         SmallVector<Attribute> readCaptures = readCaptureAttributes(candidate);
         SmallVector<Attribute> writtenCaptures =
@@ -7360,7 +7363,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         candidates.push_back(builder.getDictionaryAttr({
             builder.getNamedAttr(
                 "scope", builder.getI64IntegerAttr(
-                             preparedUnits->declarations.lookup(candidate)
+                             preparedUnits->declarations
+                                 .lookup(record->dispatchSource)
                                  .getScopeId())),
             builder.getNamedAttr(
                 "callee", FlatSymbolRefAttr::get(
@@ -10617,7 +10621,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           if (!call)
             return;
           Operation *target = resolveDirectCallee(call);
-          SmallVector<Operation *> virtualTargets =
+          SmallVector<const PreparedVirtualInterfaceCallee *> virtualTargets =
               preparedUnits->resolveVirtualInterfaceCallees(call);
           FailureOr<Type> callType = getNormalizedSemanticType(call);
           if (!target && virtualTargets.empty()) {
@@ -10633,8 +10637,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             }
           };
           collectReads(target);
-          for (Operation *candidate : virtualTargets)
-            collectReads(candidate);
+          for (const PreparedVirtualInterfaceCallee *candidate : virtualTargets)
+            collectReads(candidate->source);
         });
       };
       auto collectEvent = [&](semantic::SVSignalEventControlOp event) {

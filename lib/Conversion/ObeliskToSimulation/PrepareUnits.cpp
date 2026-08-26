@@ -121,22 +121,35 @@ static std::string getCodeUnitHierarchy(Operation *op) {
 Operation *PreparedUnits::resolveDirectCallee(
     semantic::SVCallExpressionOp call,
     const llvm::StringMap<Operation *> &symbols) const {
+  auto resolveExtern = [&](Operation *source) {
+    if (externCalleeTargets.empty())
+      return source;
+    auto target = externCalleeTargets.find(source);
+    return target == externCalleeTargets.end() ? source : target->second;
+  };
   // Prefer the elaborator's symbol identity. Paths can differ in spelling for
   // defaulted constructors and out-of-block class methods.
   if (SymbolRefAttr reference = call.getReferencedSymbolAttr()) {
     auto symbol = symbols.find(reference.getLeafReference());
-    if (symbol != symbols.end() && directCalleeNames.count(symbol->second))
-      return symbol->second;
+    if (symbol != symbols.end()) {
+      Operation *source = resolveExtern(symbol->second);
+      if (directCalleeNames.count(source))
+        return source;
+    }
   }
   if (std::optional<StringRef> path = call.getReferencedPath()) {
     auto source = directCalleeSources.find(*path);
-    if (source != directCalleeSources.end())
-      return source->second;
+    if (source != directCalleeSources.end()) {
+      Operation *target = resolveExtern(source->second);
+      if (directCalleeNames.count(target))
+        return target;
+    }
   }
   return nullptr;
 }
 
-SmallVector<Operation *> PreparedUnits::resolveVirtualInterfaceCallees(
+SmallVector<const PreparedVirtualInterfaceCallee *>
+PreparedUnits::resolveVirtualInterfaceCallees(
     semantic::SVCallExpressionOp call) const {
   SmallVector<Operation *> children = getChildren(call);
   if (!call.getHasThisClass() || children.empty())
@@ -160,15 +173,21 @@ SmallVector<Operation *> PreparedUnits::resolveVirtualInterfaceCallees(
   if (!callerDesign)
     return {};
   StringRef design = getHierarchyName(callerDesign);
-  SmallVector<Operation *> result;
+  SmallVector<const PreparedVirtualInterfaceCallee *> result;
   for (const PreparedVirtualInterfaceCallee &candidate :
        virtualInterfaceCallees) {
     if (candidate.method != call.getCalleeName() ||
         candidate.interfaceIdentity != identity || candidate.design != design)
       continue;
-    if (selectedModport.empty() ||
-        call->hasAttr("virtual_interface_call_import"))
-      result.push_back(candidate.source);
+    // An import modport consumes either an ordinary interface method or an
+    // extern implemented by a provider's export modport. An export access can
+    // only name the latter.
+    bool selected = selectedModport.empty() ||
+                    call->hasAttr("virtual_interface_call_import") ||
+                    (candidate.externExport &&
+                     call->hasAttr("virtual_interface_call_export"));
+    if (selected)
+      result.push_back(&candidate);
   }
   return result;
 }
@@ -183,6 +202,7 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
   PreparedUnits result;
   result.units.reserve(sourceUnits.size());
   llvm::DenseMap<uint64_t, Operation *> codeUnitIDs;
+  SmallVector<semantic::SVSubroutineSymbolOp> interfaceExterns;
 
   for (auto [index, source] : llvm::enumerate(sourceUnits)) {
     if (auto exported =
@@ -276,9 +296,12 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
                             {},
                             ObserverResult::None});
     if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(source)) {
+      if (subroutine.getIsInterfaceExtern().value_or(false))
+        interfaceExterns.push_back(subroutine);
       auto body =
           subroutine->getParentOfType<semantic::SVInstanceBodySymbolOp>();
-      if (body && !body->hasAttr("is_virtual_interface_type_instance")) {
+      if (body && !body->hasAttr("is_virtual_interface_type_instance") &&
+          !subroutine.getIsInterfaceExtern().value_or(false)) {
         auto identity =
             body->getAttrOfType<SymbolRefAttr>("virtual_interface_identity");
         semantic::SVInstanceSymbolOp top;
@@ -288,8 +311,9 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
             top = instance;
         if (identity && top)
           result.virtualInterfaceCallees.push_back(
-              {source, identity, subroutine.getName().value_or("").str(),
-               getHierarchyName(top).str()});
+              {source, source, identity,
+               subroutine.getName().value_or("").str(),
+               getHierarchyName(top).str(), false});
       }
     }
     if (!isa<semantic::SVPortConnectionOp, semantic::SVVariableSymbolOp,
@@ -299,6 +323,140 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
       result.directCalleeSources[hierarchy] = source;
       result.directCalleeNames[source] = symbol;
     }
+  }
+
+  auto compatibleABI = [](semantic::SVSubroutineSymbolOp lhs,
+                          semantic::SVSubroutineSymbolOp rhs) {
+    if (lhs.getSemanticType() != rhs.getSemanticType() ||
+        lhs.getSubroutineKind() != rhs.getSubroutineKind())
+      return false;
+    SmallVector<semantic::SVFormalArgumentSymbolOp> lhsFormals;
+    SmallVector<semantic::SVFormalArgumentSymbolOp> rhsFormals;
+    for (Operation *child : getChildren(lhs))
+      if (auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child))
+        lhsFormals.push_back(formal);
+    for (Operation *child : getChildren(rhs))
+      if (auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child))
+        rhsFormals.push_back(formal);
+    if (lhsFormals.size() != rhsFormals.size())
+      return false;
+    return llvm::all_of(llvm::zip_equal(lhsFormals, rhsFormals), [](auto pair) {
+      auto [lhsFormal, rhsFormal] = pair;
+      return lhsFormal.getDirection() == rhsFormal.getDirection() &&
+             lhsFormal.getSemanticType() == rhsFormal.getSemanticType();
+    });
+  };
+
+  // A modport export provides the implementation of an interface extern from
+  // the connected module. Slang freezes the exact elaborated implementation
+  // on the prototype. Redirect the otherwise empty interface stub to that
+  // ordinary code unit, so static calls retain the direct-call fast path and
+  // virtual calls reuse the existing scope-keyed interface dispatch.
+  for (semantic::SVSubroutineSymbolOp stub : interfaceExterns) {
+    auto prototype =
+        dyn_cast_or_null<semantic::SVMethodPrototypeSymbolOp>(stub->getParentOp());
+    if (!prototype) {
+      emitError(getSemanticLocation(stub))
+          << "interface extern subroutine has no method prototype";
+      invalid = true;
+      continue;
+    }
+    if (prototype.getIsForkJoin().value_or(false)) {
+      emitError(getSemanticLocation(prototype))
+          << "modport-exported interface extern fork/join methods are not "
+             "yet executable";
+      invalid = true;
+      continue;
+    }
+    int64_t count = prototype.getExternImplementationCount();
+    ArrayAttr symbols = prototype.getExternImplementationSymbols();
+    ArrayAttr paths = prototype.getExternImplementationPaths();
+    if (count == 0) {
+      // Compile-time-only virtual-interface type inventories do not represent
+      // an executable interface instance. Every real non-fork/join extern
+      // must have one provider, even when no call names it.
+      if (!isCompileTimeOnlyInstanceMember(stub)) {
+        emitError(getSemanticLocation(prototype))
+            << "modport-exported interface extern has no implementation";
+        invalid = true;
+      }
+      continue;
+    }
+    if (count != 1) {
+      emitError(getSemanticLocation(prototype))
+          << "modport-exported interface extern has " << count
+          << " implementations; exactly one is executable";
+      invalid = true;
+      continue;
+    }
+    if (!symbols || symbols.size() != 1 || !paths || paths.size() != 1) {
+      emitError(getSemanticLocation(prototype))
+          << "modport-exported interface extern has inconsistent "
+             "implementation metadata";
+      invalid = true;
+      continue;
+    }
+    auto implementationRef = dyn_cast<SymbolRefAttr>(symbols[0]);
+    auto implementationPath = dyn_cast<StringAttr>(paths[0]);
+    auto implementation =
+        implementationRef
+            ? semanticSymbols.find(implementationRef.getLeafReference())
+            : semanticSymbols.end();
+    auto target =
+        implementation == semanticSymbols.end()
+            ? semantic::SVSubroutineSymbolOp{}
+            : dyn_cast<semantic::SVSubroutineSymbolOp>(implementation->second);
+    auto pathTarget = implementationPath
+                          ? result.directCalleeSources.find(
+                                implementationPath.getValue())
+                          : result.directCalleeSources.end();
+    if (!target || pathTarget == result.directCalleeSources.end() ||
+        pathTarget->second != target || !result.directCalleeNames.count(target)) {
+      emitError(getSemanticLocation(prototype))
+          << "modport-exported interface extern implementation does not "
+             "resolve by matching symbol and path to one executable "
+             "subroutine";
+      invalid = true;
+      continue;
+    }
+    if (!compatibleABI(stub, target)) {
+      emitError(getSemanticLocation(target))
+          << "modport-exported interface extern implementation has an "
+             "incompatible subroutine ABI";
+      emitRemark(getSemanticLocation(prototype)) << "extern prototype is here";
+      invalid = true;
+      continue;
+    }
+    result.externCalleeTargets[stub] = target;
+
+    auto body =
+        prototype->getParentOfType<semantic::SVInstanceBodySymbolOp>();
+    auto identity = body ? body->getAttrOfType<SymbolRefAttr>(
+                               "virtual_interface_identity")
+                         : SymbolRefAttr{};
+    semantic::SVInstanceSymbolOp top;
+    for (Operation *parent = prototype; parent; parent = parent->getParentOp())
+      if (auto instance = dyn_cast<semantic::SVInstanceSymbolOp>(parent))
+        top = instance;
+    if (!identity || !top) {
+      emitError(getSemanticLocation(prototype))
+          << "modport-exported interface extern has no interface identity";
+      invalid = true;
+      continue;
+    }
+    std::string method = stub.getName().value_or("").str();
+    std::string design = getHierarchyName(top).str();
+    bool duplicate = llvm::any_of(
+        result.virtualInterfaceCallees,
+        [&](const PreparedVirtualInterfaceCallee &candidate) {
+          return candidate.dispatchSource == stub.getOperation() &&
+                 candidate.interfaceIdentity == identity &&
+                 candidate.method == method && candidate.design == design;
+        });
+    if (!duplicate)
+      result.virtualInterfaceCallees.push_back(PreparedVirtualInterfaceCallee{
+          target.getOperation(), stub.getOperation(), identity,
+          std::move(method), std::move(design), true});
   }
   for (auto [index, lhsRecord] :
        llvm::enumerate(result.virtualInterfaceCallees)) {
@@ -312,24 +470,7 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
           lhsRecord.design != rhsRecord.design)
         continue;
       auto rhs = cast<semantic::SVSubroutineSymbolOp>(rhsRecord.source);
-      bool compatible = lhs.getSemanticType() == rhs.getSemanticType() &&
-                        lhs.getSubroutineKind() == rhs.getSubroutineKind();
-      SmallVector<semantic::SVFormalArgumentSymbolOp> lhsFormals;
-      SmallVector<semantic::SVFormalArgumentSymbolOp> rhsFormals;
-      for (Operation *child : getChildren(lhs))
-        if (auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child))
-          lhsFormals.push_back(formal);
-      for (Operation *child : getChildren(rhs))
-        if (auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child))
-          rhsFormals.push_back(formal);
-      compatible &= lhsFormals.size() == rhsFormals.size();
-      if (compatible)
-        for (auto [lhsFormal, rhsFormal] :
-             llvm::zip_equal(lhsFormals, rhsFormals))
-          compatible &=
-              lhsFormal.getDirection() == rhsFormal.getDirection() &&
-              lhsFormal.getSemanticType() == rhsFormal.getSemanticType();
-      if (!compatible) {
+      if (!compatibleABI(lhs, rhs)) {
         emitError(getSemanticLocation(rhs))
             << "virtual-interface call candidates have incompatible "
                "subroutine ABIs";
