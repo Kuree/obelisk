@@ -1359,9 +1359,58 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     std::optional<uint64_t> width =
         getSemanticBitstreamWidth(semanticType.getValue());
     if (!width) {
-      emitError(getSemanticLocation(children.front()))
-          << "$bits of a dynamically sized bitstream is not yet executable";
-      return failure();
+      Type elementType;
+      if (auto array =
+              dyn_cast<semantic::DynArrayType>(semanticType.getValue()))
+        elementType = array.getElementType();
+      else if (auto queue =
+                   dyn_cast<semantic::QueueType>(semanticType.getValue()))
+        elementType = queue.getElementType();
+
+      std::optional<uint64_t> elementWidth =
+          elementType ? getSemanticBitstreamWidth(elementType) : std::nullopt;
+      bool string = isa<semantic::StringType>(semanticType.getValue());
+      if ((!elementType || !elementWidth) && !string) {
+        emitError(getSemanticLocation(children.front()))
+            << "$bits of this dynamically sized bitstream is not yet "
+               "executable";
+        return failure();
+      }
+
+      FailureOr<Value> operand = lowerExpression(children.front());
+      if (failed(operand))
+        return failure();
+      Value size;
+      if (string) {
+        Type stringType = sim::StringType::get(function.getContext());
+        FailureOr<Value> converted = convert(
+            *operand, stringType, isSignedNode(children.front()), location);
+        if (failed(converted))
+          return failure();
+        size = sim::SimStringLengthOp::create(builder, location, i64,
+                                              *converted);
+        elementWidth = 8;
+      } else {
+        if (!isa<sim::DynamicArrayType, sim::QueueType>((*operand).getType())) {
+          emitError(getSemanticLocation(children.front()))
+              << "$bits dynamic operand did not lower to a sequential "
+                 "container";
+          return failure();
+        }
+        recordContainerSizeRead(*operand, location);
+        size = sim::SimContainerSizeOp::create(builder, location, i64,
+                                               *operand);
+      }
+
+      // `$bits` returns a signed 32-bit integer. Truncate the live element
+      // count first and multiply in i32 so exceptionally large bitstreams
+      // retain the same low-32-bit result as the static path.
+      Value size32 = arith::TruncIOp::create(builder, location, i32, size);
+      Value stride = arith::ConstantOp::create(
+          builder, location, i32,
+          builder.getIntegerAttr(i32, APInt(32, *elementWidth)));
+      Value result = arith::MulIOp::create(builder, location, size32, stride);
+      return convertResult(result);
     }
     // `$bits` is an inquiry function: its operand is unevaluated. Preserve
     // Slang/SystemVerilog's signed 32-bit result by retaining the low 32 bits
