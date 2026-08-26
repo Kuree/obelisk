@@ -1,6 +1,6 @@
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -c \
 // RUN:   %S/Inputs/dpi_integer_time.c \
-// RUN:   -I$(obelisk --print-resource-dir)/include -o %t.o
+// RUN:   -I%resource_dir/include -o %t.o
 // RUN: obelisk -fno-lto -O0 --vpi=off %s %t.o -o %t.o0.native
 // RUN: %t.o0.native | FileCheck %s
 // RUN: obelisk -fno-lto -O0 --vpi=off --execution-tier=bytecode %s %t.o -o %t.o0.bytecode
@@ -12,7 +12,7 @@
 // RUN: obelisk --emit-dpi-header %s -o %t.h
 // RUN: FileCheck %s --check-prefix=HEADER < %t.h
 // RUN: %llvm_dist/bin/clang -x c -fsyntax-only -include %t.h \
-// RUN:   -I$(obelisk --print-resource-dir)/include /dev/null
+// RUN:   -I%resource_dir/include /dev/null
 
 module dpi_integer_time;
   import "DPI" function int dpi_legacy(input int value);

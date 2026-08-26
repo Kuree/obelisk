@@ -1,6 +1,6 @@
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -c \
 // RUN:   %S/Inputs/dpi_impl.c \
-// RUN:   -I$(obelisk --print-resource-dir)/include -o %t.o
+// RUN:   -I%resource_dir/include -o %t.o
 // RUN: not obelisk -fno-lto --dpi-link=%t.o %s -o %t.removed 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=REMOVED
 // RUN: not obelisk -fno-lto %t.o -o %t.native-only 2>&1 \
@@ -14,12 +14,12 @@
 // RUN: %t.bytecode | FileCheck %s --check-prefix=OUTPUT
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC \
 // RUN:   -flto=full -funified-lto -c %S/Inputs/dpi_impl.c \
-// RUN:   -I$(obelisk --print-resource-dir)/include -o %t.bc
+// RUN:   -I%resource_dir/include -o %t.bc
 // RUN: obelisk %s %t.bc -o %t.bitcode
 // RUN: %t.bitcode | FileCheck %s --check-prefix=OUTPUT
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC \
 // RUN:   -flto=full -c %S/Inputs/dpi_impl.c \
-// RUN:   -I$(obelisk --print-resource-dir)/include -o %t.incompatible.bc
+// RUN:   -I%resource_dir/include -o %t.incompatible.bc
 // RUN: not obelisk %s %t.incompatible.bc \
 // RUN:   -o %t.incompatible 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=INCOMPATIBLE

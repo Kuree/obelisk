@@ -221,7 +221,7 @@ jobs:
             OBJDUMP=/emsdk/upstream/bin/llvm-objdump
             test -x "$OBJDUMP"
             PATTERN="^[[:space:]]+[0-9a-f]+: .*\\b(try|try_table|catch|catch_all|delegate|rethrow|throw|throw_ref)\\b"
-            EH_SYMBOLS="(__cxa_(allocate_exception|begin_catch|end_catch|rethrow|throw)|_Unwind_)"
+            EH_SYMBOLS="(__cxa_|__gxx_personality_v0|_Unwind_)"
             DUMP=$(mktemp)
             trap "rm -f \"$DUMP\"" EXIT
             for input in site/obelisk.wasm site/toolchain/*.a; do
@@ -234,11 +234,15 @@ jobs:
                 echo "wasm exception opcode found in $input" >&2
                 exit 1
               fi
-              if [[ "$input" == *.a ]]; then
+              # Undefined symbols in a static archive belong to individual,
+              # optional members. Emscripten's official noexcept libraries
+              # contain dormant exception-related members, so only audit the
+              # Obelisk runtime archive whose every object is ours.
+              if [[ "$input" == site/toolchain/libobelisk_rt.a ]]; then
                 "$OBJDUMP" --syms "$input" >"$DUMP"
                 if grep -E "[[:space:]]\\*UND\\*[[:space:]].*$EH_SYMBOLS" \
                     "$DUMP"; then
-                  echo "C++ exception runtime dependency in $input" >&2
+                  echo "C++ exception runtime dependency in Obelisk runtime" >&2
                   exit 1
                 fi
               fi

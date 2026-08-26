@@ -1,7 +1,7 @@
 // RUN: mkdir -p %t.dir/lib %t.dir/bin
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC \
 // RUN:   -shared -nostdlib %S/Inputs/vpi_net_probe.c \
-// RUN:   -I$(obelisk --print-resource-dir)/include \
+// RUN:   -I%resource_dir/include \
 // RUN:   -Wl,-soname,libobelisk_vpi_net_probe.so \
 // RUN:   -o %t.dir/lib/libobelisk_vpi_net_probe.so
 // RUN: cd %t.dir && obelisk -fno-lto -O2 --vpi=read --native-scheduler=auto %s \

@@ -3,6 +3,7 @@
 config.obelisk_obj_root = "@PROJECT_BINARY_DIR@"
 config.obelisk_driver_dir = "@PROJECT_BINARY_DIR@/tools/driver"
 config.obelisk_driver_executable = "@PROJECT_BINARY_DIR@/tools/driver/obelisk"
+config.obelisk_resource_dir = "@PROJECT_BINARY_DIR@/lib/obelisk"
 config.obelisk_filecheck_dir = "@PROJECT_BINARY_DIR@/tools/filecheck"
 config.obelisk_opt_dir = "@PROJECT_BINARY_DIR@/tools/obelisk-opt"
 config.llvm_tools_dir = "@OBELISK_LLVM_TOOLS_DIR@"

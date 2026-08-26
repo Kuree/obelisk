@@ -1,11 +1,11 @@
 // RUN: mkdir -p %t.dir/lib %t.dir/bin
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC \
 // RUN:   -shared -nostdlib %S/Inputs/vpi_startup.c \
-// RUN:   -I$(obelisk --print-resource-dir)/include \
+// RUN:   -I%resource_dir/include \
 // RUN:   -Wl,-soname,libobelisk_vpi_test.so -o %t.dir/lib/libobelisk_vpi_test.so
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC \
 // RUN:   -shared -nostdlib %S/Inputs/vpi_startup_second.c \
-// RUN:   -I$(obelisk --print-resource-dir)/include \
+// RUN:   -I%resource_dir/include \
 // RUN:   -Wl,-soname,libobelisk_vpi_second.so \
 // RUN:   -o %t.dir/lib/libobelisk_vpi_second.so
 // RUN: not obelisk -fno-lto --vpi=off %s %t.dir/lib/libobelisk_vpi_test.so \
@@ -22,9 +22,9 @@
 // RUN: llvm-readelf --dyn-syms %t.dir/bin/simulator \
 // RUN:   | FileCheck %s --check-prefix=EXPORTS
 // RUN: test ! -e %t.dir/bin/libobelisk_vpi_test.so
-// RUN: test -f "$(obelisk --print-resource-dir)/include/vpi_user.h"
-// RUN: test -f "$(obelisk --print-resource-dir)/include/sv_vpi_user.h"
-// RUN: test -f "$(obelisk --print-resource-dir)/include/vpi_compatibility.h"
+// RUN: test -f %resource_dir/include/vpi_user.h
+// RUN: test -f %resource_dir/include/sv_vpi_user.h
+// RUN: test -f %resource_dir/include/vpi_compatibility.h
 // RUN: mkdir -p %t.dir/relocated/bin %t.dir/relocated/lib
 // RUN: cp %t.dir/bin/simulator %t.dir/relocated/bin/simulator
 // RUN: cp %t.dir/lib/libobelisk_vpi_test.so \

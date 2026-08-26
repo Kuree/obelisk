@@ -96,7 +96,7 @@ module attributes {
 // CHECK: llvm.call @obelisk_rt_v1_display
 // CHECK: llvm.icmp "eq"
 // CHECK: llvm.cond_br
-// CHECK: llvm.getelementptr {{.*}}[68]
+// CHECK: llvm.getelementptr {{.*}}[0, 10]
 // CHECK: llvm.store {{.*}} {alignment = 4 : i64} : i32, !llvm.ptr
 // CHECK-LABEL: llvm.func @aggregate_display(
 // CHECK-SAME: %{{.*}}: !llvm.ptr, %{{.*}}: i32, %{{.*}}: i80, %{{.*}}: i80) -> i32

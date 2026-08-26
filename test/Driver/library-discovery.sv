@@ -69,8 +69,8 @@
 // RUN:   | FileCheck %s --check-prefix=MAP-INCLUDE
 
 // Command files are expanded before option parsing, including plus spellings.
-// RUN: (cd %S/Inputs/library/discovery && obelisk -emit-slang \
-// RUN:   -f library.f) | FileCheck %s --check-prefix=FIRST-EXT
+// RUN: cd %S/Inputs/library/discovery && obelisk -emit-slang \
+// RUN:   -f library.f | FileCheck %s --check-prefix=FIRST-EXT
 
 // Multiple maps are applied in command-line order, which establishes the
 // default library search priority.

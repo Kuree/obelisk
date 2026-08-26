@@ -31,6 +31,9 @@ module attributes {
 
 // CHECK-LABEL: llvm.func @main
 // CHECK:      %[[STATUS:.*]] = llvm.call @obelisk_rt_v1_scheduler_run
+// CHECK-NEXT: %[[TIME:.*]] = llvm.call @obelisk_rt_v1_scheduler_time
+// CHECK-NEXT: %[[TIME_ADDRESS:.*]] = llvm.mlir.addressof @__obelisk_final_time
+// CHECK-NEXT: llvm.store %[[TIME]], %[[TIME_ADDRESS]]
 // CHECK-NEXT: llvm.call @obelisk_rt_v1_scheduler_report_status(%{{.*}}, %[[STATUS]])
 // CHECK-NEXT: llvm.call @obelisk_rt_v1_context_destroy
 // CHECK-NEXT: llvm.return %[[STATUS]]

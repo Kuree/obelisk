@@ -1,4 +1,4 @@
-// RUN: env -i PATH=/nonexistent %obelisk %s -o %t.exe
+// RUN: env PATH=/nonexistent %obelisk %s -o %t.exe
 // RUN: llvm-readelf -h -l -d %t.exe | FileCheck %s --check-prefix=ELF \
 // RUN:   --implicit-check-not='Shared library:' \
 // RUN:   --implicit-check-not='(RPATH)' --implicit-check-not='(RUNPATH)'

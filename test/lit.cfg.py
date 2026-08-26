@@ -25,6 +25,9 @@ llvm_config.with_system_environment(["HOME", "TMP", "TEMP"])
 config.substitutions.append(("%python", '"{}"'.format(sys.executable)))
 config.substitutions.append(("%obelisk", config.obelisk_driver_executable))
 config.substitutions.append(
+    ("%resource_dir", '"{}"'.format(config.obelisk_resource_dir))
+)
+config.substitutions.append(
     ("%native_support", config.obelisk_native_support_dir)
 )
 config.substitutions.append(
