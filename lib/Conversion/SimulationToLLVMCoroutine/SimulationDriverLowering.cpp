@@ -27,6 +27,137 @@ uint64_t encodeNativeStaticHandle(uint32_t id, int32_t offset = 0) {
 
 constexpr StringLiteral nativeDriverLowAttr = "obelisk.native.driver_low";
 
+// Keep ordinary narrow driver resolution straight-line.  Wide port aliases
+// are the case where expanding the identical one-driver proof once per bit
+// dominates compile time and memory.
+constexpr unsigned bulkConnectedDriverMinWidth = 65;
+
+using NetByID = DenseMap<uint64_t, const NativeStateLayout::Net *>;
+using DriverByID = DenseMap<uint64_t, const NativeStateLayout::Driver *>;
+using DriversByNet =
+    DenseMap<uint64_t, SmallVector<const NativeStateLayout::Driver *, 1>>;
+using ConnectedNets = DenseSet<uint64_t>;
+
+struct DriverLookupIndex {
+  explicit DriverLookupIndex(const NativeStateLayout &layout) {
+    for (const NativeStateLayout::Net &net : layout.netLayouts)
+      netByID.try_emplace(net.id, &net);
+    for (const NativeStateLayout::Driver &driver : layout.driverLayouts)
+      driverByID.try_emplace(driver.id, &driver);
+    for (const NativeStateLayout::Driver &driver : layout.driverLayouts)
+      driversByNet[driver.netId].push_back(&driver);
+    for (const auto &entry : layout.connectivityCanonical)
+      connectedNets.insert(entry.first.first);
+  }
+
+  NetByID netByID;
+  DriverByID driverByID;
+  DriversByNet driversByNet;
+  ConnectedNets connectedNets;
+};
+
+std::optional<SmallVector<const NativeStateLayout::Net *, 2>>
+getBulkConnectedDriverNets(const NativeStateLayout &layout,
+                           const NativeStateLayout::Driver &driver,
+                           unsigned width, const NetByID &netByID,
+                           const DriversByNet &driversByNet) {
+  if (width < bulkConnectedDriverMinWidth || layout.hasPassSwitch ||
+      driver.drivenLow != 0 || driver.drivenWidth != width ||
+      driver.width != width || driver.strength0 != sim::Strength::Strong ||
+      driver.strength1 != sim::Strength::Strong ||
+      !layout.directHandles.contains(driver.handleID) ||
+      layout.guardedHandles.contains(driver.handleID))
+    return std::nullopt;
+
+  SmallVector<const NativeStateLayout::Net *, 2> nets;
+  for (unsigned bit = 0; bit != width; ++bit) {
+    std::pair<uint64_t, uint64_t> logical{driver.netId, bit};
+    auto canonical = layout.connectivityCanonical.find(logical);
+    if (canonical == layout.connectivityCanonical.end())
+      return std::nullopt;
+    auto foundComponent = layout.connectivityComponents.find(canonical->second);
+    if (foundComponent == layout.connectivityComponents.end() ||
+        foundComponent->second.size() < 2)
+      return std::nullopt;
+    ArrayRef<analysis::NetBit> component = foundComponent->second;
+
+    auto resolution = layout.connectivityResolutions.find(canonical->second);
+    if (resolution == layout.connectivityResolutions.end() ||
+        resolution->second != sim::NetResolutionKind::Wire)
+      return std::nullopt;
+
+    if (bit == 0) {
+      for (const analysis::NetBit &member : component) {
+        if (member.offset != 0 || llvm::any_of(nets, [&](const auto *net) {
+              return net->id == member.net;
+            }))
+          return std::nullopt;
+        auto foundNet = netByID.find(member.net);
+        if (foundNet == netByID.end() || foundNet->second->width != width ||
+            foundNet->second->resolution != sim::NetResolutionKind::Wire ||
+            !layout.directHandles.contains(foundNet->second->handleID) ||
+            layout.guardedHandles.contains(foundNet->second->handleID) ||
+            llvm::any_of(foundNet->second->propagationDelays,
+                         [](const auto &delay) { return delay.has_value(); }))
+          return std::nullopt;
+        const NativeStateLayout::Net *net = foundNet->second;
+        nets.push_back(net);
+      }
+    } else {
+      if (component.size() != nets.size())
+        return std::nullopt;
+      for (const NativeStateLayout::Net *net : nets)
+        if (!llvm::is_contained(component, analysis::NetBit{net->id, bit}))
+          return std::nullopt;
+    }
+
+    // The component must have exactly one effective source, namely this
+    // driver.  This excludes multi-driver nets, strength-pair banks, and any
+    // alias whose apparently simple shape hides a competing contribution.
+    unsigned contributions = 0;
+    for (const analysis::NetBit &member : component) {
+      auto foundDrivers = driversByNet.find(member.net);
+      if (foundDrivers == driversByNet.end())
+        continue;
+      for (const NativeStateLayout::Driver *candidate : foundDrivers->second)
+        if (member.offset >= candidate->drivenLow &&
+            member.offset - candidate->drivenLow < candidate->drivenWidth) {
+          if (candidate->id != driver.id)
+            return std::nullopt;
+          ++contributions;
+        }
+    }
+    if (contributions != 1)
+      return std::nullopt;
+  }
+  return nets;
+}
+
+const NativeStateLayout::Net *getBulkCapturedIsolatedDriverNet(
+    const NativeStateLayout &layout, const NativeStateLayout::Driver &driver,
+    unsigned width, const NetByID &netByID, const DriversByNet &driversByNet,
+    const ConnectedNets &connectedNets) {
+  if (width < bulkConnectedDriverMinWidth || layout.hasPassSwitch ||
+      driver.drivenLow != 0 || driver.drivenWidth != width ||
+      driver.width != width || driver.strength0 != sim::Strength::Strong ||
+      driver.strength1 != sim::Strength::Strong ||
+      !layout.directHandles.contains(driver.handleID) ||
+      layout.guardedHandles.contains(driver.handleID) ||
+      connectedNets.contains(driver.netId))
+    return nullptr;
+  auto foundNet = netByID.find(driver.netId);
+  auto foundDrivers = driversByNet.find(driver.netId);
+  if (foundNet == netByID.end() || foundNet->second->width != width ||
+      foundDrivers == driversByNet.end() || foundDrivers->second.size() != 1 ||
+      foundNet->second->resolution != sim::NetResolutionKind::Wire ||
+      !layout.directHandles.contains(foundNet->second->handleID) ||
+      layout.guardedHandles.contains(foundNet->second->handleID) ||
+      llvm::any_of(foundNet->second->propagationDelays,
+                   [](const auto &delay) { return delay.has_value(); }))
+    return nullptr;
+  return foundNet->second;
+}
+
 std::optional<uint64_t> getStaticDriverOffset(Value value, uint64_t driverID,
                                               DenseSet<Value> &active) {
   if (!value || !active.insert(value).second)
@@ -144,8 +275,7 @@ struct ExactStaticDriverTarget {
 };
 
 std::optional<ExactStaticDriverTarget>
-getExactStaticDriverTarget(Value value, DenseSet<Value> &active,
-                           bool &cycle) {
+getExactStaticDriverTarget(Value value, DenseSet<Value> &active, bool &cycle) {
   if (!active.insert(value).second) {
     cycle = true;
     return std::nullopt;
@@ -255,8 +385,9 @@ public:
   using OneToNOpAdaptor = typename Base::OneToNOpAdaptor;
 
   DriverDriveConversion(const TypeConverter &converter, MLIRContext *context,
-                        const NativeStateLayout &layout)
-      : Base(converter, context), layout(layout) {}
+                        const NativeStateLayout &layout,
+                        std::shared_ptr<const DriverLookupIndex> index)
+      : Base(converter, context), layout(layout), index(std::move(index)) {}
 
   LogicalResult
   matchAndRewrite(DriveOp op, OneToNOpAdaptor adaptor,
@@ -268,6 +399,19 @@ public:
     std::optional<unsigned> sourceWidth = nativeStateWidth(sourceType);
     if (!sourceWidth)
       return failure();
+    auto getDriver = [&](IntegerAttr id) -> const NativeStateLayout::Driver * {
+      if (!id)
+        return nullptr;
+      uint64_t value = static_cast<uint64_t>(id.getInt());
+      if (index) {
+        auto found = index->driverByID.find(value);
+        return found == index->driverByID.end() ? nullptr : found->second;
+      }
+      auto found = llvm::find_if(layout.driverLayouts, [&](const auto &driver) {
+        return driver.id == value;
+      });
+      return found == layout.driverLayouts.end() ? nullptr : &*found;
+    };
     IntegerType driveType = rewriter.getIntegerType(*sourceWidth);
     if (isa<FloatType>(sourceType))
       driveValue = arith::BitcastOp::create(rewriter, op.getLoc(), driveType,
@@ -358,14 +502,8 @@ public:
       if (layout.hasPassSwitch) {
         auto driverID =
             op->template getAttrOfType<IntegerAttr>("obelisk.native.driver_id");
-        auto driver = driverID ? llvm::find_if(layout.driverLayouts,
-                                               [&](const auto &candidate) {
-                                                 return candidate.id ==
-                                                        static_cast<uint64_t>(
-                                                            driverID.getInt());
-                                               })
-                               : layout.driverLayouts.end();
-        if (driver == layout.driverLayouts.end())
+        const NativeStateLayout::Driver *driver = getDriver(driverID);
+        if (!driver)
           return failure();
         uint64_t begin = driver->offset + driver->drivenLow;
         uint64_t end = begin + driver->drivenWidth;
@@ -400,15 +538,8 @@ public:
     if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveDelayedNetOp>) {
       auto driverID =
           op->template getAttrOfType<IntegerAttr>("obelisk.native.driver_id");
-      auto driver =
-          driverID
-              ? llvm::find_if(layout.driverLayouts,
-                              [&](const auto &candidate) {
-                                return candidate.id ==
-                                       static_cast<uint64_t>(driverID.getInt());
-                              })
-              : layout.driverLayouts.end();
-      if (driver == layout.driverLayouts.end())
+      const NativeStateLayout::Driver *driver = getDriver(driverID);
+      if (!driver)
         return failure();
       uint64_t begin = driver->offset + driver->drivenLow;
       uint64_t end = begin + driver->drivenWidth;
@@ -445,13 +576,10 @@ public:
           op->template getAttrOfType<IntegerAttr>("obelisk.native.driver_id");
       if (!driverID)
         return failure();
-      auto driver = llvm::find_if(layout.driverLayouts, [&](const auto &item) {
-        return item.id == static_cast<uint64_t>(driverID.getInt());
-      });
-      if (driver == layout.driverLayouts.end() ||
-          driver->drivenWidth != *sourceWidth)
+      const NativeStateLayout::Driver *driver = getDriver(driverID);
+      if (!driver || driver->drivenWidth != *sourceWidth)
         return failure();
-      exactDriver = &*driver;
+      exactDriver = driver;
     }
 
     // A statically addressed partial driver update can only change the
@@ -465,13 +593,8 @@ public:
     const NativeStateLayout::Driver *affectedDriver = nullptr;
     auto driverID =
         op->template getAttrOfType<IntegerAttr>("obelisk.native.driver_id");
-    if (driverID) {
-      auto found = llvm::find_if(layout.driverLayouts, [&](const auto &driver) {
-        return driver.id == static_cast<uint64_t>(driverID.getInt());
-      });
-      if (found != layout.driverLayouts.end())
-        affectedDriver = &*found;
-    }
+    if (driverID)
+      affectedDriver = getDriver(driverID);
     std::optional<uint64_t> updateLow;
     if (auto low = op->template getAttrOfType<IntegerAttr>(nativeDriverLowAttr);
         low && !low.getValue().isNegative() &&
@@ -511,75 +634,117 @@ public:
     // bitwise resolution: the resolved value is the driver value. Keep this
     // vector-shaped through LLVM lowering so very wide constants do not turn
     // into millions of scalar loads, selects, and stores.
-    const NativeStateLayout::Net *bulkNet = nullptr;
-    if (op->hasAttr("obelisk.native.whole_driver")) {
+    SmallVector<const NativeStateLayout::Net *, 2> bulkNets;
+    if (index && exactDriver)
+      if (auto connected =
+              getBulkConnectedDriverNets(layout, *exactDriver, *sourceWidth,
+                                         index->netByID, index->driversByNet))
+        bulkNets = std::move(*connected);
+    if (bulkNets.empty() && index && exactDriver)
+      if (const NativeStateLayout::Net *isolated =
+              getBulkCapturedIsolatedDriverNet(
+                  layout, *exactDriver, *sourceWidth, index->netByID,
+                  index->driversByNet, index->connectedNets))
+        bulkNets.push_back(isolated);
+    if (bulkNets.empty() && op->hasAttr("obelisk.native.whole_driver")) {
       auto driverID =
           op->template getAttrOfType<IntegerAttr>("obelisk.native.driver_id");
-      auto driver =
-          driverID
-              ? llvm::find_if(layout.driverLayouts,
-                              [&](const auto &candidate) {
-                                return candidate.id ==
-                                       static_cast<uint64_t>(driverID.getInt());
-                              })
-              : layout.driverLayouts.end();
-      if (driver != layout.driverLayouts.end()) {
-        auto net = llvm::find_if(layout.netLayouts, [&](const auto &candidate) {
-          return candidate.id == driver->netId;
-        });
-        bool onlyDriver =
-            llvm::count_if(layout.driverLayouts, [&](const auto &candidate) {
-              return candidate.netId == driver->netId;
-            }) == 1;
-        bool connected =
-            llvm::any_of(layout.connectivityCanonical, [&](const auto &entry) {
-              return entry.first.first == driver->netId;
-            });
-        if (net != layout.netLayouts.end() && onlyDriver && !connected &&
-            driver->drivenLow == 0 && driver->drivenWidth == driver->width &&
+      const NativeStateLayout::Driver *driver = getDriver(driverID);
+      if (driver) {
+        const NativeStateLayout::Net *net = nullptr;
+        bool onlyDriver = false;
+        bool connected = false;
+        if (index) {
+          auto foundNet = index->netByID.find(driver->netId);
+          if (foundNet != index->netByID.end())
+            net = foundNet->second;
+          auto foundDrivers = index->driversByNet.find(driver->netId);
+          onlyDriver = foundDrivers != index->driversByNet.end() &&
+                       foundDrivers->second.size() == 1;
+          connected = index->connectedNets.contains(driver->netId);
+        } else {
+          auto foundNet =
+              llvm::find_if(layout.netLayouts, [&](const auto &candidate) {
+                return candidate.id == driver->netId;
+              });
+          if (foundNet != layout.netLayouts.end())
+            net = &*foundNet;
+          onlyDriver =
+              llvm::count_if(layout.driverLayouts, [&](const auto &candidate) {
+                return candidate.netId == driver->netId;
+              }) == 1;
+          connected = llvm::any_of(layout.connectivityCanonical,
+                                   [&](const auto &entry) {
+                                     return entry.first.first == driver->netId;
+                                   });
+        }
+        if (net && onlyDriver && !connected && driver->drivenLow == 0 &&
+            driver->drivenWidth == driver->width &&
             driver->width == net->width && driveType.getWidth() == net->width &&
             static_cast<uint32_t>(net->resolution) <
                 static_cast<uint32_t>(sim::NetResolutionKind::Tri0) &&
             driver->strength0 != sim::Strength::HighZ &&
             driver->strength1 != sim::Strength::HighZ)
-          bulkNet = &*net;
+          bulkNets.push_back(net);
       }
     }
-    if (bulkNet) {
-      Value netHandle = arith::ConstantOp::create(
-          rewriter, op.getLoc(), rewriter.getI64Type(),
-          rewriter.getI64IntegerAttr(
-              encodeNativeStaticHandle(bulkNet->handleID)));
-      Value oldValue = loadStatePlane(rewriter, op.getLoc(), netHandle,
-                                      driveType, "__obelisk_state_value", false,
-                                      layout.bitCount, &layout);
-      Value oldUnknown = loadStatePlane(rewriter, op.getLoc(), netHandle,
-                                        driveType, "__obelisk_state_unknown",
-                                        true, layout.bitCount, &layout);
-      Value publishValue = driveValue;
-      Value publishUnknown = driveUnknown;
-      if (!bulkNet->fourState) {
-        Value allOnes =
-            integerConstant(APInt::getAllOnes(driveType.getWidth()));
-        publishValue =
-            arith::AndIOp::create(rewriter, op.getLoc(), driveValue,
-                                  arith::XOrIOp::create(rewriter, op.getLoc(),
-                                                        driveUnknown, allOnes));
-        publishUnknown = integerConstant(APInt::getZero(driveType.getWidth()));
+    if (!bulkNets.empty()) {
+      struct BulkPublication {
+        const NativeStateLayout::Net *net;
+        Value handle;
+        Value oldValue;
+        Value oldUnknown;
+        Value value;
+        Value unknown;
+      };
+      SmallVector<BulkPublication, 2> bulkPublications;
+      for (const NativeStateLayout::Net *net : bulkNets) {
+        Value netHandle = arith::ConstantOp::create(
+            rewriter, op.getLoc(), rewriter.getI64Type(),
+            rewriter.getI64IntegerAttr(
+                encodeNativeStaticHandle(net->handleID)));
+        Value oldValue = loadStatePlane(rewriter, op.getLoc(), netHandle,
+                                        driveType, "__obelisk_state_value",
+                                        false, layout.bitCount, &layout);
+        Value oldUnknown = loadStatePlane(rewriter, op.getLoc(), netHandle,
+                                          driveType, "__obelisk_state_unknown",
+                                          true, layout.bitCount, &layout);
+        Value publishValue = driveValue;
+        Value publishUnknown = driveUnknown;
+        if (!net->fourState) {
+          Value allOnes =
+              integerConstant(APInt::getAllOnes(driveType.getWidth()));
+          publishValue = arith::AndIOp::create(
+              rewriter, op.getLoc(), driveValue,
+              arith::XOrIOp::create(rewriter, op.getLoc(), driveUnknown,
+                                    allOnes));
+          publishUnknown =
+              integerConstant(APInt::getZero(driveType.getWidth()));
+        }
+        bulkPublications.push_back({net, netHandle, oldValue, oldUnknown,
+                                    publishValue, publishUnknown});
       }
-      Value valueChanged =
-          storeStatePlane(rewriter, op.getLoc(), netHandle, publishValue,
-                          "__obelisk_state_value", layout.bitCount, &layout);
-      Value unknownChanged =
-          storeStatePlane(rewriter, op.getLoc(), netHandle, publishUnknown,
-                          "__obelisk_state_unknown", layout.bitCount, &layout);
-      changed = arith::OrIOp::create(rewriter, op.getLoc(), valueChanged,
-                                     unknownChanged);
-      notifySignal(
-          rewriter, op.getLoc(), netHandle, bulkNet->width, oldValue,
-          oldUnknown, publishValue,
-          bulkNet->fourState ? publishUnknown : Value{},
-          resolveDirectStaticStateRange(netHandle, bulkNet->width, &layout));
+      // Publish every collapsed-net member before notifying any observer, just
+      // like the scalar resolver below, so an alias transition is atomic.
+      for (const BulkPublication &publication : bulkPublications) {
+        Value valueChanged = storeStatePlane(
+            rewriter, op.getLoc(), publication.handle, publication.value,
+            "__obelisk_state_value", layout.bitCount, &layout);
+        Value unknownChanged = storeStatePlane(
+            rewriter, op.getLoc(), publication.handle, publication.unknown,
+            "__obelisk_state_unknown", layout.bitCount, &layout);
+        changed = arith::OrIOp::create(
+            rewriter, op.getLoc(), changed,
+            arith::OrIOp::create(rewriter, op.getLoc(), valueChanged,
+                                 unknownChanged));
+      }
+      for (const BulkPublication &publication : bulkPublications)
+        notifySignal(rewriter, op.getLoc(), publication.handle,
+                     publication.net->width, publication.oldValue,
+                     publication.oldUnknown, publication.value,
+                     publication.net->fourState ? publication.unknown : Value{},
+                     resolveDirectStaticStateRange(
+                         publication.handle, publication.net->width, &layout));
       if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveChangedOp>)
         rewriter.replaceOp(op, changed);
       else
@@ -940,6 +1105,7 @@ public:
 
 private:
   const NativeStateLayout &layout;
+  std::shared_ptr<const DriverLookupIndex> index;
 };
 
 } // namespace
@@ -959,9 +1125,9 @@ void annotateStaticDriverNets(ModuleOp module,
         !frozenLow.getValue().isNegative() &&
         frozenID.getValue().getActiveBits() <= 64 &&
         frozenLow.getValue().getActiveBits() <= 64)
-      exactTarget = ExactStaticDriverTarget{
-          frozenID.getValue().getZExtValue(),
-          frozenLow.getValue().getZExtValue()};
+      exactTarget =
+          ExactStaticDriverTarget{frozenID.getValue().getZExtValue(),
+                                  frozenLow.getValue().getZExtValue()};
     else if (!frozenID && !frozenLow)
       exactTarget = getExactStaticDriverTarget(drive.getDriver());
     std::optional<uint64_t> driverID =
@@ -1003,10 +1169,22 @@ void annotateStaticDriverNets(ModuleOp module,
 void populateDriverToLLVMConversionPatterns(RewritePatternSet &patterns,
                                             TypeConverter &converter,
                                             const NativeStateLayout &layout) {
+  std::shared_ptr<const DriverLookupIndex> index;
+  bool hasBulkCandidate =
+      !layout.hasPassSwitch && llvm::any_of(layout.driverLayouts, [&](auto &d) {
+        return d.width >= bulkConnectedDriverMinWidth && d.drivenLow == 0 &&
+               d.drivenWidth == d.width &&
+               d.strength0 == sim::Strength::Strong &&
+               d.strength1 == sim::Strength::Strong &&
+               layout.directHandles.contains(d.handleID) &&
+               !layout.guardedHandles.contains(d.handleID);
+      });
+  if (hasBulkCandidate)
+    index = std::make_shared<DriverLookupIndex>(layout);
   patterns.add<DriverDriveConversion<sim::SimDriverDriveOp>,
                DriverDriveConversion<sim::SimDriverDriveDelayedNetOp>,
                DriverDriveConversion<sim::SimDriverDriveChangedOp>>(
-      converter, patterns.getContext(), layout);
+      converter, patterns.getContext(), layout, index);
 }
 
 } // namespace obelisk::detail

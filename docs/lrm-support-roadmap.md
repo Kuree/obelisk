@@ -861,8 +861,8 @@ remain a targeted residual, along with atomic complementary strength-bank
 paths, pulse controls, and SDF. A 4096-bit edge-path actor remains bounded in
 native compilation, but placing the same cell behind 4096-bit hierarchical
 ports reproduces the existing per-bit native port-forward/net-resolution IR
-expansion; compact word-loop lowering for that common L13 backend path remains
-a separate performance residual.
+expansion. L13's wide-port performance tranche below closes that backend
+residual with verifier-proven vector publication.
 
 G4's tenth closure tranche maps edge-sensitive paths directly onto procedural
 output-variable writes. Recurring `always`/`always_ff` blocks with one direct
@@ -1194,11 +1194,23 @@ with `ErrorType`; the source case remains an xfail even with explicit `--top`
 selection. The remaining hierarchy-labelled external failures in this audit
 are missing harness/library inputs, prohibited hierarchical type names,
 nonconstant real-interface instance-array selects, or Verilator extensions.
-The exact executable L13 residual is the known per-bit native IR expansion for
-very wide hierarchical ports; compact word-loop port forwarding remains
-future performance work. A parameter-controlled unreachable partial NBA also
-still fails capture preparation, but belongs to the Clause 10-12 procedural
-lvalue long tail rather than parameter binding or generate elaboration.
+L13's second performance tranche replaces per-bit native resolution for a
+verifier-proven wide port topology with direct vector publication. The proof
+requires at least 65 bits, an exact full-range aligned connection, one strong
+effective driver, ordinary wire resolution, direct unguarded state, and no
+delay, strength, pass-switch, override, or competing contribution. Every
+other topology retains the existing scalar lowering. Lookup indexes are built
+only when a potentially eligible wide driver exists, and all collapsed net
+members are stored before any observer is notified. On a 1024-bit hierarchical
+forwarding benchmark, generic compile time/RSS falls from 39.01 seconds /
+470 MB to 0.18 seconds / 83 MB and forced-AOT from 38.95 seconds / 472 MB to
+0.14 seconds / 83 MB; 20,000-transition simulation also improves in both
+tiers. Bytecode and 64-bit generic/AOT outputs remain byte-identical. A
+32-port by 256-bit stress case falls from 9.58 seconds / 1.30 GB and 126 MB of
+LLVM IR to 0.57 seconds / 87 MB and 2.10 MB of LLVM IR. A
+parameter-controlled unreachable partial NBA still fails capture preparation,
+but belongs to the Clause 10-12 procedural lvalue long tail rather than
+parameter binding or generate elaboration.
 
 A 1024-element interface-array call compiles in 0.85 seconds / 85 MB for
 bytecode, 0.99 seconds / 172 MB for generic native, and 1.07 seconds / 172 MB
@@ -1231,7 +1243,7 @@ no-feature path.
 | 20 Utility system tasks/functions | Partial | Simulation/time control—including compile-time `$timeunit` and `$timeprecision` scope queries plus every omitted and explicitly empty `$timeformat` argument—conversions, data/array queries, real math, bit-vector functions, severity, random distributions, `$system`, the complete `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam` queue manager, all sixteen synchronous/asynchronous PLA tasks, most assertion control, and the implemented sampled functions execute. Missing normative families include the global-clock sampled functions and complete assertion statistics/control behavior. |
 | 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning—including formatted-input field widths, assignment suppression, zero-byte hierarchy `%m`, `$timeformat`-scaled floating-point `%t`, and canonical scalar-strength `%v`, plus `$fread` into fixed unpacked memories and captured dynamic, associative, and nested aggregate copy-out targets—read/write-memory across fixed, dynamic, queue, multidimensional, and integral associative forms, plusargs including runtime `$value$plusargs` formats, and VCD/dumpports execute. Surplus arguments after a designated `$sformat`/`$sformatf` format continue with ordinary default-radix formatting. Formatting and file corner cases remain. |
 | 22 Compiler directives | Executable for the audited surface | The Slang preprocessor implements the normative directive family. Directive persistence, separate-compilation-unit reset, and command-line default-timescale precedence have native/bytecode tests. Protected envelopes are a separate Clause 34 feature, not ordinary pragma acceptance. |
-| 23 Modules and hierarchy | Partial | ANSI/non-ANSI modules, parameters, ports, arrays, hierarchy, bind, common upward references, and the audited generated-scope/parameter-binding shapes elaborate. Automatic root inference still imports an unset required parameter as frontend `ErrorType` and is retained as an xfail. Compact word-loop lowering for very wide hierarchical port forwarding remains a performance residual. |
+| 23 Modules and hierarchy | Partial | ANSI/non-ANSI modules, parameters, ports, arrays, hierarchy, bind, common upward references, and the audited generated-scope/parameter-binding shapes elaborate. Automatic root inference still imports an unset required parameter as frontend `ErrorType` and is retained as an xfail. Verifier-proven full-range wide hierarchical port forwarding uses bounded vector-shaped native lowering; irregular, delayed, resolved, or competing-driver topology retains scalar lowering. |
 | 24 Programs | Executable for the audited surface | Program instances execute in their Reactive/Re-Inactive/Re-NBA home. IEEE 24.7 `$exit` terminates every initial procedure and descendant owned by the calling program instance, multiple programs complete independently, and the scheduler enters finalization only after all program instances complete naturally or explicitly. Design-owned `$exit` is diagnosed. Ownership accounting is event-driven and shared by native, bytecode, and tier-transition paths. |
 | 25 Interfaces | Partial | Interfaces, modports, parameterization, interface tasks/functions, interface arrays, virtual-interface handles, calls, containers, and clocking-block access execute. Real interface arrays convert by position to fixed virtual-interface arrays across ascending, descending, and nested ranges while preserving exact scope identity, nulls, and aliases. Dynamic virtual-interface clock events and expanded event-formal flow are executable from semantic IR; source import remains xfailed where Slang rejects dynamic members in concurrent assertions. Inherit specify support from Clause 30 and continue the residual frontend and differential interface audit. |
 | 26 Packages | Partial | Packages, imports/exports, scope lookup, and the implemented `std` package surface, including R1 `std::randomize`, execute. Complete the remaining normative Annex G behavior through the randomization and system-task chunks. |
