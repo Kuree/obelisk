@@ -93,9 +93,13 @@ generic candidate scans, readiness calls, and AOT fallbacks at 0, 1024, and
 The bytecode direct-signal scheduler follow-up rejected an initial
 all-candidates-ready cache after an end-to-end `-O0` clocked design showed
 unchanged counters: the clock generator and control waiter remain slow poll
-candidates beside the large ready edge cohort. The final pay-for-play design
-activates only above 16 direct-ready tasks, caches their exact scheduler-key
-order, and rescans a separately validated slow-candidate set before every
+candidates beside the large ready edge cohort. The final design allocates its
+runtime state only above 16 direct-ready tasks, caches their exact
+scheduler-key order, and rescans a separately validated slow-candidate set
+before every selection. It is not binary-size pay-for-play: common executables
+grow by about 20.5 KB because the scanner specializations remain linked.
+Priority-signal tasks stay in the exact slow scan because multiple simultaneous
+wakes intentionally share a key and preserve the unordered-set's first-equal
 selection. Membership, selection generation, time, process creation, Finals,
 NBA barriers, signal priority, urgent task-call requeue, upper bounds, and
 process control all retain exact general-scheduler ordering. Across 201 clock
@@ -103,7 +107,8 @@ waves, current-main versus final N=256 candidate scans/readiness calls fell
 from 6,698,428/6,612,297 to 189,043/102,912; N=1024 fell from
 106,219,708/105,485,001 to 1,146,355/411,648. Same-affinity N=1024 simulation
 medians fell from 1.12 to 0.19 seconds. The intentional
-`N_ready * N_slow` bound is explicit: at N=256 for 1001 waves, 1/8/64 extra
+`N_ready * N_slow` bound is explicit and admission requires
+`N_ready >= 2 * N_slow`: at N=256 for 1001 waves, 1/8/64 extra
 slow candidates produced 1,068,966/2,899,683/17,548,947 final scans versus
 33,486,351/35,317,068/49,966,332 on current main. The allocation-free N=8
 path over 100001 waves had identical 0.87-second medians (main range
@@ -113,6 +118,12 @@ same-host UVM bytecode smoke passed with zero errors or fatals at 53.274/0.187
 seconds compile/simulate on current main and 57.320/0.196 seconds on the final
 runtime; the one-sample deltas remain below the 10% gate and the focused
 small-path runs isolate no measurable scheduler regression.
+The slow-dominant N=17/SLOW=1024/CYCLES=1001 case is deliberately suppressed;
+seven interleaved same-affinity runs had 0.20-second medians for both main and
+final, and both reported exactly 22,753,932 candidate scans and 137,137
+readiness calls. Slow membership validation is combined with that exact scan,
+including stale entries in the diagnostic count, so it cannot add a hidden
+second pass.
 
 L4 is off the ordinary-net runtime hot path. Its required single UVM smoke ran
 in 34.590 seconds compile / 0.204 seconds simulate for bytecode and 74.951

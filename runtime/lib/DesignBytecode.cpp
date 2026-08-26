@@ -2736,6 +2736,7 @@ OBELISK_RT_FEATURE_HELPER bool classifyDirectDesignReadyCohortMember(
     uint32_t unstartedActorRegion, DesignReadyCohortEntry &entry) {
   if (task.id == 0 || task.terminated || task.explicitlySuspended ||
       !task.started || task.phase != activePhase || task.urgent ||
+      task.prioritySignal ||
       (task.suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
        task.suspendKind != OBELISK_RT_SUSPEND_EDGE))
     return false;
@@ -2746,8 +2747,8 @@ OBELISK_RT_FEATURE_HELPER bool classifyDirectDesignReadyCohortMember(
     return false;
   entry.id = task.id;
   entry.region = task.queuedRegion;
-  entry.rank = task.prioritySignal ? 0 : task.scheduleRank;
-  entry.insertionSequence = task.prioritySignal ? 0 : task.insertionSequence;
+  entry.rank = task.scheduleRank;
+  entry.insertionSequence = task.insertionSequence;
   return true;
 }
 
@@ -2766,9 +2767,6 @@ OBELISK_RT_FEATURE_TEXT bool trySelectCachedDesignReadyCohort(
           context->designPollCandidates.size() ||
       cohort->ready.empty())
     return false;
-  for (uint64_t slowID : cohort->slowCandidates)
-    if (!context->designPollCandidates.count(slowID))
-      return false;
 
   const DesignReadyCohortEntry &cached = cohort->ready.back();
   auto indexed = context->scheduledDesignTaskIndices.find(cached.id);
@@ -2809,6 +2807,39 @@ installDesignReadyCohort(obelisk_rt_context *context,
   cohort.nextDesignTaskID = context->nextDesignTaskID;
   cohort.runningFinals = context->schedulerRunningFinals;
   cohort.valid = true;
+  cohort.suppressed = false;
+}
+
+OBELISK_RT_FEATURE_TEXT void
+suppressDesignReadyCohort(obelisk_rt_context *context) {
+  if (!context->designReadyCohort)
+    context->designReadyCohort = std::make_unique<DesignReadyCohortState>();
+  DesignReadyCohortState &cohort = *context->designReadyCohort;
+  cohort.ready.clear();
+  cohort.slowCandidates.clear();
+  cohort.selectionGeneration = context->schedulerSelectionGeneration;
+  cohort.schedulerTime = context->schedulerTime;
+  cohort.nextDesignTaskID = context->nextDesignTaskID;
+  cohort.runningFinals = context->schedulerRunningFinals;
+  cohort.valid = false;
+  cohort.suppressed = true;
+}
+
+bool designReadyCohortSuppressed(const obelisk_rt_context *context) {
+  const DesignReadyCohortState *cohort = context->designReadyCohort.get();
+  return cohort && cohort->suppressed &&
+         !context->nativeScheduleDesignTaskFilterActive &&
+         cohort->selectionGeneration == context->schedulerSelectionGeneration &&
+         cohort->schedulerTime == context->schedulerTime &&
+         cohort->nextDesignTaskID == context->nextDesignTaskID &&
+         cohort->runningFinals == context->schedulerRunningFinals;
+}
+
+void invalidateDesignReadyCohort(obelisk_rt_context *context) {
+  if (!context->designReadyCohort)
+    return;
+  context->designReadyCohort->valid = false;
+  context->designReadyCohort->suppressed = false;
 }
 
 void rebuildDesignSchedulerIndexUnlocked(obelisk_rt_context *context) {
@@ -3075,8 +3106,7 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
     std::vector<CancelledLogicalDesignActivation> designActivations;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
-      if (context->designReadyCohort)
-        context->designReadyCohort->valid = false;
+      invalidateDesignReadyCohort(context);
       auto contains = [&](uint64_t token) {
         return std::find(targets.begin(), targets.end(), token) !=
                targets.end();
@@ -3284,8 +3314,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_control(
     uint64_t activeProcess = 0;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
-      if (context->designReadyCohort)
-        context->designReadyCohort->valid = false;
+      invalidateDesignReadyCohort(context);
       // Compiled designs containing process.control are excluded from AOT.
       // Keep the public ABI safe for external callers too: mutating or
       // destroying actors still owned by a live generated plan would leave
@@ -3378,8 +3407,7 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
     std::vector<uint64_t> insertedDesignKills;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
-      if (context->designReadyCohort)
-        context->designReadyCohort->valid = false;
+      invalidateDesignReadyCohort(context);
       uint64_t root = context->activeLogicalProcessToken;
       if (root == 0)
         return OBELISK_RT_INVALID_LIFECYCLE;
@@ -3601,8 +3629,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
     bool resumedControl = false;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
-      if (context->designReadyCohort)
-        context->designReadyCohort->valid = false;
+      invalidateDesignReadyCohort(context);
       uint64_t current = context->activeLogicalProcessToken;
       if (current == 0)
         return OBELISK_RT_INVALID_LIFECYCLE;
@@ -4331,7 +4358,9 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       bool readyCohortFeatureActive =
           readyCohort ||
           context->designPollCandidates.size() > minCachedDesignSignalCohort;
-      if (readyCohortFeatureActive && readyCohort) {
+      bool readyCohortSuppressed =
+          readyCohortFeatureActive && designReadyCohortSuppressed(context);
+      if (readyCohortFeatureActive && readyCohort && !readyCohortSuppressed) {
         size_t candidateIndex = SIZE_MAX;
         DesignReadyCohortEntry cached;
         if (trySelectCachedDesignReadyCohort(context, activePhase,
@@ -4349,6 +4378,7 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
 
       bool collectReadyCohort =
           readyCohortFeatureActive && !selectedFromReadyCohort &&
+          !readyCohortSuppressed &&
           !context->nativeScheduleDesignTaskFilterActive &&
           context->designPollCandidates.size() > minCachedDesignSignalCohort;
       bool readyCohortEligible = collectReadyCohort;
@@ -4361,10 +4391,21 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
         readyCohortBuild.emplace();
         readyCohortBuild->ready.reserve(context->designPollCandidates.size());
       }
+      bool cachedSlowMembershipValid = true;
       auto scanDesignCandidates = [&](const auto &candidates,
-                                      auto collectTag) -> obelisk_rt_status {
-        constexpr bool collect = decltype(collectTag)::value;
+                                      auto scanMode) -> obelisk_rt_status {
+        constexpr unsigned mode = decltype(scanMode)::value;
+        constexpr bool collect = mode == 1;
+        constexpr bool validateCachedSlow = mode == 2;
         for (uint64_t candidateID : candidates) {
+          if constexpr (validateCachedSlow) {
+            if (context->signalDiagnosticsEnabled)
+              ++context->signalDiagnostics.candidateScans;
+            if (!context->designPollCandidates.count(candidateID)) {
+              cachedSlowMembershipValid = false;
+              continue;
+            }
+          }
           if (context->nativeScheduleDesignTaskFilterActive &&
               candidateID != context->nativeScheduleForcedDesignTask)
             continue;
@@ -4373,12 +4414,14 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
               indexed->second >= context->scheduledDesignTasks.size()) {
             if constexpr (collect)
               readyCohortEligible = false;
+            if constexpr (validateCachedSlow)
+              cachedSlowMembershipValid = false;
             continue;
           }
           size_t candidateIndex = indexed->second;
           auto iterator =
               context->scheduledDesignTasks.begin() + candidateIndex;
-          if (context->signalDiagnosticsEnabled)
+          if (context->signalDiagnosticsEnabled && !validateCachedSlow)
             ++context->signalDiagnostics.candidateScans;
           if (iterator->phase != (context->schedulerRunningFinals ? 1u : 0u)) {
             if constexpr (collect)
@@ -4545,23 +4588,51 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       };
       obelisk_rt_status scanStatus = OBELISK_RT_OK;
       if (selectedFromReadyCohort)
-        scanStatus = scanDesignCandidates(readyCohort->slowCandidates,
-                                          std::false_type{});
+        scanStatus = scanDesignCandidates(
+            readyCohort->slowCandidates, std::integral_constant<unsigned, 2>{});
       else if (collectReadyCohort)
-        scanStatus = scanDesignCandidates(context->designPollCandidates,
-                                          std::true_type{});
+        scanStatus =
+            scanDesignCandidates(context->designPollCandidates,
+                                 std::integral_constant<unsigned, 1>{});
       else
-        scanStatus = scanDesignCandidates(context->designPollCandidates,
-                                          std::false_type{});
+        scanStatus =
+            scanDesignCandidates(context->designPollCandidates,
+                                 std::integral_constant<unsigned, 0>{});
       if (scanStatus != OBELISK_RT_OK)
         return scanStatus;
-      if (readyCohortEligible &&
-          readyCohortBuild->ready.size() + readyCohortBuild->slow.size() ==
-              context->designPollCandidates.size() &&
-          readyCohortBuild->ready.size() > minCachedDesignSignalCohort) {
-        installDesignReadyCohort(context, std::move(readyCohortBuild->ready),
-                                 std::move(readyCohortBuild->slow));
-        readyCohort = context->designReadyCohort.get();
+      if (selectedFromReadyCohort && !cachedSlowMembershipValid) {
+        readyCohort->valid = false;
+        selectedFromReadyCohort = false;
+        found = context->scheduledDesignTasks.end();
+        foundUrgent = false;
+        foundUrgentSequence = UINT64_MAX;
+        selectedRegion = UINT32_MAX;
+        selectedRank = UINT32_MAX;
+        selectedInsertionSequence = UINT64_MAX;
+        scanStatus =
+            scanDesignCandidates(context->designPollCandidates,
+                                 std::integral_constant<unsigned, 0>{});
+        if (scanStatus != OBELISK_RT_OK)
+          return scanStatus;
+      }
+      if (readyCohortEligible) {
+        size_t readyCount = readyCohortBuild->ready.size();
+        size_t slowCount = readyCohortBuild->slow.size();
+        bool completeShape =
+            readyCount + slowCount == context->designPollCandidates.size();
+        // Do not let cached slow work exceed the leading R^2/2 cost of exact
+        // ready rescans: R >= 2*S implies R*S <= R^2/2. Smaller or
+        // slow-dominant shapes stay on the exact scan for this generation.
+        bool profitable = readyCount > minCachedDesignSignalCohort &&
+                          slowCount <= readyCount / 2;
+        if (completeShape && profitable) {
+          installDesignReadyCohort(context, std::move(readyCohortBuild->ready),
+                                   std::move(readyCohortBuild->slow));
+          readyCohort = context->designReadyCohort.get();
+        } else if (completeShape) {
+          suppressDesignReadyCohort(context);
+          readyCohort = context->designReadyCohort.get();
+        }
       }
       auto maximumKey =
           std::tuple{maximumRegion, maximumRank, maximumInsertionSequence};

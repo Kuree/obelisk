@@ -4506,6 +4506,32 @@ TEST(DesignBytecode, ScheduledSignalWaitUsesDirectSubscriptions) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+void addBlockedForeverDesignTasks(obelisk_rt_context *context,
+                                  uint64_t slowCount) {
+  context->scheduledDesignTasks.reserve(context->scheduledDesignTasks.size() +
+                                        slowCount);
+  context->scheduledDesignTaskIndices.reserve(
+      context->scheduledDesignTaskIndices.size() + slowCount);
+  context->designPollCandidates.reserve(context->designPollCandidates.size() +
+                                        slowCount);
+  for (uint64_t index = 0; index != slowCount; ++index) {
+    ScheduledDesignTask slow;
+    do {
+      slow.id = context->nextDesignTaskID++;
+    } while (context->scheduledDesignTaskIndices.count(slow.id));
+    slow.function = 0;
+    slow.frame.resize(64);
+    slow.scratchOffset = 32;
+    slow.scratchSize = 32;
+    slow.started = true;
+    slow.suspendKind = OBELISK_RT_SUSPEND_FOREVER;
+    context->scheduledDesignTaskIndices.emplace(
+        slow.id, context->scheduledDesignTasks.size());
+    context->designPollCandidates.insert(slow.id);
+    context->scheduledDesignTasks.push_back(std::move(slow));
+  }
+}
+
 void expectLargeDirectSignalCohortScansLinearly(uint64_t cohortSize,
                                                 uint64_t slowCount = 0) {
   std::vector<uint8_t> bytecode = makeSignalWaitSpawnBytecode();
@@ -4571,20 +4597,7 @@ void expectLargeDirectSignalCohortScansLinearly(uint64_t cohortSize,
   ASSERT_EQ(context->scheduledDesignTasks.size(), cohortSize);
   ASSERT_TRUE(context->designPollCandidates.empty());
 
-  for (uint64_t index = 0; index != slowCount; ++index) {
-    ScheduledDesignTask slow;
-    slow.id = context->nextDesignTaskID++;
-    slow.function = 0;
-    slow.frame.resize(64);
-    slow.scratchOffset = 32;
-    slow.scratchSize = 32;
-    slow.started = true;
-    slow.suspendKind = OBELISK_RT_SUSPEND_FOREVER;
-    context->scheduledDesignTaskIndices.emplace(
-        slow.id, context->scheduledDesignTasks.size());
-    context->designPollCandidates.insert(slow.id);
-    context->scheduledDesignTasks.push_back(std::move(slow));
-  }
+  addBlockedForeverDesignTasks(context, slowCount);
 
   context->signalDiagnosticsEnabled = true;
   context->signalDiagnostics.candidateScans = 0;
@@ -4676,6 +4689,115 @@ TEST(DesignBytecode, SmallDirectSignalSetDoesNotAllocateCohort) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(DesignBytecode, SlowDominantDirectSignalSetStaysOnExactScan) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  constexpr uint64_t readyCount = 17;
+  constexpr uint64_t slowCount = 1024;
+  addReadyTerminatingDesignTasks(context, readyCount, OBELISK_RT_REGION_ACTIVE);
+  addBlockedForeverDesignTasks(context, slowCount);
+  context->signalDiagnosticsEnabled = true;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->scheduledDesignTasks.size(), slowCount);
+  EXPECT_EQ(context->signalDiagnostics.candidateScans,
+            readyCount * (readyCount + 1) / 2 + slowCount * (readyCount + 1));
+  EXPECT_EQ(context->signalDiagnostics.readinessCalls,
+            readyCount * (readyCount + 1) / 2);
+  ASSERT_NE(context->designReadyCohort, nullptr);
+  EXPECT_FALSE(context->designReadyCohort->valid);
+  EXPECT_TRUE(context->designReadyCohort->suppressed);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, AllocatedCohortSuppressesAfterSlowDominantShrink) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  addReadyTerminatingDesignTasks(context, 17, OBELISK_RT_REGION_ACTIVE);
+  bool progress = false;
+  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+                                           UINT64_MAX, &progress),
+            OBELISK_RT_OK);
+  ASSERT_TRUE(progress);
+  ASSERT_NE(context->designReadyCohort, nullptr);
+  ASSERT_TRUE(context->designReadyCohort->valid);
+  ASSERT_EQ(context->designReadyCohort->ready.size(), 16u);
+
+  constexpr uint64_t readyCount = 16;
+  constexpr uint64_t slowCount = 1024;
+  addBlockedForeverDesignTasks(context, slowCount);
+  context->signalDiagnosticsEnabled = true;
+  context->signalDiagnostics.candidateScans = 0;
+  context->signalDiagnostics.readinessCalls = 0;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->scheduledDesignTasks.size(), slowCount);
+  EXPECT_EQ(context->signalDiagnostics.candidateScans,
+            readyCount * (readyCount + 1) / 2 + slowCount * (readyCount + 1));
+  EXPECT_EQ(context->signalDiagnostics.readinessCalls,
+            readyCount * (readyCount + 1) / 2);
+  EXPECT_FALSE(context->designReadyCohort->valid);
+  EXPECT_TRUE(context->designReadyCohort->suppressed);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, CachedSlowMembershipFallbackCountsAllValidationWork) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  addReadyTerminatingDesignTasks(context, 17, OBELISK_RT_REGION_ACTIVE);
+  addBlockedForeverDesignTasks(context, 1);
+
+  ScheduledDesignTask replacement;
+  do {
+    replacement.id = context->nextDesignTaskID++;
+  } while (context->scheduledDesignTaskIndices.count(replacement.id));
+  replacement.function = 0;
+  replacement.frame.resize(64);
+  replacement.scratchOffset = 32;
+  replacement.scratchSize = 32;
+  replacement.started = true;
+  replacement.terminated = true;
+  replacement.suspendKind = OBELISK_RT_SUSPEND_FOREVER;
+  uint64_t replacementID = replacement.id;
+  context->scheduledDesignTaskIndices.emplace(
+      replacement.id, context->scheduledDesignTasks.size());
+  context->scheduledDesignTasks.push_back(std::move(replacement));
+
+  bool progress = false;
+  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+                                           UINT64_MAX, &progress),
+            OBELISK_RT_OK);
+  ASSERT_TRUE(progress);
+  ASSERT_TRUE(context->designReadyCohort->valid);
+  ASSERT_EQ(context->designReadyCohort->slowCandidates.size(), 1u);
+  uint64_t staleSlow = context->designReadyCohort->slowCandidates.front();
+  uint64_t expectedReady = context->designReadyCohort->ready.back().id;
+  ASSERT_EQ(context->designPollCandidates.erase(staleSlow), 1u);
+  ASSERT_TRUE(context->designPollCandidates.insert(replacementID).second);
+
+  context->signalDiagnosticsEnabled = true;
+  context->signalDiagnostics.candidateScans = 0;
+  context->signalDiagnostics.readinessCalls = 0;
+  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+                                           UINT64_MAX, &progress),
+            OBELISK_RT_OK);
+  ASSERT_TRUE(progress);
+  EXPECT_EQ(context->terminatedDesignTasks.count(expectedReady), 1u);
+  // One cached-head check, one stale slow-membership check, then all 17 live
+  // poll members in the safe exact fallback. No validation work is hidden.
+  EXPECT_EQ(context->signalDiagnostics.candidateScans, 19u);
+  EXPECT_EQ(context->signalDiagnostics.readinessCalls, 17u);
+  EXPECT_FALSE(context->designReadyCohort->valid);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(DesignBytecode, DirectSignalCohortPreservesBoundAndControlOrdering) {
   Fixture fixture;
   obelisk_rt_context *context = nullptr;
@@ -4719,6 +4841,57 @@ TEST(DesignBytecode, DirectSignalCohortPreservesBoundAndControlOrdering) {
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
   EXPECT_TRUE(context->scheduledDesignTasks.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, DirectSignalCohortRevalidatesTimePhaseAndFinals) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  addReadyTerminatingDesignTasks(context, 20, OBELISK_RT_REGION_ACTIVE);
+
+  bool progress = false;
+  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+                                           UINT64_MAX, &progress),
+            OBELISK_RT_OK);
+  ASSERT_TRUE(progress);
+  ASSERT_TRUE(context->designReadyCohort->valid);
+
+  // A new time key forces an exact rebuild. The restrictive upper bound keeps
+  // the freshly validated head in place for the following phase mutation.
+  ++context->schedulerTime;
+  progress = true;
+  ASSERT_EQ(obelisk_rt_run_one_design_task(context, OBELISK_RT_REGION_ACTIVE, 0,
+                                           0, &progress),
+            OBELISK_RT_OK);
+  EXPECT_FALSE(progress);
+  ASSERT_TRUE(context->designReadyCohort->valid);
+  EXPECT_EQ(context->designReadyCohort->schedulerTime, context->schedulerTime);
+
+  uint64_t finalPhaseID = context->designReadyCohort->ready.back().id;
+  auto indexed = context->scheduledDesignTaskIndices.find(finalPhaseID);
+  ASSERT_NE(indexed, context->scheduledDesignTaskIndices.end());
+  context->scheduledDesignTasks[indexed->second].phase = 1;
+  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+                                           UINT64_MAX, &progress),
+            OBELISK_RT_OK);
+  ASSERT_TRUE(progress);
+  EXPECT_EQ(context->terminatedDesignTasks.count(finalPhaseID), 0u);
+  ASSERT_TRUE(context->designReadyCohort->valid);
+
+  // Entering Finals rejects the active-phase cache. The sole final-phase task
+  // is selected by the exact scan, while the unprofitable shape is suppressed.
+  context->schedulerRunningFinals = true;
+  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+                                           UINT64_MAX, &progress),
+            OBELISK_RT_OK);
+  ASSERT_TRUE(progress);
+  EXPECT_EQ(context->terminatedDesignTasks.count(finalPhaseID), 1u);
+  EXPECT_FALSE(context->designReadyCohort->valid);
+  EXPECT_TRUE(context->designReadyCohort->suppressed);
+  EXPECT_TRUE(context->designReadyCohort->runningFinals);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -4790,6 +4963,72 @@ TEST(DesignBytecode, CachedDirectSignalCohortInvalidatesForPriorityWake) {
             OBELISK_RT_OK);
   ASSERT_TRUE(progress);
   EXPECT_EQ(context->terminatedDesignTasks.count(priorityID), 1u);
+  EXPECT_FALSE(context->designReadyCohort->valid);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode,
+     SimultaneousPrioritySignalWakesRemainInExactCandidateOrder) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  addReadyTerminatingDesignTasks(context, 19, OBELISK_RT_REGION_ACTIVE);
+
+  struct {
+    obelisk_rt_wait_record_v1 wait;
+    obelisk_rt_wait_entry_v1 entry;
+  } record{{OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_CHANGE, 0, 1, 0, 0},
+           {16, OBELISK_RT_WAIT_EDGE_CHANGE, 8}};
+  context->designPollCandidates.clear();
+  for (ScheduledDesignTask &task : context->scheduledDesignTasks) {
+    task.signalTriggered = false;
+    ASSERT_TRUE(obelisk_rt_register_signal_wait_unlocked(
+        context, &record.wait, task.signalSubscriptions, task.signalLatch,
+        task.id, true));
+  }
+  std::array<uint64_t, 2> priorityIDs{context->scheduledDesignTasks[0].id,
+                                      context->scheduledDesignTasks[1].id};
+  context->scheduledDesignTasks[0].prioritySignal = true;
+  context->scheduledDesignTasks[1].prioritySignal = true;
+
+  // Exercise the production direct-wait publication path so both equal-key
+  // priority candidates become runnable in the same scheduler generation.
+  obelisk_rt_v1_scheduler_signal(
+      context, 18, 1, OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_POSEDGE);
+  ASSERT_EQ(context->designPollCandidates.size(), 19u);
+  uint64_t exactFirst = 0;
+  for (uint64_t candidateID : context->designPollCandidates) {
+    auto indexed = context->scheduledDesignTaskIndices.find(candidateID);
+    ASSERT_NE(indexed, context->scheduledDesignTaskIndices.end());
+    if (context->scheduledDesignTasks[indexed->second].prioritySignal) {
+      exactFirst = candidateID;
+      break;
+    }
+  }
+  ASSERT_NE(exactFirst, 0u);
+
+  bool progress = false;
+  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+                                           UINT64_MAX, &progress),
+            OBELISK_RT_OK);
+  ASSERT_TRUE(progress);
+  EXPECT_EQ(context->terminatedDesignTasks.count(exactFirst), 1u);
+  ASSERT_NE(context->designReadyCohort, nullptr);
+  for (uint64_t priorityID : priorityIDs) {
+    EXPECT_EQ(std::count_if(context->designReadyCohort->ready.begin(),
+                            context->designReadyCohort->ready.end(),
+                            [&](const DesignReadyCohortEntry &entry) {
+                              return entry.id == priorityID;
+                            }),
+              0);
+    EXPECT_NE(std::find(context->designReadyCohort->slowCandidates.begin(),
+                        context->designReadyCohort->slowCandidates.end(),
+                        priorityID),
+              context->designReadyCohort->slowCandidates.end());
+  }
+  // Selecting an exact slow candidate discards the ready-only cache.
   EXPECT_FALSE(context->designReadyCohort->valid);
   obelisk_rt_v1_context_destroy(context);
 }

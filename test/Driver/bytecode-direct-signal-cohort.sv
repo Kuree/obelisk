@@ -6,14 +6,20 @@
 // RUN:   -o %t.bytecode-o0
 // RUN: obelisk -fno-lto -O3 --vpi=off --native-scheduler=aot %s \
 // RUN:   -o %t.aot
+// RUN: obelisk -fno-lto -O3 --vpi=off --execution-tier=bytecode \
+// RUN:   -G N=17 -G SLOW=1024 -G CYCLES=3 %s -o %t.slow-dominant
 // RUN: %t.native > %t.native.out
 // RUN: %t.bytecode > %t.bytecode.out
 // RUN: %t.bytecode-o0 > %t.bytecode-o0.out
 // RUN: %t.aot > %t.aot.out
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.slow-dominant \
+// RUN:   > %t.slow-dominant.out 2> %t.slow-dominant.diag
 // RUN: diff -u %t.native.out %t.bytecode.out
 // RUN: diff -u %t.native.out %t.bytecode-o0.out
 // RUN: diff -u %t.native.out %t.aot.out
 // RUN: FileCheck %s < %t.bytecode.out
+// RUN: FileCheck %s --check-prefix=SLOW < %t.slow-dominant.out
+// RUN: FileCheck %s --check-prefix=SLOW-DIAG < %t.slow-dominant.diag
 
 // More than the bytecode scheduler's cohort threshold of independent direct
 // posedge waiters must resume, execute, and resuspend on every clock wave.
@@ -48,3 +54,5 @@ module bytecode_direct_signal_cohort;
 endmodule
 
 // CHECK: cohort hits=ffffffff
+// SLOW: cohort hits=1ffff
+// SLOW-DIAG: readiness_calls=411 candidate_scans=1135256
