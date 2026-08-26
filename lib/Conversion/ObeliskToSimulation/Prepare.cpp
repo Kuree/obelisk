@@ -42,6 +42,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <numeric>
 
 using namespace mlir;
 
@@ -878,6 +879,10 @@ void ObeliskSimPreparePass::runOnOperation() {
     uint32_t action = shorthandAction;
     uint64_t assertionTypes = attemptShorthand ? 15 : 31;
     uint64_t directiveTypes = 7;
+    bool dynamicAssertionTypes = false;
+    bool dynamicDirectiveTypes = false;
+    size_t assertionTypesArgument = 0;
+    size_t directiveTypesArgument = 0;
     uint64_t levels = 0;
     bool dynamicLevels = false;
     size_t levelsArgument = 0;
@@ -919,19 +924,31 @@ void ObeliskSimPreparePass::runOnOperation() {
       action = static_cast<uint32_t>(*value);
       if (arguments.size() >= 2 &&
           !isa<semantic::SVEmptyArgumentExpressionOp>(arguments[1])) {
-        value = literalControlValue(arguments[1], "assertion-type mask");
-        if (!value)
-          return;
-        assertionTypes = *value;
+        if (arguments[1]->hasAttr("constant_value")) {
+          value = literalControlValue(arguments[1], "assertion-type mask");
+          if (!value)
+            return;
+          assertionTypes = *value;
+        } else {
+          dynamicAssertionTypes = true;
+          assertionTypesArgument = 1;
+          assertionTypes = 31;
+        }
       } else {
         assertionTypes = 31;
       }
       if (arguments.size() >= 3 &&
           !isa<semantic::SVEmptyArgumentExpressionOp>(arguments[2])) {
-        value = literalControlValue(arguments[2], "directive-type mask");
-        if (!value)
-          return;
-        directiveTypes = *value;
+        if (arguments[2]->hasAttr("constant_value")) {
+          value = literalControlValue(arguments[2], "directive-type mask");
+          if (!value)
+            return;
+          directiveTypes = *value;
+        } else {
+          dynamicDirectiveTypes = true;
+          directiveTypesArgument = 2;
+          directiveTypes = 7;
+        }
       }
       if (arguments.size() >= 4) {
         bool explicitLevels =
@@ -953,8 +970,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         firstSelector = arguments.size();
       }
     }
-    if ((assertionTypes & ~UINT64_C(31)) != 0 ||
-        (directiveTypes & ~UINT64_C(7)) != 0) {
+    if ((!dynamicAssertionTypes && (assertionTypes & ~UINT64_C(31)) != 0) ||
+        (!dynamicDirectiveTypes && (directiveTypes & ~UINT64_C(7)) != 0)) {
       emitError(getSemanticLocation(call))
           << "assertion-control masks select unsupported unique, unique0, "
              "priority, or directive kinds";
@@ -1005,6 +1022,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
 
     SmallVector<std::pair<int64_t, int64_t>> selectedTargets;
+    SmallVector<std::pair<int64_t, int64_t>> selectedTypeMasks;
     SmallVector<std::pair<Operation *, uint64_t>> selectedAssertions;
     for (const AssertionInventoryEntry &entry : assertionInventory) {
       if ((entry.assertionType & assertionTypes) == 0 ||
@@ -1053,18 +1071,48 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       selectedTargets.push_back(
           {static_cast<int64_t>(entry.id), selectedDepth});
+      if (dynamicAssertionTypes || dynamicDirectiveTypes)
+        selectedTypeMasks.push_back(
+            {static_cast<int64_t>(entry.assertionType),
+             static_cast<int64_t>(entry.directiveType)});
       selectedAssertions.push_back({entry.operation, entry.id});
     }
-    llvm::sort(selectedTargets);
     SmallVector<int64_t> selectedIDs;
     SmallVector<int64_t> selectedDepths;
-    for (auto [id, depth] : selectedTargets) {
+    SmallVector<int64_t> selectedAssertionTypes;
+    SmallVector<int64_t> selectedDirectiveTypes;
+    auto appendTarget = [&](int64_t id, int64_t depth, int64_t assertionType,
+                            int64_t directiveType) {
       if (!selectedIDs.empty() && selectedIDs.back() == id) {
         selectedDepths.back() = std::min(selectedDepths.back(), depth);
-        continue;
+        if (dynamicAssertionTypes || dynamicDirectiveTypes) {
+          selectedAssertionTypes.back() |= assertionType;
+          selectedDirectiveTypes.back() |= directiveType;
+        }
+        return;
       }
       selectedIDs.push_back(id);
       selectedDepths.push_back(depth);
+      if (dynamicAssertionTypes || dynamicDirectiveTypes) {
+        selectedAssertionTypes.push_back(assertionType);
+        selectedDirectiveTypes.push_back(directiveType);
+      }
+    };
+    if (dynamicAssertionTypes || dynamicDirectiveTypes) {
+      SmallVector<size_t> selectedOrder(selectedTargets.size());
+      std::iota(selectedOrder.begin(), selectedOrder.end(), 0);
+      llvm::sort(selectedOrder, [&](size_t left, size_t right) {
+        return selectedTargets[left] < selectedTargets[right];
+      });
+      for (size_t index : selectedOrder) {
+        auto [id, depth] = selectedTargets[index];
+        auto [assertionType, directiveType] = selectedTypeMasks[index];
+        appendTarget(id, depth, assertionType, directiveType);
+      }
+    } else {
+      llvm::sort(selectedTargets);
+      for (auto [id, depth] : selectedTargets)
+        appendTarget(id, depth, 0, 0);
     }
     call->setAttr("obelisk_sim.assertion_control_action",
                   IntegerAttr::get(IntegerType::get(context, 32), action));
@@ -1076,6 +1124,20 @@ void ObeliskSimPreparePass::runOnOperation() {
           IntegerAttr::get(IntegerType::get(context, 64), levelsArgument));
       call->setAttr("obelisk_sim.assertion_control_depths",
                     DenseI64ArrayAttr::get(context, selectedDepths));
+    }
+    if (dynamicAssertionTypes) {
+      call->setAttr("obelisk_sim.assertion_control_assertion_types_argument",
+                    IntegerAttr::get(IntegerType::get(context, 64),
+                                     assertionTypesArgument));
+      call->setAttr("obelisk_sim.assertion_control_assertion_types",
+                    DenseI64ArrayAttr::get(context, selectedAssertionTypes));
+    }
+    if (dynamicDirectiveTypes) {
+      call->setAttr("obelisk_sim.assertion_control_directive_types_argument",
+                    IntegerAttr::get(IntegerType::get(context, 64),
+                                     directiveTypesArgument));
+      call->setAttr("obelisk_sim.assertion_control_directive_types",
+                    DenseI64ArrayAttr::get(context, selectedDirectiveTypes));
     }
     for (auto [target, id] : selectedAssertions) {
       target->setAttr("obelisk_sim.assertion_control_target_id",

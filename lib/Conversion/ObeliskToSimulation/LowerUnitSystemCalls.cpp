@@ -457,19 +457,33 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         "obelisk_sim.assertion_control_depths");
     auto levelsArgument = op->getAttrOfType<IntegerAttr>(
         "obelisk_sim.assertion_control_levels_argument");
+    auto assertionTypes = op->getAttrOfType<DenseI64ArrayAttr>(
+        "obelisk_sim.assertion_control_assertion_types");
+    auto assertionTypesArgument = op->getAttrOfType<IntegerAttr>(
+        "obelisk_sim.assertion_control_assertion_types_argument");
+    auto directiveTypes = op->getAttrOfType<DenseI64ArrayAttr>(
+        "obelisk_sim.assertion_control_directive_types");
+    auto directiveTypesArgument = op->getAttrOfType<IntegerAttr>(
+        "obelisk_sim.assertion_control_directive_types_argument");
     if (static_cast<bool>(depths) != static_cast<bool>(levelsArgument) ||
-        (depths && depths.size() != targets.size())) {
+        static_cast<bool>(assertionTypes) !=
+            static_cast<bool>(assertionTypesArgument) ||
+        static_cast<bool>(directiveTypes) !=
+            static_cast<bool>(directiveTypesArgument) ||
+        (depths && depths.size() != targets.size()) ||
+        (assertionTypes && assertionTypes.size() != targets.size()) ||
+        (directiveTypes && directiveTypes.size() != targets.size())) {
       emitError(location)
           << name << " has malformed dynamic assertion-control metadata";
       return failure();
     }
 
-    Value levels;
-    if (depths) {
-      uint64_t index = levelsArgument.getValue().getZExtValue();
+    auto lowerControlInteger = [&](IntegerAttr argument,
+                                   StringRef role) -> FailureOr<Value> {
+      uint64_t index = argument.getValue().getZExtValue();
       if (index >= children.size()) {
         emitError(location)
-            << name << " has an invalid assertion-control levels index";
+            << name << " has an invalid assertion-control " << role << " index";
         return failure();
       }
       FailureOr<Value> lowered = lowerExpression(children[index]);
@@ -479,21 +493,109 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
           convert(*lowered, i64, isSignedNode(children[index]), location);
       if (failed(converted)) {
         emitError(getSemanticLocation(children[index]))
-            << name << " levels value is not an executable integer";
+            << name << " " << role << " value is not an executable integer";
         return failure();
       }
-      levels = *converted;
+      return *converted;
+    };
+
+    Value assertionTypeMask;
+    if (assertionTypes) {
+      FailureOr<Value> lowered =
+          lowerControlInteger(assertionTypesArgument, "assertion-type mask");
+      if (failed(lowered))
+        return failure();
+      assertionTypeMask = *lowered;
+    }
+    Value directiveTypeMask;
+    if (directiveTypes) {
+      FailureOr<Value> lowered =
+          lowerControlInteger(directiveTypesArgument, "directive-type mask");
+      if (failed(lowered))
+        return failure();
+      directiveTypeMask = *lowered;
+    }
+    Value levels;
+    if (depths) {
+      FailureOr<Value> lowered = lowerControlInteger(levelsArgument, "levels");
+      if (failed(lowered))
+        return failure();
+      levels = *lowered;
+    }
+
+    Value zero;
+    if (depths || assertionTypes || directiveTypes)
+      zero = constant(i64, 0);
+
+    // A dynamic mask receives the same unsupported-kind check as a literal
+    // mask, but at the point where the task executes and after its argument
+    // expressions have been evaluated.
+    Value invalidMask;
+    auto addInvalidMask = [&](Value mask, uint64_t supported) {
+      Value unsupported = arith::AndIOp::create(builder, location, mask,
+                                                constant(i64, ~supported));
+      Value invalid = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, unsupported, zero);
+      invalidMask = invalidMask ? arith::OrIOp::create(builder, location,
+                                                       invalidMask, invalid)
+                                : invalid;
+    };
+    if (assertionTypes)
+      addInvalidMask(assertionTypeMask, UINT64_C(31));
+    if (directiveTypes)
+      addInvalidMask(directiveTypeMask, UINT64_C(7));
+    if (invalidMask) {
+      Block *invalid = addBlock();
+      Block *valid = addBlock();
+      cf::CondBranchOp::create(builder, location, invalidMask, invalid, valid);
+      setCurrent(invalid);
+      if (failed(emitRuntimeFatal(
+              location,
+              "assertion-control masks select unsupported unique, unique0, "
+              "priority, or directive kinds")))
+        return failure();
+      setCurrent(valid);
     }
 
     ArrayRef<int64_t> targetValues = targets.asArrayRef();
     ArrayRef<int64_t> depthValues =
         depths ? depths.asArrayRef() : ArrayRef<int64_t>{};
-    Value zero;
-    if (depths)
-      zero = constant(i64, 0);
+    ArrayRef<int64_t> assertionTypeValues =
+        assertionTypes ? assertionTypes.asArrayRef() : ArrayRef<int64_t>{};
+    ArrayRef<int64_t> directiveTypeValues =
+        directiveTypes ? directiveTypes.asArrayRef() : ArrayRef<int64_t>{};
     for (auto [index, target] : llvm::enumerate(targetValues)) {
       int64_t depth = depths ? depthValues[index] : -1;
-      if (depth < 0) {
+      Value selected;
+      auto addSelection = [&](Value condition) {
+        selected = selected ? arith::AndIOp::create(builder, location, selected,
+                                                    condition)
+                            : condition;
+      };
+      if (depths && depth >= 0) {
+        Value allLevels = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq, levels, zero);
+        Value includesDepth = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ugt, levels,
+            constant(i64, static_cast<uint64_t>(depth)));
+        addSelection(
+            arith::OrIOp::create(builder, location, allLevels, includesDepth));
+      }
+      if (assertionTypes) {
+        Value matched = arith::AndIOp::create(
+            builder, location, assertionTypeMask,
+            constant(i64, static_cast<uint64_t>(assertionTypeValues[index])));
+        addSelection(arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, matched, zero));
+      }
+      if (directiveTypes) {
+        Value matched = arith::AndIOp::create(
+            builder, location, directiveTypeMask,
+            constant(i64, static_cast<uint64_t>(directiveTypeValues[index])));
+        addSelection(arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, matched, zero));
+      }
+      if (!selected) {
         sim::SimAssertionControlOp::create(
             builder, location, context,
             builder.getI32IntegerAttr(static_cast<int32_t>(action.getInt())),
@@ -501,13 +603,6 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         continue;
       }
 
-      Value allLevels = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::eq, levels, zero);
-      Value includesDepth = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ugt, levels,
-          constant(i64, static_cast<uint64_t>(depth)));
-      Value selected =
-          arith::OrIOp::create(builder, location, allLevels, includesDepth);
       Block *apply = addBlock();
       Block *resume = addBlock();
       cf::CondBranchOp::create(builder, location, selected, apply, resume);

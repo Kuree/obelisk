@@ -1253,6 +1253,14 @@ selectors remain unconditional, and fixed-level calls retain their existing
 branch-free lowering. Designs without assertion control retain their existing
 zero-state path, and there is no scheduler scan or polling.
 
+A1's following closure makes `$assertcontrol` assertion-type and
+directive-type masks runtime integer expressions. Preparation still resolves
+the complete possible target set and records each target's two fixed kind
+bits; execution evaluates each supplied mask once, rejects unsupported kind
+bits at the call site, and conditionally applies the action without a hierarchy
+scan. Literal masks retain the previous selection and branch-free lowering,
+and the minimal semantic-MLIR regression also verifies bytecode encoding.
+
 L14's configuration closure records the effective elaborated binding on only
 the affected Slang module and checker instance operations and exposes it
 through the opt-in, hierarchically sorted `-emit-bindings` report. Ordered
