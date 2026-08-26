@@ -1394,7 +1394,7 @@ chain, and affected event waits arm afterward without changing ordinary
 signal-wait ordering. Feature-reachable startup cycles and computed actuals
 with calls or other unbounded effects retain targeted diagnostics. Folded
 dependency-free conditionals use one-shot initialization, and an X/Z selector
-preserves identical event handles while distinct handles merge to null.
+produces the default null event after evaluating both arms exactly once.
 
 L13's second performance tranche replaces per-bit native resolution for a
 verifier-proven wide port topology with direct vector publication. The proof

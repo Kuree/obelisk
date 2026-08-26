@@ -14,6 +14,7 @@
 // This executes the MLIR-originated image, rather than merely checking that it
 // serialized.
 // CHECK: event cell executed
+// CHECK-NOT: null event woke
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -24,6 +25,7 @@ module attributes {
     obelisk_sim.code_unit.decl 9940000 in 0 root_initializer
         hierarchy "top.root"
     obelisk_sim.code_unit.decl 9940001 in 0 initial hierarchy "top.initial"
+    obelisk_sim.code_unit.decl 9940002 in 0 initial hierarchy "top.null_wait"
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.event design
         hierarchy "top.cell"
 
@@ -35,6 +37,8 @@ module attributes {
       %process = obelisk_sim.spawn @initial(%ctx, %cell) :
           !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.event> ->
           !obelisk_sim.process
+      %waiter = obelisk_sim.spawn @null_wait(%ctx) :
+          !obelisk_sim.context -> !obelisk_sim.process
       obelisk_sim.return
     }
 
@@ -65,6 +69,23 @@ module attributes {
       obelisk_sim.event.trigger %restored_null nonblocking = true
 
       %message = obelisk_sim.bytes.constant "event cell executed"
+      %stdout = arith.constant 1 : i32
+      obelisk_sim.display %ctx to %stdout(%message)
+          newline = true radix = 10 flags = [0] : !obelisk_sim.bytes
+      obelisk_sim.return
+    }
+
+    // A null event is a legal wait operand that can never wake. The bytecode
+    // handle-ID path must retain its reserved all-ones sentinel rather than
+    // rejecting it as an ordinary invalid descriptor.
+    obelisk_sim.func private @null_wait(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 9940002 : i64} {
+      %null = obelisk_sim.event.null
+      obelisk_sim.suspend.event %null to ^bad
+
+    ^bad:
+      %message = obelisk_sim.bytes.constant "null event woke"
       %stdout = arith.constant 1 : i32
       obelisk_sim.display %ctx to %stdout(%message)
           newline = true radix = 10 flags = [0] : !obelisk_sim.bytes

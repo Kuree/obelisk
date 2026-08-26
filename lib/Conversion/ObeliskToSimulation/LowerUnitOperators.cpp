@@ -1787,16 +1787,11 @@ FailureOr<Value> UnitLowering::mergeConditionalValues(Value condition,
                                                       Value falseValue,
                                                       Type type,
                                                       Location location) {
-  if (isa<sim::EventType>(type)) {
-    // An ambiguous selector preserves an event only when both branches name
-    // the same synchronization object. Different handles have no bitwise
-    // merge and therefore produce the null event handle.
-    Value equal = sim::SimEventEqualOp::create(
-        builder, location, builder.getI1Type(), trueValue, falseValue);
-    Value null = sim::SimEventNullOp::create(builder, location, type);
-    return arith::SelectOp::create(builder, location, equal, trueValue, null)
-        .getResult();
-  }
+  // IEEE 1800-2017 11.4.11 defines the ambiguous result of an event-valued
+  // conditional as the default null event. This applies even when both
+  // already-evaluated arms happen to name the same event object.
+  if (isa<sim::EventType>(type))
+    return sim::SimEventNullOp::create(builder, location, type).getResult();
   if (sim::getPackedScalarType(type)) {
     FailureOr<Value> leftScalar = toPackedScalar(trueValue, location);
     FailureOr<Value> rightScalar = toPackedScalar(falseValue, location);

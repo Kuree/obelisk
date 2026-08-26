@@ -1259,14 +1259,18 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       int64_t start = kInvalidHandleStart;
       std::memcpy(&kind, frame.data + handle.offset, 4);
       std::memcpy(&start, frame.data + handle.offset + 16, 8);
-      if (start == kInvalidHandleStart)
-        return OBELISK_RT_INVALID_HANDLE;
       uint32_t descriptorKind =
           kind & ~(kLocalHandleKind | kAutomaticHandleKind);
-      uint64_t raw = static_cast<uint64_t>(start);
+      bool nullEvent = kind == OBELISK_RT_DESCRIPTOR_EVENT && start == -1;
+      if (start == kInvalidHandleStart)
+        return OBELISK_RT_INVALID_HANDLE;
+      uint64_t raw = nullEvent ? UINT64_MAX : static_cast<uint64_t>(start);
       bool dynamicEvent = isDynamicEventHandle(descriptorKind, raw);
-      uint64_t stable = dynamicEvent ? raw : encodeGlobalHandle(start);
-      if (!dynamicEvent && (kind & kAutomaticHandleKind) != 0) {
+      uint64_t stable =
+          nullEvent ? UINT64_MAX
+                    : (dynamicEvent ? raw : encodeGlobalHandle(start));
+      if (!nullEvent && !dynamicEvent &&
+          (kind & kAutomaticHandleKind) != 0) {
         uint64_t base = 0;
         std::memcpy(&base, frame.data + handle.offset + 8, 8);
         uint32_t id = 0;
@@ -1274,7 +1278,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         if (!decodeAutomaticHandle(base, id, begin))
           return OBELISK_RT_INVALID_HANDLE;
         stable = encodeAutomaticHandle(id, start);
-      } else if (!dynamicEvent) {
+      } else if (!nullEvent && !dynamicEvent) {
         uint64_t base = 0;
         std::memcpy(&base, frame.data + handle.offset + 8, 8);
         uint32_t id = 0;
@@ -1282,7 +1286,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         if (decodeStaticHandle(base, id, begin))
           stable = encodeStaticHandle(id, start);
       }
-      if (stable == UINT64_MAX)
+      if (stable == UINT64_MAX && !nullEvent)
         return OBELISK_RT_INVALID_HANDLE;
       Logic value{64, false, {stable}, {0}};
       write(instruction.destination, value);
