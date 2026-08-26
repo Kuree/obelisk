@@ -235,7 +235,7 @@ jobs:
                 exit 1
               fi
               # Undefined symbols in a static archive belong to individual,
-              # optional members. Emscripten's official noexcept libraries
+              # optional members. The official Emscripten noexcept libraries
               # contain dormant exception-related members, so only audit the
               # Obelisk runtime archive whose every object is ours.
               if [[ "$input" == site/toolchain/libobelisk_rt.a ]]; then
