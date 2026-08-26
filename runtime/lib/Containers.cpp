@@ -124,8 +124,8 @@ struct ReferencePathHeader {
 static_assert(sizeof(ReferencePathHeader) == (sizeof(void *) == 8 ? 192 : 176));
 
 const obelisk_rt_trace_entry_v1 referenceWeakTraceEntry{
-    sizeof(obelisk_rt_managed_word_v1), 0,      1, OBELISK_RT_TRACE_WEAK,
-    OBELISK_RT_MANAGED_SLOT_CLASS,      nullptr};
+    sizeof(obelisk_rt_managed_word_v1),     0,      1, OBELISK_RT_TRACE_WEAK,
+    OBELISK_RT_MANAGED_SLOT_REFERENCE_PATH, nullptr};
 const obelisk_rt_trace_layout_v1 referenceWeakTraceLayout{
     OBELISK_RT_VERSION,
     0,

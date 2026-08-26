@@ -320,7 +320,9 @@ bool validateTraceLayout(const obelisk_rt_trace_layout_v1 *layout,
                : entry.slot_kind < OBELISK_RT_MANAGED_SLOT_CLASS ||
                      entry.slot_kind > OBELISK_RT_MANAGED_SLOT_REFERENCE_PATH ||
                      (entry.kind == OBELISK_RT_TRACE_WEAK &&
-                      entry.slot_kind != OBELISK_RT_MANAGED_SLOT_CLASS)))
+                      entry.slot_kind != OBELISK_RT_MANAGED_SLOT_CLASS &&
+                      entry.slot_kind !=
+                          OBELISK_RT_MANAGED_SLOT_REFERENCE_PATH)))
         return false;
     }
     uint64_t requiredAlignment = entry.kind == OBELISK_RT_TRACE_EMBEDDED

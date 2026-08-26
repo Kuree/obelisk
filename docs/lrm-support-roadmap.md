@@ -1027,6 +1027,19 @@ token grammar, but upstream Slang v11.0 and current `master` incorrectly require
 an integer and its unit suffix to share one physical line. Obelisk deliberately
 does not carry a local parser patch for this bug.
 
+L12's twenty-third closure tranche implements dynamic class downcasts into
+dynamic-array element lvalues from 6.24.2 and 7.5. Persistent container-element
+references now describe their internal weak referent as a reference path rather
+than a class object, so indexed `$cast` destinations remain writable while the
+array is live. The hand-authored Simulation IR regression executes a write
+through that representation in both native and whole-design bytecode tiers;
+the upstream `t_dynarray_cast_write` case covers constant, packed-select, and
+data-dependent indices. Its focused no-LTO O3 compile takes 0.13 seconds / 80
+MB RSS for native and 0.07 seconds / 75 MB RSS for bytecode, then simulates in
+0.01 seconds or less in either tier. The change adds no compiler work or state
+to designs that do not form persistent container-element references, and the
+reference registration cost remains pay-for-play on that existing runtime path.
+
 L17's stochastic-queue tranche implements all five legacy queue-manager calls
 from 20.16 as design-global, fixed-capacity FIFO/LIFO state. Job and inform
 identifiers retain their complete four-state 32-bit values, queue identifiers
