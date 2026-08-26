@@ -975,7 +975,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_scan_field(
                                   field);
     if (result == ScanResult::Error) {
       recordIOError(context, *entry, "formatted file read failed");
-      return OBELISK_RT_IO_ERROR;
+      // A host read error is an fscanf input failure, not a simulation
+      // failure. The lowering returns EOF when no conversion was assigned and
+      // otherwise preserves the preceding assignment count; $ferror exposes
+      // the recorded host error independently from $feof.
+      *outEOF = 1;
+      return OBELISK_RT_OK;
     }
     if (result == ScanResult::EndOfFile) {
       *outEOF = 1;
@@ -1129,7 +1134,8 @@ obelisk_rt_v1_file_scan_dynamic(
         }
         if (result == ScanResult::Error) {
           recordIOError(context, *entry, "dynamic formatted file read failed");
-          return OBELISK_RT_IO_ERROR;
+          *outEOF = 1;
+          return OBELISK_RT_OK;
         }
         if (result == ScanResult::EndOfFile) {
           *outEOF = 1;
@@ -1160,7 +1166,8 @@ obelisk_rt_v1_file_scan_dynamic(
           *entry, plan->suffix.data(), plan->suffix.size(), 'm', 0, ignored);
       if (result == ScanResult::Error) {
         recordIOError(context, *entry, "dynamic formatted file read failed");
-        return OBELISK_RT_IO_ERROR;
+        *outEOF = 1;
+        return OBELISK_RT_OK;
       }
       if (result == ScanResult::EndOfFile)
         *outEOF = 1;
@@ -1225,7 +1232,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_scan_raw(
                                                 rawSize, maxWidth, raw);
     if (result == ScanResult::Error) {
       recordIOError(context, *entry, "formatted raw file read failed");
-      return OBELISK_RT_IO_ERROR;
+      *outEOF = 1;
+      return OBELISK_RT_OK;
     }
     if (result == ScanResult::EndOfFile) {
       *outEOF = 1;

@@ -8,8 +8,12 @@
 // CHECK-NOT: obelisk_sim.file.getline_string
 // CHECK: %[[FIELD:.*]], %[[OK:.*]], %[[EOF:.*]] = obelisk_sim.file.scan_field {{.*}} {prefix = "", specifier = 100 : i32, width = 0 : i64}
 // CHECK: arith.cmpi ne, %[[EOF]]
-// CHECK: arith.cmpi ne, %[[OK]]
+// CHECK: %[[MATCHED:.*]] = arith.cmpi ne, %[[OK]]
 // CHECK: obelisk_sim.string.parse_logic %[[FIELD]] radix = 10 : <32>
+// CHECK: %[[ASSIGNED:.*]] = arith.extui %[[MATCHED]] : i1 to i32
+// CHECK: %[[NONE:.*]] = arith.cmpi eq, %[[ASSIGNED]]
+// CHECK: %[[INPUT_FAILURE:.*]] = arith.andi %[[NONE]], {{.*}} : i1
+// CHECK: arith.select %[[INPUT_FAILURE]], {{.*}}, %[[ASSIGNED]] : i32
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "t", name = "t", node_id = 0 : i64, sym_name = "s0.t"} {

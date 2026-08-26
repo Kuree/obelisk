@@ -3911,7 +3911,9 @@ obelisk_rt_status obelisk_rt_v1_file_getline_string(
     uint32_t descriptor, obelisk_rt_string_v1 *out_string, uint32_t *out_count);
 // Consume one formatted field at the descriptor's current position. Disabled
 // calls leave the stream untouched so lowering can stop after a mismatch. `%m`
-// matches its prefix successfully without consuming a field byte.
+// matches its prefix successfully without consuming a field byte. `out_eof`
+// denotes scanf input failure from either end-of-file or a host read error;
+// file_eof and file_error distinguish the descriptor indicators.
 obelisk_rt_status obelisk_rt_v1_file_scan_field(
     obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
     uint32_t descriptor, uint32_t enabled, const char *prefix,

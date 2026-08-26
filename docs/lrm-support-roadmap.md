@@ -1312,6 +1312,18 @@ generated IR. Compact MLIR native/bytecode lowering tests and direct runtime
 tests cover both scanner paths, binary NULs, transfer-size selection, width
 mismatch, and preflight file-position preservation.
 
+L19's thirteenth closure tranche completes the remaining formatted-input
+input-failure, error-indicator, and stream-position combinations. A host read
+error in literal, raw, or runtime-valued `$fscanf` is a language-level input
+failure rather than a simulator failure: the call returns EOF when no
+conversion was assigned and otherwise retains the preceding assignment count.
+The descriptor simultaneously retains its host error for `$ferror`, does not
+misreport `$feof`, and exposes the exact consumed position through `$ftell`.
+Runtime-valued format suffixes use the same rule. The scanners reuse their
+existing status outputs and per-descriptor error slot, so the ABI, literal and
+no-scan generated IR, lazy dynamic-format state, and ordinary successful scan
+loops are unchanged.
+
 L14's configuration closure records the effective elaborated binding on only
 the affected Slang module and checker instance operations and exposes it
 through the opt-in, hierarchically sorted `-emit-bindings` report. Ordered
@@ -1628,8 +1640,8 @@ one commit.
     assigned `%u/%z` for packed and recursively integral unpacked struct/union
     destinations, mismatch/EOF/file-position behavior, and a bounded lazy
     format-plan cache. `$fread` also accepts fixed, dynamic-array, and queue
-    memories with extent-independent generated loops. Residual
-    EOF/error-position combinations remain.
+    memories with extent-independent generated loops. Formatted-input
+    EOF/error-position combinations are complete.
 
 ### Randomization and `std`
 

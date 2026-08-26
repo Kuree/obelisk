@@ -2406,6 +2406,95 @@ TEST_F(RuntimeTest, ScansOnAnInvalidDescriptorReportEndOfFile) {
   EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
 }
 
+TEST_F(RuntimeTest, FormattedScanReadErrorsAreInputFailures) {
+  TempDirectory temporary;
+  std::filesystem::path directory = temporary.file("scan-error");
+  ASSERT_TRUE(std::filesystem::create_directory(directory));
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+
+  auto expectErrorState = [&](uint32_t descriptor) {
+    int64_t position = -1;
+    EXPECT_EQ(obelisk_rt_v1_file_tell(context, descriptor, &position),
+              OBELISK_RT_OK);
+    EXPECT_EQ(position, 0);
+    uint32_t eof = 1;
+    EXPECT_EQ(obelisk_rt_v1_file_eof(context, descriptor, &eof),
+              OBELISK_RT_OK);
+    EXPECT_EQ(eof, 0u);
+    int32_t code = 0;
+    RuntimeBuffer message;
+    EXPECT_EQ(obelisk_rt_v1_file_error(context, descriptor, &code,
+                                       message.out()),
+              OBELISK_RT_OK);
+    EXPECT_NE(code, 0);
+    EXPECT_FALSE(message.str().empty());
+    EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
+  };
+
+  obelisk_rt_string_v1 field = 1;
+  uint32_t ok = 1;
+  uint32_t inputFailure = 0;
+  uint32_t descriptor = open(directory, "r");
+  ASSERT_EQ(obelisk_rt_v1_file_scan_field(
+                context, lane, descriptor, 1, nullptr, 0, 'd', 0, &field, &ok,
+                &inputFailure),
+            OBELISK_RT_OK);
+  EXPECT_EQ(field, 0u);
+  EXPECT_EQ(ok, 0u);
+  EXPECT_EQ(inputFailure, 1u);
+  expectErrorState(descriptor);
+
+  descriptor = open(directory, "r");
+  uint32_t value = UINT32_MAX;
+  uint32_t unknown = UINT32_MAX;
+  ASSERT_EQ(obelisk_rt_v1_file_scan_raw(
+                context, descriptor, 1, nullptr, 0, 4, 32, 0, 0, &value,
+                sizeof(value), &unknown, sizeof(unknown), &ok, &inputFailure),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value, 0u);
+  EXPECT_EQ(unknown, 0u);
+  EXPECT_EQ(ok, 0u);
+  EXPECT_EQ(inputFailure, 1u);
+  expectErrorState(descriptor);
+
+  obelisk_rt_string_v1 format = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "%d", 2, &format),
+            OBELISK_RT_OK);
+  descriptor = open(directory, "r");
+  uint32_t planCursor = 0;
+  uint32_t kind = 0;
+  ASSERT_EQ(obelisk_rt_v1_file_scan_dynamic(
+                context, lane, descriptor, format, 0, 1, 0,
+                UINT64_C(1) << ('d' - 'a'), 0, 0, &field, &planCursor, &kind,
+                &ok, &inputFailure),
+            OBELISK_RT_OK);
+  EXPECT_EQ(field, 0u);
+  EXPECT_EQ(planCursor, 0u);
+  EXPECT_EQ(kind, 0u);
+  EXPECT_EQ(ok, 0u);
+  EXPECT_EQ(inputFailure, 1u);
+  expectErrorState(descriptor);
+
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "tail", 4, &format),
+            OBELISK_RT_OK);
+  descriptor = open(directory, "r");
+  ASSERT_EQ(obelisk_rt_v1_file_scan_dynamic(
+                context, lane, descriptor, format, 0, 1, 1, 0, 0, 0, &field,
+                &planCursor, &kind, &ok, &inputFailure),
+            OBELISK_RT_OK);
+  EXPECT_EQ(field, 0u);
+  EXPECT_EQ(planCursor, 0u);
+  EXPECT_EQ(kind, 0u);
+  EXPECT_EQ(ok, 0u);
+  EXPECT_EQ(inputFailure, 1u);
+  expectErrorState(descriptor);
+
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+}
+
 TEST_F(RuntimeTest, HoldsOnePushedBackByteWithoutReadAccess) {
   TempDirectory temporary;
   std::filesystem::path path = temporary.file("pushback.txt");
