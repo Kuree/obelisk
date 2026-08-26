@@ -1261,6 +1261,15 @@ bits at the call site, and conditionally applies the action without a hierarchy
 scan. Literal masks retain the previous selection and branch-free lowering,
 and the minimal semantic-MLIR regression also verifies bytecode encoding.
 
+L12's wide-delay closure removes the packed-width implementation limit from
+dynamic delay controls in 9.4.1. Values wider than 64 bits follow the same
+unknown-to-zero, negative-to-zero, and supported-time-range saturation rules
+as narrower expressions: one wide compare/select bounds the value before an
+i64 truncation and the existing scale operation. Generated work is constant
+in the source width, native and bytecode lowering are both verified by the
+existing minimal semantic-MLIR test, and the preexisting 64-bit-and-narrower
+path remains unchanged.
+
 L14's configuration closure records the effective elaborated binding on only
 the affected Slang module and checker instance operations and exposes it
 through the opt-in, hierarchically sorted `-emit-bindings` report. Ordered

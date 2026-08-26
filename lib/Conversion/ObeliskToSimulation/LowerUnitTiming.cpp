@@ -156,9 +156,18 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
     normalized = arith::SelectOp::create(builder, location, nonnegative,
                                          normalized, zero);
   }
+  uint64_t scale = scaleAttr.getValue().getZExtValue();
+  uint64_t maximumInput =
+      static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) / scale;
   if (integer.getWidth() > 64) {
-    emitError(location) << "dynamic delay wider than 64 bits is not executable";
-    return failure();
+    Value maximumWide = arith::ConstantOp::create(
+        builder, location, integer,
+        builder.getIntegerAttr(integer,
+                               APInt(integer.getWidth(), maximumInput)));
+    Value inRange = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ule, normalized, maximumWide);
+    normalized = arith::SelectOp::create(builder, location, inRange, normalized,
+                                         maximumWide);
   }
   FailureOr<Value> normalized64 =
       convert(normalized, builder.getI64Type(), false, location);
@@ -168,9 +177,6 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
   // Keep the multiplication in the supported nonnegative signed-time range
   // on every backend. The source language's X/Z and negative rules have
   // already mapped those values to zero above.
-  uint64_t scale = scaleAttr.getValue().getZExtValue();
-  uint64_t maximumInput =
-      static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) / scale;
   Value maximum =
       arith::ConstantOp::create(builder, location, builder.getI64Type(),
                                 builder.getI64IntegerAttr(maximumInput));

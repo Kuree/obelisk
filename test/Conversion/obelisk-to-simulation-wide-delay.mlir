@@ -1,4 +1,5 @@
-// RUN: not obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' --emit-bytecode -o /dev/null
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_wide_delay", name = "simulation_wide_delay", node_id = 0 : i64, sym_name = "s0.simulation_wide_delay"} {
@@ -35,4 +36,17 @@ module {
   }
 }
 
-// CHECK: dynamic delay wider than 64 bits is not executable
+// CHECK-DAG: %[[MAX_WIDE:.*]] = arith.constant 9223372036854775807 : i128
+// CHECK-DAG: %[[MAX:.*]] = arith.constant 9223372036854775807 : i64
+// CHECK: %[[RAW:.*]] = obelisk_sim.ref.load
+// CHECK: %[[AMOUNT:.*]] = obelisk_sim.packed.flatten %[[RAW]]
+// CHECK: %[[BITS:.*]] = obelisk_sim.logic.to_bits %[[AMOUNT]] : !obelisk_sim.logic<128> -> i128
+// CHECK: %[[KNOWN:.*]] = obelisk_sim.logic.compare case_eq
+// CHECK: %[[NORMALIZED:.*]] = arith.select %[[KNOWN]], %[[BITS]], {{.*}} : i128
+// CHECK: %[[IN_RANGE_WIDE:.*]] = arith.cmpi ule, %[[NORMALIZED]], %[[MAX_WIDE]] : i128
+// CHECK: %[[BOUNDED_WIDE:.*]] = arith.select %[[IN_RANGE_WIDE]], %[[NORMALIZED]], %[[MAX_WIDE]] : i128
+// CHECK: %[[TRUNCATED:.*]] = arith.trunci %[[BOUNDED_WIDE]] : i128 to i64
+// CHECK: %[[IN_RANGE:.*]] = arith.cmpi ule, %[[TRUNCATED]], %[[MAX]] : i64
+// CHECK: %[[BOUNDED:.*]] = arith.select %[[IN_RANGE]], %[[TRUNCATED]], %[[MAX]] : i64
+// CHECK: %[[DELAY:.*]] = obelisk_sim.time.scale %[[BOUNDED]] by 1 signed = false : i64
+// CHECK: obelisk_sim.suspend.delay %[[DELAY]]
