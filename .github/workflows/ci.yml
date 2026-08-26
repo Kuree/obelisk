@@ -129,28 +129,16 @@ jobs:
     name: Build and test wasm
     runs-on: ubuntu-latest
     timeout-minutes: 300
-    # Build the checked-in SDK image instead of relying on a separately
-    # published GHCR package. BuildKit's cache makes the expensive LLVM layer
-    # reusable while a clean fork or fresh repository remains self-contained.
+    # The SDK image is built only when its Dockerfile or LLVM pin changes.
+    # Normal CI consumes that immutable artifact instead of rebuilding LLVM.
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      WASM_IMAGE: obelisk-llvm-wasm32:ci
+      WASM_IMAGE: ghcr.io/kuree/obelisk-llvm-wasm32:latest@sha256:7e679d82f15d0455379891c22ee43da20224951a3d36db3204d0b4d6ad493d9c
     steps:
       - uses: actions/checkout@v4
 
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Build wasm32 SDK image
-        uses: docker/build-push-action@v6
-        with:
-          context: docker
-          file: docker/Dockerfile.llvm-wasm
-          target: toolchain
-          load: true
-          tags: ${{ env.WASM_IMAGE }}
-          build-args: JOBS=4
-          cache-from: type=gha,scope=obelisk-llvm-wasm32
-          cache-to: type=gha,mode=min,scope=obelisk-llvm-wasm32
+      - name: Pull wasm32 SDK image
+        run: docker pull "$WASM_IMAGE"
 
       # A separate key from the native job: different compiler, different
       # target, so the two would only evict each other under one key.

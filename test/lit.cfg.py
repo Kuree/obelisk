@@ -8,7 +8,7 @@ import lit.formats
 from lit.llvm import llvm_config
 
 config.name = "OBELISK"
-config.test_format = lit.formats.ShTest(not llvm_config.use_lit_shell)
+config.test_format = lit.formats.ShTest()
 config.suffixes = [".mlir", ".sv", ".test"]
 config.test_source_root = os.path.dirname(__file__)
 config.test_exec_root = os.path.join(config.obelisk_obj_root, "test")

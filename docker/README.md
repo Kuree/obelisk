@@ -50,9 +50,9 @@ cmake -S . -B build-wasm -G Ninja \
 
 ### CI image
 
-CI builds this image from the checked-in Dockerfile and caches the resulting
-BuildKit layers. This avoids a hidden dependency on the visibility or lifetime
-of a separately published GHCR package. A local image can still be built with:
+Normal CI pulls the public image by immutable digest instead of rebuilding
+LLVM. Rebuild and publish the image only when this Dockerfile or its LLVM pin
+changes. A local image can still be built with:
 
 ```sh
 docker build --target toolchain -f docker/Dockerfile.llvm-wasm \
