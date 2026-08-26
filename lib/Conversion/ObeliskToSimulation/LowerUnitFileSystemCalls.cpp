@@ -1485,24 +1485,155 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     FailureOr<Value> descriptor = lowerInteger(children[1], i32);
     if (failed(destination) || failed(descriptor))
       return failure();
-    auto reference = dyn_cast<sim::RefType>((*destination).getType());
-    if (!reference) {
+    Type destinationType = getReferenceElementType(*destination);
+    if (!destinationType) {
       emitError(getSemanticLocation(actual))
           << name << " destination must be a variable";
       return failure();
     }
-    if (name == "$fgets" && isa<sim::StringType>(reference.getElementType())) {
+    if (name == "$fgets" && isa<sim::StringType>(destinationType)) {
       auto read = sim::SimFileGetlineStringOp::create(
           builder, location,
           TypeRange{sim::StringType::get(function.getContext()), i32}, context,
           *descriptor);
-      sim::SimRefStoreOp::create(builder, location, read.getData(),
-                                 *destination);
+      if (failed(storeReference(*destination, read.getData(), location)))
+        return failure();
       return convertResult(read.getCount());
     }
     if (name == "$fread") {
-      if (auto memory =
-              dyn_cast<sim::UnpackedArrayType>(reference.getElementType())) {
+      auto dynamicArray = dyn_cast<sim::DynamicArrayType>(destinationType);
+      auto queue = dyn_cast<sim::QueueType>(destinationType);
+      if (dynamicArray || queue) {
+        Type elementType = dynamicArray ? dynamicArray.getElementType()
+                                        : queue.getElementType();
+        std::optional<unsigned> elementWidth =
+            sim::getPackedWidth(elementType);
+        if (!elementWidth || *elementWidth == 0) {
+          emitError(getSemanticLocation(actual))
+              << "$fread memory elements must be packed values";
+          return failure();
+        }
+
+        FailureOr<Value> loaded = loadReference(*destination, location);
+        if (failed(loaded))
+          return failure();
+        Value memory = cloneSequentialValue(*loaded, location);
+        // Publish the detached value before mutating its existing elements.
+        // This is the same value-semantics boundary used by $readmem*: aliases
+        // retain their old container, and no per-element clone is required.
+        if (isa<sim::RefType>((*destination).getType()))
+          sim::SimRefStoreOp::create(builder, location, memory, *destination);
+        else if (isa<sim::ManagedRefType>((*destination).getType()))
+          sim::SimManagedStoreOp::create(builder, location, memory,
+                                         *destination);
+        else if (isa<sim::ArgumentRefType>((*destination).getType()))
+          sim::SimArgumentRefStoreOp::create(builder, location, memory,
+                                             *destination);
+        else if (isa<sim::ReferencePathType>((*destination).getType())) {
+          FailureOr<Value> argument =
+              toArgumentReference(*destination, destinationType, location);
+          if (failed(argument))
+            return failure();
+          sim::SimArgumentRefStoreOp::create(builder, location, memory,
+                                             *argument);
+        }
+        else {
+          emitError(getSemanticLocation(actual))
+              << "$fread variable-size memory must be directly writable";
+          return failure();
+        }
+
+        Value size = sim::SimContainerSizeOp::create(builder, location, i64,
+                                                     memory);
+        auto optionalInteger = [&](size_t index,
+                                   Value fallback) -> FailureOr<Value> {
+          if (index >= children.size() ||
+              isa<semantic::SVEmptyArgumentExpressionOp>(children[index]))
+            return fallback;
+          return lowerInteger(children[index], i64);
+        };
+        FailureOr<Value> start = optionalInteger(2, constant(i64, 0));
+        FailureOr<Value> count = optionalInteger(3, size);
+        if (failed(start) || failed(count))
+          return failure();
+
+        Block *header = addBlock();
+        header->addArgument(i64, location);
+        header->addArgument(i64, location);
+        header->addArgument(i64, location);
+        Block *readElement = addBlock();
+        Block *storeElement = addBlock();
+        Block *continueRead = addBlock();
+        Block *done = addBlock();
+        done->addArgument(i64, location);
+
+        cf::BranchOp::create(builder, location, header,
+                             ValueRange{*start, *count, constant(i64, 0)});
+
+        setCurrent(header);
+        Value index = header->getArgument(0);
+        Value remaining = header->getArgument(1);
+        Value total = header->getArgument(2);
+        Value withinLow = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::sge, index,
+            constant(i64, 0));
+        Value withinHigh = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::slt, index, size);
+        Value within =
+            arith::AndIOp::create(builder, location, withinLow, withinHigh);
+        Value hasRemaining = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::sgt, remaining,
+            constant(i64, 0));
+        Value shouldRead = arith::AndIOp::create(builder, location, within,
+                                                 hasRemaining);
+        cf::CondBranchOp::create(builder, location, shouldRead, readElement,
+                                 ValueRange{}, done, ValueRange{total});
+
+        setCurrent(readElement);
+        IntegerType packedType = builder.getIntegerType(*elementWidth);
+        auto read = sim::SimFileReadPackedOp::create(
+            builder, location, TypeRange{packedType, i32}, context,
+            *descriptor);
+        Value count64 = arith::ExtUIOp::create(builder, location, i64,
+                                               read.getCount());
+        Value readAny = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, read.getCount(),
+            constant(i32, 0));
+        cf::CondBranchOp::create(builder, location, readAny, storeElement,
+                                 ValueRange{}, done, ValueRange{total});
+
+        setCurrent(storeElement);
+        FailureOr<Value> converted =
+            convert(read.getData(), elementType, false, location);
+        if (failed(converted))
+          return failure();
+        sim::SimContainerWriteOp::create(builder, location, memory, index,
+                                         *converted);
+        Value nextTotal =
+            arith::AddIOp::create(builder, location, total, count64);
+        uint64_t elementBytes =
+            (static_cast<uint64_t>(*elementWidth) + 7) / 8;
+        Value complete = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq, count64,
+            constant(i64, static_cast<int64_t>(elementBytes)));
+        cf::CondBranchOp::create(builder, location, complete, continueRead,
+                                 ValueRange{}, done, ValueRange{nextTotal});
+
+        setCurrent(continueRead);
+        Value nextIndex = arith::AddIOp::create(builder, location, index,
+                                                constant(i64, 1));
+        Value nextRemaining = arith::SubIOp::create(
+            builder, location, remaining, constant(i64, 1));
+        cf::BranchOp::create(
+            builder, location, header,
+            ValueRange{nextIndex, nextRemaining, nextTotal});
+
+        setCurrent(done);
+        Value result = arith::TruncIOp::create(builder, location, i32,
+                                               done->getArgument(0));
+        return convertResult(result);
+      }
+      if (auto memory = dyn_cast<sim::UnpackedArrayType>(destinationType)) {
         Type elementType = memory.getElementType();
         std::optional<unsigned> elementWidth =
             sim::getPackedWidth(elementType);
@@ -1628,8 +1759,7 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
         return failure();
       }
     }
-    std::optional<unsigned> width =
-        sim::getPackedWidth(reference.getElementType());
+    std::optional<unsigned> width = sim::getPackedWidth(destinationType);
     if (!width) {
       emitError(getSemanticLocation(actual))
           << name << " destination must be a packed integral variable";
@@ -1650,10 +1780,11 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       count = read.getCount();
     }
     FailureOr<Value> converted =
-        convert(data, reference.getElementType(), false, location);
+        convert(data, destinationType, false, location);
     if (failed(converted))
       return failure();
-    sim::SimRefStoreOp::create(builder, location, *converted, *destination);
+    if (failed(storeReference(*destination, *converted, location)))
+      return failure();
     return convertResult(count);
   }
 

@@ -1206,8 +1206,20 @@ Native `auto` directly compiles the scan actor and these runtime calls; its
 managed string state retains the preexisting exclusion from static AOT
 scheduler nodes rather than silently converting the actor to design bytecode.
 Assigned dynamic `%u/%z`, whose transfer layout depends recursively on
-the destination type, and variable-size `$fread` destinations remain explicit
-L19 residuals.
+the destination type, and variable-size `$fread` destinations remained
+explicit L19 residuals at that tranche.
+
+L19's eleventh closure tranche extends the unpacked-memory form of `$fread`
+from 21.3.4.3 to dynamic arrays and queues. The operation snapshots the live
+extent, honors omitted or explicit start/count arguments in numerical index
+order, overwrites only existing elements, returns the exact byte count, and
+does not resize an empty or partially selected destination. One detached
+value-semantics clone is published before element writes, preserving aliases
+without cloning in the generated loop. Element widths remain compile-time
+constants, including non-byte-aligned packed queue elements, and the lowering
+emits one extent-independent loop in both native and bytecode tiers. Designs
+without a variable-size `$fread`, including packed and fixed-memory calls,
+retain their existing lowering and runtime paths.
 
 L14's configuration closure records the effective elaborated binding on only
 the affected Slang module and checker instance operations and exposes it
@@ -1308,7 +1320,7 @@ no-feature path.
 | 18 Constrained random generation | Partial | Object streams, broad packed constraints, modes, finite domains, soft constraints, direct solve ordering, distributions, bounded `randc`, lifecycle hooks, and much of randsequence execute. The authoritative boundary is `docs/randomization-support.md`; R1-R7 below close the remaining standard surface without treating a solver resource cap as language semantics. |
 | 19 Functional coverage | Excluded | Explicitly outside this project goal. |
 | 20 Utility system tasks/functions | Partial | Simulation/time control—including compile-time `$timeunit` and `$timeprecision` scope queries plus every omitted and explicitly empty `$timeformat` argument—conversions, data/array queries, real math, bit-vector functions, severity, random distributions, `$system`, the complete `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam` queue manager, all sixteen synchronous/asynchronous PLA tasks, most assertion control, and the implemented sampled functions execute. Missing normative families include the global-clock sampled functions and complete assertion statistics/control behavior. |
-| 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning—including formatted-input field widths, assignment suppression, zero-byte hierarchy `%m`, `$timeformat`-scaled floating-point `%t`, and canonical scalar-strength `%v`, plus `$fread` into fixed unpacked memories and captured dynamic, associative, and nested aggregate copy-out targets—read/write-memory across fixed, dynamic, queue, multidimensional, and integral associative forms, plusargs including runtime `$value$plusargs` formats, and VCD/dumpports execute. Surplus arguments after a designated `$sformat`/`$sformatf` format continue with ordinary default-radix formatting. Formatting and file corner cases remain. |
+| 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning—including formatted-input field widths, assignment suppression, zero-byte hierarchy `%m`, `$timeformat`-scaled floating-point `%t`, and canonical scalar-strength `%v`, plus `$fread` into fixed, dynamic-array, and queue memories and captured dynamic, associative, and nested aggregate copy-out targets—read/write-memory across fixed, dynamic, queue, multidimensional, and integral associative forms, plusargs including runtime `$value$plusargs` formats, and VCD/dumpports execute. Surplus arguments after a designated `$sformat`/`$sformatf` format continue with ordinary default-radix formatting. Formatting and file corner cases remain. |
 | 22 Compiler directives | Executable for the audited surface | The Slang preprocessor implements the normative directive family. Directive persistence, separate-compilation-unit reset, and command-line default-timescale precedence have native/bytecode tests. Protected envelopes are a separate Clause 34 feature, not ordinary pragma acceptance. |
 | 23 Modules and hierarchy | Partial | ANSI/non-ANSI modules, parameters, ports, arrays, hierarchy, bind, common upward references, and the audited generated-scope/parameter-binding shapes elaborate. Automatic root inference still imports an unset required parameter as frontend `ErrorType` and is retained as an xfail. Verifier-proven full-range wide hierarchical port forwarding uses bounded vector-shaped native lowering; irregular, delayed, resolved, or competing-driver topology retains scalar lowering. |
 | 24 Programs | Executable for the audited surface | Program instances execute in their Reactive/Re-Inactive/Re-NBA home. IEEE 24.7 `$exit` terminates every initial procedure and descendant owned by the calling program instance, multiple programs complete independently, and the scheduler enters finalization only after all program instances complete naturally or explicitly. Design-owned `$exit` is diagnosed. Ownership accounting is event-driven and shared by native, bytecode, and tier-transition paths. |
@@ -1518,9 +1530,10 @@ one commit.
     width and the full Table 21-8 X/Z/? alphabet. Runtime-valued
     `$sscanf`/`$fscanf` formats implement the ordinary conversion families,
     arbitrary widths and suppression, mismatch/EOF/file-position behavior,
-    and a bounded lazy format-plan cache. Assigned dynamic `%u/%z`,
-    variable-size `$fread` destinations, and residual EOF/error-position
-    combinations remain.
+    and a bounded lazy format-plan cache. `$fread` also accepts fixed,
+    dynamic-array, and queue memories with extent-independent generated loops.
+    Assigned dynamic `%u/%z` and residual EOF/error-position combinations
+    remain.
 
 ### Randomization and `std`
 
