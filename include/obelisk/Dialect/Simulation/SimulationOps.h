@@ -115,6 +115,11 @@ bool isStartupEntryKind(EntryKind kind);
 inline constexpr ::llvm::StringLiteral startupWithoutSuspensionAttrName =
     "obelisk_sim.starts_without_waiting";
 
+/// Marks a settling process whose root spawn belongs to a feature-local
+/// computed-event startup chain and must retain that frozen position.
+inline constexpr ::llvm::StringLiteral computedEventStartupAttrName =
+    "obelisk_sim.computed_event_startup";
+
 /// Number of ordinary wait entries required by a suspension operation.
 /// Computed-observer waits use their own variable-sized record.
 uint32_t getWaitEntryCount(::mlir::Operation *operation);

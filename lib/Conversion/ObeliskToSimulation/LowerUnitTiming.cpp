@@ -244,69 +244,6 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
                                     sim::ContinuationSiteAttr{}, resume,
                                     successor);
   };
-  auto evaluateInitial =
-      [&](Operation *expression,
-          SmallVectorImpl<Value> &dynamicDependencies) -> FailureOr<Value> {
-    FailureOr<Value> value = lowerExpression(expression);
-    if (failed(value))
-      return failure();
-    if (isa<sim::EventType>((*value).getType())) {
-      dynamicDependencies.push_back(*value);
-      return arith::ConstantOp::create(builder, location, builder.getI1Type(),
-                                       builder.getBoolAttr(false))
-          .getResult();
-    }
-    return toPackedScalar(*value, getSemanticLocation(expression));
-  };
-  auto emitObserved =
-      [&](ArrayRef<semantic::SVSignalEventControlOp> events) -> LogicalResult {
-    SmallVector<Value> primaries;
-    SmallVector<Value> initials;
-    SmallVector<Value> conditions;
-    SmallVector<int32_t> edges;
-    SmallVector<int32_t> conditionIndices;
-    for (semantic::SVSignalEventControlOp event : events) {
-      SmallVector<Operation *> children = getChildren(event);
-      size_t expected = event.getHasIff() ? 2 : 1;
-      if (children.size() != expected) {
-        unsupported(event) << " (event expression inventory)";
-        return failure();
-      }
-      SmallVector<Value> dynamicDependencies;
-      FailureOr<Value> initial =
-          evaluateInitial(children.front(), dynamicDependencies);
-      FailureOr<Value> primary =
-          bindObserver(children.front(), dynamicDependencies);
-      if (failed(initial) || failed(primary))
-        return failure();
-      primaries.push_back(*primary);
-      initials.push_back(*initial);
-      auto edge = static_cast<int32_t>(event.getEdgeKind());
-      FailureOr<Type> primaryType = getNormalizedSemanticType(children.front());
-      if (succeeded(primaryType) && isa<sim::EventType>(*primaryType))
-        edge = static_cast<int32_t>(sim::EdgeKind::Change);
-      edges.push_back(edge);
-      if (!event.getHasIff()) {
-        conditionIndices.push_back(-1);
-        continue;
-      }
-      FailureOr<Value> condition = bindObserver(children[1]);
-      if (failed(condition))
-        return failure();
-      conditionIndices.push_back(static_cast<int32_t>(conditions.size()));
-      conditions.push_back(*condition);
-    }
-    SmallVector<Value> values(primaries);
-    llvm::append_range(values, initials);
-    llvm::append_range(values, conditions);
-    llvm::append_range(values, continuationOperands);
-    sim::SimSuspendObserveOp::create(
-        builder, location, values, static_cast<uint32_t>(conditions.size()),
-        edges, conditionIndices, sim::ContinuationSiteAttr{},
-        sim::EventRegionAttr{}, continuation);
-    return success();
-  };
-
   auto bindEventPrimary = [&](Value event,
                               Operation *source) -> FailureOr<Value> {
     if (!isa<sim::EventType>(event.getType()))
@@ -350,11 +287,11 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
         outlineBuilder.getNamedAttr(
             "code_unit_id", outlineBuilder.getI64IntegerAttr(codeUnitID)),
         outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
-        outlineBuilder.getNamedAttr("home_region", function.getHomeRegionAttr()),
+        outlineBuilder.getNamedAttr("home_region",
+                                    function.getHomeRegionAttr()),
         outlineBuilder.getNamedAttr("domain", function.getDomainAttr()),
-        outlineBuilder.getNamedAttr(
-            sim::metadata::hierarchicalName,
-            outlineBuilder.getStringAttr(identity)),
+        outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
+                                    outlineBuilder.getStringAttr(identity)),
         outlineBuilder.getNamedAttr(
             observerResultAttrName,
             outlineBuilder.getI32IntegerAttr(
@@ -365,11 +302,10 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
                                     outlineBuilder.getBoolAttr(false))};
     sim::SimFuncOp evaluator = sim::SimFuncOp::create(
         outlineBuilder, location, identity,
-        FunctionType::get(
-            context,
-            TypeRange{sim::ContextType::get(context),
-                      sim::EventType::get(context)},
-            TypeRange{outlineBuilder.getI1Type()}),
+        FunctionType::get(context,
+                          TypeRange{sim::ContextType::get(context),
+                                    sim::EventType::get(context)},
+                          TypeRange{outlineBuilder.getI1Type()}),
         sim::EntryKind::Observer, attributes, argumentAttrs);
     SymbolTable::setSymbolVisibility(evaluator,
                                      SymbolTable::Visibility::Private);
@@ -378,17 +314,79 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
     Value triggered = sim::SimEventTriggeredOp::create(
         evaluatorBuilder, location, evaluatorBuilder.getI1Type(),
         evaluator.getBody().front().getArgument(1));
-    sim::SimReturnOp::create(evaluatorBuilder, location,
-                             ValueRange{triggered});
-    evaluator->setAttr(sim::metadata::lowered,
-                       outlineBuilder.getUnitAttr());
+    sim::SimReturnOp::create(evaluatorBuilder, location, ValueRange{triggered});
+    evaluator->setAttr(sim::metadata::lowered, outlineBuilder.getUnitAttr());
 
     auto binding = sim::SimObserverBindOp::create(
-        builder, location,
-        sim::ObserverType::get(context, builder.getI1Type()),
+        builder, location, sim::ObserverType::get(context, builder.getI1Type()),
         evaluator.getSymName(), ValueRange{event, event}, uint32_t{1});
     binding->setAttr(observerEventPrimaryAttrName, builder.getUnitAttr());
     return binding.getResult();
+  };
+  auto evaluateInitial =
+      [&](Operation *expression,
+          SmallVectorImpl<Value> &dynamicDependencies) -> FailureOr<Value> {
+    FailureOr<Value> value = lowerExpression(expression);
+    if (failed(value))
+      return failure();
+    if (isa<sim::EventType>((*value).getType())) {
+      dynamicDependencies.push_back(*value);
+      return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                       builder.getBoolAttr(false))
+          .getResult();
+    }
+    return toPackedScalar(*value, getSemanticLocation(expression));
+  };
+  auto emitObserved =
+      [&](ArrayRef<semantic::SVSignalEventControlOp> events) -> LogicalResult {
+    SmallVector<Value> primaries;
+    SmallVector<Value> initials;
+    SmallVector<Value> conditions;
+    SmallVector<int32_t> edges;
+    SmallVector<int32_t> conditionIndices;
+    for (semantic::SVSignalEventControlOp event : events) {
+      SmallVector<Operation *> children = getChildren(event);
+      size_t expected = event.getHasIff() ? 2 : 1;
+      if (children.size() != expected) {
+        unsupported(event) << " (event expression inventory)";
+        return failure();
+      }
+      SmallVector<Value> dynamicDependencies;
+      FailureOr<Value> initial =
+          evaluateInitial(children.front(), dynamicDependencies);
+      FailureOr<Type> primaryType = getNormalizedSemanticType(children.front());
+      FailureOr<Value> primary =
+          succeeded(primaryType) && isa<sim::EventType>(*primaryType) &&
+                  dynamicDependencies.size() == 1
+              ? bindEventPrimary(dynamicDependencies.front(), event)
+              : bindObserver(children.front(), dynamicDependencies);
+      if (failed(initial) || failed(primary))
+        return failure();
+      primaries.push_back(*primary);
+      initials.push_back(*initial);
+      auto edge = static_cast<int32_t>(event.getEdgeKind());
+      if (succeeded(primaryType) && isa<sim::EventType>(*primaryType))
+        edge = static_cast<int32_t>(sim::EdgeKind::Change);
+      edges.push_back(edge);
+      if (!event.getHasIff()) {
+        conditionIndices.push_back(-1);
+        continue;
+      }
+      FailureOr<Value> condition = bindObserver(children[1]);
+      if (failed(condition))
+        return failure();
+      conditionIndices.push_back(static_cast<int32_t>(conditions.size()));
+      conditions.push_back(*condition);
+    }
+    SmallVector<Value> values(primaries);
+    llvm::append_range(values, initials);
+    llvm::append_range(values, conditions);
+    llvm::append_range(values, continuationOperands);
+    sim::SimSuspendObserveOp::create(
+        builder, location, values, static_cast<uint32_t>(conditions.size()),
+        edges, conditionIndices, sim::ContinuationSiteAttr{},
+        sim::EventRegionAttr{}, continuation);
+    return success();
   };
 
   if (auto event = dyn_cast<semantic::SVSignalEventControlOp>(control)) {

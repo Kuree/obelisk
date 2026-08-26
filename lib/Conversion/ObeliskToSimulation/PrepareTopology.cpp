@@ -378,9 +378,9 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
   for (const EventInputCandidate &candidate : eventInputs) {
     if (isWholeEvent(candidate))
       continue;
-    emitError(getSemanticLocation(candidate.connection))
-        << "event input port requires a direct named-event actual";
-    invalid = true;
+    // A computed actual cannot share one descriptor or cell. Retain a formal
+    // cell and executable propagation so handle replacement remains live.
+    result.eventCellPaths.insert(candidate.internal);
   }
   // Classify the full event-input graph before choosing aliases or executable
   // connections. A live cell may flow through any number of read-only input
@@ -418,6 +418,75 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
           changed |= liveEventPaths.insert(candidate.internal).second;
       }
     } while (changed);
+    std::function<bool(Operation *)> isDependencyFreeEventExpression =
+        [&](Operation *expression) {
+          if (expression->hasAttr("folded_constant"))
+            return true;
+          StringRef path;
+          if (auto named =
+                  dyn_cast<semantic::SVNamedValueExpressionOp>(expression))
+            path = named.getReferencedPath();
+          else if (auto hierarchical =
+                       dyn_cast<semantic::SVHierarchicalValueExpressionOp>(
+                           expression))
+            path = hierarchical.getReferencedPath();
+          if (!path.empty()) {
+            FailureOr<Type> type = getNormalizedSemanticType(expression);
+            if (succeeded(type) && isa<sim::EventType>(*type))
+              return !liveEventPaths.contains(path);
+            return false;
+          }
+          if (isa<semantic::SVIntegerLiteralOp,
+                  semantic::SVUnbasedUnsizedIntegerLiteralOp>(expression))
+            return true;
+          if (!isa<semantic::SVConditionalExpressionOp,
+                   semantic::SVConversionExpressionOp>(expression))
+            return false;
+          SmallVector<Operation *> children = getChildren(expression);
+          return !children.empty() &&
+                 llvm::all_of(children, isDependencyFreeEventExpression);
+        };
+    std::function<bool(Operation *)> isPureComputedEventExpression =
+        [&](Operation *expression) {
+          StringRef name = expression->getName().getStringRef();
+          if (!name.starts_with("obelisk.sv.expression.") ||
+              isa<semantic::SVCallExpressionOp,
+                  semantic::SVAssignmentExpressionOp>(expression) ||
+              name.starts_with("obelisk.sv.expression.new_"))
+            return false;
+          if (auto unary =
+                  dyn_cast<semantic::SVUnaryExpressionOp>(expression)) {
+            using Unary = semantic::SVUnaryOperator;
+            Unary kind = unary.getOperatorKind();
+            if (kind == Unary::Preincrement || kind == Unary::Predecrement ||
+                kind == Unary::Postincrement || kind == Unary::Postdecrement)
+              return false;
+          }
+          SmallVector<Operation *> children = getChildren(expression);
+          return llvm::all_of(children, isPureComputedEventExpression);
+        };
+    for (EventInputCandidate &candidate : eventInputs) {
+      if (isWholeEvent(candidate) || candidate.connection.getActualIsConstant())
+        continue;
+      Operation *actual = getSingleRegionRoot(candidate.connection.getActual());
+      bool hasCall = false;
+      if (actual)
+        actual->walk([&](semantic::SVCallExpressionOp) { hasCall = true; });
+      if (hasCall) {
+        emitError(getSemanticLocation(candidate.connection))
+            << "computed event input startup dependency has unresolved call "
+               "effects";
+        invalid = true;
+      } else if (actual && !isPureComputedEventExpression(actual)) {
+        emitError(getSemanticLocation(candidate.connection))
+            << "computed event input actual is not a side-effect-free event "
+               "expression";
+        invalid = true;
+      } else if (actual && isDependencyFreeEventExpression(actual))
+        candidate.connection->setAttr(
+            "actual_is_constant",
+            BoolAttr::get(candidate.connection.getContext(), true));
+    }
     for (EventInputCandidate &candidate : eventInputs) {
       if (!isWholeEvent(candidate))
         continue;

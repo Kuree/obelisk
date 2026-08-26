@@ -10305,6 +10305,14 @@ void ObeliskSimPreparePass::runOnOperation() {
            connection.getDirection() == semantic::SVArgumentDirection::In &&
            isa<semantic::EventType>(connection.getFormalType());
   };
+  auto isComputedEventInput = [&](const PreparedUnit &unit) {
+    if (!initializesEventInput(unit))
+      return false;
+    auto connection = cast<semantic::SVPortConnectionOp>(unit.source);
+    Operation *actual = getSingleRegionRoot(connection.getActual());
+    return !isa_and_nonnull<semantic::SVNamedValueExpressionOp,
+                            semantic::SVHierarchicalValueExpressionOp>(actual);
+  };
 
   // Establish explicit always-process sensitivities before initial processes
   // can trigger events or mutate their watched values. This deterministic
@@ -10313,9 +10321,13 @@ void ObeliskSimPreparePass::runOnOperation() {
   // out of that first group carries the reason on its function, so the compute
   // graph does not order it ahead of the initial procedures it now follows.
   SmallVector<PreparedUnit *> earlyEventInputs;
+  SmallVector<PreparedUnit *> computedEventInputs;
   for (PreparedUnit &unit : units) {
-    if (isRootSpawned(unit) && initializesEventInput(unit))
+    if (isRootSpawned(unit) && initializesEventInput(unit)) {
       earlyEventInputs.push_back(&unit);
+      if (isComputedEventInput(unit))
+        computedEventInputs.push_back(&unit);
+    }
     if (isRootSpawned(unit) && sim::isStartupEntryKind(unit.entryKind) &&
         !startsByWaiting(unit) && !propagatesConstantsAtTimeZero(unit))
       unit.function->setAttr(sim::startupWithoutSuspensionAttrName,
@@ -10386,20 +10398,346 @@ void ObeliskSimPreparePass::runOnOperation() {
   // Event controls capture the handle held by their event expression when
   // they suspend. Publish every cell-backed input's initial handle before an
   // `always @(formal)` can capture the formal's fresh local event instead.
-  for (PreparedUnit *unit : earlyEventInputs)
-    if (failed(spawnRootUnit(*unit)))
-      return abort();
-  for (PreparedUnit &unit : units)
-    if (isRootSpawned(unit) && startsByWaiting(unit))
-      if (failed(spawnRootUnit(unit)))
+  llvm::SmallPtrSet<PreparedUnit *, 16> featureSpawned;
+  if (computedEventInputs.empty()) {
+    for (PreparedUnit *unit : earlyEventInputs)
+      if (failed(spawnRootUnit(*unit)))
         return abort();
+    for (PreparedUnit &unit : units)
+      if (isRootSpawned(unit) && startsByWaiting(unit))
+        if (failed(spawnRootUnit(unit)))
+          return abort();
+  } else {
+    design->setAttr(sim::computedEventStartupAttrName, UnitAttr::get(context));
+    llvm::DenseMap<PreparedUnit *, unsigned> unitOrder;
+    for (auto [index, unit] : llvm::enumerate(units))
+      unitOrder[&unit] = index;
+
+    // Whole ref/input aliases are the same event cell regardless of spelling.
+    // Canonicalize them bidirectionally so producer and consumer paths meet.
+    llvm::StringMap<SmallVector<std::string, 2>> aliasNeighbors;
+    for (const auto &[path, target] : portAliases->aliases) {
+      auto view = portAliases->refViews.find(path);
+      if (view != portAliases->refViews.end() &&
+          (!view->second.identity || view->second.offset != 0 ||
+           view->second.packedOffset != 0 || !view->second.indices.empty()))
+        continue;
+      aliasNeighbors[path].push_back(target);
+      aliasNeighbors[target].push_back(path.str());
+    }
+    llvm::StringMap<std::string> canonicalPaths;
+    auto canonicalPath = [&](StringRef input) -> std::string {
+      if (auto found = canonicalPaths.find(input);
+          found != canonicalPaths.end())
+        return found->second;
+      llvm::StringSet<> visited;
+      SmallVector<std::string> pending{input.str()};
+      std::string canonical = input.str();
+      for (size_t cursor = 0; cursor != pending.size(); ++cursor) {
+        StringRef path = pending[cursor];
+        if (!visited.insert(path).second)
+          continue;
+        if (path.compare(canonical) < 0)
+          canonical = path.str();
+        if (auto found = aliasNeighbors.find(path);
+            found != aliasNeighbors.end())
+          llvm::append_range(pending, found->second);
+      }
+      for (StringRef path : visited.keys())
+        canonicalPaths[path] = canonical;
+      return canonical;
+    };
+
+    llvm::StringMap<SmallVector<PreparedUnit *, 1>> producersByPath;
+    auto addProducer = [&](StringRef path, PreparedUnit *producer) {
+      if (path.empty())
+        return;
+      auto &producers = producersByPath[canonicalPath(path)];
+      if (!llvm::is_contained(producers, producer))
+        producers.push_back(producer);
+    };
+    for (PreparedUnit &unit : units) {
+      if (!isRootSpawned(unit) || !propagatesConstantsAtTimeZero(unit))
+        continue;
+      if (auto connection = dyn_cast<semantic::SVPortConnectionOp>(unit.source);
+          connection &&
+          connection.getDirection() == semantic::SVArgumentDirection::In)
+        addProducer(connection.getInternalPath().value_or(StringRef{}), &unit);
+      for (const auto &path : unitWrittenCaptures[unit.source])
+        addProducer(path.getKey(), &unit);
+    }
+
+    llvm::SmallPtrSet<PreparedUnit *, 16> allEventInputs(
+        earlyEventInputs.begin(), earlyEventInputs.end());
+    llvm::SmallPtrSet<PreparedUnit *, 16> computedEventSet(
+        computedEventInputs.begin(), computedEventInputs.end());
+    llvm::SmallPtrSet<PreparedUnit *, 16> featureEventInputs(
+        computedEventInputs.begin(), computedEventInputs.end());
+    llvm::StringMap<PreparedUnit *> eventProducerByPath;
+    for (PreparedUnit *unit : earlyEventInputs) {
+      auto connection = cast<semantic::SVPortConnectionOp>(unit->source);
+      StringRef internal = connection.getInternalPath().value_or(StringRef{});
+      if (!internal.empty())
+        eventProducerByPath[canonicalPath(internal)] = unit;
+    }
+    bool changed;
+    do {
+      changed = false;
+      for (PreparedUnit *consumer : earlyEventInputs) {
+        if (featureEventInputs.contains(consumer) ||
+            isComputedEventInput(*consumer))
+          continue;
+        auto connection = cast<semantic::SVPortConnectionOp>(consumer->source);
+        Operation *actual = getSingleRegionRoot(connection.getActual());
+        auto path = actual
+                        ? actual->getAttrOfType<StringAttr>("referenced_path")
+                        : StringAttr{};
+        if (!path)
+          continue;
+        auto producer =
+            eventProducerByPath.find(canonicalPath(path.getValue()));
+        if (producer != eventProducerByPath.end() &&
+            featureEventInputs.contains(producer->second))
+          changed |= featureEventInputs.insert(consumer).second;
+      }
+    } while (changed);
+
+    llvm::SmallPtrSet<PreparedUnit *, 32> startupSet;
+    startupSet.insert(featureEventInputs.begin(), featureEventInputs.end());
+    SmallVector<PreparedUnit *> pending(featureEventInputs.begin(),
+                                        featureEventInputs.end());
+    llvm::DenseMap<PreparedUnit *, SmallVector<PreparedUnit *, 2>> dependents;
+    llvm::DenseMap<PreparedUnit *, unsigned> dependencyCounts;
+    llvm::DenseSet<std::pair<PreparedUnit *, PreparedUnit *>> edges;
+    auto addDependency = [&](PreparedUnit *producer, PreparedUnit *consumer) {
+      if (!edges.insert({producer, consumer}).second)
+        return;
+      dependents[producer].push_back(consumer);
+      ++dependencyCounts[consumer];
+    };
+    for (size_t cursor = 0; cursor != pending.size(); ++cursor) {
+      PreparedUnit *consumer = pending[cursor];
+      if (computedEventSet.contains(consumer)) {
+        std::string destination =
+            canonicalPath(cast<semantic::SVPortConnectionOp>(consumer->source)
+                              .getInternalPath()
+                              .value_or(StringRef{}));
+        for (const auto &written : unitWrittenCaptures[consumer->source])
+          if (canonicalPath(written.getKey()) != destination) {
+            emitError(getSemanticLocation(consumer->source))
+                << "computed event input startup expression has effects "
+                   "outside its formal";
+            return abort();
+          }
+      }
+      auto addReadDependencies = [&](StringRef path) -> LogicalResult {
+        auto found = producersByPath.find(canonicalPath(path));
+        if (found == producersByPath.end())
+          return success();
+        for (PreparedUnit *producer : found->second) {
+          if (producer == consumer) {
+            emitError(getSemanticLocation(consumer->source))
+                << "computed event input startup dependency is cyclic";
+            return failure();
+          }
+          if (allEventInputs.contains(producer) &&
+              !featureEventInputs.contains(producer))
+            continue;
+          addDependency(producer, consumer);
+          if (startupSet.insert(producer).second)
+            pending.push_back(producer);
+        }
+        return success();
+      };
+      for (const auto &read : unitReadCaptures[consumer->source])
+        if (failed(addReadDependencies(read.getKey())))
+          return abort();
+      // An output port's internal source is implicit in its semantic
+      // connection rather than represented by an expression region, so the
+      // capture inventory only contains the external destination. Follow the
+      // internal source explicitly when it lies in a computed-event startup
+      // closure.
+      if (auto connection =
+              dyn_cast<semantic::SVPortConnectionOp>(consumer->source);
+          connection &&
+          connection.getDirection() == semantic::SVArgumentDirection::Out)
+        if (failed(addReadDependencies(
+                connection.getInternalPath().value_or(StringRef{}))))
+          return abort();
+    }
+
+    for (auto &entry : dependents)
+      llvm::sort(entry.second, [&](PreparedUnit *lhs, PreparedUnit *rhs) {
+        return unitOrder.lookup(lhs) < unitOrder.lookup(rhs);
+      });
+    std::map<unsigned, PreparedUnit *> ready;
+    for (PreparedUnit &unit : units)
+      if (startupSet.contains(&unit) && dependencyCounts.lookup(&unit) == 0)
+        ready.emplace(unitOrder.lookup(&unit), &unit);
+    SmallVector<PreparedUnit *> startupOrder;
+    while (!ready.empty()) {
+      auto next = ready.begin();
+      PreparedUnit *producer = next->second;
+      ready.erase(next);
+      startupOrder.push_back(producer);
+      for (PreparedUnit *consumer : dependents[producer])
+        if (--dependencyCounts[consumer] == 0)
+          ready.emplace(unitOrder.lookup(consumer), consumer);
+    }
+    if (startupOrder.size() != startupSet.size()) {
+      emitError(getSemanticLocation(computedEventInputs.front()->source))
+          << "computed event input startup dependency is cyclic";
+      return abort();
+    }
+
+    llvm::StringSet<> featureOutputs;
+    for (PreparedUnit *unit : featureEventInputs) {
+      auto connection = cast<semantic::SVPortConnectionOp>(unit->source);
+      featureOutputs.insert(
+          canonicalPath(connection.getInternalPath().value_or(StringRef{})));
+    }
+    struct WatchedPaths {
+      SmallVector<std::string> all;
+      SmallVector<std::string> signalTriggers;
+      bool unresolvedEventCall = false;
+    };
+    auto leadingWatchedPaths = [&](const PreparedUnit &unit) {
+      WatchedPaths result;
+      auto procedure =
+          dyn_cast<semantic::SVProceduralBlockSymbolOp>(unit.source);
+      auto collectExpression = [&](Operation *expression, bool signalTrigger) {
+        expression->walk([&](Operation *nested) {
+          if (auto referenced =
+                  nested->getAttrOfType<StringAttr>("referenced_path")) {
+            result.all.push_back(referenced.getValue().str());
+            if (signalTrigger)
+              result.signalTriggers.push_back(referenced.getValue().str());
+          }
+          auto call = dyn_cast<semantic::SVCallExpressionOp>(nested);
+          if (!call)
+            return;
+          Operation *target = resolveDirectCallee(call);
+          SmallVector<Operation *> virtualTargets =
+              preparedUnits->resolveVirtualInterfaceCallees(call);
+          FailureOr<Type> callType = getNormalizedSemanticType(call);
+          if (!target && virtualTargets.empty()) {
+            result.unresolvedEventCall |=
+                succeeded(callType) && isa<sim::EventType>(*callType);
+            return;
+          }
+          auto collectReads = [&](Operation *callee) {
+            for (const auto &read : unitReadCaptures[callee]) {
+              result.all.push_back(read.getKey().str());
+              if (signalTrigger)
+                result.signalTriggers.push_back(read.getKey().str());
+            }
+          };
+          collectReads(target);
+          for (Operation *candidate : virtualTargets)
+            collectReads(candidate);
+        });
+      };
+      auto collectEvent = [&](semantic::SVSignalEventControlOp event) {
+        SmallVector<Operation *> children = getChildren(event);
+        if (children.empty())
+          return;
+        FailureOr<Type> type = getNormalizedSemanticType(children.front());
+        if (failed(type)) {
+          result.unresolvedEventCall = true;
+          return;
+        }
+        collectExpression(children.front(), !isa<sim::EventType>(*type));
+      };
+      if (!procedure) {
+        // Clocking-event and sequence-endpoint monitors have no procedural
+        // wrapper. Classify each watched primary exactly as an ordinary event
+        // list does; an iff guard is a condition, not a trigger that must arm
+        // ahead of its time-zero producer.
+        unit.source->walk([&](semantic::SVSignalEventControlOp event) {
+          collectEvent(event);
+        });
+        return result;
+      }
+      SmallVector<Operation *> body = getChildren(procedure);
+      Operation *leading = body.empty() ? nullptr : leadingStatement(body[0]);
+      auto timed = dyn_cast_or_null<semantic::SVTimedStatementOp>(leading);
+      SmallVector<Operation *> timedChildren =
+          timed ? getChildren(timed) : SmallVector<Operation *>{};
+      if (timedChildren.empty())
+        return result;
+      Operation *control = timedChildren.front();
+      if (auto event = dyn_cast<semantic::SVSignalEventControlOp>(control))
+        collectEvent(event);
+      else if (auto list = dyn_cast<semantic::SVEventListControlOp>(control))
+        for (Operation *member : getChildren(list))
+          if (auto event = dyn_cast<semantic::SVSignalEventControlOp>(member))
+            collectEvent(event);
+      return result;
+    };
+
+    llvm::SmallPtrSet<PreparedUnit *, 16> affectedWaits;
+    for (PreparedUnit &unit : units) {
+      if (!isRootSpawned(unit) || !startsByWaiting(unit))
+        continue;
+      WatchedPaths watched = leadingWatchedPaths(unit);
+      bool affected = llvm::any_of(watched.all, [&](const std::string &path) {
+        return featureOutputs.contains(canonicalPath(path));
+      });
+      if (!affected)
+        continue;
+      if (watched.unresolvedEventCall) {
+        emitError(getSemanticLocation(unit.source))
+            << "computed event input startup ordering cannot resolve this "
+               "event-control call";
+        return abort();
+      }
+      bool observesPrerequisite =
+          llvm::any_of(watched.signalTriggers, [&](const std::string &path) {
+            auto found = producersByPath.find(canonicalPath(path));
+            return found != producersByPath.end() &&
+                   llvm::any_of(found->second, [&](PreparedUnit *producer) {
+                     return startupSet.contains(producer) &&
+                            !featureEventInputs.contains(producer);
+                   });
+          });
+      if (observesPrerequisite) {
+        emitError(getSemanticLocation(unit.source))
+            << "computed event input startup dependency is cyclic through "
+               "this event control";
+        return abort();
+      }
+      affectedWaits.insert(&unit);
+    }
+
+    for (PreparedUnit *unit : earlyEventInputs)
+      if (!featureEventInputs.contains(unit))
+        if (failed(spawnRootUnit(*unit)))
+          return abort();
+    for (PreparedUnit &unit : units)
+      if (isRootSpawned(unit) && startsByWaiting(unit) &&
+          !affectedWaits.contains(&unit))
+        if (failed(spawnRootUnit(unit)))
+          return abort();
+    for (PreparedUnit *unit : startupOrder) {
+      unit->function->setAttr(sim::computedEventStartupAttrName,
+                              UnitAttr::get(context));
+      if (failed(spawnRootUnit(*unit)))
+        return abort();
+      featureSpawned.insert(unit);
+    }
+    for (PreparedUnit &unit : units)
+      if (affectedWaits.contains(&unit))
+        if (failed(spawnRootUnit(unit)))
+          return abort();
+  }
 
   // Then propagate the continuous drivers, so a constant reaches its readers
   // instead of racing them in source order. Re-evaluation stays event-driven,
   // so this only fixes which side of the time-zero race a constant lands on.
   for (PreparedUnit &unit : units)
     if (isRootSpawned(unit) && !initializesEventInput(unit) &&
-        !startsByWaiting(unit) && propagatesConstantsAtTimeZero(unit))
+        !featureSpawned.contains(&unit) && !startsByWaiting(unit) &&
+        propagatesConstantsAtTimeZero(unit))
       if (failed(spawnRootUnit(unit)))
         return abort();
 

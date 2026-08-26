@@ -1,4 +1,5 @@
-// RUN: not obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -31,4 +32,14 @@ module attributes {
   }
 }
 
-// CHECK: error: event input port requires a direct named-event actual
+// CHECK: obelisk_sim.design @design attributes {{.*}}obelisk_sim.computed_event_startup
+// CHECK: obelisk_sim.storage.decl {{.*}} : !obelisk_sim.event {{.*}} hierarchy "top.dut.wake"
+// CHECK: obelisk_sim.func private @unit_0
+// CHECK-SAME: entry_kind = 9 : i32
+// CHECK-SAME: obelisk_sim.computed_event_startup
+// CHECK: %[[SAME:.*]] = obelisk_sim.event.equal %[[TRUE:.*]], %[[FALSE:.*]]
+// CHECK: %[[NULL:.*]] = obelisk_sim.event.null
+// CHECK: arith.select %[[SAME]], %[[TRUE]], %[[NULL]]
+// CHECK: obelisk_sim.ref.store
+// CHECK: obelisk_sim.suspend.change
+// CHECK-NOT: obelisk.sv.

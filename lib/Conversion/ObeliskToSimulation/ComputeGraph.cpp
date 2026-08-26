@@ -1278,6 +1278,8 @@ void ComputeGraphBuilder::orderStartupSpawns() {
       root = fragment.function;
   if (!root || root.getBody().empty())
     return;
+  bool hasComputedEventStartup =
+      design->hasAttr(sim::computedEventStartupAttrName);
 
   // What each unit consumes and produces, keyed by the symbol a spawn names.
   struct Flow {
@@ -1299,7 +1301,9 @@ void ComputeGraphBuilder::orderStartupSpawns() {
     // Prepare has already placed cell-backed event inputs in dependency order
     // ahead of event-wait actors. Keep them out of the generic settling-unit
     // regrouping, which would otherwise move them past an intervening wait.
-    if (!isSettlingEntryKind(entryKind) || eventInput)
+    if (!isSettlingEntryKind(entryKind) || eventInput ||
+        (hasComputedEventStartup &&
+         fragment.function->hasAttr(sim::computedEventStartupAttrName)))
       continue;
     Flow &flow = flows[fragment.function.getSymName()];
     for (const ComputeEffect &effect : fragment.effects) {
