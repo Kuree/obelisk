@@ -4710,6 +4710,7 @@ TEST(DesignBytecode, SlowDominantDirectSignalSetStaysOnExactScan) {
   EXPECT_FALSE(context->designReadyCohort->valid);
   EXPECT_TRUE(context->designReadyCohort->suppressed);
   EXPECT_TRUE(context->designReadyCohort->persistentSuppression);
+  EXPECT_TRUE(context->designReadyCohortExactScan);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -4730,6 +4731,7 @@ TEST(DesignBytecode,
   ASSERT_TRUE(progress);
   ASSERT_TRUE(context->designReadyCohort->suppressed);
   EXPECT_EQ(context->designReadyCohort->suppressedCandidateHighWater, 1041u);
+  EXPECT_TRUE(context->designReadyCohortExactScan);
   uint64_t rejectedGeneration = context->designReadyCohort->selectionGeneration;
 
   // Signal publication, time advance, and phase changes affect readiness but
@@ -4758,6 +4760,7 @@ TEST(DesignBytecode,
 
   // Process creation is structural and makes the next call re-probe.
   addBlockedForeverDesignTasks(context, 1);
+  obelisk_rt_invalidate_design_ready_cohort(context);
   uint64_t newNextTaskID = context->nextDesignTaskID;
   ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
                                            UINT64_MAX, &progress),
@@ -4833,6 +4836,8 @@ TEST(DesignBytecode, AllocatedCohortSuppressesAfterSlowDominantShrink) {
             readyCount * (readyCount + 1) / 2);
   EXPECT_FALSE(context->designReadyCohort->valid);
   EXPECT_TRUE(context->designReadyCohort->suppressed);
+  EXPECT_TRUE(context->designReadyCohort->persistentSuppression);
+  EXPECT_TRUE(context->designReadyCohortExactScan);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -4982,7 +4987,8 @@ TEST(DesignBytecode, DirectSignalCohortRevalidatesTimePhaseAndFinals) {
   EXPECT_EQ(context->terminatedDesignTasks.count(finalPhaseID), 1u);
   EXPECT_FALSE(context->designReadyCohort->valid);
   EXPECT_TRUE(context->designReadyCohort->suppressed);
-  EXPECT_FALSE(context->designReadyCohort->persistentSuppression);
+  EXPECT_TRUE(context->designReadyCohort->persistentSuppression);
+  EXPECT_TRUE(context->designReadyCohortExactScan);
   EXPECT_TRUE(context->designReadyCohort->runningFinals);
   obelisk_rt_v1_context_destroy(context);
 }

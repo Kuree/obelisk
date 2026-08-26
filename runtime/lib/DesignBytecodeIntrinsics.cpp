@@ -2167,6 +2167,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           return OBELISK_RT_OUT_OF_RESOURCES;
       }
       id = context->nextDesignTaskID++;
+      // Process creation is the structural boundary that may make a rejected
+      // slow-dominant scheduler shape profitable.
+      obelisk_rt_invalidate_design_ready_cohort(context);
       task.id = id;
       task.phase =
           (callee.flags & OBELISK_RT_DESIGN_FUNCTION_FINAL) != 0 ? 1 : 0;

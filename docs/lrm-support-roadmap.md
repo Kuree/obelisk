@@ -125,25 +125,37 @@ The slow-dominant N=17/SLOW=1024/CYCLES=20001 case is deliberately suppressed;
 ten interleaved and reversed same-affinity runs ranged from 3.73-4.31 seconds
 on current main and 3.94-4.19 seconds on the final runtime, with respective
 3.895- and 4.005-second medians. The overlapping ranges and 2.8% median delta
-do not establish a wall-time change. Cachegrind instead counted fewer total
-instructions (505,386,637 versus 506,625,265) and fewer hot `run_one` I1 misses
-(109,413 versus 122,667) in the final runtime, while both versions reported
-exactly 434,331,932 candidate scans and 2,740,137 readiness calls. Slow
+do not establish a wall-time change; independent final review likewise found
+overlapping 4.095-second final and 4.185-second main medians. A subsequent
+five-pair run after the single-flag tightening ranged from 3.96-4.78 seconds
+on main and 3.80-4.22 seconds on the final runtime, with 4.10- and 4.00-second
+medians; the ranges overlap, so this also records neutrality rather than a
+speedup. The identical-command CYCLES=20001 Cachegrind review of the prior
+dispatcher
+counted 63,088,250,016 instructions versus 62,934,689,243 on current main, a
+deterministic 153,560,773-instruction (0.244%) overhead. After the final
+single-flag exact path, a fresh CPU-pinned identical-command pair counted
+61,637,473,549 instructions versus 62,934,689,183 on main, 1,297,215,634
+(2.061%) fewer. This is deterministic instruction evidence, not a wall-time
+speedup claim. Both versions reported exactly 434,331,932 candidate scans and
+2,740,137 readiness calls. Slow
 membership validation is combined with that exact scan, including stale
 entries in the diagnostic count, so it cannot add a hidden second pass. A
-genuine large-ready profitability rejection persists while the poll count
-stays at or below its rejected high-water mark; transient signal generations,
+nonzero-ready profitability rejection persists; transient signal generations,
 time, phase, and per-wave poll shrink/regrowth therefore do not rebuild
-vectors. Zero-ready and startup shapes are re-probed after a generation change
-so they cannot hide a later admitted cohort. Candidate growth, process
-creation, explicit control mutations, and entering or leaving a forced native
-task filter also re-enable probing; missing a newly profitable same-size shape
-after a genuine rejection is the intentional conservative tradeoff and does
-not change exact-scan semantics. The ordinary and suppressed exact scan remains
-inline in `run_one`; admitted or unsuppressed cohort work is dispatched to
-feature text. The final hot `run_one` symbol is 0x33d8 bytes versus 0x3823 on
-current main, so the ordinary scanner's text is smaller despite the linked
-feature code.
+vectors. This includes the real N=17 recurring shape, whose admission probe
+sees 16 tasks after the first ready task has already run. Zero-ready and startup
+shapes are re-probed after a generation change so they cannot hide a later
+admitted cohort. Process creation, explicit control mutations, and entering or
+leaving a forced native task filter also re-enable probing. A persistent
+rejection selects the exact scanner with one context flag; candidate growth
+without process creation may therefore defer re-probing until another
+structural invalidation. Missing that optimization cannot change exact-scan
+semantics. The ordinary and suppressed exact scan remains inline in `run_one`;
+admitted or unsuppressed cohort work is dispatched to feature text. The final
+host-runtime hot `run_one` symbol is 0x3408 bytes versus 0x3823 on current main.
+The linked simulator symbol is 0x2520 versus main's 0x245d and the prior
+dispatcher's 0x2560, limiting its exact-path text delta to 195 bytes.
 
 L4 is off the ordinary-net runtime hot path. Its required single UVM smoke ran
 in 34.590 seconds compile / 0.204 seconds simulate for bytecode and 74.951

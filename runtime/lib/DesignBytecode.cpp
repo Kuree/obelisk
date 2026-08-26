@@ -2810,6 +2810,7 @@ installDesignReadyCohort(obelisk_rt_context *context,
   cohort.valid = true;
   cohort.suppressed = false;
   cohort.persistentSuppression = false;
+  context->designReadyCohortExactScan = false;
 }
 
 OBELISK_RT_FEATURE_TEXT void
@@ -2827,6 +2828,7 @@ suppressDesignReadyCohort(obelisk_rt_context *context, bool persistent) {
   cohort.valid = false;
   cohort.suppressed = true;
   cohort.persistentSuppression = persistent;
+  context->designReadyCohortExactScan = persistent;
 }
 
 bool designReadyCohortSuppressed(const obelisk_rt_context *context) {
@@ -4808,11 +4810,12 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
                                    std::move(readyCohortBuild->slow));
           readyCohort = context->designReadyCohort.get();
         } else if (completeShape) {
-          // Only a genuine large-ready profitability rejection can persist.
-          // Startup/unstarted or zero-ready shapes must be reconsidered when
-          // the next signal generation makes their tasks ready.
-          suppressDesignReadyCohort(context,
-                                    readyCount > minCachedDesignSignalCohort);
+          // Any observed ready work proves this is not the zero-ready startup
+          // shape. Persist its negative profitability result; a recurring
+          // N=17 wave reaches this probe after one task has run and therefore
+          // has only 16 remaining ready tasks. Startup/unstarted or zero-ready
+          // shapes must still be reconsidered on the next signal generation.
+          suppressDesignReadyCohort(context, readyCount != 0);
           readyCohort = context->designReadyCohort.get();
         }
       }
@@ -5331,7 +5334,8 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
     obelisk_rt_context *context, uint32_t maximumRegion, uint32_t maximumRank,
     uint64_t maximumInsertionSequence, bool *outProgress) noexcept {
   bool enableReadyCohort = false;
-  if (context && !context->nativeScheduleDesignTaskFilterActive) {
+  if (context && !context->designReadyCohortExactScan &&
+      !context->nativeScheduleDesignTaskFilterActive) {
     DesignReadyCohortState *cohort = context->designReadyCohort.get();
     if (!cohort)
       enableReadyCohort = context->designPollCandidates.size() > 16;

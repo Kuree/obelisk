@@ -1279,6 +1279,11 @@ struct obelisk_rt_context {
   bool nativeScheduleStopAtCleanBoundary = false;
   bool nativeScheduleCleanBoundaryReached = false;
   bool nativeScheduleDesignTaskFilterActive = false;
+  // A rejected slow-dominant bytecode shape stays on the exact scanner until
+  // a structural invalidation. Keep this beside the native filter booleans so
+  // the hot dispatcher needs one byte test rather than re-reading the cold
+  // cohort object on every arbitration.
+  bool designReadyCohortExactScan = false;
   uint64_t nativeScheduleForcedDesignTask = 0;
   uint64_t nativePeriodicRuntimeDeadline = UINT64_MAX;
   std::vector<uint32_t> nativePeriodicClockActorSlots;
@@ -1567,7 +1572,10 @@ struct obelisk_rt_context {
 
 inline void
 obelisk_rt_invalidate_design_ready_cohort(obelisk_rt_context *context) {
-  if (!context || !context->designReadyCohort)
+  if (!context)
+    return;
+  context->designReadyCohortExactScan = false;
+  if (!context->designReadyCohort)
     return;
   context->designReadyCohort->valid = false;
   context->designReadyCohort->suppressed = false;
