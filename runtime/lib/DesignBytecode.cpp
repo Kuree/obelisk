@@ -2724,6 +2724,93 @@ bool indexedSignalBlocked(const ScheduledDesignTask &task) {
   return obelisk_rt_design_signal_wait_blocked(task);
 }
 
+OBELISK_RT_FEATURE_HELPER bool
+designReadyCohortLater(const DesignReadyCohortEntry &lhs,
+                       const DesignReadyCohortEntry &rhs) {
+  return std::tuple{lhs.region, lhs.rank, lhs.insertionSequence} >
+         std::tuple{rhs.region, rhs.rank, rhs.insertionSequence};
+}
+
+OBELISK_RT_FEATURE_HELPER bool classifyDirectDesignReadyCohortMember(
+    const ScheduledDesignTask &task, uint32_t activePhase,
+    uint32_t unstartedActorRegion, DesignReadyCohortEntry &entry) {
+  if (task.id == 0 || task.terminated || task.explicitlySuspended ||
+      !task.started || task.phase != activePhase || task.urgent ||
+      (task.suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
+       task.suspendKind != OBELISK_RT_SUSPEND_EDGE))
+    return false;
+  bool signalTriggered =
+      task.signalTriggered || (task.signalLatch && task.signalLatch->triggered);
+  if (!signalTriggered ||
+      (task.queuedRegion >= unstartedActorRegion && !task.prioritySignal))
+    return false;
+  entry.id = task.id;
+  entry.region = task.queuedRegion;
+  entry.rank = task.prioritySignal ? 0 : task.scheduleRank;
+  entry.insertionSequence = task.prioritySignal ? 0 : task.insertionSequence;
+  return true;
+}
+
+OBELISK_RT_FEATURE_TEXT bool trySelectCachedDesignReadyCohort(
+    obelisk_rt_context *context, uint32_t activePhase,
+    uint32_t unstartedActorRegion, size_t &candidateIndex,
+    DesignReadyCohortEntry &selected) {
+  DesignReadyCohortState *cohort = context->designReadyCohort.get();
+  if (!cohort || !cohort->valid ||
+      context->nativeScheduleDesignTaskFilterActive ||
+      cohort->selectionGeneration != context->schedulerSelectionGeneration ||
+      cohort->schedulerTime != context->schedulerTime ||
+      cohort->runningFinals != context->schedulerRunningFinals ||
+      cohort->nextDesignTaskID != context->nextDesignTaskID ||
+      cohort->ready.size() + cohort->slowCandidates.size() !=
+          context->designPollCandidates.size() ||
+      cohort->ready.empty())
+    return false;
+  for (uint64_t slowID : cohort->slowCandidates)
+    if (!context->designPollCandidates.count(slowID))
+      return false;
+
+  const DesignReadyCohortEntry &cached = cohort->ready.back();
+  auto indexed = context->scheduledDesignTaskIndices.find(cached.id);
+  if (indexed == context->scheduledDesignTaskIndices.end() ||
+      indexed->second >= context->scheduledDesignTasks.size() ||
+      !context->designPollCandidates.count(cached.id))
+    return false;
+  candidateIndex = indexed->second;
+  const ScheduledDesignTask &task =
+      context->scheduledDesignTasks[candidateIndex];
+  DesignReadyCohortEntry current;
+  if (context->signalDiagnosticsEnabled) {
+    ++context->signalDiagnostics.candidateScans;
+    ++context->signalDiagnostics.readinessCalls;
+  }
+  if (!classifyDirectDesignReadyCohortMember(task, activePhase,
+                                             unstartedActorRegion, current) ||
+      current.id != cached.id || current.region != cached.region ||
+      current.rank != cached.rank ||
+      current.insertionSequence != cached.insertionSequence)
+    return false;
+  selected = cached;
+  return true;
+}
+
+OBELISK_RT_FEATURE_TEXT void
+installDesignReadyCohort(obelisk_rt_context *context,
+                         std::vector<DesignReadyCohortEntry> ready,
+                         std::vector<uint64_t> slowCandidates) {
+  std::sort(ready.begin(), ready.end(), designReadyCohortLater);
+  if (!context->designReadyCohort)
+    context->designReadyCohort = std::make_unique<DesignReadyCohortState>();
+  DesignReadyCohortState &cohort = *context->designReadyCohort;
+  cohort.ready = std::move(ready);
+  cohort.slowCandidates = std::move(slowCandidates);
+  cohort.selectionGeneration = context->schedulerSelectionGeneration;
+  cohort.schedulerTime = context->schedulerTime;
+  cohort.nextDesignTaskID = context->nextDesignTaskID;
+  cohort.runningFinals = context->schedulerRunningFinals;
+  cohort.valid = true;
+}
+
 void rebuildDesignSchedulerIndexUnlocked(obelisk_rt_context *context) {
   context->scheduledDesignTaskIndices.clear();
   context->designPollCandidates.clear();
@@ -2988,6 +3075,8 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
     std::vector<CancelledLogicalDesignActivation> designActivations;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      if (context->designReadyCohort)
+        context->designReadyCohort->valid = false;
       auto contains = [&](uint64_t token) {
         return std::find(targets.begin(), targets.end(), token) !=
                targets.end();
@@ -3195,6 +3284,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_control(
     uint64_t activeProcess = 0;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      if (context->designReadyCohort)
+        context->designReadyCohort->valid = false;
       // Compiled designs containing process.control are excluded from AOT.
       // Keep the public ABI safe for external callers too: mutating or
       // destroying actors still owned by a live generated plan would leave
@@ -3287,6 +3378,8 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
     std::vector<uint64_t> insertedDesignKills;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      if (context->designReadyCohort)
+        context->designReadyCohort->valid = false;
       uint64_t root = context->activeLogicalProcessToken;
       if (root == 0)
         return OBELISK_RT_INVALID_LIFECYCLE;
@@ -3508,6 +3601,8 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
     bool resumedControl = false;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      if (context->designReadyCohort)
+        context->designReadyCohort->valid = false;
       uint64_t current = context->activeLogicalProcessToken;
       if (current == 0)
         return OBELISK_RT_INVALID_LIFECYCLE;
@@ -4230,162 +4325,243 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       uint32_t activePhase = context->schedulerRunningFinals ? 1u : 0u;
       uint32_t unstartedActorRegion =
           obelisk_rt_unstarted_actor_region(context, activePhase);
-      for (uint64_t candidateID : context->designPollCandidates) {
-        if (context->nativeScheduleDesignTaskFilterActive &&
-            candidateID != context->nativeScheduleForcedDesignTask)
-          continue;
-        auto indexed = context->scheduledDesignTaskIndices.find(candidateID);
-        if (indexed == context->scheduledDesignTaskIndices.end() ||
-            indexed->second >= context->scheduledDesignTasks.size())
-          continue;
-        size_t candidateIndex = indexed->second;
-        auto iterator = context->scheduledDesignTasks.begin() + candidateIndex;
-        if (context->signalDiagnosticsEnabled)
-          ++context->signalDiagnostics.candidateScans;
-        if (iterator->phase != (context->schedulerRunningFinals ? 1u : 0u))
-          continue;
-        bool awaited = false;
-        bool childrenDone = false;
-        bool eventTriggered = false;
-        bool eventOrderReady = iterator->waitOrderReady;
-        bool mailboxReady = false;
-        bool semaphoreReady = false;
-        bool signalTriggered =
-            iterator->signalTriggered ||
-            ((iterator->suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
-              iterator->suspendKind == OBELISK_RT_SUSPEND_EDGE) &&
-             iterator->signalLatch && iterator->signalLatch->triggered);
-        if (context->signalDiagnosticsEnabled && iterator->started &&
-            (iterator->suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
-             iterator->suspendKind == OBELISK_RT_SUSPEND_EDGE ||
-             iterator->suspendKind == OBELISK_RT_SUSPEND_OBSERVER))
-          ++context->signalDiagnostics.readinessCalls;
-        if (iterator->started &&
-            (iterator->suspendKind == OBELISK_RT_SUSPEND_EVENT ||
-             iterator->suspendKind == OBELISK_RT_SUSPEND_EVENT_ORDER ||
-             iterator->suspendKind == OBELISK_RT_SUSPEND_MAILBOX ||
-             iterator->suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE ||
-             iterator->suspendKind == OBELISK_RT_SUSPEND_AWAIT ||
-             iterator->suspendKind == OBELISK_RT_SUSPEND_JOIN) &&
-            iterator->waitSize >= sizeof(obelisk_rt_wait_record_v1) &&
-            iterator->waitOffset <= iterator->scratchOffset &&
-            iterator->waitSize <=
-                iterator->scratchOffset - iterator->waitOffset) {
-          const auto *wait =
-              reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
-                  iterator->frame.data() + iterator->waitOffset);
-          const auto *entries =
-              reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(
-                  reinterpret_cast<const uint8_t *>(wait) + sizeof(*wait));
-          if (iterator->suspendKind == OBELISK_RT_SUSPEND_EVENT) {
-            if (iterator->waitGenerations.size() == wait->count)
-              for (uint32_t index = 0; index != wait->count; ++index) {
-                auto event = context->events.find(entries[index].stable_id);
-                uint64_t generation = event == context->events.end()
-                                          ? 0
-                                          : event->second.generation;
-                eventTriggered |=
-                    generation != iterator->waitGenerations[index];
+      constexpr size_t minCachedDesignSignalCohort = 16;
+      bool selectedFromReadyCohort = false;
+      DesignReadyCohortState *readyCohort = context->designReadyCohort.get();
+      bool readyCohortFeatureActive =
+          readyCohort ||
+          context->designPollCandidates.size() > minCachedDesignSignalCohort;
+      if (readyCohortFeatureActive && readyCohort) {
+        size_t candidateIndex = SIZE_MAX;
+        DesignReadyCohortEntry cached;
+        if (trySelectCachedDesignReadyCohort(context, activePhase,
+                                             unstartedActorRegion,
+                                             candidateIndex, cached)) {
+          found = context->scheduledDesignTasks.begin() + candidateIndex;
+          selectedRegion = cached.region;
+          selectedRank = cached.rank;
+          selectedInsertionSequence = cached.insertionSequence;
+          selectedFromReadyCohort = true;
+        }
+      }
+      if (readyCohort && readyCohort->valid && !selectedFromReadyCohort)
+        readyCohort->valid = false;
+
+      bool collectReadyCohort =
+          readyCohortFeatureActive && !selectedFromReadyCohort &&
+          !context->nativeScheduleDesignTaskFilterActive &&
+          context->designPollCandidates.size() > minCachedDesignSignalCohort;
+      bool readyCohortEligible = collectReadyCohort;
+      struct DesignReadyCohortBuild {
+        std::vector<DesignReadyCohortEntry> ready;
+        std::vector<uint64_t> slow;
+      };
+      std::optional<DesignReadyCohortBuild> readyCohortBuild;
+      if (collectReadyCohort) {
+        readyCohortBuild.emplace();
+        readyCohortBuild->ready.reserve(context->designPollCandidates.size());
+      }
+      auto scanDesignCandidates = [&](const auto &candidates,
+                                      auto collectTag) -> obelisk_rt_status {
+        constexpr bool collect = decltype(collectTag)::value;
+        for (uint64_t candidateID : candidates) {
+          if (context->nativeScheduleDesignTaskFilterActive &&
+              candidateID != context->nativeScheduleForcedDesignTask)
+            continue;
+          auto indexed = context->scheduledDesignTaskIndices.find(candidateID);
+          if (indexed == context->scheduledDesignTaskIndices.end() ||
+              indexed->second >= context->scheduledDesignTasks.size()) {
+            if constexpr (collect)
+              readyCohortEligible = false;
+            continue;
+          }
+          size_t candidateIndex = indexed->second;
+          auto iterator =
+              context->scheduledDesignTasks.begin() + candidateIndex;
+          if (context->signalDiagnosticsEnabled)
+            ++context->signalDiagnostics.candidateScans;
+          if (iterator->phase != (context->schedulerRunningFinals ? 1u : 0u)) {
+            if constexpr (collect)
+              readyCohortBuild->slow.push_back(candidateID);
+            continue;
+          }
+          bool awaited = false;
+          bool childrenDone = false;
+          bool eventTriggered = false;
+          bool eventOrderReady = iterator->waitOrderReady;
+          bool mailboxReady = false;
+          bool semaphoreReady = false;
+          bool signalTriggered =
+              iterator->signalTriggered ||
+              ((iterator->suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
+                iterator->suspendKind == OBELISK_RT_SUSPEND_EDGE) &&
+               iterator->signalLatch && iterator->signalLatch->triggered);
+          if (context->signalDiagnosticsEnabled && iterator->started &&
+              (iterator->suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
+               iterator->suspendKind == OBELISK_RT_SUSPEND_EDGE ||
+               iterator->suspendKind == OBELISK_RT_SUSPEND_OBSERVER))
+            ++context->signalDiagnostics.readinessCalls;
+          if (iterator->started &&
+              (iterator->suspendKind == OBELISK_RT_SUSPEND_EVENT ||
+               iterator->suspendKind == OBELISK_RT_SUSPEND_EVENT_ORDER ||
+               iterator->suspendKind == OBELISK_RT_SUSPEND_MAILBOX ||
+               iterator->suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE ||
+               iterator->suspendKind == OBELISK_RT_SUSPEND_AWAIT ||
+               iterator->suspendKind == OBELISK_RT_SUSPEND_JOIN) &&
+              iterator->waitSize >= sizeof(obelisk_rt_wait_record_v1) &&
+              iterator->waitOffset <= iterator->scratchOffset &&
+              iterator->waitSize <=
+                  iterator->scratchOffset - iterator->waitOffset) {
+            const auto *wait =
+                reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
+                    iterator->frame.data() + iterator->waitOffset);
+            const auto *entries =
+                reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(
+                    reinterpret_cast<const uint8_t *>(wait) + sizeof(*wait));
+            if (iterator->suspendKind == OBELISK_RT_SUSPEND_EVENT) {
+              if (iterator->waitGenerations.size() == wait->count)
+                for (uint32_t index = 0; index != wait->count; ++index) {
+                  auto event = context->events.find(entries[index].stable_id);
+                  uint64_t generation = event == context->events.end()
+                                            ? 0
+                                            : event->second.generation;
+                  eventTriggered |=
+                      generation != iterator->waitGenerations[index];
+                }
+            } else if (iterator->suspendKind ==
+                       OBELISK_RT_SUSPEND_EVENT_ORDER) {
+              eventOrderReady = iterator->waitOrderReady;
+            } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_MAILBOX) {
+              if (wait->count == 1) {
+                obelisk_rt_status status = obelisk_rt_mailbox_wait_ready(
+                    reinterpret_cast<obelisk_rt_object_v1 *>(
+                        entries[0].stable_id),
+                    wait->flags, mailboxReady);
+                if (status != OBELISK_RT_OK) {
+                  context->schedulerStatus = status;
+                  return status;
+                }
               }
-          } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_EVENT_ORDER) {
-            eventOrderReady = iterator->waitOrderReady;
-          } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_MAILBOX) {
-            if (wait->count == 1) {
-              obelisk_rt_status status = obelisk_rt_mailbox_wait_ready(
-                  reinterpret_cast<obelisk_rt_object_v1 *>(
-                      entries[0].stable_id),
-                  wait->flags, mailboxReady);
-              if (status != OBELISK_RT_OK) {
-                context->schedulerStatus = status;
-                return status;
+            } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE) {
+              if (wait->count == 1 && wait->payload <= UINT32_MAX) {
+                obelisk_rt_status status = obelisk_rt_semaphore_wait_ready(
+                    context,
+                    reinterpret_cast<obelisk_rt_object_v1 *>(
+                        entries[0].stable_id),
+                    static_cast<int32_t>(wait->payload), iterator->waitSequence,
+                    semaphoreReady);
+                if (status != OBELISK_RT_OK) {
+                  context->schedulerStatus = status;
+                  return status;
+                }
               }
+            } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_AWAIT)
+              awaited =
+                  wait->count == 1 && obelisk_rt_logical_process_terminated(
+                                          context, entries[0].stable_id);
+            else if (wait->count != 0) {
+              awaited = wait->flags == 0;
+              if (wait->flags == 0)
+                for (uint32_t index = 0; index != wait->count; ++index)
+                  awaited &= obelisk_rt_logical_process_terminated(
+                      context, entries[index].stable_id);
+              else
+                for (uint32_t index = 0; index != wait->count; ++index)
+                  awaited |= obelisk_rt_logical_process_terminated(
+                      context, entries[index].stable_id);
             }
-          } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE) {
-            if (wait->count == 1 && wait->payload <= UINT32_MAX) {
-              obelisk_rt_status status = obelisk_rt_semaphore_wait_ready(
-                  context,
-                  reinterpret_cast<obelisk_rt_object_v1 *>(
-                      entries[0].stable_id),
-                  static_cast<int32_t>(wait->payload), iterator->waitSequence,
-                  semaphoreReady);
-              if (status != OBELISK_RT_OK) {
-                context->schedulerStatus = status;
-                return status;
-              }
-            }
-          } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_AWAIT)
-            awaited = wait->count == 1 && obelisk_rt_logical_process_terminated(
-                                              context, entries[0].stable_id);
-          else if (wait->count != 0) {
-            awaited = wait->flags == 0;
-            if (wait->flags == 0)
-              for (uint32_t index = 0; index != wait->count; ++index)
-                awaited &= obelisk_rt_logical_process_terminated(
-                    context, entries[index].stable_id);
+          }
+          if (iterator->started &&
+              iterator->suspendKind == OBELISK_RT_SUSPEND_CHILDREN) {
+            childrenDone = true;
+            for (const ScheduledDesignTask &child :
+                 context->scheduledDesignTasks)
+              childrenDone &= child.terminated || child.parent != iterator->id;
+            for (const ScheduledProcess &child : context->scheduledProcesses)
+              childrenDone &= !child.instance || child.parent != iterator->id;
+          }
+          bool runnable =
+              !iterator->terminated && !iterator->explicitlySuspended &&
+              (!iterator->started || awaited || eventTriggered ||
+               eventOrderReady || mailboxReady || semaphoreReady ||
+               signalTriggered || childrenDone ||
+               iterator->suspendKind == OBELISK_RT_SUSPEND_NONE ||
+               (iterator->suspendKind == OBELISK_RT_SUSPEND_DELAY
+                    ? iterator->wakeTime <= context->schedulerTime
+                    : (iterator->suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
+                       iterator->suspendKind != OBELISK_RT_SUSPEND_EDGE &&
+                       iterator->suspendKind != OBELISK_RT_SUSPEND_EVENT &&
+                       iterator->suspendKind !=
+                           OBELISK_RT_SUSPEND_EVENT_ORDER &&
+                       iterator->suspendKind != OBELISK_RT_SUSPEND_MAILBOX &&
+                       iterator->suspendKind != OBELISK_RT_SUSPEND_SEMAPHORE &&
+                       iterator->suspendKind != OBELISK_RT_SUSPEND_AWAIT &&
+                       iterator->suspendKind != OBELISK_RT_SUSPEND_JOIN &&
+                       iterator->suspendKind != OBELISK_RT_SUSPEND_FOREVER &&
+                       iterator->suspendKind != OBELISK_RT_SUSPEND_CHILDREN &&
+                       iterator->suspendKind != OBELISK_RT_SUSPEND_OBSERVER &&
+                       iterator->observedEpoch != context->schedulerEpoch)));
+          if (runnable && iterator->queuedRegion >= unstartedActorRegion &&
+              signalTriggered && !iterator->urgent && !iterator->prioritySignal)
+            runnable = false;
+          if constexpr (collect) {
+            DesignReadyCohortEntry cached;
+            if (runnable &&
+                classifyDirectDesignReadyCohortMember(
+                    *iterator, activePhase, unstartedActorRegion, cached))
+              readyCohortBuild->ready.push_back(cached);
             else
-              for (uint32_t index = 0; index != wait->count; ++index)
-                awaited |= obelisk_rt_logical_process_terminated(
-                    context, entries[index].stable_id);
+              readyCohortBuild->slow.push_back(candidateID);
           }
-        }
-        if (iterator->started &&
-            iterator->suspendKind == OBELISK_RT_SUSPEND_CHILDREN) {
-          childrenDone = true;
-          for (const ScheduledDesignTask &child : context->scheduledDesignTasks)
-            childrenDone &= child.terminated || child.parent != iterator->id;
-          for (const ScheduledProcess &child : context->scheduledProcesses)
-            childrenDone &= !child.instance || child.parent != iterator->id;
-        }
-        bool runnable =
-            !iterator->terminated && !iterator->explicitlySuspended &&
-            (!iterator->started || awaited || eventTriggered ||
-             eventOrderReady || mailboxReady || semaphoreReady ||
-             signalTriggered || childrenDone ||
-             iterator->suspendKind == OBELISK_RT_SUSPEND_NONE ||
-             (iterator->suspendKind == OBELISK_RT_SUSPEND_DELAY
-                  ? iterator->wakeTime <= context->schedulerTime
-                  : (iterator->suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
-                     iterator->suspendKind != OBELISK_RT_SUSPEND_EDGE &&
-                     iterator->suspendKind != OBELISK_RT_SUSPEND_EVENT &&
-                     iterator->suspendKind != OBELISK_RT_SUSPEND_EVENT_ORDER &&
-                     iterator->suspendKind != OBELISK_RT_SUSPEND_MAILBOX &&
-                     iterator->suspendKind != OBELISK_RT_SUSPEND_SEMAPHORE &&
-                     iterator->suspendKind != OBELISK_RT_SUSPEND_AWAIT &&
-                     iterator->suspendKind != OBELISK_RT_SUSPEND_JOIN &&
-                     iterator->suspendKind != OBELISK_RT_SUSPEND_FOREVER &&
-                     iterator->suspendKind != OBELISK_RT_SUSPEND_CHILDREN &&
-                     iterator->suspendKind != OBELISK_RT_SUSPEND_OBSERVER &&
-                     iterator->observedEpoch != context->schedulerEpoch)));
-        if (runnable && iterator->queuedRegion >= unstartedActorRegion &&
-            signalTriggered && !iterator->urgent && !iterator->prioritySignal)
-          runnable = false;
-        auto key =
-            iterator->prioritySignal && signalTriggered
-                ? std::tuple{iterator->queuedRegion, uint32_t{0}, uint64_t{0}}
-                : std::tuple{iterator->queuedRegion, iterator->scheduleRank,
-                             iterator->insertionSequence};
-        auto selectedKey =
-            std::tuple{selectedRegion, selectedRank, selectedInsertionSequence};
-        if (runnable && iterator->urgent) {
-          if (!foundUrgent ||
-              iterator->insertionSequence < foundUrgentSequence) {
+          auto key =
+              iterator->prioritySignal && signalTriggered
+                  ? std::tuple{iterator->queuedRegion, uint32_t{0}, uint64_t{0}}
+                  : std::tuple{iterator->queuedRegion, iterator->scheduleRank,
+                               iterator->insertionSequence};
+          auto selectedKey = std::tuple{selectedRegion, selectedRank,
+                                        selectedInsertionSequence};
+          if (runnable && iterator->urgent) {
+            if (!foundUrgent ||
+                iterator->insertionSequence < foundUrgentSequence) {
+              found = iterator;
+              foundUrgent = true;
+              foundUrgentSequence = iterator->insertionSequence;
+              selectedRegion = 0;
+              selectedRank = 0;
+              selectedInsertionSequence = 0;
+            }
+            continue;
+          }
+          if (foundUrgent)
+            continue;
+          if (runnable && key < selectedKey) {
             found = iterator;
-            foundUrgent = true;
-            foundUrgentSequence = iterator->insertionSequence;
-            selectedRegion = 0;
-            selectedRank = 0;
-            selectedInsertionSequence = 0;
+            selectedRegion = std::get<0>(key);
+            selectedRank = std::get<1>(key);
+            selectedInsertionSequence = std::get<2>(key);
           }
-          continue;
         }
-        if (foundUrgent)
-          continue;
-        if (runnable && key < selectedKey) {
-          found = iterator;
-          selectedRegion = std::get<0>(key);
-          selectedRank = std::get<1>(key);
-          selectedInsertionSequence = std::get<2>(key);
-        }
+        return OBELISK_RT_OK;
+      };
+      obelisk_rt_status scanStatus = OBELISK_RT_OK;
+      if (selectedFromReadyCohort)
+        scanStatus = scanDesignCandidates(readyCohort->slowCandidates,
+                                          std::false_type{});
+      else if (collectReadyCohort)
+        scanStatus = scanDesignCandidates(context->designPollCandidates,
+                                          std::true_type{});
+      else
+        scanStatus = scanDesignCandidates(context->designPollCandidates,
+                                          std::false_type{});
+      if (scanStatus != OBELISK_RT_OK)
+        return scanStatus;
+      if (readyCohortEligible &&
+          readyCohortBuild->ready.size() + readyCohortBuild->slow.size() ==
+              context->designPollCandidates.size() &&
+          readyCohortBuild->ready.size() > minCachedDesignSignalCohort) {
+        installDesignReadyCohort(context, std::move(readyCohortBuild->ready),
+                                 std::move(readyCohortBuild->slow));
+        readyCohort = context->designReadyCohort.get();
       }
       auto maximumKey =
           std::tuple{maximumRegion, maximumRank, maximumInsertionSequence};
@@ -4409,6 +4585,13 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
       }
       size_t selectedIndex =
           static_cast<size_t>(found - context->scheduledDesignTasks.begin());
+      if (readyCohort && readyCohort->valid) {
+        if (!readyCohort->ready.empty() &&
+            readyCohort->ready.back().id == found->id)
+          readyCohort->ready.pop_back();
+        else
+          readyCohort->valid = false;
+      }
       task = std::move(context->scheduledDesignTasks[selectedIndex]);
       bool resuming =
           task.started && task.suspendKind != OBELISK_RT_SUSPEND_NONE;

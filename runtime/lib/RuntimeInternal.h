@@ -776,6 +776,31 @@ struct ScheduledDesignTask {
   bool explicitlySuspended = false;
 };
 
+// Cold, bytecode-only scheduler state for a large direct-signal publication
+// cohort. The generic scheduler owns no instance of this state until more
+// than a small candidate set becomes ready at once.
+struct DesignReadyCohortEntry {
+  uint64_t id = 0;
+  uint32_t region = UINT32_MAX;
+  uint32_t rank = UINT32_MAX;
+  uint64_t insertionSequence = UINT64_MAX;
+};
+
+struct DesignReadyCohortState {
+  // Stored later-first so the exact next scheduler key is consumed from the
+  // back in O(1). Cohorts contain only ordinary direct CHANGE/EDGE resumes;
+  // every other readiness source stays on the exact general scan.
+  std::vector<DesignReadyCohortEntry> ready;
+  // Candidates outside the homogeneous direct-signal batch are rescanned
+  // exactly on every cached selection and compared with the cached head.
+  std::vector<uint64_t> slowCandidates;
+  uint64_t selectionGeneration = 0;
+  uint64_t schedulerTime = 0;
+  uint64_t nextDesignTaskID = 0;
+  bool runningFinals = false;
+  bool valid = false;
+};
+
 struct SignalSubscriptionBucketKey {
   uint32_t kind = 0;
   uint32_t id = 0;
@@ -1527,6 +1552,11 @@ struct obelisk_rt_context {
   // the tail so every preexisting context field retains its offset, and leave
   // it null for designs that never execute a clock-cohort wait.
   std::unique_ptr<ClockOccurrenceFeatureState> clockOccurrences;
+
+  // Cold, pay-for-play acceleration for a large bytecode direct-signal ready
+  // cohort. Null preserves ordinary native/generic/AOT allocation behavior;
+  // tail placement preserves every preexisting context field offset.
+  std::unique_ptr<DesignReadyCohortState> designReadyCohort;
 
   obelisk_rt_context();
   ~obelisk_rt_context();
