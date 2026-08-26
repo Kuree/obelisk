@@ -1877,7 +1877,7 @@ TEST_F(RuntimeTest, DynamicScanPlansCacheAndInterpretSuppressionExactly) {
   obelisk_rt_string_v1 field = 0;
   ASSERT_EQ(obelisk_rt_v1_string_scan_dynamic(
                 context, lane, input, cursor, format, planCursor, 1, 0,
-                mask("scm"), &field, &cursor, &planCursor, &kind, &ok),
+                mask("scm"), 0, 0, &field, &cursor, &planCursor, &kind, &ok),
             OBELISK_RT_OK);
   EXPECT_EQ(ok, 1u);
   EXPECT_EQ(cursor, 6u);
@@ -1889,7 +1889,7 @@ TEST_F(RuntimeTest, DynamicScanPlansCacheAndInterpretSuppressionExactly) {
 
   ASSERT_EQ(obelisk_rt_v1_string_scan_dynamic(
                 context, lane, input, cursor, format, planCursor, 1, 0,
-                mask("h"), &field, &cursor, &planCursor, &kind, &ok),
+                mask("h"), 0, 0, &field, &cursor, &planCursor, &kind, &ok),
             OBELISK_RT_OK);
   EXPECT_EQ(ok, 1u);
   EXPECT_EQ(cursor, 14u);
@@ -1903,7 +1903,7 @@ TEST_F(RuntimeTest, DynamicScanPlansCacheAndInterpretSuppressionExactly) {
   EXPECT_EQ(std::string_view(bytes, size), "7f");
   ASSERT_EQ(obelisk_rt_v1_string_scan_dynamic(
                 context, lane, input, cursor, format, planCursor, 1, 1, 0,
-                &field, &cursor, &planCursor, &kind, &ok),
+                0, 0, &field, &cursor, &planCursor, &kind, &ok),
             OBELISK_RT_OK);
   EXPECT_EQ(ok, 1u);
   EXPECT_EQ(cursor, 15u);
@@ -2002,6 +2002,109 @@ TEST_F(RuntimeTest, DynamicScanIdentityHitsDoNotWalkFormatBytes) {
   ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
 }
 
+TEST_F(RuntimeTest, DynamicRawScanUsesDestinationSpecificTransferSizes) {
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+  auto string = [&](std::string_view value) {
+    obelisk_rt_string_v1 result = 0;
+    EXPECT_EQ(obelisk_rt_v1_string_create(lane, value.data(), value.size(),
+                                          &result),
+              OBELISK_RT_OK);
+    return result;
+  };
+  auto view = [&](obelisk_rt_string_v1 value) {
+    char scratch[8]{};
+    const char *bytes = nullptr;
+    uint64_t size = 0;
+    EXPECT_EQ(obelisk_rt_v1_string_view(value, scratch, &bytes, &size),
+              OBELISK_RT_OK);
+    return std::string(bytes, static_cast<size_t>(size));
+  };
+
+  std::string raw("ABCD", 4);
+  raw.append("\x01\x00\x00\x80\x00\x00\x00\x80", 8);
+  obelisk_rt_string_v1 input = string(raw);
+  obelisk_rt_string_v1 format = string("%u%z");
+  uint64_t allowed = (UINT64_C(1) << ('u' - 'a')) |
+                     (UINT64_C(1) << ('z' - 'a'));
+  obelisk_rt_string_v1 field = 0;
+  uint32_t cursor = 0, planCursor = 0, kind = 0, ok = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_scan_dynamic(
+                context, lane, input, cursor, format, planCursor, 1, 0,
+                allowed, 4, 8, &field, &cursor, &planCursor, &kind, &ok),
+            OBELISK_RT_OK);
+  EXPECT_EQ(ok, 1u);
+  EXPECT_EQ(cursor, 4u);
+  EXPECT_EQ(planCursor, 1u);
+  EXPECT_EQ(kind, OBELISK_RT_SCAN_DYNAMIC_RAW2);
+  EXPECT_EQ(view(field), raw.substr(0, 4));
+
+  ASSERT_EQ(obelisk_rt_v1_string_scan_dynamic(
+                context, lane, input, cursor, format, planCursor, 1, 0,
+                allowed, 4, 8, &field, &cursor, &planCursor, &kind, &ok),
+            OBELISK_RT_OK);
+  EXPECT_EQ(ok, 1u);
+  EXPECT_EQ(cursor, 12u);
+  EXPECT_EQ(planCursor, 2u);
+  EXPECT_EQ(kind, OBELISK_RT_SCAN_DYNAMIC_RAW4);
+  EXPECT_EQ(view(field), raw.substr(4));
+
+  format = string("%3u");
+  cursor = 0;
+  planCursor = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_scan_dynamic(
+                context, lane, input, cursor, format, planCursor, 1, 0,
+                allowed, 4, 8, &field, &cursor, &planCursor, &kind, &ok),
+            OBELISK_RT_OK);
+  EXPECT_EQ(ok, 0u);
+  EXPECT_EQ(cursor, 0u);
+  EXPECT_EQ(planCursor, 0u);
+
+  TempDirectory temporary;
+  std::filesystem::path path = temporary.file("dynamic-raw.bin");
+  {
+    std::ofstream output(path, std::ios::binary);
+    output.write(raw.data() + 4, 8);
+  }
+  uint32_t descriptor = open(path, "rb");
+  obelisk_rt_string_v1 incompatible = string("%d %u");
+  uint32_t validationCursor = 0;
+  ASSERT_EQ(obelisk_rt_v1_scan_dynamic_validate(
+                context, incompatible, validationCursor, 1, 0,
+                UINT64_C(1) << ('d' - 'a'), &validationCursor),
+            OBELISK_RT_OK);
+  EXPECT_EQ(validationCursor, 1u);
+  EXPECT_EQ(obelisk_rt_v1_scan_dynamic_validate(
+                context, incompatible, validationCursor, 1, 0,
+                UINT64_C(1) << ('s' - 'a'), &validationCursor),
+            OBELISK_RT_INVALID_ARGUMENT);
+  int64_t position = -1;
+  EXPECT_EQ(obelisk_rt_v1_file_tell(context, descriptor, &position),
+            OBELISK_RT_OK);
+  EXPECT_EQ(position, 0);
+
+  format = string("%z");
+  planCursor = 0;
+  uint32_t eof = 0;
+  ASSERT_EQ(obelisk_rt_v1_file_scan_dynamic(
+                context, lane, descriptor, format, planCursor, 1, 0, allowed,
+                4, 8, &field, &planCursor, &kind, &ok, &eof),
+            OBELISK_RT_OK);
+  EXPECT_EQ(ok, 1u);
+  EXPECT_EQ(eof, 0u);
+  EXPECT_EQ(planCursor, 1u);
+  EXPECT_EQ(kind, OBELISK_RT_SCAN_DYNAMIC_RAW4);
+  EXPECT_EQ(view(field), raw.substr(4));
+  EXPECT_EQ(obelisk_rt_v1_file_tell(context, descriptor, &position),
+            OBELISK_RT_OK);
+  EXPECT_EQ(position, 8);
+  EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
+
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+}
+
 TEST_F(RuntimeTest, DynamicScanRejectsCrossContextLanesAndHeapStrings) {
   obelisk_rt_gc_lane_v1 *lane = nullptr;
   ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
@@ -2033,22 +2136,22 @@ TEST_F(RuntimeTest, DynamicScanRejectsCrossContextLanesAndHeapStrings) {
   uint64_t decimal = UINT64_C(1) << ('d' - 'a');
   EXPECT_EQ(obelisk_rt_v1_string_scan_dynamic(
                 context, otherLane, input, 0, format, 0, 1, 0, decimal,
-                &field, &cursor, &planCursor, &kind, &ok),
+                0, 0, &field, &cursor, &planCursor, &kind, &ok),
             OBELISK_RT_INVALID_ARGUMENT);
   EXPECT_EQ(obelisk_rt_v1_string_scan_dynamic(
-                context, lane, otherInput, 0, format, 0, 1, 0, decimal, &field,
-                &cursor, &planCursor, &kind, &ok),
+                context, lane, otherInput, 0, format, 0, 1, 0, decimal, 0, 0,
+                &field, &cursor, &planCursor, &kind, &ok),
             OBELISK_RT_INVALID_HANDLE);
   EXPECT_EQ(obelisk_rt_v1_string_scan_dynamic(
-                context, lane, input, 0, otherFormat, 0, 1, 0, decimal, &field,
-                &cursor, &planCursor, &kind, &ok),
+                context, lane, input, 0, otherFormat, 0, 1, 0, decimal, 0, 0,
+                &field, &cursor, &planCursor, &kind, &ok),
             OBELISK_RT_INVALID_HANDLE);
   EXPECT_EQ(obelisk_rt_v1_file_scan_dynamic(
-                context, otherLane, 0, format, 0, 1, 0, decimal, &field,
+                context, otherLane, 0, format, 0, 1, 0, decimal, 0, 0, &field,
                 &planCursor, &kind, &ok, &eof),
             OBELISK_RT_INVALID_ARGUMENT);
   EXPECT_EQ(obelisk_rt_v1_file_scan_dynamic(
-                context, lane, 0, otherFormat, 0, 1, 0, decimal, &field,
+                context, lane, 0, otherFormat, 0, 1, 0, decimal, 0, 0, &field,
                 &planCursor, &kind, &ok, &eof),
             OBELISK_RT_INVALID_HANDLE);
   EXPECT_EQ(obelisk_rt_v1_scan_dynamic_validate(
@@ -2086,7 +2189,7 @@ TEST_F(RuntimeTest, DynamicFileScanPreservesPositionAndEOF) {
                      (UINT64_C(1) << ('h' - 'a'));
   ASSERT_EQ(obelisk_rt_v1_file_scan_dynamic(
                 context, lane, descriptor, format, planCursor, 1, 0, numeric,
-                &field, &planCursor, &kind, &ok, &scanEOF),
+                0, 0, &field, &planCursor, &kind, &ok, &scanEOF),
             OBELISK_RT_OK);
   EXPECT_EQ(ok, 1u);
   EXPECT_EQ(scanEOF, 0u);
@@ -2099,7 +2202,7 @@ TEST_F(RuntimeTest, DynamicFileScanPreservesPositionAndEOF) {
 
   ASSERT_EQ(obelisk_rt_v1_file_scan_dynamic(
                 context, lane, descriptor, format, planCursor, 1, 0, numeric,
-                &field, &planCursor, &kind, &ok, &scanEOF),
+                0, 0, &field, &planCursor, &kind, &ok, &scanEOF),
             OBELISK_RT_OK);
   EXPECT_EQ(ok, 1u);
   EXPECT_EQ(planCursor, 3u);
@@ -2108,8 +2211,8 @@ TEST_F(RuntimeTest, DynamicFileScanPreservesPositionAndEOF) {
             OBELISK_RT_OK);
   EXPECT_EQ(position, 12);
   ASSERT_EQ(obelisk_rt_v1_file_scan_dynamic(
-                context, lane, descriptor, format, planCursor, 1, 1, 0, &field,
-                &planCursor, &kind, &ok, &scanEOF),
+                context, lane, descriptor, format, planCursor, 1, 1, 0, 0, 0,
+                &field, &planCursor, &kind, &ok, &scanEOF),
             OBELISK_RT_OK);
   EXPECT_EQ(ok, 1u);
   ASSERT_EQ(obelisk_rt_v1_file_tell(context, descriptor, &position),
@@ -2124,7 +2227,7 @@ TEST_F(RuntimeTest, DynamicFileScanPreservesPositionAndEOF) {
   planCursor = 0;
   ASSERT_EQ(obelisk_rt_v1_file_scan_dynamic(
                 context, lane, descriptor, format, planCursor, 1, 0, numeric,
-                &field, &planCursor, &kind, &ok, &scanEOF),
+                0, 0, &field, &planCursor, &kind, &ok, &scanEOF),
             OBELISK_RT_OK);
   EXPECT_EQ(ok, 0u);
   EXPECT_EQ(scanEOF, 1u);

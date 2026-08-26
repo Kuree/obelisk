@@ -254,6 +254,8 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
       bool real;
       uint64_t allowed;
       std::optional<unsigned> packedWidth;
+      uint64_t rawTwoStateBytes;
+      uint64_t rawFourStateBytes;
     };
     SmallVector<DynamicDestination> destinations;
     destinations.reserve(children.size() - 2);
@@ -279,18 +281,24 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
       bool packed = static_cast<bool>(sim::getPackedScalarType(destinationType));
       bool string = isa<sim::StringType>(destinationType);
       bool real = isa<FloatType>(destinationType);
+      std::optional<uint64_t> rawTwoStateBytes =
+          rawScanByteSize(destinationType, false);
+      std::optional<uint64_t> rawFourStateBytes =
+          rawScanByteSize(destinationType, true);
       uint64_t allowed = 0;
       if (packed)
-        allowed = maskFor("bodhxefgscmtv");
+        allowed = maskFor("bodhxefgscmtvuz");
       else if (string)
         allowed = maskFor("scm");
       else if (real)
         allowed = maskFor("efgt");
+      else if (rawTwoStateBytes && rawFourStateBytes)
+        allowed = maskFor("uz");
       else {
         emitError(getSemanticLocation(actual))
-            << name << " dynamic-format destination must be packed, real, or "
-               "string; assigned dynamic %u/%z aggregates are not yet "
-               "supported";
+            << name << " dynamic-format destination must be packed, real, "
+                        "string, or a recursively integral unpacked "
+                        "struct/union";
         return failure();
       }
       std::optional<unsigned> packedWidth =
@@ -308,7 +316,9 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
         return failure();
       }
       destinations.push_back({std::move(*captured), packed, string, real,
-                              allowed, packedWidth});
+                              allowed, packedWidth,
+                              rawTwoStateBytes.value_or(0),
+                              rawFourStateBytes.value_or(0)});
     }
 
     // Validate the complete cached plan and destination shape before the
@@ -342,6 +352,8 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
       bool real = destination.real;
       uint64_t allowed = destination.allowed;
       std::optional<unsigned> packedWidth = destination.packedWidth;
+      uint64_t rawTwoStateBytes = destination.rawTwoStateBytes;
+      uint64_t rawFourStateBytes = destination.rawFourStateBytes;
 
       Value enabled =
           arith::ExtUIOp::create(builder, location, i32, live).getResult();
@@ -353,7 +365,8 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
       if (name == "$sscanf") {
         auto scan = sim::SimStringScanDynamicOp::create(
             builder, location, TypeRange{stringType, i32, i32, i32, i32}, text,
-            cursor, *dynamicFormat, planCursor, enabled, false, allowed);
+            cursor, *dynamicFormat, planCursor, enabled, false, allowed,
+            rawTwoStateBytes, rawFourStateBytes);
         field = scan.getField();
         nextCursor = scan.getNextCursor();
         nextPlanCursor = scan.getNextPlanCursor();
@@ -363,7 +376,8 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
         auto scan = sim::SimFileScanDynamicOp::create(
             builder, location,
             TypeRange{stringType, i32, i32, i32, i32}, context, fileDescriptor,
-            *dynamicFormat, planCursor, enabled, false, allowed);
+            *dynamicFormat, planCursor, enabled, false, allowed,
+            rawTwoStateBytes, rawFourStateBytes);
         field = scan.getField();
         nextPlanCursor = scan.getNextPlanCursor();
         conversionKind = scan.getConversionKind();
@@ -457,6 +471,68 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
                                  false)))
           return failure();
       }
+      auto addRawConversion = [&](int32_t kind,
+                                  bool fourState) -> LogicalResult {
+        Block *target = addBlock();
+        kinds.push_back(kind);
+        targets.push_back(target);
+        setCurrent(target);
+        Value rawCursor = constant(0);
+        std::function<FailureOr<Value>(Type)> scanType =
+            [&](Type type) -> FailureOr<Value> {
+          if (Type scalar = sim::getPackedScalarType(type)) {
+            std::optional<unsigned> width = sim::getPackedWidth(type);
+            if (!width || *width == 0)
+              return failure();
+            auto scan = sim::SimStringScanRawOp::create(
+                builder, location,
+                TypeRange{sim::LogicType::get(function.getContext(), *width),
+                          i32, i32},
+                field, rawCursor, "", fourState, 0);
+            rawCursor = scan.getNextCursor();
+            FailureOr<Value> converted =
+                convert(scan.getData(), scalar, true, location);
+            if (failed(converted))
+              return failure();
+            if (scalar == type)
+              return *converted;
+            return sim::SimPackedUnflattenOp::create(builder, location, type,
+                                                     *converted)
+                .getResult();
+          }
+          bool isUnion = isa<sim::UnpackedUnionType>(type);
+          unsigned count = isUnion ? 1 : sim::getAggregateNumElements(type);
+          SmallVector<Value> elements;
+          elements.reserve(count);
+          for (unsigned ordinal = 0; ordinal != count; ++ordinal) {
+            FailureOr<Value> element =
+                scanType(sim::getAggregateElementType(type, ordinal));
+            if (failed(element))
+              return failure();
+            elements.push_back(*element);
+          }
+          if (isUnion)
+            return sim::SimUnionConstructOp::create(
+                       builder, location, type, elements.front(), 0)
+                .getResult();
+          return sim::SimAggregateConstructOp::create(builder, location, type,
+                                                       elements)
+              .getResult();
+        };
+        FailureOr<Value> parsed = scanType(destinationType);
+        if (failed(parsed) ||
+            failed(writeCapturedLValue(captured, *parsed, false, false,
+                                       location)))
+          return failure();
+        cf::BranchOp::create(builder, location, resume);
+        return success();
+      };
+      if (rawTwoStateBytes != 0 &&
+          failed(addRawConversion(OBELISK_RT_SCAN_DYNAMIC_RAW2, false)))
+        return failure();
+      if (rawFourStateBytes != 0 &&
+          failed(addRawConversion(OBELISK_RT_SCAN_DYNAMIC_RAW4, true)))
+        return failure();
       setCurrent(dispatch);
       auto caseType = RankedTensorType::get(
           {static_cast<int64_t>(kinds.size())}, i32);
@@ -476,13 +552,14 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
     if (name == "$sscanf") {
       auto finish = sim::SimStringScanDynamicOp::create(
           builder, location, TypeRange{stringType, i32, i32, i32, i32}, text,
-          cursor, *dynamicFormat, planCursor, enabled, true, 0);
+          cursor, *dynamicFormat, planCursor, enabled, true, 0, 0, 0);
       cursor = arith::SelectOp::create(builder, location, live,
                                        finish.getNextCursor(), cursor);
     } else {
       auto finish = sim::SimFileScanDynamicOp::create(
           builder, location, TypeRange{stringType, i32, i32, i32, i32},
-          context, fileDescriptor, *dynamicFormat, planCursor, enabled, true, 0);
+          context, fileDescriptor, *dynamicFormat, planCursor, enabled, true, 0,
+          0, 0);
       Value eof = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::ne, finish.getEof(),
           constant(0));

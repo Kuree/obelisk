@@ -23,13 +23,15 @@ module attributes {
            finalize = false} : (!obelisk_sim.string, i32) -> i32
       %field, %cursor, %plan, %kind, %ok =
           "obelisk_sim.string.scan_dynamic"(%input, %zero, %format, %zero, %one)
-          {allowed_specifiers = 262144 : i64, finalize = false} :
+          {allowed_specifiers = 262144 : i64, finalize = false,
+           raw_four_state_bytes = 0 : i64, raw_two_state_bytes = 0 : i64} :
           (!obelisk_sim.string, i32, !obelisk_sim.string, i32, i32) ->
           (!obelisk_sim.string, i32, i32, i32, i32)
       %fileField, %filePlan, %fileKind, %fileOk, %eof =
           "obelisk_sim.file.scan_dynamic"(%ctx, %descriptor, %format, %zero,
                                             %one)
-          {allowed_specifiers = 262144 : i64, finalize = false} :
+          {allowed_specifiers = 262144 : i64, finalize = false,
+           raw_four_state_bytes = 0 : i64, raw_two_state_bytes = 0 : i64} :
           (!obelisk_sim.context, i32, !obelisk_sim.string, i32, i32) ->
           (!obelisk_sim.string, i32, i32, i32, i32)
       obelisk_sim.return
@@ -41,5 +43,5 @@ module attributes {
 // NATIVE-COUNT-1: llvm.call @obelisk_rt_v1_string_scan_dynamic
 // NATIVE-COUNT-1: llvm.call @obelisk_rt_v1_file_scan_dynamic
 // BYTECODE-COUNT-1: intrinsic 0: id=0x00010248 inputs=5 outputs=1 flags=0
-// BYTECODE-COUNT-1: intrinsic 1: id=0x00010246 inputs=7 outputs=5 flags=0
-// BYTECODE-COUNT-1: intrinsic 2: id=0x00010247 inputs=6 outputs=5 flags=0
+// BYTECODE-COUNT-1: intrinsic 1: id=0x00010246 inputs=9 outputs=5 flags=0
+// BYTECODE-COUNT-1: intrinsic 2: id=0x00010247 inputs=8 outputs=5 flags=0

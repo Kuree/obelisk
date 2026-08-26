@@ -1212,7 +1212,9 @@ def SimStringScanDynamicOp : SimOp<"string.scan_dynamic", [
   }];
   let arguments = (ins SimStringType:$input, I32:$cursor,
                        SimStringType:$format, I32:$plan_cursor, I32:$enabled,
-                       BoolAttr:$finalize, I64Attr:$allowed_specifiers);
+                       BoolAttr:$finalize, I64Attr:$allowed_specifiers,
+                       I64Attr:$raw_two_state_bytes,
+                       I64Attr:$raw_four_state_bytes);
   let results = (outs SimStringType:$field, I32:$next_cursor,
                       I32:$next_plan_cursor, I32:$conversion_kind, I32:$ok);
 }
@@ -2246,7 +2248,8 @@ def SimFileScanFieldOp : SimFileOp<"file.scan_field",
 def SimFileScanDynamicOp : SimFileOp<"file.scan_dynamic",
     (ins SimContextType:$context, I32:$descriptor, SimStringType:$format,
          I32:$plan_cursor, I32:$enabled, BoolAttr:$finalize,
-         I64Attr:$allowed_specifiers),
+         I64Attr:$allowed_specifiers, I64Attr:$raw_two_state_bytes,
+         I64Attr:$raw_four_state_bytes),
     (outs SimStringType:$field, I32:$next_plan_cursor, I32:$conversion_kind,
           I32:$ok, I32:$eof),
     [MemRead<SimIOResource>, MemWrite<SimIOResource>,

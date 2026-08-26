@@ -1203,7 +1203,7 @@ count. Each destination is still converted and stored through its statically
 typed lowering path, so generated dispatch is O(destination count times the
 constant conversion-family count), never O(destination width or runtime format
 length). A linear plan preflight validates the full format, exact destination
-count, every statically typed destination, and the assigned-raw diagnostic
+count and every statically typed destination
 before input or file position can change, including on an initial mismatch or
 EOF. The runtime allocates its bounded eight-entry LRU only on the first
 dynamic scan, reuses resident plans by immutable string identity or content,
@@ -1281,6 +1281,22 @@ rejecting their infinity and NaN bit patterns. Native and bytecode constant
 encoding already carry those bits exactly, so the change is confined to
 compile-time constant freezing and has no simulation-path cost; a minimal
 semantic-MLIR test covers both encodings.
+
+L19's twelfth closure tranche completes assigned `%u/%z` in runtime-valued
+`$sscanf` and `$fscanf` formats. Lowering computes the two- and four-state raw
+transfer sizes once from each statically known packed or recursively integral
+unpacked struct/untagged-union destination. The feature-local interpreter
+selects the applicable size, atomically consumes one exact binary field, and
+returns it to the existing typed raw decoder; aggregates retain declaration
+order, first-member union selection, and independent 32-bit word padding for
+every scalar leaf. Explicit widths smaller than the selected transfer fail
+without assignment, and plan preflight rejects incompatible destinations
+before string input or file position can change. The two byte counts are
+constant operands only on dynamic-scan operations, so literal and no-scan IR
+remain unchanged; selected scans stay O(words) in the runtime and O(leaves) in
+generated IR. Compact MLIR native/bytecode lowering tests and direct runtime
+tests cover both scanner paths, binary NULs, transfer-size selection, width
+mismatch, and preflight file-position preservation.
 
 L14's configuration closure records the effective elaborated binding on only
 the affected Slang module and checker instance operations and exposes it
@@ -1595,10 +1611,11 @@ one commit.
     width and the full Table 21-8 X/Z/? alphabet. Runtime-valued
     `$sscanf`/`$fscanf` formats implement the ordinary conversion families,
     arbitrary widths and suppression, mismatch/EOF/file-position behavior,
-    and a bounded lazy format-plan cache. `$fread` also accepts fixed,
-    dynamic-array, and queue memories with extent-independent generated loops.
-    Assigned dynamic `%u/%z` and residual EOF/error-position combinations
-    remain.
+    assigned `%u/%z` for packed and recursively integral unpacked struct/union
+    destinations, mismatch/EOF/file-position behavior, and a bounded lazy
+    format-plan cache. `$fread` also accepts fixed, dynamic-array, and queue
+    memories with extent-independent generated loops. Residual
+    EOF/error-position combinations remain.
 
 ### Randomization and `std`
 

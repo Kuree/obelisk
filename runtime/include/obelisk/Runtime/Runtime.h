@@ -2055,7 +2055,9 @@ obelisk_rt_status obelisk_rt_v1_string_scan_field(
 // `finalize` consumes only trailing suppressed conversions / literal text and
 // diagnoses a remaining assigned conversion. Plans and their prefixes remain
 // runtime-owned; unchanged formats reuse a resident entry in the bounded
-// cache, while an entry reparses after eviction.
+// cache, while an entry reparses after eviction. The two raw byte counts are
+// the statically typed destination's exact `%u` and `%z` transfer sizes; they
+// are zero when raw conversions are not legal for that destination.
 enum {
   OBELISK_RT_SCAN_DYNAMIC_TEXT = 1,
   OBELISK_RT_SCAN_DYNAMIC_HIERARCHY = 2,
@@ -2064,7 +2066,9 @@ enum {
   OBELISK_RT_SCAN_DYNAMIC_LOGIC2 = 5,
   OBELISK_RT_SCAN_DYNAMIC_LOGIC8 = 6,
   OBELISK_RT_SCAN_DYNAMIC_LOGIC10 = 7,
-  OBELISK_RT_SCAN_DYNAMIC_LOGIC16 = 8
+  OBELISK_RT_SCAN_DYNAMIC_LOGIC16 = 8,
+  OBELISK_RT_SCAN_DYNAMIC_RAW2 = 9,
+  OBELISK_RT_SCAN_DYNAMIC_RAW4 = 10
 };
 // Validate one destination against the next assigned conversion without
 // consuming input. `file` selects the task name used by diagnostics. Lowering
@@ -2080,6 +2084,7 @@ obelisk_rt_status obelisk_rt_v1_string_scan_dynamic(
     obelisk_rt_string_v1 input, uint32_t cursor,
     obelisk_rt_string_v1 format, uint32_t plan_cursor, uint32_t enabled,
     uint32_t finalize, uint64_t allowed_specifiers,
+    uint64_t raw_two_state_bytes, uint64_t raw_four_state_bytes,
     obelisk_rt_string_v1 *out_field, uint32_t *out_cursor,
     uint32_t *out_plan_cursor, uint32_t *out_conversion_kind,
     uint32_t *out_ok);
@@ -3916,6 +3921,7 @@ obelisk_rt_status obelisk_rt_v1_file_scan_dynamic(
     obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
     uint32_t descriptor, obelisk_rt_string_v1 format, uint32_t plan_cursor,
     uint32_t enabled, uint32_t finalize, uint64_t allowed_specifiers,
+    uint64_t raw_two_state_bytes, uint64_t raw_four_state_bytes,
     obelisk_rt_string_v1 *out_field, uint32_t *out_plan_cursor,
     uint32_t *out_conversion_kind, uint32_t *out_ok, uint32_t *out_eof);
 obelisk_rt_status obelisk_rt_v1_file_scan_raw(

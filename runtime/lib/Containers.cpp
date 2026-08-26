@@ -1902,6 +1902,7 @@ obelisk_rt_v1_string_scan_dynamic(
     obelisk_rt_string_v1 input, uint32_t cursor,
     obelisk_rt_string_v1 format, uint32_t planCursor, uint32_t enabled,
     uint32_t finalize, uint64_t allowedSpecifiers,
+    uint64_t rawTwoStateBytes, uint64_t rawFourStateBytes,
     obelisk_rt_string_v1 *outField, uint32_t *outCursor,
     uint32_t *outPlanCursor, uint32_t *outSpecifier, uint32_t *outOk) {
   if (!context || !lane || !outField || !outCursor || !outPlanCursor ||
@@ -1989,6 +1990,10 @@ obelisk_rt_v1_string_scan_dynamic(
       return OBELISK_RT_SCAN_DYNAMIC_LOGIC8;
     case 'd':
       return OBELISK_RT_SCAN_DYNAMIC_LOGIC10;
+    case 'u':
+      return OBELISK_RT_SCAN_DYNAMIC_RAW2;
+    case 'z':
+      return OBELISK_RT_SCAN_DYNAMIC_RAW4;
     default:
       return OBELISK_RT_SCAN_DYNAMIC_LOGIC16;
     }
@@ -2005,13 +2010,6 @@ obelisk_rt_v1_string_scan_dynamic(
                      "than destinations\n");
         return OBELISK_RT_INVALID_ARGUMENT;
       }
-      if (normalized == 'u' || normalized == 'z') {
-        std::fprintf(stderr,
-                     "obelisk: assigned dynamic $sscanf %%%c is not yet "
-                     "supported\n",
-                     static_cast<char>(conversion.specifier));
-        return OBELISK_RT_INVALID_ARGUMENT;
-      }
       if (!allowed(conversion.specifier)) {
         std::fprintf(stderr,
                      "obelisk: dynamic $sscanf %%%c is incompatible with "
@@ -2025,16 +2023,27 @@ obelisk_rt_v1_string_scan_dynamic(
     if (!matchPrefix(conversion.prefix, next))
       return OBELISK_RT_OK;
     if (normalized == 'u' || normalized == 'z') {
-      if (conversion.width == 0) {
+      uint64_t rawSize = normalized == 'u' ? rawTwoStateBytes
+                                           : rawFourStateBytes;
+      if (conversion.suppressed)
+        rawSize = conversion.width;
+      if (rawSize == 0) {
         std::fprintf(stderr,
                      "obelisk: dynamic $sscanf assignment suppression for "
                      "raw %%%c requires an explicit byte count\n",
                      static_cast<char>(conversion.specifier));
         return OBELISK_RT_INVALID_ARGUMENT;
       }
-      if (conversion.width > view.size - std::min<uint64_t>(next, view.size))
+      if ((!conversion.suppressed && conversion.width != 0 &&
+           rawSize > conversion.width) ||
+          rawSize > view.size - std::min<uint64_t>(next, view.size))
         return OBELISK_RT_OK;
-      next += conversion.width;
+      if (!conversion.suppressed) {
+        status = createString(lane, view.bytes + next, rawSize, outField);
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
+      next += rawSize;
     } else if (normalized != 'm') {
       uint64_t fieldBegin = next;
       uint64_t extent =

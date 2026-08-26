@@ -1,22 +1,16 @@
 // RUN: obelisk -fno-lto -O0 --vpi=off %s -o %t.native
 // RUN: obelisk -fno-lto -O0 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
-// RUN: not %t.native +CASE=raw 2>&1 | FileCheck %s --check-prefix=RAW
 // RUN: not %t.native +CASE=malformed 2>&1 | FileCheck %s --check-prefix=MALFORMED
 // RUN: not %t.native +CASE=mismatch_count 2>&1 | FileCheck %s --check-prefix=COUNT
 // RUN: not %t.native +CASE=mismatch_type 2>&1 | FileCheck %s --check-prefix=TYPE
-// RUN: not %t.native +CASE=mismatch_raw 2>&1 | FileCheck %s --check-prefix=MISMATCH-RAW
 // RUN: not %t.native +CASE=eof_count 2>&1 | FileCheck %s --check-prefix=COUNT
 // RUN: not %t.native +CASE=eof_type 2>&1 | FileCheck %s --check-prefix=TYPE
-// RUN: not %t.native +CASE=eof_raw 2>&1 | FileCheck %s --check-prefix=EOF-RAW
 // RUN: not %t.native +CASE=suppressed 2>&1 | FileCheck %s --check-prefix=SUPPRESSED
-// RUN: not %t.bytecode +CASE=raw 2>&1 | FileCheck %s --check-prefix=RAW
 // RUN: not %t.bytecode +CASE=malformed 2>&1 | FileCheck %s --check-prefix=MALFORMED
 // RUN: not %t.bytecode +CASE=mismatch_count 2>&1 | FileCheck %s --check-prefix=COUNT
 // RUN: not %t.bytecode +CASE=mismatch_type 2>&1 | FileCheck %s --check-prefix=TYPE
-// RUN: not %t.bytecode +CASE=mismatch_raw 2>&1 | FileCheck %s --check-prefix=MISMATCH-RAW
 // RUN: not %t.bytecode +CASE=eof_count 2>&1 | FileCheck %s --check-prefix=COUNT
 // RUN: not %t.bytecode +CASE=eof_type 2>&1 | FileCheck %s --check-prefix=TYPE
-// RUN: not %t.bytecode +CASE=eof_raw 2>&1 | FileCheck %s --check-prefix=EOF-RAW
 // RUN: not %t.bytecode +CASE=suppressed 2>&1 | FileCheck %s --check-prefix=SUPPRESSED
 
 module scan_dynamic_format_invalid;
@@ -70,10 +64,7 @@ module scan_dynamic_format_invalid;
   end
 endmodule
 
-// RAW: assigned dynamic $sscanf %u is not yet supported
 // MALFORMED: malformed dynamic $sscanf conversion '%q'
 // COUNT: format has more conversions than destinations
 // TYPE: %F is incompatible with its destination
-// MISMATCH-RAW: assigned dynamic $sscanf %u is not yet supported
-// EOF-RAW: assigned dynamic $fscanf %Z is not yet supported
 // SUPPRESSED: assignment suppression for raw %u requires an explicit byte count

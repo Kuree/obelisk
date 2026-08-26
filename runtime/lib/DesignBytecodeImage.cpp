@@ -1280,17 +1280,19 @@ bool validIntrinsic(const Image &image, const Function &function,
            bits(input(2), 64) && bits(input(3), 64) && bits(input(4), 64) &&
            bits(output(0), 32);
   case OBELISK_RT_INTRINSIC_V1_STRING_SCAN_DYNAMIC:
-    return signature.flags == 0 && site.inputCount == 7 &&
+    return signature.flags == 0 && site.inputCount == 9 &&
            site.outputCount == 5 && string(input(0)) && bits(input(1), 32) &&
            string(input(2)) && bits(input(3), 32) && bits(input(4), 32) &&
-           bits(input(5), 64) && bits(input(6), 64) && string(output(0)) &&
+           bits(input(5), 64) && bits(input(6), 64) && bits(input(7), 64) &&
+           bits(input(8), 64) && string(output(0)) &&
            bits(output(1), 32) && bits(output(2), 32) &&
            bits(output(3), 32) && bits(output(4), 32);
   case OBELISK_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC:
-    return signature.flags == 0 && site.inputCount == 6 &&
+    return signature.flags == 0 && site.inputCount == 8 &&
            site.outputCount == 5 && bits(input(0), 32) && string(input(1)) &&
            bits(input(2), 32) && bits(input(3), 32) && bits(input(4), 64) &&
-           bits(input(5), 64) && string(output(0)) && bits(output(1), 32) &&
+           bits(input(5), 64) && bits(input(6), 64) && bits(input(7), 64) &&
+           string(output(0)) && bits(output(1), 32) &&
            bits(output(2), 32) && bits(output(3), 32) &&
            bits(output(4), 32);
   case OBELISK_RT_INTRINSIC_V1_STRING_SCAN_RAW:

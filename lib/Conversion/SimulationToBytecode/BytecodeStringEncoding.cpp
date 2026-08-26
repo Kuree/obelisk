@@ -93,13 +93,17 @@ Encoder::encodeStringOperation(FunctionPlan &plan, Operation *operation) {
     requiresDynamicScanFeature = true;
     uint32_t finalize = emitU64Constant(plan, op.getFinalize() ? 1 : 0);
     uint32_t allowed = emitU64Constant(plan, op.getAllowedSpecifiers());
-    if (finalize == kInvalidRegister || allowed == kInvalidRegister)
+    uint32_t rawTwoState = emitU64Constant(plan, op.getRawTwoStateBytes());
+    uint32_t rawFourState = emitU64Constant(plan, op.getRawFourStateBytes());
+    if (finalize == kInvalidRegister || allowed == kInvalidRegister ||
+        rawTwoState == kInvalidRegister || rawFourState == kInvalidRegister)
       return op.emitOpError("cannot allocate dynamic scan operands");
     return emitIntrinsicRegisters(
         plan, kIntrinsicStringScanDynamic,
         {reg(plan, op.getInput()), reg(plan, op.getCursor()),
          reg(plan, op.getFormat()), reg(plan, op.getPlanCursor()),
-         reg(plan, op.getEnabled()), finalize, allowed},
+         reg(plan, op.getEnabled()), finalize, allowed, rawTwoState,
+         rawFourState},
         {reg(plan, op.getField()), reg(plan, op.getNextCursor()),
          reg(plan, op.getNextPlanCursor()), reg(plan, op.getConversionKind()),
          reg(plan, op.getOk())});
@@ -161,13 +165,16 @@ Encoder::encodeStringOperation(FunctionPlan &plan, Operation *operation) {
     requiresDynamicScanFeature = true;
     uint32_t finalize = emitU64Constant(plan, op.getFinalize() ? 1 : 0);
     uint32_t allowed = emitU64Constant(plan, op.getAllowedSpecifiers());
-    if (finalize == kInvalidRegister || allowed == kInvalidRegister)
+    uint32_t rawTwoState = emitU64Constant(plan, op.getRawTwoStateBytes());
+    uint32_t rawFourState = emitU64Constant(plan, op.getRawFourStateBytes());
+    if (finalize == kInvalidRegister || allowed == kInvalidRegister ||
+        rawTwoState == kInvalidRegister || rawFourState == kInvalidRegister)
       return op.emitOpError("cannot allocate dynamic file scan operands");
     return emitIntrinsicRegisters(
         plan, kIntrinsicFileScanDynamic,
         {reg(plan, op.getDescriptor()), reg(plan, op.getFormat()),
          reg(plan, op.getPlanCursor()), reg(plan, op.getEnabled()), finalize,
-         allowed},
+         allowed, rawTwoState, rawFourState},
         {reg(plan, op.getField()), reg(plan, op.getNextPlanCursor()),
          reg(plan, op.getConversionKind()), reg(plan, op.getOk()),
          reg(plan, op.getEof())});

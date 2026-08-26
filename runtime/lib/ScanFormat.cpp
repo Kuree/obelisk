@@ -223,12 +223,6 @@ obelisk_rt_v1_scan_dynamic_validate(obelisk_rt_context *context,
                    task);
       return OBELISK_RT_INVALID_ARGUMENT;
     }
-    if (normalized == 'u' || normalized == 'z') {
-      std::fprintf(stderr,
-                   "obelisk: assigned dynamic %s %%%c is not yet supported\n",
-                   task, static_cast<char>(conversion.specifier));
-      return OBELISK_RT_INVALID_ARGUMENT;
-    }
     if (!allowed(conversion.specifier)) {
       std::fprintf(stderr,
                    "obelisk: dynamic %s %%%c is incompatible with its "

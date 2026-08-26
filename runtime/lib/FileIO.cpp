@@ -996,6 +996,7 @@ obelisk_rt_v1_file_scan_dynamic(
     obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
     uint32_t descriptor, obelisk_rt_string_v1 format, uint32_t planCursor,
     uint32_t enabled, uint32_t finalize, uint64_t allowedSpecifiers,
+    uint64_t rawTwoStateBytes, uint64_t rawFourStateBytes,
     obelisk_rt_string_v1 *outField, uint32_t *outPlanCursor,
     uint32_t *outSpecifier, uint32_t *outOk, uint32_t *outEOF) {
   if (!context || !lane || !outField || !outPlanCursor || !outSpecifier ||
@@ -1071,6 +1072,10 @@ obelisk_rt_v1_file_scan_dynamic(
         return OBELISK_RT_SCAN_DYNAMIC_LOGIC8;
       case 'd':
         return OBELISK_RT_SCAN_DYNAMIC_LOGIC10;
+      case 'u':
+        return OBELISK_RT_SCAN_DYNAMIC_RAW2;
+      case 'z':
+        return OBELISK_RT_SCAN_DYNAMIC_RAW4;
       default:
         return OBELISK_RT_SCAN_DYNAMIC_LOGIC16;
       }
@@ -1089,13 +1094,6 @@ obelisk_rt_v1_file_scan_dynamic(
                          "conversions than destinations\n");
             return OBELISK_RT_INVALID_ARGUMENT;
           }
-          if (normalized == 'u' || normalized == 'z') {
-            std::fprintf(stderr,
-                         "obelisk: assigned dynamic $fscanf %%%c is not yet "
-                         "supported\n",
-                         static_cast<char>(conversion.specifier));
-            return OBELISK_RT_INVALID_ARGUMENT;
-          }
           if (!allowed(conversion.specifier)) {
             std::fprintf(stderr,
                          "obelisk: dynamic $fscanf %%%c is incompatible with "
@@ -1109,7 +1107,11 @@ obelisk_rt_v1_file_scan_dynamic(
         ScanResult result;
         std::string field;
         if (normalized == 'u' || normalized == 'z') {
-          if (conversion.width == 0) {
+          uint64_t rawSize = normalized == 'u' ? rawTwoStateBytes
+                                               : rawFourStateBytes;
+          if (conversion.suppressed)
+            rawSize = conversion.width;
+          if (rawSize == 0) {
             std::fprintf(
                 stderr,
                 "obelisk: dynamic $fscanf assignment suppression for raw "
@@ -1119,7 +1121,7 @@ obelisk_rt_v1_file_scan_dynamic(
           }
           result = scanFileRaw<Synthetic>(
               *entry, conversion.prefix.data(), conversion.prefix.size(),
-              conversion.width, conversion.width, field);
+              rawSize, conversion.width, field);
         } else {
           result = scanFileField<Synthetic>(
               *entry, conversion.prefix.data(), conversion.prefix.size(),

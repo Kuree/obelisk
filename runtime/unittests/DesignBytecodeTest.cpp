@@ -169,7 +169,7 @@ std::vector<uint8_t> makeDynamicScanIntrinsicBytecode(uint32_t intrinsicID) {
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 3 * 40;
   constexpr size_t operandOffset = codeOffset + 2 * 32;
-  constexpr size_t continuationOffset = operandOffset + 12 * 8;
+  constexpr size_t continuationOffset = operandOffset + 14 * 8;
   constexpr size_t intrinsicOffset = continuationOffset + 24;
   constexpr size_t siteOffset = intrinsicOffset + 16;
   std::vector<uint8_t> bytes(siteOffset + 16, 0);
@@ -184,7 +184,7 @@ std::vector<uint8_t> makeDynamicScanIntrinsicBytecode(uint32_t intrinsicID) {
   put64(bytes, 72, codeOffset);
   put64(bytes, 80, 2);
   put64(bytes, 88, operandOffset);
-  put64(bytes, 96, 12);
+  put64(bytes, 96, 14);
   put64(bytes, 104, continuationOffset);
   put64(bytes, 112, 0);
   put64(bytes, 120, continuationOffset);
@@ -221,10 +221,10 @@ std::vector<uint8_t> makeDynamicScanIntrinsicBytecode(uint32_t intrinsicID) {
   std::vector<uint32_t> inputs;
   std::vector<uint32_t> outputs;
   if (intrinsicID == OBELISK_RT_INTRINSIC_V1_STRING_SCAN_DYNAMIC) {
-    inputs = {0, 1, 0, 1, 1, 2, 2};
+    inputs = {0, 1, 0, 1, 1, 2, 2, 2, 2};
     outputs = {0, 1, 1, 1, 1};
   } else if (intrinsicID == OBELISK_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC) {
-    inputs = {1, 0, 1, 1, 2, 2};
+    inputs = {1, 0, 1, 1, 2, 2, 2, 2};
     outputs = {0, 1, 1, 1, 1};
   } else {
     inputs = {0, 1, 2, 2, 2};
@@ -5686,7 +5686,7 @@ TEST(DesignBytecode, RejectsCorruptDynamicScanIntrinsicSignatures) {
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 3 * 40;
   constexpr size_t operandOffset = codeOffset + 2 * 32;
-  constexpr size_t continuationOffset = operandOffset + 12 * 8;
+  constexpr size_t continuationOffset = operandOffset + 14 * 8;
   constexpr size_t intrinsicOffset = continuationOffset + 24;
   auto validate = [](std::vector<uint8_t> bytecode) {
     Fixture fixture;
@@ -5710,7 +5710,7 @@ TEST(DesignBytecode, RejectsCorruptDynamicScanIntrinsicSignatures) {
     EXPECT_EQ(validate(valid), OBELISK_RT_OK) << id;
 
     std::vector<uint8_t> arity = valid;
-    put32(arity, intrinsicOffset + 4, 8);
+    put32(arity, intrinsicOffset + 4, 1);
     EXPECT_EQ(validate(std::move(arity)), OBELISK_RT_INVALID_BYTECODE) << id;
 
     std::vector<uint8_t> flags = valid;

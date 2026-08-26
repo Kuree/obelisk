@@ -697,7 +697,7 @@ public:
     else
       argumentTypes.append({i64, i32, i64, i32, i32});
     argumentTypes.append(
-        {i32, i64, pointer, pointer, pointer, pointer, pointer});
+        {i32, i64, i64, i64, pointer, pointer, pointer, pointer, pointer});
     getOrDeclareLLVMFunction(op->template getParentOfType<ModuleOp>(),
                              IsFile ? "obelisk_rt_v1_file_scan_dynamic"
                                     : "obelisk_rt_v1_string_scan_dynamic",
@@ -732,7 +732,9 @@ public:
     }
     arguments.append(
         {constant(i32, op.getFinalize() ? 1 : 0),
-         constant(i64, op.getAllowedSpecifiers()), fieldOutput});
+         constant(i64, op.getAllowedSpecifiers()),
+         constant(i64, op.getRawTwoStateBytes()),
+         constant(i64, op.getRawFourStateBytes()), fieldOutput});
     if constexpr (!IsFile)
       arguments.push_back(scalarOutputs[0]);
     arguments.append({scalarOutputs[IsFile ? 0 : 1],
