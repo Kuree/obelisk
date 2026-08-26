@@ -1,20 +1,20 @@
-// RUN: not obelisk -fno-lto -O0 -DDYNAMIC_LEVEL %s -o %t.dynamic 2>&1 | FileCheck %s --check-prefix=DYNAMIC
-// RUN: not obelisk -fno-lto -O0 -DACTION_DYNAMIC %s -o %t.action-dynamic 2>&1 | FileCheck %s --check-prefix=ACTION-DYNAMIC
+// RUN: not obelisk -fno-lto -O0 -DDYNAMIC_CONTROL %s -o %t.dynamic-control 2>&1 | FileCheck %s --check-prefix=DYNAMIC-CONTROL
+// RUN: not obelisk -fno-lto -O0 -DDYNAMIC_MASK %s -o %t.dynamic-mask 2>&1 | FileCheck %s --check-prefix=DYNAMIC-MASK
 // RUN: not obelisk -fno-lto -O0 -DPROCEDURAL_SCOPE %s -o %t.scope 2>&1 | FileCheck %s --check-prefix=SCOPE
 // RUN: not obelisk -fno-lto -O0 -DINVALID_CONTROL %s -o %t.invalid 2>&1 | FileCheck %s --check-prefix=INVALID
 
 module assertion_control_unsupported;
-`ifdef DYNAMIC_LEVEL
-  int level = 0;
+`ifdef DYNAMIC_CONTROL
+  int control = 3;
   initial begin
     selected: assert (1'b1);
-    $assertoff(level, selected);
+    $assertcontrol(control, 2, 1, 0, selected);
   end
-`elsif ACTION_DYNAMIC
-  int level = 0;
+`elsif DYNAMIC_MASK
+  int mask = 2;
   initial begin
     selected: assert (1'b1);
-    $assertpassoff(level, selected);
+    $assertcontrol(4, mask, 1, 0, selected);
   end
 `elsif PROCEDURAL_SCOPE
   task automatic selected_scope;
@@ -26,8 +26,8 @@ module assertion_control_unsupported;
 `endif
 endmodule
 
-// DYNAMIC: error: assertion-control levels must be a fixed integer literal
-// ACTION-DYNAMIC: error: assertion-control levels must be a fixed integer literal
+// DYNAMIC-CONTROL: error: assertion-control control type must be a fixed integer literal
+// DYNAMIC-MASK: error: assertion-control assertion-type mask must be a fixed integer literal
 // SCOPE: error: assertion-control selector
 // SCOPE-SAME: is not an assertion or supported module-instance scope
 // INVALID: error: $assertcontrol control type must be in the range 1 through 11

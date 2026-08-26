@@ -879,15 +879,22 @@ void ObeliskSimPreparePass::runOnOperation() {
     uint64_t assertionTypes = attemptShorthand ? 15 : 31;
     uint64_t directiveTypes = 7;
     uint64_t levels = 0;
+    bool dynamicLevels = false;
+    size_t levelsArgument = 0;
     size_t firstSelector = 0;
     bool selectCurrentScope = false;
     if (shorthand) {
       if (!arguments.empty()) {
-        std::optional<uint64_t> value =
-            literalControlValue(arguments.front(), "levels");
-        if (!value)
-          return;
-        levels = *value;
+        if (arguments.front()->hasAttr("constant_value")) {
+          std::optional<uint64_t> value =
+              literalControlValue(arguments.front(), "levels");
+          if (!value)
+            return;
+          levels = *value;
+        } else {
+          dynamicLevels = true;
+          levelsArgument = 0;
+        }
         firstSelector = 1;
         selectCurrentScope = arguments.size() == 1;
       }
@@ -930,10 +937,15 @@ void ObeliskSimPreparePass::runOnOperation() {
         bool explicitLevels =
             !isa<semantic::SVEmptyArgumentExpressionOp>(arguments[3]);
         if (explicitLevels) {
-          value = literalControlValue(arguments[3], "levels");
-          if (!value)
-            return;
-          levels = *value;
+          if (arguments[3]->hasAttr("constant_value")) {
+            value = literalControlValue(arguments[3], "levels");
+            if (!value)
+              return;
+            levels = *value;
+          } else {
+            dynamicLevels = true;
+            levelsArgument = 3;
+          }
         }
         firstSelector = 4;
         selectCurrentScope = explicitLevels && arguments.size() == 4;
@@ -992,16 +1004,22 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
     }
 
-    SmallVector<int64_t> selectedIDs;
+    SmallVector<std::pair<int64_t, int64_t>> selectedTargets;
     SmallVector<std::pair<Operation *, uint64_t>> selectedAssertions;
     for (const AssertionInventoryEntry &entry : assertionInventory) {
       if ((entry.assertionType & assertionTypes) == 0 ||
           (entry.directiveType & directiveTypes) == 0)
         continue;
       bool selected = selectors.empty();
+      // -1 denotes a target selected independently of the levels value. For
+      // a hierarchy selector, retain the shallowest relative instance depth;
+      // a run-time zero selects every descendant and a positive value selects
+      // depths strictly below it, matching the fixed-level path below.
+      int64_t selectedDepth = selectors.empty() ? -1 : INT64_MAX;
       for (StringRef selector : selectors) {
         if (entry.path == selector) {
           selected = true;
+          selectedDepth = -1;
           break;
         }
         auto scope = instanceScopeDepths.find(selector);
@@ -1014,8 +1032,13 @@ void ObeliskSimPreparePass::runOnOperation() {
                    .starts_with("."))))
           continue;
         uint64_t relativeDepth = entry.scopeDepth - scope->second;
-        if (levels == 0 || relativeDepth < levels) {
+        if (dynamicLevels) {
           selected = true;
+          selectedDepth = std::min<int64_t>(
+              selectedDepth, static_cast<int64_t>(relativeDepth));
+        } else if (levels == 0 || relativeDepth < levels) {
+          selected = true;
+          selectedDepth = -1;
           break;
         }
       }
@@ -1028,16 +1051,32 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         return;
       }
-      selectedIDs.push_back(static_cast<int64_t>(entry.id));
+      selectedTargets.push_back(
+          {static_cast<int64_t>(entry.id), selectedDepth});
       selectedAssertions.push_back({entry.operation, entry.id});
     }
-    llvm::sort(selectedIDs);
-    selectedIDs.erase(std::unique(selectedIDs.begin(), selectedIDs.end()),
-                      selectedIDs.end());
+    llvm::sort(selectedTargets);
+    SmallVector<int64_t> selectedIDs;
+    SmallVector<int64_t> selectedDepths;
+    for (auto [id, depth] : selectedTargets) {
+      if (!selectedIDs.empty() && selectedIDs.back() == id) {
+        selectedDepths.back() = std::min(selectedDepths.back(), depth);
+        continue;
+      }
+      selectedIDs.push_back(id);
+      selectedDepths.push_back(depth);
+    }
     call->setAttr("obelisk_sim.assertion_control_action",
                   IntegerAttr::get(IntegerType::get(context, 32), action));
     call->setAttr("obelisk_sim.assertion_control_ids",
                   DenseI64ArrayAttr::get(context, selectedIDs));
+    if (dynamicLevels) {
+      call->setAttr(
+          "obelisk_sim.assertion_control_levels_argument",
+          IntegerAttr::get(IntegerType::get(context, 64), levelsArgument));
+      call->setAttr("obelisk_sim.assertion_control_depths",
+                    DenseI64ArrayAttr::get(context, selectedDepths));
+    }
     for (auto [target, id] : selectedAssertions) {
       target->setAttr("obelisk_sim.assertion_control_target_id",
                       IntegerAttr::get(IntegerType::get(context, 64), id));

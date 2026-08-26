@@ -1230,6 +1230,16 @@ reacts to queue and dynamic-array resizing without polling. Each query lowers
 to one size read, one truncation, and one multiplication; the existing static
 `$bits` constant-folding path remains unchanged.
 
+A1's next assertion-control closure makes the `levels` operand of
+`$assertcontrol` and every convenience task a runtime integer expression, as
+required by 20.12. The compiler still resolves assertion and hierarchy
+selectors once, retaining one relative instance depth per possible target;
+execution evaluates `levels` once and conditionally applies control only to
+targets inside that depth. Zero selects the complete subtree, exact assertion
+selectors remain unconditional, and fixed-level calls retain their existing
+branch-free lowering. Designs without assertion control retain their existing
+zero-state path, and there is no scheduler scan or polling.
+
 L14's configuration closure records the effective elaborated binding on only
 the affected Slang module and checker instance operations and exposes it
 through the opt-in, hierarchically sorted `-emit-bindings` report. Ordered

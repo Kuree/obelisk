@@ -453,11 +453,72 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
                           << " has no prepared assertion-control selection";
       return failure();
     }
-    for (int64_t target : targets.asArrayRef())
+    auto depths = op->getAttrOfType<DenseI64ArrayAttr>(
+        "obelisk_sim.assertion_control_depths");
+    auto levelsArgument = op->getAttrOfType<IntegerAttr>(
+        "obelisk_sim.assertion_control_levels_argument");
+    if (static_cast<bool>(depths) != static_cast<bool>(levelsArgument) ||
+        (depths && depths.size() != targets.size())) {
+      emitError(location)
+          << name << " has malformed dynamic assertion-control metadata";
+      return failure();
+    }
+
+    Value levels;
+    if (depths) {
+      uint64_t index = levelsArgument.getValue().getZExtValue();
+      if (index >= children.size()) {
+        emitError(location)
+            << name << " has an invalid assertion-control levels index";
+        return failure();
+      }
+      FailureOr<Value> lowered = lowerExpression(children[index]);
+      if (failed(lowered))
+        return failure();
+      FailureOr<Value> converted =
+          convert(*lowered, i64, isSignedNode(children[index]), location);
+      if (failed(converted)) {
+        emitError(getSemanticLocation(children[index]))
+            << name << " levels value is not an executable integer";
+        return failure();
+      }
+      levels = *converted;
+    }
+
+    ArrayRef<int64_t> targetValues = targets.asArrayRef();
+    ArrayRef<int64_t> depthValues =
+        depths ? depths.asArrayRef() : ArrayRef<int64_t>{};
+    Value zero;
+    if (depths)
+      zero = constant(i64, 0);
+    for (auto [index, target] : llvm::enumerate(targetValues)) {
+      int64_t depth = depths ? depthValues[index] : -1;
+      if (depth < 0) {
+        sim::SimAssertionControlOp::create(
+            builder, location, context,
+            builder.getI32IntegerAttr(static_cast<int32_t>(action.getInt())),
+            builder.getI64IntegerAttr(target));
+        continue;
+      }
+
+      Value allLevels = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, levels, zero);
+      Value includesDepth = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ugt, levels,
+          constant(i64, static_cast<uint64_t>(depth)));
+      Value selected =
+          arith::OrIOp::create(builder, location, allLevels, includesDepth);
+      Block *apply = addBlock();
+      Block *resume = addBlock();
+      cf::CondBranchOp::create(builder, location, selected, apply, resume);
+      setCurrent(apply);
       sim::SimAssertionControlOp::create(
           builder, location, context,
           builder.getI32IntegerAttr(static_cast<int32_t>(action.getInt())),
           builder.getI64IntegerAttr(target));
+      emitBranch(resume);
+      setCurrent(resume);
+    }
     return dummyTaskResult();
   }
 
