@@ -715,6 +715,37 @@ UnitLowering::lowerConditional(semantic::SVConditionalStatementOp op) {
       ArrayRef<Operation *>(children).take_front(conditionChildren);
   ArrayRef<Operation *> statements =
       ArrayRef<Operation *>(children).take_back(statementCount);
+
+  // Elaboration can prove a parameter-controlled branch dead even when its
+  // body contains a selection that has no legal runtime representation at
+  // this parameter value. IEEE 1800-2017 12.4 treats an integral condition as
+  // true exactly when it contains a known one bit. Select the sole unpatterned
+  // arm here so unreachable source contributes neither lowering work nor IR.
+  if (op.getConditionCount() == 1 && patternFlags.front() == 0) {
+    Operation *expression = conditions.front();
+    std::optional<StringRef> spelling = getConstantSpelling(expression);
+    if (spelling) {
+      auto semanticType =
+          expression->getAttrOfType<TypeAttr>("semantic_type");
+      std::optional<uint64_t> width =
+          semanticType ? getSemanticPackedWidth(semanticType.getValue())
+                       : std::nullopt;
+      if (width && *width <= std::numeric_limits<unsigned>::max()) {
+        FailureOr<ParsedConstant> parsed =
+            parseSVInteger(*spelling, static_cast<unsigned>(*width),
+                           getSemanticLocation(expression));
+        if (failed(parsed))
+          return failure();
+        bool selected = !(parsed->value & ~parsed->unknown).isZero();
+        if (selected)
+          return lowerStatement(statements.front());
+        if (op.getHasElse())
+          return lowerStatement(statements.back());
+        return success();
+      }
+    }
+  }
+
   Block *thenBlock = addBlock();
   Block *elseBlock = addBlock();
   Block *mergeBlock = addBlock();

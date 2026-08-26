@@ -1347,10 +1347,14 @@ forwarding benchmark, generic compile time/RSS falls from 39.01 seconds /
 0.14 seconds / 83 MB; 20,000-transition simulation also improves in both
 tiers. Bytecode and 64-bit generic/AOT outputs remain byte-identical. A
 32-port by 256-bit stress case falls from 9.58 seconds / 1.30 GB and 126 MB of
-LLVM IR to 0.57 seconds / 87 MB and 2.10 MB of LLVM IR. A
-parameter-controlled unreachable partial NBA still fails capture preparation,
-but belongs to the Clause 10-12 procedural lvalue long tail rather than
-parameter binding or generate elaboration.
+LLVM IR to 0.57 seconds / 87 MB and 2.10 MB of LLVM IR.
+
+L12 now discards a sole unpatterned conditional arm when elaboration has
+already frozen its integral condition. This closes the parameter-controlled
+unreachable partial-NBA residual without weakening partial-update capture:
+the impossible lvalue is never lowered, while every live or runtime-valued
+conditional retains the existing CFG and NBA path. The decision is
+compile-time-only and removes work from the specialized design.
 
 A 1024-element interface-array call compiles in 0.85 seconds / 85 MB for
 bytecode, 0.99 seconds / 172 MB for generic native, and 1.07 seconds / 172 MB
