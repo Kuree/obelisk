@@ -183,8 +183,11 @@ feature_symbols = (
 )
 for binary in no_feature_binaries:
     sections, symbols = linked_layout(binary)
-    if ".obelisk.feature.text" in sections:
-        raise SystemExit(f"no-feature binary retained feature text: {binary}")
+    # The shared feature section may contain unrelated cold services (for
+    # example, the bytecode scheduler's large ready-cohort accelerator).
+    # Dynamic-scan pay-for-play is therefore identified by its complete symbol
+    # set rather than by requiring the process-wide feature section to be
+    # absent.
     for symbol in feature_symbols:
         if symbol in symbols:
             raise SystemExit(f"no-feature binary retained {symbol}: {binary}")
