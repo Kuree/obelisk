@@ -730,6 +730,9 @@ static FailureOr<Type> normalizeType(Type type, Location location,
                                     isSignedSemanticType(array.getKeyType()),
                                     array.getWildcardIndex());
   }
+  if (auto enumeration = dyn_cast<semantic::EnumType>(type);
+      enumeration && isa<semantic::TimeType>(enumeration.getBaseType()))
+    return normalizeType(enumeration.getBaseType(), location, allowRealScalar);
   if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
     FailureOr<ArrayAttr> fields =
         normalizeSourceFields(aggregate.getFields(), location,

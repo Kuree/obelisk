@@ -1270,6 +1270,12 @@ in the source width, native and bytecode lowering are both verified by the
 existing minimal semantic-MLIR test, and the preexisting 64-bit-and-narrower
 path remains unchanged.
 
+L12's enum-base closure normalizes the legal 6.19 `enum time` form to the
+existing four-state 64-bit `time` representation. This is a compile-time type
+dispatch only: ordinary integral enum normalization remains byte-identical,
+the minimal declaration-only semantic-MLIR test also passes bytecode encoding,
+and the current external `enum_base_time` case now passes.
+
 L14's configuration closure records the effective elaborated binding on only
 the affected Slang module and checker instance operations and exposes it
 through the opt-in, hierarchically sorted `-emit-bindings` report. Ordered
