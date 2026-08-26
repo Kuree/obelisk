@@ -1,8 +1,8 @@
-// RUN: not obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
 
-// A mutable event actual needs live handle propagation. Until that path is
-// executable in every tier, reject it instead of emitting an invalid static
-// schedule.
+// A read-only event input aliases its actual event cell. It therefore observes
+// handle replacement without a startup propagation process.
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
@@ -24,6 +24,14 @@ module attributes {
           obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.dut", name = "child", node_id = 11 : i64, sym_name = "child_b", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
             obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "top.dut.wake", name = "wake", node_id = 12 : i64, semantic_type = !obelisk.event, sym_name = "wake_p"} {}
             obelisk.sv.symbol.variable attributes {hierarchical_name = "top.dut.wake", lifetime = 1 : i32, name = "wake", node_id = 13 : i64, semantic_type = !obelisk.event, sym_name = "wake_v"} {}
+            obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top.dut", node_id = 14 : i64, procedure_kind = 0 : i32, sym_name = "wait", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+              obelisk.sv.statement.timed attributes {node_id = 15 : i64} {
+                obelisk.sv.timing.signal_event attributes {edge_kind = 0 : i32, has_iff = false, node_id = 16 : i64} {
+                  obelisk.sv.expression.named_value attributes {node_id = 17 : i64, referenced_path = "top.dut.wake", referenced_symbol = @root::@top_i::@top_b::@dut::@child_b::@wake_v, semantic_type = !obelisk.event} {}
+                }
+                obelisk.sv.statement.empty attributes {node_id = 18 : i64} {}
+              }
+            }
           }
         }
       }
@@ -31,4 +39,9 @@ module attributes {
   }
 }
 
-// CHECK: error: event input port requires a stable direct named-event actual and an unwritten formal
+// CHECK: obelisk_sim.storage.decl {{.*}} : !obelisk_sim.event {{.*}} hierarchy "top.mutable"
+// CHECK-NOT: hierarchy "top.dut.wake"
+// CHECK-NOT: hierarchy "top.dut.$port_connection_0"
+// CHECK: obelisk_sim.ref.load
+// CHECK: obelisk_sim.suspend.event
+// CHECK-NOT: obelisk.sv.

@@ -10296,6 +10296,15 @@ void ObeliskSimPreparePass::runOnOperation() {
            unit.entryKind == sim::EntryKind::PortInput ||
            unit.entryKind == sim::EntryKind::PortOutput;
   };
+  auto initializesEventInput = [](const PreparedUnit &unit) {
+    if (unit.entryKind != sim::EntryKind::PortInput &&
+        unit.entryKind != sim::EntryKind::PortInitialize)
+      return false;
+    auto connection = dyn_cast<semantic::SVPortConnectionOp>(unit.source);
+    return connection &&
+           connection.getDirection() == semantic::SVArgumentDirection::In &&
+           isa<semantic::EventType>(connection.getFormalType());
+  };
 
   // Establish explicit always-process sensitivities before initial processes
   // can trigger events or mutate their watched values. This deterministic
@@ -10303,11 +10312,83 @@ void ObeliskSimPreparePass::runOnOperation() {
   // before an `always @(event)` has suspended. An always process that is left
   // out of that first group carries the reason on its function, so the compute
   // graph does not order it ahead of the initial procedures it now follows.
-  for (PreparedUnit &unit : units)
+  SmallVector<PreparedUnit *> earlyEventInputs;
+  for (PreparedUnit &unit : units) {
+    if (isRootSpawned(unit) && initializesEventInput(unit))
+      earlyEventInputs.push_back(&unit);
     if (isRootSpawned(unit) && sim::isStartupEntryKind(unit.entryKind) &&
         !startsByWaiting(unit) && !propagatesConstantsAtTimeZero(unit))
       unit.function->setAttr(sim::startupWithoutSuspensionAttrName,
                              UnitAttr::get(context));
+  }
+  if (!earlyEventInputs.empty()) {
+    llvm::StringMap<unsigned> producerByPath;
+    for (auto [index, unit] : llvm::enumerate(earlyEventInputs)) {
+      auto connection = cast<semantic::SVPortConnectionOp>(unit->source);
+      StringRef internal = connection.getInternalPath().value_or(StringRef{});
+      if (internal.empty() ||
+          !producerByPath.try_emplace(internal, index).second) {
+        emitError(getSemanticLocation(connection))
+            << "cell-backed event input port has no unique destination";
+        return abort();
+      }
+    }
+    SmallVector<SmallVector<unsigned>> dependents(earlyEventInputs.size());
+    SmallVector<unsigned> dependencyCounts(earlyEventInputs.size());
+    for (auto [consumer, unit] : llvm::enumerate(earlyEventInputs)) {
+      auto connection = cast<semantic::SVPortConnectionOp>(unit->source);
+      Operation *actual = getSingleRegionRoot(connection.getActual());
+      StringRef path;
+      if (auto named =
+              dyn_cast_or_null<semantic::SVNamedValueExpressionOp>(actual))
+        path = named.getReferencedPath();
+      else if (auto hierarchical =
+                   dyn_cast_or_null<semantic::SVHierarchicalValueExpressionOp>(
+                       actual))
+        path = hierarchical.getReferencedPath();
+      else if (auto member =
+                   dyn_cast_or_null<semantic::SVMemberAccessExpressionOp>(
+                       actual))
+        path = member.getReferencedPath();
+      llvm::StringSet<> visited;
+      while (!path.empty() && visited.insert(path).second) {
+        auto producer = producerByPath.find(path);
+        if (producer != producerByPath.end()) {
+          dependents[producer->second].push_back(consumer);
+          ++dependencyCounts[consumer];
+          break;
+        }
+        auto alias = portAliases->aliases.find(path);
+        if (alias == portAliases->aliases.end())
+          break;
+        path = alias->second;
+      }
+    }
+    SmallVector<unsigned> ready;
+    for (auto [index, count] : llvm::enumerate(dependencyCounts))
+      if (count == 0)
+        ready.push_back(index);
+    SmallVector<PreparedUnit *> ordered;
+    for (size_t cursor = 0; cursor != ready.size(); ++cursor) {
+      unsigned producer = ready[cursor];
+      ordered.push_back(earlyEventInputs[producer]);
+      for (unsigned consumer : dependents[producer])
+        if (--dependencyCounts[consumer] == 0)
+          ready.push_back(consumer);
+    }
+    if (ordered.size() != earlyEventInputs.size()) {
+      emitError(getSemanticLocation(earlyEventInputs.front()->source))
+          << "cell-backed event input port dependency is cyclic";
+      return abort();
+    }
+    earlyEventInputs = std::move(ordered);
+  }
+  // Event controls capture the handle held by their event expression when
+  // they suspend. Publish every cell-backed input's initial handle before an
+  // `always @(formal)` can capture the formal's fresh local event instead.
+  for (PreparedUnit *unit : earlyEventInputs)
+    if (failed(spawnRootUnit(*unit)))
+      return abort();
   for (PreparedUnit &unit : units)
     if (isRootSpawned(unit) && startsByWaiting(unit))
       if (failed(spawnRootUnit(unit)))
@@ -10317,8 +10398,8 @@ void ObeliskSimPreparePass::runOnOperation() {
   // instead of racing them in source order. Re-evaluation stays event-driven,
   // so this only fixes which side of the time-zero race a constant lands on.
   for (PreparedUnit &unit : units)
-    if (isRootSpawned(unit) && !startsByWaiting(unit) &&
-        propagatesConstantsAtTimeZero(unit))
+    if (isRootSpawned(unit) && !initializesEventInput(unit) &&
+        !startsByWaiting(unit) && propagatesConstantsAtTimeZero(unit))
       if (failed(spawnRootUnit(unit)))
         return abort();
 

@@ -83,10 +83,11 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
   }
   if (auto op = dyn_cast<sim::SimRefStoreOp>(operation)) {
     sim::EntryKind entryKind = plan.function.getEntryKind();
-    bool continuous = op->hasAttr(continuousStoreAttrName) ||
-                      entryKind == sim::EntryKind::Continuous ||
-                      entryKind == sim::EntryKind::PortInput ||
-                      entryKind == sim::EntryKind::PortOutput;
+    bool continuous = !isa<sim::EventType>(op.getValue().getType()) &&
+                      (op->hasAttr(continuousStoreAttrName) ||
+                       entryKind == sim::EntryKind::Continuous ||
+                       entryKind == sim::EntryKind::PortInput ||
+                       entryKind == sim::EntryKind::PortOutput);
     emit({StoreState,
           static_cast<uint16_t>(
               continuous ? OBELISK_RT_DB_STORE_STATE_CONTINUOUS : 0),

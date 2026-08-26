@@ -1286,7 +1286,20 @@ void ComputeGraphBuilder::orderStartupSpawns() {
   };
   llvm::StringMap<Flow> flows;
   for (Fragment &fragment : fragments) {
-    if (!isSettlingEntryKind(fragment.function.getEntryKind()))
+    sim::EntryKind entryKind = fragment.function.getEntryKind();
+    bool eventInput =
+        (entryKind == sim::EntryKind::PortInput ||
+         entryKind == sim::EntryKind::PortInitialize) &&
+        llvm::any_of(fragment.function.getFunctionType().getInputs(),
+                     [](Type type) {
+                       auto reference = dyn_cast<sim::RefType>(type);
+                       return reference &&
+                              isa<sim::EventType>(reference.getElementType());
+                     });
+    // Prepare has already placed cell-backed event inputs in dependency order
+    // ahead of event-wait actors. Keep them out of the generic settling-unit
+    // regrouping, which would otherwise move them past an intervening wait.
+    if (!isSettlingEntryKind(entryKind) || eventInput)
       continue;
     Flow &flow = flows[fragment.function.getSymName()];
     for (const ComputeEffect &effect : fragment.effects) {

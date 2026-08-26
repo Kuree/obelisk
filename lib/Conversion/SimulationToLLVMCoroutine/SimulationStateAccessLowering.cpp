@@ -118,10 +118,11 @@ public:
     bool assumeClean = op->hasAttr(assumeCleanSpecializationAttr);
     sim::SimFuncOp function = op->getParentOfType<sim::SimFuncOp>();
     sim::EntryKind entryKind = function.getEntryKind();
-    bool continuous = op->hasAttr(continuousStoreAttrName) ||
-                      entryKind == sim::EntryKind::Continuous ||
-                      entryKind == sim::EntryKind::PortInput ||
-                      entryKind == sim::EntryKind::PortOutput;
+    bool continuous = !isa<sim::EventType>(valueType) &&
+                      (op->hasAttr(continuousStoreAttrName) ||
+                       entryKind == sim::EntryKind::Continuous ||
+                       entryKind == sim::EntryKind::PortInput ||
+                       entryKind == sim::EntryKind::PortOutput);
     std::optional<DirectStaticStateRange> directRange =
         resolveDirectStaticStateRange(adaptor.getReference().front(), *width,
                                       directLayout);

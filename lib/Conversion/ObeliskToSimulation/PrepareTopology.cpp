@@ -210,11 +210,11 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
   // Inventory the events that require cells during the existing topology
   // walk. Stable direct event input ports can then share their actual's
   // descriptor without a time-zero propagation process. Mutable actuals or
-  // formals are diagnosed until live propagation is executable in every tier.
+  // formals retain cell-backed input propagation.
   struct EventInputCandidate {
     semantic::SVPortConnectionOp connection;
     std::string internal;
-    StaticStorageView actual;
+    std::optional<StaticStorageView> actual;
   };
   SmallVector<EventInputCandidate> eventInputs;
   auto collectEventCellReferences = [&](Operation *root) {
@@ -333,13 +333,14 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
       FailureOr<StaticStorageView> view =
           actual ? getStaticStorageView(actual)
                  : FailureOr<StaticStorageView>(failure());
-      if (!internal.empty() && succeeded(view))
-        eventInputs.push_back({connection, internal.str(), *view});
-      else {
+      if (internal.empty()) {
         emitError(getSemanticLocation(connection))
-            << "event input port requires a stable direct named-event actual "
-               "and an unwritten formal";
+            << "event input port has no internal event object";
         invalid = true;
+      } else {
+        eventInputs.push_back(
+            {connection, internal.str(),
+             succeeded(view) ? std::optional(*view) : std::nullopt});
       }
       return;
     }
@@ -367,20 +368,53 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
     result.aliases[internal] = view->path;
     result.refViews[internal] = *view;
   });
+  auto isWholeEvent = [](const EventInputCandidate &candidate) {
+    return candidate.actual && candidate.actual->identity &&
+           candidate.actual->offset == 0 &&
+           candidate.actual->packedOffset == 0 &&
+           candidate.actual->indices.empty() &&
+           isa<sim::EventType>(candidate.actual->rootType);
+  };
+  for (const EventInputCandidate &candidate : eventInputs) {
+    if (isWholeEvent(candidate))
+      continue;
+    emitError(getSemanticLocation(candidate.connection))
+        << "event input port requires a direct named-event actual";
+    invalid = true;
+  }
+  // Classify the full event-input graph before choosing aliases or executable
+  // connections. A live cell may flow through any number of read-only input
+  // formals before reaching a child-written formal that needs its own cell.
+  // The fixpoint keeps that last edge live instead of freezing a time-zero
+  // handle merely because its immediate source formal is itself aliased.
+  llvm::StringSet<> liveEventPaths = result.eventCellPaths;
+  bool changed;
+  do {
+    changed = false;
+    for (const EventInputCandidate &candidate : eventInputs) {
+      if (!isWholeEvent(candidate))
+        continue;
+      bool liveActual = liveEventPaths.contains(candidate.actual->path);
+      if (liveActual)
+        changed |= liveEventPaths.insert(candidate.internal).second;
+    }
+  } while (changed);
   for (EventInputCandidate &candidate : eventInputs) {
-    const StaticStorageView &actual = candidate.actual;
-    bool stableActual = actual.identity && actual.offset == 0 &&
-                        actual.packedOffset == 0 && actual.indices.empty() &&
-                        isa<sim::EventType>(actual.rootType) &&
-                        !result.eventCellPaths.contains(actual.path);
-    if (stableActual && !result.eventCellPaths.contains(candidate.internal)) {
-      result.aliases[candidate.internal] = actual.path;
+    if (!isWholeEvent(candidate))
+      continue;
+    bool liveActual = liveEventPaths.contains(candidate.actual->path);
+    bool writtenFormal = result.eventCellPaths.contains(candidate.internal);
+    if (!writtenFormal) {
+      // A read-only input may share either a direct scheduler descriptor or
+      // an event cell. The latter remains live without an executable process.
+      result.aliases[candidate.internal] = candidate.actual->path;
       continue;
     }
-    emitError(getSemanticLocation(candidate.connection))
-        << "event input port requires a stable direct named-event actual and "
-           "an unwritten formal";
-    invalid = true;
+    result.eventCellPaths.insert(candidate.internal);
+    if (!liveActual)
+      candidate.connection->setAttr(
+          "actual_is_constant",
+          BoolAttr::get(candidate.connection.getContext(), true));
   }
   if (!eventInputs.empty())
     llvm::erase_if(
