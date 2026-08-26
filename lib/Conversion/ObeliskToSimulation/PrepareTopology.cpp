@@ -168,6 +168,8 @@ FailureOr<StaticStorageView> getStaticStorageView(Operation *expression) {
 
 } // namespace
 
+static bool isStaticReturnVariable(Operation *op);
+
 Operation *getSingleRegionRoot(Region &region) {
   if (region.empty() || region.front().empty())
     return nullptr;
@@ -203,6 +205,36 @@ FailureOr<PreparedPortAliases>
 analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
   PreparedPortAliases result;
   bool invalid = false;
+
+  // IEEE 1800-2017 6.17 and 15.5.5 make event variables assignable handles.
+  // Inventory the events that require cells during the existing topology
+  // walk. Stable direct event input ports can then share their actual's
+  // descriptor without a time-zero propagation process. Mutable actuals or
+  // formals are diagnosed until live propagation is executable in every tier.
+  struct EventInputCandidate {
+    semantic::SVPortConnectionOp connection;
+    std::string internal;
+    StaticStorageView actual;
+  };
+  SmallVector<EventInputCandidate> eventInputs;
+  auto collectEventCellReferences = [&](Operation *root) {
+    root->walk<WalkOrder::PreOrder>([&](Operation *nested) {
+      auto type = nested->getAttrOfType<TypeAttr>("semantic_type");
+      if (!type || !isa<semantic::EventType>(type.getValue()))
+        return;
+      StringRef path;
+      if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(nested))
+        path = named.getReferencedPath();
+      else if (auto hierarchical =
+                   dyn_cast<semantic::SVHierarchicalValueExpressionOp>(nested))
+        path = hierarchical.getReferencedPath();
+      else if (auto member =
+                   dyn_cast<semantic::SVMemberAccessExpressionOp>(nested))
+        path = member.getReferencedPath();
+      if (!path.empty())
+        result.eventCellPaths.insert(path);
+    });
+  };
 
   // IEEE 1800-2017 10.10 net aliases are static topology, not executable
   // connectivity.  Collapse direct whole-net aliases onto one descriptor so
@@ -249,9 +281,41 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
       uniteNetAliases(paths.front(), path);
   };
 
-  // Fold alias collection into the existing port inventory walk so designs
-  // without alias statements do not pay for another full semantic-tree walk.
+  // Fold alias, port, and event-cell collection into one semantic-tree walk.
   semanticRoot->walk([&](Operation *op) {
+    if (isStaticFormal(op)) {
+      auto type = op->getAttrOfType<TypeAttr>("semantic_type");
+      if (type && isa<semantic::EventType>(type.getValue()))
+        result.eventCellPaths.insert(getHierarchyName(op));
+      return;
+    }
+    if (auto variable = dyn_cast<semantic::SVVariableSymbolOp>(op)) {
+      auto type = variable->getAttrOfType<TypeAttr>("semantic_type");
+      if (type && isa<semantic::EventType>(type.getValue()) &&
+          (!getChildren(op).empty() || isStaticReturnVariable(op)))
+        result.eventCellPaths.insert(getHierarchyName(op));
+      return;
+    }
+    if (auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(op)) {
+      auto type = property->getAttrOfType<TypeAttr>("semantic_type");
+      if (type && isa<semantic::EventType>(type.getValue()) &&
+          !getChildren(op).empty())
+        result.eventCellPaths.insert(getHierarchyName(op));
+      return;
+    }
+    if (auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(op)) {
+      SmallVector<Operation *> children = getChildren(assignment);
+      size_t destination = assignment.getHasTimingControl() ? 1 : 0;
+      if (destination < children.size())
+        collectEventCellReferences(children[destination]);
+      return;
+    }
+    if (auto call = dyn_cast<semantic::SVCallExpressionOp>(op);
+        call && call.getHasOutputArguments()) {
+      for (Operation *child : getChildren(call))
+        collectEventCellReferences(child);
+      return;
+    }
     if (auto alias = dyn_cast<semantic::SVNetAliasSymbolOp>(op)) {
       recordNetAlias(alias);
       return;
@@ -262,6 +326,23 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
     if (isCompileTimeOnlyInstanceMember(connection))
       return;
     result.connections.push_back(connection);
+    if (connection.getDirection() == semantic::SVArgumentDirection::In &&
+        isa<semantic::EventType>(connection.getFormalType())) {
+      StringRef internal = connection.getInternalPath().value_or(StringRef{});
+      Operation *actual = getSingleRegionRoot(connection.getActual());
+      FailureOr<StaticStorageView> view =
+          actual ? getStaticStorageView(actual)
+                 : FailureOr<StaticStorageView>(failure());
+      if (!internal.empty() && succeeded(view))
+        eventInputs.push_back({connection, internal.str(), *view});
+      else {
+        emitError(getSemanticLocation(connection))
+            << "event input port requires a stable direct named-event actual "
+               "and an unwritten formal";
+        invalid = true;
+      }
+      return;
+    }
     if (connection.getDirection() != semantic::SVArgumentDirection::Ref)
       return;
     StringRef internal = connection.getInternalPath().value_or(StringRef{});
@@ -286,6 +367,31 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
     result.aliases[internal] = view->path;
     result.refViews[internal] = *view;
   });
+  for (EventInputCandidate &candidate : eventInputs) {
+    const StaticStorageView &actual = candidate.actual;
+    bool stableActual = actual.identity && actual.offset == 0 &&
+                        actual.packedOffset == 0 && actual.indices.empty() &&
+                        isa<sim::EventType>(actual.rootType) &&
+                        !result.eventCellPaths.contains(actual.path);
+    if (stableActual && !result.eventCellPaths.contains(candidate.internal)) {
+      result.aliases[candidate.internal] = actual.path;
+      continue;
+    }
+    emitError(getSemanticLocation(candidate.connection))
+        << "event input port requires a stable direct named-event actual and "
+           "an unwritten formal";
+    invalid = true;
+  }
+  if (!eventInputs.empty())
+    llvm::erase_if(
+        result.connections, [&](semantic::SVPortConnectionOp connection) {
+          if (connection.getDirection() != semantic::SVArgumentDirection::In ||
+              !isa<semantic::EventType>(connection.getFormalType()))
+            return false;
+          StringRef internal =
+              connection.getInternalPath().value_or(StringRef{});
+          return !internal.empty() && result.aliases.count(internal);
+        });
   auto isWholeRefView = [](const StaticStorageView &view) {
     return view.identity && view.offset == 0 && view.packedOffset == 0 &&
            view.indices.empty() && view.rootType == view.viewType;
@@ -434,63 +540,7 @@ materializeDesignDescriptors(ModuleOp module,
   bool invalid = false;
   SmallVector<Operation *> designObjects;
 
-  // IEEE 1800-2017 6.17 and 15.5.5 make event variables assignable handles.
-  // Keep never-written, uninitialized scalar events as direct scheduler
-  // descriptors, but give every initialized or written design event a storage
-  // cell. Copying that cell aliases the synchronization object without moving
-  // waiters that already captured the previous handle.
-  llvm::StringSet<> eventCellPaths;
-  auto collectEventCellReferences = [&](Operation *root) {
-    root->walk<WalkOrder::PreOrder>([&](Operation *nested) {
-      auto type = nested->getAttrOfType<TypeAttr>("semantic_type");
-      if (!type || !isa<semantic::EventType>(type.getValue()))
-        return;
-      StringRef path;
-      if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(nested))
-        path = named.getReferencedPath();
-      else if (auto hierarchical =
-                   dyn_cast<semantic::SVHierarchicalValueExpressionOp>(nested))
-        path = hierarchical.getReferencedPath();
-      else if (auto member =
-                   dyn_cast<semantic::SVMemberAccessExpressionOp>(nested))
-        path = member.getReferencedPath();
-      if (!path.empty())
-        eventCellPaths.insert(path);
-    });
-  };
-  semanticRoot->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (isStaticFormal(op)) {
-      auto type = op->getAttrOfType<TypeAttr>("semantic_type");
-      if (type && isa<semantic::EventType>(type.getValue()))
-        eventCellPaths.insert(getHierarchyName(op));
-      return;
-    }
-    if (auto variable = dyn_cast<semantic::SVVariableSymbolOp>(op)) {
-      auto type = variable->getAttrOfType<TypeAttr>("semantic_type");
-      if (type && isa<semantic::EventType>(type.getValue()) &&
-          (!getChildren(op).empty() || isStaticReturnVariable(op)))
-        eventCellPaths.insert(getHierarchyName(op));
-      return;
-    }
-    if (auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(op)) {
-      auto type = property->getAttrOfType<TypeAttr>("semantic_type");
-      if (type && isa<semantic::EventType>(type.getValue()) &&
-          !getChildren(op).empty())
-        eventCellPaths.insert(getHierarchyName(op));
-      return;
-    }
-    if (auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(op)) {
-      SmallVector<Operation *> children = getChildren(assignment);
-      size_t destination = assignment.getHasTimingControl() ? 1 : 0;
-      if (destination < children.size())
-        collectEventCellReferences(children[destination]);
-      return;
-    }
-    if (auto call = dyn_cast<semantic::SVCallExpressionOp>(op);
-        call && call.getHasOutputArguments())
-      for (Operation *child : getChildren(call))
-        collectEventCellReferences(child);
-  });
+  const llvm::StringSet<> &eventCellPaths = portAliases.eventCellPaths;
 
   semanticRoot->walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isCompileTimeOnlyInstanceMember(op))

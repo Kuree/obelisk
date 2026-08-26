@@ -16,6 +16,7 @@
 #include "mlir/Support/LLVM.h"
 
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
 
 namespace obelisk::simlowering {
 
@@ -48,6 +49,7 @@ struct PreparedPortAliases {
   llvm::StringMap<std::string> aliases;
   llvm::StringMap<StaticStorageView> refViews;
   llvm::StringMap<std::string> interfaceAliases;
+  llvm::StringSet<> eventCellPaths;
   mlir::SmallVector<ir::SVPortConnectionOp> connections;
 };
 
